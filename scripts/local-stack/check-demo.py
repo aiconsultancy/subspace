@@ -103,6 +103,7 @@ def check_demo():
             for file in files:
                 assert isinstance(get(file["url"].removeprefix("/api/v1")), bytes)
             pulls = items(f"{path}/pull-requests")
+            assert len(pulls) == 1 and pulls[0]["repository"]["fullName"] == f"fallow-reach-demo/{key.lower()}"
             deployments = items(f"/projects/{key}/deployment-statuses")
             counts["pull_requests"] += len(pulls)
             counts["deployments"] += len(deployments)
