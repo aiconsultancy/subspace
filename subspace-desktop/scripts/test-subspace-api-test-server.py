@@ -408,6 +408,25 @@ class FixtureTests(unittest.TestCase):
                               [{key: row[key] for key in ('id', 'title', 'status')} for row in rows])
         self.assertEqual(self.get('/issues/SUB-2/activity')['references']['decisions'], [])
 
+    def test_the_fleet_option_adds_a_neutral_project_and_its_issues(self):
+        self.assertNotIn('FLT', [row['key'] for row in self.get('/projects')['items']])
+        self.assertEqual(self.request('/issues/FLT-212')[0], 404)
+        fleet = FIXTURE.FixtureServer(0, 'fixture-access', fleet=True)
+        worker = threading.Thread(target=fleet.serve_forever, daemon=True)
+        worker.start()
+        try:
+            request = Request(fleet.origin + '/api/v1/issues/FLT-212',
+                              headers={'Authorization': 'Bearer fixture-access'})
+            with urlopen(request, timeout=3) as response:
+                issue = json.load(response)
+            self.assertEqual((issue['identifier'], issue['state']['type']), ('FLT-212', 'started'))
+            self.assertEqual(issue['assignee']['displayName'], 'Bo Sample')
+            self.assertIn('FLT', [row['key'] for row in fleet.fixture.projects])
+        finally:
+            fleet.shutdown()
+            fleet.server_close()
+            worker.join()
+
     def test_decision_scenarios_leave_other_issue_reads_available(self):
         current = self.get('/decisions?status=accepted')['items'][0]
         self.assertEqual(self.request('/decisions/not-a-uuid')[0], 400)

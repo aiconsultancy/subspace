@@ -273,6 +273,29 @@ def seed_issues(now):
     return rows
 
 
+# --fleet: a third fictional project, FLT, whose issues a web Space's capture
+# evidence (Fleet Console) references with a neutral key. Identifier, title,
+# state type and assignee.
+FLEET_ISSUES = (
+    ('FLT-198', 'Serve the Fleet API over a private network', 'completed', 'Rosa Fixture'),
+    ('FLT-205', 'Stream fleet events to web Spaces', 'started', 'Jo Fixture'),
+    ('FLT-207', 'Resume event streams after a drop', 'unstarted', None),
+    ('FLT-212', 'Warp transitions between fleet tiers', 'started', 'Bo Sample'),
+    ('FLT-230', 'Offline mode for the fleet map', 'backlog', None),
+)
+
+
+def add_fleet(fixture, now):
+    fixture.projects.append(project('FLT', 'Fleet fixture', now))
+    for ref, title, kind, assignee in FLEET_ISSUES:
+        row = issue(ref, title, kind, now)
+        row.update(assignee=person(assignee) if assignee else None,
+                   summary='Fictional fleet work for web Space evidence.')
+        fixture.issues.append(row)
+        fixture.creators[row['id']] = ADA
+        fixture.events[row['id']] = [activity(row, now)]
+
+
 class IssueWrites:
     def create_issue(self, payload):
         validate_issue_payload(payload, True)
@@ -480,7 +503,7 @@ def validate_chat_upload(name, mime, data):
             raise Problem(400, 'Invalid archive.') from error
 
 class Fixture(IssueWrites):
-    def __init__(self):
+    def __init__(self, fleet=False):
         now = instant()
         self.projects = [
             dict(project('SUB', 'Subspace fixture', now), initiativeId='ca2aabe7-68bd-4e82-9b76-d577ddf987ac'),
@@ -533,6 +556,8 @@ class Fixture(IssueWrites):
         self.events[root['issueId']].insert(0, activity(self.issues[0], now, 'comment.created', root))
         self.issues[0]['lastActivityAt'] = now
         self.issues[0]['lastActivity'] = dict(kind='comment.created', occurredAt=now, actor=actor(ADA))
+        if fleet:
+            add_fleet(self, created)
 
     def find_issue(self, ref):
         return next((r for r in self.issues if ref in (r['identifier'], r['id']) or self.aliases.get(ref) == r['id']), None)
@@ -921,13 +946,13 @@ class FixtureServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, port, access_jwt, fail_chat_uploads=None, updates_stream=True, change_after=None,
-                 decision_scenario='normal'):
+                 decision_scenario='normal', fleet=False):
         if not access_jwt:
             raise ValueError('A non-empty fixture Access JWT is required.')
         self.access_jwt = access_jwt
         # Opt-in failure injection: (file-name prefix, HTTP status) or None.
         self.fail_chat_uploads = fail_chat_uploads
-        self.fixture = Fixture()
+        self.fixture = Fixture(fleet)
         self.lock = threading.RLock()
         self.updates = UpdateFeed(updates_stream)
         self.change_after = change_after
@@ -1295,10 +1320,12 @@ def main():
                         help='Retitle SUB-1 SECONDS after its first detail read.')
     parser.add_argument('--decision-scenario', choices=DECISION_SCENARIOS, default='normal',
                         help='Choose which fictional Decisions response to capture.')
+    parser.add_argument('--fleet', action='store_true',
+                        help='Add the fictional FLT project and its issues, for web Space evidence.')
     args = parser.parse_args()
     with FixtureServer(args.port, args.access_jwt, fail_chat_uploads=args.fail_chat_uploads,
                        updates_stream=not args.no_updates_stream, change_after=args.change_after,
-                       decision_scenario=args.decision_scenario) as server:
+                       decision_scenario=args.decision_scenario, fleet=args.fleet) as server:
         print(f'Subspace API fixture on {server.origin}', flush=True)
         print(f'SUBSPACE_API_URL={server.origin}/api', flush=True)
         server.serve_forever()

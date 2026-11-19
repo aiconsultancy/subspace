@@ -23,6 +23,7 @@
 #   CAPTURE_NO_UPDATES_STREAM=1   the Subspace API fixture has no live updates stream
 #   CAPTURE_DECISION_SCENARIO=<normal|missing|forbidden|unavailable>  Decisions fixture
 #   CAPTURE_CHANGE_AFTER=<s>   the fixture retitles SUB-1 after <s> seconds, as a change elsewhere
+#   CAPTURE_FLEET=1            the fixture adds the neutral FLT project for web Space evidence
 #   CAPTURE_KEEP_LOG=1         copy the app's logs into <out-dir>
 # Linux uses the native executable, a private Xvfb display and a private
 # D-Bus session, including on Wayland desktops. A Vulkan driver is
@@ -103,6 +104,7 @@ api_args=(--port 0 --access-jwt fixture-access)
 if [ -n "${CAPTURE_NO_UPDATES_STREAM:-}" ]; then api_args+=(--no-updates-stream); fi
 if [ -n "${CAPTURE_CHANGE_AFTER:-}" ]; then api_args+=(--change-after "$CAPTURE_CHANGE_AFTER"); fi
 if [ -n "${CAPTURE_DECISION_SCENARIO:-}" ]; then api_args+=(--decision-scenario "$CAPTURE_DECISION_SCENARIO"); fi
+if [ -n "${CAPTURE_FLEET:-}" ]; then api_args+=(--fleet); fi
 python3 -u "$root/scripts/subspace_api_test_server.py" "${api_args[@]}" >"$fixture/subspace-api.log" 2>&1 &
 servers+=("$!")
 github="$(server_address "$fixture/github.log")"
