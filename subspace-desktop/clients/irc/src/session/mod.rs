@@ -196,6 +196,7 @@ impl Session {
     pub fn tick(&mut self, now: DateTime<Utc>) -> Output {
         self.now = now;
         let mut out = Output::default();
+        caps::expire_sasl(self, &mut out);
         metadata::sync_due(self, &mut out);
         out
     }

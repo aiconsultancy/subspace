@@ -1,5 +1,6 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use chrono::TimeDelta;
 
 use super::super::{Carry, Session};
 use super::{ERGO_ISUPPORT, ERGO_LS, config, feed, lines, now, sent};
@@ -25,6 +26,63 @@ fn nickname_fallback_allows_an_alternative_and_three_underscores() {
         Some("No IRC nickname was accepted. Nickname in use")
     );
     assert!(!session.registered());
+}
+
+#[test]
+fn a_stalled_sasl_exchange_aborts_and_registration_continues() {
+    let mut session = Session::new(config(), Carry::default());
+    session.start(now());
+    let started = feed(
+        &mut session,
+        &[":srv CAP * LS :sasl", ":srv CAP * ACK :sasl"],
+    );
+    assert_eq!(sent(&started), ["CAP REQ sasl", "AUTHENTICATE PLAIN"]);
+    assert!(session.tick(now() + TimeDelta::seconds(29)).send.is_empty());
+    let expired = session.tick(now() + TimeDelta::seconds(30));
+    assert_eq!(sent(&expired), ["AUTHENTICATE *", "CAP END"]);
+    assert!(matches!(
+        expired.events.as_slice(),
+        [Event::Capabilities { .. }]
+    ));
+    assert!(session.tick(now() + TimeDelta::seconds(40)).send.is_empty());
+    let abort = parse(":srv 906 subspace :SASL aborted").unwrap();
+    assert!(
+        session
+            .receive(abort, now() + TimeDelta::seconds(41))
+            .send
+            .is_empty()
+    );
+    let late = parse("AUTHENTICATE +").unwrap();
+    assert!(
+        session
+            .receive(late, now() + TimeDelta::seconds(42))
+            .send
+            .is_empty()
+    );
+    let welcome = parse(":srv 001 subspace :Welcome").unwrap();
+    assert_eq!(
+        sent(&session.receive(welcome, now() + TimeDelta::seconds(43))),
+        ["JOIN #subspace"]
+    );
+    assert!(session.registered());
+}
+
+#[test]
+fn a_sasl_timeout_still_waits_for_outstanding_capability_replies() {
+    let mut session = Session::new(config(), Carry::default());
+    session.start(now());
+    let started = feed(
+        &mut session,
+        &[":srv CAP * LS :server-time sasl", ":srv CAP * ACK * :sasl"],
+    );
+    assert_eq!(
+        sent(&started),
+        ["CAP REQ :server-time sasl", "AUTHENTICATE PLAIN"]
+    );
+    let expiry = now() + TimeDelta::seconds(30);
+    assert_eq!(sent(&session.tick(expiry)), ["AUTHENTICATE *"]);
+    let ack = parse(":srv CAP * ACK :server-time").unwrap();
+    assert_eq!(sent(&session.receive(ack, expiry)), ["CAP END"]);
 }
 
 #[test]
