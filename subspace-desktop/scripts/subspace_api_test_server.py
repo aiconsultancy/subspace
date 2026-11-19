@@ -169,7 +169,7 @@ def decision_summary(row):
     return {key: row[key] for key in ('id', 'title', 'status')}
 
 
-def decision_record(key, title, status, at, project_row, linked_issues, text, maker=ADA):
+def decision_record(key, title, status, at, decided, project_row, linked_issues, text, maker=ADA):
     links = [{field: issue_row[field] for field in ('id', 'identifier', 'title')}
              for issue_row in linked_issues]
     agent = maker['kind'] == 'agent'
@@ -179,7 +179,7 @@ def decision_record(key, title, status, at, project_row, linked_issues, text, ma
                       madeByAgentModel='fixture-model' if agent else None,
                       evidenceKind='documentOrUrl', evidenceReference='https://example.invalid/fixture-review',
                       evidenceExcerpt='A fictional review note for Desktop capture.')
-    row = dict(id=uid('decision-' + key), title=title, status=status, decidedOn=at[:10],
+    row = dict(id=uid('decision-' + key), title=title, status=status, decidedOn=decided,
                projectId=project_row['id'], projectKey=project_row['key'],
                project=dict(id=project_row['id'], name=project_row['name'], archived=False),
                supersedesId=None, supersededById=None, supersedes=None, supersededBy=None,
@@ -204,14 +204,19 @@ def seed_decisions(project_row, tracker, discussion, now):
     def minutes_ago(minutes):
         return (instant_now - timedelta(minutes=minutes)).isoformat().replace('+00:00', 'Z')
 
+    def days_ago(days):
+        return (instant_now - timedelta(days=days)).date().isoformat()
+
+    # Distinct decided-on dates, so the list order (newest decided first)
+    # differs from both the logging order and the ID order.
     old = decision_record(
-        'separate-queues', 'Keep separate review queues', 'superseded', minutes_ago(40),
+        'separate-queues', 'Keep separate review queues', 'superseded', minutes_ago(40), days_ago(9),
         project_row, [tracker], 'Review each part of the fixture workspace in its own queue.')
     accepted = decision_record(
-        'shared-queue', 'Use one review queue', 'accepted', minutes_ago(25),
+        'shared-queue', 'Use one review queue', 'accepted', minutes_ago(25), days_ago(4),
         project_row, [tracker, discussion], 'Use one queue for all reviews of the fixture workspace.')
     proposed = decision_record(
-        'handover-note', 'Add a short handover note', 'proposed', minutes_ago(10),
+        'handover-note', 'Add a short handover note', 'proposed', minutes_ago(10), days_ago(1),
         project_row, [tracker], 'Write a short handover note when a fixture review closes.', maker=AGENT)
     old[0].update(supersededById=accepted[0]['id'], supersededBy=decision_summary(accepted[0]),
                   updatedAt=accepted[0]['createdAt'], revisionNumber=2, version=2)
@@ -802,7 +807,10 @@ def decision_list(fixture, query):
                 row['title'], *(detail[key] for key in ('decision', 'context', 'why', 'implications', 'alternatives')))):
             continue
         rows.append(row)
-    return page(sorted(rows, key=lambda row: row['id']), query, 'decisions', maximum=100)
+    # Subspace API's order: newest decided-on date first, then ID.
+    rows.sort(key=lambda row: row['id'])
+    rows.sort(key=lambda row: row['decidedOn'], reverse=True)
+    return page(rows, query, 'decisions', maximum=100)
 
 
 def groups(fixture, query):

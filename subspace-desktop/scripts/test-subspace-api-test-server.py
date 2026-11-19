@@ -362,6 +362,13 @@ class FixtureTests(unittest.TestCase):
         rows = self.get('/decisions?issue=SUB-1')['items']
         self.assertEqual({row['status'] for row in rows}, {'accepted', 'proposed', 'superseded'})
         self.assertEqual(len(rows), 3)
+        # Newest decided first, as Subspace API sorts, on distinct dates that
+        # differ from the ID order.
+        dates = [row['decidedOn'] for row in rows]
+        self.assertEqual(len(set(dates)), 3)
+        self.assertEqual(dates, sorted(dates, reverse=True))
+        self.assertNotEqual([row['id'] for row in rows], sorted(row['id'] for row in rows))
+        self.assertEqual([row['status'] for row in rows], ['proposed', 'accepted', 'superseded'])
         self.assertEqual(self.get(f"/decisions?issue={tracker['id']}")['items'], rows)
         self.assertEqual(self.get('/decisions?issue=SUB-2'), {'items': [], 'nextCursor': None})
         self.assertEqual(self.get('/decisions?issue=SUB-4')['items'], [row for row in rows if row['status'] == 'accepted'])
@@ -373,6 +380,8 @@ class FixtureTests(unittest.TestCase):
         first = self.get('/decisions?issue=SUB-1&limit=1')
         cursor = urlencode({'cursor': first['nextCursor']})
         second = self.get('/decisions?issue=SUB-1&limit=2&' + cursor)
+        self.assertEqual(first['items'], rows[:1])
+        self.assertEqual(second['items'], rows[1:])
         self.assertEqual(first['items'] + second['items'], rows)
         self.assertIsNone(second['nextCursor'])
         self.assertEqual(self.request('/decisions?issue=SUB-4&' + cursor)[0], 400)
