@@ -19,7 +19,8 @@ mod media;
 mod reference;
 pub(super) use badges::badges;
 pub(crate) use badges::pills;
-pub(super) use links::{external, external_marked};
+#[cfg(test)]
+pub(super) use links::{external, external_marked, external_marked_with_label};
 pub(super) use reference::{reference_cards, reference_frames};
 
 const SHORT_WIDTH: f32 = 180.;
@@ -86,20 +87,9 @@ pub(crate) const ITEMS: &[Item] = &[
         samples: pills,
         kit: None,
     },
-    Item {
-        name: "links::external",
-        source: "board-kit/dashboard/src/links.rs",
-        used_in: "External links in the host.",
-        samples: external,
-        kit: None,
-    },
-    Item {
-        name: "links::external_marked",
-        source: "board-kit/dashboard/src/links.rs",
-        used_in: "External links with a trailing mark; no board uses it at present.",
-        samples: external_marked,
-        kit: None,
-    },
+    links::EXTERNAL,
+    links::MARKED,
+    links::MARKED_WITH_LABEL,
     Item {
         name: "truncated::text",
         source: "board-kit/dashboard/src/truncated.rs",
