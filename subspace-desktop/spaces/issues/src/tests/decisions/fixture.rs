@@ -90,3 +90,36 @@ pub(super) fn switched(
         Some((status, body.to_string()))
     })
 }
+
+/// One decision whose reasoning and linked issues overflow the panel, so
+/// its controls start below the viewport.
+pub(super) fn long_fixture() -> Offline {
+    let detail_path = format!("/api/v1/decisions/{NEW}");
+    offline_with(move |r| {
+        let path = r.path.as_str();
+        let body = match path {
+            FIRST => {
+                json!({"items":[item(NEW, "Read decisions here", "accepted")],"nextCursor":null})
+            }
+            _ if path == detail_path => long_detail(),
+            _ if path.starts_with("/api/v1/issues/SUB-1/activity?") => timeline(),
+            _ => return None,
+        };
+        Some((200, body.to_string()))
+    })
+}
+
+pub(super) const LONG_LINKS: usize = 24;
+
+fn long_detail() -> Value {
+    let mut value = detail(NEW);
+    let context: Vec<String> = (1..=40)
+        .map(|n| format!("Context paragraph {n}."))
+        .collect();
+    value["context"] = json!(context.join("\n\n"));
+    let links: Vec<Value> = (1..=LONG_LINKS)
+        .map(|n| json!({"id":format!("link-{n}"),"identifier":format!("LNK-{n}"),"title":format!("Linked issue {n}")}))
+        .collect();
+    value["issues"] = json!({"items":links,"count":LONG_LINKS});
+    value
+}

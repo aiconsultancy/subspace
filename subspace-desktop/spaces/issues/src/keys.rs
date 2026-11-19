@@ -5,8 +5,8 @@
 use gpui_kit::{App, Context, Div, Focusable as _, InteractiveElement as _, KeyBinding, actions};
 use subspace_framework::dashboard::{KeyHelp, view_keys};
 
-use crate::Issues;
 use crate::model::Tab;
+use crate::{Issues, decision};
 
 actions!(
     issues_board,
@@ -41,6 +41,10 @@ pub(crate) const HELP: &[KeyHelp] = &[
     KeyHelp::new("k / ↑", "Previous row"),
     KeyHelp::new("Enter", "Open issue or fold group"),
     KeyHelp::new("Esc", "Close the attachment or decision, else go back"),
+    KeyHelp::new(
+        "↑ / ↓, Page Up / Down, Home / End",
+        "Scroll an open decision",
+    ),
     KeyHelp::new("j / k", "Next or previous issue in detail"),
     KeyHelp::new("1–4", "My issues / Active / Backlog / All issues"),
     KeyHelp::new("5", "Issue activity"),
@@ -61,6 +65,16 @@ pub(crate) fn bind(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("escape", DismissDetail, Some(&detail)),
         KeyBinding::new("escape", DismissDetail, Some(crate::decision::CONTEXT)),
+        KeyBinding::new("up", decision::ScrollUp, Some(decision::CONTEXT)),
+        KeyBinding::new("down", decision::ScrollDown, Some(decision::CONTEXT)),
+        KeyBinding::new("pageup", decision::ScrollPageUp, Some(decision::CONTEXT)),
+        KeyBinding::new(
+            "pagedown",
+            decision::ScrollPageDown,
+            Some(decision::CONTEXT),
+        ),
+        KeyBinding::new("home", decision::ScrollToTop, Some(decision::CONTEXT)),
+        KeyBinding::new("end", decision::ScrollToBottom, Some(decision::CONTEXT)),
         KeyBinding::new(
             "escape",
             subspace_framework::dashboard::find_in_page::Close,

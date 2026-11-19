@@ -30,7 +30,13 @@ Back to the [change record](intent.md).
 - Use the native tab controls with Left/Right and Enter/Space. Kit's tab
   rendering already supplies selection semantics and pointer activation;
   a local adapter supplies keyboard focus without a Framework change.
-- Close receives focus on open. Tab and Shift+Tab stay in the decision panel.
+- Close receives focus on open. Tab and Shift+Tab stay in the decision panel,
+  and each control they reach scrolls the panel body just far enough to show
+  it. The arrow keys, Page Up, Page Down, Home and End scroll the body from
+  any control, so reasoning without links can be read by keyboard. The issue
+  page behind the panel is hidden from assistive technology, and a control
+  there that takes focus another way hands it back to **Close decision**;
+  focus that leaves the board, such as to the command palette, is left alone.
   Closing returns focus to the opener if still present, otherwise the board.
   Escape closes a text attachment viewer first, then the decision panel,
   then follows the issue's Back destination. The panel's own Back arrow

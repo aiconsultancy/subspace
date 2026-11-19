@@ -80,6 +80,11 @@ fn key(media: &IssueMedia) -> String {
 }
 
 impl MediaView {
+    /// Whether the attachment panel is open beside the issue page.
+    pub(crate) fn text_open(&self) -> bool {
+        self.text.is_some()
+    }
+
     fn open_issue(&mut self, issue: &str) {
         self.close_issue();
         self.issue = issue.into();
