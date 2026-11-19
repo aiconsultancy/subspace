@@ -2,7 +2,10 @@
 
 Settings lists app pages first, then the boards included in the product.
 Disabled boards remain configurable. Their main tabs and agent tools disappear
-after you save and restart.
+when you save. A board's tab menu (right-click) has **Close Space**, which
+saves and applies the same `false` or removed `boards` entry as turning off
+its Enabled switch and choosing Save, and **Space settings…**, which opens
+its page. The last open board can't be closed.
 
 A board omitted from `config.json` uses the product default for the current
 build. It is not treated as enabled merely because the key is absent. Release

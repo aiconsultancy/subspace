@@ -247,6 +247,26 @@ impl ServiceForm {
     }
 }
 
+/// The saved board choices after Space `id`'s Enabled switch is set to
+/// `enabled` and saved, by the rule Save follows for every switch.
+pub(super) fn switched_board_values(
+    saved: &std::collections::BTreeMap<String, bool>,
+    id: &str,
+    enabled: bool,
+    default_enabled: bool,
+) -> std::collections::BTreeMap<String, bool> {
+    let initial_explicit = saved.get(id).copied();
+    let switched = BoardChoice {
+        id: id.to_owned(),
+        enabled,
+        default_enabled,
+        initial_enabled: initial_explicit.unwrap_or(default_enabled),
+        initial_explicit,
+        changed: true,
+    };
+    merge_board_values(saved, &[switched])
+}
+
 fn merge_board_values(
     original: &std::collections::BTreeMap<String, bool>,
     boards: &[BoardChoice],
