@@ -1,0 +1,136 @@
+//! One menu policy for literal values, rich blocks and legacy selectable hosts.
+
+use gpui_kit::base::TextSelection;
+use gpui_kit::component::menu::{ContextMenu, PopupMenu, PopupMenuItem};
+use gpui_kit::{App, Context, Entity, InteractiveElement, ParentElement, Styled, Window};
+
+use crate::anchored::AnchoredContextMenuExt as _;
+use crate::row_menu::MenuChat;
+use crate::{AddSelectionToChat, links, set_selection};
+
+use super::plain::PlainState;
+use super::view::RichTextContext;
+
+#[derive(Clone)]
+pub(super) enum Source {
+    Rich(RichTextContext),
+    Plain(Entity<PlainState>),
+    Fallback(String),
+}
+
+impl Source {
+    fn payload(&self, window: &mut Window, cx: &mut App) -> String {
+        let selected = TextSelection::selected_text(window, cx);
+        match self {
+            Self::Rich(context) => rich_payload(context, &selected, cx),
+            Self::Plain(state) => plain_payload(state, &selected, cx),
+            Self::Fallback(fallback) => super::selected_or_fallback(&selected, fallback),
+        }
+    }
+
+    fn link(&self) -> Option<String> {
+        match self {
+            Self::Rich(context) => context.link(),
+            _ => None,
+        }
+    }
+
+    fn select_all(&self, window: &mut Window, cx: &mut App) {
+        match self {
+            Self::Rich(context) => {
+                TextSelection::clear(window, cx);
+                _ = context.state.update(cx, |state, cx| state.select_all(cx));
+            }
+            Self::Plain(state) => state.update(cx, |state, cx| state.select_all(window, cx)),
+            Self::Fallback(_) => {}
+        }
+    }
+}
+
+pub(super) fn with_source<E>(element: E, source: Source, chat: MenuChat) -> ContextMenu<E>
+where
+    E: InteractiveElement + ParentElement + Styled,
+{
+    element.anchored_context_menu(move |menu, window, cx| {
+        let payload = source.payload(window, cx);
+        contents(menu, source.clone(), payload, chat, cx)
+    })
+}
+
+fn contents(
+    menu: PopupMenu,
+    source: Source,
+    payload: String,
+    chat: MenuChat,
+    _: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let copy = payload.clone();
+    let mut menu = menu.item(
+        PopupMenuItem::new("Copy")
+            .icon(subspace_lucide::IconName::Copy)
+            .on_click(move |_, _, cx| links::copy(copy.clone(), cx)),
+    );
+    if let Some(url) = source.link() {
+        menu = menu.item(PopupMenuItem::new("Copy link").on_click(move |_, _, cx| {
+            links::copy(url.clone(), cx);
+        }));
+    }
+    if !matches!(source, Source::Fallback(_)) {
+        menu = menu.item(
+            PopupMenuItem::new("Select all").on_click(move |_, window, cx| {
+                source.select_all(window, cx);
+            }),
+        );
+    }
+    if chat == MenuChat::Offered {
+        menu = menu.item(
+            PopupMenuItem::new("Add to chat").on_click(move |_, window, cx| {
+                let payload = payload.clone();
+                window.defer(cx, move |window, cx| {
+                    set_selection(cx, payload);
+                    window.dispatch_action(Box::new(AddSelectionToChat), cx);
+                });
+            }),
+        );
+    }
+    menu
+}
+
+fn plain_payload(state: &Entity<PlainState>, selected: &str, cx: &App) -> String {
+    let state = state.read(cx);
+    if !selected.is_empty()
+        && (state.selection.has_local_selection(cx) || state.selection.snapshot(cx).is_some())
+    {
+        selected.to_owned()
+    } else {
+        state.text.to_string()
+    }
+}
+
+fn rich_payload(context: &RichTextContext, selected: &str, cx: &App) -> String {
+    let Some(state) = context.state.upgrade() else {
+        return String::new();
+    };
+    let state = state.read(cx);
+    let own = state.selected_text();
+    if !selected.is_empty() && !own.is_empty() {
+        if own == selected {
+            let text = state.rendered_text();
+            if let Some(range) = state
+                .selected_source_range()
+                .and_then(|range| text.range_for_source(range))
+                && let Some(exact) = text.as_str().get(range)
+            {
+                return exact.to_owned();
+            }
+        }
+        return selected.to_owned();
+    }
+    context.fallback.clone().unwrap_or_else(|| {
+        state
+            .rendered_text()
+            .as_str()
+            .trim_end_matches('\n')
+            .to_owned()
+    })
+}

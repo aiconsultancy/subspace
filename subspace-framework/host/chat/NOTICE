@@ -1,0 +1,14 @@
+subspace-chat third-party notices
+
+This crate embeds third-party material. Its own code is licensed under the
+Apache License 2.0 (LICENSE).
+
+- assets/copilot.svg: from primer/octicons. MIT License, Copyright (c)
+  GitHub Inc. Licence text: assets/LICENSE-OCTICONS.
+- assets/openai.svg: from lobehub/lobe-icons. MIT License, Copyright (c) LobeHub.
+  Licence text: assets/LICENSE-LOBE-ICONS.
+- assets/claude.svg, assets/opencode.svg, assets/gemini.svg: from
+  simple-icons, CC0-1.0.
+
+Sources, changes and checksums: assets/PROVENANCE.md. The marks are
+trademarks of their owners and identify the product that runs a chat.

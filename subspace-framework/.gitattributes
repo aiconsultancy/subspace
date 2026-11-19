@@ -1,0 +1,5 @@
+# Check out text files with LF on every platform. Git for Windows converts to
+# CRLF by default, and the crates embed files with include_str!, such as the
+# themes in host/app/themes, whose content must not depend on the machine
+# that built the binary.
+* text=auto eol=lf

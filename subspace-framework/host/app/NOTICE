@@ -1,0 +1,14 @@
+subspace-shell third-party notices
+
+This crate embeds third-party material. Its own code is licensed under the
+Apache License 2.0 (LICENSE).
+
+- themes/gpui-kit/*.json: the GPUI Component theme catalogue from
+  longbridge/gpui-component, with Subspace metadata added to each variant.
+  Apache License 2.0. Licence text and provenance:
+  themes/gpui-kit/LICENSE-APACHE and themes/gpui-kit/PROVENANCE.md.
+  Source: https://github.com/longbridge/gpui-component
+- themes/macos-classic-dark-remix.json: adapted from huacnlee's macOS Classic
+  theme for Zed. MIT License, Copyright (c) Jason Lee.
+  Licence text: themes/LICENSE-MACOS-CLASSIC.
+  Source: https://github.com/huacnlee/zed-theme-macos-classic

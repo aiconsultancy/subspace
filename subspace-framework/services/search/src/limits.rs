@@ -1,0 +1,13 @@
+pub(crate) const MAX_BOARDS: usize = 32;
+pub(crate) const MAX_QUERY: usize = 2048;
+pub(crate) const MAX_RESULTS: usize = 100;
+pub(crate) const MAX_TERMS: usize = 64;
+pub(crate) const MAX_IDENTIFIER: usize = 2048;
+pub(crate) const MAX_NAME: usize = 100;
+pub(crate) const MAX_RETENTION: u32 = 3650;
+pub(crate) const MAX_QUOTA: u64 = 100_000_000_000;
+pub(crate) const EXCERPT_BYTES: usize = 2048;
+pub(crate) const BODY_BYTES: usize = 8192;
+pub(crate) const RESPONSE_RESERVE: usize = 65_536;
+pub(crate) const STORAGE_FACTOR: u64 = 3;
+pub(crate) const MAX_RECORDS: usize = 1000;

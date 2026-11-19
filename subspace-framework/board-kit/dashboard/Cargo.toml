@@ -1,0 +1,40 @@
+[package]
+name = "subspace-dashboard"
+documentation = "https://docs.rs/subspace-dashboard"
+description = "Subspace Framework board kit: the Dashboard trait, shared widgets and design tokens. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+test-support = ["gpui-kit/test-support"]
+
+[dependencies]
+regex.workspace = true
+base64.workspace = true
+chrono.workspace = true
+subspace-core.workspace = true
+subspace-github-auth.workspace = true
+subspace-product.workspace = true
+subspace-agent-model.workspace = true
+subspace-agent-tools.workspace = true
+subspace-charts.workspace = true
+subspace-contracts.workspace = true
+subspace-lucide.workspace = true
+subspace-search.workspace = true
+gpui-kit.workspace = true
+image.workspace = true
+markdown = "=1.0.0"
+serde_json.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,259 @@
+[package]
+name = "subspace-framework"
+documentation = "https://docs.rs/subspace-framework"
+description = "The Subspace Framework: build desktop dashboard apps from Spaces with GPUI Kit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
+# The facade is src/ alone; the rest of this folder is the workspace.
+include = ["/src/**", "/README.md", "/LICENSE"]
+
+[features]
+default = ["space"]
+# What a Space needs: the services, the board kit and the GitHub client.
+space = [
+    "dep:subspace-core",
+    "dep:subspace-agent-model",
+    "dep:subspace-agent-tools",
+    "dep:subspace-charts",
+    "dep:subspace-contracts",
+    "dep:subspace-search",
+    "dep:subspace-web",
+    "dep:subspace-github-auth",
+    "dep:subspace-account",
+    "dep:subspace-dashboard",
+    "dep:subspace-lucide",
+    "dep:subspace-client-github",
+]
+# The agent runtime: Copilot, Pi and ACP chat engines.
+agent = ["space", "dep:subspace-agent"]
+# The shell and the other host crates, for app builders only.
+host = [
+    "space",
+    "agent",
+    "dep:subspace-shell",
+    "dep:subspace-board-command",
+    "dep:subspace-chat",
+    "dep:subspace-mcp",
+    "dep:subspace-search-ui",
+    "dep:subspace-update",
+    "dep:subspace-entra-auth",
+    "dep:subspace-workos-auth",
+]
+# Report issue in the shell, filing into the repository the app names in
+# `ProductBuild`. Not part of `host`.
+report-issue = ["host", "dep:subspace-report-issue", "subspace-shell/report-issue"]
+# Local ONNX reranking for full-text search.
+search-onnx = ["dep:subspace-search-onnx"]
+# The Component gallery Space, the Framework's component catalogue.
+component-gallery = ["space", "dep:subspace-component-gallery-board"]
+# Test fixtures and GPUI test support of every enabled Framework crate, and
+# the offline HTTP fixtures as `client_test_support`.
+test-support = [
+    "subspace-product/test-support",
+    "subspace-dashboard?/test-support",
+    "subspace-agent-tools?/test-support",
+    "subspace-agent?/test-support",
+    "subspace-shell?/test-support",
+    "subspace-chat?/test-support",
+    "subspace-report-issue?/test-support",
+    "subspace-component-gallery-board?/test-support",
+    "dep:subspace-client-test-support",
+    "subspace-client-test-support/test-support",
+]
+# The debug-only screenshot capture build.
+capture = ["host", "subspace-shell/capture"]
+
+[dependencies]
+subspace-product.workspace = true
+subspace-account = { workspace = true, optional = true }
+subspace-entra-auth = { workspace = true, optional = true }
+subspace-workos-auth = { workspace = true, optional = true }
+subspace-core = { workspace = true, optional = true }
+subspace-agent-model = { workspace = true, optional = true }
+subspace-agent-tools = { workspace = true, optional = true }
+subspace-charts = { workspace = true, optional = true }
+subspace-contracts = { workspace = true, optional = true }
+subspace-search = { workspace = true, optional = true }
+subspace-search-onnx = { workspace = true, optional = true }
+subspace-web = { workspace = true, optional = true }
+subspace-github-auth = { workspace = true, optional = true }
+subspace-dashboard = { workspace = true, optional = true }
+subspace-lucide = { workspace = true, optional = true }
+subspace-agent = { workspace = true, optional = true }
+subspace-shell = { workspace = true, optional = true }
+subspace-board-command = { workspace = true, optional = true }
+subspace-chat = { workspace = true, optional = true }
+subspace-mcp = { workspace = true, optional = true }
+subspace-report-issue = { workspace = true, optional = true }
+subspace-search-ui = { workspace = true, optional = true }
+subspace-update = { workspace = true, optional = true }
+subspace-client-github = { workspace = true, optional = true }
+subspace-client-test-support = { workspace = true, optional = true }
+subspace-component-gallery-board = { workspace = true, optional = true }
+
+[dev-dependencies]
+# The README's examples use GPUI Kit directly, as apps do.
+gpui-kit.workspace = true
+
+# Used only by the README's doctests, which cargo-shear does not read.
+[package.metadata.cargo-shear]
+ignored = ["gpui-kit"]
+
+[lints]
+workspace = true
+
+[workspace]
+# The facade crate at the root, the Framework's layers and its catalogue Space.
+members = ["services/*", "board-kit/*", "runtimes/*", "host/*", "clients/*", "spaces/*"]
+exclude = ["vendor/markdown"]
+resolver = "2"
+
+[patch.crates-io]
+markdown = { path = "vendor/markdown" }
+
+# Kept only for its `links` metadata; see the comment on the dependency below.
+[workspace.metadata.cargo-shear]
+ignored = ["gpui-kit-assets"]
+
+[workspace.package]
+version = "0.2.0"
+publish = true
+edition = "2024"
+# The toolchain mise pins and every check runs with.
+rust-version = "1.99"
+license = "Apache-2.0"
+keywords = ["gpui", "desktop", "dashboard", "gui", "subspace"]
+categories = ["gui"]
+
+[workspace.dependencies]
+x11rb = "0.13"
+raw-window-handle = "0.6"
+uuid = { version = "=1.29.2", features = ["v4"] }
+openidconnect = { version = "4.1", default-features = false }
+# Framework crates share one version and pin each other to it. Release
+# Please's release pull request moves every pin between these markers.
+# x-release-please-start-version
+subspace-product = { path = "services/product", version = "=0.2.0" }
+subspace-core = { path = "services/core", version = "=0.2.0" }
+subspace-agent-model = { path = "services/agent-model", version = "=0.2.0" }
+subspace-agent-tools = { path = "services/agent-tools", version = "=0.2.0" }
+subspace-charts = { path = "services/charts", version = "=0.2.0" }
+subspace-contracts = { path = "services/contracts", version = "=0.2.0" }
+subspace-search = { path = "services/search", version = "=0.2.0" }
+subspace-search-onnx = { path = "services/search-onnx", version = "=0.2.0" }
+subspace-web = { path = "services/web", version = "=0.2.0" }
+subspace-github-auth = { path = "services/github-auth", version = "=0.2.0" }
+subspace-account = { path = "services/account", version = "=0.2.0" }
+subspace-auth-return = { path = "services/auth-return", version = "=0.2.0" }
+subspace-entra-auth = { path = "services/entra-auth", version = "=0.2.0" }
+subspace-workos-auth = { path = "services/workos-auth", version = "=0.2.0" }
+subspace-dashboard = { path = "board-kit/dashboard", version = "=0.2.0" }
+subspace-lucide = { path = "board-kit/lucide", version = "=0.2.0" }
+subspace-agent = { path = "runtimes/agent", version = "=0.2.0" }
+subspace-shell = { path = "host/app", version = "=0.2.0" }
+subspace-board-command = { path = "host/board-command", version = "=0.2.0" }
+subspace-chat = { path = "host/chat", version = "=0.2.0" }
+subspace-mcp = { path = "host/mcp", version = "=0.2.0" }
+subspace-report-issue = { path = "host/report-issue", version = "=0.2.0" }
+subspace-search-ui = { path = "host/search-ui", version = "=0.2.0" }
+subspace-update = { path = "host/update", version = "=0.2.0" }
+subspace-client-github = { path = "clients/github", version = "=0.2.0" }
+subspace-client-test-support = { path = "clients/test-support", version = "=0.2.0" }
+subspace-component-gallery-board = { path = "spaces/component-gallery", version = "=0.2.0" }
+# x-release-please-end
+
+# GPUI Kit pins its matching GPUI snapshot, so the application lists one
+# dependency. See https://github.com/longbridge/gpui-kit.
+# The tree-sitter grammars colour code in code views. Not
+# `tree-sitter-languages`: its SQL grammar pins a `cc` that conflicts with the
+# workspace lock.
+gpui-kit = { version = "0.9.1", features = [
+    "tree-sitter-bash",
+    "tree-sitter-csharp",
+    "tree-sitter-css",
+    "tree-sitter-go",
+    "tree-sitter-html",
+    "tree-sitter-javascript",
+    "tree-sitter-markdown",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-toml",
+    "tree-sitter-tsx",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+] }
+notify-rust = "4.19"
+# Same version as GPUI Kit's own; listed directly only so `subspace-lucide`'s build
+# script receives the Lucide icon directory from its `links` metadata.
+gpui-kit-assets = "=0.9.1"
+
+anyhow = "1"
+base64 = "0.23"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+dirs = "7"
+flate2 = "1"
+hex = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+keyring = "4.2"
+libc = "0.2"
+rand = "0.10"
+regex = "1"
+rmcp = { version = "3.10", default-features = false }
+rusqlite = { version = "0.42", features = ["bundled"] }
+# The JavaScript engine that compiles a Flint chart, built from source with
+# the crate; `subspace-charts` embeds Flint itself, so a chart needs no Node.
+rquickjs = { version = "0.14", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustix = { version = "=1.1.6", features = ["fs"] }
+# Pre-release update versions compare by semver precedence.
+semver = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# `serde_yaml` is unmaintained (RUSTSEC-2024-0320); this maintained fork keeps
+# its API and gives workflow definitions a real YAML parser.
+serde_yaml_ng = "0.10"
+sha2 = "0.11"
+tar = "0.4"
+tempfile = "3"
+sysinfo = { version = "0.40.3", default-features = false, features = ["system"] }
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+unicode-normalization = "0.1"
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
+url = "2"
+zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
+windows-sys = "0.61"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "warn"
+type_complexity = "allow"
+
+[profile.dev]
+panic = "unwind"
+codegen-units = 16
+debug = "limited"
+split-debuginfo = "unpacked"
+
+# Release builds have no debug info of their own. The default "debuginfo" strip
+# only removes the standard library's, saves almost nothing on macOS, and needs
+# rust-objcopy, which cannot find libLLVM.dylib in the 1.96-1.98 toolchains.
+[profile.release]
+panic = "unwind"
+strip = false
+
+# GPUI is slow unoptimised; the GPUI Kit workspace applies the same overrides.
+[profile.dev.package]
+markdown = { opt-level = 3 }
+resvg = { opt-level = 3 }
+rustybuzz = { opt-level = 3 }
+taffy = { opt-level = 3 }
+ttf-parser = { opt-level = 3 }
+gpui-pre = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }

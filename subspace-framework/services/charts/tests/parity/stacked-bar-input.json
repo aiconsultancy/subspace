@@ -1,0 +1,196 @@
+{
+  "data": {
+    "values": [
+      {
+        "date": "2026-09-01",
+        "stream": "platform",
+        "environment": "prd",
+        "cost_usd": 131.5
+      },
+      {
+        "date": "2026-09-01",
+        "stream": "data",
+        "environment": "qat",
+        "cost_usd": 168.5
+      },
+      {
+        "date": "2026-09-01",
+        "stream": "web",
+        "environment": "prd",
+        "cost_usd": 205.5
+      },
+      {
+        "date": "2026-09-01",
+        "stream": "api",
+        "environment": "qat",
+        "cost_usd": 242.5
+      },
+      {
+        "date": "2026-09-02",
+        "stream": "platform",
+        "environment": "prd",
+        "cost_usd": 143
+      },
+      {
+        "date": "2026-09-02",
+        "stream": "data",
+        "environment": "qat",
+        "cost_usd": 180
+      },
+      {
+        "date": "2026-09-02",
+        "stream": "web",
+        "environment": "prd",
+        "cost_usd": 217
+      },
+      {
+        "date": "2026-09-02",
+        "stream": "api",
+        "environment": "qat",
+        "cost_usd": 254
+      },
+      {
+        "date": "2026-09-03",
+        "stream": "platform",
+        "environment": "prd",
+        "cost_usd": 154.5
+      },
+      {
+        "date": "2026-09-03",
+        "stream": "data",
+        "environment": "qat",
+        "cost_usd": 191.5
+      },
+      {
+        "date": "2026-09-03",
+        "stream": "web",
+        "environment": "prd",
+        "cost_usd": 228.5
+      },
+      {
+        "date": "2026-09-03",
+        "stream": "api",
+        "environment": "qat",
+        "cost_usd": 265.5
+      },
+      {
+        "date": "2026-09-04",
+        "stream": "platform",
+        "environment": "prd",
+        "cost_usd": 166
+      },
+      {
+        "date": "2026-09-04",
+        "stream": "data",
+        "environment": "qat",
+        "cost_usd": 203
+      },
+      {
+        "date": "2026-09-04",
+        "stream": "web",
+        "environment": "prd",
+        "cost_usd": 240
+      },
+      {
+        "date": "2026-09-04",
+        "stream": "api",
+        "environment": "qat",
+        "cost_usd": 277
+      },
+      {
+        "date": "2026-09-05",
+        "stream": "platform",
+        "environment": "prd",
+        "cost_usd": 177.5
+      },
+      {
+        "date": "2026-09-05",
+        "stream": "data",
+        "environment": "qat",
+        "cost_usd": 214.5
+      },
+      {
+        "date": "2026-09-05",
+        "stream": "web",
+        "environment": "prd",
+        "cost_usd": 251.5
+      },
+      {
+        "date": "2026-09-05",
+        "stream": "api",
+        "environment": "qat",
+        "cost_usd": 288.5
+      },
+      {
+        "date": "2026-09-06",
+        "stream": "platform",
+        "environment": "prd",
+        "cost_usd": 189
+      },
+      {
+        "date": "2026-09-06",
+        "stream": "data",
+        "environment": "qat",
+        "cost_usd": 226
+      },
+      {
+        "date": "2026-09-06",
+        "stream": "web",
+        "environment": "prd",
+        "cost_usd": 263
+      },
+      {
+        "date": "2026-09-06",
+        "stream": "api",
+        "environment": "qat",
+        "cost_usd": 300
+      },
+      {
+        "date": "2026-09-07",
+        "stream": "platform",
+        "environment": "prd",
+        "cost_usd": 200.5
+      },
+      {
+        "date": "2026-09-07",
+        "stream": "data",
+        "environment": "qat",
+        "cost_usd": 237.5
+      },
+      {
+        "date": "2026-09-07",
+        "stream": "web",
+        "environment": "prd",
+        "cost_usd": 274.5
+      },
+      {
+        "date": "2026-09-07",
+        "stream": "api",
+        "environment": "qat",
+        "cost_usd": 311.5
+      }
+    ]
+  },
+  "semantic_types": {
+    "date": "Date",
+    "stream": "Category",
+    "environment": "Category",
+    "cost_usd": "Price"
+  },
+  "chart_spec": {
+    "chartType": "Stacked Bar Chart",
+    "title": "Daily cost by work stream",
+    "subtitle": "synthetic rows, amortized USD per day",
+    "encodings": {
+      "x": {
+        "field": "date"
+      },
+      "y": {
+        "field": "cost_usd"
+      },
+      "color": {
+        "field": "stream"
+      }
+    }
+  }
+}

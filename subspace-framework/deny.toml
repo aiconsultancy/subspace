@@ -1,0 +1,22 @@
+# cargo-deny advisory policy for the Subspace Framework workspace.
+#
+# Each ignore names an advisory that has no fixed release reachable from our
+# dependency tree. Review every entry by its date: upgrade the blocking parent
+# when it moves, or replace the crate, then delete the entry.
+
+[advisories]
+# Report unsound transitive crates too; the default scope only checks crates
+# that a workspace member depends on directly.
+unsound = "all"
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono 0.4.45 is unmaintained (informational notice), used directly and through GPUI Kit. All versions are affected, so no compatible chrono upgrade fixes it. Migration needs a maintained successor across GPUI Kit too. Review by 2026-12-17." },
+    { id = "RUSTSEC-2024-0384", reason = "instant 0.1.13 (unmaintained), from gpui-base 0.9.1 through gpui-component and gpui-kit 0.9.1, the latest GPUI Kit release. Needs a GPUI Kit release without it. Review by 2027-02-14." },
+    { id = "RUSTSEC-2024-0436", reason = "paste 1.0.15 (unmaintained proc macro), from gpui-component 0.9.1 through gpui-kit. Build time only. Review by 2027-02-14." },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 2.2.0 (unmaintained), from gpui-pre-reqwest 0.12.15 through gpui-kit-assets 0.9.1. Its parser moved into rustls-pki-types; needs a GPUI Kit release. Review by 2027-02-14." },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz 0.20.1 (unmaintained), from usvg 0.45 (resvg) through gpui-component 0.9.1. Needs a GPUI Kit release on a newer resvg. Review by 2027-02-14." },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser 0.25.1 (unmaintained), from fontdb, cosmic-text and usvg through gpui-pre 0.3.12 and gpui-component 0.9.1. Needs a GPUI Kit release. Review by 2027-02-14." },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant 5.15.1 (unmaintained), from atspi-common 0.13 and accesskit_unix 0.22 through gpui-pre-linux 0.3.12 (Linux accessibility). Needs a GPUI Kit release. Review by 2027-02-14." },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names 4.3.5 (unmaintained), from atspi-common 0.13 through accesskit_unix 0.22 and gpui-pre-linux 0.3.12. Needs a GPUI Kit release. Review by 2027-02-14." },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 5.15.1 (unmaintained proc macro), from zvariant through accesskit_unix 0.22 and gpui-pre-linux 0.3.12. Needs a GPUI Kit release. Review by 2027-02-14." },
+    { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml 0.2.11 (unmaintained), from serde_yaml_ng 0.10 (the latest release) in subspace-client-github, which reads workflow definitions. Replacing the YAML parser needs parsing characterisation tests first. Review by 2027-02-14." },
+]

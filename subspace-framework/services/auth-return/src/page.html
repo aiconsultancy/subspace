@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>{{title}}</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --surface: #111111;
+        --text: #f0efed;
+        --secondary: #cccac7;
+      }
+      body {
+        margin: 0;
+        background: var(--surface);
+        color: var(--text);
+        font: 16px/1.5 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      }
+      main {
+        width: min(34rem, calc(100% - 3rem));
+        margin: clamp(4rem, 18vh, 9rem) auto 3rem;
+        text-align: center;
+      }
+      .brands {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 1.25rem;
+        margin-bottom: 2rem;
+      }
+      .brands img { display: block; max-width: 100%; }
+      h1 { margin: 0; font-size: clamp(1.6rem, 5vw, 2rem); line-height: 1.2; }
+      p { margin: 1rem 0 0; color: var(--secondary); }
+      ::selection { background: #3cf0ff; color: var(--surface); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brands">
+        <img src="data:image/svg+xml;base64,{{subspace_logo}}" alt="Subspace" width="64" height="64">
+      </div>
+      <h1>{{title}}</h1>
+      <p>{{message}}</p>
+    </main>
+  </body>
+</html>

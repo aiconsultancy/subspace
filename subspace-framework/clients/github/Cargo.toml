@@ -1,0 +1,27 @@
+[package]
+name = "subspace-client-github"
+documentation = "https://docs.rs/subspace-client-github"
+description = "Subspace Framework GitHub client: REST and GraphQL types and requests. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+subspace-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+ureq.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+subspace-client-test-support = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

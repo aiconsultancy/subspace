@@ -1,0 +1,31 @@
+[package]
+name = "subspace-component-gallery-board"
+documentation = "https://docs.rs/subspace-component-gallery-board"
+description = "Subspace Framework component gallery: every shared component in its states. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+subspace-charts.workspace = true
+subspace-core.workspace = true
+subspace-dashboard.workspace = true
+subspace-lucide.workspace = true
+gpui-kit.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
+
+[[example]]
+name = "copy_error_details_gallery"
+required-features = ["test-support"]

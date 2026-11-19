@@ -1,0 +1,105 @@
+[tools]
+rust = { version = "1.99.0", mr_boxington = true, components = "rustfmt,clippy" }
+mr-boxington = "1.19.0"
+"cargo:rustqual" = "1.8.3"
+"github:Boshen/cargo-shear" = "1.14.0"
+"github:j178/prek" = "0.3.13"
+
+[tasks.build]
+description = "Build every crate"
+run = "cargo build --workspace"
+
+[tasks.update-deps]
+description = "Update Cargo.lock to the latest compatible dependency versions"
+run = "cargo update"
+
+[tasks.test]
+description = "Run the tests, the shell's with and without Report issue, and the README's examples"
+run = [
+    "cargo test --workspace --locked",
+    # Report issue is an optional shell feature that nothing in the workspace enables.
+    "cargo test -p subspace-shell --features report-issue --locked",
+    "cargo test -p subspace-framework --features report-issue --doc --locked",
+]
+
+[tasks.fmt]
+# cargo fmt --all also follows vendored path dependencies.
+run = "python3 scripts/format-workspace.py"
+
+[tasks.fmt-check]
+run = "python3 scripts/format-workspace.py -- --check"
+
+[tasks.lint]
+# --keep-going reports every failing crate in one run, not only the first.
+run = [
+    "cargo shear",
+    "cargo clippy --workspace --all-targets --keep-going -- -D warnings",
+    "cargo clippy -p subspace-shell -p subspace-framework --features subspace-shell/report-issue,subspace-framework/report-issue --all-targets -- -D warnings",
+]
+
+[tasks.quality]
+description = "Fail when the rustqual quality score drops below the baseline"
+run = "rustqual . --no-fail --compare rustqual-baseline.json --fail-on-regression"
+
+[tasks.quality-baseline]
+description = "Save the current rustqual results as the baseline"
+# rustqual reads the saved score back through serde_json without exact float
+# parsing, so an unchanged score can read one ulp higher and fail `quality`.
+# Rounding the saved score down to 9 decimals absorbs that error.
+run = [
+    "rustqual . --no-fail --save-baseline rustqual-baseline.json",
+    "awk '/\"quality_score\":/ { sub(/[0-9.]+,$/, sprintf(\"%.9f,\", int($2 * 1e9) / 1e9)) } { print }' rustqual-baseline.json > rustqual-baseline.json.tmp",
+    "mv rustqual-baseline.json.tmp rustqual-baseline.json",
+]
+
+[tasks.audit]
+description = "Check the lockfile against the RustSec advisory database"
+# Not part of `check`: cargo-deny fetches the advisory database from the network.
+tools = { "github:EmbarkStudios/cargo-deny" = "0.19.8" }
+run = "cargo deny --manifest-path Cargo.toml check --config deny.toml advisories"
+
+[tasks.architecture]
+description = "Check layer directions, source includes and source rules"
+run = ["python3 scripts/test-architecture.py", "python3 scripts/test-icon-buttons.py", "python3 scripts/test-copy-details.py", "python3 scripts/check-architecture.py"]
+
+[tasks.board-docs]
+description = "Check the Framework Spaces' guides, local links and embedded image sources"
+run = ["python3 scripts/test-board-docs.py", "python3 scripts/check-board-docs.py"]
+
+[tasks.docs-index]
+description = "Check that docs/README.md reaches every documentation page and its links resolve"
+run = ["python3 scripts/test-docs-index.py", "python3 scripts/check-docs-index.py"]
+
+[tasks.package]
+# Full verification: each crate builds from its packaged copy against the
+# others' packaged copies. About 80 s warm, about 5 min cold.
+description = "Package every crate, build each from its package, then check what each ships"
+run = [
+    "bash scripts/package-workspace.sh --offline",
+    "python3 scripts/test-check-package.py",
+    "python3 scripts/check-package.py",
+]
+
+[tasks.publish-script-test]
+description = "Test the publish script against fakes"
+run = "python3 scripts/test-publish.py"
+
+[tasks.publish-check]
+description = "Before a release: package and verify every crate online, against the live index"
+run = [
+    "bash scripts/package-workspace.sh",
+    "python3 scripts/check-package.py",
+    "bash scripts/check-stamp.sh publish-check",
+]
+
+[tasks.check]
+description = "Architecture, docs, format check, lint, Rust tests and packaging"
+depends = ["architecture", "board-docs", "docs-index", "fmt-check", "lint", "test", "package", "publish-script-test"]
+run = "bash scripts/check-stamp.sh check"
+
+[tasks.cache-stats]
+description = "Show Mr Boxington cache results for the last build"
+run = "mbx explain --last"
+
+[tasks.clean]
+run = "cargo clean"

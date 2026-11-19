@@ -1,0 +1,24 @@
+[package]
+name = "subspace-product"
+documentation = "https://docs.rs/subspace-product"
+description = "Subspace Framework: product descriptors, build info, aliases and paths. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# A fixture product descriptor for tests.
+test-support = []
+
+[dependencies]
+dirs.workspace = true
+semver.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

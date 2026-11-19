@@ -1,0 +1,19 @@
+[package]
+name = "subspace-charts"
+documentation = "https://docs.rs/subspace-charts"
+description = "Subspace Framework charts: the chart model, Chart.js conversion and Flint compiler. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rquickjs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

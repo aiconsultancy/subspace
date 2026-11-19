@@ -1,0 +1,10 @@
+subspace-lucide third-party notices
+
+This crate's own code is licensed under the Apache License 2.0 (LICENSE).
+
+- build.rs and src/lib.rs are ported from gpui-lucide in suxiaoshao/gupi,
+  Apache License 2.0 (the same licence text as LICENSE).
+  Source: https://github.com/suxiaoshao/gupi
+- The build script embeds the Lucide SVG icons that the gpui-kit-assets
+  dependency ships. ISC License, Copyright (c) Lucide Icons and Contributors.
+  Licence text: LICENSE-LUCIDE.
