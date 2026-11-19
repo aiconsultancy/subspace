@@ -45,16 +45,17 @@ use their own lockfiles.
 
 ## Pending upstream pull requests
 
-GPUI Kit main already includes the highlight builder. Three pull requests
-are pending for the remaining changes:
+GPUI Kit main already includes the highlight builder. The upstream pull
+requests cover these related changes.
 
-- Reveal the visual line of a selectable text range.
-- Report secondary presses on text links.
-- Clear the selection press latch after mouse-down dispatch.
+- [Reveal the visual line of a selectable text range](https://github.com/longbridge/gpui-kit/pull/4052).
+- [Share linked-image click handling](https://github.com/longbridge/gpui-kit/pull/4053).
+- [Clear the selection press latch after mouse-down dispatch](https://github.com/longbridge/gpui-kit/pull/4054) (draft).
 
-Once all fixes ship together, upgrade the matching GPUI Kit crates, switch
-the Framework code to the released APIs, remove the feature and path
-patches, and refresh the affected lockfiles.
+Upstream review of the linked-image change kept secondary presses on
+`TextView::on_link_click`. Before removing the local patch, verify that the
+released APIs can preserve the selected text and supply the link URL in
+Subspace's context menu.
 
 ## Verify
 

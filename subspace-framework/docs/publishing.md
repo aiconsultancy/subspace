@@ -212,6 +212,11 @@ All three desktop manifests patch `gpui-base` 0.9.1 from the same vendor
 directory. The published Framework's default features compile against the
 registry's GPUI Kit.
 
+Track the upstream pull requests for [selectable text reveal](https://github.com/longbridge/gpui-kit/pull/4052),
+[shared linked-image click handling](https://github.com/longbridge/gpui-kit/pull/4053) and
+[selection press latch recovery](https://github.com/longbridge/gpui-kit/pull/4054)
+when checking whether a GPUI Kit release can replace the patch.
+
 If the two folders become separate repositories, copy `vendor/markdown` and
 `vendor/gpui-base` from the Framework's repository into
 `subspace-desktop/vendor/`, add
