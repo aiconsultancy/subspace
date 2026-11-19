@@ -78,6 +78,19 @@ fn a_plain_find_match_remains_highlighted_and_selectable_after_reveal(cx: &mut T
         scroll.offset().y < px(0.),
         "find should reveal the off-screen match"
     );
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        scroll.set_offset(Default::default());
+        window.refresh();
+        window.render_frame(cx);
+        window.press("enter", cx);
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.render_frame(cx));
+    assert!(
+        scroll.offset().y < px(0.),
+        "find should reveal the match again"
+    );
     cx.update(|window, cx| {
         window.render_frame(cx);
         window.click_with_options(

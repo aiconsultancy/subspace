@@ -3289,10 +3289,9 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
                 state.prepare_for_mouse_down(event.click_count == 1 && event.modifiers.shift, cx)
             });
             dispatch_clear_handlers(handlers, cx);
-            // The latch only stops a second layer preparing this same press.
-            // A release that never reaches the layer (an element stopped it,
-            // or it happened outside the window) must not leave it set, or
-            // the next press keeps a stale selection that blocks link clicks.
+
+            // Selection layers share this latch for one dispatch. A release
+            // may be stopped by a child or occur outside the window.
             let latch = state.downgrade();
             cx.defer(move |cx| {
                 if let Some(state) = latch.upgrade() {
@@ -5802,9 +5801,6 @@ mod tests {
         assert_eq!(painted_selection(cx), "two three\nfour five");
     }
 
-    /// A press whose release the layer never sees (stopped by an
-    /// element, or outside the window) must not leave the next press unable
-    /// to clear the old selection.
     #[gpui::test]
     fn a_press_without_a_release_does_not_keep_a_stale_selection(cx: &mut TestAppContext) {
         let (_, cx) = cx.add_window_view(|_, _| SelectableTextsView {
@@ -5814,7 +5810,7 @@ mod tests {
 
         press_at("one two three", 0, 1, false, cx);
         assert_eq!(drag_to("one two three", 7, cx), "one two");
-        // No release: the next press must still clear the selection.
+
         press_at("four five six", 2, 1, false, cx);
         release(1, cx);
         assert_eq!(painted_selection(cx), "");

@@ -4,19 +4,24 @@ use std::sync::{Arc, Mutex};
 
 use gpui_kit::base::{TextView, TextViewState, TextViewStyle};
 use gpui_kit::{
-    App, Context, ElementId, Entity, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, RenderOnce, SharedString, StyleRefinement, Styled, Subscription,
+    AnyElement, App, Context, ElementId, Entity, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, RenderOnce, SharedString, StyleRefinement, Styled, Subscription,
     TestSupportExt as _, WeakEntity, Window, div,
 };
 
 use crate::row_menu::MenuChat;
 use gpui_kit::base::StyledExt as _;
 
+use super::menu;
+
 pub(super) type Claim = Arc<dyn Fn(&str, &mut Window, &mut App) -> bool + Send + Sync>;
 type Configure = Box<dyn FnOnce(TextView, RichTextContext) -> TextView>;
 
 struct Owner {
     state: Entity<TextViewState>,
+    target: Arc<Mutex<Option<String>>>,
+    #[cfg(feature = "gpui-kit-text-patch")]
+    menu_press: menu::LinkMenuPress,
     _subscription: Subscription,
 }
 impl Owner {
@@ -25,6 +30,9 @@ impl Owner {
         let subscription = cx.observe(&state, |_, _, cx| cx.notify());
         Self {
             state,
+            target: Arc::default(),
+            #[cfg(feature = "gpui-kit-text-patch")]
+            menu_press: menu::LinkMenuPress::default(),
             _subscription: subscription,
         }
     }
@@ -34,7 +42,34 @@ impl Owner {
         }
         self._subscription = cx.observe(&state, |_, _, cx| cx.notify());
         self.state = state;
+        self.target = Arc::default();
         cx.notify();
+    }
+
+    fn wrap_menu<E>(
+        &self,
+        root: E,
+        context: RichTextContext,
+        chat: MenuChat,
+        show_menu: bool,
+    ) -> AnyElement
+    where
+        E: InteractiveElement + IntoElement + ParentElement + Styled + 'static,
+    {
+        let clear = context.clone();
+        let root = root.capture_any_mouse_down(move |event, _, _| {
+            if event.button == MouseButton::Right {
+                clear.clear_link();
+            }
+        });
+        if !show_menu {
+            return root.into_any_element();
+        }
+        #[cfg(feature = "gpui-kit-text-patch")]
+        let menu = self.menu_press.wrap(root, context, chat);
+        #[cfg(not(feature = "gpui-kit-text-patch"))]
+        let menu = menu::with_source(root, menu::Source::Rich(context), chat);
+        menu.into_any_element()
     }
 }
 
@@ -116,11 +151,11 @@ impl RichTextContext {
         }
     }
 
-    pub(super) fn link(&self) -> Option<String> {
+    pub(super) fn take_link(&self) -> Option<String> {
         self.target
             .lock()
             .ok()
-            .and_then(|target| target.clone())
+            .and_then(|mut target| target.take())
             .filter(|url| {
                 crate::links::safe_url(url).is_some() || subspace_search::parse_link(url).is_some()
             })
@@ -225,7 +260,7 @@ impl RenderOnce for RichText {
         state.update(cx, |state, cx| state.set_text(&self.source, cx));
         let context = RichTextContext {
             state: state.downgrade(),
-            target: Arc::default(),
+            target: owner.read(cx).target.clone(),
             fallback: self.fallback,
             highlights: scope.as_ref().map_or_else(Vec::new, |scope| {
                 scope
@@ -241,23 +276,14 @@ impl RenderOnce for RichText {
             });
         }
         let view = configure_view(view, self.configure, &context, self.claim);
-        let clear = context.clone();
         let root = div()
             .id(ElementId::Name(format!("rich-menu-{:?}", self.id).into()))
             .test_support()
             .refine_style(&self.style)
-            .capture_any_mouse_down(move |event, _, _| {
-                if event.button == MouseButton::Right {
-                    clear.clear_link();
-                }
-            })
             .child(view);
-        let root = if self.menu {
-            super::menu::with_source(root, super::menu::Source::Rich(context), self.chat)
-                .into_any_element()
-        } else {
-            root.into_any_element()
-        };
+        let root = owner
+            .read(cx)
+            .wrap_menu(root, context, self.chat, self.menu);
         crate::find_in_page::scope::measured(scope, self.id, root)
     }
 }
@@ -272,20 +298,17 @@ fn configure_view(
     for configure in configure {
         view = configure(view, context.clone());
     }
-    #[cfg(feature = "gpui-kit-text-patch")]
-    {
-        let pointer = context.clone();
-        view =
-            view.on_link_context_menu(move |url, _, _, _| pointer.set_link(Some(url.to_string())));
-    }
-    view = view
-        .on_link_click(move |url, event, window, cx| {
-            if super::activates_link(event) && !claim(url, window, cx) {
-                super::follow_link(url, window, cx);
-            }
-        })
-        .image_source(|uri| super::image_source(&uri.to_string()));
-    view
+    let pointer = context.clone();
+    view.on_link_click(move |url, event, window, cx| {
+        if cfg!(feature = "gpui-kit-text-patch") && event.is_right_click() {
+            pointer.set_link(Some(url.to_string()));
+            return;
+        }
+        if super::activates_link(event) && !claim(url, window, cx) {
+            super::follow_link(url, window, cx);
+        }
+    })
+    .image_source(|uri| super::image_source(&uri.to_string()))
 }
 
 #[cfg(test)]
