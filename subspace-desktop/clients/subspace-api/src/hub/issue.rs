@@ -25,10 +25,12 @@ impl Hub {
         }
         Ok(())
     }
+    /// An explicit refresh: everything shown is read again, including the
+    /// decision list from its first page.
     pub fn reload_issue(&self) -> Result<(), HubError> {
         let mut state = lock(&self.0.state);
         state.running()?;
-        self.0.reload_open_issue(&mut state);
+        self.0.refresh_open_issue(&mut state);
         Ok(())
     }
     pub fn close_issue(&self) {
@@ -106,6 +108,13 @@ impl Hub {
 }
 
 impl Shared {
+    fn refresh_open_issue(&self, state: &mut State) {
+        if let Some(issue) = state.snapshot.issue.as_mut() {
+            issue.decisions.restart();
+        }
+        self.reload_open_issue(state);
+    }
+
     pub(super) fn reload_open_issue(&self, state: &mut State) {
         let Some(issue) = state
             .snapshot
