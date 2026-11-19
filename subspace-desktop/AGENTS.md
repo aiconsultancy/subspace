@@ -289,6 +289,14 @@ not replace them.
   element: each `key:` step first focuses the active Space, then sends the
   whole sequence, so keys such as Tab can change focus within that sequence.
   `type:` preserves focus; click the composer before typing into it.
+- A web Space's page is a native web view, which GPUI's window image does
+  not contain. On macOS a capture build draws a snapshot of the page over it
+  and forwards `click:` and `move:` steps on it to the page as DOM pointer
+  events (`spaces/web/src/mirror.rs`); keys do not reach the page. The page
+  is also told it is visible, because the capture window sits behind others.
+  `CAPTURE_CONFIG` can install a folder web Space with its grants and
+  secrets; `CAPTURE_FLEET=1` adds the neutral `FLT` project whose issues
+  such a page can reference.
 - Capture in Cupertino Dark, the default theme: leave `appearance.theme`
   unset in the fixture state. Capture other themes only when the change is
   about a theme, colour or contrast.

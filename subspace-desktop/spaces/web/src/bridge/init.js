@@ -67,6 +67,13 @@
     }
   } });
 
+  function setSecret(key, value) {
+    if (typeof key !== "string" || (value !== null && typeof value !== "string")) {
+      return Promise.reject(new TypeError("secrets.set expects a key and a string value, or null to delete it."));
+    }
+    return call("secrets.set", { key, value }).then(() => undefined);
+  }
+
   function resolveIssues(identifiers) {
     if (!Array.isArray(identifiers)) {
       return Promise.reject(new TypeError("issues.resolve expects an array of issue identifiers."));
@@ -88,7 +95,7 @@
     setContext: value => call("context.set", value),
     notify: value => call("notify", value),
     theme: () => call("theme"),
-    secrets: Object.freeze({ get: () => call("secrets.get") }),
+    secrets: Object.freeze({ get: () => call("secrets.get"), set: setSecret }),
     issues: Object.freeze({
       scope: () => call("issues.scope"),
       resolve: resolveIssues,

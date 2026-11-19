@@ -9,7 +9,7 @@ use subspace_framework::core::config::web_boards::{
 use subspace_framework::dashboard::settings::{BoardFields, PermissionSpec};
 
 use crate::app::app_origin;
-use crate::manifest::{self, Manifest};
+use crate::manifest::{self, Manifest, Permission};
 use crate::page::{AppFolder, Start};
 use crate::policy::location;
 
@@ -31,34 +31,43 @@ pub fn settings_fields(board: &WebBoard) -> Option<BoardFields> {
     let WebBoardSource::Folder(root) = &board.source else {
         return None;
     };
-    let (fields, notes, permissions) = match manifest::read(root) {
+    let section = vec!["webBoards".to_owned(), board.id.clone()];
+    Some(match manifest::read(root) {
         Ok(None) => return None,
-        Ok(Some(manifest)) => (
-            manifest.settings.clone(),
-            manifest_notes(&manifest, root),
-            manifest
-                .permissions
-                .iter()
-                .map(|permission| {
-                    PermissionSpec::new(
-                        manifest.grant_key(root, *permission),
-                        format!("Allow this app to {}", permission.label()),
-                    )
-                })
-                .collect(),
-        ),
-        Err(error) => (
+        Ok(Some(manifest)) => manifest_fields(section, &manifest, root),
+        Err(error) => BoardFields::new(
+            section,
             Vec::new(),
             vec![format!("This app cannot open. {error}")],
             Vec::new(),
         ),
-    };
-    Some(BoardFields::new(
-        vec!["webBoards".to_owned(), board.id.clone()],
-        fields,
-        notes,
+    })
+}
+
+/// The manifest's fields, notes and grants. An app that may save its own
+/// secrets also gets their count and Clear.
+fn manifest_fields(section: Vec<String>, manifest: &Manifest, root: &Path) -> BoardFields {
+    let permissions = manifest
+        .permissions
+        .iter()
+        .map(|permission| {
+            PermissionSpec::new(
+                manifest.grant_key(root, *permission),
+                format!("Allow this app to {}", permission.label()),
+            )
+        })
+        .collect();
+    let fields = BoardFields::new(
+        section,
+        manifest.settings.clone(),
+        manifest_notes(manifest, root),
         permissions,
-    ))
+    );
+    if manifest.permissions.contains(&Permission::Secrets) {
+        fields.with_app_secrets()
+    } else {
+        fields
+    }
 }
 
 fn manifest_notes(manifest: &Manifest, root: &Path) -> Vec<String> {
@@ -207,6 +216,16 @@ mod tests {
         assert!(fields.notes[0].starts_with("Notes 1.2.0, from "));
         assert!(fields.notes[1].contains("show notifications"));
         assert!(fields.notes[2].contains("camera"));
+        assert!(!fields.app_secrets);
+        let with_secrets = serde_json::json!({
+            "name": "Notes", "version": "1.2.0", "permissions": ["secrets"]
+        });
+        std::fs::write(
+            root.path().join("subspace-board.json"),
+            with_secrets.to_string(),
+        )
+        .unwrap();
+        assert!(settings_fields(&app).unwrap().app_secrets);
         std::fs::write(root.path().join("subspace-board.json"), "[]").unwrap();
         let broken = settings_fields(&app).unwrap();
         assert!(broken.fields.is_empty());

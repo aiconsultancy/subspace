@@ -22,6 +22,13 @@ tempfile.workspace = true
 gpui-webview.workspace = true
 wry.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+block2.workspace = true
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+objc2-web-kit.workspace = true
+
 [dev-dependencies]
 subspace-framework = { workspace = true, features = ["test-support"] }
 gpui-kit = { workspace = true, features = ["test-support"] }

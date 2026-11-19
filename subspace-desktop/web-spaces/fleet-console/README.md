@@ -1,0 +1,223 @@
+# Fleet Console web Space
+
+Fleet Console shows your Stargate fleets. A fleet is one VM running
+Stargate with a rear admiral and several captains (ships), each with its
+crew. It draws them with WebGL2 and drills in tier by tier, like C4 levels:
+
+| Tier | C4 level | Shows |
+| --- | --- | --- |
+| Fleets (L0) | Landscape | Every fleet around this Subspace: its state, ships online, crew busy, CPU and memory. Shown with two or more fleets |
+| Fleet | Context | The rear admiral, every ship and its crew in orbit, host metrics, uptimes, versions and feature flags |
+| Ship | Containers | The captain, the queue, each crew member's dial, branch and linked issue |
+| Crew | Components | A 24-hour ring of outcomes, one card per project, subagents, the current task, git state, pull request and issue tiles |
+
+Click a fleet, ship or crew member to warp through it into the next tier.
+Escape, the breadcrumb (`Fleets › fleet › ship › crew`) or the tier stack in
+the corner pulls back out. Everything on the map is also reachable from the
+inspector beside it with the keyboard. With the map focused (click it or Tab
+to it), Shift+P shows or hides the frame-time readout.
+
+## Fleets
+
+- **The first fleet** is the one in Settings (`endpoint` and `token`). With
+  only that fleet, Fleet Console opens on it, as it always has, and the
+  inspector offers **Add fleet**.
+- **Add fleet** in the inspector takes a name, the Stargate API address
+  (HTTPS, or `http://localhost` through an SSH tunnel) and its API token.
+  **Test connection** reads `GET /api/v1/fleet` before you save. Each fleet's
+  token is kept by Subspace with this Space's secrets (as `fleet_<id>`,
+  through `subspace.secrets.set`); the list itself (id, name, address, never
+  the token) is kept in the page's local storage. **Edit** changes a fleet,
+  leaving the token blank to keep the saved one, and **Remove** deletes the
+  entry and its token. The first fleet is changed in Settings.
+- Adding fleets needs a Subspace version with `secrets.set` and the
+  **read its saved secrets** permission; otherwise **Add fleet** says why.
+- **Connections.** The fleet you are inside streams `GET /api/v1/events`. The
+  other fleets are read once on load and every 30 seconds while the Fleets
+  tier is open. Each fleet shows its own state: live, reconnecting, signed
+  out, forbidden or unreachable, and the inspector says what to do.
+- The tab badge counts across fleets: uncertain crew (where ship detail has
+  been read), unavailable ships and fleets that cannot be read. Chat context
+  names the fleet when there is more than one.
+- Fleets come from one place, `src/fleet-sources.js`, which merges the
+  Settings fleet, the page's fleets and (later) the fleets the Subspace API
+  assigns to initiatives.
+
+It is plain HTML, CSS and JavaScript modules with no dependencies and no
+build step. The scene is hand-written WebGL2 (signed-distance shapes,
+instanced particles and a bloom pass), with labels on a Canvas 2D layer; web
+views without WebGL2 get a Canvas 2D renderer instead.
+
+## Performance
+
+Fleet Console draws only while something moves, never while hidden, and
+keeps its own cost low: the scene renders straight into its canvas, light for
+the bloom is drawn into a small target and blurred there, large rings and the
+radar sweep cover only the pixels they light, and labels redraw only when they
+change (about once a second while the map idles). Ambient motion runs at 30
+frames a second, and 20 while the window lacks focus or after 45 seconds
+without input; warps and dispatches run at the display rate.
+
+A governor watches frame times. When frames run slow for about a second it
+steps quality down one level: the scene's internal resolution (2x, 1.5x,
+1.25x, 1x; text always stays sharp), then one bloom level, then no bloom,
+then 20 fps ambient motion. With sustained headroom it steps back up, one
+level every five seconds at most. Nothing is saved; reduced motion is
+unaffected. If the web view loses its WebGL context, Fleet Console waits three
+seconds for it to come back before switching to Canvas 2D.
+
+The frame-time readout shows median and p95 frame time, CPU time, GPU time
+where the engine exposes timer queries (Chromium does, WebKit does not), the
+frame rate, label redraws and the quality level. Inside Subspace, set
+**Frame-time readout** to **On** in Settings › Spaces › Fleet Console, or
+press Shift+P with the map focused; Shift+P flips it until the setting next
+changes. In a browser, `?perf=1` also turns it on.
+
+## What it reads
+
+Fleet Console reads Stargate's read-only Fleet API v1 with a bearer token:
+
+| Route | Used for |
+| --- | --- |
+| `GET /api/v1/fleet` | The first view of a fleet; every 30 s for the fleets you are not inside while the Fleets tier is open; **Test connection** |
+| `GET /api/v1/events` | Live updates: `fleet`, `ship`, `host`, `activity` and `heartbeat` events |
+| `GET /api/v1/ships/{id}` | Fresh detail when you warp into a ship |
+| `GET /api/v1/ships/{id}/crew/{member}` | Fresh detail when you warp into a crew member |
+
+The event stream is read as a streamed `fetch` body, because `EventSource`
+cannot send an `Authorization` header. If it drops, Fleet Console reconnects
+with jittered backoff and resumes from the last event ID; three missed
+heartbeats count as a dropped stream. The toolbar and a banner always say
+whether it is live, reconnecting, signed out (401), forbidden (403) or
+unreachable, and what to do about it.
+
+## Set up Stargate
+
+1. **Enable the API.** Add an `api` block to the fleet VM's Stargate
+   configuration and restart Stargate. It listens only on loopback or a
+   private address, never a public one:
+
+   ```json
+   { "api": { "listen": "127.0.0.1:8484" } }
+   ```
+
+   Its `allowedNetworks` defaults to private ranges, and its `corsOrigins`
+   default (`subspace://*` and `https://subspace.*`) already allows web
+   Spaces on macOS and Windows. See Stargate's API documentation for every
+   option.
+
+2. **Get the token.** On the fleet VM, run `stargate api token`. It prints the
+   token (creating it the first time). `stargate api token --rotate` replaces
+   it; restart Stargate afterwards.
+
+3. **Reach it privately.** Pick one:
+
+   | Route | Endpoint to enter | Notes |
+   | --- | --- | --- |
+   | Tailscale Serve | `https://<vm>.<tailnet>.ts.net` | `tailscale serve --bg 8484` on the VM serves the loopback listener over HTTPS to your tailnet |
+   | Cloudflare Tunnel with Access | `https://fleet.example.com` | Put an Access policy in front of the hostname; the bearer token is still required |
+   | SSH tunnel | `http://localhost:8484` | `ssh -N -L 8484:127.0.0.1:8484 <vm>`; plain HTTP is allowed only to localhost |
+
+   Web Spaces may connect only over HTTPS or to loopback HTTP, so an address
+   such as `http://100.101.102.103:8484` cannot be used directly.
+
+## Install the Space
+
+In Subspace, open **Settings > Application > Web Spaces** and choose
+**Add board…**:
+
+- **Local folder**: choose `subspace-desktop/web-spaces/fleet-console` in a
+  checkout of this repository.
+- **Local ZIP**: from `subspace-desktop/`, run
+  `make package-web-space SPACE=web-spaces/fleet-console` and choose
+  `dist/web-spaces/fleet-console-1.0.0.zip`.
+- **GitHub repository**: repository `aiconsultancy/subspace`, board directory
+  `subspace-desktop/web-spaces/fleet-console`.
+
+Then open **Settings > Spaces > Fleet Console** and:
+
+1. Enter the **Stargate API address** and the **API token**.
+2. Allow it to **read its settings** and **read its saved secrets** (the
+   token). Without both it shows the sample fleets, unless you add fleets in
+   the page.
+3. Optionally allow **read and open issues** (issue tiles and badges, from
+   the board that answers the issues contract), **show a badge on its tab**
+   (uncertain crew plus unavailable ships), **share context with chat** (the
+   selected crew member's ship, task, phase, branch, pull request and issue
+   identifiers; never the address or token) and **show notifications** (when a
+   crew task becomes uncertain or a ship becomes unavailable, at most one
+   every five seconds and never for what was already true when it opened).
+4. Save. Every permission starts off, and replacing or updating the Space
+   needs them allowed again.
+
+**Motion** set to **Reduced**, or the system's reduce-motion setting,
+replaces the warp with a short crossfade and stops orbits, the radar sweep
+and blinking. **Frame-time readout** (Off by default) shows frame times over
+the map; see Performance.
+
+## Sample mode
+
+With no Subspace bridge (a plain browser), no address, or missing
+permissions, Fleet Console shows clearly labelled sample fleets: two
+simulated fleets that keep changing and one that never answers, so the
+Fleets tier, the warp and the unavailable state are visible without setup.
+The samples use the same data shapes and event path as live fleets. The
+banner says what is missing.
+
+To look at it in a browser, serve this folder and open it:
+
+```sh
+python3 -m http.server --bind 127.0.0.1 8765
+```
+
+Preview parameters, for checking the design: `?theme=light` or `?theme=dark`
+forces a palette, `?motion=reduced` reduces motion, `?renderer=2d` uses the
+Canvas 2D renderer and `?slowmo=20` runs animations twenty times slower.
+`?perf=1` shows the frame-time readout from the start (Shift+P still hides
+it); `?quality=N` pins level N (0 is the full look) and turns the governor
+off.
+
+## Themes
+
+Inside Subspace, Fleet Console follows the app theme through
+`subspace.theme()` and the `subspace:theme` event: tones become CSS custom
+properties and shader colours, and the theme's UI and mono fonts are used.
+Dark themes add bloom light; light themes tint toward the glow colour
+instead, so nothing blows out to white. In a browser it uses Subspace One
+Dark, or Subspace Channel Light when the system prefers light.
+
+## Development
+
+Run the offline tests with the pinned Node.js through mise. From this folder:
+
+```sh
+mise run test
+```
+
+From `subspace-desktop/`, `mise run fleet-console-space-test` runs the same
+tests; it is part of `make check`. They cover the SSE parser (chunk
+boundaries, multi-line data, comments, heartbeats), the reducer, the live
+source and its reconnects, the connection state machine, issue identifier
+extraction and batching, layouts and the warp camera, formatters, sample data
+against the contract, alerts, the inspector's escaping, theme mapping, the
+quality governor, label dirty tracking, render batching, the fleet store
+and its failure modes, address validation, the source merge, per-fleet
+connections and poll timing, the Fleets layout, navigation and breadcrumb
+through L0, and the package rules.
+
+| Path | Purpose |
+| --- | --- |
+| `subspace-board.json`, `index.html`, `styles.css` | Manifest, page and styles |
+| `src/main.js` | Page wiring: mode, frame loop, navigation, inspector, bridge effects |
+| `src/api.js`, `src/live.js`, `src/sse.js`, `src/connection.js` | Fleet API client, event stream, SSE parser, connection states |
+| `src/contract.js`, `src/reducer.js`, `src/model.js` | Payload checks, state reducer, derived views |
+| `src/sample.js`, `src/sample-source.js` | Sample fleets and their simulation |
+| `src/fleet-sources.js`, `src/fleet-store.js`, `src/fleet-manager.js` | Fleet sources and their merge, the page's fleet list, one connection per fleet |
+| `src/fleet-panel.js`, `src/fleet-form.js`, `src/scene/landscape.js` | Fleets panels and the Add / Edit form, the Fleets tier |
+| `src/bridge.js`, `src/issues.js`, `src/alerts.js`, `src/effects.js` | Bridge wrapper, issue references, notifications, chat context |
+| `src/layout.js`, `src/camera.js`, `src/stars.js`, `src/geometry.js` | Tier layouts, navigation and warp camera, star field, point lists |
+| `src/scene/` | Builds each tier as a draw list both renderers read |
+| `src/gl/` | WebGL2 renderer, instance batching, shaders and helpers |
+| `src/canvas2d.js`, `src/overlay.js` | Canvas 2D fallback renderer, text overlay with dirty tracking |
+| `src/quality.js`, `src/perf.js` | Quality levels and governor, frame statistics, the frame-time readout and its Shift+P toggle |
+| `src/inspector.js`, `src/html.js`, `src/chrome.js`, `src/theme.js` | Inspector panels, escaping, window chrome, theme tones |

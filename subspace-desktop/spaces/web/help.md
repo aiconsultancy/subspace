@@ -200,16 +200,19 @@ allow the action in the board's Subspace settings.
 | `setContext(valueOrNull)` | `context` | Label up to 100 characters, content up to 8192 UTF-8 bytes |
 | `notify({title, body})` | `notifications` | Title up to 100 characters, body up to 500, without control characters |
 | `theme()` | None | The app's theme: id, name, light or dark mode, tones as `#rrggbb` and CSS font families |
-| `secrets.get()` | `secrets` | Saved values of the secrets the manifest declares |
+| `secrets.get()` | `secrets` | Saved values of the declared secrets and of the page's own |
+| `secrets.set(key, valueOrNull)` | `secrets` | Saves or deletes one secret of the page's own; at most 32 |
 | `issues.scope()` | `issues` | The issue scope (profile name, API base, project keys), or `null` |
 | `issues.resolve(identifiers)` | `issues` | One resolution per distinct identifier, at most 50 |
 | `issues.open(identifier)` | `issues` | Opens the issue in the Space that answers issue requests |
 
 - Unknown setting keys and secret fields never appear in `settings.get()`.
   Only `secrets.get()`, with the `secrets` permission, returns saved secrets:
-  those the manifest declares as `secret` that have a value. A page allowed
-  `secrets` holds them in its own memory, so allow it only for an app you
-  trust.
+  those the manifest declares as `secret` that have a value, and those the
+  page saved itself with `secrets.set()`, such as a token for each account
+  you add in the page. A page saves secrets only while its Space is shown.
+  A page allowed `secrets` holds them in its own memory, so allow it only
+  for an app you trust.
 - The page hears two events on `window`. `subspace:theme` carries the new
   theme as its `detail` whenever the theme, mode, a tone or a font changes.
   `subspace:issues-changed` tells a page allowed `issues` to ask again for
@@ -234,7 +237,7 @@ allow the action in the board's Subspace settings.
   service worker, actions, click callbacks or OS retraction. `close()` does
   nothing. Acceptance does not prove that the OS showed an alert.
 - The bridge has no shell, process, filesystem, clipboard or arbitrary native
-  API, and no credential access beyond the app's own declared secrets.
+  API, and no credential access beyond the app's own secrets.
 
 ### The manifest
 
@@ -410,6 +413,9 @@ and Windows, not Linux.
   Leave a secret input blank to keep it, or replace or clear it explicitly.
   Secrets are plaintext in that file, not OS-keychain entries or encrypted app
   storage.
+- An app allowed **read its saved secrets** may save secrets of its own. The
+  page then says **This app has saved N secrets** (never what they are), and
+  **Clear** removes them all on **Save**. They are removed with the Space.
 - Grants bind to the canonical app folder and the exact manifest bytes,
   including whitespace. Changing either needs new grants. Restart after a
   manifest change, then review permissions. The running old bridge refuses calls

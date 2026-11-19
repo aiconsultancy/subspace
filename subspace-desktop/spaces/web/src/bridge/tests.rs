@@ -11,6 +11,7 @@ use super::{
     Bridge, Effect,
     issues::IssueCall,
     protocol::{Message, Operation},
+    secrets::SecretWrite,
 };
 use crate::manifest::Permission;
 
@@ -170,7 +171,7 @@ fn badge_and_context_do_not_survive_a_new_document() {
 }
 
 #[test]
-fn secrets_are_only_the_declared_secret_fields_with_a_saved_value() {
+fn secrets_are_the_declared_ones_with_a_value_and_the_pages_own() {
     let (_root, mut config, mut bridge) = fixture();
     let now = Instant::now();
     assert!(
@@ -191,7 +192,35 @@ fn secrets_are_only_the_declared_secret_fields_with_a_saved_value() {
     let (value, _) = bridge
         .call(&Operation::Secrets, &config, false, now)
         .unwrap();
-    assert_eq!(value, json!({"token": "secret"}));
+    // "limit" is a declared setting, "blank" is empty, "unset" has no value;
+    // "undeclared" is a secret the page saved itself.
+    assert_eq!(value, json!({"token": "secret", "undeclared": "other"}));
+}
+
+#[test]
+fn secrets_set_needs_the_secrets_grant_and_is_checked_before_saving() {
+    let (_root, mut config, mut bridge) = fixture();
+    let now = Instant::now();
+    let set = |key: &str, value: Option<&str>| {
+        Operation::SecretsSet(SecretWrite {
+            key: key.into(),
+            value: value.map(str::to_owned),
+        })
+    };
+    assert!(
+        bridge
+            .call(&set("fleet-a", Some("t")), &config, false, now)
+            .is_err()
+    );
+    grant(&mut config, &bridge, Permission::Secrets);
+    assert!(matches!(
+        bridge.call(&set("fleet-a", Some("t")), &config, false, now),
+        Ok((_, Effect::SaveSecret(write))) if write.key == "fleet-a"
+    ));
+    assert!(matches!(
+        bridge.call(&set("limit", Some("t")), &config, false, now),
+        Err(error) if error.contains("settings")
+    ));
 }
 
 #[test]
