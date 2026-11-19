@@ -122,8 +122,8 @@ them part of the public API and history of the crates.
    the signing company's name) no longer appear in any packaged file: the
    bundle ids and repositories in `subspace-product`, `subspace-update` and
    the shell's tests are now `com.example.*` and `example-org/example-app`.
-4. **NETT references.** `subspace-contracts` documents NETT issue links and
-   keys (`TST-827`, `nett-dev`) as an example issue tracker.
+4. **Example issue keys.** The default issue reference recogniser in
+   `subspace-contracts` uses the fictional `TST` project key.
 5. **`repository` and `homepage`.** The manifests set neither, because the
    repository is private. crates.io will show no source link, and the
    README's relative links to `docs/` will not resolve there. Set both, and
