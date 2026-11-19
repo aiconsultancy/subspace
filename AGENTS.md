@@ -68,6 +68,121 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
   `example.com` in docs and `.env.example` files. Configure identity
   providers and service endpoints at build or run time.
 - Keep generated build output out of commits.
+- Merge a pull request only after both model reviews clear it. See
+  [Pull request review clearance](#pull-request-review-clearance).
+
+## Pull request review clearance
+
+Every pull request needs clearance from two independent model reviews before
+it merges: Claude Opus 5.5 at high effort and GPT-6.2 Sol at high effort. They
+come on top of the project checks, never instead of them. A draft can be
+opened before the reviews; the clearances gate the merge.
+
+Run both reviews with the **trusted** copy of
+[`scripts/review-pr.sh`](scripts/review-pr.sh), the one on the canonical
+repository's `main`, never the copy in the change under review. Fetch it into
+a private scratch repository with no Git configuration, so no URL rewrite can
+substitute another copy:
+
+```sh
+review() (
+  d=$(mktemp -d) &&
+  g() { env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_NOSYSTEM=1 git "$@"; } &&
+  g init -q --bare --template= "$d/r.git" &&
+  g -C "$d/r.git" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+    fetch -q https://github.com/aiconsultancy/subspace.git main &&
+  g -C "$d/r.git" show FETCH_HEAD:scripts/review-pr.sh > "$d/review-pr.sh" &&
+  test -s "$d/review-pr.sh" && bash "$d/review-pr.sh" "$@"
+)
+review --pr <number>                          # the pushed head
+review --local origin/main                    # this clone's HEAD, before pushing
+review --pr <number> --since <cleared-head>   # added commits only
+```
+
+Each step must succeed before the next runs, so a failed fetch never runs a
+stale or empty launcher.
+
+It needs `git`, `gh`, `codex`, `claude`, `python3` and `gitleaks`, and runs
+from Claude Code and from Codex alike. It:
+
+- does all Git work in a fresh scratch repository with no user, system or
+  repository configuration, so no URL rewrites, hooks, filters or attributes
+  apply. It fetches the pull request from the repository GitHub names and
+  checks that both the head and base commits match;
+- refuses to run unless it matches the canonical `main` copy;
+- clears inherited `GIT_*` variables, and scans every commit in the range
+  (merges against each parent) plus everything the reviewers would see with
+  gitleaks before anything is sent to a model, stopping on a possible secret.
+  It uses gitleaks' built-in rules only, so no `gitleaks:allow` comment, config
+  or ignore file in the change can exempt a line;
+- stops on binary changes other than images, PDFs and fonts, which a person
+  looks at, and on submodule pointer changes, since the reviewers cannot read
+  either;
+- writes the diff and a snapshot straight from the committed files;
+- runs GPT-6.2 Sol with no shell or file access at all, on the diff passed
+  inline with 25 lines of context;
+- runs Claude Opus 5.5 in restricted mode with only Read, Grep and Glob,
+  confined to the diff and the snapshot;
+- starts both reviewers from an empty folder with a fixed minimal environment,
+  and with user and project settings, hooks, rules and MCP servers switched off;
+- passes the pull request's title and any author notes only as untrusted data,
+  after the instructions;
+- checks the Sol session header for the model and high effort, and that Opus
+  was the only model used. `--effort high` is passed to Claude, but its result
+  does not report the effort;
+- requires each report to end with a JSON summary of its findings and what it
+  checked, then a highest-severity line and a verdict. The verdict is worked out
+  from the summary, the findings' tags and the footer together, so a report
+  that lists a high finding, or checks nothing, cannot clear;
+- keeps Sol's transcript out of Claude's reach, keeps only the two reports and
+  session metadata unless `--keep` is given, and saves a clear receipt (pull
+  request, target, merge base and head) for `--since` to check.
+
+Edits to the script are reviewed by `main`'s copy like any other change. Only
+the change that first adds the script, while `main` has no copy, may run with
+`--bootstrap`; a person reads the script before running it, and that run saves
+no receipt.
+
+It exits 0 when both reviews are clear, 1 when either is not clear, and 2
+when a review did not run or could not be checked.
+
+**Clearance.** A review clears when it finished, read the change, and ended
+with `Verdict: clear`, meaning no critical or high finding remains. Fix every
+critical and high finding, or show that it is wrong. Fix or rebut the others
+with a reason.
+
+**After changes.**
+- When new commits are added on top of a cleared head, run both reviews with
+  `--since <cleared head>`. The script refuses unless this clone holds a clear
+  receipt for that head, pull request, target and merge base.
+- Run both full reviews again after any rebase or rewritten history, after a
+  change that does more than fix findings, and whenever the pull request's
+  target branch changes.
+- Re-signing or rewording commits needs no new review when both the tree and
+  the merge base with the target are unchanged. Check `git diff --quiet <old>
+  <new>` and that `git merge-base <target> <old>` equals `git merge-base
+  <target> <new>`, and record both commits.
+
+**Recording and merging.**
+- Record every review under **Reviews** in the pull request: the range and
+  target reviewed, each verdict, and how each finding was resolved.
+- Before copying review text into the pull request, check it for secrets.
+  The script scans both reports with gitleaks and says if it found anything.
+- When the script names changed agent instructions, hooks, workflows, task
+  runners (`prek.toml`, `mise.toml`, `Makefile`) or the script itself, a person
+  reads those changes as well.
+- Tick both review checkboxes only when both reviews of the final head are
+  clear. Merge with `gh pr merge --match-head-commit <final head>`.
+
+**Exceptions.**
+- **Release Please.** Its pull requests and the release workflow's automated
+  merges are exempt. A Release Please branch that gains any other commit loses
+  the exemption: it needs both reviews and a merge by hand, not the nightly
+  workflow.
+- **Integration merges** (`merge/feat-to-main`) need no new review when every
+  change they bring was cleared in its own pull request. Review anything not
+  covered, such as conflict resolutions, direct commits or hand rebases.
 
 ## Commands
 
