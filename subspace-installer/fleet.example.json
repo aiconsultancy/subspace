@@ -1,0 +1,48 @@
+{
+  "slug": "example-fleet",
+  "name": "Example Fleet",
+  "rearAdmiral": { "id": "atlas", "name": "Atlas", "account": "example-atlas" },
+  "captains": [
+    { "id": "orion", "name": "Orion", "account": "example-orion" }
+  ],
+  "harness": { "type": "opencode", "family": "codex", "model": "gpt-5.4" },
+  "crew": {
+    "claude": { "count": 2, "type": "opencode", "model": "claude-sonnet-5-5" },
+    "codex": { "count": 2, "type": "opencode", "model": "gpt-5.4" }
+  },
+  "repositories": [],
+  "operatorUsers": [],
+  "toolchains": { "node": "24" },
+  "maintenance": {
+    "mirrorCalendar": "hourly",
+    "toolsCalendar": "weekly",
+    "pruneCalendar": "daily",
+    "logDays": 14,
+    "worktreeDays": 30
+  },
+  "medical": {
+    "enabled": false,
+    "baseUrl": "https://sentry.io",
+    "organisation": "your-org",
+    "projects": ["your-project"],
+    "environment": "production",
+    "intervalSeconds": 10800,
+    "account": "example-medical",
+    "channel": "#example-fleet-starbase",
+    "target": "atlas"
+  },
+  "usage": {
+    "families": {
+      "claude": {},
+      "codex": {}
+    }
+  },
+  "stakeholders": {},
+  "irc": {
+    "mode": "remote",
+    "host": "irc.example.com",
+    "commandChannel": "#example-fleet-starbase",
+    "starbaseChannel": "#example-fleet-starbase",
+    "allowedAccounts": ["operator"]
+  }
+}
