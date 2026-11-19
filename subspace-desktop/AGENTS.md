@@ -295,7 +295,8 @@ not replace them.
   events (`spaces/web/src/mirror.rs`); keys do not reach the page. The page
   is also told it is visible, because the capture window sits behind others.
   `CAPTURE_CONFIG` can install a folder web Space with its grants and
-  secrets.
+  secrets; `CAPTURE_FLEET=1` adds the neutral `FLT` project whose issues
+  such a page can reference.
 - Capture in Cupertino Dark, the default theme: leave `appearance.theme`
   unset in the fixture state. Capture other themes only when the change is
   about a theme, colour or contrast.
