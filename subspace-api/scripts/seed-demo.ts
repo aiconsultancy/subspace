@@ -241,7 +241,7 @@ async function seedProject(
           ownerId: lead.userId,
           priority,
           estimate: [2, 3, 5, 8][offset % 4],
-          dueDate: day(state === "completed" ? -7 + (offset % 5) : 2 + (offset % 8)),
+          dueDate: day(state === "completed" ? -7 + (offset % 5) : 7 + (offset % 8)),
           labelIds: [labelIds.get(label)!],
           parentId: parent ? result[parent - 1]!.id : null,
           ...(state === "duplicate" ? { relations: { duplicateOf: result[0]!.id } } : {}),
@@ -268,14 +268,16 @@ async function seedProject(
 async function addComment(
   author: Actor,
   issue: SeedIssue,
-  body: string,
+  text: string | readonly [string, string],
   when: string,
   history: SeedHistory | null,
   parent?: string,
 ) {
+  const [body, previous] = typeof text === "string" ? [text, undefined] : text;
   const path = `/issues/${issue.id}/comments`;
   const prior = (await author.api.all<Comment>(parent ? `${path}/${parent}/replies` : path)).find(
-    (row) => row.body === body && row.actualAuthor.userId === author.userId,
+    (row) =>
+      (row.body === body || row.body === previous) && row.actualAuthor.userId === author.userId,
   );
   if (prior) return prior.id;
   const saved = await author.api.write<Comment>("POST", path, {
@@ -311,10 +313,12 @@ async function seedCollaboration(
   const captain = actors.get(spec.captain)!;
   const issue = rows[0]!;
   const media = await issueFile(lead.api, issue.id, fixture.file, image(fixture.file), "images");
+  const screenshot = `\n\n![${fixture.alt}](nett-media:${media.id})`;
+  const report = fixture.report + screenshot;
   const thread = await addComment(
     lead,
     issue,
-    `${fixture.report}\n\n![${fixture.alt}](nett-media:${media.id})`,
+    "previousReport" in fixture ? [report, fixture.previousReport + screenshot] : report,
     dateAt(-12 + index, 10),
     history,
   );

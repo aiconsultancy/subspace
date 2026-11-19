@@ -37,9 +37,10 @@ app, Xvfb and fixture server. Human NETT dev and macOS acceptance are separate.
 
 ## PR A
 
+The base discussion capture was [removed for publication](../../public-repository-examples/README.md).
+
 | Frame | State |
 | --- | --- |
-| before-52d2768-1440-dark.png | Base discussion, before authoring |
 | [composer-empty-1440-dark.png](composer-empty-1440-dark.png) | Empty composer beneath timeline |
 | [composer-draft-1440-dark.png](composer-draft-1440-dark.png) | Retained multiline Markdown draft and submit hint |
 | [composer-posting-1440-dark.png](composer-posting-1440-dark.png) | Single in-flight submit, frozen input |

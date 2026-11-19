@@ -29,8 +29,16 @@ fn only_known_keys_and_complete_identifiers_match() {
 }
 
 #[test]
+fn default_recognises_the_example_project_key() {
+    let recognizer = ReferenceRecognizer::default();
+    let found = recognizer.find("TST-827 and OPS-42");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].identifier(), "TST-827");
+}
+
+#[test]
 fn urls_and_code_spans_are_not_issue_links() {
-    let recognizer = ReferenceRecognizer::new([], ["TST"]);
+    let recognizer = ReferenceRecognizer::default();
     let text = "https://example.test/TST-1 `TST-2` ``TST-3`` <https://x.test?q=TST-4> TST-5 www.example.test/TST-6 irc://host/TST-7 mailto:TST-8@example.test";
     let found = recognizer.find(text);
     assert_eq!(found.len(), 1);
@@ -40,7 +48,7 @@ fn urls_and_code_spans_are_not_issue_links() {
 
 #[test]
 fn hyphenated_words_and_dates_are_not_issue_references() {
-    let recognizer = ReferenceRecognizer::new([], ["TST"]);
+    let recognizer = ReferenceRecognizer::default();
     assert!(
         recognizer
             .find("PRE-TST-12 re-TST-5 TST-2026-11-15 -TST-6 éTST-7")
@@ -51,7 +59,7 @@ fn hyphenated_words_and_dates_are_not_issue_references() {
 
 #[test]
 fn unmatched_backtick_runs_are_literal() {
-    let recognizer = ReferenceRecognizer::new([], ["TST"]);
+    let recognizer = ReferenceRecognizer::default();
     for text in ["` TST-12", "`` TST-12 ` TST-5", "`TST-1` ` TST-12"] {
         let found = recognizer.find(text);
         assert_eq!(found[0].identifier(), "TST-12");
@@ -61,7 +69,7 @@ fn unmatched_backtick_runs_are_literal() {
 
 #[test]
 fn closed_code_spans_after_unmatched_runs_are_still_protected() {
-    let recognizer = ReferenceRecognizer::new([], ["TST"]);
+    let recognizer = ReferenceRecognizer::default();
     assert!(recognizer.find("` ``TST-1``").is_empty());
     let found = recognizer.find("``` `TST-2` TST-3 ``TST-4`` TST-5");
     assert_eq!(

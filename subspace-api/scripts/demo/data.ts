@@ -1,9 +1,16 @@
-export const demoDate = "2026-11-19";
+const HOUR_MS = 3600_000;
+
+export function startOfUtcWeek(seedDate: Date) {
+  const monday = new Date(seedDate);
+  monday.setUTCHours(0, 0, 0, 0);
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+  return monday.getTime();
+}
+
+const demoWeek = startOfUtcWeek(new Date());
 
 export function dateAt(days: number, hour = 12) {
-  return new Date(
-    Date.parse(`${demoDate}T00:00:00Z`) + (days * 24 + hour) * 3600_000,
-  ).toISOString();
+  return new Date(demoWeek + (days * 24 + hour) * HOUR_MS).toISOString();
 }
 
 export const people = [
@@ -489,6 +496,8 @@ export const evidence = {
     file: "thermal-alerts.png",
     alt: "Thermal alert chart with a sustained crossing of the warning band",
     report:
+      "The brief 09:42 crossing was calibration noise. The sustained rise fired the alert around 09:46:45 UTC.",
+    previousReport:
       "The 09:42 replay crossed the band twice. The first crossing was noise; the sustained rise came 80 seconds later.",
     response:
       "A five-minute slope plus three increasing samples catches the second crossing with no pilot false positives.",

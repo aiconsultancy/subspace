@@ -256,8 +256,8 @@ A root message with loaded replies shows their count and the latest reply's
 local time below its text, in channels and private conversations. Replies to
 replies count on the root. The count covers only the messages this client
 currently holds; loading older history or restoring the store rebuilds it.
-the reply-search follow-up will add the server lookup. An unloaded root gets no count until it
-loads, and cyclic relationships get no count.
+The reply-search follow-up will add the server lookup. An unloaded root gets
+no count until it loads, and cyclic relationships get no count.
 
 `ThreadRoots` indexes a buffer's parents once for all its counts, preserving
 `Line::thread_root`'s cycle and missing-parent behaviour. Each conversation
@@ -492,8 +492,8 @@ without markers.
 ## Selecting and copying
 
 A drag from any point in the transcript to any other selects the text of
-every row between, and Copy puts it on the clipboard in reading order, as in
-Slack (the Channels interaction improvements). Each row's text is one selectable GPUI Kit `TextView`
+every row between, and Copy puts the selected text on the clipboard in
+reading order. Each row's text is one selectable GPUI Kit `TextView`
 (`text.rs`): formatted messages as the safe Markdown above, and plain
 messages, mIRC-coded messages, server lines and membership lines as literal
 Markdown (`markup/markdown/literal.rs`). Kit numbers `TextView`s in the order
