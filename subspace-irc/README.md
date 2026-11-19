@@ -227,3 +227,10 @@ credentials and ephemeral loopback ports. It checks login, operator-only
 creation, seeded founders and channel settings, messaging, history, read
 markers, metadata, TLS and WebSocket origins. It also checks input validation,
 the mounted channel seed and registered channel history across recreation.
+
+## Licence
+
+The Subspace IRC packaging and configuration are licensed under the
+[Apache License 2.0](../LICENSE). See the
+[upstream Ergo licence](https://github.com/ergochat/ergo/blob/v2.19.1/LICENSE)
+for the server.

@@ -1,0 +1,12 @@
+Subspace
+Copyright 2026 The Subspace Authors
+
+Third-party licences and attribution notices are recorded in:
+
+- subspace-desktop/licenses/
+- subspace-desktop/web-spaces/examples/component-gallery/public/
+- subspace-framework/docs/publishing-audit.md
+- subspace-framework/vendor/gpui-base/LICENSE-APACHE
+- subspace-framework/vendor/gpui-base/SUBSPACE-PATCH.md
+- subspace-framework/vendor/markdown/license
+- subspace-framework/vendor/markdown/PATCHED.md
