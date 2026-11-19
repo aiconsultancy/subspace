@@ -9,6 +9,7 @@ pub mod install;
 pub mod manager;
 mod manifest;
 mod page;
+mod page_bridge;
 mod policy;
 mod source;
 mod state;
@@ -23,7 +24,7 @@ use gpui_kit::{
 };
 use subspace_framework::core::config::web_boards::{WebBoard as WebBoardConfig, WebBoardSource};
 use subspace_framework::dashboard::{
-    Dashboard, DashboardEvent, DashboardHandle, KeyHelp, Tokens, feedback,
+    Dashboard, DashboardEvent, DashboardHandle, KeyHelp, Tokens, contracts, feedback,
 };
 
 use page::{Page, Profile, Start};
@@ -54,6 +55,7 @@ pub struct WebBoard {
     covered: bool,
     last_external: Option<Instant>,
     bridge: Option<bridge::Bridge>,
+    follow: page_bridge::Follow,
 }
 
 impl WebBoard {
@@ -70,6 +72,7 @@ impl WebBoard {
             active: false,
             covered: false,
             last_external: None,
+            follow: page_bridge::Follow::new(cx),
         }
     }
 
@@ -141,24 +144,12 @@ impl WebBoard {
             epoch,
         } = event
         {
-            if let (Some(page), Some(bridge), Some(config)) = (
-                &self.page,
-                &mut self.bridge,
-                bridge::runtime::live_config(&self.config.id, cx).cloned(),
-            ) {
-                bridge::runtime::receive(
-                    bridge,
-                    page,
-                    &config,
-                    bridge::runtime::Incoming {
-                        source: &source,
-                        body: &body,
-                        epoch,
-                    },
-                    cx,
-                );
-            }
-            return;
+            let message = bridge::runtime::Incoming {
+                source: &source,
+                body: &body,
+                epoch,
+            };
+            return page_bridge::receive(self, message, cx);
         }
         if matches!(event, page::PageEvent::Loading(_))
             && let Some(bridge) = &mut self.bridge
@@ -251,6 +242,10 @@ impl Dashboard for WebBoard {
     const ICON: Option<&'static str> = Some("icons/globe.svg");
     const HELP_MARKDOWN: &'static str = include_str!("../help.md");
 
+    fn contracts() -> contracts::BoardContracts {
+        bridge::issues::CONTRACTS
+    }
+
     fn settings() -> subspace_framework::dashboard::settings::BoardSettings {
         subspace_framework::dashboard::settings::BoardSettings {
             description: "Shows a website or a built local web app in a native web view. You can navigate the page and manage supported app settings and permissions. Web Spaces are available on macOS and Windows, not Linux.",
@@ -294,6 +289,7 @@ impl Dashboard for WebBoard {
     fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.active = true;
         self.ensure_page(window, cx);
+        page_bridge::attach_issues(self, cx);
         self.sync_shown(cx);
     }
 

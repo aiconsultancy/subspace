@@ -57,6 +57,23 @@
     }
   } });
 
+  // Native pushes call this in the current document after checking its
+  // origin. A page that calls it only fools itself.
+  Object.defineProperty(globalThis, "__subspaceEvent", { value: (name, detail) => {
+    if (name === "theme") {
+      globalThis.dispatchEvent(new CustomEvent("subspace:theme", { detail }));
+    } else if (name === "issues-changed") {
+      globalThis.dispatchEvent(new Event("subspace:issues-changed"));
+    }
+  } });
+
+  function resolveIssues(identifiers) {
+    if (!Array.isArray(identifiers)) {
+      return Promise.reject(new TypeError("issues.resolve expects an array of issue identifiers."));
+    }
+    return call("issues.resolve", identifiers.map(String));
+  }
+
   async function info() {
     const result = await call("info");
     permission = result.notificationPermission;
@@ -70,6 +87,13 @@
     setBadge: value => call("badge.set", value === null ? null : String(value)),
     setContext: value => call("context.set", value),
     notify: value => call("notify", value),
+    theme: () => call("theme"),
+    secrets: Object.freeze({ get: () => call("secrets.get") }),
+    issues: Object.freeze({
+      scope: () => call("issues.scope"),
+      resolve: resolveIssues,
+      open: identifier => call("issues.open", String(identifier)).then(() => undefined),
+    }),
   }) });
 
   function sendNotification(notification) {

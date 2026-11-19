@@ -38,6 +38,10 @@ impl Page {
         match *self {}
     }
 
+    pub(crate) fn push(&self, _script: &str, _cx: &App) {
+        match *self {}
+    }
+
     pub(crate) fn back(&self, _cx: &App) -> Result<(), String> {
         match *self {}
     }

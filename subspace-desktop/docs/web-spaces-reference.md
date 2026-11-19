@@ -139,7 +139,7 @@ The rules are in `spaces/web/src/manifest.rs` and
 | --- | --- | --- |
 | `name` | Yes | Text of 1 to 60 characters after trimming |
 | `version` | Yes | Text of 1 to 40 characters after trimming; free-form, shown to users |
-| `permissions` | No | A list of text: `notifications`, `settings`, `badge`, `context` |
+| `permissions` | No | A list of text: `notifications`, `settings`, `badge`, `context`, `secrets`, `issues` |
 | `settings` | No | A list of at most 32 setting objects |
 
 Unknown permission names produce a warning (`Unknown permission "camera"
@@ -182,8 +182,9 @@ Manifest errors name the problem, prefixed with the file name, for example:
 
 After installing, open **Settings > Spaces > [Space name]**. Each requested
 permission has an **Allow this app to …** checkbox: **show notifications**,
-**read its settings**, **show a badge on its tab** and **share context with
-Copilot chat**. Every permission starts off. Select the ones you trust and
+**read its settings**, **show a badge on its tab**, **share context with
+Copilot chat**, **read its saved secrets** and **read and open issues**.
+Every permission starts off. Select the ones you trust and
 save. Notification delivery also needs an enabled notification channel for
 the Space in **Notifications** settings.
 
@@ -217,6 +218,11 @@ await window.subspace.setContext(null);
 | `setBadge(textOrNull)` | `badge` | At most 8 characters, without control characters |
 | `setContext(valueOrNull)` | `context` | Label up to 100 characters, content up to 8192 UTF-8 bytes |
 | `notify({title, body})` | `notifications` | Title up to 100 characters, body up to 500, without control characters |
+| `theme()` | None | The app's theme: tones, mode, id, name and fonts ([Follow the app's theme](#follow-the-apps-theme)) |
+| `secrets.get()` | `secrets` | Saved values of the secrets the manifest declares ([Read the app's secrets](#read-the-apps-secrets)) |
+| `issues.scope()` | `issues` | The scope issue identifiers are recognised in, or `null` ([Show issues](#show-issues)) |
+| `issues.resolve(identifiers)` | `issues` | One resolution per distinct identifier, at most 50 distinct, each up to 32 characters |
+| `issues.open(identifier)` | `issues` | Opens the issue in the Space that answers issue requests |
 
 Errors from the bridge (`spaces/web/src/bridge.rs` and
 `spaces/web/src/bridge/init.js`):
@@ -229,6 +235,10 @@ Errors from the bridge (`spaces/web/src/bridge.rs` and
 | `Use a notification title up to 100 characters and body up to 500 characters.` | Notification too long |
 | `Notifications are off. Choose a notification channel in Subspace Settings.` | No notification channel |
 | `Too many notifications. Wait five seconds.` | More than one notification in five seconds |
+| `Resolve at most 50 distinct issue identifiers.` | `issues.resolve` with more than 50 distinct identifiers |
+| `Use issue identifiers of at most 32 characters, without control characters.` | An empty, long or malformed identifier |
+| `No Space that answers issue requests recognises this issue identifier.` | `issues.open` with no scope, or an identifier whose project key is not in it |
+| `issues.resolve expects an array of issue identifiers.` | `issues.resolve` with something other than an array (a `TypeError`, before any request) |
 | `The app manifest changed. Restart Subspace, then review its permissions in Settings.` | The manifest changed under a running page |
 | `Too many pending Subspace requests.` / `Subspace request is too large.` / `Subspace request timed out.` | Request limits below |
 
@@ -239,12 +249,151 @@ is excluded, even if the manifest later describes it as non-secret.
 Native settings save values under `webBoards.<id>.settings` and secrets
 under `secrets` in the private config file. Saved secrets never populate
 inputs. Leave a secret input blank to keep it; replace or clear it
-explicitly. This bridge has no API that consumes or returns those secrets.
-They are not OS-keychain entries or encrypted app storage.
+explicitly. Only `secrets.get()`, with the `secrets` permission, returns
+them to the page. They are not OS-keychain entries or encrypted app storage.
 
 Setting and permission edits apply on **Save** without restarting. The page
-can read the current values again. There is no change-event subscription.
-Cancel leaves the saved configuration unchanged.
+can read the current values again. Settings and secrets have no change
+event; only the theme and issues push events (below). Cancel leaves the
+saved configuration unchanged.
+
+## Follow the app's theme
+
+```javascript
+const theme = await window.subspace.theme();
+window.addEventListener("subspace:theme", event => apply(event.detail));
+
+function apply(theme) {
+  const root = document.documentElement;
+  root.style.colorScheme = theme.mode;
+  for (const [name, value] of Object.entries(theme.tones)) {
+    root.style.setProperty(`--${name}`, value);
+  }
+  root.style.fontFamily = theme.fonts.ui;
+}
+```
+
+`theme()` needs no permission. It resolves to:
+
+```typescript
+type Theme = {
+  id: string;            // the bundled theme file, e.g. "one-dark", "cupertino"; "custom" for a user's theme
+  name: string;          // the variant's display name, e.g. "Subspace One Dark", "Cupertino Dark"
+  mode: "light" | "dark";
+  tones: {               // "#rrggbb"
+    bg: string; pane: string; line: string; hair: string; select: string;
+    fg: string; strong: string; muted: string; accent: string;
+    red: string; orange: string; yellow: string; green: string;
+    cyan: string; blue: string; magenta: string;
+  };
+  fonts: { ui: string; mono: string };   // CSS font-family values
+};
+```
+
+The tones are the colours Subspace's own Spaces use for each tone, from the
+active theme and its tone overrides. A translucent tone is flattened onto
+`bg`, so every value is an opaque `#rrggbb`. `fonts.ui` and `fonts.mono` are
+complete `font-family` values: the app's family, quoted, then generic
+fallbacks (`system-ui, -apple-system, sans-serif` and
+`ui-monospace, monospace`). The platform interface font is the fallbacks
+alone. A family the app bundles but the system does not have falls back.
+
+`subspace:theme` is a `CustomEvent` on `window` whose `detail` is a `Theme`.
+It fires when the theme, light or dark mode, a tone or a font changes, and
+only when the value differs from the last one sent to the page. A newly
+loaded document gets no event until something changes: call `theme()` at
+start.
+
+## Read the app's secrets
+
+```javascript
+const { token } = await window.subspace.secrets.get();
+```
+
+`secrets.get()` needs the `secrets` permission. It returns an object with
+the saved value of each setting the manifest declares with
+`"type": "secret"`, keyed by setting key. A secret with no saved value, or
+an empty one, is absent. Nothing else in the private config is reachable:
+other web Spaces' secrets, service tokens and keys the manifest does not
+declare as secrets stay out.
+
+A page granted `secrets` holds its secrets in its own JavaScript memory, so
+anything the page loads can read them. Keep the page's scripts in its own
+files (the Content Security Policy already blocks inline and remote
+scripts), send the secret only to the service it is for, and never put it
+in a URL, `setContext`, a notification or the page's storage.
+
+## Show issues
+
+The `issues` permission forwards the Framework's `issues` board contract,
+the one Channels (IRC) uses for its live issue tiles, to the page. The page
+never names the Space that answers; in the Subspace App it is the Issues
+Space while that is enabled and signed in.
+
+```javascript
+const scope = await subspace.issues.scope();
+if (scope) {
+  const resolutions = await subspace.issues.resolve(["ABC-827", "ENG-12"]);
+  // render the available ones; pending ones settle with the event below
+}
+window.addEventListener("subspace:issues-changed", () => refresh());
+tile.addEventListener("click", () => subspace.issues.open("ABC-827"));
+```
+
+```typescript
+subspace.issues.scope(): Promise<IssueScope | null>
+type IssueScope = {
+  profileName: string;
+  appOrigin: string;              // Subspace API base, including /api
+  teamKeys: string[];              // project keys, e.g. ["ABC", "ENG"]
+  linearWorkspace: string | null; // null with the Subspace API
+};
+
+subspace.issues.resolve(identifiers: string[]): Promise<Resolution[]>
+type Resolution = {
+  identifier: string;
+  state: "available" | "unavailable" | "pending" | "signed-out" | "failed";
+  summary?: IssueSummary;         // only when state is "available"
+};
+type IssueSummary = {
+  identifier: string;
+  title: string;
+  url: string;
+  state: {
+    name: string;                 // e.g. "In Progress"
+    kind: "triage" | "backlog" | "unstarted" | "started" | "completed" | "canceled" | "duplicate";
+  };
+  assignee: string | null;
+  archived: boolean;
+};
+
+subspace.issues.open(identifier: string): Promise<void>
+```
+
+- `scope()` is `null` while no Space answers or while the answering Space
+  has no active project scope, including when it is signed out. The scope
+  omits profile and organisation IDs.
+- `resolve()` answers once per distinct identifier, in the order given. It
+  accepts at most 50 distinct identifiers of at most 32 characters each;
+  repeats are dropped. `pending` means a read has started:
+  `subspace:issues-changed` follows when it lands. `unavailable` never says
+  whether an issue exists. Without a scope nothing is asked: every
+  identifier is `signed-out` when a Space answers without a scope, and
+  `unavailable` when no Space answers.
+- `open()` opens the issue in the answering Space, as selecting an issue
+  tile in Channels does, and switches to that Space. It needs an identifier
+  whose project key is in `scope().teamKeys`. It uses the summary's navigation
+  URL when available and otherwise builds an issue URL under the same API
+  base. The web Space must be the one shown, which it is when the user clicks
+  in it.
+- `subspace:issues-changed` is a plain `Event` on `window`. It fires after
+  each contract `changed`: when the answering Space starts or stops, when
+  the scope changes (sign-in, sign-out, API base or project keys) and when
+  pending reads finish. Ask for the scope and the identifiers you show
+  again; keep nothing across it. It is sent only while `issues` is allowed.
+
+The web Space keeps no issue content: summaries pass straight to the page,
+and Subspace adds none of them to search or notifications.
 
 ## Page Notification adapter
 
@@ -281,6 +430,10 @@ trust, or revoke permissions before updating.
 The native engine supplies the sender URL. Subspace also checks the current
 page's exact origin. Another site cannot use the bridge after navigation.
 Replies address one document, and badge/context state resets on navigation.
+Pushed events (`subspace:theme`, `subspace:issues-changed`) go only to the
+document the web Space shows at that moment, and only while it has the app's
+exact origin: Subspace checks the page address before sending, and the event
+script checks `location.origin` again in the page.
 Chat treats page-provided context as untrusted data, not instructions.
 
 Requests are limited to 16 KiB of UTF-8 JSON. There can be at most 32 pending
@@ -309,8 +462,9 @@ The app is served from `subspace://<id>/` on macOS and
 folder, and an address with no file extension that names no file returns
 `index.html`.
 
-The bridge provides no shell, process, filesystem, clipboard, arbitrary
-native API or credential access. macOS uses WKWebView and Windows uses
+The bridge provides no shell, process, filesystem, clipboard or arbitrary
+native API, and no credential access beyond the app's own declared secrets
+once `secrets` is allowed. macOS uses WKWebView and Windows uses
 WebView2. Linux has no web view and shows a message instead of the page.
 Windows CI builds and tests the code;
 native Windows runtime validation remains outstanding.

@@ -2,11 +2,17 @@
 
 use std::time::Instant;
 
-use gpui_kit::{App, SharedString};
-use subspace_framework::dashboard::{AgentContext, notifications, services};
+use gpui_kit::{App, Context, SharedString};
+use serde_json::Value;
+use subspace_framework::contracts::issues::CurrentScope;
+use subspace_framework::dashboard::contracts::MessageKey;
+use subspace_framework::dashboard::{
+    AgentContext, BoardNavigation, DashboardEvent, notifications, services,
+};
 
-use super::{Bridge, Effect, protocol};
-use crate::{WebBoardConfig, manifest::Permission, page::Page};
+use super::issues::{self, IssueCall};
+use super::{Bridge, Effect, protocol, theme};
+use crate::{WebBoard, WebBoardConfig, manifest::Permission, page::Page};
 
 pub(crate) struct Incoming<'a> {
     pub source: &'a str,
@@ -19,7 +25,7 @@ pub(crate) fn receive(
     page: &Page,
     config: &WebBoardConfig,
     message: Incoming<'_>,
-    cx: &mut App,
+    cx: &mut Context<WebBoard>,
 ) {
     let Incoming {
         source,
@@ -35,19 +41,77 @@ pub(crate) fn receive(
     };
     let on = notifications::preferences(&config.id, cx).mode != notifications::Mode::Off;
     bridge.enter_document(epoch);
-    let result = bridge.call(&request.operation, config, on, Instant::now());
-    let reply = match result {
-        Ok((value, effect)) => {
-            if let Effect::Notify(message) = effect {
-                // Page text stays out of OS notifications: a plain notice.
-                let notice = notifications::Notice::new(format!("{}: {message}", config.title));
-                notifications::request(&config.id, 0, notice, cx);
-            }
-            protocol::reply(&request, Ok(value), &bridge.origin)
-        }
-        Err(error) => protocol::reply(&request, Err(error), &bridge.origin),
-    };
+    let result = bridge
+        .call(&request.operation, config, on, Instant::now())
+        .and_then(|(value, effect)| finish(bridge.board, config, value, effect, cx));
+    let reply = protocol::reply(&request, result, &bridge.origin);
     page.respond(epoch, &reply, cx)
+}
+
+/// Completes an allowed call with what only the app can do.
+fn finish(
+    board: &'static str,
+    config: &WebBoardConfig,
+    value: Value,
+    effect: Effect,
+    cx: &mut Context<WebBoard>,
+) -> Result<Value, &'static str> {
+    match effect {
+        Effect::None => Ok(value),
+        Effect::Notify(message) => {
+            // Page text stays out of OS notifications: a plain notice.
+            let notice = notifications::Notice::new(format!("{}: {message}", config.title));
+            notifications::request(&config.id, 0, notice, cx);
+            Ok(value)
+        }
+        Effect::Theme => Ok(theme::current(cx)),
+        Effect::Issues(call) => issue(board, call, cx),
+    }
+}
+
+fn issue(
+    board: &'static str,
+    call: IssueCall,
+    cx: &mut Context<WebBoard>,
+) -> Result<Value, &'static str> {
+    match call {
+        IssueCall::Scope => Ok(issues::scope_json(issues::scope(board, cx).as_ref())),
+        IssueCall::Resolve(identifiers) => Ok(issues::resolve(board, identifiers, cx)),
+        IssueCall::Open(identifier) => {
+            let url = issues::open(board, &identifier, cx)?;
+            // The shell opens it in the Space that answers `current-scope`,
+            // as an IRC tile click does, while this Space is the one shown.
+            cx.emit(DashboardEvent::Navigate(BoardNavigation {
+                responder: MessageKey::request::<CurrentScope>(),
+                url: url.into(),
+                origin: None,
+            }));
+            Ok(Value::Null)
+        }
+    }
+}
+
+/// Sends the theme to the page when it changed since the last push.
+pub(crate) fn push_theme(bridge: &mut Bridge, page: &Page, cx: &App) {
+    let theme = theme::current(cx);
+    if bridge.pushed_theme.as_ref() == Some(&theme) || !shows_app(bridge, page, cx) {
+        return;
+    }
+    page.push(&protocol::event("theme", &theme, &bridge.origin), cx);
+    bridge.pushed_theme = Some(theme);
+}
+
+/// Tells a page allowed `issues` to ask again.
+pub(crate) fn push_issues_changed(bridge: &Bridge, page: &Page, config: &WebBoardConfig, cx: &App) {
+    if shows_app(bridge, page, cx) && bridge.allows(Permission::Issues, config) {
+        let script = protocol::event("issues-changed", &Value::Null, &bridge.origin);
+        page.push(&script, cx);
+    }
+}
+
+/// Whether the view shows a document of the app's exact origin now.
+fn shows_app(bridge: &Bridge, page: &Page, cx: &App) -> bool {
+    page.url(cx).is_some_and(|url| bridge.trusted(&url, &url))
 }
 
 pub(crate) fn live_config<'a>(id: &str, cx: &'a App) -> Option<&'a WebBoardConfig> {

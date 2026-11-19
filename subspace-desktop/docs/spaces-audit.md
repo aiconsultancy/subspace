@@ -90,7 +90,7 @@ HTTP requests are limited to 60 requests per bind per minute and receive
 
 | Contract | Messages | Answers and publishes | Subscribes and asks | Status |
 | --- | --- | --- | --- | --- |
-| `issues` v1 (`subspace_contracts::issues`) | `current-scope` request: profile, API origin and project keys, or none while unavailable. `resolve` request: one resolution per identifier (summary, unavailable, pending, signed out or failed), at most 50. `changed` event | The Issues board, from its Subspace API hub | Channels, to recognise and show issue references ([Channels issue references](irc.md#issue-references)) | Delivered: phases 3 and 4 of the [delivery plan](changes/board-contracts/tasks.md); per-reference HTTP reads, with batch HTTP resolution to follow |
+| `issues` v1 (`subspace_contracts::issues`) | `current-scope` request: profile, API origin and project keys, or none while unavailable. `resolve` request: one resolution per identifier (summary, unavailable, pending, signed out or failed), at most 50. `changed` event | The Issues board, from its Subspace API hub | Channels, to recognise and show issue references ([Channels issue references](irc.md#issue-references)); web Spaces, for app pages allowed `issues` ([Show issues](web-spaces-reference.md#show-issues)) | Delivered: phases 3 and 4 of the [delivery plan](changes/board-contracts/tasks.md); per-reference HTTP reads, with batch HTTP resolution to follow |
 | `github` v1 (`subspace_contracts::github`) | `open-pull-request`: navigation responder role for a validated GitHub PR URL. `resolve-pull-requests` request: one resolution per `owner/repo#n` key (summary, unavailable, pending, signed out or failed), at most 50. `changed` event | PRs, through `Dashboard::open_link`; summaries from what its current account loaded and a refresh confirmed, else one background read; a signed-out login answers signed out until it signs in or reads again | Issues, from its pull requests panel and palette. Channels, for pull request chips and hover tiles ([change record](changes/subspace-api-accounts/README.md)) | Delivered: [pull request navigation](changes/subspace-api-accounts/README.md) and [change record](changes/subspace-api-accounts/README.md); unavailable responders and unsupported links fall back to the browser |
 
 **Pull request navigation.** `github@1/open-pull-request`
@@ -165,6 +165,11 @@ the registrations differ.
 | `github` | responds | `github@1/resolve-pull-requests` |
 | `github` | publishes | `github@1/changed` |
 
+Configured web Spaces are not in the product registrations this test reads:
+each one declares the same three roles as `irc` under its own configured ID
+(`spaces/web/src/bridge/issues.rs`). Only a page whose manifest asks for
+`issues`, and whose user allowed it, reaches the contract.
+
 The Issues board answers whenever enabled, including fixture builds. With it
 disabled, requests are unavailable and references stay plain. Debug capture
 builds can alternatively route a stand-in responder for isolated IRC evidence
@@ -223,9 +228,9 @@ web boards). The terminal is a Framework panel, not a board; see
 | Quit warnings | – | – | – | – | ○ | – | – |
 | Diagnostic config path | – | – | – | ✓ | – | – | ○ |
 | Retain when disabled | – | – | – | – | ✓ | – | – |
-| Shared state it writes or follows (globals) | ✓ ⁹ | ✓ | ✓ | ✓ | – | – | – |
+| Shared state it writes or follows (globals) | ✓ ⁹ | ✓ | ✓ | ✓ | – | – | ✓ ¹² |
 | Contracts it publishes or answers ¹⁰ | ○ | – | ○ | ○ | – | – | – |
-| Contracts it subscribes to or asks ¹⁰ | ○ | ○ | – | ✓ | – | – | – |
+| Contracts it subscribes to or asks ¹⁰ | ○ | ○ | – | ✓ | – | – | ✓ |
 
 The Issues board (`spaces/issues`) registers its own identity, artwork,
 guide, list/detail views, Settings editor, toolbar, status, palette, keys
@@ -253,12 +258,14 @@ The broker holds its responder weakly and stop drops it. See the completed
 9. PRs writes favourite repositories with `repositories::apply` and follows
    `Services`; Actions and IRC's hub follow `Services`; Copilot Agents
    follows `ChatSessions`. See [Framework paths](../../subspace-framework/docs/board-integration.md#framework-paths).
-10. [Board-to-board contracts](../../subspace-framework/docs/board-integration.md#board-to-board-contracts): IRC follows and
-    asks the `issues` contract ([Declared contracts](#declared-contracts)).
+10. [Board-to-board contracts](../../subspace-framework/docs/board-integration.md#board-to-board-contracts): IRC and web
+    Spaces follow and ask the `issues` contract ([Declared contracts](#declared-contracts)).
     ○ marks the [candidate contracts](#candidate-contracts), in the
     [delivery plan](changes/board-contracts/tasks.md).
 11. IRC keeps its messages in the [board store](../../subspace-framework/docs/board-integration.md#board-storage), not a cache
     file ([IRC search and history](changes/irc-search-history/spec.md)).
+12. Web Spaces follow the GPUI Kit `Theme` and the Framework's `ThemeId` to
+    push `subspace:theme` to app pages ([Follow the app's theme](web-spaces-reference.md#follow-the-apps-theme)).
 
 ## Gaps
 
