@@ -8,8 +8,8 @@ use gpui_kit::component::group_box::{GroupBox, GroupBoxVariants as _};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, Div, InteractiveElement as _, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement as _, Styled, TestSupportExt as _, div,
+    AnyElement, Div, InteractiveElement as _, IntoElement, ParentElement, Role, SharedString,
+    Stateful, StatefulInteractiveElement as _, Styled, TestSupportExt as _, div,
 };
 use subspace_framework::dashboard::{Tokens, truncated};
 use subspace_framework::lucide::SvgIcon;
@@ -124,9 +124,15 @@ pub(super) fn fact_row(
 pub(super) fn grid() -> Div {
     v_flex().gap_1().w_full().min_w_0()
 }
-pub(super) fn behind_decision<T: Styled + ParentElement>(page: T, modal: bool) -> T {
+/// The issue page behind an open decision: it stays visible, but blocks the
+/// pointer and is hidden from assistive technology, like an inert subtree
+/// behind a modal dialog. Focus containment lives with the panel.
+pub(super) fn behind_decision(page: Stateful<Div>, modal: bool) -> Stateful<Div> {
     if modal {
-        page.relative().child(div().absolute().inset_0().occlude())
+        page.relative()
+            .role(Role::Group)
+            .a11y_synthetic_children(|subtree| subtree.parent_node().set_hidden())
+            .child(div().absolute().inset_0().occlude())
     } else {
         page
     }

@@ -56,7 +56,9 @@ pub(super) fn render(
         .flex_1()
         .min_h_0()
         .child(panel::behind_decision(
-            div().child(header::path(issues, open.detail(), tokens, cx)),
+            div()
+                .id("issues-detail-path")
+                .child(header::path(issues, open.detail(), tokens, cx)),
             issues.decision.is_some(),
         ))
         .child(
