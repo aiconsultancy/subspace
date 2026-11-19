@@ -6,10 +6,13 @@ use super::{Output, Session, autojoin, caps, history, metadata, numerics};
 use crate::model::{ConnectionStatus, Event, LineKind, NetworkConfig};
 use crate::proto::Message;
 
+const MAX_UNDERSCORES: usize = 3;
+
 pub(super) struct Registration {
     pub(super) nick: String,
     pub(super) registered: bool,
     next_alternative: usize,
+    underscores: usize,
 }
 
 impl Registration {
@@ -18,6 +21,7 @@ impl Registration {
             nick,
             registered: false,
             next_alternative: 0,
+            underscores: 0,
         }
     }
 }
@@ -53,12 +57,28 @@ pub(super) fn nick_error(session: &mut Session, message: &Message, out: &mut Out
         numerics::server_line(session, message, LineKind::Error, out);
         return;
     }
-    if let Some(nick) = session.config.alt_nicks.get(reg.next_alternative) {
-        reg.nick.clone_from(nick);
+    let nick = if let Some(nick) = session.config.alt_nicks.get(reg.next_alternative) {
         reg.next_alternative += 1;
+        nick.clone()
+    } else if reg.underscores < MAX_UNDERSCORES {
+        reg.underscores += 1;
+        format!("{}_", reg.nick)
     } else {
-        reg.nick.push('_');
+        out.fatal = Some(format!(
+            "No IRC nickname was accepted. {}",
+            message.trailing()
+        ));
+        return;
+    };
+    if let Some(limit) = session.isupport.nicklen
+        && nick.len() > limit
+    {
+        out.fatal = Some(format!(
+            "The next IRC nickname exceeds the server’s {limit}-byte limit"
+        ));
+        return;
     }
+    reg.nick = nick;
     out.send(Message::new("NICK", [&reg.nick]));
 }
 

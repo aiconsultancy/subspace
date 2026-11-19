@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
@@ -11,6 +12,46 @@ const WAIT: Duration = Duration::from_secs(5);
 
 mod metadata;
 mod send_all;
+
+#[tokio::test]
+async fn a_nickname_exceeding_nicklen_ends_registration_as_failed() {
+    let (listener, mut config) = silent_server().await;
+    config.tls = false;
+    let (commands, receiver) = mpsc::unbounded_channel();
+    let events = EventSink::default();
+    let task = tokio::spawn(run_with(
+        config,
+        receiver,
+        events.clone(),
+        Timeouts::default(),
+    ));
+    let (mut socket, _) = tokio::time::timeout(WAIT, listener.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    socket
+        .write_all(
+            b":srv 005 * NICKLEN=8 :are supported\r\n:srv 432 * subspace :Invalid nickname\r\n",
+        )
+        .await
+        .unwrap();
+    let mut received = String::new();
+    tokio::time::timeout(WAIT, socket.read_to_string(&mut received))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        received,
+        "CAP LS 302\r\nNICK subspace\r\nUSER subspace 0 * subspace\r\n"
+    );
+    let failed = status(&events, &mut 0, |status| {
+        matches!(status, ConnectionStatus::Failed { .. })
+    })
+    .await;
+    assert!(matches!(failed, ConnectionStatus::Failed { error } if error.contains("8-byte limit")));
+    commands.send(NetCommand::Shutdown).unwrap();
+    tokio::time::timeout(WAIT, task).await.unwrap().unwrap();
+}
 
 #[test]
 fn backoff_doubles_up_to_a_minute() {

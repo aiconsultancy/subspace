@@ -354,7 +354,10 @@ impl Link {
         }
         self.session.written(&output.written);
         self.events.extend(output.written);
-        output.quit.then_some(End::Quit)
+        output
+            .fatal
+            .map(End::Fatal)
+            .or(output.quit.then_some(End::Quit))
     }
 
     async fn write_output(&mut self, bytes: &[u8]) -> io::Result<()> {
