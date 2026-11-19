@@ -29,6 +29,8 @@ pub struct IssueSnapshot {
     /// continuation applies only to the epoch it was asked for.
     pub(in crate::hub) epochs: Epochs,
     pub(in crate::hub) pull_requests: crate::hub::pull_requests::PullRequests,
+    pub(in crate::hub) decisions: crate::hub::decisions::IssueDecisions,
+    pub(in crate::hub) decision: crate::hub::decision::Slot,
     pub(in crate::hub) timeline: TimelineSnapshot,
     pub(in crate::hub) images: crate::hub::ImagesSnapshot,
     pub(in crate::hub) files: crate::hub::FilesSnapshot,
@@ -84,6 +86,8 @@ impl IssueSnapshot {
             relations_failed: false,
             epochs: Epochs::default(),
             pull_requests: Default::default(),
+            decisions: Default::default(),
+            decision: Default::default(),
             timeline: TimelineSnapshot::default(),
             images: Default::default(),
             files: Default::default(),

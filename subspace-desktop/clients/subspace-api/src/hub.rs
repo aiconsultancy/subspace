@@ -1,6 +1,8 @@
 //! Shared memory snapshots and bounded background readers, with generation fences.
 mod activity;
 mod comments;
+mod decision;
+mod decisions;
 mod files;
 mod images;
 mod issue;
@@ -20,6 +22,7 @@ mod timeline;
 mod worker;
 use crate::{Client, ListQuery};
 pub use comments::{Attachment, AttachmentState, CommentDraft, CommentState, ImageIntake};
+pub use decision::DecisionStatus as DecisionReadStatus;
 pub use queue::ReadPriority;
 pub use search::WiderSearch;
 use state::State;

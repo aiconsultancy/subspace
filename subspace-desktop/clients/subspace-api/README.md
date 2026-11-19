@@ -15,6 +15,20 @@ Reads use two priority-ordered workers; reference reads are serialised and
 comment POSTs use separate single-attempt workers. Network calls never run in
 snapshot accessors.
 
+`Client::decisions` reads `/v1/decisions` in API order using opaque cursors;
+`DecisionQuery::for_issue` scopes the list to an issue key or UUID. Blank
+filters are omitted, and the client caps the requested page size at 100.
+`Client::decision` reads `/v1/decisions/{id}` and never writes decisions.
+
+`Hub::activate_decisions` starts paging only for the open issue; subsequent
+requests use `load_more_decisions` and `retry_decisions`. `IssueSnapshot`
+exposes the retained page, loading, error and unavailable states. A refresh
+re-reads the loaded depth from fresh cursors and keeps the old rows on a
+retryable failure. `Hub::open_decision` reads one detail, exposed by
+`IssueSnapshot::decision`: Loading, Loaded, Gone (404), or Error. Opening
+another decision, closing the panel or leaving the issue retires its read.
+Queued and in-flight results cannot cross those boundaries.
+
 Without a signed-in account the client sends no credentials. Debug builds
 can pair `SUBSPACE_API_URL` (a numeric loopback origin) with
 `SUBSPACE_API_ACCESS_JWT_FILE`, a path to a private token file, for offline

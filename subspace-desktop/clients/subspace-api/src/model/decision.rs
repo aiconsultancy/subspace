@@ -1,6 +1,7 @@
 //! Read-only decision projections from the API's Decisions/Shared contract.
 use chrono::NaiveDate;
 use serde::Deserialize;
+use std::ops::Deref;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,7 +96,6 @@ pub struct DecisionListItem {
 
 impl DecisionListItem {
     /// An unset API DateOnly is not a real decision date.
-    // qual:api — consumed by the decision UI; tested here.
     pub fn decided_on(&self) -> Option<NaiveDate> {
         NaiveDate::parse_from_str(&self.decided_on, "%Y-%m-%d")
             .ok()
@@ -124,6 +124,14 @@ pub struct DecisionDetail {
     pub rejected_by_user_id: Option<String>,
     pub provenance: DecisionProvenance,
     pub recorded_by: DecisionMember,
+}
+
+impl Deref for DecisionDetail {
+    type Target = DecisionListItem;
+
+    fn deref(&self) -> &Self::Target {
+        &self.item
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -189,5 +197,6 @@ pub struct DecisionMember {
     pub user_id: String,
     pub display_name: String,
     pub available: bool,
-    pub kind: DecisionMakerType,
+    /// User kind, as in `Person` and `Me`; preserve unknown kinds.
+    pub kind: String,
 }
