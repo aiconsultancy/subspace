@@ -40,9 +40,22 @@ impl SubspaceApp {
             self.open_settings(&OpenSettings, window, cx);
             return;
         }
-        let board = self.dashboard().map(|dashboard| dashboard.id);
+        if let Some(board) = self.dashboard().map(|dashboard| dashboard.id) {
+            self.open_board_settings(board, window, cx);
+        } else {
+            self.open_settings(&OpenSettings, window, cx);
+        }
+    }
+
+    /// Opens Settings at Space `board`'s page.
+    pub(super) fn open_board_settings(
+        &mut self,
+        board: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.open_settings(&OpenSettings, window, cx);
-        if let (Some(settings), Some(board)) = (&self.settings, board) {
+        if let Some(settings) = &self.settings {
             settings.update(cx, |settings, cx| settings.select_initial_board(board, cx));
         }
     }

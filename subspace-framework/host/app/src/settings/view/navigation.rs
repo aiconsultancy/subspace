@@ -172,6 +172,11 @@ impl Settings {
     }
 
     #[cfg(test)]
+    pub(crate) fn shows_board_page(&self, id: &str) -> bool {
+        matches!(self.page, SettingsPage::Board(board) if board == id)
+    }
+
+    #[cfg(test)]
     pub(crate) fn shows_developer_page(&self) -> bool {
         self.page == SettingsPage::Developer
     }
