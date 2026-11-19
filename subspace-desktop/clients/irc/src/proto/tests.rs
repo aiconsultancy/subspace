@@ -24,6 +24,8 @@ fn separates_a_bridged_nick_from_its_user_and_host() {
 
 #[test]
 fn ignores_a_tag_with_no_key() {
-    let message = parse("@=;=value;label=ok PING water").unwrap();
-    assert_eq!(serialise(&message), "@label=ok PING water");
+    let message = parse("@=;=value;flag=;label=ok PING water").unwrap();
+    assert_eq!(message.tag(""), None);
+    assert_eq!(message.tag("flag"), Some(""));
+    assert_eq!(serialise(&message), "@flag;label=ok PING water");
 }
