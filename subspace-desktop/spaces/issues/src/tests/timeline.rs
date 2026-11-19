@@ -68,7 +68,7 @@ fn comments_are_default_and_all_includes_activity_until_opening_another_issue(
                 .timeline_focus
                 .as_ref()
                 .unwrap()
-                .handle
+                .tab(TimelineMode::Comments)
                 .is_focused(window)
         );
     });

@@ -219,7 +219,6 @@ impl Client {
         self.get(&["issues", reference], &[])
     }
 
-    // qual:api — read client for the decision UI; contract-tested here.
     pub fn decisions(
         &self,
         query: &DecisionQuery,
@@ -228,7 +227,6 @@ impl Client {
         self.get(&["decisions"], &query.parameters(page)?)
     }
 
-    // qual:api — read client for the decision UI; contract-tested here.
     pub fn decision(&self, id: &str) -> Result<model::DecisionDetail, Error> {
         self.get(&["decisions", id], &[])
     }

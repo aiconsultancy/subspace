@@ -231,6 +231,7 @@ fn content_and_list_builders_caption_every_state(cx: &mut TestAppContext) {
             content::pills(g, t, w, cx),
             content::external(g, t, w, cx),
             content::external_marked(g, t, w, cx),
+            content::external_marked_with_label(g, t, w, cx),
             content::truncated_text(g, t, w, cx),
             content::plain_text(g, t, w, cx),
             content::rich_text(g, t, w, cx),

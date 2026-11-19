@@ -8,6 +8,11 @@ use crate::model::{ProjectScope, SubIssues, Tab};
 
 // qual:allow(coupling, oi) reason: "The board owns conversion of its retained controls into an owned list request."
 impl crate::Issues {
+    /// The requests made since the last call, oldest first.
+    pub(crate) fn take_requests(&mut self) -> Vec<Request> {
+        std::mem::take(&mut self.requests)
+    }
+
     // qual:allow(dry, boilerplate) reason: "An owned request snapshots the mutable toolbar; the queued query must not borrow the board."
     pub(crate) fn choice(&self) -> ListChoice {
         ListChoice {
@@ -85,6 +90,12 @@ pub(crate) enum Request {
     OpenTimeline(usize),
     MoreTimeline(usize),
     RetryTimeline(usize),
+    OpenDecisions,
+    MoreDecisions,
+    RetryDecisions,
+    OpenDecision(String),
+    RetryDecision(String),
+    CloseDecision,
     /// The visible list, when its choices changed or its last read is over
     /// a minute old.
     List(ListChoice),

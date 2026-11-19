@@ -1,7 +1,5 @@
 //! The board and the hub. The board reads the hub's snapshot only when its
-//! version changes, never by draining events, and turns its own requests
-//! into hub calls. Without a hub, as in the board's own tests, requests wait
-//! in [`Issues::take_requests`].
+//! version changes and turns requests into hub calls.
 
 use std::time::Instant;
 
@@ -327,6 +325,15 @@ impl Issues {
             Request::OpenTimeline(goal) => hub.activate_timeline(goal),
             Request::MoreTimeline(goal) => hub.load_more_timeline(goal),
             Request::RetryTimeline(goal) => hub.retry_timeline(goal),
+            Request::OpenDecisions => hub.activate_decisions(),
+            Request::MoreDecisions => hub.load_more_decisions(),
+            Request::RetryDecisions => hub.retry_decisions(),
+            Request::OpenDecision(id) => hub.open_decision(&id),
+            Request::RetryDecision(id) => hub.retry_decision(&id),
+            Request::CloseDecision => {
+                hub.close_decision();
+                Ok(())
+            }
             Request::More { group } | Request::Group { group } => match self.group_index(&group) {
                 Some(index) => hub.load_more(index),
                 None => Ok(()),
@@ -340,10 +347,5 @@ impl Issues {
             .iter()
             .find(|group| group.key == key)
             .map(|group| group.index)
-    }
-
-    /// The requests made since the last call, oldest first.
-    pub(crate) fn take_requests(&mut self) -> Vec<Request> {
-        std::mem::take(&mut self.requests)
     }
 }

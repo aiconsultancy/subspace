@@ -36,6 +36,8 @@ fn publish(
                     issue.updated_at = None;
                     issue.timeline.reset();
                     issue.pull_requests = Default::default();
+                    issue.decisions = Default::default();
+                    issue.decision = Default::default();
                 }
                 issue.status = if error == Error::NotFound {
                     IssueStatus::Unavailable
@@ -65,6 +67,8 @@ fn publish(
             crate::hub::ReadPriority::Visible,
         );
         milestone::queue(shared, &mut state);
+        crate::hub::decisions::resume(shared, &mut state);
+        crate::hub::decision::resume_pending(shared, &mut state);
     }
     if state.live_reads.issue_after_load.take() == Some((job.generation, job.issue_revision)) {
         crate::hub::live::reread_issue(shared, &mut state);

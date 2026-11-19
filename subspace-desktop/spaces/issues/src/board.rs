@@ -43,6 +43,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Issues>) -> Issues {
         activity: Default::default(),
         issue_view: Default::default(),
         media: Default::default(),
+        decision: None,
         project: initial_project(initiative_id.as_deref(), cx),
         profile: "subspace-api".to_owned(),
         access: Access::Starting,
