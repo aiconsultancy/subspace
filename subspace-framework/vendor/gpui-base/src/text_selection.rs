@@ -1,3 +1,5 @@
+// Modified by the Subspace contributors. See SUBSPACE-PATCH.md and subspace.patch.
+
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
@@ -3287,6 +3289,16 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
                 state.prepare_for_mouse_down(event.click_count == 1 && event.modifiers.shift, cx)
             });
             dispatch_clear_handlers(handlers, cx);
+            // The latch only stops a second layer preparing this same press.
+            // A release that never reaches the layer (an element stopped it,
+            // or it happened outside the window) must not leave it set, or
+            // the next press keeps a stale selection that blocks link clicks.
+            let latch = state.downgrade();
+            cx.defer(move |cx| {
+                if let Some(state) = latch.upgrade() {
+                    state.update(cx, |state, _| state.mouse_down_prepared = false);
+                }
+            });
         } else if event.click_count == 1 {
             if GlobalState::is_text_selection_suppressed(cx) {
                 state.update(cx, |state, _| state.pending_extension_anchor = None);
@@ -3447,10 +3459,7 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
         if phase.bubble()
             && let Some(state) = mouse_up_state.upgrade()
         {
-            state.update(cx, |state, cx| {
-                state.mouse_down_prepared = false;
-                state.end(cx)
-            });
+            state.update(cx, |state, cx| state.end(cx));
         }
     });
 
@@ -5791,6 +5800,24 @@ mod tests {
         assert_eq!(drag_to("four five six", 6, cx), "two three\nfour five");
         release(2, cx);
         assert_eq!(painted_selection(cx), "two three\nfour five");
+    }
+
+    /// A press whose release the layer never sees (stopped by an
+    /// element, or outside the window) must not leave the next press unable
+    /// to clear the old selection.
+    #[gpui::test]
+    fn a_press_without_a_release_does_not_keep_a_stale_selection(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| SelectableTextsView {
+            texts: vec!["one two three", "four five six"],
+        });
+        painted_selection(cx);
+
+        press_at("one two three", 0, 1, false, cx);
+        assert_eq!(drag_to("one two three", 7, cx), "one two");
+        // No release: the next press must still clear the selection.
+        press_at("four five six", 2, 1, false, cx);
+        release(1, cx);
+        assert_eq!(painted_selection(cx), "");
     }
 
     #[gpui::test]

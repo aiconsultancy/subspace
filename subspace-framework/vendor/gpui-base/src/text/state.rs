@@ -1,3 +1,5 @@
+// Modified by the Subspace contributors. See SUBSPACE-PATCH.md and subspace.patch.
+
 use futures::Stream as _;
 #[cfg(not(target_family = "wasm"))]
 use std::time::Instant;
@@ -132,6 +134,7 @@ pub struct TextViewState {
     pub(super) table_actions: Option<std::sync::Arc<TableActionsFn>>,
     pub(super) image_source: Option<std::sync::Arc<super::text_view::ImageSourceFn>>,
     pub(super) link_click_handler: Option<std::sync::Arc<LinkClickHandlerFn>>,
+    pub(super) link_context_menu_handler: Option<Arc<super::text_view::LinkContextMenuHandlerFn>>,
     pub(super) link_tooltip: Option<std::sync::Arc<super::text_view::LinkTooltipFn>>,
     pub(super) hovered_link_tooltip: Option<(SharedString, gpui::AnyView)>,
     pub(super) link_tooltip_target: Option<(usize, SharedString)>,
@@ -241,6 +244,7 @@ impl TextViewState {
             code_block_highlighter: None,
             table_actions: None,
             link_click_handler: None,
+            link_context_menu_handler: None,
             link_tooltip: None,
             hovered_link_tooltip: None,
             link_tooltip_target: None,
@@ -1144,6 +1148,7 @@ impl Render for TextViewState {
             code_block_highlighter: self.code_block_highlighter.clone(),
             table_actions: self.table_actions.clone(),
             link_click_handler: self.link_click_handler.clone(),
+            link_context_menu_handler: self.link_context_menu_handler.clone(),
             task_toggle_handler: self.task_toggle_handler.clone(),
             image_source: self.image_source.clone(),
             markdown_extensions: self.markdown_extensions.clone(),

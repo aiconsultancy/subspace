@@ -1,3 +1,5 @@
+// Modified by the Subspace contributors. See SUBSPACE-PATCH.md and subspace.patch.
+
 use std::{
     borrow::Cow,
     collections::HashMap,
@@ -29,7 +31,7 @@ use crate::{
         inline_flow::{InlineFlow, InlineFlowItem, slice_ranges},
         range_highlight::{RangeHighlightFrame, RevealAt, RevealRequest},
         stream_fade::{StreamFadeFrame, TextLeafKey},
-        text_view::handle_link_click,
+        text_view::linked_image,
     },
     theme::ActiveTheme as _,
 };
@@ -2758,6 +2760,7 @@ pub(crate) struct NodeContext {
     pub(crate) table_actions: Option<Arc<TableActionsFn>>,
     pub(crate) image_source: Option<Arc<super::text_view::ImageSourceFn>>,
     pub(crate) link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+    pub(crate) link_context_menu_handler: Option<Arc<super::text_view::LinkContextMenuHandlerFn>>,
     pub(crate) task_toggle_handler: Option<Arc<TaskToggleHandlerFn>>,
     pub(crate) markdown_extensions: Arc<MarkdownExtensions>,
     /// This frame's streamed fade-in, when any text is still fading.
@@ -3045,7 +3048,6 @@ impl Paragraph {
                         .into_any_element(),
                     );
                 }
-                let link_click_handler = node_cx.link_click_handler.clone();
                 child_nodes.push(
                     img(node_cx.image_source(image))
                         .id(ix)
@@ -3053,32 +3055,12 @@ impl Paragraph {
                         .max_w(relative(1.))
                         .when_some(image.width, |this, width| this.w(width))
                         .when_some(image.link.clone(), |this, link| {
-                            let link_click_handler = link_click_handler.clone();
-                            let aux_link = link.clone();
-                            let aux_link_click_handler = link_click_handler.clone();
-                            this.cursor_pointer()
-                                .on_click(move |event, window, cx| {
-                                    crate::TextSelection::end(window, cx);
-                                    cx.stop_propagation();
-                                    handle_link_click(
-                                        &link_click_handler,
-                                        link.url.clone(),
-                                        event.clone(),
-                                        window,
-                                        cx,
-                                    );
-                                })
-                                .on_aux_click(move |event, window, cx| {
-                                    crate::TextSelection::end(window, cx);
-                                    cx.stop_propagation();
-                                    handle_link_click(
-                                        &aux_link_click_handler,
-                                        aux_link.url.clone(),
-                                        event.clone(),
-                                        window,
-                                        cx,
-                                    );
-                                })
+                            linked_image(
+                                this,
+                                link.url,
+                                node_cx.link_click_handler.clone(),
+                                node_cx.link_context_menu_handler.clone(),
+                            )
                         })
                         .into_any_element(),
                 );
