@@ -26,6 +26,8 @@ PAGE_SIZE = 100
 ALERT_LIMIT = 3
 RESPONSE_LIMIT = 8 * 1024 * 1024
 LOOKBACK = 7 * 86400
+MAX_RETRY_DELAY = 86400
+REGRESSION_INBOX_REASON = 2
 TIMEOUT = 15
 SAAS_HOSTS = {"sentry.io", "us.sentry.io", "de.sentry.io"}
 ISSUE_FIELDS = "(origin, org, environment, project, issue)"
@@ -49,9 +51,10 @@ def retry_after(value, now):
     if not value:
         return 0
     if re.fullmatch(r"[0-9]{1,12}", value):
-        return now + int(value)
+        return now + min(MAX_RETRY_DELAY, int(value))
     try:
-        return max(now, parsedate_to_datetime(value).timestamp())
+        retry_at = parsedate_to_datetime(value).timestamp()
+        return min(max(now, retry_at), now + MAX_RETRY_DELAY)
     except (ValueError, TypeError, OSError, OverflowError):
         return 0
 
@@ -119,9 +122,12 @@ def issue_link(config, permalink, project, issue):
         link = urlsplit(permalink)
         api = urlsplit(config["baseUrl"])
         org = config["organisation"]
-        same_host = link.hostname == api.hostname and (link.port or 443) == (api.port or 443)
-        saas_host = api.hostname in SAAS_HOSTS and api.port in (None, 443) and link.port in (None, 443)
-        expected_host = same_host or (saas_host and link.hostname in {"sentry.io", f"{org.lower()}.sentry.io"})
+        if host := config.get("permalinkHost"):
+            expected_host = link.hostname == host and link.port in (None, 443)
+        else:
+            same_host = link.hostname == api.hostname and (link.port or 443) == (api.port or 443)
+            saas_host = api.hostname in SAAS_HOSTS and api.port in (None, 443) and link.port in (None, 443)
+            expected_host = same_host or (saas_host and link.hostname in {"sentry.io", f"{org.lower()}.sentry.io"})
         allowed_paths = {f"/issues/{issue}", f"/organizations/{org}/issues/{issue}", f"/{org}/{project}/issues/{issue}"}
         if link.scheme == "https" and expected_host and "@" not in link.netloc and link.path.rstrip("/") in allowed_paths:
             return link._replace(query="", fragment="").geturl()
@@ -175,10 +181,11 @@ def parse_issue(config, row, status, cutoff):
         link = issue_link(config, row.get("permalink"), project, issue_id)
         if status == "unresolved" and link is None:
             raise PollError("Sentry returned an unexpected issue permalink.")
-        regression = None
-        if row.get("substatus") == "regressed":
-            marker = (row.get("inbox") or {}).get("reason_date")
-            regression = str(timestamp(marker)) if marker else "regressed"
+        inbox = row.get("inbox") or {}
+        marker = inbox.get("date_added") if inbox.get("reason") == REGRESSION_INBOX_REASON else None
+        regression = "regressed" if row.get("substatus") == "regressed" else None
+        if marker:
+            regression = str(timestamp(marker))
         issue = Issue(project, issue_id, last_seen, row["level"], link or "", regression)
         if status == "unresolved":
             wire = f"PRIVMSG {config['irc']['channel']} :{alert_text(config, issue)}\r\n"
@@ -397,6 +404,7 @@ def poll_locked(config, db):
     state = db.execute("SELECT pending, outage, retry_at FROM poll_state WHERE scope = ?", (state_key,)).fetchone()
     saved, outage, retry_at = state or ("[]", "healthy", 0)
     now = time()
+    retry_at = min(retry_at, now + MAX_RETRY_DELAY)
     cutoff = now - LOOKBACK
     pending = []
     for item in json.loads(saved):
@@ -414,6 +422,8 @@ def poll_locked(config, db):
         retry_at = error.retry_at if error else 0
         if error and outage == "healthy":
             outage = "pending"
+        elif not error and outage == "pending":
+            outage = "healthy"
         queued = {(issue.project, issue.id) for issue in pending}
         for issue, _ in sorted(candidates.values(), key=lambda entry: entry[1], reverse=True):
             if len(pending) == ALERT_LIMIT:

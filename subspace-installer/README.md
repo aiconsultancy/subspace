@@ -296,7 +296,10 @@ Set `medical.enabled` to `true` and specify the Sentry `organisation` slug
 and `projects` to watch. Use project slugs with Sentry SaaS or self-hosted
 Sentry 26.6.0 or later. Use quoted numeric project IDs on older installations.
 `baseUrl` defaults to `https://sentry.io` and accepts the organisation's
-regional API origin or your self-hosted HTTPS origin. Set `environment`
+regional API origin or your self-hosted HTTPS origin. If a self-hosted
+instance serves issue links on a separate HTTPS host, set `permalinkHost`
+to that hostname, for example `issues.example.com`. Links use HTTPS port 443
+when this setting is supplied. Set `environment`
 to filter issues, or omit it to cover all environments. `intervalSeconds`
 defaults to 10,800 (three hours) and accepts 300 to 86,400. Increase any
 shorter interval in the fleet configuration before upgrading.
@@ -346,12 +349,12 @@ state, which survives restart and upgrade.
 
 A later occurrence can become eligible again when Sentry marks it regressed
 or after the poller sees it resolved. The poller reads one page of recent
-resolutions for that check. A continuing regression stays deduplicated,
-using Sentry's regression date when available. If a request fails, the
-poller stops scanning and keeps the alerts it already found. For rate
-limits and server errors it respects `Retry-After` before contacting
-Sentry again. It posts one fixed failure notice and one recovery notice
-to the medical channel, retrying unconfirmed notices on later timer runs.
+resolutions for that check. When Sentry supplies a regression inbox entry,
+its `date_added` distinguishes a new regression from a continuing one.
+If a request fails, the poller stops scanning and keeps the alerts it
+already found. For rate limits and server errors it respects `Retry-After`
+up to 24 hours before contacting Sentry again. It retries a failure notice while the
+outage continues and posts a recovery notice after a confirmed failure notice.
 
 Use
 `sudo systemctl start subspace-fleet-medical.service` to poll immediately
