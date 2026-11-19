@@ -27,6 +27,8 @@
 # Linux uses the native executable, a private Xvfb display and a private
 # D-Bus session, including on Wayland desktops. A Vulkan driver is
 # required; Mesa lavapipe supports headless machines without a GPU.
+# A web Space's page shows as a snapshot drawn over its native view, and
+# click: and move: steps on it reach the page (spaces/web/src/mirror.rs).
 set -euo pipefail
 
 root="${SUBSPACE_RUN_APP_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"

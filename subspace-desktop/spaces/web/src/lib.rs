@@ -8,6 +8,7 @@ mod bridge;
 pub mod install;
 pub mod manager;
 mod manifest;
+mod mirror;
 mod page;
 mod page_bridge;
 mod policy;
@@ -56,6 +57,7 @@ pub struct WebBoard {
     last_external: Option<Instant>,
     bridge: Option<bridge::Bridge>,
     follow: page_bridge::Follow,
+    mirror: mirror::Mirror,
 }
 
 impl WebBoard {
@@ -73,6 +75,7 @@ impl WebBoard {
             covered: false,
             last_external: None,
             follow: page_bridge::Follow::new(cx),
+            mirror: mirror::Mirror::new(),
         }
     }
 
@@ -120,6 +123,7 @@ impl WebBoard {
     }
 
     fn poll(&mut self, cx: &mut Context<Self>) {
+        mirror::refresh(self, cx);
         let Some(page) = &self.page else {
             return;
         };
@@ -199,7 +203,7 @@ impl WebBoard {
     fn body(&self, cx: &mut Context<Self>) -> AnyElement {
         let tokens = Tokens::current(cx);
         if let Some(page) = &self.page {
-            return page.view().into_any_element();
+            return mirror::view(self, page.view().into_any_element(), cx);
         }
         match &self.error {
             Some(error) => feedback::error_box(
