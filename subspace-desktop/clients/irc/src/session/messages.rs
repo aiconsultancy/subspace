@@ -1,8 +1,14 @@
 //! Routes conversation traffic and responds to supported CTCP queries.
 
+use chrono::TimeDelta;
+
 use super::{Output, Session, describe, history, lines, listing};
 use crate::model::{Event, LineKind, Target, Typing};
 use crate::proto::{Message, ctcp};
+
+const CTCP_SENDER_INTERVAL: TimeDelta = TimeDelta::seconds(3);
+const CTCP_WINDOW: TimeDelta = TimeDelta::minutes(1);
+const CTCP_REPLIES_PER_WINDOW: usize = 10;
 
 pub(super) fn privmsg(session: &mut Session, message: &Message, out: &mut Output) {
     let target = lines::message_target(session, message);
@@ -30,7 +36,7 @@ fn conversation_line(session: &Session, message: &Message, target: Target, out: 
     }
 }
 
-fn ctcp_reply(session: &Session, message: &Message) -> Option<Message> {
+fn ctcp_reply(session: &mut Session, message: &Message) -> Option<Message> {
     let nick = message.nick().filter(|nick| !session.is_own(nick))?;
     let query = ctcp::parse(message.trailing())?;
     let reply = match query.command.as_str() {
@@ -39,6 +45,9 @@ fn ctcp_reply(session: &Session, message: &Message) -> Option<Message> {
         "VERSION" => concat!("Subspace IRC ", env!("CARGO_PKG_VERSION")).to_owned(),
         _ => return None,
     };
+    if !allow_ctcp_reply(session, nick) {
+        return None;
+    }
 
     let mut text = format!("\x01{}", query.command);
     if !reply.is_empty() {
@@ -47,6 +56,23 @@ fn ctcp_reply(session: &Session, message: &Message) -> Option<Message> {
     }
     text.push('\x01');
     Some(Message::new("NOTICE", [nick, &text]))
+}
+
+fn allow_ctcp_reply(session: &mut Session, nick: &str) -> bool {
+    let now = session.now;
+    session
+        .ctcp_replies
+        .retain(|(time, _)| now - time < CTCP_WINDOW);
+    let folded = session.fold(nick);
+    if session.ctcp_replies.len() >= CTCP_REPLIES_PER_WINDOW
+        || session.ctcp_replies.iter().any(|(time, sender)| {
+            now - time < CTCP_SENDER_INTERVAL && session.fold(sender) == folded
+        })
+    {
+        return false;
+    }
+    session.ctcp_replies.push_back((now, nick.into()));
+    true
 }
 
 pub(super) fn tagmsg(session: &mut Session, message: &Message, out: &mut Output) {

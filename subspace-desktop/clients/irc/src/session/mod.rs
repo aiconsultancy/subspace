@@ -135,6 +135,7 @@ pub struct Session {
     sent_batches: u64,
     now: DateTime<Utc>,
     batches: VecDeque<batch::Batch>,
+    ctcp_replies: VecDeque<(DateTime<Utc>, String)>,
 }
 
 impl Session {
@@ -157,6 +158,7 @@ impl Session {
             sent_batches: 0,
             now: Utc::now(),
             batches: VecDeque::new(),
+            ctcp_replies: VecDeque::new(),
         };
         session.refold(carry.spellings);
         session
