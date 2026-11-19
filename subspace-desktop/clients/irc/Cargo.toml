@@ -3,6 +3,7 @@ name = "subspace-client-irc"
 description = "IRC and IRCv3 client runtime"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
