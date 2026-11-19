@@ -12,6 +12,7 @@ are not built into the app; users install them at run time.
 
 | Path | What it is |
 | --- | --- |
+| [`fleet-console/`](fleet-console/README.md) | Fleet Console: your Stargate fleets drawn with WebGL2, drilling from fleets to fleet, ship and crew, fed by Stargate's Fleet API; sample fleets without setup |
 | [`examples/weather/`](examples/weather/README.md) | Weather: a keyless UK-postcode forecast, plain HTML, CSS and JavaScript with no build step and no permissions |
 
 ## Try Weather
@@ -36,7 +37,9 @@ From `subspace-desktop/`:
 
 ```sh
 mise run weather-space-test                              # Weather's offline Node tests (part of make check)
+mise run fleet-console-space-test                        # Fleet Console's offline Node tests (part of make check)
 make package-web-space SPACE=web-spaces/examples/weather # writes dist/web-spaces/weather-1.0.0.zip
+make package-web-space SPACE=web-spaces/fleet-console    # writes dist/web-spaces/fleet-console-1.0.0.zip
 ```
 
 `scripts/package-web-space.py` validates a web Space folder with the same
