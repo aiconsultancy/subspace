@@ -1,4 +1,5 @@
 mod all_or_nothing;
+mod ctcp;
 mod oversized;
 mod paragraphs;
 
@@ -235,24 +236,6 @@ fn typing_markread_and_standard_replies() {
         sent(&mark),
         ["MARKREAD #c timestamp=2026-01-02T03:04:05.000Z"]
     );
-}
-
-#[test]
-fn answers_ctcp_version_ping_and_time() {
-    let mut session = registered(PLAIN_CAPS);
-    let out = feed(
-        &mut session,
-        &[
-            ":bob!b@h PRIVMSG subspace :\u{1}VERSION\u{1}",
-            ":bob!b@h PRIVMSG subspace :\u{1}PING 123\u{1}",
-            ":bob!b@h PRIVMSG subspace :\u{1}TIME\u{1}",
-        ],
-    );
-    let sent = sent(&out);
-    assert!(sent[0].starts_with("NOTICE bob :\u{1}VERSION Subspace IRC"));
-    assert_eq!(sent[1], "NOTICE bob :\u{1}PING 123\u{1}");
-    assert!(sent[2].starts_with("NOTICE bob :\u{1}TIME "));
-    assert!(lines(&out).is_empty());
 }
 
 #[test]

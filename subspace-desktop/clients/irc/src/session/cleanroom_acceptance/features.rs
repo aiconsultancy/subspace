@@ -1,9 +1,11 @@
 //! ISUPPORT and conversation message acceptance tests.
 
-use chrono::{TimeZone, Utc};
+use chrono::{TimeDelta, TimeZone, Utc};
 
-use super::{base, feed, key, lines, welcomed, wire};
+use super::{at, base, feed, key, lines, welcomed, wire};
 use crate::model::{Event, LineKind, Target, Typing};
+use crate::proto::parse;
+use crate::session::Output;
 use crate::session::isupport::{Casemapping, Isupport};
 
 #[test]
@@ -104,17 +106,22 @@ fn i04_channels_in_targets() {
 #[test]
 fn g01_ctcp_replies_go_to_the_sender_and_never_to_ourselves() {
     let mut session = welcomed(base(), "echo-message");
-    let out = feed(
-        &mut session,
-        &[
-            ":lee!l@h.example PRIVMSG #room :\u{1}VERSION\u{1}",
-            ":lee!l@h.example PRIVMSG kim :\u{1}PING\u{1}",
-            ":lee!l@h.example PRIVMSG kim :\u{1}TIME\u{1}",
-            ":lee!l@h.example PRIVMSG kim :\u{1}CLIENTINFO\u{1}",
-            ":kim!k@h.example PRIVMSG lee :\u{1}VERSION\u{1}",
+    let mut out = Output::default();
+    for (offset, line) in [
+        (-6, ":lee!l@h.example PRIVMSG #room :\u{1}VERSION\u{1}"),
+        (-3, ":lee!l@h.example PRIVMSG kim :\u{1}PING\u{1}"),
+        (0, ":lee!l@h.example PRIVMSG kim :\u{1}TIME\u{1}"),
+        (3, ":lee!l@h.example PRIVMSG kim :\u{1}CLIENTINFO\u{1}"),
+        (3, ":kim!k@h.example PRIVMSG lee :\u{1}VERSION\u{1}"),
+        (
+            3,
             ":lee!l@h.example NOTICE kim :\u{1}VERSION other 1.0\u{1}",
-        ],
-    );
+        ),
+    ] {
+        let received = session.receive(parse(line).unwrap(), at() + TimeDelta::seconds(offset));
+        out.send.extend(received.send);
+        out.events.extend(received.events);
+    }
     let sent = wire(&out);
     assert_eq!(sent.len(), 3, "{sent:?}");
     assert!(sent[0].starts_with("NOTICE lee :\u{1}VERSION Subspace IRC "));
