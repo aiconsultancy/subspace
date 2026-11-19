@@ -113,6 +113,8 @@ I/O and remain in memory.
 | `open_issue(identifier, profile_id)`, `reload_issue()` | Read or refresh detail, checking navigation scope |
 | `load_more_subissues()`, `load_more_relations()` | Continue the open detail's children or relations |
 | `load_more_pull_requests()` | Continue associations or retry their failed first page |
+| `activate_decisions()`, `load_more_decisions()`, `retry_decisions()` | Start, continue or retry the open issue's decision list |
+| `open_decision(id)`, `close_decision()` | Read one decision for the open panel or retire that read |
 | `close_issue()` | Drop detail and retire pending detail reads |
 | `irc_snapshot()`, `reference_version()` | Restricted reference projection for the contract responder |
 | `resolve_reference(identifier, profile_id)` | Queue a demand-only reference read |
@@ -361,6 +363,45 @@ and offer Retry; stale results are fenced on close, reload, scope change and
 stop. A 404 on this route alone shows “Pull requests are not available from
 this server yet”. It does not make the issue unavailable. Reload checks the
 route again after deployment. Issue content is not persisted by this board or supplied as automatic chat context. A person may explicitly select text and choose Add to chat.
+
+## Decisions on an issue
+
+Open an issue and choose **Decisions** under **Activity** to read its linked
+decisions. Choose **Show more** for another page. The list shows all statuses
+in the order the API returns them: Subspace API sorts by decided-on date,
+newest first. The tab has no count or comment composer. Open a decision here or from a **Decision logged** entry
+in **All** to read it in the same side panel. **All** records what happened;
+use **Decisions** to see which decisions are linked now. Opening another
+issue starts on **Comments**.
+
+Press `m` to focus the selected Activity tab, Left or Right to move between
+tabs, and Enter or Space to select. Tab to a decision and activate it.
+The modal panel starts on **Close decision**, keeps Tab and Shift+Tab inside
+and blocks pointer interaction with the issue page underneath. Use its Back
+arrow after following a supersede link. Escape dismisses a text viewer first
+if one is open, then closes the decision panel and restores focus to its
+opener (or the Issues board if the opener is gone). Escape again follows the
+issue's own Back destination, including the original channel if you arrived
+from one. Opening a linked issue keeps that first destination too.
+
+The hub requests `GET /v1/decisions?issue=<identifier>&limit=50` only after
+the tab is selected. It follows opaque cursors and removes duplicate IDs
+without reordering. Issue refresh starts a fresh cursor chain and reads to
+the loaded page depth, plus the page a pending **Show more** asked for. It
+keeps any existing rows until all those pages succeed; retryable failures
+leave the rows in place. A list 403 from
+the API or a 404 shows the unavailable state without Retry. The detail
+reader makes one `GET /v1/decisions/{id}` per selection. A 404 shows the
+decision is no longer available; other failures, including 400, offer Retry.
+The hub checks account and issue scope, list epoch and detail read generation
+before installing results. During an issue reload, decision reads wait for the
+issue to finish loading. If the issue goes offline, the views keep cached rows
+and offer Retry; **Show more** is disabled while another read is paused.
+Pending reads resume after the issue loads again. The decision views perform
+no writes.
+
+See the [issue decisions change record](changes/issue-decisions/intent.md)
+for the scope, API limitations and validation.
 
 ## Removed and deferred
 
