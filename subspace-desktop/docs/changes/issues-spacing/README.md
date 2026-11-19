@@ -9,9 +9,4 @@ and a tooltip for the full label. Long values stay within the panel. Subspace
 uses the NETT detail it already reads for the panel's values.
 
 Board layout tests check the long label and property rows at 1,000 and 720 px.
-The macOS before-and-after captures use the same fictional long label.
-
-| View | Before | After |
-| --- | --- | --- |
-| List | Before | After |
-| Issue page | Before | After |
+The macOS captures were [removed for publication](../public-repository-examples/README.md).

@@ -28,15 +28,7 @@ the common attachment upload path lands. Existing image reads work as before.
 
 ## macOS evidence
 
-Native captures use the loopback fixture and fictional issues. The prior
-feature build had neither action. The current form captures show the
-editable fields and the calculated tracker state on a fixture issue.
-
-| View | Before | After |
-| --- | --- | --- |
-| Issues list | List | List with New issue |
-| Issue details | Details | Details with Edit issue |
-| Forms | — | New issue, Edit issue |
+The macOS captures were [removed for publication](../public-repository-examples/README.md).
 
 Automated coverage uses local fixtures for permission gating, native
 keyboard submission, edit conflicts, sparse clears and create retries.
