@@ -1,0 +1,167 @@
+@import 'tailwindcss' source('./');
+
+@font-face {
+  font-family: Inter;
+  src: url('/fonts/Inter-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'JetBrainsMono Nerd Font';
+  src: url('/fonts/JetBrainsMonoNerdFont-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+:root {
+  font-family: Inter, sans-serif;
+  font-size: 14px; /* Native density::REFERENCE_REM, independent of DPR. */
+  line-height: 1.618; /* GPUI's default text line-height. */
+  color-scheme: dark;
+  font-synthesis: none;
+  /* Cosmic Text lays out unhinted advances. Chromium's default hinted
+     advances round each small glyph and change wrapping, even with the same
+     font bytes. Keep actual DOM text, but request its outline geometry. */
+  text-rendering: geometricPrecision;
+  background: var(--background);
+  color: var(--foreground);
+  --space-part: .25rem;
+  --space-samples: .75rem;
+  --caption-size: 11px;
+  --secondary-size: 12px;
+  --action-glyph: calc(var(--action-button-h) * 7 / 12);
+  --action-gap: calc(var(--action-button-h) / 6);
+}
+* { box-sizing: border-box; scrollbar-color: var(--scrollbar-thumb-background) var(--background); }
+body { margin: 0; }
+button, input, select { font: inherit; }
+button { cursor: default; }
+::selection { background: var(--selection-background); color: var(--caret); }
+input { caret-color: var(--caret); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+
+/* Raster boundary is fixed by the native fixture, never scaled to conceal a diff. */
+.gallery-viewport { width: 800px; height: 600px; padding: 1rem; flex-shrink: 0; background: var(--background); }
+[data-capture='true'], [data-capture='true'] body { width: 800px; height: 600px; overflow: hidden; }
+[data-capture='true'][data-full='true'], [data-capture='true'][data-full='true'] body { height: auto; min-height: 600px; overflow: visible; }
+[data-capture='true'][data-full='true'] .gallery-viewport { height: auto; min-height: 600px; }
+.gallery-card {
+  display: flex; flex-direction: column; gap: var(--space-part);
+  padding: var(--pad-x); border: 1px solid var(--border);
+  border-radius: var(--surface-radius); background: var(--muted-background);
+  font-size: var(--row-font);
+  /* GPUI TextLayout pixel-snaps line heights at the fixture's DPR 2. */
+  line-height: round(nearest, calc(var(--row-font) * 1.618), .5px);
+}
+.card-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-part); }
+.card-title h2 { margin: 0; font: inherit; font-family: 'JetBrainsMono Nerd Font', monospace; font-size: var(--mono-font); line-height: round(nearest, calc(var(--mono-font) * 1.618), .5px); color: var(--caret); }
+.card-source { margin: 0; font-size: var(--caption-size); line-height: round(nearest, calc(var(--caption-size) * 1.618), .5px); color: var(--muted-foreground); }
+.card-usage { margin: 0; font-size: var(--secondary-size); line-height: round(nearest, calc(var(--secondary-size) * 1.618), .5px); }
+.samples { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-samples); padding-top: var(--space-part); }
+.sample { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-part); }
+.sample > div:first-child { display: flex; }
+.sample-caption { font-size: var(--caption-size); line-height: round(nearest, calc(var(--caption-size) * 1.618), .5px); color: var(--muted-foreground); }
+.action-button {
+  height: var(--action-button-h); min-width: var(--action-button-h);
+  /* GPUI TextLayout ceilings each label; Taffy snaps the frame at DPR2.
+     Form controls otherwise override the root's unhinted advance request. */
+  text-rendering: geometricPrecision;
+  width: calc-size(max-content, round(nearest, size, .5px));
+  padding: 0 var(--action-button-pad-x); border-radius: var(--action-button-radius);
+  gap: var(--action-gap); font-size: var(--action-button-font);
+  line-height: round(nearest, calc(var(--action-button-font) * 1.25), .5px);
+  /* GPUI Button paints a border only for Default and outlined variants. */
+  border-width: 0;
+}
+.action-button > .button-label { width: calc-size(max-content, round(up, size, 1px)); }
+.action-button svg { width: var(--action-glyph); height: var(--action-glyph); stroke-width: 2; }
+.button-primary { background: var(--primary-background); color: var(--primary-foreground); border-color: transparent; }
+.button-primary:not(:disabled):hover { background: var(--primary-hover-background); }
+.button-primary:not(:disabled):active { background: var(--primary-active-background); }
+.button-primary:disabled { background: var(--fixture-disabled-button-fill); color: color-mix(in srgb, var(--muted-foreground) 50%, transparent); }
+.button-accept { background: var(--fixture-accept-fill); color: var(--success-background); border-color: transparent; }
+.button-reject { background: var(--fixture-reject-fill); color: var(--danger-background); border: 1px solid var(--fixture-reject-border); }
+.button-caution { background: var(--fixture-caution-fill); color: var(--warning-background); border-color: transparent; }
+.button-accept:hover, .button-caution:hover { filter: brightness(1.15); }
+.button-reject:hover { background: color-mix(in srgb, var(--danger-background) 16%, transparent); }
+.button-outline { background: var(--fixture-input-fill); color: var(--foreground); border: 1px solid var(--input-border); }
+.button-outline:hover { background: var(--secondary-hover-background); }
+.button-ghost { color: var(--secondary-foreground); border-color: transparent; background: transparent; }
+.button-ghost:hover { background: var(--secondary-hover-background); }
+.button-ghost:active { background: var(--secondary-active-background); }
+.button-selected { background: var(--secondary-active-background); color: var(--foreground); border-color: transparent; }
+.button-selected:hover { background: var(--secondary-hover-background); }
+.copy-button { width: 1.25rem; height: 1.25rem; border: 0; border-radius: var(--input-radius); padding: 0; }
+.copy-button svg { width: .75rem; height: .75rem; }
+.input-sample { width: 240px; }
+.input-sample > div:first-child { width: 100%; }
+.gallery-input {
+  text-rendering: geometricPrecision;
+  height: 1.5rem; padding: 2px 8px; border-color: var(--input-border);
+  border-radius: var(--input-radius); font-size: .875rem; line-height: 1.25rem;
+  background: var(--fixture-input-fill);
+  color: var(--foreground);
+}
+.gallery-input::placeholder { color: var(--muted-foreground); }
+.gallery-input:disabled { color: color-mix(in srgb, var(--foreground) 50%, transparent); background: var(--fixture-disabled-input-fill); }
+.input-compact { height: 1.25rem; padding: 0 4px; font-size: .75rem; }
+.masked-input { position: relative; width: 100%; min-width: 0; }
+.masked-input input { padding-right: 2rem; }
+/* Native Input's Text button has no padding; align its glyph to the 8px
+   content inset plus 1px border, without shrinking the web hit target. */
+.mask-toggle { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); justify-content: flex-end; height: 1.25rem; color: color-mix(in srgb, var(--foreground) 90%, transparent); }
+.mask-toggle svg { width: .75rem; height: .75rem; }
+.bounded-state { width: 560px; height: 260px; overflow: hidden; border: 1px solid var(--list-hover-background); }
+.error-state { display: flex; flex-direction: column; align-items: center; padding: 120px 16px 0; gap: .5rem; font-size: var(--row-font); }
+.error-state h3 { font-size: var(--heading-font); line-height: round(nearest, calc(var(--heading-font) * 1.618), .5px); margin: 0; }
+/* Native state_box centres TextLayout's ceiled width, not raw glyph advance. */
+.error-state h3, .error-state [data-slot='alert-description'] { width: calc-size(max-content, round(up, size, 1px)); }
+.error-state [data-slot='alert-description'] { max-width: 520px; text-align: center; }
+.recovery-actions { display: flex; gap: .5rem; margin-top: 8px; }
+
+.comparison-app { min-width: 320px; }
+.app-header { padding: 1.5rem; border-bottom: 1px solid var(--border); }
+.app-header h1 { font-size: 1.4rem; margin: 0 0 .5rem; }
+.app-header p, footer { color: var(--muted-foreground); }
+.selectors { display: flex; flex-wrap: wrap; gap: 1.5rem; margin-top: 1rem; }
+.selectors label { display: flex; flex-direction: column; gap: .4rem; }
+.selectors select { padding: .5rem .75rem; border: 1px solid var(--input-border); border-radius: var(--input-radius); background: var(--muted-background); color: var(--foreground); max-width: 100%; }
+.comparison-panes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.comparison-panes section { min-width: 0; }
+.comparison-panes section + section { border-left: 1px solid var(--border); }
+.comparison-panes section > h2 { padding: 1rem; margin: 0; font-size: 1rem; border-bottom: 1px solid var(--border); }
+.comparison-panes h2 span { display: block; color: var(--muted-foreground); font-size: .85rem; margin-top: .4rem; }
+.pane-scroll { overflow-x: auto; }
+.native-reference { display: block; width: 800px; height: 600px; max-width: none; }
+footer { padding: 1rem 1.5rem; border-top: 1px solid var(--border); font-size: .9rem; }
+@media (max-width: 1000px) {
+  .comparison-panes { grid-template-columns: minmax(0, 1fr); }
+  .comparison-panes section + section { border-left: 0; border-top: 1px solid var(--border); }
+}
+
+/* Review navigation owns catalogue scanning, not the sample's density. */
+.gallery-workspace { display: grid; grid-template-columns: 19rem minmax(0, 1fr); }
+.gallery-navigation { padding: 1rem; border-right: 1px solid var(--border); min-width: 0; }
+.gallery-navigation label { display: flex; flex-direction: column; gap: .5rem; }
+.gallery-navigation select { max-width: 100%; background: var(--muted-background); color: var(--foreground); border: 1px solid var(--border); padding: .5rem; }
+.gallery-detail { min-width: 0; }
+.card-navigation { display: flex; flex-direction: column; gap: .25rem; max-height: 70vh; overflow: auto; padding: .25rem; }
+.card-navigation .action-button { height: auto; min-height: 2rem; width: 100%; justify-content: start; text-align: start; overflow-wrap: anywhere; }
+.card-navigation .button-label { width: auto; white-space: normal; }
+.selectors input { width: 20rem; max-width: 100%; }
+.selectors select { max-width: 32rem; }
+.review-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; padding: 1rem; border-bottom: 1px solid var(--border); }
+.review-navigation p { margin: 0; flex: 1; min-width: 10rem; text-align: center; }
+.coverage-details, .missing-evidence { padding: 1rem; }
+.coverage-details { border-top: 1px solid var(--border); }
+.gallery-detail .pane-scroll { overflow: auto; max-height: 50rem; scrollbar-gutter: stable; }
+.gallery-detail .gallery-viewport { height: auto; min-height: 600px; }
+.gallery-detail .native-reference { height: auto; }
+textarea:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+@media(max-width: 800px) {
+  .gallery-workspace { grid-template-columns: minmax(0, 1fr); }
+  .gallery-navigation { border-right: 0; border-bottom: 1px solid var(--border); }
+  .card-navigation { max-height: 15rem; }
+}

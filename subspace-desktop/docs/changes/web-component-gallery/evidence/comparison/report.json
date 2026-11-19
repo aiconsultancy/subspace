@@ -1,0 +1,116 @@
+{
+  "threshold": 0,
+  "includeAA": false,
+  "maxDiffPixels": 0,
+  "pass": false,
+  "cases": [
+    {
+      "id": "one-dark-action-button",
+      "theme": "one-dark",
+      "card": "action-button",
+      "width": 1600,
+      "height": 1200,
+      "pass": false,
+      "changedPixels": 40923,
+      "exactChangedPixels": 57065,
+      "ignoredEdgePixels": 16142,
+      "changedPercent": 2.13140625,
+      "files": {
+        "reference": "one-dark-action-button-reference.png",
+        "actual": "one-dark-action-button-react.png",
+        "diff": "one-dark-action-button-diff.png",
+        "overlay": "one-dark-action-button-overlay.png"
+      }
+    },
+    {
+      "id": "one-dark-input",
+      "theme": "one-dark",
+      "card": "input",
+      "width": 1600,
+      "height": 1200,
+      "pass": false,
+      "changedPixels": 93197,
+      "exactChangedPixels": 108304,
+      "ignoredEdgePixels": 15107,
+      "changedPercent": 4.854010416666667,
+      "files": {
+        "reference": "one-dark-input-reference.png",
+        "actual": "one-dark-input-react.png",
+        "diff": "one-dark-input-diff.png",
+        "overlay": "one-dark-input-overlay.png"
+      }
+    },
+    {
+      "id": "one-dark-error-box",
+      "theme": "one-dark",
+      "card": "error-box",
+      "width": 1600,
+      "height": 1200,
+      "pass": false,
+      "changedPixels": 14694,
+      "exactChangedPixels": 27193,
+      "ignoredEdgePixels": 12499,
+      "changedPercent": 0.7653125,
+      "files": {
+        "reference": "one-dark-error-box-reference.png",
+        "actual": "one-dark-error-box-react.png",
+        "diff": "one-dark-error-box-diff.png",
+        "overlay": "one-dark-error-box-overlay.png"
+      }
+    },
+    {
+      "id": "cupertino-dark-action-button",
+      "theme": "cupertino-dark",
+      "card": "action-button",
+      "width": 1600,
+      "height": 1200,
+      "pass": false,
+      "changedPixels": 33076,
+      "exactChangedPixels": 49076,
+      "ignoredEdgePixels": 16000,
+      "changedPercent": 1.7227083333333333,
+      "files": {
+        "reference": "cupertino-dark-action-button-reference.png",
+        "actual": "cupertino-dark-action-button-react.png",
+        "diff": "cupertino-dark-action-button-diff.png",
+        "overlay": "cupertino-dark-action-button-overlay.png"
+      }
+    },
+    {
+      "id": "cupertino-dark-input",
+      "theme": "cupertino-dark",
+      "card": "input",
+      "width": 1600,
+      "height": 1200,
+      "pass": false,
+      "changedPixels": 93225,
+      "exactChangedPixels": 108444,
+      "ignoredEdgePixels": 15219,
+      "changedPercent": 4.85546875,
+      "files": {
+        "reference": "cupertino-dark-input-reference.png",
+        "actual": "cupertino-dark-input-react.png",
+        "diff": "cupertino-dark-input-diff.png",
+        "overlay": "cupertino-dark-input-overlay.png"
+      }
+    },
+    {
+      "id": "cupertino-dark-error-box",
+      "theme": "cupertino-dark",
+      "card": "error-box",
+      "width": 1600,
+      "height": 1200,
+      "pass": false,
+      "changedPixels": 15095,
+      "exactChangedPixels": 27547,
+      "ignoredEdgePixels": 12452,
+      "changedPercent": 0.7861979166666667,
+      "files": {
+        "reference": "cupertino-dark-error-box-reference.png",
+        "actual": "cupertino-dark-error-box-react.png",
+        "diff": "cupertino-dark-error-box-diff.png",
+        "overlay": "cupertino-dark-error-box-overlay.png"
+      }
+    }
+  ]
+}

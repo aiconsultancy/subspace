@@ -8527,6 +8527,8 @@ name = "subspace-component-gallery-board"
 version = "0.2.0"
 dependencies = [
  "gpui-kit",
+ "image",
+ "serde_json",
  "subspace-charts",
  "subspace-core",
  "subspace-dashboard",
