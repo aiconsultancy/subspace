@@ -38,11 +38,16 @@ TOKEN=$(curl --fail --silent http://127.0.0.1:3000/api/v1/auth/dev/token \
 
 To add fictional demo data, run `docker compose exec -T api bun run seed:demo`.
 It signs in as `developer@example.com` in organisation `local` through the
-development endpoint and creates two fleets, an initiative and a project for
-each, labels, issues and stakeholders. Running it again keeps existing records.
+development endpoint and creates the fictional Fallow Reach rehearsal with
+fleets, initiatives, projects, issues, decisions and attachments. Running it
+again fills in missing fixtures.
 `SEED_IRC_HOST`, `SEED_IRC_PLAIN_PORT` and `SEED_IRC_TLS_PORT` set the fleets'
-IRC endpoints. The repository root's `make stack-up` runs it for the whole local
-system.
+IRC endpoints. From the repository root, `make stack-up` also adds IRC history and
+primes the local GitHub webhook with a generated key for simulated deployment
+and pull request events. The root seed dates its new issue and comment events
+to the rehearsal timeline. The four synthetic issue screenshots can be
+regenerated with `python3 scripts/demo/generate-art.py` using Python 3.12 and
+`rsvg-convert`.
 
 The development endpoint accepts optional `email`, `name` and `organisation`
 fields and returns `{accessToken,tokenType,expiresIn}`. Both `AUTH_PROVIDERS=dev`

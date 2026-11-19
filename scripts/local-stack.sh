@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # The whole system on this machine: PostgreSQL, the API and Ergo IRC from the
-# root compose.yaml, with demo data. Run through the root Makefile.
+# root compose.yaml, with optional demo data. Run through the root Makefile.
 #
 # Usage: scripts/local-stack.sh <command>
 #   up                    generate credentials, start, seed, configure Channels
-#   seed                  seed demo data again (existing records are kept)
+#   demo                  add or top up demo data and IRC history
 #   token                 print a development bearer token for the API
 #   desktop-irc-config    print a desktop irc/config.json for the local IRC
 #   stack-desktop-config  install the local IRC networks in the desktop config
@@ -49,12 +49,19 @@ secrets() {
     chmod 644 "$irc/accounts.json" "$irc/operator.seed"
 }
 
-seed() {
+seed_api() {
     docker compose exec -T \
+        -e SEED_ROOT_STACK=1 \
         -e SEED_IRC_PLAIN_PORT="${IRC_PLAIN_PORT:-6667}" \
         -e SEED_IRC_TLS_PORT="${IRC_TLS_PORT:-6697}" \
         -e SEED_EMAIL="$email" -e SEED_ORGANISATION="$organisation" \
-        api bun run --silent seed:demo
+        api bun run --silent seed:demo "$@"
+}
+
+seed_demo() {
+    local transcript
+    transcript="$(seed_api --with-irc)"
+    docker compose exec -T irc python3 /run/subspace-stack/seed-irc.py <<<"$transcript"
 }
 
 desktop_irc_config() {
@@ -70,16 +77,18 @@ install_desktop_irc_config() {
 
 case "${1:-}" in
     up)
+        demo="${SUBSPACE_STACK_DEMO_DATA:-1}"
+        [[ "$demo" == 0 || "$demo" == 1 ]] || die "SUBSPACE_STACK_DEMO_DATA must be 0 or 1"
         secrets
         docker compose up --build --detach --wait
         # Older stacks mounted operator.password directly. Tighten old files
         # once Compose has switched the container to the new seed mount.
         chmod 600 "$irc/"*.password
-        seed
+        if [ "$demo" = 0 ]; then seed_api --workspace-only; else seed_demo; fi
         install_desktop_irc_config
         echo "API: http://127.0.0.1:${API_PORT:-3000}  IRC: 127.0.0.1:${IRC_PLAIN_PORT:-6667} (TLS ${IRC_TLS_PORT:-6697})"
         ;;
-    seed) seed ;;
+    demo|seed) seed_demo ;;
     token) docker compose exec -T api bun run --silent auth:dev "$email" "$organisation" ;;
     desktop-irc-config) desktop_irc_config ;;
     stack-desktop-config) install_desktop_irc_config ;;
