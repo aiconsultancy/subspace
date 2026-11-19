@@ -169,7 +169,13 @@ fn take(requests: &mut Requests, key: &str) -> Option<Pending> {
 }
 
 /// A finished `chathistory` batch for `target`, oldest first.
-pub(super) fn deliver(session: &mut Session, target: &str, messages: &[Message], out: &mut Output) {
+pub(super) fn deliver(
+    session: &mut Session,
+    target: &str,
+    messages: &[Message],
+    closed: bool,
+    out: &mut Output,
+) {
     let key = session.fold(target);
     let requested = take(&mut session.history, &key);
     let buffer_target = buffer_target(session, target);
@@ -182,7 +188,7 @@ pub(super) fn deliver(session: &mut Session, target: &str, messages: &[Message],
         Some(Pending { merge: true, .. }) => Event::Backfill { buffer, lines },
         _ => Event::History {
             buffer,
-            complete: complete(messages.len(), requested),
+            complete: closed && complete(messages.len(), requested),
             lines,
         },
     });

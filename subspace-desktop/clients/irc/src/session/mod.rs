@@ -29,7 +29,7 @@ mod cleanroom_acceptance;
 #[cfg(test)]
 mod tests;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use chrono::{DateTime, Utc};
 
@@ -133,7 +133,7 @@ pub struct Session {
     spellings: spelling::Spellings,
     sent_batches: u64,
     now: DateTime<Utc>,
-    batches: BTreeMap<String, batch::Batch>,
+    batches: VecDeque<batch::Batch>,
 }
 
 impl Session {
@@ -155,7 +155,7 @@ impl Session {
             spellings: spelling::Spellings::default(),
             sent_batches: 0,
             now: Utc::now(),
-            batches: BTreeMap::new(),
+            batches: VecDeque::new(),
         };
         session.refold(carry.spellings);
         session

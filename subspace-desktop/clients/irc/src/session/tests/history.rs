@@ -1,5 +1,7 @@
+use super::super::batch::{MAX_BATCH_MESSAGES, MAX_OPEN_BATCHES};
 use super::{ALL_CAPS, buffer, channel, command, feed, in_channel, lines, now, sent};
 use crate::model::{Command, Event, LineKind, Target};
+use crate::proto::parse;
 
 fn history(events: &[Event]) -> Option<(&Vec<crate::model::Line>, bool)> {
     events.iter().find_map(|event| match event {
@@ -8,6 +10,80 @@ fn history(events: &[Event]) -> Option<(&Vec<crate::model::Line>, bool)> {
         } => Some((lines, *complete)),
         _ => None,
     })
+}
+
+#[test]
+fn opening_another_batch_releases_the_oldest_one() {
+    let mut session = in_channel(ALL_CAPS);
+    feed(
+        &mut session,
+        &[
+            "BATCH +oldest chathistory #c",
+            "@batch=oldest :alice!a@h PRIVMSG #c :first",
+        ],
+    );
+    for index in 1..MAX_OPEN_BATCHES {
+        let out = feed(
+            &mut session,
+            &[&format!("BATCH +b{index} example.org/transparent")],
+        );
+        assert!(out.events.is_empty());
+    }
+    let out = feed(&mut session, &["BATCH +newest chathistory #c"]);
+    let (recovered, complete) = history(&out.events).expect("oldest batch delivered");
+    assert_eq!(recovered[0].text, "first");
+    assert!(!complete);
+    assert_eq!(session.batches.len(), MAX_OPEN_BATCHES);
+    assert_eq!(feed(&mut session, &["BATCH -oldest"]), Default::default());
+    let out = feed(
+        &mut session,
+        &["@batch=newest :alice!a@h PRIVMSG #c :last", "BATCH -newest"],
+    );
+    assert_eq!(history(&out.events).unwrap().0[0].text, "last");
+}
+
+#[test]
+fn an_overflowing_history_batch_delivers_its_limit_once() {
+    for nested in [false, true] {
+        let mut session = in_channel(ALL_CAPS);
+        feed(&mut session, &["BATCH +parent chathistory #c"]);
+        let message = parse("@batch=parent :alice!a@h PRIVMSG #c :held").unwrap();
+        let direct_count = MAX_BATCH_MESSAGES - usize::from(nested);
+        for _ in 0..direct_count {
+            assert_eq!(session.receive(message.clone(), now()), Default::default());
+        }
+        let out = if nested {
+            feed(
+                &mut session,
+                &[
+                    "@batch=parent BATCH +child example.org/nested",
+                    "@batch=child :alice!a@h PRIVMSG #c :fits",
+                    "@batch=child :alice!a@h PRIVMSG #c :excess",
+                    "BATCH -child",
+                ],
+            )
+        } else {
+            feed(
+                &mut session,
+                &["@batch=parent :alice!a@h PRIVMSG #c :excess"],
+            )
+        };
+        let (recovered, complete) = history(&out.events).expect("full batch delivered");
+        assert_eq!(recovered.len(), MAX_BATCH_MESSAGES);
+        assert_eq!(
+            recovered.last().unwrap().text,
+            if nested { "fits" } else { "held" }
+        );
+        assert!(!complete);
+        let end = feed(
+            &mut session,
+            &[
+                "@batch=parent :alice!a@h PRIVMSG #c :still excess",
+                "BATCH -parent",
+            ],
+        );
+        assert_eq!(end, Default::default());
+    }
 }
 
 #[test]
