@@ -517,3 +517,8 @@ read-only reference checkouts and fresh worktree bases. It exercises nftables
 when permitted by the container and checks rule generation otherwise. Run
 `python3 -B subspace-installer/tests/policy_test.py` for the offline policy
 checks.
+
+## Licence
+
+The Subspace fleet installer is licensed under the
+[Apache License 2.0](../LICENSE).
