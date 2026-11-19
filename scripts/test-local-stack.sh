@@ -28,6 +28,20 @@ printf '%s\n' "$*" >>"$DOCKER_LOG"
 SH
 chmod 755 "$fixture/bin/docker"
 
+cat >"$fixture/bin/python3" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+chmod 755 "$fixture/bin/python3"
+if make -s stack-up >"$fixture/old-python" 2>&1; then
+    echo "expected unsupported Python to fail before stack-up" >&2
+    exit 1
+fi
+grep -Fq 'Python 3.12 or newer is required to configure Channels' "$fixture/old-python"
+test ! -e "$DOCKER_LOG"
+test ! -e .stack
+rm "$fixture/bin/python3"
+
 EXPECT_MISSING_CONFIG=1 make -s stack-up >"$fixture/up"
 grep -Fxq "Created IRC config at $config" "$fixture/up"
 grep -Eq '^compose up .*--wait$' "$DOCKER_LOG"
@@ -68,7 +82,7 @@ cat >"$config" <<'JSON'
     {"id": "aurora", "host": "localhost", "port": 6667, "tls": true, "acceptInvalidCerts": true},
     {"id": "handmade", "name": "My local TLS", "host": "IRC.LOCALHOST", "port": 16697,
      "tls": false, "channels": ["#example"], "autoConnect": false,
-     "sasl": {"username": "old", "password": "fixture", "external": true, "custom": true}}
+     "sasl": {"username": "developer", "password": "fixture", "custom": true}}
   ],
   "highlights": ["fixture"],
   "captainNotifications": true,
@@ -106,6 +120,53 @@ assert {key: tls[key] for key in ("name", "channels", "autoConnect")} == {
 assert plain["sasl"]["username"] == "developer"
 assert Path(plain["sasl"]["passwordFile"]).resolve() == Path.cwd() / ".stack/irc/developer.password"
 assert tls["sasl"] == dict(plain["sasl"], custom=True)
+PY
+
+cp "$config" "$fixture/first-merge.json"
+IRC_PLAIN_PORT=16668 make -s stack-desktop-config >/dev/null
+backups=("$(dirname "$config")"/config.json.*.bak)
+test "${#backups[@]}" = 1
+cmp "${backups[0]}" "$fixture/first-merge.json"
+make -s stack-desktop-config >/dev/null
+cmp "$config" "$fixture/first-merge.json"
+
+backup_dir=$(dirname "$config")
+stale_backup="$backup_dir/config.json.20000101T000000000000Z.bak"
+cp "$fixture/first-merge.json" "$stale_backup"
+ln "$config" "$fixture/current-inode"
+make -s stack-desktop-config >"$fixture/unchanged"
+grep -Fxq "IRC config unchanged at $config" "$fixture/unchanged"
+test "$config" -ef "$fixture/current-inode"
+test ! -e "$stale_backup"
+
+cat >"$fixture/protected.json" <<'JSON'
+{"networks": [
+  {"id":"aurora","host":"irc.example.com","port":6667,"sasl":{"username":"developer","password":"fixture"}},
+  {"id":"aurora-local","host":"localhost","port":16667,"password":"fixture"},
+  {"id":"borealis","host":"localhost","port":16697,"tls":true,"acceptInvalidCerts":false,
+   "sasl":{"username":"tunnel-user","password":"fixture","external":true}},
+  {"id":"certificate-tunnel","host":"127.0.0.1","port":16697,"clientCert":"/fixture/client.pem"}
+]}
+JSON
+cp "$fixture/protected.json" "$fixture/protected-before.json"
+SUBSPACE_STACK_DESKTOP_CONFIG_FILE="$fixture/protected.json" make -s stack-desktop-config >/dev/null 2>"$fixture/protected-warning"
+grep -Fq 'kept existing IRC connection and added aurora-local-2' "$fixture/protected-warning"
+grep -Fq 'kept existing IRC connection and added borealis-local' "$fixture/protected-warning"
+cp "$fixture/protected.json" "$fixture/protected-after.json"
+SUBSPACE_STACK_DESKTOP_CONFIG_FILE="$fixture/protected.json" make -s stack-desktop-config >/dev/null
+cmp "$fixture/protected-after.json" "$fixture/protected.json"
+SUBSPACE_STACK_DESKTOP_CONFIG_FILE="$fixture/protected.json" IRC_PLAIN_PORT=16668 make -s stack-desktop-config >/dev/null
+python3 - "$fixture/protected-before.json" "$fixture/protected.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+before, after = [json.loads(Path(file).read_text())["networks"] for file in sys.argv[1:]]
+assert after[:len(before)] == before
+plain, tls = after[len(before):]
+assert (plain["id"], plain["port"]) == ("aurora-local-2", 16668)
+assert (tls["id"], tls["port"]) == ("borealis-local", 16697)
+assert all(network["sasl"]["username"] == "developer" for network in (plain, tls))
 PY
 
 printf '{"highlights":["fixture"]}\n' >"$fixture/empty-networks.json"
@@ -155,7 +216,7 @@ fi
 cmp "$fixture/merged.json" "$config"
 test "$(find "$(dirname "$config")" -name '*.bak' | wc -l | tr -d ' ')" = 1
 make -s stack-up >"$fixture/restart"
-grep -Fxq "Updated IRC config at $config" "$fixture/restart"
+grep -Fxq "IRC config unchanged at $config" "$fixture/restart"
 cmp "$fixture/merged.json" "$config"
 if cmp -s "$fixture/old-password" .stack/irc/developer.password; then
     echo "expected stack-up to generate a new password after reset" >&2

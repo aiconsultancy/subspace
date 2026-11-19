@@ -25,6 +25,11 @@ accounts=(developer aurora-admiral aurora-lyra aurora-orion borealis-admiral bor
 
 die() { echo "local-stack: $*" >&2; exit 1; }
 
+require_python() {
+    python3 -c 'import sys; sys.exit(sys.version_info < (3, 12))' 2>/dev/null ||
+        die "Python 3.12 or newer is required to configure Channels. Put it first on PATH."
+}
+
 secrets() {
     command -v openssl >/dev/null || die "openssl is required to generate local passwords"
     (umask 077; mkdir -p "$irc")
@@ -66,7 +71,6 @@ seed_demo() {
 
 desktop_irc_config() {
     [ -s "$irc/developer.password" ] || die "run 'make stack-up' first"
-    command -v python3 >/dev/null || die "python3 is required to configure Channels"
     python3 "$root/scripts/local-stack/desktop-irc-config.py" "$irc/developer.password" "$@"
 }
 
@@ -79,6 +83,7 @@ case "${1:-}" in
     up)
         demo="${SUBSPACE_STACK_DEMO_DATA:-1}"
         [[ "$demo" == 0 || "$demo" == 1 ]] || die "SUBSPACE_STACK_DEMO_DATA must be 0 or 1"
+        if [ "${SUBSPACE_STACK_DESKTOP_CONFIG:-1}" != 0 ]; then require_python; fi
         secrets
         docker compose up --build --detach --wait
         # Older stacks mounted operator.password directly. Tighten old files
@@ -90,8 +95,11 @@ case "${1:-}" in
         ;;
     demo|seed) seed_demo ;;
     token) docker compose exec -T api bun run --silent auth:dev "$email" "$organisation" ;;
-    desktop-irc-config) desktop_irc_config ;;
-    stack-desktop-config) install_desktop_irc_config ;;
+    desktop-irc-config) require_python; desktop_irc_config ;;
+    stack-desktop-config)
+        if [ "${SUBSPACE_STACK_DESKTOP_CONFIG:-1}" != 0 ]; then require_python; fi
+        install_desktop_irc_config
+        ;;
     reset)
         docker compose down --volumes --remove-orphans
         rm -rf "$stack"
