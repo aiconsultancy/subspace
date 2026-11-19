@@ -66,3 +66,31 @@ The parser skips malformed tag entries with an empty key, following IRCv3's
 nonempty tag-key grammar. This also keeps serialisation unambiguous.
 The supplied acceptance cases retain their inputs and assertions. They are
 grouped by subsystem, with shared fixture steps factored out of network tests.
+
+## Round 2
+
+On 19 November 2026 the implementer revised the clean-room code using
+`TASK2.md`, `spec.md` and the protocol references below.
+
+- A 30-second deadline covers each transport write and flush. Expiry drops
+  the link and reports uncertain sends through the existing write failure path.
+- Each session tracks at most 64 open batches and buffers at most 10,000
+  messages per batch, including messages merged from children. Opening another
+  batch releases the oldest one. A batch that exceeds its message limit releases
+  what fits and ignores the remaining components until close. History released
+  early is incomplete. [IRCv3 Batch](https://ircv3.net/specs/extensions/batch).
+- Registration tries the configured alternate nicks and up to three appended
+  underscores. Exhaustion or a candidate beyond the advertised `NICKLEN` byte
+  limit ends the attempt with a failed status. This limits the unbounded
+  fallback described in section 15.2 and is a deliberate deviation under
+  section 18.2. [NICKLEN](https://modern.ircdocs.horse/#nicklen-parameter).
+- A SASL exchange still in progress after 30 seconds is aborted. Capability
+  negotiation then follows the usual progress rules, and late challenges to
+  the timed-out exchange are ignored. [IRCv3 SASL 3.1](https://ircv3.net/specs/extensions/sasl-3.1#the-authenticate-command).
+- Automatic CTCP replies are limited to one every three seconds per folded
+  sender and ten per rolling minute per connection to limit NOTICE floods.
+  [CTCP](https://modern.ircdocs.horse/ctcp).
+- Section 7.2 clarification. The parser drops entries with an empty key and
+  still accepts empty values on named tags. [IRCv3 Message Tags](https://ircv3.net/specs/extensions/message-tags#format).
+- The IRC crate inherits the desktop workspace’s declared Rust 1.99.0 floor,
+  matching the mise pin.
