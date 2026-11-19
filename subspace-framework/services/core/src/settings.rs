@@ -141,6 +141,11 @@ impl SettingsFile {
     pub fn board_secret_present(&self, section: &[String], key: &str) -> bool {
         board_fields::secret_present(&self.root, section, key)
     }
+    /// The keys of the secrets saved for the board at `section`, never
+    /// their values.
+    pub fn board_secret_keys(&self, section: &[String]) -> Vec<String> {
+        board_fields::secret_keys(&self.root, section)
+    }
     pub fn board_permission(&self, section: &[String], key: &str) -> bool {
         board_fields::permission(&self.root, section, key)
     }
