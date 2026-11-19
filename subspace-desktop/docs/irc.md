@@ -1,0 +1,921 @@
+# Channels (IRC)
+
+The Channels Space (`spaces/irc`, board id `irc`) is an IRC client with IRCv3
+support. It was called IRC until 0.4.0; its id, crates, settings file and
+stored data keep the `irc` name. The protocol, connections and session state live in
+`clients/irc` (`subspace-client-irc`); the board applies the runtime's events
+and sends it commands. The in-app guide is
+[spaces/irc/help.md](../spaces/irc/help.md).
+
+## Initiative channel sets
+
+The process Hub reads `GET /api/v1/me/initiatives` with the same Subspace API
+client as Issues. Only the caller's latest successful memberships are used;
+an access error, verified user change or empty result falls back to Local channels. The picker is
+shared across windows through the Hub and resets when you quit.
+
+The selected list replaces autojoin on exactly one connection: the one on the
+selected initiative's IRC server. An initiative assigned to a fleet uses that
+fleet's `ircHost`, `ircPort` and `ircTls` from Subspace API, so switching to an
+initiative of another fleet moves its channels to that fleet's connection;
+another initiative on the same server stays on the current one. Initiatives
+without a fleet use `SUBSPACE_IRC_ENDPOINT` (`irc://host:port` or
+`ircs://host:port`, by default `irc://127.0.0.1:6667`). While an assigned
+fleet's server is unknown, for example because its fleet could not be read,
+the initiative's autojoin stays off rather than using that default: the
+header says so and the Hub reads the memberships again, waiting 5 seconds at
+first and doubling the wait after each failure, up to 5 minutes. A TLS connection must
+verify certificates unless its host is loopback. When no connection matches,
+the header names the server to add in **Settings > Channels**; the desktop
+does not create connections, because IRC needs that server's SASL account.
+Other IRC connections never receive initiative channel names. Capture can
+use a numeric loopback IRC address when the debug API is also a validated
+loopback fixture. The network task retains the selected list while it
+reconnects. The board closes tabs retired by a switch and preserves cached
+message history and manually joined channels.
+
+See the [change record](changes/subspace-api-accounts/README.md).
+
+
+## Configuration
+
+The `captainNotifications` switch is on by default. See
+[Notify ship captains](../spaces/irc/help.md#notify-ship-captains).
+
+Networks live in the board's own settings file, `irc/config.json` in the
+folder of Subspace's `config.json`. With the config file at
+`~/.config/subspace/config.json`, it is `~/.config/subspace/irc/config.json`.
+The file's top-level object holds the IRC settings. Whether the board shows
+(`boards.irc`) stays in the main `config.json`. There are three ways to
+change the networks:
+
+- **Settings > Channels** lists the networks with **Add network**, **Edit…** and
+  **Remove…**, and has the board-wide **Highlight words**. Saving the network
+  form preserves per-network `highlights` values. Settings keeps edits in a
+  draft until you choose **Save**. It validates each network and names the
+  network and field that need fixing.
+- **Copy agent prompt**, on the IRC Settings page and on the board while no
+  network is configured, copies a self-contained prompt for a coding agent:
+  the absolute paths of this computer's IRC settings file and of the main
+  config file that enables the board, the rules for editing it (valid JSON,
+  keep other keys, keep mode `0600` and the folder's `0700`, ask for passwords
+  and never echo or commit them), the schema below and how to verify the
+  result. The
+  prompt is written from `spaces/irc/src/schema.rs`; a test keeps that file
+  equal to the serde names of `NetworkConfig` and `Sasl`.
+- Edit the file yourself. **Show in Finder** (**Show in File Explorer** on
+  Windows, **Show in Folder** on Linux), on the same two surfaces, shows the
+  IRC settings file, or the nearest existing folder above it before the first
+  save. **Settings > General** shows the main config file.
+
+A Settings save applies at once: the board's runtime hub observes the saved
+`Services` config, sends the runtime the new networks, and the runtime
+restarts only networks whose configuration changed. Unchanged networks stay
+connected and keep their buffers; removed networks disconnect and their
+buffers leave the list. A file edited outside Settings is read at the next
+start.
+
+For the local stack (`subspace-irc/` in this repository), add a network for
+`127.0.0.1`, port `6667`, TLS off, with SASL set to the Ergo account and
+password the stack provisioned; Ergo forces the nickname to the account
+name, and only an operator can create channels. A shared or remote fleet
+server uses its host name, port `6697` and TLS with certificate checks.
+
+```json
+{
+  "networks": [
+    {
+      "id": "local",
+      "name": "Local Ergo",
+      "host": "127.0.0.1",
+      "port": 16667,
+      "tls": false,
+      "nickname": "subspace",
+      "sasl": { "username": "subspace", "password": "…" },
+      "channels": ["#subspace"]
+    }
+  ],
+  "highlights": ["subspace"],
+  "captainNotifications": true
+}
+```
+
+Each network accepts:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `id` | required | Stable key, such as `libera`. Settings derives a new network's id from its name (`Example Network` becomes `example-network`, with `-2` and so on when taken) and never changes a saved id. |
+| `name` | the `id` | Name shown as the network's group. |
+| `host` | required | Server host name or address. |
+| `port` | `6697` | Server port, 1 to 65535. |
+| `tls` | `true` | Use TLS. |
+| `acceptInvalidCerts` | `false` | Accept any certificate. Only for local test servers. |
+| `caCert` | none | PEM CA certificate(s) trusted for this server besides the system roots, such as a private network's own CA. |
+| `nickname` | required | Preferred nick. |
+| `altNicks` | none | Nicks to try when the preferred one is taken; else an underscore is appended. |
+| `username`, `realname` | the nick | Sent at registration. |
+| `password` | none | Server password (`PASS`), not the account password. |
+| `sasl` | none | `{ "username": …, "password": … }` for SASL PLAIN, `{ "username": …, "passwordFile": … }` to read the PLAIN password from a file at each connect (used when `password` is empty), or `{ "username": …, "external": true }` for SASL EXTERNAL. |
+| `channels` | none | Channels joined after every connect. Each starts with `#` or `&`. |
+| `autoConnect` | `true` | Connect at startup. |
+| `highlights` | none | Extra highlight words for this network only. |
+| `clientCert`, `clientKey` | none | PEM client certificate and private key paths for TLS and SASL EXTERNAL. The key defaults to the certificate file. |
+
+Settings checks the same rules before it saves: a host and a nickname are
+required, the port is 1 to 65535, nicks start with a letter or one of
+`` [ ] \ ` _ ^ { | } `` and have no spaces, channel names start with `#` or
+`&`, file paths are absolute, PLAIN needs an account and a password or a
+password file, and EXTERNAL needs TLS and a client certificate. Keys the form
+does not show, in the network object, its `sasl` object or the file's
+top-level object, are kept as they are.
+
+The top-level `highlights` lists extra words that highlight a message on every
+network besides your nick. The board matches them itself, so changing them
+reconnects nothing. Words match whole words, ignoring case and formatting.
+Topic, mode and membership lines never highlight.
+
+A malformed network entry is skipped and named on the board's empty state;
+the other networks still connect. A file that is not a JSON object is ignored
+with a startup notice naming it, and Settings names it instead of showing the
+IRC page's editor. A file that other users can read or write is ignored with
+a startup notice that says to run `chmod 600`; a save from Settings rewrites
+it owner-only.
+
+`irc/config.json` is owner-only (`0600`) in an owner-only folder (`0700`);
+Settings writes both that way. Passwords stay in it and go only to the
+runtime. Settings never copies a saved password into an input: a saved
+password is kept until you clear or replace it, and removing a network removes
+its passwords on Save. Passwords never enter UI state or `state.json`.
+
+## IRCv3 support
+
+The runtime negotiates with `CAP LS 302` and requests, when the server offers
+them: `cap-notify`, `sasl` (PLAIN, EXTERNAL), `server-time`, `message-tags`,
+`batch`, `echo-message`, `labeled-response`, `away-notify`, `account-notify`,
+`account-tag`, `extended-join`, `multi-prefix`, `userhost-in-names`,
+`invite-notify`, `setname`, `chghost`, `standard-replies`,
+`draft/chathistory` (with `draft/event-playback`), `draft/read-marker` and
+`draft/multiline` and `draft/metadata-2` (requires `batch`), plus the
+`+typing` client tag. It reads ISUPPORT
+(`CHANTYPES`, `PREFIX`, `NETWORK`, `CASEMAPPING`, `CHATHISTORY`), answers
+`PING`, falls back to another nick on collision and reconnects with backoff.
+Opening the TCP connection and the TLS handshake each time out after 15
+seconds and are retried; **Disconnect** abandons an attempt in progress.
+
+Channels and private conversations follow the server's `CASEMAPPING`: `#Room`
+and `#room` (and, under `rfc1459`, `#[x]` and `#{x}`) are one buffer, shown with
+the first spelling the runtime saw, which it keeps across reconnects. Member
+updates carry each member's stored spelling.
+
+What the board does with them:
+
+| Capability | Board behaviour |
+| --- | --- |
+| `server-time` | Line times and day separators use the server's time. |
+| `draft/chathistory` | Joining a channel, or registering with a stored private conversation, asks only for what was missed since the newest stored line (`LATEST <target> msgid=…`, up to 500 lines), else the latest 100. Opening a buffer with fewer than 50 lines loads recent history; **Load older messages** loads 100 more. Opening a search result the buffer does not hold asks for the 50 lines around it (`AROUND`). Without the capability, the first request reports that there is no history and the row disappears. |
+| `draft/read-marker` | Opening a buffer sends `MARKREAD`; markers from other clients clear unread counts. |
+| `+typing` | Typing notices are sent at most every 3 seconds while you type and `done` when you clear the input; others' notices show above the input and expire after 6 (active) or 30 (paused) seconds. |
+| `draft/metadata-2` | The client subscribes to nickname `status` after registration. It emits `Event::NickStatus { network, nick, status }`; the Space currently ignores it. No visible status row yet. |
+| `multi-prefix` | The member column groups members by their highest prefix. |
+| `away-notify` | Away members are muted in the member column. |
+| `echo-message` | Your own lines appear once, as the server delivered them. |
+| `message-tags` (`msgid`) | A line that live delivery, history and the store all carry is shown and stored once; lines without a `msgid` match by time, sender and text. |
+
+The Server panel lists the capabilities the server enabled.
+
+### Nickname status protocol
+
+After `draft/metadata-2` and `batch` are acknowledged and registration
+completes, the runtime sends `METADATA * SUB status` once per capability
+activation. Without those capabilities it sends no metadata commands.
+It reads Ergo 2.19.1's `761 <recipient> <nick> status * :<value>` and
+`766 <recipient> <nick> status :<explanation>`, and the draft's
+`METADATA <nick> status <visibility> [:<value>]` (no value clears).
+Channel metadata and other keys do not change nickname statuses.
+
+`metadata` batches stream normally without blocking other traffic. Their
+target can be a channel even when the enclosed values belong to nicknames.
+Subscription numerics 770–773, metadata error numerics and `FAIL METADATA`
+produce diagnostics without conversation lines. A 774 sync-later reply
+requests `METADATA <target> SYNC` after its delay, including Ergo's
+`METADATA *ALL SYNC` for the initial snapshot. Positive delays run on the
+connection's existing ten-second tick; removing the capability cancels them.
+
+Each network holds current values using its own `CASEMAPPING`. Only a set,
+change or clear emits `Event::NickStatus`; repeated equal values do not.
+Events use the held value's first nickname spelling. Values clear on QUIT,
+NICK, deletion, loss of the final known shared channel (PART or KICK by
+either side), capability removal and connection end. Each clear is emitted
+to consumers, and reconnect carry data contains no statuses. Values learned
+outside known channel membership are retained until another clear rule
+applies; no extra membership tracking is introduced.
+
+At ingestion, a pure function strips IRC formatting and colour arguments,
+removes control and bidi override characters, replaces line separators with
+spaces, trims and limits text to 80 Unicode characters including a trailing
+ellipsis when cut. The workspace has no segmentation dependency, so this
+uses characters rather than grapheme clusters. Empty cleaned text clears.
+Markdown, URLs, mentions and issue references remain literal plain text;
+consumers must not interpret them as markup or interactive content.
+
+See [the status protocol change record](changes/irc-agent-status/README.md)
+for sources, tests and delivery gates. The conversation row follows in PR 2.
+
+### Reply protocol foundation
+
+The runtime preserves `+draft/reply` as `Line::reply_to` on `PRIVMSG`,
+`NOTICE` and actions, in channels and private conversations, live and in
+history. Multiline messages take the reference exclusively from the opening
+`BATCH`, as required for client tags by the
+[multiline specification](https://ircv3.net/specs/extensions/multiline).
+The existing deployed-server proof uses this draft wire tag; this slice
+continues to use `+draft/reply`.
+
+`Line::thread_root` follows the relationships in loaded lines of the same
+buffer. A reply to a reply resolves to the earliest known ancestor; cycles
+return no root. Resolving again after loading more history can complete the
+chain. The original relationship survives the local store, and older stored
+lines without the optional field still load. There is no count or server
+lookup in this foundation; the reply-search follow-up can later supply server results.
+
+`Line::reply(text, loaded, message_tags)` prepares `Command::Reply` only for
+a conversation message with a nonempty server `msgid` and `message-tags`
+enabled. The command sends literal text, using the resolved root as its
+`+draft/reply` value. The session rechecks `message-tags` and a nonempty ID,
+escapes the value through the protocol serializer and rejects values that
+cannot fit in an IRC tag. Multiline replies tag only the opening `BATCH`;
+without multiline, each split message carries the reference. Local echoes
+retain it. Ordinary composer and agent sends are unchanged.
+
+See the [protocol change record](changes/irc-reply-tags/README.md) for tests
+and proof commands.
+
+### Loaded reply counts
+
+A root message with loaded replies shows their count and the latest reply's
+local time below its text, in channels and private conversations. Replies to
+replies count on the root. The count covers only the messages this client
+currently holds; loading older history or restoring the store rebuilds it.
+the reply-search follow-up will add the server lookup. An unloaded root gets no count until it
+loads, and cyclic relationships get no count.
+
+`ThreadRoots` indexes a buffer's parents once for all its counts, preserving
+`Line::thread_root`'s cycle and missing-parent behaviour. Each conversation
+retains the resulting summaries and shares them across its virtual rows.
+
+Replies remain inline, so every message stays readable. Counts are read-only;
+the pane, reply action, composer and hiding replies from the room come in PR 3.
+Unread and notification behaviour are unchanged in this slice. See the
+[count change record](changes/irc-reply-count/README.md).
+
+**Join…** is available only while the selected network is connected; its
+tooltip says why otherwise. Commands that need the server while a network is
+disconnected or still connecting (input, joins, leaving a channel) leave a
+**Not connected** error line instead of being dropped. Your user modes read as
+`Your user modes are +Zi` (`RPL_UMODEIS`) or `Your user modes changed: +w`.
+
+## Message history and search
+
+The board keeps channel and private messages on this computer, in its own
+SQLite full-text store: the Framework's search store for the `irc` board
+(`<state dir>/search/<app>/<board>.sqlite`, folder `0700`, file `0600`). There
+is no other history file, and nothing goes into `state.json`. The design note
+is the [change record](changes/irc-search-history/spec.md).
+
+- **What is kept**: each `PRIVMSG`, `ACTION` and `NOTICE` in a channel or
+  private conversation, yours included, live, replayed by a bouncer or sent as
+  chat history. Joins, parts, quits, nick, topic, mode and server lines are
+  not kept. Each message is one record: its `msgid`, else a hash of where,
+  when, who and what, so copies dedupe; its text without formatting; the
+  network as the `project` filter; and an exact `ReferenceIdentity::github`
+  (`mentioned-pull-request` or `mentioned-issue`) for each GitHub pull
+  request or issue URL in it, so `related_items` for that item lists the
+  message.
+- **When it is written**: in order on the background executor, in batches of
+  at most 100, about a second after new lines arrive and when the board stops
+  (`hub/persist.rs`).
+- **Restore**: when the board starts, the hub reads each stored buffer's newest
+  2,000 lines before it configures the runtime. They show at once, as history:
+  no unread count, no mention count, no notification, no badge. It then sends
+  `Command::Anchors` with each buffer's newest stored line, so joining asks the
+  server only for what came after.
+- **Search**: IRC is a Search view source with one local scope (endpoint and
+  account `local`); the network is the `project` filter for `search_content`.
+  A result's title is `#channel · nick`, or the nick in a private
+  conversation; its kind is `Channel message` or `Private message`. Opening
+  one shows the buffer's panel, scrolls to the line and selects it; when the
+  buffer does not hold the line, the board first asks for the lines around it.
+- **Control**: the Search view's **Cache Channels** switch, on by default
+  (`BoardSettings::store_by_default`), keeps messages; off erases the store and
+  IRC keeps lines in memory only. **Clear cache…** deletes every stored
+  message. Retention (60 days by default) and the storage limit apply to IRC's
+  store alone and drop the oldest messages first. Leaving a channel, removing
+  it from the list or closing a private conversation deletes its stored
+  messages.
+
+## Removing channels and conversations from the list
+
+A joined channel's row menu offers **Leave channel**, a channel we are no
+longer in (after a kick or a typed `/part`) offers **Remove from list**, and a
+private conversation's offers **Close conversation**. The toolbar's **More**
+menu has the same items for the selected row. The server row offers none
+(`spaces/irc/src/remove.rs`).
+
+- **Leave channel** sends `Command::Part`, then `Command::Forget`, and
+  removes the buffer. It is unavailable while the network is not connected.
+- **Remove from list** and **Close conversation** send only
+  `Command::Forget` and remove the buffer.
+- `Command::Forget` sends nothing to the server. For a private conversation
+  the session forgets the nick, so the other side's notices go to the server
+  buffer again, as before the conversation was opened.
+- Each closes the buffer's panel. The conversation in front stays in front,
+  or the network's server buffer comes forward when the removed buffer was
+  in front, so the list keeps a selection.
+- A typed `/part` parts without removing the row, and a reconnect joins a
+  configured channel again as before.
+
+`IrcState::remove` drops the buffer and records it in `IrcState::removed`
+(`state/removed.rs`) with the time of the newest message someone else sent in
+it, a time the server set, or no time when there is none. Our own lines and
+local error lines are left out, because their times come from our clock. The
+hub saves that record under `irc.removed` in the state file whenever it
+changes and loads it at startup, so removals survive a restart. Names match
+ignoring ASCII case, because the runtime's spelling of a buffer may differ
+after a restart; they do not use RFC 1459 folding or Unicode case, which on a
+network with ASCII case mapping would join two different names. While an item
+is removed, `IrcState::apply` drops every event for it, including a bouncer's
+replay (`Event::Replayed`), except those that bring it back, which also forget
+the removal:
+
+| Removed | Comes back on |
+| --- | --- |
+| Private conversation | A message, action or notice in it (ours too, such as `/msg` from another channel) newer than the recorded time, or any one when no time was recorded, because the local clock cannot be compared with the server's. Not replayed history, typing, quits or nick changes. Also `Event::Joined` from `/query`, and opening it from the member list, a reference or a notification (`IrcState::open_query`) |
+| Channel | Our own join (`Event::Joined` or our join line), from `/join`, **Join…**, a channel reference or the server; adding the channel to the network's `channels` in Settings |
+
+A notification for a channel left since does nothing when chosen.
+
+A left channel stays out after a reconnect and a restart, also when it is in
+the network's `channels`:
+
+- The hub configures the runtime with each network's `channels` minus the
+  channels the user left (`hub/running.rs`). A later Settings save keeps the
+  configuration of every network whose settings did not change, so leaving a
+  channel never restarts a connection; a network whose settings changed starts
+  without the channels left.
+- `Command::Forget` puts the channel in the network task's `Carry` (`left`),
+  whether a session runs, is connecting or the network is disconnected. Each
+  connection skips those channels, matched ignoring ASCII case, in the
+  configured autojoin and in the channels it rejoins after a reconnect, until
+  we join them again.
+- Restoring the dock layout drops removed conversations.
+
+## Channel list
+
+Each network shows every public channel on the server, not only the ones
+joined or named in its `channels` setting (the
+[change record](changes/channel-list/README.md)).
+
+- **Fetch**: each connection sends `LIST` once, at the end of the message of
+  the day (`RPL_ENDOFMOTD` 376 or `ERR_NOMOTD` 422), and collects
+  `RPL_LIST` (322) until `RPL_LISTEND` (323) into one
+  `Event::ChannelList` with each channel's name, visible user count and
+  topic (`clients/irc/src/session/listing.rs`). `RPL_LISTSTART` (321) and
+  the replies show no server lines. Names that do not start with a
+  `CHANTYPES` prefix, such as the `*` some servers send for a private
+  channel, are left out. `Command::ListChannels` asks again: the network
+  header's **Refresh channel list** and the palette send it. A connection
+  runs at most one `LIST`; a request while one runs, or before
+  registration, sends nothing. A numeric naming `LIST` (such as
+  `RPL_TRYAGAIN` 263 or an unknown command) or `FAIL LIST` ends it without
+  an event, so the Space keeps its previous list. A `LIST` typed with
+  `/raw` also replaces the list when it ends.
+- **Cache**: `IrcState::directories` (`state/directory.rs`) holds each
+  configured network's list with the time it arrived, the 500 busiest
+  channels kept, sorted by name. The hub reads it from
+  `irc-channel-list.json` beside the state file at start, so the list shows
+  at once, and writes it there (`prefs::write_cache`, owner-only) when a new
+  list arrives or a network is removed. Nothing goes into `state.json`.
+- **Rows** (`rows.rs`): after a network's server row, channels and private
+  conversations, the listed channels that have no buffer follow in name
+  order, matched ignoring ASCII case: greyed (`Row::done`), with their user
+  count (`7 users`) and no unread count. Their row keys use the kind `l`, in
+  `Irc::listed`, apart from buffer rows. A parted or kicked channel keeps
+  its own greyed buffer row; after **Remove from list** it returns as a
+  listed row. A network with no list yet shows nothing extra. `/` and the
+  palette search find listed channels too (kind `channel not joined`);
+  choosing one selects its row.
+- **Join** (`listing.rs`): a click selects a listed row
+  (`ListDashboard::activates_on_click` is false for it); a double click,
+  Enter or the row menu's **Join** sends `Command::Join` through
+  `IrcState::join_listed`, which remembers the channel. When the server's
+  `Event::Joined` names it, the state hands it to the board like a
+  `/query`, and the board selects and opens it. **Join** is unavailable
+  while the network is not connected; Enter and a double click then leave
+  the runtime's **Not connected** line in the server buffer. The menu of a
+  listed row offers **Copy title** and **Join**, without **Add to chat** or
+  **Open details**. Joining does not add the channel to the network's
+  `channels` setting.
+- **Hidden channels**: the server leaves secret (`+s`) and private (`+p`)
+  channels out of `LIST` unless you are in them, so they appear only once
+  joined.
+
+## Formatting messages
+
+Messages are sent as typed; other IRC clients show the characters as they
+are. The board shows formatting the way Slack reads it, in channels and
+private conversations and for messages from anyone, people and bots alike:
+
+| Written | Shown |
+| --- | --- |
+| `*bold*` or `**bold**` | bold |
+| `_italic_` | italic |
+| `~strike~` or `~~strike~~` | strikethrough |
+| `` `code` `` | inline code |
+| ```` ``` ```` lines around the code, or ```` ```code``` ```` | a code block |
+| `> text`, or `>` alone | a quoted line; `>>>` quotes the rest of the message |
+| `- `, `* `, `• ` or `+ `; `1. ` or `1) ` | bulleted and numbered lists |
+| `https://…`, `[text](https://…)` | links |
+
+The rules, in order of precedence:
+
+1. **mIRC codes.** A message with mIRC formatting codes keeps the IRC
+   reading: its Markdown characters show as typed. Its bold, italic,
+   underline, strikethrough and monospace show; a colour shows as a tint of
+   its theme tone behind the text (see [Selecting and copying](#selecting-and-copying)).
+2. **Code.** Fenced blocks and code spans (a run of backticks closed by a run
+   of the same length on the line) show their text as typed: nothing inside
+   is formatted, linked or referenced. Slack's fences work too: text right
+   after an opening fence is the first line of code, unless it is one word
+   such as `rust` and code follows, which names the language; a fence at the
+   end of a line closes the block; text after a closing fence is a line of
+   its own. An unclosed block is closed at the end of the message.
+3. **Links and URLs.** `[text](url)` is a link only when the link policy
+   opens its URL (`http`, `https` or `mailto`, through `links::safe_url`);
+   otherwise it shows as typed. Its text shows as typed, and the typed URL
+   ends at the `)` that balances its parentheses, at most 32 deep, as the
+   parser allows. Bare `http` and `https` URLs are links, unless they hold
+   `<` or `>`. Nothing inside a link or URL is formatted. A link always opens
+   exactly the URL the policy returned, never the typed text: brackets,
+   backslashes and `&` are written with a backslash, which Markdown decodes,
+   and anything that cannot be in a destination is percent-encoded.
+4. **Markers.** A marker opens before text, after a space, the line's start,
+   an opening bracket or quote, or another marker. It closes after text,
+   before a space, punctuation or the line's end. A marker between two
+   punctuation characters, as in `(*.md)` or `"*"`, is neither. A closing
+   marker pairs with the nearest open marker of the same character and length
+   on the same line; markers opened after that one show as typed. So formats
+   nest (`*_both_*`), `*a _b* c_` is bold `a _b` then ` c_`, and
+   `snake_case_names`, `__init__`, `2*3*4`, `src/*.rs`, `**/*.rs`,
+   `(*.rs) and (*.md)` and `~/notes` show as typed. Runs of `__`, `***` or
+   `~~~` and longer, and unpaired markers, show as typed.
+
+Everything else shows as typed: a backslash is a character, not an escape;
+headings, rules, tables, HTML, entities, math, footnotes and task lists are
+escaped, and `<` is written as `&lt;`, so no message can start HTML; an image
+`![alt](url)` shows as `!` and a link, so nothing remote loads. `:`, `@` and
+the `.` of `www.` are escaped so the renderer's GFM autolink literals never
+form: they would run on through the following syntax, such as a code span's
+opening backtick. So `www.` and email addresses are text, as in plain
+messages. A list item's text follows the paragraph rules, and a list keeps
+its first item's indentation as the left edge, so an indented list stays a
+list. A list marker with nothing after it shows as typed, so an empty
+nested bullet cannot turn the item above it into a heading. A lone carriage
+return ends a line. `markup/markdown/parsed.rs` parses
+the rewrite with the same parser and options as `TextView` to check all of
+this. `#channel` and `@member` references stay clickable inside formatting.
+Your nick and highlight words still highlight inside `*bold*`, `**bold**` and
+`~strike~`, but not `_italic_`, because `_` is a nick character. A
+multi-line batch (`draft/multiline`) is one message, so a code block, quote or
+list can span its lines. A row's accessible name is the text as shown,
+without markers.
+
+## Selecting and copying
+
+A drag from any point in the transcript to any other selects the text of
+every row between, and Copy puts it on the clipboard in reading order, as in
+Slack (the Channels interaction improvements). Each row's text is one selectable GPUI Kit `TextView`
+(`text.rs`): formatted messages as the safe Markdown above, and plain
+messages, mIRC-coded messages, server lines and membership lines as literal
+Markdown (`markup/markdown/literal.rs`). Kit numbers `TextView`s in the order
+they paint, which is reading order, and copies participants by that number,
+so the rows copy in order. The other selectable texts Kit offers do not mix
+with them: `InteractiveText` takes no part in a selection, and
+`SelectableText` defaults to order 0, which copies before every text view.
+`tests/selection/kit.rs` records this, and
+`docs/changes/irc-transcript-drag-selection/findings.md` explains it with
+Kit's source.
+
+Literal Markdown shows the text exactly as sent: every ASCII punctuation
+character is escaped with a backslash (`<` as `&lt;`), spaces and tabs at a
+line's start or end become character references, and each line ending, a
+lone carriage return included, is a hard break. mIRC bold, italic, underline and strikethrough become the inline
+`<b>`, `<i>`, `<u>` and `<s>` tags Kit's Markdown reads, monospace a code
+span, URLs links the link policy opens and references links the board opens.
+A `TextView` has no text colour for a run, so an mIRC colour becomes a
+`<mark>` tint of its theme tone at 16 % opacity; white and black, which
+follow the text colour, add none, and a compact line's sender name is bold
+without its tone. These generated tags are the only HTML in a row, and no
+message text can open a tag. A muted or error row keeps its tone through
+`rich::tinted`, as a `TextView` ignores its container's text colour while the
+app leaves Kit's `inherit_text_color` off.
+
+Kit separates rows in the copied text with a blank line, as each `TextView`
+ends its paragraph with a line break. Not copied: message sender headers,
+times and day pills, which are labels, not text views. Sender names within
+compact server and topic lines are copied with their text. The `MessageScroller` keeps only
+rows near the viewport, so a drag that auto-scrolls far past them can lose
+its start; a fix needs a Kit selection adapter for virtual lists. Right-click
+**Copy** on a row copies the selection, or the row's whole text.
+
+The unread **New** divider is also a label: it does not interrupt selection
+or add its label to copied text. Unread row fills remain visible behind a
+text selection. Literal links and references retain their native look and
+cards through Kit inline objects. Right-click **Copy** on an issue link
+copies the selection or the link's displayed text. A primary click opens
+the issue in the current Issues board, including while the preview loads.
+## Oversized drafts
+
+The shared composer grows by whole visual rows, including wrapped text, from
+two rows up to twelve. Half the measured Space height, after the toolbar and
+counter, can lower that cap. The native textarea owns both its row minimum
+and scrolling; the old fixed wrapper height could let its rows extend into
+the toolbar. Drag and keyboard resizing now set matching native row bounds.
+
+The empty draft shows the send hint. Kit's fast opacity transition hides it
+as soon as the draft contains text and restores it when cleared; reduced
+motion switches immediately. Send errors remain visible.
+
+Channels opts into `ChatInput::set_limits` with `DraftLimits`. The client
+exports `draft_line_limit` and `MAX_INLINE_BYTES`; validation and the counter
+use the same rule, including the 10-line command exception and literal `//`.
+Capabilities changing during an open draft also update its counter. The
+shared `badge::Pill` is a labelled status at the frame's top right, in its
+own layout row above the editor. It shows `n / max lines` above one line and
+`x.x / 4 KB` strictly above 2,048 UTF-8 bytes. KB uses 1,024 bytes. The higher
+of line and byte usage selects muted below 80%, warning from 80% through
+100%, and danger above 100%. Exact counts are exposed in the status label.
+
+The composer keeps drafts over the line limit or 4,096 UTF-8 bytes available
+for editing. The line limit is 100 for plain text on a connection with
+`draft/multiline`, which sends it as one batch, and 10 otherwise, including for
+slash commands. **Save as file…** writes the draft text to a local file. The
+IRC session checks the same limit before it splits text or creates a multiline
+batch, including text sent through slash commands and agent tools; the agent
+`message` tool keeps its own 10-line limit. Text that doesn't fit one batch,
+because the server advertises a lower limit or long lines split into pieces,
+goes as several batches, so on a server like the Subspace Ergo server a draft the composer
+accepts is sent. Only a server whose batches are so small that more than 10
+would be needed refuses it, after the composer has cleared it (it stays in
+recall), rather than sending it line by line. Actions and notices over 10
+lines are refused too.
+
+A single paragraph that wraps into several wire messages also uses one
+`draft/multiline` batch when it fits the negotiated byte and physical-line
+limits. Continuations keep spaces and UTF-8 characters and use concat tags,
+so receivers see the whole paragraph without inserted newlines. A paragraph
+that cannot fit a batch keeps the existing standalone splitting fallback.
+See the [wrapped paragraph record](changes/subspace-api-accounts/README.md).
+
+## Issue references
+
+IRC shows issue references through the `issues` contract
+([Board-to-board contracts](../../subspace-framework/docs/board-integration.md#board-to-board-contracts),
+[record](changes/irc-issue-references/spec.md)). It never depends on
+`clients/subspace-api` or the Issues board, and works with whichever board answers.
+
+- **Declared roles** (`issues::CONTRACTS`): subscribes to `issues@1/changed`,
+  requests `issues@1/current-scope` and `issues@1/resolve`.
+- **Scope**: the process-owned hub (`issues/follow.rs`) subscribes from
+  `hub::start`, so it follows the contract while the view is closed. It asks
+  for the scope at start and on every `changed`. `None` or `Unavailable`
+  (Issues disabled, absent or without a ready API connection) means
+  nothing is recognised: identifiers stay text and links stay links.
+- **Recognition** (`markup/issue.rs`) uses the contract's recogniser
+  (`subspace_contracts::issues::recognition`) with the scope's project keys
+  and API origin, inside `markup::classify`, so plain and formatted lines
+  share the same identifier rule (`[A-Z][A-Z0-9]{1,9}`). The scope carries
+  `profile_id`, `profile_name`, `api_origin` and `project_keys`. Links to
+  other trackers stay links. Code spans stay plain.
+  An issue link is a reference, not a link (`style/marks.rs`).
+- **Resolving** (`issues.rs`): each message row the transcript draws reports
+  its identifiers; the first new one of a frame defers one request until the
+  frame is drawn, so a frame's references go in one `resolve` of at most 50
+  distinct identifiers (more are split). An identifier is asked once per
+  round; `changed` starts a new round, keeps the old answers on screen until
+  they are asked again, and forgets them when the profile, API origin or
+  project keys change. A refused `resolve` drops the scope until the next `changed`.
+- **Looks** (`text/references.rs`, `transcript/line/marks.rs`): references are accent on
+  a tint, as `#channel` references are; `Unavailable` is muted and
+  underlined; the keyboard's reference is accent on a strong tint. Formatted
+  (Markdown) lines show issue references as links (`subspace-irc:issue/…`)
+  without an inline muted look.
+- **Hover cards** (`issues/tooltip.rs`) share one observed view for chip hover,
+  inline-reference hover and the keyboard's focused reference. The view reads
+  the hub on each draw, so `Pending` (*Loading SUB-42…*) becomes the current
+  summary after `changed`. Available summaries use the A accent or B tracker
+  composition from `issues/tile/`, at `400 / REFERENCE_REM` rem. The shared
+  `reference_card::frame` supplies the card surface, state edge or outline,
+  padding and radius, with Kit's themed popover elevation. It is the tooltip
+  view itself, with no surrounding Kit tooltip frame and no interactive
+  children or focus. Pending, Unavailable, SignedOut and Failed keep plain
+  Kit tooltip notes. The keyboard card floats through `anchored::floating`.
+- **Issue chips** (`issues/preview.rs`, `issues/tile/`) use the same batched
+  lookup as the hover card. Every available issue is a compact chip, including
+  a message with one available issue; the row always wraps. Chips retain their
+  full accessible names and native activation. A and B cards appear only on
+  hover or reference keyboard focus. Ordinary hover cards have a state edge,
+  mono key, urgent or high priority pill, state pill, two-line title and
+  optional assignment and latest-activity footer. Tracker hover cards show a
+  progress bar and available pull request and due-date facts.
+  Code spans and blocks do not request chips. The additive summary builders
+  carry priority, owner, assignee kind/rank, progress, pull requests, due date
+  and latest activity without coupling Channels to the API client.
+  `reference_card` supplies shared chip and passive card treatments, pills
+  and avatars; Kit supplies icons and progress. Colours come from `Tokens`.
+  Pure UTC formatting uses `hub.now`: minutes, hours, days, then a British date
+  after seven days; future activity says *just now* without a recent dot.
+  Activity within an hour has a success dot. Missing or malformed optional
+  dates are omitted. See the [change record](changes/subspace-api-accounts/README.md).
+- **Opening an issue** works from a chip, resolved reference click or `Enter` on a resolved
+  reference. The shell opens the issue in the answering board after it checks
+  the profile on the navigation request.
+  A reference without a summary keeps its browser destination while the
+  current profile can recognise it.
+- **Privacy**: scope and answers live in the hub's memory only; nothing goes
+  to IRC's store, search, state file or logs.
+- **Keyboard** (`conversation/keys.rs`, `transcript/focus.rs`): `Shift+Tab` in
+  the message input focuses the newest message (`IrcConversation > Input`,
+  ahead of the text area's outdent); in `IrcTranscript`, `↑`/`↓` move between
+  messages, `Tab`/`Shift+Tab` between a message's links and references in
+  reading order, `Enter` opens and `Esc` returns to the input. A ring marks
+  the focused message. For a formatted message the references are
+  `Rendered::refs` (issues and pull requests outside code, in reading order,
+  a pull request with its URL as written, each with its range in the message
+  text). `transcript::targets` keeps the plain text's links and channel and
+  nick references, drops a link a rendered reference covers, and sorts all of
+  them by those real ranges, so Tab follows reading order and Tab and a click
+  agree.
+- **Evidence fixture**: debug capture builds with `SUBSPACE_CAPTURE_ISSUES`
+  route a stand-in responder (`subspace-framework/host/app/src/capture/issues.rs`)
+  with fictional answers; release builds never contain it.
+
+## Pull request references
+
+IRC shows GitHub pull request references through the `github` contract
+([Board-to-board contracts](../../subspace-framework/docs/board-integration.md#board-to-board-contracts),
+[change record](changes/subspace-api-accounts/README.md)). It never depends on the
+GitHub client or the PRs board.
+
+- **Declared roles** (`issues::CONTRACTS`): subscribes to `github@1/changed`,
+  requests `github@1/resolve-pull-requests` and `github@1/open-pull-request`.
+- **Recognition** (`markup/pull_request.rs`): `[PR:owner/repo#n]`, a full
+  pull request URL with GitHub's `/files`, `/commits`, query or fragment
+  suffixes, and a Markdown link whose label is the marker and whose
+  destination is the same pull request. Each gives one `PrRef`: the
+  lower-cased `owner/repo#n` identity and the URL as written (the canonical
+  URL for a marker). Repo-only markers and bare `#123` stay text: Channels has
+  no repository context. Recognition runs before ordinary links, so a pull
+  request URL is a chip rather than a link. In a formatted message, code spans
+  and fenced code stay text, and `Rendered::refs` lists the chips outside
+  code for the keyboard and the hub.
+- **Chip** (`text/references.rs`): the `GitPullRequest` glyph and `repo#n`,
+  with the owner only beside another owner's same-named repository in the
+  message (`PrRef::label_among`). The node text stays as written, so Copy
+  keeps it; Copy link gives `PrRef::url`. No preview row is added under the
+  message.
+- **Answers** (`pull_requests.rs`, `pull_requests/follow.rs`): the hub asks
+  for the distinct keys a frame shows in one request of at most 50, keeps the
+  answers in memory and forgets them, and the wanted keys, on every `changed`.
+  A refused request records `Unavailable`. Nothing reaches IRC's store,
+  search, state file or logs.
+- **Hover tile** (`pull_requests/tooltip.rs`, `pull_requests/tile.rs`): a
+  passive 320 px `reference_card` (accent treatment) with state edge and pill,
+  `repo#n`, title, branches and changed lines when known, author, review and
+  check marks and the time since update from `hub.now`. Every other state is
+  a note: `Loading repo#n…` while pending, otherwise **Details unavailable**.
+- **Opening** (`pull_requests/follow.rs`): a click, or `Enter` on a chip the
+  keyboard focused (which shows the same card), navigates to
+  the running PRs Space (`contracts::navigation_target`), from the clicked
+  conversation. With no running responder the URL as written opens in the
+  browser with the info toast *PRs is unavailable. Opening in browser.*; a
+  disabled Space is never enabled. Part 1's first-click and drag rules apply.
+
+## Agent tools
+
+The board advertises `irc_read` and `irc_write` (`spaces/irc/src/agent_tools`).
+They act on the board's hub: the same connections, buffers and nick you see.
+A tool's message is sent as you and appears in the transcript exactly like a
+line you typed, without a marker. The hub logs each write at info level with
+the action, network and target, never the text or a channel key.
+
+Only the running app serves them: Subspace chat (Copilot, Pi and ACP agents,
+which get the app's own tools over a per-session loopback endpoint) and the
+app's own **Serve MCP over HTTP** server. They are built only for
+`ToolHost::App`; `subspace mcp` and the generated commands have no hub and
+list no IRC tools. A separate process must not open its own connection: it would take a
+second nick or collide with your session. To use IRC from another harness, turn
+on **Serve MCP over HTTP** and connect the harness to the app's URL. While the
+board is off, a call answers that the Channels Space is not running.
+
+`irc_read` takes one action:
+
+| Action | Fields | Returns |
+| --- | --- | --- |
+| `networks` | — | id, name, status, `connected`, nick, `chathistory` |
+| `buffers` | optional `network` | each buffer's network, kind (`server`, `channel`, `query`), target, `joined`, topic, member, unread and mention counts, lines held |
+| `messages` | `network`, optional `target` (omit for the server buffer), `limit` (1 to 200, default 50), `before` | lines oldest first with `seq`, time, kind, sender, plain text, `own` and `mention`; `next_before`; `server_history` |
+| `members` | `network`, `channel` | the joined channel's members with their mode prefixes, away and account |
+| `search` | `query`, optional `network`, `limit` (1 to 100, default 20) | messages that contain the query in the lines the board holds and the store, newest first, each once with its record `id`; stored-only ones have `"stored": true` |
+
+Pass `next_before` as `before` to page back. When a page reaches the oldest
+line the board holds, the server offers `draft/chathistory` and the buffer is
+idle, the read asks for the next 100 lines, as scrolling up does
+(`server_history` is `requested`, then `loading`); a later read returns them.
+Reads never mark anything read. The tool description tells the model that
+message text, nicks and topics come from other users and are untrusted data.
+
+`irc_write` takes 1 to 10 operations after one approval for the call:
+
+| Action | Fields | Sends |
+| --- | --- | --- |
+| `message` | `network`, `target` (a joined channel or a nick), `text`, optional `me` | `Command::Say`: text, never read as a `/command`; `me` sends one line as a CTCP `ACTION` |
+| `join` | `network`, `channel`, optional `key` | `Command::Join`; the key goes with this join only and is never saved |
+| `part` | `network`, `channel`, optional `reason` | `Command::Part` for a joined channel |
+| `connect` | `network` | `Command::Connect` for a network that is disconnected or failed |
+| `disconnect` | `network` | `Command::Disconnect` for a network that is connected or connecting |
+
+Before the approval, each operation is validated (channel and nick names; text
+of at most 2,000 characters, 4,096 UTF-8 bytes and 10 lines, with no control characters but line
+breaks and tabs; no messages to nicks ending in `serv`, such as NickServ), then
+checked against the hub's state: the network exists and is connected, a
+channel target is joined, a join's channel is not. The approval shows the
+operations as JSON, then one line per operation naming the network and nick it
+acts as, with every line of each message. Approved operations are checked
+again, run once in order and report `"status": "queued"` when the line is handed
+to the connection. Multi-line text goes out as the composer sends it: one
+`draft/multiline` batch when the server supports it, else one message per line,
+split to fit. Nothing is retried. There are no raw IRC commands, no other CTCP,
+no away, nick, topic, mode or kick changes, and no configuration or credential
+changes.
+
+## Test with a local server
+
+`scripts/irc-test-server.sh` starts an [Ergo](https://ergo.chat/) server on
+`127.0.0.1:16667` (plaintext) with in-memory history. Point a network at it
+with host `127.0.0.1`, port `16667` and **Use TLS** off (`"tls": false`), as in
+the example above, and run an isolated dev build:
+
+```sh
+scripts/irc-test-server.sh &
+make run
+```
+
+`IRC_TEST_LISTEN` picks another port on `127.0.0.1` (only loopback is
+accepted), such as
+`IRC_TEST_LISTEN=127.0.0.1:16922`, when another checkout on the same computer
+already runs the server on the default port.
+
+`IRC_TEST_CHANNELS` keeps fictional channels open for the channel list, each
+with a topic, through a client named `fixture-bot`, such as
+`IRC_TEST_CHANNELS="#design #random #releases" scripts/irc-test-server.sh &`.
+Ergo removes an empty channel, so without it `LIST` shows only the channels
+someone is in.
+
+The runtime's integration test against the same server runs when
+`IRC_TEST_SERVER` is set (`IRC_TEST_SERVER=127.0.0.1:16667 cargo test -p
+subspace-client-irc`) and is skipped otherwise. With the same variable,
+`cargo test -p subspace-irc-board agent_tools` also checks that an
+`irc_write` message arrives in a channel under the tool's nick, and the
+runtime's `anchors` test checks that an anchored join receives only the
+messages after its anchor.
+
+## Design
+
+- `hub.rs` owns the runtime for the whole process, from
+  `Dashboard::start_background` until Settings turns the board off. A 50 ms UI
+  timer drains events into one state entity and notifies the board. It
+  observes the `Services` global and applies changed IRC settings with
+  `Command::Configure` and `IrcState::reconfigure`.
+- `store.rs` maps stored lines to records (`store/mapping.rs`, GitHub links in
+  `store/links.rs`) and runs writes, deletes and the restore against the
+  store. `hub/persist.rs` queues them in order. `state/merge.rs` merges
+  restored lines, missed lines (`Event::Backfill`) and the lines around a
+  message by time, deduplicating by `msgid`, then by time, sender and text.
+  `reveal.rs` opens a search result.
+- `state/directory.rs` holds and caches each network's channel list;
+  `listing.rs` joins a listed channel and asks for the list again (see
+  [Channel list](#channel-list)).
+- `config.rs` reads the settings the shell loaded from the board's file
+  (`Services::board_config_file("irc")`).
+- `editor.rs` is the board's `Dashboard::settings_editor`: retained native
+  inputs per network inside Settings' Save/Cancel draft. `editor/draft.rs`
+  reads and writes the JSON over the saved object, and `editor/validate.rs`
+  holds the rules. Saved passwords stay in the saved object and are written
+  back only when untouched.
+- `state.rs` is a pure reducer over runtime events: networks, buffers, topics,
+  members, typing, read markers and unread and mention counts. Live lines keep
+  a buffer at 2,000 lines, dropping the oldest. Loaded history raises that
+  buffer's limit by the lines it added, up to 10,000; a page that would pass
+  10,000 keeps its newest lines that fit and ends **Load older messages**.
+  Notifications are decided there: a live line that counts as unread and
+  mentions us or is in a private conversation raises `Attention`. History
+  (`chathistory` batches, with their `draft/event-playback` events), a
+  bouncer's replay (`Event::Replayed`, from ZNC's `znc.in/playback` batch),
+  our own lines, the **Server** buffer and lines the read marker covers
+  never do. The hub raises it for conversations not on screen (the focused
+  one and each tab group's displayed tab, published by the board), as a
+  `Notice::described` from `notice.rs`: who and where, with the network as
+  the OS body, never the message. IRC declares OS delivery with the Glass
+  sound as its notification defaults. See
+  [the change record](changes/irc-mention-notifications/spec.md).
+- Each opened buffer has a `Conversation` view (`conversation.rs`): its
+  transcript and composer, with its own scroll position and draft. The dock
+  tab carries the buffer name and exposes the topic and network on hover. A
+  channel also has a `MemberList` view (`members.rs`). Both observe the hub
+  and report navigation as events.
+- `dock.rs` hosts them in a GPUI Kit `DockArea`: the buffer list (the shared
+  list, `dock/panels.rs`) in the left dock, conversations as centre panels in
+  tabs and splits (`dock/open.rs`), and the focused channel's member list in
+  the right dock. The member list fills its dock, whose width the user drags
+  and the layout restores. List and conversation events reach it without a
+  window, so dock edits are deferred to the board's window
+  (`dock::with_window`).
+- `dock/layout.rs` is the layout in buffer terms (splits, tab groups, the
+  side docks' widths and visibility), saved under `irc.dock-layout` after
+  every change and restored once the hub is bound (`dock/persist.rs`).
+  Conversations on networks that are no longer configured are dropped with
+  the groups they leave empty. Without a stored layout the first network's
+  **Server** buffer opens.
+- The transcript uses Kit's `MessageScroller` with stable row identities, so
+  new lines and prepended history splice in without losing the reading place.
+  `lines.rs` groups a sender's messages within five minutes and condenses
+  membership lines; `markup.rs` finds `#channel` and member references and
+  rewrites formatted text to a safe Markdown subset for the shared rich text
+  (`markup/markdown/`: `blocks.rs` sorts lines and Slack's fences and
+  quotes, `emphasis.rs` pairs markers, `spans.rs` reads code spans, links and
+  URLs as units, `inline.rs` and `lines.rs` rewrite each line). The result
+  has no HTML and no images, so the row shows it with
+  `rich::rich_text_prepared`, without `prepare_markdown`. Plain text, text
+  with mIRC codes, server lines and membership lines go through the same
+  view as literal Markdown (`style.rs`, `markup/markdown/literal.rs`,
+  `text.rs`; see [Selecting and copying](#selecting-and-copying)).
+  Every row but the day pill is tinted under the pointer with the foreground
+  at low opacity; a row that mentions us keeps its `select` fill
+  (`transcript/fill.rs`).
+  See [GPUI-Kit messaging reuse](../../subspace-framework/docs/ui-components.md#gpui-kit-messaging-reuse).
+- The composer (`compose.rs`) is the shared `ChatInput::message` in plain-text
+  mode with recall keys, under the shared completion list. `Enter` sends and
+  `Shift+Enter` breaks the line, which the hint under the input names
+  (`Return` on macOS). Up and Down recall sent lines while the draft is empty,
+  one line or a recalled line not yet edited (`ChatInput::set_recalled`), so
+  a multi-line message does not stop the walk; they move between the lines of
+  any other longer draft. The completion list
+  (`chat_input::completion`). After each edit, `compose/suggest.rs` reads
+  the word before the cursor and offers choices for it:
+  - `@` offers the buffer's members, or the other person of a private
+    conversation. Choosing one inserts `@nick ` with a space after it, which
+    the transcript shows as a mention pill. The nick in it still highlights
+    for the recipient, because `@` is not part of a nick.
+  - `/` at the start of the draft offers the commands that the client parser
+    (`subspace_client_irc::COMMANDS`, beside `parse_input`) handles, with
+    their arguments and a description. Choosing one inserts `/name `.
+  - The first argument of `/join` offers the network's channels. `/part` and
+    `/topic` offer the channels you are in. `/msg`, `/query`, `/notice`,
+    `/whois`, `/invite` and `/kick` offer everyone on the network.
+  - `#` elsewhere in the text offers the channels you are in.
+
+  People are listed by who spoke recently in the buffer, newest first, then
+  by nick; your own nick is left out. Rows show an initials avatar and the
+  mode prefix, muted at the end as in the member list, and away members are
+  dimmed. Matching ignores case
+  using RFC 1459 folding, which treats `[]\~` as `{}|^`. The server's own
+  casemapping is not sent to the board, and RFC 1459 folding matches at
+  least as much. Up and Down move the highlight, Enter or Tab inserts the
+  choice, Escape closes the list and a click chooses a row. While no list is
+  open, Tab completes a bare nick before the cursor (`compose/complete.rs`),
+  adding `: ` at the start of the line.
+
+## Inline issue summaries
+
+Each available issue chip has a separate compact shared `IconButton` chevron.
+Its accessible name is **Show summary of SUB-2** or **Hide summary of SUB-2**,
+and Kit receives expanded state. Activation stops propagation; the chip’s
+other button still navigates to Issues. Hover cards A and B show a supplied
+summary below the title in muted text, clamped to three lines; null is omitted.
+
+`Conversation::summaries` retains one selection per message, keyed by message
+sequence and issue identifier. Redraws keep the selection. The panel sits under
+the wrapping chip row; null uses **No summary yet**. The dashboard kit’s
+`animated_collapsible::AnimatedCollapsible` composes a GPUI animation clock and
+standard GPUI layout. `DISCLOSURE_DURATION` is 200 ms with `ease_in_out`;
+height and opacity follow the same progress in both directions. The animation ID
+includes the message, issue and transition revision. The owner retains the
+measured and sampled geometry, so a reversal starts at the current height.
+Content height changes, including switching to a different summary, animate
+from that height to the newly measured target.
+
+Progress changes defer remeasurement of the message’s virtual row until the
+scroller releases its list borrow. Kit’s tail-following state keeps a transcript
+at the bottom anchored while the row changes height. `App::reduce_motion()`
+uses the endpoint immediately. The gallery has collapsed, mid-way, open and
+interactive examples. See the [change record](changes/subspace-api-accounts/README.md).

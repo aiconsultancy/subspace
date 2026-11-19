@@ -1,0 +1,5 @@
+vance: This is one composed request, rather than several separate instructions. Please read the whole message before deciding what to do. The first paragraph explains the context: a long desktop message must remain one logical message even when the IRC wire format needs several frames. Starting work from a prefix would miss instructions that appear later in this same request.
+
+The second paragraph gives more context for the screenshot that will follow. It is a separate upload, so it must not be mistaken for the final fragment of this caption. Keep this text and its original paragraph breaks together. Do not infer a complete request from the first physical frame, do not repeat the task for later frames, and do not make model or issue calls during this protocol fixture.
+
+The last paragraph contains the instruction that was previously lost when receivers acted on partial messages. Preserve ordinary spaces and café characters throughout the request. Receiving a closing multiline batch means that this text is complete; it does not mean the separate screenshot has arrived. I am about to send a screenshot so do not respond until I have

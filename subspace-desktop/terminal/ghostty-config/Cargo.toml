@@ -1,0 +1,15 @@
+[package]
+name = "subspace-ghostty-config"
+description = "Zig-free parser for the Ghostty configuration and theme files the Terminal board reads"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

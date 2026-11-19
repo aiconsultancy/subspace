@@ -1,0 +1,181 @@
+# Subspace documentation
+
+Start here. This page links every page under `docs/`, grouped by area, with
+one line on what each covers. Read the area that matches your task, then only
+the pages you need. Agents: read [AGENTS.md](../AGENTS.md) and
+[Ways of working](ways-of-working.md) first, then choose from the areas below.
+
+The published product guide starts at [Subspace](subspace/index.md); this page
+is the developer and agent entry point. `make check` fails when a page under
+`docs/` is not linked from here.
+
+## Ways of working
+
+If you want to know how to commit, branch, version and release, read
+[Ways of working](ways-of-working.md).
+
+- [Ways of working](ways-of-working.md): conventional commits, branches and
+  pull requests, hooks, versioning and the release steps.
+- [Before opening or merging a pull request](ways-of-working.md#before-opening-or-merging-a-pull-request):
+  the pull request checklist, also in the repository's pull request template.
+- [AGENTS.md](../AGENTS.md): rules for agents, including terminology, commands,
+  structure, conventions and UI evidence.
+- [Change records](changes/README.md): the intent, spec, delivery and tasks
+  recorded for each change.
+- [Glossary](glossary.md): the Subspace App's terms; the Framework's terms
+  (App, Space, channel, update source) are in the
+  [Framework glossary](../../subspace-framework/docs/glossary.md).
+
+## Architecture and code structure
+
+If you want to know how the crates are laid out and which layer may depend on
+which, read the [layout](../README.md#layout) and the
+[structure rules](../AGENTS.md#structure).
+
+- [Developer overview](../README.md): the Framework dependency, layout, adding
+  a Space, settings, keys and tasks.
+- [The Framework](../README.md#the-framework): the one crate this folder
+  imports, the two documented paths into `../subspace-framework`, working on
+  a Framework change and a Space change together, and switching to the
+  published crate.
+- [Structure rules](../AGENTS.md#structure): dependency direction, crate
+  ownership and what the architecture check enforces.
+- [Canonical design and coding guides](../AGENTS.md#canonical-design-and-coding-guides):
+  the GPUI Kit Design and Coding Guides every UI and architecture change follows.
+- [Identity providers and the API URL](../README.md#identity-providers-and-the-api-url):
+  the build config and run-time variables that select `dev`, WorkOS or Entra
+  sign-in and the Subspace API.
+- [Issues and Subspace API](issues.md): the API connection, projects, the
+  shared hub, live updates, comments and offline fixtures.
+
+## Code quality and checks
+
+If you want to know what must pass before work is done, read
+[Commands](../AGENTS.md#commands), [Code quality rules](../AGENTS.md#code-quality-rules)
+and the [gates](ways-of-working.md#gates).
+
+- [Commands](../AGENTS.md#commands): the make targets and what `make check`
+  runs.
+- [Desktop capture](capture.md): isolated macOS and Linux screenshots,
+  display prerequisites and fixture configuration.
+- [Code quality rules](../AGENTS.md#code-quality-rules): rustqual, IOSP,
+  function size and test assertions.
+- [Dependency audit](../AGENTS.md#dependency-audit): `mise run audit` and
+  accepted advisories in `deny.toml`.
+- [Gates](ways-of-working.md#gates): the commit and push hooks; there is no
+  CI yet.
+
+## Boards
+
+If you want to know how a board behaves, read its in-app guide. Its developer
+page, where there is one, covers configuration and internals. Guides follow
+the Framework's [board guide template](../../subspace-framework/docs/board-guide-template.md).
+
+If you want to build a Space, read [Add a Space](../README.md#add-a-space) and
+the Framework's [What the Framework gives a board](../../subspace-framework/docs/board-integration.md),
+then fill in its [board checklist](../../subspace-framework/docs/board-checklist.md).
+
+- [The Subspace App's Spaces](spaces-audit.md): the agent tools the app serves,
+  the contracts its Spaces declare and exchange, and the audit of which
+  Framework integration points each Space uses, with the gaps.
+- [Build and package a web Space](web-spaces-guide.md): make a web app into a
+  web Space, use the bridge, test it with Node, package it with
+  `scripts/package-web-space.py` and install it from a folder, ZIP or GitHub.
+  The [web Space reference](web-spaces-reference.md) lists every manifest
+  field, package rule and error; the packages live in
+  [web-spaces/](../web-spaces/README.md).
+
+| Board | In-app guide | Developer page |
+| --- | --- | --- |
+| PRs | [GitHub pull requests](../spaces/github/help.md) | |
+| Copilot Agents | [Copilot agent tasks](../spaces/github-copilot-agents/help.md) | [Copilot Agents dashboard](github-copilot-agents.md) |
+| Channels | [IRC networks, channels and private messages](../spaces/irc/help.md) | [Channels](irc.md): configuration, protocol support, initiatives and fleets, agent tools |
+| Issues | [Subspace API issues and comments](../spaces/issues/help.md) | [Issues and Subspace API](issues.md): connection, shared hub and offline fixtures |
+| Board Lab | [Native dashboards and managed environments](../spaces/board-lab/help.md) | [Board Lab](board-lab.md): enablement and safety; [design evidence](agents/board-lab/README.md): retired harness history |
+| Actions | [GitHub Actions](../spaces/actions/help.md) | [Actions board](actions.md) |
+| Component gallery | [Shared UI components](../../subspace-framework/spaces/component-gallery/help.md) | |
+| Web Spaces | [Websites and installed web Spaces](../spaces/web/help.md) | [Web Space reference](web-spaces-reference.md): manifest, install sources, package rules, bridge; [authoring guide](web-spaces-guide.md) |
+
+- [Desktop UI components](ui-components.md): shared catalogue and component ownership.
+
+## The Framework
+
+The shared UI, the shell and everything every app gets are documented in the
+Framework's own [documentation index](../../subspace-framework/docs/README.md). The pages most
+often needed for work here:
+
+- [UI component catalogue](../../subspace-framework/docs/ui-components.md): every component and
+  style, which crate owns it and the component rules.
+- [Agent chat](../../subspace-framework/docs/agent-chat.md), [MCP server](../../subspace-framework/docs/mcp.md) and
+  [Command-line interface](../../subspace-framework/docs/cli.md): the chat pane and engines, the
+  `subspace mcp` server and headless board commands.
+- [Developer tools](../../subspace-framework/docs/developer-tools.md): the debug-build element
+  inspector and the build version markers.
+- [Appearance](../../subspace-framework/docs/appearance.md), [Logging](../../subspace-framework/docs/logging.md),
+  [Full-text search](../../subspace-framework/docs/search.md),
+  [Report an issue](../../subspace-framework/docs/report-issue.md),
+  [Features and experiments](../../subspace-framework/docs/feature-flags.md) and
+  [Web research](../../subspace-framework/docs/web-research.md).
+
+## App-owned features
+
+- [Terminal](terminal.md): the docked terminal panel, its layouts, build
+  feature, platforms and configuration; the in-app
+  [terminal guide](../terminal/panel/help.md).
+- [Application icons](app-icons.md): checking and regenerating the native
+  icons.
+
+## Settings, configuration and secrets
+
+If you want to know where settings, credentials and state are stored, read
+[Settings and stored state](../README.md#settings-and-stored-state).
+
+- [Settings and stored state](../README.md#settings-and-stored-state):
+  `config.json`, credential priority, `state.json` and caches.
+- [Settings and appearance](settings.md): the Settings dialog, updates and
+  service connections.
+
+## Releases, packaging and installation
+
+If you want to know how to version or publish a release, read
+[Versioning](ways-of-working.md#versioning) and
+[Releases](ways-of-working.md#releases).
+
+- [Install Subspace](installation.md): source builds, packaging, signing,
+  publishing, release installers, pre-releases and updates.
+- [Releases](../AGENTS.md#releases): the release rules for agents.
+
+## Product documentation site
+
+If you want to know how the published guide is organised, read
+[Product documentation](../AGENTS.md#product-documentation). The site's
+navigation is `toc.yml` in the project root and `subspace/toc.yml`; the
+shared quick-start fragments live in `subspace/includes/`.
+
+- [Subspace](subspace/index.md): the product landing page.
+- [Install and update Subspace](subspace/installation.md): the product
+  installation page.
+- [Boards and board guides](subspace/boards.md): links to every board guide.
+- [Subspace settings](subspace/settings.md): the product settings page.
+- [Logs and retention](subspace/logging.md): finding and keeping the app log.
+- [Documentation versions](versions.md): main and frozen release snapshots of
+  the site.
+
+## Change records
+
+- [Subspace API, accounts and fleets](changes/subspace-api-accounts/README.md):
+  the Issues client, provider-neutral sign-in, initiative and fleet switching
+  in Channels, and what came across from a downstream fork.
+If you want to know why something was built the way it was, read its change
+record. [Change records](changes/README.md) explains the convention.
+
+- [Public repository examples](changes/public-repository-examples/README.md):
+  fictional deployment settings, tracker references and fixture identifiers.
+- [Issue Activity data](changes/issue-activity-data/README.md) and
+  [Issue Activity pane](changes/issue-activity-pane/README.md): data retrieval,
+  refresh and the Issues Space view.
+- [Integration pre-releases](changes/integration-prereleases/README.md):
+  download-only snapshots, commit-derived versions and disabled updates.
+- [Framework split research](changes/framework-split/research.md): separating
+  the Framework from the Spaces, what blocks publishing and white-labelling,
+  the proposed Space author API and the migration plan.

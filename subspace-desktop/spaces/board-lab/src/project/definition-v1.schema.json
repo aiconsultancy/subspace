@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://subspace.dev/schemas/board-project-v1.json",
+  "title": "Subspace native board project version 1",
+  "description": "Cross-field bindings, constraints and source safety are additionally validated by ProjectDefinition::validate. Environment is a configured exact-pin environment ID, not a grant.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "title", "environment", "entrypoint", "components", "files"],
+  "properties": {
+    "version": {"const": 1},
+    "id": {"$ref": "#/$defs/token"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 160},
+    "environment": {"$ref": "#/$defs/token"},
+    "entrypoint": {"$ref": "#/$defs/path"},
+    "inputs": {"type": "object", "maxProperties": 64, "propertyNames": {"$ref": "#/$defs/token"}, "additionalProperties": {"$ref": "#/$defs/input"}},
+    "components": {"type": "array", "minItems": 1, "maxItems": 64, "items": {"$ref": "#/$defs/component"}},
+    "actions": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/token"}},
+    "environment_keys": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,127}$"}},
+    "destinations": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"type": "string", "format": "uri", "pattern": "^https://"}},
+    "files": {"type": "array", "minItems": 1, "maxItems": 32, "uniqueItems": true, "items": {"$ref": "#/$defs/path"}}
+  },
+  "$defs": {
+    "token": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"},
+    "path": {"type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_.-]*(/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$"},
+    "options": {"type": "array", "minItems": 1, "maxItems": 500, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 1024}},
+    "input": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type", "default", "min", "max", "step"], "properties": {"type": {"const": "number"}, "default": {"type": "number"}, "min": {"type": "number"}, "max": {"type": "number"}, "step": {"type": "number", "exclusiveMinimum": 0}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "default", "options"], "properties": {"type": {"const": "string"}, "default": {"type": "string"}, "options": {"$ref": "#/$defs/options"}}}
+      ]
+    },
+    "component": {
+      "type": "object", "additionalProperties": false, "required": ["id", "label", "kind"],
+      "properties": {"id": {"$ref": "#/$defs/token"}, "label": {"type": "string", "minLength": 1, "maxLength": 160}, "kind": {"$ref": "#/$defs/kind"}}
+    },
+    "children": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/component"}},
+    "kind": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type", "children"], "properties": {"type": {"enum": ["row", "column"]}, "children": {"$ref": "#/$defs/children"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "columns", "children"], "properties": {"type": {"const": "grid"}, "columns": {"type": "integer", "minimum": 1, "maximum": 12}, "children": {"$ref": "#/$defs/children"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "text"], "properties": {"type": {"const": "text"}, "text": {"type": "string", "maxLength": 16384}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "input"], "properties": {"type": {"enum": ["slider", "select"]}, "input": {"$ref": "#/$defs/token"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "action"], "properties": {"type": {"const": "button"}, "action": {"$ref": "#/$defs/token"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"enum": ["chart", "table"]}}}
+      ]
+    }
+  }
+}

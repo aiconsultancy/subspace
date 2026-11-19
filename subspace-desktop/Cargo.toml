@@ -1,0 +1,110 @@
+[workspace]
+default-members = ["products/subspace"]
+# Spaces and their owned crates, desktop clients, products and the Zig-free
+# Ghostty configuration parser. New crates need no member entry. See "Add a
+# dashboard" in README.md.
+members = ["clients/*", "spaces/*", "spaces/*/crates/*", "products/*", "terminal/ghostty-config"]
+# The terminal runtime and its panel are the only packages that need Zig, so
+# they stay outside the workspace: `cargo build --workspace`, `make check` and
+# CI install no Zig. Both declare their own version, edition, licence, lints
+# and dependencies, and the product reaches them by relative path.
+exclude = ["terminal/runtime", "terminal/panel"]
+resolver = "2"
+
+# The Framework's patched Markdown parser.
+[patch.crates-io]
+markdown = { path = "../subspace-framework/vendor/markdown" }
+
+[workspace.package]
+version = "0.9.0"
+publish = false
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+uuid = { version = "=1.29.2", features = ["v4"] }
+unicode-general-category = "=1.1.0"
+# The one Framework crate. Deleting `path` switches to crates.io.
+subspace-framework = { path = "../subspace-framework", version = "0.2.0" }
+subspace-client-irc = { path = "clients/irc" }
+subspace-api-client = { path = "clients/subspace-api" }
+regex = "1"
+subspace-descriptor = { path = "products/descriptor" }
+
+# GPUI Kit pins its matching GPUI snapshot, so the application lists one
+# dependency. See https://github.com/longbridge/gpui-kit.
+# The tree-sitter grammars colour code in the GitHub diff view and the Sonar
+# code view. Not `tree-sitter-languages`: its SQL grammar pins a `cc` that
+# conflicts with the workspace lock.
+gpui-kit = { version = "0.9.1", features = [
+    "tree-sitter-bash",
+    "tree-sitter-csharp",
+    "tree-sitter-css",
+    "tree-sitter-go",
+    "tree-sitter-html",
+    "tree-sitter-javascript",
+    "tree-sitter-markdown",
+    "tree-sitter-python",
+    "tree-sitter-rust",
+    "tree-sitter-toml",
+    "tree-sitter-tsx",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+] }
+gpui-webview = "=0.9.1"
+wry = { package = "lb-wry", version = "=0.53.3" }
+
+anyhow = "1"
+base64 = "0.23"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+hex = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+percent-encoding = "2"
+# Jitter for the issue stream's reconnect backoff. Already in the lock through
+# subspace-framework, which does not re-export it.
+rand = "0.10"
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+rustls-platform-verifier = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+# Word-level changes in the GitHub diff view.
+similar = "3"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tokio-rustls = { version = "0.26", default-features = false }
+log = "0.4"
+# Cancellable streaming HTTP for the Subspace API event feed.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
+url = "2"
+zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "warn"
+type_complexity = "allow"
+
+[profile.dev]
+panic = "unwind"
+codegen-units = 16
+debug = "limited"
+split-debuginfo = "unpacked"
+
+# Release builds have no debug info of their own. The default "debuginfo" strip
+# only removes the standard library's, saves almost nothing on macOS, and needs
+# rust-objcopy, which cannot find libLLVM.dylib in the 1.96-1.98 toolchains.
+[profile.release]
+panic = "unwind"
+strip = false
+
+# GPUI is slow unoptimised; the GPUI Kit workspace applies the same overrides.
+[profile.dev.package]
+markdown = { opt-level = 3 }
+resvg = { opt-level = 3 }
+rustybuzz = { opt-level = 3 }
+taffy = { opt-level = 3 }
+ttf-parser = { opt-level = 3 }
+gpui-pre = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }

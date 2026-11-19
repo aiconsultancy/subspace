@@ -1,0 +1,30 @@
+[package]
+name = "subspace-web-board"
+description = "Subspace dashboard: a web page from the config file in a native web view"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+subspace-framework.workspace = true
+gpui-kit.workspace = true
+hex.workspace = true
+percent-encoding.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+sha2.workspace = true
+url.workspace = true
+zip.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+gpui-webview.workspace = true
+wry.workspace = true
+
+[dev-dependencies]
+subspace-framework = { workspace = true, features = ["test-support"] }
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

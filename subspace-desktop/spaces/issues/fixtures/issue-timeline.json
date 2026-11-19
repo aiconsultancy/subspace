@@ -1,0 +1,289 @@
+{
+  "head": {
+    "items": [
+      {
+        "id": "comment-event-6",
+        "kind": "comment.created",
+        "occurredAt": "2026-11-15T14:00:00Z",
+        "displayAt": "2026-11-15T14:00:00Z",
+        "actor": {
+          "type": "human",
+          "person": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          }
+        },
+        "comment": {
+          "id": "comment-6",
+          "issueId": "1",
+          "parentCommentId": null,
+          "body": "Fixture comment 6",
+          "version": 1,
+          "actualAuthor": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          },
+          "createdAt": "2026-11-15T14:00:00Z",
+          "displayCreatedAt": "2026-11-15T14:00:00Z",
+          "editedAt": null,
+          "deletedAt": null,
+          "resolved": false,
+          "replyCount": 0,
+          "hasReplies": false
+        }
+      },
+      {
+        "id": "comment-event-5",
+        "kind": "comment.created",
+        "occurredAt": "2026-11-15T13:00:00Z",
+        "displayAt": "2026-11-15T13:00:00Z",
+        "actor": {
+          "type": "human",
+          "person": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          }
+        },
+        "comment": {
+          "id": "comment-5",
+          "issueId": "1",
+          "parentCommentId": null,
+          "body": "Fixture comment 5",
+          "version": 1,
+          "actualAuthor": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          },
+          "createdAt": "2026-11-15T13:00:00Z",
+          "displayCreatedAt": "2026-11-15T13:00:00Z",
+          "editedAt": null,
+          "deletedAt": null,
+          "resolved": false,
+          "replyCount": 0,
+          "hasReplies": false
+        }
+      },
+      {
+        "id": "comment-event-4",
+        "kind": "comment.created",
+        "occurredAt": "2026-11-15T12:00:00Z",
+        "displayAt": "2026-11-15T12:00:00Z",
+        "actor": {
+          "type": "human",
+          "person": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          }
+        },
+        "comment": {
+          "id": "comment-4",
+          "issueId": "1",
+          "parentCommentId": null,
+          "body": "Fixture comment 4",
+          "version": 1,
+          "actualAuthor": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          },
+          "createdAt": "2026-11-15T12:00:00Z",
+          "displayCreatedAt": "2026-11-15T12:00:00Z",
+          "editedAt": null,
+          "deletedAt": null,
+          "resolved": false,
+          "replyCount": 0,
+          "hasReplies": false
+        }
+      },
+      {
+        "id": "comment-event-3",
+        "kind": "comment.created",
+        "occurredAt": "2026-11-15T11:00:00Z",
+        "displayAt": "2026-11-15T11:00:00Z",
+        "actor": {
+          "type": "human",
+          "person": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          }
+        },
+        "comment": {
+          "id": "comment-3",
+          "issueId": "1",
+          "parentCommentId": null,
+          "body": "Fixture comment 3",
+          "version": 1,
+          "actualAuthor": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          },
+          "createdAt": "2026-11-15T11:00:00Z",
+          "displayCreatedAt": "2026-11-15T11:00:00Z",
+          "editedAt": null,
+          "deletedAt": null,
+          "resolved": false,
+          "replyCount": 0,
+          "hasReplies": false
+        }
+      },
+      {
+        "id": "comment-event-2",
+        "kind": "comment.created",
+        "occurredAt": "2026-11-15T10:00:00Z",
+        "displayAt": "2026-11-15T10:00:00Z",
+        "actor": {
+          "type": "human",
+          "person": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          }
+        },
+        "comment": {
+          "id": "comment-2",
+          "issueId": "1",
+          "parentCommentId": "comment-1",
+          "body": "Fixture comment 2",
+          "version": 1,
+          "actualAuthor": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          },
+          "createdAt": "2026-11-15T10:00:00Z",
+          "displayCreatedAt": "2026-11-15T10:00:00Z",
+          "editedAt": null,
+          "deletedAt": null,
+          "resolved": false,
+          "replyCount": 0,
+          "hasReplies": false
+        }
+      },
+      {
+        "id": "event-2",
+        "kind": "issue.changed",
+        "occurredAt": "2026-11-15T10:00:00Z",
+        "displayAt": "2026-11-15T10:00:00Z",
+        "actor": {
+          "type": "human",
+          "person": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          }
+        },
+        "comment": null
+      },
+      {
+        "id": "comment-event-1",
+        "kind": "comment.created",
+        "occurredAt": "2026-11-15T09:00:00Z",
+        "displayAt": "2026-11-15T09:00:00Z",
+        "actor": {
+          "type": "human",
+          "person": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          }
+        },
+        "comment": {
+          "id": "comment-1",
+          "issueId": "1",
+          "parentCommentId": null,
+          "body": "Fixture comment 1",
+          "version": 1,
+          "actualAuthor": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          },
+          "createdAt": "2026-11-15T09:00:00Z",
+          "displayCreatedAt": "2026-11-15T09:00:00Z",
+          "editedAt": null,
+          "deletedAt": null,
+          "resolved": false,
+          "replyCount": 1,
+          "hasReplies": true
+        }
+      },
+      {
+        "id": "event-1",
+        "kind": "issue.created",
+        "occurredAt": "2026-11-15T07:00:00Z",
+        "displayAt": "2026-11-15T07:00:00Z",
+        "actor": {
+          "type": "human",
+          "person": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          }
+        },
+        "comment": null
+      }
+    ],
+    "nextCursor": "fixture-timeline-older"
+  },
+  "earlier": {
+    "items": [
+      {
+        "id": "comment-removed",
+        "kind": "comment.created",
+        "occurredAt": "2026-11-15T06:00:00Z",
+        "displayAt": "2026-11-15T06:00:00Z",
+        "actor": {
+          "type": "human",
+          "person": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          }
+        },
+        "comment": {
+          "id": "comment-0",
+          "issueId": "1",
+          "parentCommentId": null,
+          "body": "Fixture comment 0",
+          "version": 1,
+          "actualAuthor": {
+            "userId": "fixture-me",
+            "displayName": "Ada Fixture",
+            "isFormerMember": false,
+            "kind": "human"
+          },
+          "createdAt": "2026-11-15T08:00:00Z",
+          "displayCreatedAt": "2026-11-15T08:00:00Z",
+          "editedAt": null,
+          "deletedAt": "2026-11-15T08:00:00Z",
+          "resolved": false,
+          "replyCount": 0,
+          "hasReplies": false
+        }
+      }
+    ],
+    "nextCursor": null
+  }
+}

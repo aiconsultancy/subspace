@@ -1,0 +1,6 @@
+# libghostty-rs issue 70: `graphemes_buf` passes no capacity to the C API, so
+# it can write past the end of the caller's slice. The crate documentation
+# records the rule; this makes the ban mechanical.
+disallowed-methods = [
+    { path = "libghostty_vt::render::CellIteration::graphemes_buf", reason = "libghostty-rs issue 70: it passes no capacity and can write past the slice. Use graphemes_len and graphemes_utf8." },
+]

@@ -1,0 +1,13 @@
+{"direction":"client->agent","method":"initialize","id":1}
+{"direction":"agent->client","method":null,"id":1}
+{"direction":"client->agent","method":"session/new","id":2}
+{"direction":"agent->client","method":"_auth/status_update","id":null}
+{"direction":"agent->client","method":null,"id":2}
+{"direction":"client->agent","method":"session/prompt","id":3}
+{"direction":"agent->client","method":"session/update","id":null}
+{"direction":"agent->client","method":"session/update","id":null}
+{"direction":"agent->client","method":"session/update","id":null}
+{"direction":"agent->client","method":"session/update","id":null}
+{"direction":"agent->client","method":"session/update","id":null}
+{"direction":"agent->client","method":"session/update","id":null}
+{"direction":"agent->client","method":null,"id":3}

@@ -1,0 +1,17 @@
+[package]
+name = "subspace-descriptor"
+description = "The Subspace App's product descriptor and its packaging metadata helper"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Only the GPUI-free product types, so the packaging helper builds quickly.
+subspace-framework = { workspace = true, default-features = false }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

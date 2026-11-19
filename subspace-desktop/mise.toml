@@ -1,0 +1,201 @@
+[tools]
+rust = { version = "1.99.0", mr_boxington = true, components = "rustfmt,clippy" }
+mr-boxington = "1.19.0"
+"cargo:rustqual" = "1.8.3"
+"github:Boshen/cargo-shear" = "1.14.0"
+"github:j178/prek" = "0.3.13"
+"conda:imagemagick" = "7.1.2_31"
+
+[tasks.build]
+description = "Build every crate"
+run = "cargo build --workspace"
+
+[tasks.update-deps]
+description = "Update Cargo.lock to the latest compatible dependency versions"
+run = "cargo update"
+
+[tasks.run]
+description = "Run the desktop application"
+run = "bash scripts/run-app.sh"
+
+[tasks.capture]
+description = "macOS/Linux screenshots from an isolated debug capture build with fixture data"
+run = "bash scripts/capture.sh"
+
+[tasks.test]
+description = "Run the tests"
+run = "cargo test --workspace --locked"
+
+[tasks.board-lab-examples]
+description = "Check live examples through Python, Node and Bun helpers; pass --python, --node and --bun executable paths"
+run = "python3 spaces/board-lab/src/project_browser/examples/test_live_examples.py"
+
+[tasks.prepare-onnx-runtime]
+description = "Prepare and verify the native ONNX archive before cached macOS builds"
+run = "bash scripts/prepare-onnx-runtime.sh"
+
+[tasks.script-test]
+description = "Test release, installation and packaging scripts with isolated fixtures"
+run = "bash scripts/test-scripts.sh"
+
+[tasks.web-bridge-test]
+description = "Test the web Space JavaScript bridge without a browser"
+tools = { node = "26.5.0" }
+run = "node --test spaces/web/tests/bridge.test.mjs"
+
+[tasks.weather-space-test]
+description = "Test the installable Weather web Space without network access"
+tools = { node = "26.5.0" }
+run = "node --test web-spaces/examples/weather/test/*.test.js"
+
+[tasks.package-web-space]
+description = "Validate a web Space folder and write a reproducible ZIP (FOLDER [OUT.zip])"
+run = "python3 scripts/package-web-space.py"
+
+[tasks.interfaces]
+description = "Check the product CLI without GUI, credentials or live services"
+run = "bash scripts/test-product-interfaces.sh"
+
+[tasks.fmt]
+# cargo fmt --all also follows vendored path dependencies.
+run = "python3 scripts/format-workspace.py"
+
+[tasks.fmt-check]
+run = "python3 scripts/format-workspace.py -- --check"
+
+[tasks.lint]
+# --keep-going reports every failing crate in one run, not only the first.
+run = ["cargo shear", "cargo clippy --workspace --all-targets --keep-going -- -D warnings"]
+
+[tasks.quality]
+description = "Fail when the rustqual quality score drops below the baseline"
+run = "rustqual . --no-fail --compare rustqual-baseline.json --fail-on-regression"
+
+[tasks.quality-baseline]
+description = "Save the current rustqual results as the baseline"
+# rustqual reads the saved score back through serde_json without exact float
+# parsing, so an unchanged score can read one ulp higher and fail `quality`.
+# Rounding the saved score down to 9 decimals absorbs that error.
+run = [
+    "rustqual . --no-fail --save-baseline rustqual-baseline.json",
+    "awk '/\"quality_score\":/ { sub(/[0-9.]+,$/, sprintf(\"%.9f,\", int($2 * 1e9) / 1e9)) } { print }' rustqual-baseline.json > rustqual-baseline.json.tmp",
+    "mv rustqual-baseline.json.tmp rustqual-baseline.json",
+]
+
+[tasks.audit]
+description = "Check all three Cargo lockfiles against the RustSec advisory database"
+# Not part of `check`: cargo-deny fetches the advisory database from the network.
+tools = { "github:EmbarkStudios/cargo-deny" = "0.19.8" }
+shell = "bash -c"
+run = '''
+set -uo pipefail
+status=0
+audit() {
+  echo "cargo deny: $1"
+  cargo deny --manifest-path "$1" check --config "$2" advisories || status=1
+}
+audit Cargo.toml deny.toml
+audit terminal/runtime/Cargo.toml deny.toml
+audit terminal/panel/Cargo.toml deny.toml
+exit "$status"
+'''
+
+[tasks.check]
+description = "Architecture, format check, lint, Rust tests and script fixtures"
+depends = ["architecture", "board-docs", "docs-index", "fmt-check", "lint", "test", "script-test", "web-bridge-test", "weather-space-test"]
+
+[tasks.board-docs]
+description = "Check every composed board guide, local links and embedded image sources"
+run = ["python3 scripts/test-board-docs.py", "python3 scripts/check-board-docs.py"]
+
+[tasks.docs-index]
+description = "Check that docs/README.md reaches every documentation page and its links resolve"
+run = ["python3 scripts/test-docs-index.py", "python3 scripts/check-docs-index.py"]
+
+[tasks.architecture]
+description = "Check the one Framework import, dependency and source-include direction, including terminals"
+run = ["python3 scripts/test-architecture.py", "python3 scripts/test-icon-buttons.py", "python3 scripts/check-architecture.py"]
+
+[tasks.package]
+description = "Build the release archive into dist/: mise run package -- [RUST_TARGET [VERSION]]"
+# bash, not the task shell, so the task also runs on Windows (Git Bash).
+run = "bash scripts/package-release.sh"
+
+[tasks.package-macos]
+description = "Build the signed, notarized macOS app: mise run package-macos -- SIGNING_IDENTITY KEYCHAIN_PROFILE [RUST_TARGET]"
+run = "bash scripts/package-macos.sh"
+
+[tasks.release-macos]
+description = "Build, sign and notarize the macOS app, attach it to the draft release and publish it: mise run release-macos -- SIGNING_IDENTITY KEYCHAIN_PROFILE"
+run = "bash scripts/release-macos.sh"
+
+[tasks.package-macos-ci]
+description = "Build the signed release app with protected CI secrets: -- RUST_TARGET VERSION"
+run = "bash scripts/package-macos-ci.sh"
+
+[tasks.install-macos]
+description = "Build the app, sign it ad hoc and install it into ~/Applications: mise run install-macos -- [RUST_TARGET]"
+run = "bash scripts/install-macos.sh"
+
+[tasks.cache-stats]
+description = "Show Mr Boxington cache results for the last build"
+run = "mbx explain --last"
+
+[tasks.clean]
+run = "cargo clean"
+
+[tasks.terminal-deps]
+description = "Download Ghostty and prefetch its Zig dependencies for offline Terminal builds"
+shell = "bash -c"
+run = '''
+set -euo pipefail
+root="$(pwd)"
+deps="${SUBSPACE_ZIG_DEPS_DIR:-$root/target/zig-deps}"
+commit=3425025e585a3403340d4dc6d65132f42e05e605
+source="$deps/ghostty-$commit"
+archive="$deps/ghostty-$commit.tar.gz"
+mkdir -p "$deps"
+if [[ ! -d "$source" ]]; then
+  if [[ ! -f "$archive" ]]; then
+    curl --fail --silent --show-error --location \
+      --connect-timeout 10 --max-time 45 --retry 2 --retry-delay 2 \
+      --retry-max-time 100 --retry-all-errors \
+      -o "$archive.partial" "https://github.com/ghostty-org/ghostty/archive/$commit.tar.gz"
+    mv "$archive.partial" "$archive"
+  fi
+  tmp="$deps/.ghostty-$commit.$$"
+  rm -rf "$tmp"
+  mkdir "$tmp"
+  tar -xzf "$archive" -C "$tmp" --strip-components=1
+  mv "$tmp" "$source"
+fi
+bash scripts/prefetch-zig-deps.sh "$source" "$deps"
+# Resolve the actual library build graph offline before publishing this cache.
+# Optional platform packages may be unavailable, but required packages may not.
+(cd "$source" && zig build --system "$deps/system" --global-cache-dir "$deps/cache" \
+  -Demit-lib-vt=true -Demit-xcframework=false -Dapp-runtime=none --help >/dev/null)
+'''
+
+[tasks.check-terminal]
+description = "Check the excluded Terminal crates with Zig enabled"
+shell = "bash -c"
+run = '''
+set -euo pipefail
+# Each excluded crate is its own workspace root, with its own target directory
+# and default profile. Share one directory and keep debug info small so the
+# two crates build GPUI once and fit on a CI runner's disk.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target/terminal-check}"
+export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-line-tables-only}"
+manifests=(terminal/runtime/Cargo.toml terminal/panel/Cargo.toml)
+for manifest in "${manifests[@]}"; do
+  [[ -f "$manifest" ]] || continue
+  cargo fmt --manifest-path "$manifest" -- --check
+  cargo clippy --manifest-path "$manifest" --all-targets --locked -- -D warnings
+  cargo test --manifest-path "$manifest" --locked
+done
+# Exercise the real product link step too.
+cargo build -p subspace --features terminal --locked
+# The baseline covers all of this folder's source, including the excluded
+# terminal crates.
+rustqual . --no-fail --compare rustqual-baseline.json --fail-on-regression
+'''
