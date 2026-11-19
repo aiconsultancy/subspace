@@ -2,7 +2,6 @@ import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { type Client, type SeedIssue, request } from "./api";
 import { dateAt } from "./data";
-
 import { webhookKeyPath } from "./settings";
 
 async function key() {
@@ -47,13 +46,16 @@ export async function demoGitHub(admin: Client, local: boolean) {
       });
     }
     const issue = issues[0]!;
-    const linked = await admin.all<{ repository: string; number: number }>(
+    const pullNumber = 42;
+    const linked = await admin.all<{ repository: { fullName: string }; number: number }>(
       `/issues/${issue.id}/pull-requests`,
     );
-    if (!linked.some((row) => row.repository === repository && row.number === 42)) {
+    if (
+      !linked.some((row) => row.repository.fullName === repository && row.number === pullNumber)
+    ) {
       await event("pull_request", {
         pull_request: {
-          number: 42,
+          number: pullNumber,
           title: `Pilot: ${issue.title}`,
           body: `Refs ${issue.identifier}`,
           user: { login: captain },
