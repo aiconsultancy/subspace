@@ -200,23 +200,23 @@ and docs. Every crate here depends on exactly one Framework crate, the facade
 `subspace-framework`, and writes `subspace_framework::<module>::…`
 (`dashboard`, `core`, `shell`, …). Spaces and clients use its default
 features (or `agent`); only `products/subspace` enables `host`,
-`search-onnx`, `component-gallery` and, for capture builds, `capture`.
+`search-onnx`, `component-gallery`, `gpui-kit-text-patch` and, for capture
+builds, `capture`.
 
 ```toml
 # Cargo.toml
-subspace-framework = { path = "../subspace-framework", version = "0.1.0" }
+subspace-framework = { path = "../subspace-framework", version = "0.2.0" }
 
 [patch.crates-io]
+gpui-base = { path = "../subspace-framework/vendor/gpui-base" }
 markdown = { path = "../subspace-framework/vendor/markdown" }
 ```
 
-Those two paths are the only places this folder names the Framework's
-(the excluded terminal manifests repeat them). To build against the published
-crate instead, delete `path = "../subspace-framework", ` from the dependency
-here and in the two terminal manifests, then refresh the three lockfiles; the
-Framework's [publishing guide](../subspace-framework/docs/publishing.md#subspace-desktop-and-the-published-crate)
-has the exact steps, how to switch back and what the architecture check
-accepts in each mode. The Markdown patch stays until upstream fixes the
+The excluded terminal manifests use the same Framework dependency and
+vendored patches. The Framework's
+[publishing guide](../subspace-framework/docs/publishing.md#subspace-desktop-and-the-published-crate)
+shows how to switch to a published crate, refresh the three lockfiles and
+return to the source checkout. The Markdown patch stays until upstream fixes the
 parser (see the
 [Framework README](../subspace-framework/README.md#requirements-for-an-app)).
 Integration pre-releases count Framework commits as app changes while the

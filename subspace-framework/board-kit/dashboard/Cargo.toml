@@ -11,6 +11,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
+gpui-kit-text-patch = []
 test-support = ["gpui-kit/test-support"]
 
 [dependencies]

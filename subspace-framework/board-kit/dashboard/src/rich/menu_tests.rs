@@ -31,8 +31,6 @@ impl Render for Fixture {
 }
 
 #[gpui_kit::test]
-/// Published GPUI Kit 0.9.1 does not report the link under a secondary
-/// click, so the menu cannot offer Copy link for it; the selection survives.
 fn selected_formatted_link_keeps_selection_on_a_secondary_click(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let (fixture, cx) = cx.add_window_view(|_, _| Fixture {
@@ -73,5 +71,17 @@ fn selected_formatted_link_keeps_selection_on_a_secondary_click(cx: &mut TestApp
             cx.read_from_clipboard().unwrap().text().as_deref(),
             Some("untouched")
         );
+        #[cfg(feature = "gpui-kit-text-patch")]
+        {
+            assert_eq!(
+                window.within("popup-menu").find(1usize).label(),
+                Some("Copy link")
+            );
+            window.within("popup-menu").click(1usize, cx);
+            assert_eq!(
+                cx.read_from_clipboard().unwrap().text().as_deref(),
+                Some("https://example.org/path")
+            );
+        }
     });
 }

@@ -99,17 +99,20 @@ impl RichTextContext {
     }
 
     /// Mark a custom inline link during its secondary mouse-down, before the
-    /// containing text menu opens. Ordinary Markdown links do this natively.
+    /// containing text menu opens. With the GPUI Kit text patch enabled,
+    /// Markdown links record their destinations automatically.
     // qual:api — called by app Spaces for their own inline references.
     pub fn mark_link(&self, url: impl Into<String>) {
-        if let Ok(mut target) = self.target.lock() {
-            *target = Some(url.into());
-        }
+        self.set_link(Some(url.into()));
     }
 
     pub(super) fn clear_link(&self) {
+        self.set_link(None);
+    }
+
+    fn set_link(&self, url: Option<String>) {
         if let Ok(mut target) = self.target.lock() {
-            *target = None;
+            *target = url;
         }
     }
 
@@ -268,6 +271,12 @@ fn configure_view(
     view = view.selectable(true);
     for configure in configure {
         view = configure(view, context.clone());
+    }
+    #[cfg(feature = "gpui-kit-text-patch")]
+    {
+        let pointer = context.clone();
+        view =
+            view.on_link_context_menu(move |url, _, _, _| pointer.set_link(Some(url.to_string())));
     }
     view = view
         .on_link_click(move |url, event, window, cx| {
