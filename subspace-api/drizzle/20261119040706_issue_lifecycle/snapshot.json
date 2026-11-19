@@ -1,0 +1,575 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "a5da3b62-55ef-42aa-9ee4-d877ab39453a",
+  "prevIds": [
+    "7fa1b5d7-a315-4bf6-85cc-cd1ccd6273b3"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_todos"
+      ],
+      "writes": [
+        "s|tbl|public.issue_todos",
+        "n|tbl|public.issue_todos",
+        "e|tbl|public.issue_todos",
+        "n|rel|public.issue_todos",
+        "n|type|public.issue_todos",
+        "n|rel|public.issue_todos_pkey",
+        "n|rel|public.issue_todos_organisation_id_issue_id_position_unique"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "issues",
+        "archived_by_id"
+      ],
+      "writes": [
+        "s|col|public.issues.archived_by_id",
+        "n|col|public.issues.archived_by_id",
+        "e|col|public.issues.archived_by_id"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issues"
+      ],
+      "writes": [
+        "s|fk|public.issues.issues_JskMR9b2U8WQ_fkey",
+        "n|fk|public.issues.issues_JskMR9b2U8WQ_fkey",
+        "e|fk|public.issues.issues_JskMR9b2U8WQ_fkey",
+        "n|con|public.issues.issues_JskMR9b2U8WQ_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.archived_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_todos"
+      ],
+      "writes": [
+        "s|fk|public.issue_todos.issue_todos_organisation_id_organisations_id_fkey",
+        "n|fk|public.issue_todos.issue_todos_organisation_id_organisations_id_fkey",
+        "e|fk|public.issue_todos.issue_todos_organisation_id_organisations_id_fkey",
+        "n|con|public.issue_todos.issue_todos_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_todos",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.issue_todos.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_todos"
+      ],
+      "writes": [
+        "s|fk|public.issue_todos.issue_todos_LFrZ2CJvbiW8_fkey",
+        "n|fk|public.issue_todos.issue_todos_LFrZ2CJvbiW8_fkey",
+        "e|fk|public.issue_todos.issue_todos_LFrZ2CJvbiW8_fkey",
+        "n|con|public.issue_todos.issue_todos_LFrZ2CJvbiW8_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_todos",
+        "n|sch|public",
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issue_todos.organisation_id",
+        "n|col|public.issue_todos.issue_id",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id",
+        "e|uniqueness|public.issues.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_todos"
+      ],
+      "writes": [
+        "s|fk|public.issue_todos.issue_todos_P7Jlab01fqL5_fkey",
+        "n|fk|public.issue_todos.issue_todos_P7Jlab01fqL5_fkey",
+        "e|fk|public.issue_todos.issue_todos_P7Jlab01fqL5_fkey",
+        "n|con|public.issue_todos.issue_todos_P7Jlab01fqL5_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_todos",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.issue_todos.organisation_id",
+        "n|col|public.issue_todos.created_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_todos"
+      ],
+      "writes": [
+        "s|fk|public.issue_todos.issue_todos_0XBVA0J88hvw_fkey",
+        "n|fk|public.issue_todos.issue_todos_0XBVA0J88hvw_fkey",
+        "e|fk|public.issue_todos.issue_todos_0XBVA0J88hvw_fkey",
+        "n|con|public.issue_todos.issue_todos_0XBVA0J88hvw_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_todos",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.issue_todos.organisation_id",
+        "n|col|public.issue_todos.updated_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_todos"
+      ],
+      "writes": [
+        "s|fk|public.issue_todos.issue_todos_Ct7wvyUu4Akt_fkey",
+        "n|fk|public.issue_todos.issue_todos_Ct7wvyUu4Akt_fkey",
+        "e|fk|public.issue_todos.issue_todos_Ct7wvyUu4Akt_fkey",
+        "n|con|public.issue_todos.issue_todos_Ct7wvyUu4Akt_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_todos",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.issue_todos.organisation_id",
+        "n|col|public.issue_todos.done_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "issue_todos",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "archived_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "issue_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "text",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "position",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "done_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "done_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "created_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "updated_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "version",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "1",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "issues_JskMR9b2U8WQ_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "archived_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "issue_todos_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "issue_todos_LFrZ2CJvbiW8_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "issue_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issues",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "issue_todos_P7Jlab01fqL5_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "created_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "issue_todos_0XBVA0J88hvw_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "updated_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "issue_todos_Ct7wvyUu4Akt_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "done_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "issue_todos_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_todos",
+        "name": "issue_todos_organisation_id_issue_id_position_unique",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "issue_id",
+          "position"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    }
+  ]
+}

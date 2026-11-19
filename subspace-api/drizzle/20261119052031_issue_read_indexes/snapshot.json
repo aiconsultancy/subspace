@@ -1,0 +1,384 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "40544632-93d4-495a-90fd-2c8a126dda1f",
+  "prevIds": [
+    "059ac4e5-b98b-435f-8525-a7e668a19a96"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "issues",
+        "issues_created_order_idx"
+      ],
+      "writes": [
+        "s|idx|public.issues_created_order_idx",
+        "n|idx|public.issues_created_order_idx",
+        "e|idx|public.issues_created_order_idx",
+        "n|rel|public.issues_created_order_idx"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "issues",
+        "issues_priority_order_idx"
+      ],
+      "writes": [
+        "s|idx|public.issues_priority_order_idx",
+        "n|idx|public.issues_priority_order_idx",
+        "e|idx|public.issues_priority_order_idx",
+        "n|rel|public.issues_priority_order_idx"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "issues",
+        "issues_activity_order_idx"
+      ],
+      "writes": [
+        "s|idx|public.issues_activity_order_idx",
+        "n|idx|public.issues_activity_order_idx",
+        "e|idx|public.issues_activity_order_idx",
+        "n|rel|public.issues_activity_order_idx"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "issues",
+        "issues_activity_since_idx"
+      ],
+      "writes": [
+        "s|idx|public.issues_activity_since_idx",
+        "n|idx|public.issues_activity_since_idx",
+        "e|idx|public.issues_activity_since_idx",
+        "n|rel|public.issues_activity_since_idx"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.last_activity_at"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "issues",
+        "issues_manual_order_idx"
+      ],
+      "writes": [
+        "s|idx|public.issues_manual_order_idx",
+        "n|idx|public.issues_manual_order_idx",
+        "e|idx|public.issues_manual_order_idx",
+        "n|rel|public.issues_manual_order_idx"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.number",
+        "n|col|public.issues.id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "issues",
+        "issues_parent_order_idx"
+      ],
+      "writes": [
+        "s|idx|public.issues_parent_order_idx",
+        "n|idx|public.issues_parent_order_idx",
+        "e|idx|public.issues_parent_order_idx",
+        "n|rel|public.issues_parent_order_idx"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.parent_id",
+        "n|col|public.issues.number",
+        "n|col|public.issues.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "issues_created_order_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "(-floor(extract(epoch from (\"created_at\" at time zone 'UTC')) * 1000)::bigint)",
+            "isExpression": true,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "issues_priority_order_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "coalesce(nullif(\"priority\", 0), 5)",
+            "isExpression": true,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "(-floor(extract(epoch from (\"created_at\" at time zone 'UTC')) * 1000)::bigint)",
+            "isExpression": true,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "issues_activity_order_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "(-floor(extract(epoch from (\"last_activity_at\" at time zone 'UTC')) * 1000)::bigint)",
+            "isExpression": true,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "(-floor(extract(epoch from (\"created_at\" at time zone 'UTC')) * 1000)::bigint)",
+            "isExpression": true,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "issues_activity_since_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "last_activity_at",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "issues_manual_order_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "number",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "issues_parent_order_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "parent_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "number",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}

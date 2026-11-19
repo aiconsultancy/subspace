@@ -1,0 +1,451 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "2d13f545-e167-4846-b5d0-45cd591b5625",
+  "prevIds": [
+    "9b92fe6d-77f8-49f7-8619-221232570c32"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decision_revisions"
+      ],
+      "writes": [
+        "s|tbl|public.project_decision_revisions",
+        "n|tbl|public.project_decision_revisions",
+        "e|tbl|public.project_decision_revisions",
+        "n|rel|public.project_decision_revisions",
+        "n|type|public.project_decision_revisions",
+        "n|rel|public.project_decision_revisions_pkey",
+        "n|rel|public.project_decision_revisions_organisation_id_decision_id_number_unique"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_decisions",
+        "supersedes_id"
+      ],
+      "writes": [
+        "s|col|public.project_decisions.supersedes_id",
+        "n|col|public.project_decisions.supersedes_id",
+        "e|col|public.project_decisions.supersedes_id"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_decisions",
+        "superseded_by_id"
+      ],
+      "writes": [
+        "s|col|public.project_decisions.superseded_by_id",
+        "n|col|public.project_decisions.superseded_by_id",
+        "e|col|public.project_decisions.superseded_by_id"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decision_revisions"
+      ],
+      "writes": [
+        "s|fk|public.project_decision_revisions.project_decision_revisions_HbKHxDgJ777y_fkey",
+        "n|fk|public.project_decision_revisions.project_decision_revisions_HbKHxDgJ777y_fkey",
+        "e|fk|public.project_decision_revisions.project_decision_revisions_HbKHxDgJ777y_fkey",
+        "n|con|public.project_decision_revisions.project_decision_revisions_HbKHxDgJ777y_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_decision_revisions",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.project_decision_revisions.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decision_revisions"
+      ],
+      "writes": [
+        "s|fk|public.project_decision_revisions.project_decision_revisions_JLY8QLovbCpW_fkey",
+        "n|fk|public.project_decision_revisions.project_decision_revisions_JLY8QLovbCpW_fkey",
+        "e|fk|public.project_decision_revisions.project_decision_revisions_JLY8QLovbCpW_fkey",
+        "n|con|public.project_decision_revisions.project_decision_revisions_JLY8QLovbCpW_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_decision_revisions",
+        "n|sch|public",
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|col|public.project_decision_revisions.organisation_id",
+        "n|col|public.project_decision_revisions.decision_id",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.id",
+        "e|uniqueness|public.project_decisions.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decisions"
+      ],
+      "writes": [
+        "s|fk|public.project_decisions.project_decisions_NjzNFb5kCJK3_fkey",
+        "n|fk|public.project_decisions.project_decisions_NjzNFb5kCJK3_fkey",
+        "e|fk|public.project_decisions.project_decisions_NjzNFb5kCJK3_fkey",
+        "n|con|public.project_decisions.project_decisions_NjzNFb5kCJK3_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.supersedes_id",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.id",
+        "e|uniqueness|public.project_decisions.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decisions"
+      ],
+      "writes": [
+        "s|fk|public.project_decisions.project_decisions_gFeFr8udgMMu_fkey",
+        "n|fk|public.project_decisions.project_decisions_gFeFr8udgMMu_fkey",
+        "e|fk|public.project_decisions.project_decisions_gFeFr8udgMMu_fkey",
+        "n|con|public.project_decisions.project_decisions_gFeFr8udgMMu_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.superseded_by_id",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.id",
+        "e|uniqueness|public.project_decisions.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "project_decision_revisions",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "decision_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "number",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "snapshot",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "saved_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "saved_by",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "changed_fields",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "supersedes_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "superseded_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "project_decision_revisions_HbKHxDgJ777y_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "project_decision_revisions_JLY8QLovbCpW_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "decision_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "project_decisions",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "project_decisions_NjzNFb5kCJK3_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "supersedes_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "project_decisions",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "project_decisions_gFeFr8udgMMu_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "superseded_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "project_decisions",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "project_decision_revisions_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_revisions",
+        "name": "project_decision_revisions_organisation_id_decision_id_number_unique",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "decision_id",
+          "number"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    }
+  ]
+}
