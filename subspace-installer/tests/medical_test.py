@@ -184,6 +184,28 @@ class MedicalTest(TestCase):
             self.assertEqual(medical.poll(self.config, self.db), 0)
         self.assertEqual(self.messages.count(medical.POLL_RECOVERED), 1)
 
+    def test_recovery_skips_notices_when_failure_was_never_delivered(self):
+        self.server.respond = lambda _: (503, {}, {})
+        with patch.object(self, "announce", side_effect=medical.PollError("IRC unavailable")):
+            with self.assertRaisesRegex(medical.PollError, "IRC unavailable"):
+                medical.poll(self.config, self.db)
+
+        self.server.respond = lambda _: (200, [self.issue(41)], {})
+        self.assertEqual(medical.poll(self.config, self.db), 1)
+        self.polls(["41"])
+        self.assertEqual(len(self.messages), 1)
+
+    def test_self_hosted_permalink_uses_configured_https_host(self):
+        self.config["permalinkHost"] = "issues.example.com"
+        valid = "https://issues.example.com/organizations/your-org/issues/42/"
+        self.server.respond = lambda _: (200, [self.issue(42, permalink=valid)], {})
+        self.assertEqual(medical.poll(self.config, self.db), 1)
+        self.assertIn(valid, self.messages[0])
+        for url in (valid.replace("https:", "http:"), valid.replace(".com/", ".com:8443/"),
+                    valid.replace("issues.example.com", f"127.0.0.1:{self.port}")):
+            with self.subTest(url=url):
+                self.assertIsNone(medical.issue_link(self.config, url, "your-project", "42"))
+
     def test_regressions_and_legacy_receipt(self):
         with sqlite3.connect(self.db) as db:
             db.execute("CREATE TABLE alerts (origin TEXT, org TEXT, environment TEXT, project TEXT, issue TEXT, "
@@ -197,9 +219,12 @@ class MedicalTest(TestCase):
         self.assertEqual(medical.poll(self.config, self.db), 1)
         rows[0]["lastSeen"] = iso(self.now + 1)
         self.assertEqual(medical.poll(self.config, self.db), 0)
-        rows[0]["inbox"] = {"reason": 1, "reason_date": iso(self.now)}
+        rows[0]["inbox"] = {"reason": 2, "reason_details": {}, "date_added": iso(self.now)}
         self.assertEqual(medical.poll(self.config, self.db), 0)
-        rows[0]["inbox"]["reason_date"] = iso(self.now + 2)
+        rows[0]["inbox"] = {"reason": 1, "reason_details": {}, "date_added": iso(self.now + 1)}
+        rows[0]["lastSeen"] = iso(self.now + 2)
+        self.assertEqual(medical.poll(self.config, self.db), 0)
+        rows[0]["inbox"] = {"reason": 2, "reason_details": {}, "date_added": iso(self.now + 2)}
         rows[0]["lastSeen"] = iso(self.now + 3)
         self.assertEqual(medical.poll(self.config, self.db), 1)
         rows.pop()
@@ -263,6 +288,8 @@ class ProtocolTest(TestCase):
             medical.next_cursor(cursor("unexpected/redirect"))
         self.assertEqual(medical.retry_after("300", 1234), 1534)
         self.assertEqual(medical.retry_after(formatdate(1534, usegmt=True), 1234), 1534)
+        self.assertEqual(medical.retry_after("999999999999", 1234), 1234 + 86400)
+        self.assertEqual(medical.retry_after(formatdate(1234 + 7 * 86400, usegmt=True), 1234), 1234 + 86400)
         self.assertEqual(medical.retry_after("invalid", 1234), 0)
 
     def test_issue_permalink_checks_expected_host_scheme_and_id(self):
@@ -296,6 +323,7 @@ class ConfigTest(TestCase):
         opts = {"enabled": True, "organisation": "your-org", "projects": ["123"], "account": "medical-bot"}
         irc = {"allowedAccounts": [], "mode": "remote", "starbaseChannel": "#starbase"}
         self.assertIsNone(medical_config(opts, irc, [])["http5xxTag"])
+        self.assertIsNone(medical_config(opts, irc, [])["permalinkHost"])
         parsed = medical_config({**opts, "intervalSeconds": 300, "http5xxTag": "http.server.status_code"}, irc, [])
         self.assertEqual(parsed["intervalSeconds"], 300)
         self.assertEqual(parsed["http5xxTag"], "http.server.status_code")
@@ -303,6 +331,10 @@ class ConfigTest(TestCase):
             medical_config({**opts, "intervalSeconds": 299}, irc, [])
         with self.assertRaisesRegex(Invalid, "Invalid Sentry HTTP status tag"):
             medical_config({**opts, "http5xxTag": "http] :500"}, irc, [])
+        parsed = medical_config({**opts, "permalinkHost": "Issues.Example.COM"}, irc, [])
+        self.assertEqual(parsed["permalinkHost"], "issues.example.com")
+        with self.assertRaisesRegex(Invalid, "Invalid host"):
+            medical_config({**opts, "permalinkHost": "https://issues.example.com"}, irc, [])
         with self.assertRaisesRegex(Invalid, "medical member ID is reserved"):
             member({"id": "medical", "name": "Medical Captain", "account": "member-account"})
 

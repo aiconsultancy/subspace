@@ -385,13 +385,14 @@ def integrations_config(cfg):
 
 
 def medical_config(value, irc, agents):
-    allowed = "enabled baseUrl organisation projects environment http5xxTag intervalSeconds channel account target"
+    allowed = "enabled baseUrl permalinkHost organisation projects environment http5xxTag intervalSeconds channel account target"
     value = fields(value, "medical", allowed)
     if not boolean(value.get("enabled", False)):
         return None
     fields(value, "medical", allowed, ["organisation", "projects", "account"])
     base = url(value.get("baseUrl", "https://sentry.io"), "Sentry base URL", True, ("", "/")).rstrip("/")
     host(urlsplit(base).hostname)
+    permalink_host = host(value["permalinkHost"]) if "permalinkHost" in value else None
     slug = r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}"
     organisation = pattern(value["organisation"], slug, "Sentry organisation slug")
     projects = value["projects"]
@@ -416,7 +417,7 @@ def medical_config(value, irc, agents):
         room = target["channel"]
     room = channel(value.get("channel", room))
     require(target is None or room == target["channel"], "Use the medical target's own channel.")
-    return {"baseUrl": base, "organisation": organisation, "projects": projects,
+    return {"baseUrl": base, "permalinkHost": permalink_host, "organisation": organisation, "projects": projects,
             "environment": string(value["environment"], "Sentry environment", 64) if "environment" in value else "",
             "http5xxTag": tag, "intervalSeconds": interval, "channel": room, "account": account_name, "target": target}
 
@@ -1091,7 +1092,7 @@ def medical_units(cfg, credentials, after):
     if "caFile" in cfg["irc"]:
         irc["caFile"] = str(ETC / "irc-ca.pem")
     irc.update(account=medical["account"], channel=medical["channel"], password=credentials[MEDICAL_IRC_PASSWORD[-1]])
-    settings = {key: medical[key] for key in ("baseUrl", "organisation", "projects", "environment", "http5xxTag")}
+    settings = {key: medical[key] for key in ("baseUrl", "permalinkHost", "organisation", "projects", "environment", "http5xxTag")}
     settings.update(irc=irc, token=credentials[SENTRY_TOKEN[-1]],
                     target=medical["target"]["account"] if medical["target"] else None)
     write(path, json_text(settings))
