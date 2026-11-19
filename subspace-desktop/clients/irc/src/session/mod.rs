@@ -104,6 +104,7 @@ pub struct Output {
     pub written: Vec<Event>,
     pub unwritten: Vec<Event>,
     pub quit: bool,
+    pub(crate) fatal: Option<String>,
 }
 
 impl Output {

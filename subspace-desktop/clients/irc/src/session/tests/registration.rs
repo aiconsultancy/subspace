@@ -4,8 +4,28 @@ use base64::engine::general_purpose::STANDARD;
 use super::super::{Carry, Session};
 use super::{ERGO_ISUPPORT, ERGO_LS, config, feed, lines, now, sent};
 use crate::model::{ConnectionStatus, Event, LineKind, NetworkId, Sasl};
+use crate::proto::parse;
 
 const REQUESTED: &str = "CAP REQ :account-notify account-tag away-notify batch cap-notify chghost draft/chathistory draft/event-playback draft/multiline draft/read-marker echo-message extended-join invite-notify labeled-response message-tags multi-prefix server-time setname standard-replies userhost-in-names sasl";
+
+#[test]
+fn nickname_fallback_allows_an_alternative_and_three_underscores() {
+    let mut session = Session::new(config(), Carry::default());
+    session.start(now());
+    let rejected = parse(":srv 433 * subspace :Nickname in use").unwrap();
+    for next in ["subspace2", "subspace2_", "subspace2__", "subspace2___"] {
+        let retry = session.receive(rejected.clone(), now());
+        assert_eq!(sent(&retry), [format!("NICK {next}")]);
+        assert!(retry.fatal.is_none());
+    }
+    let exhausted = session.receive(rejected, now());
+    assert!(exhausted.send.is_empty());
+    assert_eq!(
+        exhausted.fatal.as_deref(),
+        Some("No IRC nickname was accepted. Nickname in use")
+    );
+    assert!(!session.registered());
+}
 
 #[test]
 fn registers_with_cap_ls_302_and_sasl_plain() {

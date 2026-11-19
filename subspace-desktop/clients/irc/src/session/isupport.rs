@@ -31,6 +31,7 @@ pub struct Isupport {
     pub network: Option<String>,
     pub casemapping: Casemapping,
     pub chathistory: u16,
+    pub nicklen: Option<usize>,
     pub statusmsg: Vec<char>,
     pub list_modes: String,
     pub param_modes: String,
@@ -46,6 +47,7 @@ impl Default for Isupport {
             network: None,
             casemapping: Casemapping::Rfc1459,
             chathistory: 0,
+            nicklen: None,
             statusmsg: Vec::new(),
             list_modes: "beI".into(),
             param_modes: "k".into(),
@@ -77,9 +79,6 @@ impl Isupport {
                     _ => Casemapping::Rfc1459,
                 };
             }
-            "CHATHISTORY" | "DRAFT/CHATHISTORY" => {
-                self.chathistory = value.parse().unwrap_or_default();
-            }
             "STATUSMSG" => self.statusmsg = value.chars().collect(),
             "CHANMODES" => {
                 let mut modes = value.split(',');
@@ -89,6 +88,17 @@ impl Isupport {
             }
             "WHOX" => self.whox = true,
             "-WHOX" => self.whox = false,
+            key => self.apply_limit(key, &value),
+        }
+    }
+
+    fn apply_limit(&mut self, key: &str, value: &str) {
+        match key {
+            "CHATHISTORY" | "DRAFT/CHATHISTORY" => {
+                self.chathistory = value.parse().unwrap_or_default();
+            }
+            "NICKLEN" => self.nicklen = value.parse().ok().filter(|&limit| limit > 0),
+            "-NICKLEN" => self.nicklen = None,
             _ => {}
         }
     }
