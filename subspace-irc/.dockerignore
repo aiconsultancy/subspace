@@ -1,0 +1,6 @@
+**
+!Dockerfile
+!entrypoint.sh
+!seed-channels.py
+!ircd.yaml.tmpl
+!subspace.motd
