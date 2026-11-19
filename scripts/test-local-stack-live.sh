@@ -7,8 +7,9 @@ if [[ -z "${COMPOSE_PROJECT_NAME:-}" || "$COMPOSE_PROJECT_NAME" == subspace ]]; 
     exit 2
 fi
 
+api_binding="$(docker compose port api 3000)"
 verify() {
-    python3 scripts/local-stack/check-demo.py "${API_PORT:-3000}" "$1"
+    python3 scripts/local-stack/check-demo.py "${api_binding##*:}" "$1"
 }
 
 irc_counts() {
