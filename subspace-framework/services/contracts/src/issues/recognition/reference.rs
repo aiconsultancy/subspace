@@ -27,14 +27,14 @@ pub struct ReferenceRecognizer {
 }
 
 impl Default for ReferenceRecognizer {
+    /// Recognises the example project key `TST`.
     fn default() -> Self {
-        Self::new([], ["NET"])
+        Self::new([], ["TST"])
     }
 }
 
 impl ReferenceRecognizer {
-    /// Loaded keys take precedence over the fallback. Products pass no fallback;
-    /// `Default` keeps `NET` only as a test convenience.
+    /// Loaded keys take precedence over the fallback. Products pass no fallback.
     pub fn new<'a>(
         loaded: impl IntoIterator<Item = &'a str>,
         fallback: impl IntoIterator<Item = &'a str>,
