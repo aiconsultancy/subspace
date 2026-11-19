@@ -1,0 +1,109 @@
+# Agent instructions for Subspace
+
+Subspace is the communications layer for autonomous, collaborative coding
+agents. It brings together IRC and a bespoke issue tracker so agents can
+communicate and coordinate their work. The desktop app gives humans access to
+both. Start with the [repository README](README.md).
+
+## Repository layout
+
+Each folder is a self-contained project with its own toolchain, checks and
+docs. Read the nearest `AGENTS.md` before editing a project, then use its
+README and documentation index to find the pages relevant to your change.
+
+| Project | Role | Guidance |
+| --- | --- | --- |
+| [`subspace-framework/`](subspace-framework/README.md) | Reusable Rust crates exposed through `subspace-framework`, published on crates.io. | [AGENTS.md](subspace-framework/AGENTS.md) |
+| [`subspace-desktop/`](subspace-desktop/README.md) | Rust and GPUI desktop app with Spaces, service clients, a terminal and web Spaces. | [AGENTS.md](subspace-desktop/AGENTS.md) |
+| [`subspace-irc/`](subspace-irc/README.md) | Ergo IRCd packaged as a container. | |
+| [`subspace-api/`](subspace-api/README.md) | TypeScript HTTP API for the issue tracker, initiatives and fleets. | |
+| [`subspace-installer/`](subspace-installer/README.md) | Installer for fleet VMs. | |
+
+## Toolchains
+
+- **Framework and desktop.** Both Rust workspaces use edition 2024 and pin
+  stable Rust 1.99.0 through mise. Use GPUI through `gpui-kit` (0.9.1 in the
+  workspace manifests). The desktop terminal also pins Zig 0.16.0. Follow the
+  pins in the [Framework mise config](subspace-framework/mise.toml),
+  [desktop mise config](subspace-desktop/mise.toml) and
+  [terminal mise config](subspace-desktop/mise.terminal.toml).
+- **API.** Bun and strict TypeScript, with Effect HttpApi and Schema at the
+  HTTP boundary and Drizzle ORM on PostgreSQL. WorkOS is the default identity
+  provider, with optional Entra and an explicitly enabled local development
+  provider. Use oxlint and `bun test`.
+- **IRC.** Ergo IRCd runs under Docker Compose.
+- **Installer.** Bash for Ubuntu LTS VMs. It sets up stargate, OpenCode (the
+  default agent harness), CLIProxyAPI and agentsview.
+
+## Glossary
+
+| Term | Meaning |
+| --- | --- |
+| Space | A dashboard module, called a board in much of the code. Prefer *Space* in new text. |
+| Framework | The reusable crates that apps are composed from, exposed through the `subspace-framework` facade crate. |
+| Channels | The IRC Space for networks, channels and private messages. Its board ID is `irc`. |
+| Fleet | A VM running one rear admiral and a set of captains. Fleet and agent names are configurable. |
+| Rear admiral | The agent that coordinates work across a fleet's captains. |
+| Captain | An autonomous coding agent that carries out work in a fleet. |
+| Initiative | A grouping of work that can be assigned to a fleet. Switching initiative in the desktop also switches fleet context when the new initiative belongs to a different fleet. |
+
+See the [Framework glossary](subspace-framework/docs/glossary.md) and
+[desktop glossary](subspace-desktop/docs/glossary.md) for product terminology.
+
+## Working rules
+
+- Keep changes small and focused. Include tests for changed behaviour and run
+  the relevant project checks before reporting work as done.
+- Use conventional commits (`type(scope)!: summary`), one logical change per
+  commit. Work on a branch.
+- Release Please owns release versions and changelogs. Never bump a version,
+  edit a release changelog or tag a release by hand.
+  [Release Please configuration](release-please-config.json)
+- Keep prek hooks installed and passing. Never use `--no-verify`. Review the
+  staged diff before committing. [Repository hook configuration](prek.toml)
+- Write prose in British English. Keep existing code and API identifiers.
+- Keep this public repository free of secrets, tokens, real tenant or client
+  IDs, internal hostnames, personal data, and organisation-specific branding
+  or configuration. Use fictional fixtures and placeholders such as
+  `example.com` in docs and `.env.example` files. Configure identity
+  providers and service endpoints at build or run time.
+- Keep generated build output out of commits.
+
+## Commands
+
+Plain `make` or `make help` lists the root targets. From the repository root:
+
+- `make build`, `make test`, `make check`, `make format`, `make fmt-check`,
+  `make lint`, `make quality` and `make audit` run in the Framework first,
+  then the desktop.
+- `make release-check` checks release tooling and is also part of root
+  `make check`. `make hooks` installs the prek hooks on a fresh checkout.
+- `make stack-up` runs PostgreSQL, the API and IRC from the root
+  `compose.yaml` on loopback with demo data, and `make stack-reset` removes
+  them. See [Run the whole system locally](README.md#run-the-whole-system-locally).
+- Other targets are forwarded to the desktop Makefile, so `make run` also
+  works from the root.
+
+Run project commands from the owning folder.
+
+| Project | Everyday commands |
+| --- | --- |
+| Framework | `mise install`, `make build`, `make test`, `make check`, `make quality`. Run `make audit` after dependency changes. |
+| Desktop | `mise install`, `make run`, `make test`, `make check`, `make quality`. Use `make interfaces` for the headless product interface and `MISE_ENV=terminal make check-terminal` for the terminal. Run `make audit` after dependency changes. |
+| IRC | `docker compose config --quiet` validates the configuration. `docker compose up --build -d` starts the server. |
+| API | `bun install --frozen-lockfile` installs pinned dependencies. Run `bun test` and use the scripts in `package.json` for linting, type checking and running the API. `bun run` lists them. |
+| Installer | Use `bash -n` on changed scripts. Follow the installer README for the fleet setup commands and VM checks. |
+
+See the project guidance for prerequisites, integration checks and release
+commands. For changes across projects, run the checks in each affected folder
+and exercise the shared behaviour with the local stack.
+
+## Deeper guidance
+
+- [Desktop AGENTS.md](subspace-desktop/AGENTS.md) and
+  [documentation index](subspace-desktop/docs/README.md).
+- [Framework AGENTS.md](subspace-framework/AGENTS.md) and
+  [documentation index](subspace-framework/docs/README.md).
+- [Desktop agent skills](subspace-desktop/.agents/skills) and
+  [Framework agent skills](subspace-framework/.agents/skills) hold the local
+  checklists and specialised workflows.

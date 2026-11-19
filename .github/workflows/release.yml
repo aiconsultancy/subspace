@@ -1,0 +1,186 @@
+# Release Please for the Framework and the desktop app (release-please-config.json,
+# .release-please-manifest.json). See subspace-desktop/docs/ways-of-working.md#releases.
+#
+# - On every push to main: open or update one release pull request per
+#   project, refresh the lockfiles on their branches, and tag and release a
+#   merged one. A Framework release starts publish-framework.yml on its tag.
+#   An app release is a draft that `make release-macos` builds, attaches to
+#   and publishes from the owner's Mac.
+# - Nightly: also merge the Framework's release pull request, then release it
+#   in the same run, because a merge made with this workflow's token starts no
+#   other workflow run.
+# - By hand: a dry run that changes nothing and shows what Release Please
+#   would do.
+name: release
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  FRAMEWORK_BRANCH: release-please--branches--main--components--subspace-framework
+  INTEGRATION_BRANCH: feat/subspace-desktop
+  # The release-please version bundled in the action pinned below.
+  RELEASE_PLEASE_VERSION: 17.6.0
+
+jobs:
+  release:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # Tags, releases, release branches and the integration branch.
+      pull-requests: write # Open, update, label and merge the release pull requests.
+      issues: write # Create the autorelease labels.
+      actions: write # Start publish-framework.yml on a new Framework tag.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the Rust toolchain the Framework names
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' subspace-framework/Cargo.toml)"
+          test -n "$version"
+          rustup toolchain install "$version" --profile minimal
+          rustup default "$version"
+      - name: Have Release Please rebuild release pull requests that are behind main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release-rebuild.sh
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Refresh the lockfiles on the release branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # A copy: the script switches the checkout to each release branch,
+        # and bash reads a script while it runs.
+        run: |
+          cp scripts/release-lockfiles.sh "$RUNNER_TEMP/release-lockfiles.sh"
+          bash "$RUNNER_TEMP/release-lockfiles.sh"
+      - name: Merge the Framework's release pull request (nightly)
+        id: merge
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --state open \
+            --head "$FRAMEWORK_BRANCH" --label 'autorelease: pending' \
+            --json number,headRefOid --jq '.[0] // empty | "\(.number) \(.headRefOid)"')"
+          if [[ -z "$pr" ]]; then
+            echo "No Framework release pull request is open." >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          read -r number head <<<"$pr"
+          # The head that was just checked; a newer push waits for tomorrow.
+          gh pr merge "$number" --repo "$GITHUB_REPOSITORY" --squash --match-head-commit "$head"
+          echo "merged=true" >>"$GITHUB_OUTPUT"
+          echo "Merged the Framework release pull request #$number." >>"$GITHUB_STEP_SUMMARY"
+      - name: Have Release Please rebuild the app's release pull request after the merge
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release-rebuild.sh
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        id: after-merge
+        if: steps.merge.outputs.merged == 'true'
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Refresh the lockfiles again after the merge
+        if: steps.merge.outputs.merged == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # Release Please has rebuilt the app's release branch on the new main,
+        # without the lockfile commit.
+        run: bash "$RUNNER_TEMP/release-lockfiles.sh"
+      - name: Start the crates.io publish for a new Framework release
+        if: steps.release.outputs['subspace-framework--release_created'] == 'true' || steps.after-merge.outputs['subspace-framework--release_created'] == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs['subspace-framework--tag_name'] || steps.after-merge.outputs['subspace-framework--tag_name'] }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            subspace-framework-v*) ;;
+            *) echo "unexpected Framework tag: $TAG" >&2; exit 1 ;;
+          esac
+          gh workflow run publish-framework.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f publish=true
+          echo "Started publish-framework on $TAG." >>"$GITHUB_STEP_SUMMARY"
+      - name: Keep the app's newest release as the repository's latest
+        if: steps.release.outputs['subspace-framework--release_created'] == 'true' || steps.after-merge.outputs['subspace-framework--release_created'] == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # GitHub marks each new release Latest, and Release Please cannot
+        # say otherwise. Latest is what people download: the app.
+        run: |
+          set -euo pipefail
+          app="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases \
+            --limit 100 --json tagName --jq '[.[].tagName | select(startswith("subspace-desktop-v"))][0] // empty')"
+          if [[ -n "$app" ]]; then
+            gh release edit "$app" --repo "$GITHUB_REPOSITORY" --latest
+            echo "Kept $app as the latest release." >>"$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Note a new app release
+        if: steps.release.outputs['subspace-desktop--release_created'] == 'true'
+        env:
+          TAG: ${{ steps.release.outputs['subspace-desktop--tag_name'] }}
+        run: |
+          {
+            echo "Created the draft release $TAG. Publish it from the owner's Mac:"
+            echo "check out $TAG in subspace-desktop/ and run \`make release-macos\`."
+          } >>"$GITHUB_STEP_SUMMARY"
+      - name: Fast-forward the integration branch to main
+        if: steps.release.outputs.releases_created == 'true' || steps.after-merge.outputs.releases_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          if gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/$INTEGRATION_BRANCH" \
+            -f sha="$main" -F force=false --silent 2>/tmp/fast-forward.err; then
+            echo "Fast-forwarded $INTEGRATION_BRANCH to main ($main)." >>"$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "Left $INTEGRATION_BRANCH as it is: it cannot fast-forward to main ($main)."
+              echo "Merge or rebase it onto main by hand."
+              echo
+              echo '```'
+              cat /tmp/fast-forward.err
+              echo '```'
+            } >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+  preview:
+    if: github.event_name == 'workflow_dispatch'
+    name: Dry run (changes nothing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - name: What Release Please would release and propose
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for command in github-release release-pr; do
+            echo "::group::release-please $command --dry-run"
+            npx --yes "release-please@$RELEASE_PLEASE_VERSION" "$command" --dry-run \
+              --repo-url "$GITHUB_REPOSITORY" --token "$GH_TOKEN" --target-branch main \
+              --config-file release-please-config.json --manifest-file .release-please-manifest.json
+            echo "::endgroup::"
+          done

@@ -1,0 +1,29 @@
+# Root-stack additions to subspace-irc/compose.yaml: a local operator, the
+# generated service accounts and the demo channels. Relative paths resolve
+# from subspace-irc/, the first file of this include.
+services:
+  irc:
+    environment:
+      IRC_OPER_NAME: local-operator
+      IRC_OPER_PASSWORD_FILE: /run/subspace-stack/operator.password
+      IRC_ACCOUNTS_FILE: /run/subspace-stack/accounts.json
+      IRC_CHANNELS_FILE: /run/subspace-stack/channels.json
+    volumes:
+      - type: bind
+        source: ../.stack/irc/operator.seed
+        target: /run/subspace-stack/operator.password
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../.stack/irc/accounts.json
+        target: /run/subspace-stack/accounts.json
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../scripts/local-stack/irc-channels.json
+        target: /run/subspace-stack/channels.json
+        read_only: true
+        bind:
+          create_host_path: false
