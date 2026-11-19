@@ -21,6 +21,12 @@ The Component gallery's `find_in_page::surface` sample includes a literal
 match and a Markdown link. The Framework feature is opt-in so normal
 registry builds can continue to use the published GPUI Kit.
 
+Related upstream changes are in open pull requests.
+
+- [Reveal a selectable text range](https://github.com/longbridge/gpui-kit/pull/4052).
+- [Share linked-image click handling](https://github.com/longbridge/gpui-kit/pull/4053).
+- [Clear the selection press latch after mouse-down dispatch](https://github.com/longbridge/gpui-kit/pull/4054) (draft).
+
 ## Verification
 
 The dashboard tests exercise copying a selected link and selecting a
