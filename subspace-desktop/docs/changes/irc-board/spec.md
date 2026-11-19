@@ -7,9 +7,10 @@ An IRC client board with strong IRCv3 support, inspired by Halloy's model
 completion, condensed join/part, highlights) but built from Subspace's shared
 GPUI Kit components so it matches the other boards and themes.
 
-Halloy (GPL-3.0) code may be copied for this internal prototype; each copied
-file starts with a comment naming its Halloy source path. Licensing is
-resolved later.
+The first prototype adapted some files from Halloy (GPL-3.0-or-later). A
+clean-room implementation replaced them in November 2026. The current
+Apache-2.0 crate uses independently written IRC code.
+[Clean-room implementation](../irc-cleanroom/README.md)
 
 ## Crates
 
@@ -20,8 +21,7 @@ resolved later.
   - `runtime.rs`: `Runtime::start()`, `send(Command)`, `drain() -> Vec<Event>`.
     A dedicated thread owns a tokio runtime and one task per network.
   - `format.rs`: mIRC formatting to `Span`s, and `strip`.
-  - `proto/`: message parsing and serialisation with message tags (from
-    Halloy `irc/proto`).
+  - `proto/`: message parsing and serialisation with IRCv3 message tags.
 - `spaces/irc` (`subspace-irc-board`, board id `irc`, title `IRC`).
 
 ## Configuration

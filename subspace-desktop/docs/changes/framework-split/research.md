@@ -460,7 +460,7 @@ and `state::directory_name` should go.
 | Feature flags | `subspace-product/terminal` only adds a Space to `known.rs`; `capture` and `test-support` are fine | No |
 | Excluded Zig workspaces | `framework/runtimes/terminal`, `spaces/terminal` | They stay out of the first published set |
 | Licences | Every manifest says `Apache-2.0`. There is no `LICENSE` file in the repository or in any crate. Third-party notices exist for Flint, mermaid-rs and Ghostty under `licenses/`, outside the crates that embed them | Metadata passes; the files should ship in each crate |
-| `clients/irc` | Adapted from Halloy, which is `GPL-3.0-or-later` [L1]. An adaptation cannot be relabelled Apache-2.0 [L2] | Yes for that crate. It is used only by the Channels Space, so it does not have to be a Framework crate. See [open questions](#risks-and-open-questions-for-the-owner) |
+| `clients/irc` | At the time of this report, the crate contained modules adapted from Halloy (`GPL-3.0-or-later` [L1]). A clean-room implementation replaced them in November 2026. The crate is Apache-2.0. [Clean-room implementation](../irc-cleanroom/README.md) | No |
 | Package metadata | No `repository`, `readme`, `rust-version`, `keywords` in any manifest | Warnings only |
 | Names | `subspace` is taken on crates.io (an unrelated crate, last updated 2020). Every `subspace-*` name checked is free | The facade cannot be called `subspace` |
 
@@ -487,7 +487,7 @@ help, because GPUI Kit calls the `markdown` crate itself.
 | Piece | Used by | Options | Recommendation |
 | --- | --- | --- | --- |
 | `clients/github` | Four Spaces and three Framework crates | Stay in the Framework; separate published crate; one copy per Space | **A separate crate in the Framework repository**, published with it as `subspace-github`. The Framework needs it (Copilot sign-in, issue reports, repository search), so it cannot leave, and four copies of an 11,000-line client would drift. Its `issue_report` module takes its target from the product |
-| `clients/irc` | Channels only | Framework; Space-owned | **Space-owned**: `spaces/irc/crates/client`. This also takes the GPL-derived code out of anything the Framework publishes |
+| `clients/irc` | Channels only | Framework; Space-owned | **Space-owned**: `spaces/irc/crates/client` |
 | `clients/nett` | Issues only | Framework; Space-owned | **Space-owned**: `spaces/issues/crates/nett-client`. It hard-codes NETT hosts and a WorkOS client id |
 | `clients/test-support` | Tests of two Spaces, one client, one host crate | Framework dev crate; copy | **Framework**, published as a small test crate. It is 159 lines with no dependencies |
 | The `issues` contract (`subspace_contracts::issues`) | Channels, Issues, the NETT client | Framework; a crate between the two Spaces | **Out of the Framework**, into a contracts crate that both Spaces depend on. It describes NETT issues. The Framework keeps the `Contract`, `Event` and `Request` traits. This is also the pattern a third party needs for its own contracts |
@@ -702,7 +702,7 @@ read without creating a view.
 | Component gallery | A Space beside the others | In the Framework workspace | In the Framework repository: its tests read the Framework's source and its catalogue, and `make check` requires a card for every component | The same |
 | Docs | One tree | One tree | Framework: the Space author's guide and API docs. App: the product guide and Space guides | Split three ways |
 | Releases | One version, as now | Two versions in one repository | Framework: crate releases. App: `make release-macos`, as now, on its own version | Three cadences |
-| Open-sourcing the Framework | The whole repository becomes public, including the NETT client and the Halloy-derived code | The same | Only the Framework repository | Framework and shared Spaces |
+| Open-sourcing the Framework | The whole repository becomes public, including the NETT client | The same | Only the Framework repository | Framework and shared Spaces |
 
 **Recommendation**: (a) now, (b) as the end state.
 
@@ -710,8 +710,8 @@ read without creating a view.
   Framework and every Space together, and that is cheap only while they
   share a commit. Bevy, egui and Zed all publish from one repository.
 - (b) is forced by the goal. An open-source Framework needs a public
-  repository, and `aiconsultancy/subspace` also holds the NETT client, the
-  Halloy-derived IRC code and Subspace's own Spaces. A third party's app is
+  repository, and `aiconsultancy/subspace` also holds the NETT client and
+  Subspace's own Spaces. A third party's app is
   option (b) from its first day, so Subspace's own app should live the same
   way and find the problems first.
 - (a2) adds a second lockfile and build tree without adding proof that
@@ -771,13 +771,10 @@ Phases 1 and 2 can be several small pull requests each.
 
 **Decisions needed**
 
-1. **Licence of the IRC client.** `clients/irc` is adapted from Halloy, which
-   is `GPL-3.0-or-later` [L1]. Moving it under the Channels Space keeps the
-   Framework Apache-2.0. It does not settle Subspace itself: an app that
-   links GPL code is distributed under the GPL as a whole [L3]. The choices
-   are to license the Subspace app under the GPL, rewrite the adapted files,
-   or obtain permission from Halloy's authors. This is licensing analysis,
-   not legal advice.
+1. **Licence of the IRC client.** Resolved in November 2026. A clean-room
+   implementation replaced the modules adapted from Halloy
+   (`GPL-3.0-or-later` [L1]). The crate and the Subspace app remain
+   Apache-2.0. [Clean-room implementation](../irc-cleanroom/README.md)
 2. **Names.** `subspace` is taken on crates.io. Decided: the Framework
    crate is `subspace-framework`; the name of a second, Space-only facade,
    if phase 3 keeps one, is open. Should the public types be
@@ -852,8 +849,6 @@ Checked on 16 November 2026. Registry versions are as observed that day.
 - [C2] Publishing on crates.io: <https://doc.rust-lang.org/cargo/reference/publishing.html>, <https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#multiple-locations>
 - [C3] Alternate registries: <https://doc.rust-lang.org/cargo/reference/registries.html>, <https://github.com/kellnr/kellnr>
 - [L1] Halloy's licence: <https://github.com/squidowl/halloy/blob/main/Cargo.toml>, <https://github.com/squidowl/halloy/blob/main/LICENSE>
-- [L2] Apache and GPL compatibility: <https://www.apache.org/licenses/GPL-compatibility.html>
-- [L3] GNU licence FAQ: <https://www.gnu.org/licenses/gpl-faq.html#IfLibraryIsGPL>
 - [G1] `cargo-generate`: <https://github.com/cargo-generate/cargo-generate>
 - [R1] API checks: <https://github.com/obi1kenobi/cargo-semver-checks>, <https://github.com/cargo-public-api/cargo-public-api>
 - [R2] Rust API Guidelines, future proofing: <https://rust-lang.github.io/api-guidelines/future-proofing.html>

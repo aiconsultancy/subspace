@@ -160,9 +160,11 @@ forwards the app's targets here.
   Framework's broker; record the declared roles in
   [the Spaces audit](docs/spaces-audit.md#declared-contracts), which a product
   test compares with the registrations.
-- `clients/irc` is the IRC and IRCv3 runtime used by `spaces/irc`. Its
-  protocol, connection and session code is adapted from Halloy (GPL-3.0); each
-  adapted file names its source. Settle the licence before any public release.
+- `clients/irc` is the IRC and IRCv3 runtime used by `spaces/irc` and is
+  licensed Apache-2.0 like the rest of the workspace. Its protocol, connection
+  and session modules were written in a clean room. Keep them independent of
+  code from other IRC clients and libraries, including Halloy
+  (GPL-3.0-or-later). [Clean-room log](clients/irc/CLEANROOM.md)
 - Client calls block: run them in `cx.background_spawn`, never in render.
 - GitHub credentials resolve in this order: environment, config file, an
   in-app Sign in with GitHub account (Keychain), then the `gh` CLI; keep it.

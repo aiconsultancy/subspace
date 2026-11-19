@@ -24,3 +24,16 @@ registration, capability negotiation, SASL, ISUPPORT, batches and messages.
 Run the client and Channels Space suites with `IRC_TEST_SERVER` set to the
 loopback address from `scripts/irc-test-server.sh`. Run `make check` from the
 desktop workspace for the full checks.
+
+## Evidence
+
+- [Functional specification](evidence/spec.md) supplied to the implementer,
+  dated 19 November 2026.
+- [Caller inventory](evidence/interface-callers.md) for the interfaces the
+  replacement had to preserve.
+- [Excluded material](evidence/excluded.md) for the isolated implementation.
+- [Initial implementer brief](evidence/implementer-brief.md) and
+  [follow-up brief](evidence/implementer-follow-up.md) for the two rounds of
+  instructions.
+- [Independent similarity review](evidence/similarity-review.md) with its
+  method, all 15 file comparisons and the verdict on the initial replacement.

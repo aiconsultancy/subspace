@@ -1,11 +1,33 @@
 # IRC client clean-room log
 
-On 19 November 2026 the implementer wrote the 15 IRC client modules from
-the 19 November 2026 version of `spec.md` and the protocol references
-below. `interface-callers.md` and the visible code in this repository
-were used to match interfaces. The brief supplied the acceptance tests.
-The baseline omitted all 15 files. No excluded implementation, test,
-repository history or derived artefact was consulted.
+The earlier `subspace-client-irc` protocol layer included 15 files adapted
+from Halloy (GPL-3.0-or-later). A clean-room implementation replaced them on
+19 November 2026. The crate remains Apache-2.0.
+
+- **Specification.** An AI agent that had read the earlier files wrote the
+  functional specification, recorded the interfaces required by callers,
+  listed the excluded material and wrote 67 acceptance tests with fresh
+  inputs. The specification provides signatures and describes behaviour.
+  The reviewer found no Halloy-derived code in its Rust blocks or in the
+  acceptance tests.
+  [Functional specification](../../docs/changes/irc-cleanroom/evidence/spec.md) ·
+  [Caller inventory](../../docs/changes/irc-cleanroom/evidence/interface-callers.md) ·
+  [Excluded material](../../docs/changes/irc-cleanroom/evidence/excluded.md)
+- **Implementation.** A separate coding agent, OpenAI Codex, started from a
+  single baseline commit in an isolated repository. The baseline omitted
+  all 15 files. Codex used the supplied brief, the rest of the repository
+  and the public references below, and reported encountering no excluded
+  material. The integrated acceptance tests retain all 67 cases and their
+  inputs and assertions.
+  [Initial brief](../../docs/changes/irc-cleanroom/evidence/implementer-brief.md) ·
+  [Follow-up brief](../../docs/changes/irc-cleanroom/evidence/implementer-follow-up.md)
+- **Review.** An independent reviewer had access to the earlier files,
+  Halloy and the replacement. The reviewer found no sign of Halloy-derived
+  expression in the reviewed code. The fixed interfaces and specified
+  behaviour account for much of the overlap with the earlier files. The
+  reviewer verified that the isolated repository contained none of the
+  historical versions of those files.
+  [Similarity review](../../docs/changes/irc-cleanroom/evidence/similarity-review.md)
 
 ## References consulted
 
