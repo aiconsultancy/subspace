@@ -2,6 +2,7 @@
   { "name": "#subspace", "topic": "Local workspace" },
   { "name": "#aurora-command", "topic": "Aurora fleet Starbase: admirals and the rear admiral" },
   { "name": "#aurora-nav", "topic": "Navigation console initiative" },
+  { "name": "#aurora-relay", "topic": "Relay reliability initiative" },
   { "name": "#borealis-command", "topic": "Borealis fleet Starbase: admirals and the rear admiral" },
   { "name": "#borealis-warp", "topic": "Warp diagnostics initiative" }
 ]

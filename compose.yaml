@@ -5,7 +5,9 @@
 name: subspace
 
 include:
-  - path: subspace-api/compose.yaml
+  - path:
+      - subspace-api/compose.yaml
+      - scripts/local-stack/api.compose.yaml
   - path:
       - subspace-irc/compose.yaml
       - scripts/local-stack/irc.compose.yaml

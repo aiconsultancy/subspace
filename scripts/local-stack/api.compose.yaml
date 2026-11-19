@@ -1,0 +1,4 @@
+# Root stack only. The standalone API image keeps its normal startup.
+services:
+  api:
+    command: ["sh", "-c", "bun run db:migrate && exec bun scripts/local-stack-server.ts"]
