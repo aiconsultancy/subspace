@@ -2,9 +2,11 @@
 
 use gpui_kit::base::{SelectableText, TextSelection, TextSelectionHandle};
 use gpui_kit::{
-    App, Context, ElementId, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, RenderOnce, SharedString, StyleRefinement, Styled, TestSupportExt as _, Window, div,
+    App, Bounds, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, Render, RenderOnce, ScrollHandle, SharedString, StyleRefinement,
+    Styled, TestSupportExt as _, Window, div,
 };
+use std::ops::Range;
 
 use crate::row_menu::MenuChat;
 use gpui_kit::base::StyledExt as _;
@@ -14,9 +16,9 @@ pub(crate) struct PlainState {
     pub(crate) revision: u64,
     pub(crate) selection: TextSelectionHandle,
     id: ElementId,
-    highlights: Vec<(std::ops::Range<usize>, gpui_kit::HighlightStyle)>,
-    reveal: Option<std::ops::Range<usize>>,
-    scroll: Option<gpui_kit::ScrollHandle>,
+    highlights: Vec<(Range<usize>, gpui_kit::HighlightStyle)>,
+    reveal: Option<Range<usize>>,
+    scroll: Option<ScrollHandle>,
 }
 
 impl PlainState {
@@ -45,7 +47,7 @@ impl PlainState {
 
     pub(crate) fn highlight(
         &mut self,
-        ranges: Vec<(std::ops::Range<usize>, gpui_kit::Hsla)>,
+        ranges: Vec<(Range<usize>, gpui_kit::Hsla)>,
         cx: &mut Context<Self>,
     ) {
         self.highlights = ranges
@@ -67,8 +69,8 @@ impl PlainState {
     pub(crate) fn highlight_count(&self) -> usize {
         self.highlights.len()
     }
-    pub(crate) fn reveal(&mut self, range: std::ops::Range<usize>, cx: &mut Context<Self>) {
-        self.reveal = Some(range);
+    pub(crate) fn reveal(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        self.reveal = self.text.get(range.clone()).map(|_| range);
         cx.notify();
     }
     pub(super) fn select_all(&self, window: &mut Window, cx: &mut App) {
@@ -76,22 +78,43 @@ impl PlainState {
         self.selection.set_local_selection(true, cx);
         window.refresh();
     }
+
+    fn selectable_text(&self) -> SelectableText {
+        SelectableText::with_handle(self.id.clone(), self.selection.clone(), self.text.clone())
+    }
 }
 
+#[cfg(feature = "gpui-kit-text-patch")]
 impl Render for PlainState {
-    /// GPUI Kit 0.9.1's selectable text cannot paint highlights or reveal a
-    /// range. While find in page marks matches in this value, it shows them
-    /// as styled text and scrolls the value itself into view; otherwise the
-    /// value keeps Kit's native selection and copy.
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let text = self.selectable_text().highlights(self.highlights.clone());
+        let Some(range) = self.reveal.clone() else {
+            return text;
+        };
+        let scroll = self.scroll.clone();
+        let state = cx.entity().downgrade();
+        text.reveal_range(range.clone())
+            .on_reveal(move |bounds, window, cx| {
+                reveal_bounds(scroll.as_ref(), bounds, window);
+                let state = state.clone();
+                let range = range.clone();
+                cx.defer(move |cx| {
+                    _ = state.update(cx, |state, _| {
+                        if state.reveal.as_ref() == Some(&range) {
+                            state.reveal = None;
+                        }
+                    });
+                });
+            })
+    }
+}
+
+#[cfg(not(feature = "gpui-kit-text-patch"))]
+impl Render for PlainState {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         if self.highlights.is_empty() {
             self.reveal = None;
-            return SelectableText::with_handle(
-                self.id.clone(),
-                self.selection.clone(),
-                self.text.clone(),
-            )
-            .into_any_element();
+            return self.selectable_text().into_any_element();
         }
         let text =
             gpui_kit::StyledText::new(self.text.clone()).with_highlights(self.highlights.clone());
@@ -105,13 +128,17 @@ impl Render for PlainState {
                 let Some(bounds) = bounds.into_iter().reduce(|a, b| a.union(&b)) else {
                     return;
                 };
-                if let Some(scroll) = &scroll {
-                    crate::find_in_page::scope::reveal(scroll, bounds, window);
-                } else {
-                    window.request_autoscroll(bounds);
-                }
+                reveal_bounds(scroll.as_ref(), bounds, window);
             })
             .into_any_element()
+    }
+}
+
+fn reveal_bounds(scroll: Option<&ScrollHandle>, bounds: Bounds<Pixels>, window: &mut Window) {
+    if let Some(scroll) = scroll {
+        crate::find_in_page::scope::reveal(scroll, bounds, window);
+    } else {
+        window.request_autoscroll(bounds);
     }
 }
 

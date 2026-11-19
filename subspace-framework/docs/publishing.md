@@ -164,7 +164,9 @@ registry instead.
    (delete `path = "../subspace-framework", `).
 2. In `terminal/panel/Cargo.toml` and `terminal/runtime/Cargo.toml`, the
    same edit to their `subspace-framework` line.
-3. Refresh the three lockfiles. Cargo makes the smallest change a manifest
+3. If the chosen release predates the `gpui-kit-text-patch` feature, remove
+   that feature from `products/subspace/Cargo.toml`.
+4. Refresh the three lockfiles. Cargo makes the smallest change a manifest
    edit needs: the `subspace-*` entries move from path to registry, with
    checksums, and nothing else moves. It must download the crates once, so
    run these online:
@@ -178,13 +180,14 @@ registry instead.
    ```
 
    Check that only `subspace-*` entries changed. Do not run `cargo update`.
-4. `make check` and `MISE_ENV=terminal make check-terminal`. After this,
+5. `make check` and `MISE_ENV=terminal make check-terminal`. After this,
    `--locked` builds work offline from Cargo's cache.
 
 The desktop architecture check accepts the Framework either at
 `../subspace-framework` or without a path (crates.io), and any other path is
 an error. It still forbids every Framework crate but the facade, the `host`
 and `capture` features outside products and host modules in Space source.
+The optional `gpui-kit-text-patch` feature is also selected by the product.
 
 ### Switch back for Framework work
 
@@ -198,18 +201,25 @@ changes only while the path is in place.
 
 ### What stays cross-folder
 
-Only the Markdown patch: `[patch.crates-io] markdown` points at
+`[patch.crates-io] markdown` points at
 `../subspace-framework/vendor/markdown` (and the two terminal manifests at
 `../../../subspace-framework/vendor/markdown`). Cargo never applies a
 dependency's `[patch]`, so every app must carry it; the crates do not ship
 `vendor/markdown`.
 
-If the two folders become separate repositories, copy `vendor/markdown`
-from the Framework's repository into `subspace-desktop/vendor/markdown`, add
-`"vendor/markdown"` to the workspace's `exclude`, and point the patches at it:
-`vendor/markdown` in `Cargo.toml` and `../../vendor/markdown` in the terminal
-manifests. The architecture check accepts that copy. Refresh it whenever the
-Framework's copy changes; drop it once `markdown` upstream releases the fix.
+The desktop also uses the optional [GPUI Kit text patch](../vendor/gpui-base/SUBSPACE-PATCH.md).
+All three desktop manifests patch `gpui-base` 0.9.1 from the same vendor
+directory. The published Framework's default features compile against the
+registry's GPUI Kit.
+
+If the two folders become separate repositories, copy `vendor/markdown` and
+`vendor/gpui-base` from the Framework's repository into
+`subspace-desktop/vendor/`, add
+the copies to the workspace's `exclude`, and point the patches at the
+corresponding directories under `vendor/` in `Cargo.toml` and `../../vendor/`
+in the terminal manifests. The architecture check accepts those locations.
+Refresh the copies when the Framework's copies change. Remove each when its
+upstream release provides the corresponding fixes.
 
 ## Evidence that the switch works
 

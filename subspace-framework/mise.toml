@@ -14,9 +14,10 @@ description = "Update Cargo.lock to the latest compatible dependency versions"
 run = "cargo update"
 
 [tasks.test]
-description = "Run the tests, the shell's with and without Report issue, and the README's examples"
+description = "Run the tests, optional text and report-issue cases, and the README's examples"
 run = [
     "cargo test --workspace --locked",
+    "cargo test -p subspace-dashboard --features gpui-kit-text-patch --locked",
     # Report issue is an optional shell feature that nothing in the workspace enables.
     "cargo test -p subspace-shell --features report-issue --locked",
     "cargo test -p subspace-framework --features report-issue --doc --locked",
@@ -34,6 +35,7 @@ run = "python3 scripts/format-workspace.py -- --check"
 run = [
     "cargo shear",
     "cargo clippy --workspace --all-targets --keep-going -- -D warnings",
+    "cargo clippy -p subspace-dashboard --features gpui-kit-text-patch --all-targets -- -D warnings",
     "cargo clippy -p subspace-shell -p subspace-framework --features subspace-shell/report-issue,subspace-framework/report-issue --all-targets -- -D warnings",
 ]
 
