@@ -111,6 +111,12 @@ impl Page {
         }
     }
 
+    /// Runs an event script in whatever document the view shows now. The
+    /// script checks the document's origin itself before dispatching.
+    pub(crate) fn push(&self, script: &str, cx: &App) {
+        let _ = self.script(script, cx);
+    }
+
     pub(crate) fn back(&self, cx: &App) -> Result<(), String> {
         self.script("history.back();", cx)
     }

@@ -1,10 +1,10 @@
 ---
 name: web-space
-description: Scaffold, test, package and publish a Subspace web Space (a built web app with a subspace-board.json manifest shown by the Web Space). Use when asked to make, build, bundle, zip, package, ship, install or debug a web Space or web app for Subspace; to use window.subspace settings, badge, context or notifications; to put a web Space in a folder, a ZIP or a GitHub repository; or when a web Space install fails validation.
+description: Scaffold, test, package and publish a Subspace web Space (a built web app with a subspace-board.json manifest shown by the Web Space). Use when asked to make, build, bundle, zip, package, ship, install or debug a web Space or web app for Subspace; to use window.subspace settings, badge, context, notifications, theme, secrets or issues; to put a web Space in a folder, a ZIP or a GitHub repository; or when a web Space install fails validation.
 compatibility: Subspace desktop repository (aiconsultancy/subspace, subspace-desktop/) with python3, and Node.js through mise for tests.
 metadata:
   owner: aiconsultancy/subspace
-  last-reviewed: "2026-11-16"
+  last-reviewed: "2026-11-19"
 ---
 
 # Web Space
@@ -51,7 +51,23 @@ message. The worked example is
   `notifications` plus a notification channel. Limits and messages:
   [Read settings and call Subspace](../../../docs/web-spaces-reference.md#read-settings-and-call-subspace)
   and [Page Notification adapter](../../../docs/web-spaces-reference.md#page-notification-adapter).
-- [ ] Never expect secrets in the page: `secret` settings are not sent.
+- [ ] Feature-detect newer methods (`typeof subspace.theme === "function"`,
+  `subspace.issues`) so the app still runs in an older Subspace.
+- [ ] Follow the app's look: call `subspace.theme()` at start (no permission)
+  and listen for `subspace:theme` on `window`; map `tones` to CSS custom
+  properties and use `fonts.ui` and `fonts.mono` as `font-family` values
+  ([Follow the app's theme](../../../docs/web-spaces-reference.md#follow-the-apps-theme)).
+- [ ] Secrets: `settings.get()` never returns them. Only `secrets.get()`, with
+  the `secrets` permission, returns the saved `secret` fields the manifest
+  declares. Send a secret only to its service; never into a URL, context,
+  notification or page storage
+  ([Read the app's secrets](../../../docs/web-spaces-reference.md#read-the-apps-secrets)).
+- [ ] Issues: with `issues`, `issues.scope()`, `issues.resolve(ids)` (at most
+  50 distinct) and `issues.open(id)` reach the Issues Space as Channels'
+  issue tiles do. Re-resolve on `subspace:issues-changed`; `pending` answers
+  settle that way ([Show issues](../../../docs/web-spaces-reference.md#show-issues)).
+- [ ] Fakes in tests need the same shapes: `theme` returns the documented
+  `Theme`, `issues.resolve` returns one resolution per identifier.
 
 ## 3. Test with Node
 

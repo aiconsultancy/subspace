@@ -2,7 +2,8 @@
 
 <!--
 Evidence: spaces/web/src/{lib,toolbar,source,policy,state,manifest,bridge,
-page,page/unsupported,page/native,app,install/*}.rs, manager.rs, manager/{view,
+bridge/{runtime,protocol,theme,issues},page,page/unsupported,page/native,app,
+install/*}.rs, bridge/init.js, manager.rs, manager/{view,
 view/collection,view/editor,editor,model,operations}.rs;
 products/subspace/src/main.rs (one registration per webBoards entry, shared guide);
 subspace-framework/board-kit/dashboard/src/settings.rs; web-spaces/examples/weather/*;
@@ -198,10 +199,27 @@ allow the action in the board's Subspace settings.
 | `setBadge(textOrNull)` | `badge` | At most 8 characters, without control characters |
 | `setContext(valueOrNull)` | `context` | Label up to 100 characters, content up to 8192 UTF-8 bytes |
 | `notify({title, body})` | `notifications` | Title up to 100 characters, body up to 500, without control characters |
+| `theme()` | None | The app's theme: id, name, light or dark mode, tones as `#rrggbb` and CSS font families |
+| `secrets.get()` | `secrets` | Saved values of the secrets the manifest declares |
+| `issues.scope()` | `issues` | The issue scope (profile name, API base, project keys), or `null` |
+| `issues.resolve(identifiers)` | `issues` | One resolution per distinct identifier, at most 50 |
+| `issues.open(identifier)` | `issues` | Opens the issue in the Space that answers issue requests |
 
 - Unknown setting keys and secret fields never appear in `settings.get()`.
-  Saved secrets are never sent to the page, and no bridge method consumes or
-  returns them.
+  Only `secrets.get()`, with the `secrets` permission, returns saved secrets:
+  those the manifest declares as `secret` that have a value. A page allowed
+  `secrets` holds them in its own memory, so allow it only for an app you
+  trust.
+- The page hears two events on `window`. `subspace:theme` carries the new
+  theme as its `detail` whenever the theme, mode, a tone or a font changes.
+  `subspace:issues-changed` tells a page allowed `issues` to ask again for
+  the scope and the issues it shows, for example after sign-in or when a
+  `pending` issue has loaded. Events reach only the document the web Space
+  shows, and only while it has the app's own origin.
+- `issues.*` uses the same issue contract as the issue tiles in Channels.
+  With the Issues Space disabled or signed out, the scope is `null` and
+  issues resolve as `unavailable` or `signed-out`. `issues.open()` switches
+  to the Space that answers and shows the issue there.
 - Chat treats page-provided context as untrusted data, not instructions. Badge
   and context state reset when the page navigates.
 - Requests are at most 16 KiB of UTF-8 JSON. At most 32 calls can be pending,
@@ -215,15 +233,15 @@ allow the action in the board's Subspace settings.
   one request per board is accepted every five seconds. It is not Web Push: no
   service worker, actions, click callbacks or OS retraction. `close()` does
   nothing. Acceptance does not prove that the OS showed an alert.
-- The bridge has no shell, process, filesystem, clipboard, arbitrary native API
-  or credential access.
+- The bridge has no shell, process, filesystem, clipboard or arbitrary native
+  API, and no credential access beyond the app's own declared secrets.
 
 ### The manifest
 
 `subspace-board.json` sits next to `index.html`. It is at most 256 KiB. `name`
 (up to 60 characters) and `version` (up to 40) are required. `permissions` and
 `settings` are optional. The known permissions are `notifications`, `settings`,
-`badge` and `context`. An unknown permission name produces a note in Settings
+`badge`, `context`, `secrets` and `issues`. An unknown permission name produces a note in Settings
 and grants nothing. An invalid manifest prevents the app from opening.
 
 ```json
@@ -378,11 +396,12 @@ and Windows, not Linux.
 - A folder app with `subspace-board.json` shows its declared fields here, a note
   `<name> <version>, from <folder>` and one **Allow this app to …** checkbox for
   each requested permission: **show notifications**, **read its settings**,
-  **show a badge on its tab** and **share context with Copilot chat**.
+  **show a badge on its tab**, **share context with Copilot chat**, **read
+  its saved secrets** and **read and open issues**.
   Permissions start off. Select the ones you trust, then **Save**. Setting and
   permission edits apply on Save without a restart. The page reads the current
-  values again; there is no change event. Cancel leaves the saved configuration
-  unchanged.
+  values again; settings and secrets have no change event. Cancel leaves the
+  saved configuration unchanged.
 - Notification permission also needs a channel under **Settings >
   Notifications > [Space name]**. Delivery, in-app style and sound work as for
   other boards. A permission is not delivery.
@@ -414,6 +433,8 @@ permissions. There are no background-update controls.
 | A download does nothing | The status bar says `Downloads are not available in web Spaces yet. Use Open in browser.` |
 | The bridge call rejects with a permission error | Allow the action in **Settings > Spaces > [Space name]** and save. |
 | `window.subspace` is missing | The board is a website, or a folder app without `subspace-board.json`. |
+| Issues stay plain or `issues.scope()` is `null` | Enable the Issues Space and sign in under Settings › Account. The page's `subspace:issues-changed` handler then asks again. |
+| `issues.open()` does nothing | It opens issues only while this web Space is the one shown, and only for project keys in the scope. |
 | Notification never appears | Check both the permission and a channel under **Settings > Notifications > [Space name]**. Acceptance by the host does not prove that the OS showed an alert. |
 | A new build does not show | An imported folder is a private snapshot. Use **Edit… > Replace source…**. For a manually configured live folder, rebuild and select **Reload page**. |
 | `Updates are unavailable for this account or source.` | Select a GitHub account in Settings that belongs to the repository's organization. |

@@ -99,7 +99,7 @@ pub use row_menu::RowMenu;
 pub use subspace_agent_model::ContextRef as AgentContext;
 pub use subspace_agent_tools::{AgentTool, Catalog, HelpImage, ToolEnvironment};
 pub use subspace_core::search::SearchDoc;
-pub use tokens::{ThemeTones, Tokens, Tone};
+pub use tokens::{ThemeId, ThemeTones, Tokens, Tone};
 pub use typography::{Typography, heading_font};
 
 actions!(
