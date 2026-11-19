@@ -11,8 +11,9 @@ members = ["clients/*", "spaces/*", "spaces/*/crates/*", "products/*", "terminal
 exclude = ["terminal/runtime", "terminal/panel"]
 resolver = "2"
 
-# The Framework's patched Markdown parser.
+# The Framework's patched text components and Markdown parser.
 [patch.crates-io]
+gpui-base = { path = "../subspace-framework/vendor/gpui-base" }
 markdown = { path = "../subspace-framework/vendor/markdown" }
 
 [workspace.package]

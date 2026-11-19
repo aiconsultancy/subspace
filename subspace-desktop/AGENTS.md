@@ -102,18 +102,20 @@ forwards the app's targets here.
 - **One import.** Every crate here reaches the Framework only through
   `subspace-framework` and writes `subspace_framework::<module>::…`. No crate
   names another Framework crate. The workspace dependency is
-  `subspace-framework = { path = "../subspace-framework", version = "0.1.0" }`;
+  `subspace-framework = { path = "../subspace-framework", version = "0.2.0" }`;
   deleting `path` (here and in the two terminal manifests, then refreshing
   the three lockfiles) switches to the published crate, as the Framework's
   [publishing guide](../subspace-framework/docs/publishing.md#subspace-desktop-and-the-published-crate)
-  describes. The architecture check accepts either form, and a `markdown`
-  patch from the Framework's `vendor/markdown` or from this folder's own
-  copy. While the path is in place, `scripts/prerelease-plan.sh` counts
-  Framework commits as app changes (a git pathspec, not a file read).
-- **Two cross-folder paths** live in `Cargo.toml`: that dependency and
-  `[patch.crates-io] markdown = { path = "../subspace-framework/vendor/markdown" }`,
-  which every Framework consumer must copy. The two excluded terminal
-  manifests carry the same two paths themselves, because an excluded
+  describes. The architecture check accepts either form and permits
+  `markdown` and `gpui-base` patches from the Framework's `vendor/` or from
+  this folder's own copies. While the path is in place,
+  `scripts/prerelease-plan.sh` counts Framework commits as app changes
+  (a git pathspec, not a file read).
+- **Three cross-folder paths** live in `Cargo.toml`. They point to the facade,
+  `../subspace-framework/vendor/markdown` and `../subspace-framework/vendor/gpui-base`.
+  Framework consumers copy the Markdown patch, and apps enabling
+  `gpui-kit-text-patch` also copy the `gpui-base` patch. The two excluded
+  terminal manifests declare their paths directly, because an excluded
   workspace cannot inherit them. No script, test, build script, doc check,
   `include_str!` or `#[path]` here reads the Framework's folder. Docs may link
   to Framework pages with relative links, which the doc checks treat as

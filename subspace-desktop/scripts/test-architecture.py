@@ -32,8 +32,11 @@ class Fixture(unittest.TestCase):
         self.root = Path(self.temp.name).resolve() / "subspace-desktop"
         self.framework = self.root.parent / "subspace-framework"
         for name, value in (("ROOT", self.root), ("FRAMEWORK_ROOT", self.framework),
-                            ("PATCHES", {"markdown": (self.framework / "vendor/markdown",
-                                                      self.root / "vendor/markdown")}),
+                            ("PATCHES", {
+                                name: (self.framework / "vendor" / name,
+                                       self.root / "vendor" / name)
+                                for name in ("markdown", "gpui-base")
+                            }),
                             ("MANIFESTS", ())):
             patcher = patch.object(CHECK, name, value)
             patcher.start()
@@ -130,14 +133,15 @@ class FrameworkEdgeTests(Fixture):
     def test_host_features_are_for_products_only(self) -> None:
         for source, feature, kind in product(("spaces/irc", "spaces/irc/crates/support",
                                               "clients/nett", "terminal/panel"),
-                                             ("host", "capture"), KINDS):
+                                             ("host", "capture", "gpui-kit-text-patch"), KINDS):
             with self.subTest(source=source, feature=feature, kind=kind):
                 self.framework_edge(source, kind, features=[feature])
                 failures = self.failures()
                 self.assertEqual(len(failures), 1, failures)
                 self.assertIn(f"only products may enable {feature}", failures[0])
                 self.packages[self.root / source]["dependencies"] = []
-        self.framework_edge("products/subspace", features=["host", "capture"])
+        self.framework_edge("products/subspace",
+                            features=["host", "capture", "gpui-kit-text-patch"])
         self.assertEqual(self.failures(), [])
 
     def test_test_support_is_for_dev_dependencies_only(self) -> None:
@@ -167,17 +171,19 @@ class FrameworkEdgeTests(Fixture):
                 self.assertEqual(len(failures), 1, failures)
                 self.assertIn("outside Subspace Desktop", failures[0])
 
-    def test_only_the_framework_markdown_patch_is_permitted(self) -> None:
+    def test_only_the_documented_vendor_patches_are_permitted(self) -> None:
         def manifest(text: str) -> list[str]:
             self.write("Cargo.toml", text)
             with patch.object(CHECK, "MANIFESTS", ("Cargo.toml",)):
                 return self.failures()
-        self.assertEqual(manifest(
-            '[patch.crates-io]\nmarkdown = { path = "../subspace-framework/vendor/markdown" }\n'), [])
         self.assertEqual(manifest("[workspace]\n"), [])
-        self.assertEqual(manifest('[patch.crates-io]\nmarkdown = { path = "vendor/markdown" }\n'), [],
-                         "after a repository split the desktop keeps its own copy")
+        for name, vendor in product(("markdown", "gpui-base"),
+                                    ("../subspace-framework/vendor", "vendor")):
+            with self.subTest(name=name, vendor=vendor):
+                self.assertEqual(manifest(
+                    f'[patch.crates-io]\n{name} = {{ path = "{vendor}/{name}" }}\n'), [])
         for text in ('[patch.crates-io]\nmarkdown = { path = "other/markdown" }\n',
+                     '[patch.crates-io]\ngpui-base = { path = "other/gpui-base" }\n',
                      '[patch.crates-io]\nserde = { path = "../subspace-framework/vendor/serde" }\n'):
             with self.subTest(text=text):
                 failures = manifest(text)
