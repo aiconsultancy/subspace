@@ -1,0 +1,128 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "97264157-0df4-41b1-b2a9-a244aa93e092",
+  "prevIds": [
+    "d532d53c-e29b-4f7a-996b-6aee8275b6ea"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "issue_comments",
+        "resolved_at"
+      ],
+      "writes": [
+        "s|col|public.issue_comments.resolved_at",
+        "n|col|public.issue_comments.resolved_at",
+        "e|col|public.issue_comments.resolved_at"
+      ],
+      "reads": [
+        "n|tbl|public.issue_comments",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "issue_comments",
+        "resolved_by_id"
+      ],
+      "writes": [
+        "s|col|public.issue_comments.resolved_by_id",
+        "n|col|public.issue_comments.resolved_by_id",
+        "e|col|public.issue_comments.resolved_by_id"
+      ],
+      "reads": [
+        "n|tbl|public.issue_comments",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_comments"
+      ],
+      "writes": [
+        "s|fk|public.issue_comments.issue_comments_V619K6CTScCM_fkey",
+        "n|fk|public.issue_comments.issue_comments_V619K6CTScCM_fkey",
+        "e|fk|public.issue_comments.issue_comments_V619K6CTScCM_fkey",
+        "n|con|public.issue_comments.issue_comments_V619K6CTScCM_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_comments",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.issue_comments.organisation_id",
+        "n|col|public.issue_comments.resolved_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_comments",
+        "name": "resolved_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_comments",
+        "name": "resolved_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_comments",
+        "name": "issue_comments_V619K6CTScCM_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "resolved_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    }
+  ]
+}

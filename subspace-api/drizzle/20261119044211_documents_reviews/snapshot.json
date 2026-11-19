@@ -1,0 +1,1705 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "d532d53c-e29b-4f7a-996b-6aee8275b6ea",
+  "prevIds": [
+    "2d13f545-e167-4846-b5d0-45cd591b5625"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_document_counters"
+      ],
+      "writes": [
+        "s|tbl|public.project_document_counters",
+        "n|tbl|public.project_document_counters",
+        "e|tbl|public.project_document_counters",
+        "n|rel|public.project_document_counters",
+        "n|type|public.project_document_counters",
+        "n|rel|public.project_document_counters_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_document_revisions"
+      ],
+      "writes": [
+        "s|tbl|public.issue_document_revisions",
+        "n|tbl|public.issue_document_revisions",
+        "e|tbl|public.issue_document_revisions",
+        "n|rel|public.issue_document_revisions",
+        "n|type|public.issue_document_revisions",
+        "n|rel|public.issue_document_revisions_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_documents"
+      ],
+      "writes": [
+        "s|tbl|public.issue_documents",
+        "n|tbl|public.issue_documents",
+        "e|tbl|public.issue_documents",
+        "n|rel|public.issue_documents",
+        "n|type|public.issue_documents",
+        "n|rel|public.issue_documents_pkey",
+        "n|rel|public.issue_documents_organisation_id_id_unique",
+        "n|rel|public.issue_documents_organisation_id_reference_unique"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_reviews"
+      ],
+      "writes": [
+        "s|tbl|public.issue_reviews",
+        "n|tbl|public.issue_reviews",
+        "e|tbl|public.issue_reviews",
+        "n|rel|public.issue_reviews",
+        "n|type|public.issue_reviews",
+        "n|rel|public.issue_reviews_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_review_requirements"
+      ],
+      "writes": [
+        "s|tbl|public.project_review_requirements",
+        "n|tbl|public.project_review_requirements",
+        "e|tbl|public.project_review_requirements",
+        "n|rel|public.project_review_requirements",
+        "n|type|public.project_review_requirements",
+        "n|rel|public.project_review_requirements_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "issue_documents",
+        "issue_documents_organisation_id_issue_id_index"
+      ],
+      "writes": [
+        "s|idx|public.issue_documents_organisation_id_issue_id_index",
+        "n|idx|public.issue_documents_organisation_id_issue_id_index",
+        "e|idx|public.issue_documents_organisation_id_issue_id_index",
+        "n|rel|public.issue_documents_organisation_id_issue_id_index"
+      ],
+      "reads": [
+        "n|tbl|public.issue_documents",
+        "n|sch|public",
+        "n|col|public.issue_documents.organisation_id",
+        "n|col|public.issue_documents.issue_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "issue_reviews",
+        "issue_reviews_organisation_id_issue_id_created_at_index"
+      ],
+      "writes": [
+        "s|idx|public.issue_reviews_organisation_id_issue_id_created_at_index",
+        "n|idx|public.issue_reviews_organisation_id_issue_id_created_at_index",
+        "e|idx|public.issue_reviews_organisation_id_issue_id_created_at_index",
+        "n|rel|public.issue_reviews_organisation_id_issue_id_created_at_index"
+      ],
+      "reads": [
+        "n|tbl|public.issue_reviews",
+        "n|sch|public",
+        "n|col|public.issue_reviews.organisation_id",
+        "n|col|public.issue_reviews.issue_id",
+        "n|col|public.issue_reviews.created_at"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_document_counters"
+      ],
+      "writes": [
+        "s|fk|public.project_document_counters.project_document_counters_organisation_id_organisations_id_fkey",
+        "n|fk|public.project_document_counters.project_document_counters_organisation_id_organisations_id_fkey",
+        "e|fk|public.project_document_counters.project_document_counters_organisation_id_organisations_id_fkey",
+        "n|con|public.project_document_counters.project_document_counters_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_document_counters",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.project_document_counters.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_document_counters"
+      ],
+      "writes": [
+        "s|fk|public.project_document_counters.project_document_counters_Cp7UcIyp6uay_fkey",
+        "n|fk|public.project_document_counters.project_document_counters_Cp7UcIyp6uay_fkey",
+        "e|fk|public.project_document_counters.project_document_counters_Cp7UcIyp6uay_fkey",
+        "n|con|public.project_document_counters.project_document_counters_Cp7UcIyp6uay_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_document_counters",
+        "n|sch|public",
+        "n|tbl|public.projects",
+        "n|sch|public",
+        "n|col|public.project_document_counters.organisation_id",
+        "n|col|public.project_document_counters.project_id",
+        "n|col|public.projects.organisation_id",
+        "n|col|public.projects.id",
+        "e|uniqueness|public.projects.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_document_revisions"
+      ],
+      "writes": [
+        "s|fk|public.issue_document_revisions.issue_document_revisions_organisation_id_organisations_id_fkey",
+        "n|fk|public.issue_document_revisions.issue_document_revisions_organisation_id_organisations_id_fkey",
+        "e|fk|public.issue_document_revisions.issue_document_revisions_organisation_id_organisations_id_fkey",
+        "n|con|public.issue_document_revisions.issue_document_revisions_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_document_revisions",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.issue_document_revisions.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_document_revisions"
+      ],
+      "writes": [
+        "s|fk|public.issue_document_revisions.issue_document_revisions_OafB9xCSBB0j_fkey",
+        "n|fk|public.issue_document_revisions.issue_document_revisions_OafB9xCSBB0j_fkey",
+        "e|fk|public.issue_document_revisions.issue_document_revisions_OafB9xCSBB0j_fkey",
+        "n|con|public.issue_document_revisions.issue_document_revisions_OafB9xCSBB0j_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_document_revisions",
+        "n|sch|public",
+        "n|tbl|public.issue_documents",
+        "n|sch|public",
+        "n|col|public.issue_document_revisions.organisation_id",
+        "n|col|public.issue_document_revisions.document_id",
+        "n|col|public.issue_documents.organisation_id",
+        "n|col|public.issue_documents.id",
+        "e|uniqueness|public.issue_documents.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_document_revisions"
+      ],
+      "writes": [
+        "s|fk|public.issue_document_revisions.issue_document_revisions_4xyHBFqes3RR_fkey",
+        "n|fk|public.issue_document_revisions.issue_document_revisions_4xyHBFqes3RR_fkey",
+        "e|fk|public.issue_document_revisions.issue_document_revisions_4xyHBFqes3RR_fkey",
+        "n|con|public.issue_document_revisions.issue_document_revisions_4xyHBFqes3RR_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_document_revisions",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.issue_document_revisions.organisation_id",
+        "n|col|public.issue_document_revisions.author_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_documents"
+      ],
+      "writes": [
+        "s|fk|public.issue_documents.issue_documents_organisation_id_organisations_id_fkey",
+        "n|fk|public.issue_documents.issue_documents_organisation_id_organisations_id_fkey",
+        "e|fk|public.issue_documents.issue_documents_organisation_id_organisations_id_fkey",
+        "n|con|public.issue_documents.issue_documents_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_documents",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.issue_documents.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_documents"
+      ],
+      "writes": [
+        "s|fk|public.issue_documents.issue_documents_FhvK68IYJKhb_fkey",
+        "n|fk|public.issue_documents.issue_documents_FhvK68IYJKhb_fkey",
+        "e|fk|public.issue_documents.issue_documents_FhvK68IYJKhb_fkey",
+        "n|con|public.issue_documents.issue_documents_FhvK68IYJKhb_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_documents",
+        "n|sch|public",
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issue_documents.organisation_id",
+        "n|col|public.issue_documents.issue_id",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id",
+        "e|uniqueness|public.issues.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_documents"
+      ],
+      "writes": [
+        "s|fk|public.issue_documents.issue_documents_Hz6PMCQBG1L3_fkey",
+        "n|fk|public.issue_documents.issue_documents_Hz6PMCQBG1L3_fkey",
+        "e|fk|public.issue_documents.issue_documents_Hz6PMCQBG1L3_fkey",
+        "n|con|public.issue_documents.issue_documents_Hz6PMCQBG1L3_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_documents",
+        "n|sch|public",
+        "n|tbl|public.projects",
+        "n|sch|public",
+        "n|col|public.issue_documents.organisation_id",
+        "n|col|public.issue_documents.original_project_id",
+        "n|col|public.projects.organisation_id",
+        "n|col|public.projects.id",
+        "e|uniqueness|public.projects.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_documents"
+      ],
+      "writes": [
+        "s|fk|public.issue_documents.issue_documents_uVGVdG1VBtpn_fkey",
+        "n|fk|public.issue_documents.issue_documents_uVGVdG1VBtpn_fkey",
+        "e|fk|public.issue_documents.issue_documents_uVGVdG1VBtpn_fkey",
+        "n|con|public.issue_documents.issue_documents_uVGVdG1VBtpn_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_documents",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.issue_documents.organisation_id",
+        "n|col|public.issue_documents.author_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_reviews"
+      ],
+      "writes": [
+        "s|fk|public.issue_reviews.issue_reviews_organisation_id_organisations_id_fkey",
+        "n|fk|public.issue_reviews.issue_reviews_organisation_id_organisations_id_fkey",
+        "e|fk|public.issue_reviews.issue_reviews_organisation_id_organisations_id_fkey",
+        "n|con|public.issue_reviews.issue_reviews_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_reviews",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.issue_reviews.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_reviews"
+      ],
+      "writes": [
+        "s|fk|public.issue_reviews.issue_reviews_IrpN5NdBIwm8_fkey",
+        "n|fk|public.issue_reviews.issue_reviews_IrpN5NdBIwm8_fkey",
+        "e|fk|public.issue_reviews.issue_reviews_IrpN5NdBIwm8_fkey",
+        "n|con|public.issue_reviews.issue_reviews_IrpN5NdBIwm8_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_reviews",
+        "n|sch|public",
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issue_reviews.organisation_id",
+        "n|col|public.issue_reviews.issue_id",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id",
+        "e|uniqueness|public.issues.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_reviews"
+      ],
+      "writes": [
+        "s|fk|public.issue_reviews.issue_reviews_3Zcn6SVFof8X_fkey",
+        "n|fk|public.issue_reviews.issue_reviews_3Zcn6SVFof8X_fkey",
+        "e|fk|public.issue_reviews.issue_reviews_3Zcn6SVFof8X_fkey",
+        "n|con|public.issue_reviews.issue_reviews_3Zcn6SVFof8X_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_reviews",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.issue_reviews.organisation_id",
+        "n|col|public.issue_reviews.recorded_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_reviews"
+      ],
+      "writes": [
+        "s|fk|public.issue_reviews.issue_reviews_kbj1XY76mGHW_fkey",
+        "n|fk|public.issue_reviews.issue_reviews_kbj1XY76mGHW_fkey",
+        "e|fk|public.issue_reviews.issue_reviews_kbj1XY76mGHW_fkey",
+        "n|con|public.issue_reviews.issue_reviews_kbj1XY76mGHW_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_reviews",
+        "n|sch|public",
+        "n|tbl|public.issue_document_revisions",
+        "n|sch|public",
+        "n|col|public.issue_reviews.organisation_id",
+        "n|col|public.issue_reviews.document_id",
+        "n|col|public.issue_reviews.document_revision",
+        "n|col|public.issue_document_revisions.organisation_id",
+        "n|col|public.issue_document_revisions.document_id",
+        "n|col|public.issue_document_revisions.number",
+        "e|uniqueness|public.issue_document_revisions.document_id.number.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_review_requirements"
+      ],
+      "writes": [
+        "s|fk|public.project_review_requirements.project_review_requirements_XhXJMgdsPOpE_fkey",
+        "n|fk|public.project_review_requirements.project_review_requirements_XhXJMgdsPOpE_fkey",
+        "e|fk|public.project_review_requirements.project_review_requirements_XhXJMgdsPOpE_fkey",
+        "n|con|public.project_review_requirements.project_review_requirements_XhXJMgdsPOpE_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_review_requirements",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.project_review_requirements.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_review_requirements"
+      ],
+      "writes": [
+        "s|fk|public.project_review_requirements.project_review_requirements_mBkaurhxmbQu_fkey",
+        "n|fk|public.project_review_requirements.project_review_requirements_mBkaurhxmbQu_fkey",
+        "e|fk|public.project_review_requirements.project_review_requirements_mBkaurhxmbQu_fkey",
+        "n|con|public.project_review_requirements.project_review_requirements_mBkaurhxmbQu_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_review_requirements",
+        "n|sch|public",
+        "n|tbl|public.projects",
+        "n|sch|public",
+        "n|col|public.project_review_requirements.organisation_id",
+        "n|col|public.project_review_requirements.project_id",
+        "n|col|public.projects.organisation_id",
+        "n|col|public.projects.id",
+        "e|uniqueness|public.projects.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "project_document_counters",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "issue_document_revisions",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "issue_documents",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "issue_reviews",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "project_review_requirements",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_document_counters",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_document_counters",
+        "name": "project_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_document_counters",
+        "name": "number",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "document_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "number",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "title",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "content",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "note",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "author_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "issue_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "original_project_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "reference",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "type",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "subtype",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "author_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "current_revision",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "1",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "archived_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "issue_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "kind",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "model",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "reasoning",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "verdict",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "subject",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "revision",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "document_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "document_revision",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "notes",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "recorded_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_review_requirements",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_review_requirements",
+        "name": "project_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_review_requirements",
+        "name": "kinds",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "issue_documents_organisation_id_issue_id_index",
+        "nameExplicit": false,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "issue_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "issue_reviews_organisation_id_issue_id_created_at_index",
+        "nameExplicit": false,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "issue_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "created_at",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_document_counters",
+        "name": "project_document_counters_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_document_counters",
+        "name": "project_document_counters_Cp7UcIyp6uay_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "project_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "projects",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "issue_document_revisions_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "issue_document_revisions_OafB9xCSBB0j_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "document_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issue_documents",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "issue_document_revisions_4xyHBFqes3RR_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "author_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "issue_documents_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "issue_documents_FhvK68IYJKhb_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "issue_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issues",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "issue_documents_Hz6PMCQBG1L3_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "original_project_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "projects",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "issue_documents_uVGVdG1VBtpn_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "author_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "issue_reviews_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "issue_reviews_IrpN5NdBIwm8_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "issue_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issues",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "issue_reviews_3Zcn6SVFof8X_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "recorded_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "issue_reviews_kbj1XY76mGHW_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "document_id",
+          "document_revision"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issue_document_revisions",
+        "columnsTo": [
+          "organisation_id",
+          "document_id",
+          "number"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_review_requirements",
+        "name": "project_review_requirements_XhXJMgdsPOpE_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_review_requirements",
+        "name": "project_review_requirements_mBkaurhxmbQu_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "project_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "projects",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_document_counters",
+        "name": "project_document_counters_pkey",
+        "columns": [
+          "organisation_id",
+          "project_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_document_revisions",
+        "name": "issue_document_revisions_pkey",
+        "columns": [
+          "organisation_id",
+          "document_id",
+          "number"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_review_requirements",
+        "name": "project_review_requirements_pkey",
+        "columns": [
+          "organisation_id",
+          "project_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "issue_documents_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "issue_reviews_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "issue_documents_organisation_id_id_unique",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "id"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_documents",
+        "name": "issue_documents_organisation_id_reference_unique",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "reference"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_reviews",
+        "name": "review_document_revision",
+        "value": "(\"document_id\" is null) = (\"document_revision\" is null)",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

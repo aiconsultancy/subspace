@@ -1,0 +1,81 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "059ac4e5-b98b-435f-8525-a7e668a19a96",
+  "prevIds": [
+    "c9335a8b-369d-4bb6-860e-57ab20d6638e"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "issue_comments",
+        "relayed_crew"
+      ],
+      "writes": [
+        "s|col|public.issue_comments.relayed_crew",
+        "n|col|public.issue_comments.relayed_crew",
+        "e|col|public.issue_comments.relayed_crew"
+      ],
+      "reads": [
+        "n|tbl|public.issue_comments",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "issues",
+        "relayed_crew"
+      ],
+      "writes": [
+        "s|col|public.issues.relayed_crew",
+        "n|col|public.issues.relayed_crew",
+        "e|col|public.issues.relayed_crew"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_comments",
+        "name": "relayed_crew",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "relayed_crew",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

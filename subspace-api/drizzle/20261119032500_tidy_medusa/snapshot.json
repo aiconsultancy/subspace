@@ -1,0 +1,1252 @@
+{
+  "type": "base",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "645a8fbf-df33-4d41-9616-6c299c71f79d",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "fleets"
+      ],
+      "writes": [
+        "s|tbl|public.fleets",
+        "n|tbl|public.fleets",
+        "e|tbl|public.fleets",
+        "n|rel|public.fleets",
+        "n|type|public.fleets",
+        "n|rel|public.fleets_pkey",
+        "n|rel|public.fleets_organisation_slug",
+        "n|rel|public.fleets_organisation_id_id_unique"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiative_memberships"
+      ],
+      "writes": [
+        "s|tbl|public.initiative_memberships",
+        "n|tbl|public.initiative_memberships",
+        "e|tbl|public.initiative_memberships",
+        "n|rel|public.initiative_memberships",
+        "n|type|public.initiative_memberships",
+        "n|rel|public.initiative_memberships_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiatives"
+      ],
+      "writes": [
+        "s|tbl|public.initiatives",
+        "n|tbl|public.initiatives",
+        "e|tbl|public.initiatives",
+        "n|rel|public.initiatives",
+        "n|type|public.initiatives",
+        "n|rel|public.initiatives_pkey",
+        "n|rel|public.initiatives_organisation_id_id_unique"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "organisations"
+      ],
+      "writes": [
+        "s|tbl|public.organisations",
+        "n|tbl|public.organisations",
+        "e|tbl|public.organisations",
+        "n|rel|public.organisations",
+        "n|type|public.organisations",
+        "n|rel|public.organisations_pkey",
+        "n|rel|public.organisations_provider_external_id_unique"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "users"
+      ],
+      "writes": [
+        "s|tbl|public.users",
+        "n|tbl|public.users",
+        "e|tbl|public.users",
+        "n|rel|public.users",
+        "n|type|public.users",
+        "n|rel|public.users_pkey",
+        "n|rel|public.users_organisation_id_subject_unique",
+        "n|rel|public.users_organisation_id_id_unique"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "initiative_memberships",
+        "initiative_memberships_organisation_id_user_id_index"
+      ],
+      "writes": [
+        "s|idx|public.initiative_memberships_organisation_id_user_id_index",
+        "n|idx|public.initiative_memberships_organisation_id_user_id_index",
+        "e|idx|public.initiative_memberships_organisation_id_user_id_index",
+        "n|rel|public.initiative_memberships_organisation_id_user_id_index"
+      ],
+      "reads": [
+        "n|tbl|public.initiative_memberships",
+        "n|sch|public",
+        "n|col|public.initiative_memberships.organisation_id",
+        "n|col|public.initiative_memberships.user_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "fleets"
+      ],
+      "writes": [
+        "s|fk|public.fleets.fleets_organisation_id_organisations_id_fkey",
+        "n|fk|public.fleets.fleets_organisation_id_organisations_id_fkey",
+        "e|fk|public.fleets.fleets_organisation_id_organisations_id_fkey",
+        "n|con|public.fleets.fleets_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.fleets",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.fleets.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiative_memberships"
+      ],
+      "writes": [
+        "s|fk|public.initiative_memberships.initiative_memberships_organisation_id_organisations_id_fkey",
+        "n|fk|public.initiative_memberships.initiative_memberships_organisation_id_organisations_id_fkey",
+        "e|fk|public.initiative_memberships.initiative_memberships_organisation_id_organisations_id_fkey",
+        "n|con|public.initiative_memberships.initiative_memberships_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.initiative_memberships",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.initiative_memberships.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiative_memberships"
+      ],
+      "writes": [
+        "s|fk|public.initiative_memberships.initiative_memberships_Hq53YY1PCzOJ_fkey",
+        "n|fk|public.initiative_memberships.initiative_memberships_Hq53YY1PCzOJ_fkey",
+        "e|fk|public.initiative_memberships.initiative_memberships_Hq53YY1PCzOJ_fkey",
+        "n|con|public.initiative_memberships.initiative_memberships_Hq53YY1PCzOJ_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.initiative_memberships",
+        "n|sch|public",
+        "n|tbl|public.initiatives",
+        "n|sch|public",
+        "n|col|public.initiative_memberships.organisation_id",
+        "n|col|public.initiative_memberships.initiative_id",
+        "n|col|public.initiatives.organisation_id",
+        "n|col|public.initiatives.id",
+        "e|uniqueness|public.initiatives.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiative_memberships"
+      ],
+      "writes": [
+        "s|fk|public.initiative_memberships.initiative_memberships_WUWIgZUzmRin_fkey",
+        "n|fk|public.initiative_memberships.initiative_memberships_WUWIgZUzmRin_fkey",
+        "e|fk|public.initiative_memberships.initiative_memberships_WUWIgZUzmRin_fkey",
+        "n|con|public.initiative_memberships.initiative_memberships_WUWIgZUzmRin_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.initiative_memberships",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.initiative_memberships.organisation_id",
+        "n|col|public.initiative_memberships.user_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiatives"
+      ],
+      "writes": [
+        "s|fk|public.initiatives.initiatives_organisation_id_organisations_id_fkey",
+        "n|fk|public.initiatives.initiatives_organisation_id_organisations_id_fkey",
+        "e|fk|public.initiatives.initiatives_organisation_id_organisations_id_fkey",
+        "n|con|public.initiatives.initiatives_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.initiatives",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.initiatives.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiatives"
+      ],
+      "writes": [
+        "s|fk|public.initiatives.initiatives_OVRK26iEq1Ko_fkey",
+        "n|fk|public.initiatives.initiatives_OVRK26iEq1Ko_fkey",
+        "e|fk|public.initiatives.initiatives_OVRK26iEq1Ko_fkey",
+        "n|con|public.initiatives.initiatives_OVRK26iEq1Ko_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.initiatives",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.initiatives.organisation_id",
+        "n|col|public.initiatives.owner_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiatives"
+      ],
+      "writes": [
+        "s|fk|public.initiatives.initiatives_oEAymN28lN0W_fkey",
+        "n|fk|public.initiatives.initiatives_oEAymN28lN0W_fkey",
+        "e|fk|public.initiatives.initiatives_oEAymN28lN0W_fkey",
+        "n|con|public.initiatives.initiatives_oEAymN28lN0W_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.initiatives",
+        "n|sch|public",
+        "n|tbl|public.fleets",
+        "n|sch|public",
+        "n|col|public.initiatives.organisation_id",
+        "n|col|public.initiatives.fleet_id",
+        "n|col|public.fleets.organisation_id",
+        "n|col|public.fleets.id",
+        "e|uniqueness|public.fleets.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiatives"
+      ],
+      "writes": [
+        "s|fk|public.initiatives.initiatives_IJpJ0m73SB1s_fkey",
+        "n|fk|public.initiatives.initiatives_IJpJ0m73SB1s_fkey",
+        "e|fk|public.initiatives.initiatives_IJpJ0m73SB1s_fkey",
+        "n|con|public.initiatives.initiatives_IJpJ0m73SB1s_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.initiatives",
+        "n|sch|public",
+        "n|tbl|public.initiatives",
+        "n|sch|public",
+        "n|col|public.initiatives.organisation_id",
+        "n|col|public.initiatives.parent_id",
+        "n|col|public.initiatives.organisation_id",
+        "n|col|public.initiatives.id",
+        "e|uniqueness|public.initiatives.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "users"
+      ],
+      "writes": [
+        "s|fk|public.users.users_organisation_id_organisations_id_fkey",
+        "n|fk|public.users.users_organisation_id_organisations_id_fkey",
+        "e|fk|public.users.users_organisation_id_organisations_id_fkey",
+        "n|con|public.users.users_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.users.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    }
+  ],
+  "ddl": [
+    {
+      "schema": "public",
+      "name": "fleets",
+      "isRlsEnabled": false,
+      "entityType": "tables"
+    },
+    {
+      "schema": "public",
+      "name": "initiative_memberships",
+      "isRlsEnabled": false,
+      "entityType": "tables"
+    },
+    {
+      "schema": "public",
+      "name": "initiatives",
+      "isRlsEnabled": false,
+      "entityType": "tables"
+    },
+    {
+      "schema": "public",
+      "name": "organisations",
+      "isRlsEnabled": false,
+      "entityType": "tables"
+    },
+    {
+      "schema": "public",
+      "name": "users",
+      "isRlsEnabled": false,
+      "entityType": "tables"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "organisation_id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "slug",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "name",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "irc_host",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "irc_port",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "irc_tls",
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "irc_websocket_url",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "rear_admiral_name",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "captain_names",
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "vm_host",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiative_memberships",
+      "name": "organisation_id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiative_memberships",
+      "name": "initiative_id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiative_memberships",
+      "name": "user_id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "organisation_id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "name",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "channels",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "''",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "description",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "owner_id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "parent_id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "fleet_id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "version",
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "status",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'planned'",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "target_date",
+      "type": "date",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "archived",
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "false",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "organisations",
+      "name": "id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "organisations",
+      "name": "provider",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "organisations",
+      "name": "external_id",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "organisation_id",
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "subject",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "email",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "display_name",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "role",
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'member'",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "active",
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "true",
+      "generated": null,
+      "identity": null,
+      "entityType": "columns"
+    },
+    {
+      "schema": "public",
+      "table": "initiative_memberships",
+      "name": "initiative_memberships_organisation_id_user_id_index",
+      "nameExplicit": false,
+      "columns": [
+        {
+          "value": "organisation_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "user_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "entityType": "indexes"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "fleets_organisation_id_organisations_id_fkey",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "organisations",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "entityType": "fks"
+    },
+    {
+      "schema": "public",
+      "table": "initiative_memberships",
+      "name": "initiative_memberships_organisation_id_organisations_id_fkey",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "organisations",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "entityType": "fks"
+    },
+    {
+      "schema": "public",
+      "table": "initiative_memberships",
+      "name": "initiative_memberships_Hq53YY1PCzOJ_fkey",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id",
+        "initiative_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "initiatives",
+      "columnsTo": [
+        "organisation_id",
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "entityType": "fks"
+    },
+    {
+      "schema": "public",
+      "table": "initiative_memberships",
+      "name": "initiative_memberships_WUWIgZUzmRin_fkey",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id",
+        "user_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "users",
+      "columnsTo": [
+        "organisation_id",
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "entityType": "fks"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "initiatives_organisation_id_organisations_id_fkey",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "organisations",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "entityType": "fks"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "initiatives_OVRK26iEq1Ko_fkey",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id",
+        "owner_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "users",
+      "columnsTo": [
+        "organisation_id",
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "entityType": "fks"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "initiatives_oEAymN28lN0W_fkey",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id",
+        "fleet_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "fleets",
+      "columnsTo": [
+        "organisation_id",
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "entityType": "fks"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "initiatives_IJpJ0m73SB1s_fkey",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id",
+        "parent_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "initiatives",
+      "columnsTo": [
+        "organisation_id",
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "entityType": "fks"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "users_organisation_id_organisations_id_fkey",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "organisations",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "entityType": "fks"
+    },
+    {
+      "schema": "public",
+      "table": "initiative_memberships",
+      "name": "initiative_memberships_pkey",
+      "columns": [
+        "organisation_id",
+        "initiative_id",
+        "user_id"
+      ],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "fleets_pkey",
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "initiatives_pkey",
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "schema": "public",
+      "table": "organisations",
+      "name": "organisations_pkey",
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "users_pkey",
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "entityType": "pks"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "fleets_organisation_slug",
+      "nameExplicit": true,
+      "columns": [
+        "organisation_id",
+        "slug"
+      ],
+      "nullsNotDistinct": false,
+      "entityType": "uniques"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "fleets_organisation_id_id_unique",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id",
+        "id"
+      ],
+      "nullsNotDistinct": false,
+      "entityType": "uniques"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "initiatives_organisation_id_id_unique",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id",
+        "id"
+      ],
+      "nullsNotDistinct": false,
+      "entityType": "uniques"
+    },
+    {
+      "schema": "public",
+      "table": "organisations",
+      "name": "organisations_provider_external_id_unique",
+      "nameExplicit": false,
+      "columns": [
+        "provider",
+        "external_id"
+      ],
+      "nullsNotDistinct": false,
+      "entityType": "uniques"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "users_organisation_id_subject_unique",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id",
+        "subject"
+      ],
+      "nullsNotDistinct": false,
+      "entityType": "uniques"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "users_organisation_id_id_unique",
+      "nameExplicit": false,
+      "columns": [
+        "organisation_id",
+        "id"
+      ],
+      "nullsNotDistinct": false,
+      "entityType": "uniques"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "fleets_irc_port",
+      "value": "\"irc_port\" between 1 and 65535",
+      "entityType": "checks"
+    },
+    {
+      "schema": "public",
+      "table": "fleets",
+      "name": "fleets_captain_names",
+      "value": "jsonb_typeof(\"captain_names\") = 'array'",
+      "entityType": "checks"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "initiatives_status",
+      "value": "\"status\" in ('planned', 'active', 'completed', 'canceled')",
+      "entityType": "checks"
+    },
+    {
+      "schema": "public",
+      "table": "initiatives",
+      "name": "initiatives_version",
+      "value": "\"version\" > 0",
+      "entityType": "checks"
+    },
+    {
+      "schema": "public",
+      "table": "users",
+      "name": "users_role",
+      "value": "\"role\" in ('admin', 'member')",
+      "entityType": "checks"
+    }
+  ]
+}

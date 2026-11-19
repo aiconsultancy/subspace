@@ -1,0 +1,670 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "2296c370-9b81-433b-9ac6-eb8375263b17",
+  "prevIds": [
+    "ab614fa4-9b40-4b95-800d-51d405862041"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_updates"
+      ],
+      "writes": [
+        "s|tbl|public.project_updates",
+        "n|tbl|public.project_updates",
+        "e|tbl|public.project_updates",
+        "n|rel|public.project_updates",
+        "n|type|public.project_updates",
+        "n|rel|public.project_updates_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_milestones",
+        "sort_order"
+      ],
+      "writes": [
+        "s|col|public.project_milestones.sort_order",
+        "n|col|public.project_milestones.sort_order",
+        "e|col|public.project_milestones.sort_order"
+      ],
+      "reads": [
+        "n|tbl|public.project_milestones",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_milestones",
+        "completed_at"
+      ],
+      "writes": [
+        "s|col|public.project_milestones.completed_at",
+        "n|col|public.project_milestones.completed_at",
+        "e|col|public.project_milestones.completed_at"
+      ],
+      "reads": [
+        "n|tbl|public.project_milestones",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_milestones",
+        "completed_by_id"
+      ],
+      "writes": [
+        "s|col|public.project_milestones.completed_by_id",
+        "n|col|public.project_milestones.completed_by_id",
+        "e|col|public.project_milestones.completed_by_id"
+      ],
+      "reads": [
+        "n|tbl|public.project_milestones",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_milestones",
+        "version"
+      ],
+      "writes": [
+        "s|col|public.project_milestones.version",
+        "n|col|public.project_milestones.version",
+        "e|col|public.project_milestones.version"
+      ],
+      "reads": [
+        "n|tbl|public.project_milestones",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_milestones",
+        "updated_at"
+      ],
+      "writes": [
+        "s|col|public.project_milestones.updated_at",
+        "n|col|public.project_milestones.updated_at",
+        "e|col|public.project_milestones.updated_at"
+      ],
+      "reads": [
+        "n|tbl|public.project_milestones",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "projects",
+        "health"
+      ],
+      "writes": [
+        "s|col|public.projects.health",
+        "n|col|public.projects.health",
+        "e|col|public.projects.health"
+      ],
+      "reads": [
+        "n|tbl|public.projects",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "project_updates",
+        "project_updates_organisation_id_project_id_created_at_id_index"
+      ],
+      "writes": [
+        "s|idx|public.project_updates_organisation_id_project_id_created_at_id_index",
+        "n|idx|public.project_updates_organisation_id_project_id_created_at_id_index",
+        "e|idx|public.project_updates_organisation_id_project_id_created_at_id_index",
+        "n|rel|public.project_updates_organisation_id_project_id_created_at_id_index"
+      ],
+      "reads": [
+        "n|tbl|public.project_updates",
+        "n|sch|public",
+        "n|col|public.project_updates.organisation_id",
+        "n|col|public.project_updates.project_id",
+        "n|col|public.project_updates.created_at",
+        "n|col|public.project_updates.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_milestones"
+      ],
+      "writes": [
+        "s|fk|public.project_milestones.project_milestones_ZkjOQWwxhHWs_fkey",
+        "n|fk|public.project_milestones.project_milestones_ZkjOQWwxhHWs_fkey",
+        "e|fk|public.project_milestones.project_milestones_ZkjOQWwxhHWs_fkey",
+        "n|con|public.project_milestones.project_milestones_ZkjOQWwxhHWs_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_milestones",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.project_milestones.organisation_id",
+        "n|col|public.project_milestones.completed_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_updates"
+      ],
+      "writes": [
+        "s|fk|public.project_updates.project_updates_organisation_id_organisations_id_fkey",
+        "n|fk|public.project_updates.project_updates_organisation_id_organisations_id_fkey",
+        "e|fk|public.project_updates.project_updates_organisation_id_organisations_id_fkey",
+        "n|con|public.project_updates.project_updates_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_updates",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.project_updates.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_updates"
+      ],
+      "writes": [
+        "s|fk|public.project_updates.project_updates_WHs7oSbzljy7_fkey",
+        "n|fk|public.project_updates.project_updates_WHs7oSbzljy7_fkey",
+        "e|fk|public.project_updates.project_updates_WHs7oSbzljy7_fkey",
+        "n|con|public.project_updates.project_updates_WHs7oSbzljy7_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_updates",
+        "n|sch|public",
+        "n|tbl|public.projects",
+        "n|sch|public",
+        "n|col|public.project_updates.organisation_id",
+        "n|col|public.project_updates.project_id",
+        "n|col|public.projects.organisation_id",
+        "n|col|public.projects.id",
+        "e|uniqueness|public.projects.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_updates"
+      ],
+      "writes": [
+        "s|fk|public.project_updates.project_updates_lvXgV47zNRaX_fkey",
+        "n|fk|public.project_updates.project_updates_lvXgV47zNRaX_fkey",
+        "e|fk|public.project_updates.project_updates_lvXgV47zNRaX_fkey",
+        "n|con|public.project_updates.project_updates_lvXgV47zNRaX_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_updates",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.project_updates.organisation_id",
+        "n|col|public.project_updates.author_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "project_updates",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_milestones",
+        "name": "sort_order",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "0",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_milestones",
+        "name": "completed_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_milestones",
+        "name": "completed_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_milestones",
+        "name": "version",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "1",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_milestones",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "project_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "author_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "body",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "health",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "version",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "1",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "edited_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "projects",
+        "name": "health",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "project_updates_organisation_id_project_id_created_at_id_index",
+        "nameExplicit": false,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "project_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "created_at",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_milestones",
+        "name": "project_milestones_ZkjOQWwxhHWs_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "completed_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "project_updates_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "project_updates_WHs7oSbzljy7_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "project_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "projects",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "project_updates_lvXgV47zNRaX_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "author_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_updates",
+        "name": "project_updates_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

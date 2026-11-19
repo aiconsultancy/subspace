@@ -1,0 +1,318 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "ab614fa4-9b40-4b95-800d-51d405862041",
+  "prevIds": [
+    "97264157-0df4-41b1-b2a9-a244aa93e092"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiative_stakeholders"
+      ],
+      "writes": [
+        "s|tbl|public.initiative_stakeholders",
+        "n|tbl|public.initiative_stakeholders",
+        "e|tbl|public.initiative_stakeholders",
+        "n|rel|public.initiative_stakeholders",
+        "n|type|public.initiative_stakeholders",
+        "n|rel|public.initiative_stakeholders_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "initiative_stakeholders",
+        "initiative_stakeholders_organisation_id_initiative_id_index"
+      ],
+      "writes": [
+        "s|idx|public.initiative_stakeholders_organisation_id_initiative_id_index",
+        "n|idx|public.initiative_stakeholders_organisation_id_initiative_id_index",
+        "e|idx|public.initiative_stakeholders_organisation_id_initiative_id_index",
+        "n|rel|public.initiative_stakeholders_organisation_id_initiative_id_index"
+      ],
+      "reads": [
+        "n|tbl|public.initiative_stakeholders",
+        "n|sch|public",
+        "n|col|public.initiative_stakeholders.organisation_id",
+        "n|col|public.initiative_stakeholders.initiative_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiative_stakeholders"
+      ],
+      "writes": [
+        "s|fk|public.initiative_stakeholders.initiative_stakeholders_organisation_id_organisations_id_fkey",
+        "n|fk|public.initiative_stakeholders.initiative_stakeholders_organisation_id_organisations_id_fkey",
+        "e|fk|public.initiative_stakeholders.initiative_stakeholders_organisation_id_organisations_id_fkey",
+        "n|con|public.initiative_stakeholders.initiative_stakeholders_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.initiative_stakeholders",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.initiative_stakeholders.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "initiative_stakeholders"
+      ],
+      "writes": [
+        "s|fk|public.initiative_stakeholders.initiative_stakeholders_pOM8ZHgItmj1_fkey",
+        "n|fk|public.initiative_stakeholders.initiative_stakeholders_pOM8ZHgItmj1_fkey",
+        "e|fk|public.initiative_stakeholders.initiative_stakeholders_pOM8ZHgItmj1_fkey",
+        "n|con|public.initiative_stakeholders.initiative_stakeholders_pOM8ZHgItmj1_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.initiative_stakeholders",
+        "n|sch|public",
+        "n|tbl|public.initiatives",
+        "n|sch|public",
+        "n|col|public.initiative_stakeholders.organisation_id",
+        "n|col|public.initiative_stakeholders.initiative_id",
+        "n|col|public.initiatives.organisation_id",
+        "n|col|public.initiatives.id",
+        "e|uniqueness|public.initiatives.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "initiative_stakeholders",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "initiative_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "name",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "role",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "slack_handle",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "teams_handle",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "initiative_stakeholders_organisation_id_initiative_id_index",
+        "nameExplicit": false,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "initiative_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "initiative_stakeholders_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "initiative_stakeholders_pOM8ZHgItmj1_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "initiative_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "initiatives",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "initiative_stakeholders_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "initiative_stakeholders",
+        "name": "stakeholder_contact",
+        "value": "\"slack_handle\" is not null or \"teams_handle\" is not null",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

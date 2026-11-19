@@ -1,0 +1,2296 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "7fa1b5d7-a315-4bf6-85cc-cd1ccd6273b3",
+  "prevIds": [
+    "9c646f00-8251-42fa-8a0b-e7c31e3c6e19"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decision_issues"
+      ],
+      "writes": [
+        "s|tbl|public.project_decision_issues",
+        "n|tbl|public.project_decision_issues",
+        "e|tbl|public.project_decision_issues",
+        "n|rel|public.project_decision_issues",
+        "n|type|public.project_decision_issues",
+        "n|rel|public.project_decision_issues_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decisions"
+      ],
+      "writes": [
+        "s|tbl|public.project_decisions",
+        "n|tbl|public.project_decisions",
+        "e|tbl|public.project_decisions",
+        "n|rel|public.project_decisions",
+        "n|type|public.project_decisions",
+        "n|rel|public.project_decisions_pkey",
+        "n|rel|public.project_decisions_organisation_id_id_unique"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_identifier_aliases"
+      ],
+      "writes": [
+        "s|tbl|public.issue_identifier_aliases",
+        "n|tbl|public.issue_identifier_aliases",
+        "e|tbl|public.issue_identifier_aliases",
+        "n|rel|public.issue_identifier_aliases",
+        "n|type|public.issue_identifier_aliases",
+        "n|rel|public.issue_identifier_aliases_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_relations"
+      ],
+      "writes": [
+        "s|tbl|public.issue_relations",
+        "n|tbl|public.issue_relations",
+        "e|tbl|public.issue_relations",
+        "n|rel|public.issue_relations",
+        "n|type|public.issue_relations",
+        "n|rel|public.issue_relations_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_repositories"
+      ],
+      "writes": [
+        "s|tbl|public.project_repositories",
+        "n|tbl|public.project_repositories",
+        "e|tbl|public.project_repositories",
+        "n|rel|public.project_repositories",
+        "n|type|public.project_repositories",
+        "n|rel|public.project_repositories_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_pull_request_links"
+      ],
+      "writes": [
+        "s|tbl|public.issue_pull_request_links",
+        "n|tbl|public.issue_pull_request_links",
+        "e|tbl|public.issue_pull_request_links",
+        "n|rel|public.issue_pull_request_links",
+        "n|type|public.issue_pull_request_links",
+        "n|rel|public.issue_pull_request_links_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "github_pull_requests"
+      ],
+      "writes": [
+        "s|tbl|public.github_pull_requests",
+        "n|tbl|public.github_pull_requests",
+        "e|tbl|public.github_pull_requests",
+        "n|rel|public.github_pull_requests",
+        "n|type|public.github_pull_requests",
+        "n|rel|public.github_pull_requests_pkey",
+        "n|rel|public.github_pull_requests_organisation_id_id_unique",
+        "n|rel|public.github_pull_requests_organisation_id_repository_number_unique"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "project_decision_issues",
+        "project_decision_issues_organisation_id_issue_id_index"
+      ],
+      "writes": [
+        "s|idx|public.project_decision_issues_organisation_id_issue_id_index",
+        "n|idx|public.project_decision_issues_organisation_id_issue_id_index",
+        "e|idx|public.project_decision_issues_organisation_id_issue_id_index",
+        "n|rel|public.project_decision_issues_organisation_id_issue_id_index"
+      ],
+      "reads": [
+        "n|tbl|public.project_decision_issues",
+        "n|sch|public",
+        "n|col|public.project_decision_issues.organisation_id",
+        "n|col|public.project_decision_issues.issue_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "project_decisions",
+        "project_decisions_organisation_id_project_id_decided_on_index"
+      ],
+      "writes": [
+        "s|idx|public.project_decisions_organisation_id_project_id_decided_on_index",
+        "n|idx|public.project_decisions_organisation_id_project_id_decided_on_index",
+        "e|idx|public.project_decisions_organisation_id_project_id_decided_on_index",
+        "n|rel|public.project_decisions_organisation_id_project_id_decided_on_index"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.project_id",
+        "n|col|public.project_decisions.decided_on"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "issue_relations",
+        "issue_relations_organisation_id_target_id_index"
+      ],
+      "writes": [
+        "s|idx|public.issue_relations_organisation_id_target_id_index",
+        "n|idx|public.issue_relations_organisation_id_target_id_index",
+        "e|idx|public.issue_relations_organisation_id_target_id_index",
+        "n|rel|public.issue_relations_organisation_id_target_id_index"
+      ],
+      "reads": [
+        "n|tbl|public.issue_relations",
+        "n|sch|public",
+        "n|col|public.issue_relations.organisation_id",
+        "n|col|public.issue_relations.target_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "project_repositories",
+        "project_repositories_repository_index"
+      ],
+      "writes": [
+        "s|idx|public.project_repositories_repository_index",
+        "n|idx|public.project_repositories_repository_index",
+        "e|idx|public.project_repositories_repository_index",
+        "n|rel|public.project_repositories_repository_index"
+      ],
+      "reads": [
+        "n|tbl|public.project_repositories",
+        "n|sch|public",
+        "n|col|public.project_repositories.repository"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "issue_pull_request_links",
+        "issue_pull_request_links_organisation_id_pull_request_id_index"
+      ],
+      "writes": [
+        "s|idx|public.issue_pull_request_links_organisation_id_pull_request_id_index",
+        "n|idx|public.issue_pull_request_links_organisation_id_pull_request_id_index",
+        "e|idx|public.issue_pull_request_links_organisation_id_pull_request_id_index",
+        "n|rel|public.issue_pull_request_links_organisation_id_pull_request_id_index"
+      ],
+      "reads": [
+        "n|tbl|public.issue_pull_request_links",
+        "n|sch|public",
+        "n|col|public.issue_pull_request_links.organisation_id",
+        "n|col|public.issue_pull_request_links.pull_request_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decision_issues"
+      ],
+      "writes": [
+        "s|fk|public.project_decision_issues.project_decision_issues_organisation_id_organisations_id_fkey",
+        "n|fk|public.project_decision_issues.project_decision_issues_organisation_id_organisations_id_fkey",
+        "e|fk|public.project_decision_issues.project_decision_issues_organisation_id_organisations_id_fkey",
+        "n|con|public.project_decision_issues.project_decision_issues_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_decision_issues",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.project_decision_issues.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decision_issues"
+      ],
+      "writes": [
+        "s|fk|public.project_decision_issues.project_decision_issues_pC92h07rTqAS_fkey",
+        "n|fk|public.project_decision_issues.project_decision_issues_pC92h07rTqAS_fkey",
+        "e|fk|public.project_decision_issues.project_decision_issues_pC92h07rTqAS_fkey",
+        "n|con|public.project_decision_issues.project_decision_issues_pC92h07rTqAS_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_decision_issues",
+        "n|sch|public",
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|col|public.project_decision_issues.organisation_id",
+        "n|col|public.project_decision_issues.decision_id",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.id",
+        "e|uniqueness|public.project_decisions.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decision_issues"
+      ],
+      "writes": [
+        "s|fk|public.project_decision_issues.project_decision_issues_x9L083BvAv5s_fkey",
+        "n|fk|public.project_decision_issues.project_decision_issues_x9L083BvAv5s_fkey",
+        "e|fk|public.project_decision_issues.project_decision_issues_x9L083BvAv5s_fkey",
+        "n|con|public.project_decision_issues.project_decision_issues_x9L083BvAv5s_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_decision_issues",
+        "n|sch|public",
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.project_decision_issues.organisation_id",
+        "n|col|public.project_decision_issues.issue_id",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id",
+        "e|uniqueness|public.issues.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decisions"
+      ],
+      "writes": [
+        "s|fk|public.project_decisions.project_decisions_organisation_id_organisations_id_fkey",
+        "n|fk|public.project_decisions.project_decisions_organisation_id_organisations_id_fkey",
+        "e|fk|public.project_decisions.project_decisions_organisation_id_organisations_id_fkey",
+        "n|con|public.project_decisions.project_decisions_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decisions"
+      ],
+      "writes": [
+        "s|fk|public.project_decisions.project_decisions_hrVWkxmRK0WO_fkey",
+        "n|fk|public.project_decisions.project_decisions_hrVWkxmRK0WO_fkey",
+        "e|fk|public.project_decisions.project_decisions_hrVWkxmRK0WO_fkey",
+        "n|con|public.project_decisions.project_decisions_hrVWkxmRK0WO_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|tbl|public.projects",
+        "n|sch|public",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.project_id",
+        "n|col|public.projects.organisation_id",
+        "n|col|public.projects.id",
+        "e|uniqueness|public.projects.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decisions"
+      ],
+      "writes": [
+        "s|fk|public.project_decisions.project_decisions_u5OHgJuCtNg1_fkey",
+        "n|fk|public.project_decisions.project_decisions_u5OHgJuCtNg1_fkey",
+        "e|fk|public.project_decisions.project_decisions_u5OHgJuCtNg1_fkey",
+        "n|con|public.project_decisions.project_decisions_u5OHgJuCtNg1_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.recorded_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_identifier_aliases"
+      ],
+      "writes": [
+        "s|fk|public.issue_identifier_aliases.issue_identifier_aliases_organisation_id_organisations_id_fkey",
+        "n|fk|public.issue_identifier_aliases.issue_identifier_aliases_organisation_id_organisations_id_fkey",
+        "e|fk|public.issue_identifier_aliases.issue_identifier_aliases_organisation_id_organisations_id_fkey",
+        "n|con|public.issue_identifier_aliases.issue_identifier_aliases_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_identifier_aliases",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.issue_identifier_aliases.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_identifier_aliases"
+      ],
+      "writes": [
+        "s|fk|public.issue_identifier_aliases.issue_identifier_aliases_R48KDyyer2Q3_fkey",
+        "n|fk|public.issue_identifier_aliases.issue_identifier_aliases_R48KDyyer2Q3_fkey",
+        "e|fk|public.issue_identifier_aliases.issue_identifier_aliases_R48KDyyer2Q3_fkey",
+        "n|con|public.issue_identifier_aliases.issue_identifier_aliases_R48KDyyer2Q3_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_identifier_aliases",
+        "n|sch|public",
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issue_identifier_aliases.organisation_id",
+        "n|col|public.issue_identifier_aliases.issue_id",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id",
+        "e|uniqueness|public.issues.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_relations"
+      ],
+      "writes": [
+        "s|fk|public.issue_relations.issue_relations_organisation_id_organisations_id_fkey",
+        "n|fk|public.issue_relations.issue_relations_organisation_id_organisations_id_fkey",
+        "e|fk|public.issue_relations.issue_relations_organisation_id_organisations_id_fkey",
+        "n|con|public.issue_relations.issue_relations_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_relations",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.issue_relations.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_relations"
+      ],
+      "writes": [
+        "s|fk|public.issue_relations.issue_relations_tOtUgDWSuy0U_fkey",
+        "n|fk|public.issue_relations.issue_relations_tOtUgDWSuy0U_fkey",
+        "e|fk|public.issue_relations.issue_relations_tOtUgDWSuy0U_fkey",
+        "n|con|public.issue_relations.issue_relations_tOtUgDWSuy0U_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_relations",
+        "n|sch|public",
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issue_relations.organisation_id",
+        "n|col|public.issue_relations.source_id",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id",
+        "e|uniqueness|public.issues.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_relations"
+      ],
+      "writes": [
+        "s|fk|public.issue_relations.issue_relations_wFONTWAjBKl8_fkey",
+        "n|fk|public.issue_relations.issue_relations_wFONTWAjBKl8_fkey",
+        "e|fk|public.issue_relations.issue_relations_wFONTWAjBKl8_fkey",
+        "n|con|public.issue_relations.issue_relations_wFONTWAjBKl8_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_relations",
+        "n|sch|public",
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issue_relations.organisation_id",
+        "n|col|public.issue_relations.target_id",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id",
+        "e|uniqueness|public.issues.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_repositories"
+      ],
+      "writes": [
+        "s|fk|public.project_repositories.project_repositories_organisation_id_organisations_id_fkey",
+        "n|fk|public.project_repositories.project_repositories_organisation_id_organisations_id_fkey",
+        "e|fk|public.project_repositories.project_repositories_organisation_id_organisations_id_fkey",
+        "n|con|public.project_repositories.project_repositories_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_repositories",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.project_repositories.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_repositories"
+      ],
+      "writes": [
+        "s|fk|public.project_repositories.project_repositories_2ObWA3gy9GqN_fkey",
+        "n|fk|public.project_repositories.project_repositories_2ObWA3gy9GqN_fkey",
+        "e|fk|public.project_repositories.project_repositories_2ObWA3gy9GqN_fkey",
+        "n|con|public.project_repositories.project_repositories_2ObWA3gy9GqN_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_repositories",
+        "n|sch|public",
+        "n|tbl|public.projects",
+        "n|sch|public",
+        "n|col|public.project_repositories.organisation_id",
+        "n|col|public.project_repositories.project_id",
+        "n|col|public.projects.organisation_id",
+        "n|col|public.projects.id",
+        "e|uniqueness|public.projects.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_pull_request_links"
+      ],
+      "writes": [
+        "s|fk|public.issue_pull_request_links.issue_pull_request_links_organisation_id_organisations_id_fkey",
+        "n|fk|public.issue_pull_request_links.issue_pull_request_links_organisation_id_organisations_id_fkey",
+        "e|fk|public.issue_pull_request_links.issue_pull_request_links_organisation_id_organisations_id_fkey",
+        "n|con|public.issue_pull_request_links.issue_pull_request_links_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_pull_request_links",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.issue_pull_request_links.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_pull_request_links"
+      ],
+      "writes": [
+        "s|fk|public.issue_pull_request_links.issue_pull_request_links_1NY4gsgCt6v2_fkey",
+        "n|fk|public.issue_pull_request_links.issue_pull_request_links_1NY4gsgCt6v2_fkey",
+        "e|fk|public.issue_pull_request_links.issue_pull_request_links_1NY4gsgCt6v2_fkey",
+        "n|con|public.issue_pull_request_links.issue_pull_request_links_1NY4gsgCt6v2_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_pull_request_links",
+        "n|sch|public",
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issue_pull_request_links.organisation_id",
+        "n|col|public.issue_pull_request_links.issue_id",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id",
+        "e|uniqueness|public.issues.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_pull_request_links"
+      ],
+      "writes": [
+        "s|fk|public.issue_pull_request_links.issue_pull_request_links_8ygU1kVT3h8G_fkey",
+        "n|fk|public.issue_pull_request_links.issue_pull_request_links_8ygU1kVT3h8G_fkey",
+        "e|fk|public.issue_pull_request_links.issue_pull_request_links_8ygU1kVT3h8G_fkey",
+        "n|con|public.issue_pull_request_links.issue_pull_request_links_8ygU1kVT3h8G_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_pull_request_links",
+        "n|sch|public",
+        "n|tbl|public.github_pull_requests",
+        "n|sch|public",
+        "n|col|public.issue_pull_request_links.organisation_id",
+        "n|col|public.issue_pull_request_links.pull_request_id",
+        "n|col|public.github_pull_requests.organisation_id",
+        "n|col|public.github_pull_requests.id",
+        "e|uniqueness|public.github_pull_requests.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "github_pull_requests"
+      ],
+      "writes": [
+        "s|fk|public.github_pull_requests.github_pull_requests_organisation_id_organisations_id_fkey",
+        "n|fk|public.github_pull_requests.github_pull_requests_organisation_id_organisations_id_fkey",
+        "e|fk|public.github_pull_requests.github_pull_requests_organisation_id_organisations_id_fkey",
+        "n|con|public.github_pull_requests.github_pull_requests_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.github_pull_requests",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.github_pull_requests.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "project_decision_issues",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "project_decisions",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "issue_identifier_aliases",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "issue_relations",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "project_repositories",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "issue_pull_request_links",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "github_pull_requests",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_issues",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_issues",
+        "name": "decision_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_issues",
+        "name": "issue_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "project_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "recorded_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "title",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "decided_on",
+        "type": "date",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "status",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'proposed'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "decision",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "context",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "''",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "why",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "''",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "implications",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "''",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "alternatives",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "''",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "tags",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'[]'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "evidence_kind",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "evidence_reference",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "evidence_excerpt",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "accepted_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "accepted_by_user_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "rejected_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "rejected_by_user_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "version",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "1",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_identifier_aliases",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_identifier_aliases",
+        "name": "identifier",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_identifier_aliases",
+        "name": "issue_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_relations",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_relations",
+        "name": "source_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_relations",
+        "name": "target_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_relations",
+        "name": "kind",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_repositories",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_repositories",
+        "name": "project_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_repositories",
+        "name": "repository",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_pull_request_links",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_pull_request_links",
+        "name": "issue_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_pull_request_links",
+        "name": "pull_request_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_pull_request_links",
+        "name": "kind",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_pull_request_links",
+        "name": "sources",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_pull_request_links",
+        "name": "active",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "true",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "repository",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "number",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "title",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "author_login",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "state",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "is_draft",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "head_branch",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "base_branch",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "merged_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "closed_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "github_updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "last_observed_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_issues",
+        "name": "project_decision_issues_organisation_id_issue_id_index",
+        "nameExplicit": false,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "issue_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "project_decisions_organisation_id_project_id_decided_on_index",
+        "nameExplicit": false,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "project_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "decided_on",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_relations",
+        "name": "issue_relations_organisation_id_target_id_index",
+        "nameExplicit": false,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "target_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_repositories",
+        "name": "project_repositories_repository_index",
+        "nameExplicit": false,
+        "columns": [
+          {
+            "value": "repository",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_pull_request_links",
+        "name": "issue_pull_request_links_organisation_id_pull_request_id_index",
+        "nameExplicit": false,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "pull_request_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_issues",
+        "name": "project_decision_issues_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_issues",
+        "name": "project_decision_issues_pC92h07rTqAS_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "decision_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "project_decisions",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_issues",
+        "name": "project_decision_issues_x9L083BvAv5s_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "issue_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issues",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "project_decisions_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "project_decisions_hrVWkxmRK0WO_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "project_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "projects",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "project_decisions_u5OHgJuCtNg1_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "recorded_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_identifier_aliases",
+        "name": "issue_identifier_aliases_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_identifier_aliases",
+        "name": "issue_identifier_aliases_R48KDyyer2Q3_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "issue_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issues",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_relations",
+        "name": "issue_relations_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_relations",
+        "name": "issue_relations_tOtUgDWSuy0U_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "source_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issues",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_relations",
+        "name": "issue_relations_wFONTWAjBKl8_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "target_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issues",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_repositories",
+        "name": "project_repositories_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_repositories",
+        "name": "project_repositories_2ObWA3gy9GqN_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "project_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "projects",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_pull_request_links",
+        "name": "issue_pull_request_links_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_pull_request_links",
+        "name": "issue_pull_request_links_1NY4gsgCt6v2_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "issue_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issues",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_pull_request_links",
+        "name": "issue_pull_request_links_8ygU1kVT3h8G_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "pull_request_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "github_pull_requests",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "github_pull_requests_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decision_issues",
+        "name": "project_decision_issues_pkey",
+        "columns": [
+          "organisation_id",
+          "decision_id",
+          "issue_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_identifier_aliases",
+        "name": "issue_identifier_aliases_pkey",
+        "columns": [
+          "organisation_id",
+          "identifier"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_relations",
+        "name": "issue_relations_pkey",
+        "columns": [
+          "organisation_id",
+          "kind",
+          "source_id",
+          "target_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_repositories",
+        "name": "project_repositories_pkey",
+        "columns": [
+          "organisation_id",
+          "project_id",
+          "repository"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_pull_request_links",
+        "name": "issue_pull_request_links_pkey",
+        "columns": [
+          "organisation_id",
+          "issue_id",
+          "pull_request_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "project_decisions_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "github_pull_requests_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "project_decisions_organisation_id_id_unique",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "id"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "github_pull_requests_organisation_id_id_unique",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "id"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "github_pull_requests",
+        "name": "github_pull_requests_organisation_id_repository_number_unique",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "repository",
+          "number"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_relations",
+        "name": "issue_relations_distinct",
+        "value": "\"source_id\" <> \"target_id\"",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

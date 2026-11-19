@@ -1,0 +1,545 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "c9335a8b-369d-4bb6-860e-57ab20d6638e",
+  "prevIds": [
+    "05704fa2-f89c-4558-8828-0af319789510"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_cycle_results"
+      ],
+      "writes": [
+        "s|tbl|public.issue_cycle_results",
+        "n|tbl|public.issue_cycle_results",
+        "e|tbl|public.issue_cycle_results",
+        "n|rel|public.issue_cycle_results",
+        "n|type|public.issue_cycle_results",
+        "n|rel|public.issue_cycle_results_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "issue_cycles",
+        "finished_at"
+      ],
+      "writes": [
+        "s|col|public.issue_cycles.finished_at",
+        "n|col|public.issue_cycles.finished_at",
+        "e|col|public.issue_cycles.finished_at"
+      ],
+      "reads": [
+        "n|tbl|public.issue_cycles",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "issue_cycles",
+        "finished_early"
+      ],
+      "writes": [
+        "s|col|public.issue_cycles.finished_early",
+        "n|col|public.issue_cycles.finished_early",
+        "e|col|public.issue_cycles.finished_early"
+      ],
+      "reads": [
+        "n|tbl|public.issue_cycles",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "issue_cycles",
+        "carried_to_number"
+      ],
+      "writes": [
+        "s|col|public.issue_cycles.carried_to_number",
+        "n|col|public.issue_cycles.carried_to_number",
+        "e|col|public.issue_cycles.carried_to_number"
+      ],
+      "reads": [
+        "n|tbl|public.issue_cycles",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "issues",
+        "cycle_joined_at"
+      ],
+      "writes": [
+        "s|col|public.issues.cycle_joined_at",
+        "n|col|public.issues.cycle_joined_at",
+        "e|col|public.issues.cycle_joined_at"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "projects",
+        "last_cycle_number"
+      ],
+      "writes": [
+        "s|col|public.projects.last_cycle_number",
+        "n|col|public.projects.last_cycle_number",
+        "e|col|public.projects.last_cycle_number"
+      ],
+      "reads": [
+        "n|tbl|public.projects",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "projects",
+        "cycle_settings"
+      ],
+      "writes": [
+        "s|col|public.projects.cycle_settings",
+        "n|col|public.projects.cycle_settings",
+        "e|col|public.projects.cycle_settings"
+      ],
+      "reads": [
+        "n|tbl|public.projects",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_cycle_results"
+      ],
+      "writes": [
+        "s|fk|public.issue_cycle_results.issue_cycle_results_organisation_id_organisations_id_fkey",
+        "n|fk|public.issue_cycle_results.issue_cycle_results_organisation_id_organisations_id_fkey",
+        "e|fk|public.issue_cycle_results.issue_cycle_results_organisation_id_organisations_id_fkey",
+        "n|con|public.issue_cycle_results.issue_cycle_results_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_cycle_results",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.issue_cycle_results.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_cycle_results"
+      ],
+      "writes": [
+        "s|fk|public.issue_cycle_results.issue_cycle_results_NQ39Mdvhd4Ds_fkey",
+        "n|fk|public.issue_cycle_results.issue_cycle_results_NQ39Mdvhd4Ds_fkey",
+        "e|fk|public.issue_cycle_results.issue_cycle_results_NQ39Mdvhd4Ds_fkey",
+        "n|con|public.issue_cycle_results.issue_cycle_results_NQ39Mdvhd4Ds_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_cycle_results",
+        "n|sch|public",
+        "n|tbl|public.issue_cycles",
+        "n|sch|public",
+        "n|col|public.issue_cycle_results.organisation_id",
+        "n|col|public.issue_cycle_results.project_id",
+        "n|col|public.issue_cycle_results.cycle_id",
+        "n|col|public.issue_cycles.organisation_id",
+        "n|col|public.issue_cycles.project_id",
+        "n|col|public.issue_cycles.id",
+        "e|uniqueness|public.issue_cycles.id.organisation_id.project_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "issue_cycle_results"
+      ],
+      "writes": [
+        "s|fk|public.issue_cycle_results.issue_cycle_results_bTAvMctFAY1S_fkey",
+        "n|fk|public.issue_cycle_results.issue_cycle_results_bTAvMctFAY1S_fkey",
+        "e|fk|public.issue_cycle_results.issue_cycle_results_bTAvMctFAY1S_fkey",
+        "n|con|public.issue_cycle_results.issue_cycle_results_bTAvMctFAY1S_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.issue_cycle_results",
+        "n|sch|public",
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issue_cycle_results.organisation_id",
+        "n|col|public.issue_cycle_results.issue_id",
+        "n|col|public.issues.organisation_id",
+        "n|col|public.issues.id",
+        "e|uniqueness|public.issues.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "issue_cycle_results",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "project_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "cycle_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "issue_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "state_type",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "state_name",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "points",
+        "type": "double precision",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "outcome",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "joined_after_start",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "false",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycles",
+        "name": "finished_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycles",
+        "name": "finished_early",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "false",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycles",
+        "name": "carried_to_number",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "cycle_joined_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "projects",
+        "name": "last_cycle_number",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "0",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "projects",
+        "name": "cycle_settings",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'{\"enabled\":false,\"lengthWeeks\":2,\"startDay\":\"monday\",\"cyclesAhead\":2,\"carryOver\":true}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "issue_cycle_results_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "issue_cycle_results_NQ39Mdvhd4Ds_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "project_id",
+          "cycle_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issue_cycles",
+        "columnsTo": [
+          "organisation_id",
+          "project_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "issue_cycle_results_bTAvMctFAY1S_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "issue_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "issues",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issue_cycle_results",
+        "name": "issue_cycle_results_pkey",
+        "columns": [
+          "organisation_id",
+          "cycle_id",
+          "issue_id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    }
+  ]
+}

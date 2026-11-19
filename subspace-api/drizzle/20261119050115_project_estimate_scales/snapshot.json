@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "05704fa2-f89c-4558-8828-0af319789510",
+  "prevIds": [
+    "b28ce31a-2054-451f-8bd7-7dd0d1b8e6a0"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "projects",
+        "estimate_scale"
+      ],
+      "writes": [
+        "s|col|public.projects.estimate_scale",
+        "n|col|public.projects.estimate_scale",
+        "e|col|public.projects.estimate_scale"
+      ],
+      "reads": [
+        "n|tbl|public.projects",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "projects",
+        "name": "estimate_scale",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'notUsed'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}
