@@ -1,0 +1,66 @@
+# This package is excluded from the workspace (see the root `Cargo.toml`), so
+# every field is declared explicitly: an excluded package cannot inherit from
+# `workspace.package`, `workspace.dependencies` or `workspace.lints`. It is the
+# only package that needs Zig, which is why `cargo build --workspace` must not
+# reach it.
+[package]
+name = "subspace-terminal"
+description = "Shell sessions on a pseudo-terminal with libghostty VT emulation"
+version = "0.9.0"
+publish = false
+edition = "2024"
+license = "Apache-2.0"
+
+[patch.crates-io]
+markdown = { path = "../../../subspace-framework/vendor/markdown" }
+
+[dependencies]
+# portable-pty reports failures as `anyhow::Error`; `{:#}` keeps the cause
+# chain, which carries the operating-system message REQ-28 shows.
+anyhow = "1"
+# Tokens for every colour the Ghostty configuration leaves unset, and the
+# shared font-family matching (REQ-12, REQ-14). The version and features come
+# from the workspace lockfile, which this package's own lockfile must match.
+subspace-framework = { path = "../../../subspace-framework", version = "0.2.0" }
+# The typed Ghostty values the view styles itself from (REQ-12, REQ-14 to
+# REQ-17). Zig-free, so it stays testable in the workspace as well.
+subspace-ghostty-config = { path = "../ghostty-config" }
+# The one GPUI dependency, as the rest of the workspace uses it.
+gpui-kit = "0.9.1"
+# The published 0.2.2 requires exactly Zig 0.15.2, which cannot link on
+# macOS 26 with only the Command Line Tools. This rev pins Ghostty 3425025e,
+# whose manifest declares Zig 0.16.0, and carries
+# `Terminal::set_scrollback_max_bytes`. `default-features = false` drops the
+# Kitty graphics module and `set_png_decoder` (see the soundness rules in
+# `src/lib.rs`). Replace the rev once a crates.io release supports Zig 0.16.
+libghostty-vt = { git = "https://github.com/Uzaaft/libghostty-rs", rev = "d2036baeb605d31d09a9e2ba6d0c923e04c34d54", default-features = false }
+# Opens a Unix pseudo-terminal, or a ConPTY pseudo console on Windows.
+portable-pty = "0.9"
+# Splits the Ghostty `command` value the way a shell splits a command line.
+shell-words = "1"
+thiserror = "2"
+
+# Signals the shell's process group on teardown and checks that a shell is
+# executable. The same version the workspace pins, so the two lockfiles agree.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.6", features = ["fs", "process"] }
+
+# Resolves the foreground program name from a pid. Linux reads
+# `/proc/<pid>/comm` instead and needs no dependency.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+# Read just the NSFont stored in the default Terminal.app profile.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSFont", "NSFontManager", "objc2-core-foundation"] }
+objc2-core-text = { version = "0.3", default-features = false, features = ["CTFontManager"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSDictionary", "NSError", "NSKeyedArchiver", "NSPropertyList", "NSString", "NSURL", "objc2-core-foundation"] }
+
+# The view's resize contract (REQ-17) is only observable through the real
+# element, so those tests draw it in a GPUI test window.
+[dev-dependencies]
+gpui-kit = { version = "0.9.1", features = ["test-support"] }
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "warn"
+type_complexity = "allow"

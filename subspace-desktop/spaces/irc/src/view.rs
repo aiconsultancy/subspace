@@ -1,0 +1,329 @@
+//! The board's view: the dock (buffer list, conversations, member list),
+//! rows from the state, and keeping the hub told which buffer is read.
+
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::{Icon, Sizable as _};
+use gpui_kit::{
+    AnyElement, App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, Styled as _, TestSupportExt as _, Window, div,
+};
+use subspace_client_irc::{BufferKey, Target};
+use subspace_framework::dashboard::panel::IconName;
+use subspace_framework::dashboard::{
+    Detail, Group, ListDashboard, ListState, Row, RowMenu, Tokens, list,
+};
+
+use crate::dock::{self, IrcDock, Where};
+use crate::{Irc, hub, listing, remove, rows, setup, transcript};
+
+mod details;
+mod empty;
+mod frame;
+mod hosting;
+
+use details::{kind, kind_icon};
+
+pub(crate) use details::server_summary;
+pub(crate) use hosting::{Hosted, open_channel};
+/// Fewer lines than this on open asks the server for recent history.
+const HISTORY_ON_OPEN: usize = 50;
+/// Lines asked for per history request.
+pub(crate) const HISTORY_PAGE: u16 = 100;
+
+pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
+    let focus = cx.focus_handle();
+    let subscriptions = vec![cx.observe_window_activation(window, |board, window, cx| {
+        board.window_active = window.is_window_active();
+        publish_visible(board, cx);
+    })];
+    let mut board = Irc {
+        me: cx.entity().downgrade(),
+        focus,
+        list: ListState::default(),
+        buffers: Default::default(),
+        listed: Default::default(),
+        hub: None,
+        hub_subscription: None,
+        networks: Vec::new(),
+        active: false,
+        find_revision: 0,
+        window_active: window.is_window_active(),
+        dock: IrcDock::new(window, cx),
+        join: None,
+        initiative_menu: Default::default(),
+        toolbar: None,
+        reveal: None,
+        search: std::rc::Rc::new(subspace_framework::dashboard::ItemSearch::new([])),
+        available_height: subspace_framework::dashboard::measure::unmeasured(cx),
+        _subscriptions: subscriptions,
+    };
+    bind_hub(&mut board, cx);
+    board
+}
+
+/// Follows the process hub: it starts after the board in some launches and
+/// is replaced when Settings turns the board off and on again.
+pub(crate) fn bind_hub(board: &mut Irc, cx: &mut Context<Irc>) {
+    let current = hub::entity(cx);
+    if current == board.hub {
+        return;
+    }
+    board.hub_subscription = current
+        .as_ref()
+        .map(|hub| cx.observe(hub, |board, _, cx| sync(board, cx)));
+    board.hub = current;
+    board.dock.reset();
+    board.find_revision = board.find_revision.wrapping_add(1);
+    let owner = cx.entity().downgrade();
+    cx.defer(move |cx| {
+        _ = owner.update(cx, |board, cx| {
+            if board.active {
+                crate::initiatives::refresh(board, cx);
+            }
+            cx.notify();
+        });
+    });
+    sync(board, cx);
+}
+
+/// Rebuilds the rows and the open transcript from the hub's state.
+pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
+    let Some(hub) = board.hub.clone() else {
+        return;
+    };
+    let state = &hub.read(cx).state;
+    let retired: Vec<BufferKey> = board
+        .dock
+        .open
+        .keys()
+        .filter(|buffer| state.joins.retired(buffer))
+        .cloned()
+        .collect();
+    let layout = rows::layout(state);
+    board.networks = state.networks().to_vec();
+    board.buffers = layout.buffers;
+    board.listed = layout.listed;
+    board.search = std::rc::Rc::new(rows::search(&layout.groups));
+    board.list.set_groups(layout.groups);
+    let opened = hub.update(cx, |hub, _| hub.state.take_opened());
+    if let Some(query) = opened {
+        reveal(board, &query, cx);
+    }
+    crate::initiatives::dismiss_stale_picker(board, cx);
+    dock::restore(board, cx);
+    if !retired.is_empty() {
+        dock::close_retired(board, retired, cx);
+    }
+    publish_visible(board, cx);
+    crate::reveal::settle(board, cx);
+    cx.notify();
+}
+
+/// Tells the hub, while the board and its window are in front, which buffer
+/// the user is reading, so it reads as it arrives, and which conversations
+/// are on screen, which raise no notification.
+pub(crate) fn publish_visible(board: &mut Irc, cx: &mut Context<Irc>) {
+    let front = board.active && board.window_active;
+    let visible = front.then(|| board.dock.focused.clone()).flatten();
+    let shown = if front {
+        dock::shown(board, cx)
+    } else {
+        Vec::new()
+    };
+    if let Some(hub) = board.hub.clone() {
+        hub.update(cx, |hub, cx| hub.set_visible(visible, shown, cx));
+    }
+}
+
+/// Selects buffer `buffer` in the list and shows its conversation.
+pub(crate) fn reveal(board: &mut Irc, buffer: &BufferKey, cx: &mut Context<Irc>) {
+    reveal_row(board, buffer, cx);
+    dock::request(board, buffer.clone(), Where::Tab, cx);
+}
+
+/// Shows the buffer a notification names. A private conversation closed
+/// since opens again, as choosing its person in the member list does; a
+/// channel left since stays left.
+pub(crate) fn show_notified(board: &mut Irc, buffer: &BufferKey, cx: &mut Context<Irc>) {
+    if board
+        .hub
+        .as_ref()
+        .is_some_and(|hub| hub.read(cx).state.joins.retired(buffer))
+    {
+        return;
+    }
+    let removed = board
+        .hub
+        .as_ref()
+        .is_some_and(|hub| hub.read(cx).state.removed.get(buffer).is_some());
+    match (&buffer.target, removed) {
+        (_, false) => reveal(board, buffer, cx),
+        (Target::Query(nick), true) => board.open_query(&buffer.network, nick, cx),
+        _ => {}
+    }
+}
+
+/// Selects buffer `buffer` in the list, unfolding its network.
+pub(crate) fn reveal_row(board: &mut Irc, buffer: &BufferKey, cx: &mut Context<Irc>) {
+    let key = rows::row_key(buffer);
+    if board.list.selected() == Some(&key) {
+        return;
+    }
+    list::update(board, cx, |list| {
+        list.reveal(&key);
+        list.close_detail();
+    });
+}
+
+/// Recent history for a buffer that has little to show.
+pub(crate) fn load_recent(board: &mut Irc, buffer: &BufferKey, cx: &mut Context<Irc>) {
+    let Some(hub) = board.hub.clone() else {
+        return;
+    };
+    let few = hub
+        .read(cx)
+        .state
+        .buffer(buffer)
+        .is_some_and(|held| held.entries.len() < HISTORY_ON_OPEN);
+    if few && buffer.target != Target::Server {
+        transcript::load_older(&hub, buffer, cx);
+    }
+}
+
+impl ListDashboard for Irc {
+    fn list(&self) -> &ListState {
+        &self.list
+    }
+
+    fn list_mut(&mut self) -> &mut ListState {
+        &mut self.list
+    }
+
+    /// Rows have no details panel; the conversation shows in the dock.
+    fn detail(&self, key: &str) -> Option<Detail> {
+        let buffer = self.buffers.get(key)?;
+        let title: SharedString = match buffer.target {
+            Target::Server => self.network_name(&buffer.network).into(),
+            _ => rows::title(buffer).to_owned().into(),
+        };
+        Some(Detail {
+            kind: kind(&buffer.target).into(),
+            id: title.clone(),
+            title,
+            ..Default::default()
+        })
+    }
+
+    fn row_leading(&self, row: &Row, cx: &App) -> Option<AnyElement> {
+        let buffer = self
+            .buffers
+            .get(&row.key)
+            .or_else(|| self.listed.get(&row.key))?;
+        let tokens = Tokens::current(cx);
+        Some(
+            div()
+                .id(SharedString::from(format!("irc-row:{}", row.key)))
+                .test_support()
+                .flex_shrink_0()
+                .child(
+                    Icon::from(kind_icon(&buffer.target))
+                        .xsmall()
+                        .text_color(tokens.muted),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn row_emphasis(&self, row: &Row, cx: &App) -> bool {
+        self.buffer_state(&row.key, cx).is_some_and(|buffer| {
+            buffer.highlights > 0 || Irc::is_query_row(self, row) && buffer.unread > 0
+        })
+    }
+
+    fn row_accessible_label(&self, row: &Row, cx: &App) -> SharedString {
+        if self.listed.contains_key(&row.key) {
+            return rows::listed_accessible_label(row);
+        }
+        match self.buffer_state(&row.key, cx) {
+            Some(buffer) => rows::accessible_label(&row.title, &buffer),
+            None => row.title.clone(),
+        }
+    }
+
+    /// A click selects a channel we are not in; a double click joins it.
+    fn activates_on_click(&self, row: &Row) -> bool {
+        !self.listed.contains_key(&row.key)
+    }
+
+    fn row_menu(&self, row: &Row) -> RowMenu {
+        listing::row_menu(row, self.listed.contains_key(&row.key))
+    }
+
+    fn group_menu(&self, group: &Group) -> Option<RowMenu> {
+        Some(listing::group_menu(group))
+    }
+
+    fn empty_message(&self) -> (SharedString, SharedString) {
+        (setup::TITLE.into(), setup::HINT.into())
+    }
+
+    /// Enter or a click on a buffer opens its conversation in the dock;
+    /// Enter or a double click on a channel we are not in joins it.
+    fn on_activate(&mut self, key: &SharedString, cx: &mut Context<Self>) -> bool {
+        if let Some(channel) = self.listed.get(key) {
+            listing::join(self, channel, cx);
+            return true;
+        }
+        let Some(buffer) = self.buffers.get(key).cloned() else {
+            return false;
+        };
+        cx.emit(subspace_framework::dashboard::DashboardEvent::Opened(
+            key.clone(),
+        ));
+        dock::request(self, buffer, Where::Tab, cx);
+        true
+    }
+
+    /// Opening beside or below, then leaving a channel or closing a private
+    /// conversation. The server row offers no removal.
+    fn extend_row_menu(&self, menu: PopupMenu, cx: &App) -> PopupMenu {
+        if let Some(item) = listing::menu_item(self, cx) {
+            return menu.separator().item(item);
+        }
+        let Some(buffer) = self.selected_buffer().cloned() else {
+            return menu;
+        };
+        let menu = [
+            ("Open to the right", IconName::PanelRight, Where::Right),
+            ("Open below", IconName::PanelBottom, Where::Below),
+        ]
+        .into_iter()
+        .fold(menu.separator(), |menu, (label, icon, place)| {
+            let (owner, buffer) = (self.me.clone(), buffer.clone());
+            menu.item(
+                PopupMenuItem::new(label)
+                    .icon(icon)
+                    .on_click(move |_, _, cx| {
+                        let buffer = buffer.clone();
+                        _ = owner.update(cx, |board, cx| dock::request(board, buffer, place, cx));
+                    }),
+            )
+        });
+        let Some(state) = self.hub.as_ref().map(|hub| &hub.read(cx).state) else {
+            return menu;
+        };
+        let Some(removal) = remove::Removal::now(state, &buffer) else {
+            return menu;
+        };
+        let available = remove::available(state, &buffer);
+        menu.separator().item(remove::item(
+            self.me.clone(),
+            removal,
+            available.then_some(buffer),
+        ))
+    }
+
+    fn can_navigate(&self, _cx: &App) -> bool {
+        self.join.is_none() && self.initiative_menu.host().is_none()
+    }
+}

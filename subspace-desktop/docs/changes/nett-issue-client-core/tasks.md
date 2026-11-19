@@ -1,0 +1,29 @@
+# Tasks: NETT issue client core
+
+- [x] Read Indra auth/edge source and exact REST schemas without changing Indra.
+- [x] Check the batch reference endpoint and retain a scalar reference resolver seam.
+- [x] Specify offline profile/reference/read/auth tests before implementation.
+- [x] Add typed readonly NETT transport, paging, roots/replies and relations.
+- [x] Reject redirects and separate Access admission from ordinary API errors.
+- [x] Add public WorkOS device authentication and rotating per-profile sessions.
+- [x] Add native keychain and explicitly injected memory credential stores.
+- [x] Persist only metadata through the existing private Settings editor.
+- [x] Add team-scoped reference recognition with UTF-8 byte ranges.
+- [x] Confirm IRC hostname support and document the existing CLI boundary.
+- [x] Complete core tests, strict targeted Clippy, dependency audit and quality/findings.
+- [x] Repair the pre-existing Linux platform gates in a separate commit.
+- [x] Pass the full `mise exec -- make check` and `mise run quality` gates on Linux.
+- [x] Retry transient device polling within count and deadline limits.
+- [x] Retain live access on refresh failure and retry rotated-token keychain saves.
+- [x] Tighten reference boundaries, key validation and unmatched backtick handling.
+- [x] Record deferred auth context, IRC links, cancellation and macOS keychain checks.
+- [x] Continue child pages with parent/manual filters and match endpoint/query limits.
+- [x] Save rotation before access validation and schedule expiry from server lifetime.
+- [x] Latch explicit sign-out, retry deletion and preserve newer stored credentials.
+- [x] Save only dev preferences and migrate legacy profiles with current built-ins.
+- [x] Keep live access on store failure and recognise closed spans after unmatched runs.
+- [ ] Captain reviews the local commit before push or PR.
+- [ ] Claude crew delivers the approved Slice 1 UI and IRC link integration.
+- [ ] The issue workspace specification settles the outstanding contracts listed in the spec.
+- [ ] The development access update enables and proves live dev edge admission separately.
+- [ ] Slice 2 adds activity/media and standalone Access sign-in.

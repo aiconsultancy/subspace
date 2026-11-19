@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://subspace.dev/schemas/board-protocol-v1.json",
+  "title": "Subspace board JSON-line protocol version 1",
+  "description": "One bounded JSON object per line. Whole patch validation and matching session/input revision are required before apply. Result/Error are non-coalescible request completions. Patch is replaceable display traffic. Schema references resolve against the separately published definition schema.",
+  "oneOf": [{"$ref": "#/$defs/host"}, {"$ref": "#/$defs/worker"}],
+  "$defs": {
+    "context": {
+      "type": "object", "additionalProperties": false,
+      "required": ["version", "request_id", "session_id", "input_revision"],
+      "properties": {"version": {"const": 1}, "request_id": {"$ref": "https://subspace.dev/schemas/board-project-v1.json#/$defs/token"}, "session_id": {"$ref": "https://subspace.dev/schemas/board-project-v1.json#/$defs/token"}, "input_revision": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}}
+    },
+    "value": {"type": ["string", "number"]},
+    "values": {"type": "object", "maxProperties": 64, "additionalProperties": {"$ref": "#/$defs/value"}},
+    "host": {"type": "object", "additionalProperties": false, "required": ["context", "event"], "properties": {"context": {"$ref": "#/$defs/context"}, "event": {"$ref": "#/$defs/hostEvent"}}},
+    "worker": {"type": "object", "additionalProperties": false, "required": ["context", "event"], "properties": {"context": {"$ref": "#/$defs/context"}, "event": {"$ref": "#/$defs/workerEvent"}}},
+    "hostEvent": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type", "definition", "definition_revision", "source_revision", "values"], "properties": {"type": {"const": "init"}, "definition": {"$ref": "https://subspace.dev/schemas/board-project-v1.json"}, "definition_revision": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "source_revision": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "values": {"$ref": "#/$defs/values"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "key", "value"], "properties": {"type": {"const": "input"}, "key": {"type": "string"}, "value": {"$ref": "#/$defs/value"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "action", "values"], "properties": {"type": {"const": "action"}, "action": {"type": "string"}, "values": {"$ref": "#/$defs/values"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "stop"}}}
+      ]
+    },
+    "workerEvent": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"enum": ["ready", "ack"]}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "patch"], "properties": {"type": {"enum": ["patch", "result"]}, "patch": {"$ref": "#/$defs/patch"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "message"], "properties": {"type": {"const": "error"}, "message": {"type": "string", "maxLength": 16384}}}
+      ]
+    },
+    "patch": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "values": {"$ref": "#/$defs/values"},
+        "options": {"type": "object", "maxProperties": 64, "additionalProperties": {"$ref": "https://subspace.dev/schemas/board-project-v1.json#/$defs/options"}},
+        "enabled": {"type": "object", "maxProperties": 64, "additionalProperties": {"type": "boolean"}},
+        "results": {"type": "object", "maxProperties": 64, "additionalProperties": {"$ref": "#/$defs/result"}}
+      }
+    },
+    "result": {"type": "object", "additionalProperties": false, "required": ["scope", "evaluated_at_ms", "value"], "properties": {"scope": {"type": "string", "minLength": 1, "maxLength": 1024}, "evaluated_at_ms": {"type": "integer", "minimum": 0, "maximum": 18446744073709551615}, "value": {"$ref": "#/$defs/resultValue"}}},
+    "resultValue": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type", "text"], "properties": {"type": {"const": "text"}, "text": {"type": "string", "maxLength": 16384}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "table"], "properties": {"type": {"const": "table"}, "table": {"$ref": "#/$defs/table"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "chart"], "properties": {"type": {"const": "chart"}, "chart": {"$ref": "#/$defs/chart"}}}
+      ]
+    },
+    "table": {"type": "object", "additionalProperties": false, "required": ["columns", "rows"], "properties": {"columns": {"type": "array", "minItems": 1, "maxItems": 8000, "items": {"type": "string", "minLength": 1, "maxLength": 1024}}, "rows": {"type": "array", "maxItems": 500, "items": {"type": "array", "maxItems": 8000, "items": {"$ref": "#/$defs/value"}}}}},
+    "chart": {
+      "type": "object", "description": "The existing subspace_charts::ChartModel. Category lengths, finite coordinates and round-chart slice shapes are checked at apply.",
+      "required": ["kind", "orientation", "stacked", "title", "subtitle", "categoryAxisTitle", "valueAxisTitle", "series", "xScale", "legend", "format"],
+      "properties": {
+        "kind": {"enum": ["bar", "line", "area", "pie", "doughnut", "scatter"]}, "orientation": {"enum": ["vertical", "horizontal"]}, "stacked": {"type": "boolean"},
+        "title": {"type": "string"}, "subtitle": {"type": "string"}, "labels": {"type": "array", "maxItems": 500, "items": {"type": "string", "maxLength": 1024}},
+        "categoryAxisTitle": {"type": "string"}, "valueAxisTitle": {"type": "string"}, "series": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/series"}},
+        "xScale": {"enum": ["number", "timestamp"]}, "legend": {"type": "boolean"}, "format": {"oneOf": [{"enum": ["plain", "percent"]}, {"type": "object", "required": ["currency"], "properties": {"currency": {"type": "object", "required": ["code"], "properties": {"code": {"type": "string"}}}}}]}
+      }
+    },
+    "series": {
+      "type": "object", "required": ["label"],
+      "properties": {"label": {"type": "string"}, "color": {"type": ["integer", "null"], "minimum": 0, "maximum": 4294967295}, "values": {"type": "array", "maxItems": 500, "items": {"type": ["number", "null"]}}, "points": {"type": "array", "maxItems": 500, "items": {"type": "object", "required": ["x", "y"], "properties": {"x": {"type": "number"}, "y": {"type": "number"}}}}}
+    }
+  }
+}

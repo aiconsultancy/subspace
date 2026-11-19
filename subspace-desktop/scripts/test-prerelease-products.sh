@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Exercise channel packaging offline, before the real Rust metadata is built.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+input="$(mktemp -d "${TMPDIR:-/tmp}/subspace-channel-metadata.XXXXXX")"
+trap 'rm -rf "${input:?}"' EXIT
+write_channel_metadata() {
+    local directory="$1" channel="$2" suffix="" title="" label_suffix="" stem_suffix=""
+    if [[ "$channel" = integration ]]; then
+        channel=stable
+        suffix="-feat-subspace-desktop.202611151345.gabc1234"
+    elif [[ "$channel" != stable ]]; then
+        suffix="-$channel.202611010200.g0123456"
+        case "$channel" in nightly) title=Nightly ;; alpha) title=Alpha ;; beta) title=Beta ;; esac
+        label_suffix=" ($title)"
+        stem_suffix="-$title"
+    fi
+    jq -n --arg subspace "1.10.2$suffix" '{packages:[{name:"subspace",version:$subspace}]}' >"$directory/workspace.json"
+    local icon_stem=subspace svg_stem=subspace-app
+    if [[ "$channel" = nightly ]]; then
+        icon_stem=subspace-nightly
+        svg_stem="$icon_stem"
+    fi
+    jq -n --arg name "Subspace$label_suffix" --arg stem "Subspace$stem_suffix" \
+        --arg channel "$channel" --arg version "1.10.2$suffix" \
+        --arg identifier "com.aiconsultancy.subspace${label_suffix:+.$channel}" --arg icon "assets/$icon_stem" --arg svg "assets/$svg_stem.svg" \
+        '{binary_name:"subspace",display_name:$name,asset_stem:$stem,channel:$channel,bundle_id:$identifier,version:$version,subspace_version:$version,icon_paths:[($icon + ".icns"),($icon + ".ico"),$svg]}' >"$directory/subspace.json"
+}
+write_channel_metadata "$input" stable
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=product-fixture.sh
+source "$root/scripts/product-fixture.sh"
+setup_product_fixture "$input"
+rm -rf "${input:?}"
+for channel in stable nightly alpha beta integration; do
+    write_channel_metadata "$fixture/metadata" "$channel"
+    export SUBSPACE_RELEASE_CHANNEL="$channel"
+    metadata="$fixture/metadata/subspace.json"
+    version="$(jq -r .version "$metadata")"
+    binary="$(jq -r .binary_name "$metadata")"
+    name="$(jq -r .display_name "$metadata")"
+    stem="$(jq -r .asset_stem "$metadata")"
+    touch "$fixture/cargo.log"
+    builds_before="$(grep -c '^build ' "$fixture/cargo.log" || true)"
+    cp "$fixture/metadata/workspace.json" "$fixture/workspace-current.json"
+    jq '.packages[].version = "9.9.9"' "$fixture/workspace-current.json" >"$fixture/metadata/workspace.json"
+    if bash "$fixture/scripts/package-release.sh" x86_64-unknown-linux-gnu "$version" >"$fixture/stale-workspace.log" 2>&1; then
+        echo 'stale workspace versions must fail before packaging' >&2; exit 1
+    fi
+    test "$(grep -c '^build ' "$fixture/cargo.log" || true)" = "$builds_before"
+    mv "$fixture/workspace-current.json" "$fixture/metadata/workspace.json"
+    for target in x86_64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc; do
+        bash "$fixture/scripts/package-release.sh" "$target" "$version"
+    done
+    svg_relative="$(jq -r '.icon_paths[] | select(endswith(".svg"))' "$metadata")"
+    unpacked="$fixture/unpacked-$channel"
+    mkdir "$unpacked"
+    tar -xzf "$fixture/dist/$binary-$version-x86_64-unknown-linux-gnu.tar.gz" -C "$unpacked"
+    test -f "$unpacked/$svg_relative" || { echo "Linux archive is missing $svg_relative" >&2; exit 1; }
+    cmp "$root/products/subspace/$svg_relative" "$unpacked/$svg_relative"
+    test "$(find "$unpacked/assets" -type f | wc -l | tr -d ' ')" = 1
+    if [[ "$(/usr/bin/uname -s)" = Darwin ]]; then
+        bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
+        app="$fixture/dist/$name.app"
+        test -x "$app/Contents/MacOS/$binary"
+        test -f "$fixture/dist/${stem}_${version}_darwin_arm64.zip"
+        cmp "$metadata" "$app/Contents/Resources/product.json"
+        icon_relative="$(jq -r '.icon_paths[] | select(endswith(".icns"))' "$metadata")"
+        icon_name="$(basename "$icon_relative" .icns)"
+        cmp "$root/products/subspace/$icon_relative" "$app/Contents/Resources/$icon_name.icns"
+        test "$(plutil -extract CFBundleIconFile raw -o - "$app/Contents/Info.plist")" = "$icon_name"
+        test "$(plutil -extract CFBundleShortVersionString raw -o - "$app/Contents/Info.plist")" = "${version%%-*}"
+        test "$(plutil -extract CFBundleVersion raw -o - "$app/Contents/Info.plist")" = "${version%%-*}"
+        test "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" = "$(jq -r .bundle_id "$metadata")"
+        test "$(plutil -extract CFBundleDisplayName raw -o - "$app/Contents/Info.plist")" = "$name"
+    fi
+    jq '.channel = (if .channel == "nightly" then "beta" else "nightly" end)' "$metadata" >"$metadata.new"
+    mv "$metadata.new" "$metadata"
+    if bash "$fixture/scripts/package-release.sh" aarch64-apple-darwin "$version" >"$fixture/mismatch.log" 2>&1; then
+        echo 'expected channel mismatch to fail before building' >&2; exit 1
+    fi
+    grep -q 'channel do not match' "$fixture/mismatch.log"
+done
+echo 'offline channel archive and bundle fixtures passed'

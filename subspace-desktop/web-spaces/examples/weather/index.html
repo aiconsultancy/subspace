@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="referrer" content="no-referrer">
+  <title>Weather</title>
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="src/main.js"></script>
+</head>
+<body data-kind="idle" data-time="night" data-intensity="0">
+  <a class="skip-link" href="#forecast">Skip to forecast</a>
+
+  <!-- Decorative weather scene. Layers are shown or hidden by body[data-kind] and body[data-time]. -->
+  <div class="scene" aria-hidden="true">
+    <svg class="defs" width="0" height="0" focusable="false">
+      <defs>
+        <symbol id="cloud-shape" viewBox="0 0 240 120">
+          <g fill="currentColor">
+            <rect x="14" y="62" width="212" height="52" rx="26"/>
+            <circle cx="72" cy="64" r="38"/>
+            <circle cx="130" cy="50" r="46"/>
+            <circle cx="186" cy="70" r="34"/>
+          </g>
+        </symbol>
+        <mask id="moon-mask">
+          <rect width="120" height="120" fill="#fff"/>
+          <circle cx="80" cy="44" r="34" fill="#000"/>
+        </mask>
+      </defs>
+    </svg>
+    <div class="sky"></div>
+    <div class="stars" id="stars"></div>
+    <div class="sun"><div class="sun-glow"></div><div class="sun-core"></div></div>
+    <div class="moon">
+      <div class="moon-glow"></div>
+      <svg viewBox="0 0 120 120" focusable="false"><circle cx="52" cy="64" r="42" fill="currentColor" mask="url(#moon-mask)"/></svg>
+    </div>
+    <div class="clouds" id="clouds"></div>
+    <div class="fog"><i></i><i></i><i></i></div>
+    <div class="rain" id="rain"></div>
+    <div class="snow" id="snow"></div>
+    <svg class="bolt" viewBox="0 0 80 160" focusable="false"><path d="M50 0 8 86h26L22 160 74 64H46z" fill="currentColor"/></svg>
+    <div class="lightning"></div>
+    <svg class="hills" viewBox="0 0 1440 400" preserveAspectRatio="none" focusable="false">
+      <path class="hill-far" d="M0 190c140-70 260-80 400-40s260 30 400-30 280-50 400 10 180 40 240 20v250H0z"/>
+      <path class="hill-mid" d="M0 250c180-60 300-40 460 0s300 40 460-10 360-30 520 20v140H0z"/>
+      <path class="hill-near" d="M0 320c200-40 380-30 560 10s420 20 880-20v90H0z"/>
+    </svg>
+    <div class="veil"></div>
+  </div>
+
+  <div class="app">
+    <header class="topbar">
+      <form id="postcode-form" class="postcode-form" novalidate>
+        <label for="postcode">UK postcode</label>
+        <div class="field">
+          <input id="postcode" name="postcode" type="text" inputmode="text"
+                 autocomplete="postal-code" autocapitalize="characters" spellcheck="false"
+                 maxlength="10" placeholder="SW1A 1AA"
+                 aria-describedby="postcode-hint postcode-error">
+          <button type="submit" id="postcode-submit" class="button primary">Show weather</button>
+          <button type="button" id="refresh" class="button" hidden>Refresh</button>
+        </div>
+        <p id="postcode-hint" class="hint">The forecast is for the coordinates of the postcode.</p>
+        <p id="postcode-error" class="field-error" role="alert"></p>
+      </form>
+    </header>
+
+    <p id="banner" class="banner" role="status" hidden></p>
+
+    <p id="announce" class="sr-only" role="status"></p>
+
+    <main id="forecast" tabindex="-1" aria-busy="false">
+      <section class="hero" aria-labelledby="place">
+        <p id="hero-basis" class="eyebrow"></p>
+        <h1 id="place">Weather</h1>
+        <p id="place-detail" class="place-detail"></p>
+        <p id="temperature" class="temperature" hidden>
+          <span id="temperature-value" aria-hidden="true"></span>
+          <span id="temperature-text" class="sr-only"></span>
+        </p>
+        <p id="condition" class="condition" hidden></p>
+        <p id="range" class="range" hidden></p>
+      </section>
+
+      <div id="sections" hidden>
+        <section class="panel hourly" aria-labelledby="hourly-title">
+          <div class="panel-head">
+            <h2 id="hourly-title">Hourly forecast</h2>
+            <div class="scroll-buttons">
+              <button type="button" id="hours-earlier" class="icon-button" aria-label="Scroll hourly forecast earlier" aria-controls="hours-scroller">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 5-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <button type="button" id="hours-later" class="icon-button" aria-label="Scroll hourly forecast later" aria-controls="hours-scroller">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+          </div>
+          <div id="hours-scroller" class="scroller" role="region" aria-labelledby="hourly-title" tabindex="0">
+            <ol id="hours" class="hours"></ol>
+          </div>
+        </section>
+
+        <div class="columns">
+          <section class="panel daily" aria-labelledby="daily-title">
+            <div class="panel-head"><h2 id="daily-title">7-day forecast</h2></div>
+            <ol id="days" class="days"></ol>
+          </section>
+
+          <section class="panel details" aria-labelledby="details-title">
+            <div class="panel-head"><h2 id="details-title">Details</h2></div>
+            <dl id="details" class="tiles"></dl>
+          </section>
+        </div>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <p id="updated" class="updated"></p>
+      <p>
+        Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo.com</a>
+        (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a>;
+        <a href="https://open-meteo.com/en/terms" target="_blank" rel="noopener noreferrer">terms</a>).
+        Postcode lookup by <a href="https://postcodes.io/" target="_blank" rel="noopener noreferrer">Postcodes.io</a>
+        (<a href="https://postcodes.io/docs/licences" target="_blank" rel="noopener noreferrer">data licences</a>).
+      </p>
+      <p>Open-Meteo's free service is for non-commercial use. Forecasts may be wrong; do not rely on them for safety.</p>
+      <p id="ni-note" hidden>Northern Ireland postcode data may need a licence for commercial use.</p>
+    </footer>
+  </div>
+</body>
+</html>

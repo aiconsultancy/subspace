@@ -1,0 +1,316 @@
+# Web Space manifest, packages and bridge reference
+
+A web Space is a web app that the Web Space shows in a native web view. A
+folder-based web Space can declare native settings and request selected
+Subspace actions through `subspace-board.json`, which sits beside its built
+`index.html`. No Node.js process or HTTP server runs in Subspace. URL web
+Spaces (websites) do not receive this API.
+
+This page is the reference. For a step-by-step walkthrough, from an empty
+folder to a published package, read the
+[web Space authoring guide](web-spaces-guide.md). The packages in the
+repository, including the Weather example, are described in
+[web-spaces/README.md](../web-spaces/README.md). The in-app guide is
+[Web Spaces](../spaces/web/help.md).
+
+Some names keep the older word *board* for compatibility, because changing
+them would orphan installed web Spaces or break existing packages: the
+manifest file `subspace-board.json`, the `webBoards` configuration key, the
+private data folders `web-board-apps` and `web-boards`, labels such as
+**Add board…** and **Board directory**, and the `subspace-web-board` crate.
+
+## Install sources
+
+Install web Spaces in **Settings > Application > Web Spaces**. Choose **Add
+board…**, enter a **Board ID** and **Name**, choose a **Source type**, then
+**Validate source**, review the package and requested permissions, and choose
+**Install now**. Installation, renaming and removal apply immediately.
+Settings Save and Cancel do not undo them.
+
+| Source type | Location | What is imported |
+| --- | --- | --- |
+| **Website URL** | An `https://` address, or `http://` to `localhost` or a loopback address | Nothing; the page is shown live |
+| **Local folder** | An absolute folder path, or **Choose…** | A private snapshot of the folder |
+| **Local ZIP** | An absolute `.zip` path, or **Choose…** | The ZIP's web Space folder |
+| **GitHub repository** | `owner/repository` or `https://github.com/owner/repository`, plus **Ref** and **Board directory** | The board directory at the resolved commit |
+| **GitHub release ZIP** | `owner/repository`, then **Load release ZIPs** and a **Release and ZIP asset** | The selected release asset |
+
+Git sources are GitHub only (`github.com`). There is no import from other Git
+hosts or from a local Git repository; use **Local folder** for a checkout.
+
+- **Folder** imports copy a validated snapshot into Subspace's private store.
+  Rebuilding the original folder does not change the installed copy. Use
+  **Edit… > Replace source…** to import it again. Removing a web Space does
+  not delete original files or browsing data. The folder must not be inside
+  the managed store (`Select an app folder outside the managed board store.`).
+- **ZIP** imports accept a web Space at the ZIP root or inside one enclosing
+  directory (`ZIP must contain a board at its root or in one enclosing
+  directory.`). The **Choose…** picker accepts any file; the importer rejects
+  anything that is not a readable ZIP.
+- **GitHub repository**: a blank **Ref** uses the default branch. A branch
+  name (optionally `branch:<name>`) tracks that branch; `tag:v1.0` and
+  `commit:<full SHA>` pin a version and are never offered updates. A blank
+  **Board directory** is the repository root. The URL form must be the
+  repository root, without credentials, query or fragment. Subspace downloads
+  the repository archive for the resolved commit, so the whole archive, not
+  only the board directory, must pass the [package rules](#package-rules).
+- **GitHub release ZIP**: the release must be published, not a draft, and
+  the asset name must end in `.zip`. Prereleases are excluded unless
+  **Include prereleases** is on. Updates match the exact asset name.
+- GitHub operations need a GitHub account selected in Settings with verified,
+  active membership of the repository's organization and read access to the
+  repository. Personal repositories are not eligible. Changing accounts leaves
+  installed files usable but discards in-progress work for the old account.
+- Subspace never runs a build, repository hook or dependency installation.
+
+**Install Weather example…** fills in the GitHub repository form for the
+keyless UK-postcode [Weather web Space](../web-spaces/examples/weather/README.md):
+repository `aiconsultancy/subspace`, board directory
+`subspace-desktop/web-spaces/examples/weather`. It uses the same authorization
+and validation as other imports. From a checkout, install the same folder as a
+**Local folder**, or package it as a ZIP (see
+[Package a web Space](web-spaces-guide.md#8-package-it)). The free hosted
+weather endpoint is for non-commercial evaluation and prototyping; review the
+package's service terms before other use.
+
+### Updates
+
+**Check for updates** applies to GitHub sources only. A tracked branch
+(including the default branch) offers an update when it resolves to a
+different commit. A release source offers the newest eligible release whose
+assets include the exact same ZIP name and that was published after the
+installed one. A check never installs anything: choose **Download update**,
+review the package, then **Replace now**. The manifest `version` is shown but
+does not decide whether an update is offered. Folder and ZIP sources are
+updated with **Edit… > Replace source…**.
+
+## Package rules
+
+Every import is staged and validated before anything is installed. The rules
+are in `spaces/web/src/install/` (`paths.rs`, `files.rs`, `archive.rs`,
+`zip_header.rs`, `stage.rs`). An import that breaks one fails with the
+message shown.
+
+| Rule | Message |
+| --- | --- |
+| `index.html` is a regular file at the web Space root | `The board root needs a regular, readable index.html. Select the built app folder.` |
+| `subspace-board.json` is a regular file at the root | `The board root needs a regular, readable subspace-board.json.` |
+| Names use ASCII letters, digits, space and `-_.@()+,[]{}`, are not `.`, `..` or `.git`, do not end in `.` or space, are not Windows device names (`CON`, `PRN`, `AUX`, `NUL`, `COM0`–`COM9`, `LPT0`–`LPT9`) and are at most 255 bytes | `The package contains an unsafe or unsupported filename. Use portable ASCII names without .git or device names.` |
+| A path is at most 1,024 bytes and relative | `Select a non-empty relative board path of at most 1024 bytes.` |
+| At most 32 directory levels | `The package exceeds 32 directory levels.` |
+| No two paths differ only by letter case | `The package has duplicate or platform-colliding paths.` |
+| Only regular files and directories; no symbolic links, special files or (in a folder) hard-linked files | `Package links and special files are not supported.` / `Package files must be regular files, not links or special files.` |
+| At most 10,000 entries | `Package contains more than 10,000 entries.` / `ZIP contains duplicate names or more than 10,000 entries.` |
+| A file is at most 32 MiB | `A package file exceeds 32 MiB.` |
+| All files together are at most 256 MiB | `Package expansion exceeds 256 MiB.` |
+| A ZIP (or repository archive) is at most 64 MiB | `ZIP exceeds 64 MiB.` / `ZIP exceeds the 64 MiB download limit.` |
+| A ZIP is regular: no ZIP64, no split disks | `Use a regular ZIP with at most 10,000 entries, without ZIP64 or split disks.` |
+
+Installed files are made read-only. The importer checks the required root
+files and the manifest, not every asset that JavaScript loads at run time.
+When the web Space runs, a single served file is at most 64 MiB.
+
+`scripts/package-web-space.py` applies the same rules to a folder before you
+publish it and writes a reproducible ZIP; see
+[Package it](web-spaces-guide.md#8-package-it).
+
+## Declare an app
+
+```json
+{
+  "name": "Notes",
+  "version": "1.0.0",
+  "permissions": ["settings", "badge", "context", "notifications"],
+  "settings": [
+    { "key": "name", "label": "Notebook", "type": "text", "default": "Personal" },
+    { "key": "endpoint", "label": "Sync address", "type": "url" },
+    { "key": "limit", "label": "Notes to keep", "type": "number", "default": 50 },
+    { "key": "compact", "label": "Compact list", "type": "boolean", "default": false },
+    { "key": "sort", "label": "Sort order", "type": "select", "options": ["Newest", "Oldest"], "default": "Newest" },
+    { "key": "token", "label": "Sync token", "type": "secret" }
+  ]
+}
+```
+
+The rules are in `spaces/web/src/manifest.rs` and
+`spaces/web/src/manifest/fields.rs`.
+
+| Field | Required | Rule |
+| --- | --- | --- |
+| `name` | Yes | Text of 1 to 60 characters after trimming |
+| `version` | Yes | Text of 1 to 40 characters after trimming; free-form, shown to users |
+| `permissions` | No | A list of text: `notifications`, `settings`, `badge`, `context` |
+| `settings` | No | A list of at most 32 setting objects |
+
+Unknown permission names produce a warning (`Unknown permission "camera"
+ignored.`) and grant nothing. Other unknown fields are ignored. The file must
+be UTF-8 JSON of at most 256 KiB (`subspace-board.json is larger than 256
+KiB.`). An invalid manifest prevents the app from opening, and the Space's
+settings page says `This app cannot open.` with the reason.
+
+Each setting has:
+
+- a unique `key`: 1 to 40 ASCII letters, digits, `_` or `-`, starting with a
+  letter;
+- a `label` of 1 to 60 characters;
+- a `type`: `text`, `url`, `number`, `boolean`, `select` or `secret`;
+- an optional `help` of up to 200 characters;
+- an optional `default` of the matching kind: text for `text`, `url` and
+  `select`, a number for `number`, `true` or `false` for `boolean`.
+
+Select fields have 1 to 50 text `options` of 1 to 60 characters, and a
+default must be one of them. Secret fields cannot have defaults. In Settings,
+text, URL and number inputs accept up to 2000 characters, and URL inputs
+accept HTTP and HTTPS addresses.
+
+Manifest errors name the problem, prefixed with the file name, for example:
+
+| Problem | Message after `subspace-board.json: ` |
+| --- | --- |
+| Not an object | `expected a JSON object.` |
+| Not JSON | `invalid JSON (<parser detail>).` |
+| Missing name | `expected name to be text of 1 to 60 characters.` |
+| Missing version | `expected version to be text of 1 to 40 characters.` |
+| `permissions` not a list | `expected permissions to be a list.` |
+| Too many settings | `expected at most 32 settings.` |
+| Bad key | `settings[0]: expected key to be 1 to 40 letters, digits, _ or -, starting with a letter.` |
+| Bad type | `settings[0]: expected type to be text, url, number, boolean, select or secret.` |
+| Secret with default | `settings[0]: a secret cannot have a default.` |
+| Bad options | `settings[0]: expected 1 to 50 options of 1 to 60 characters.` |
+| Default not an option | `settings[0]: expected default to be one of the options.` |
+| Duplicate key | `settings[1]: the key name is used twice.` |
+
+After installing, open **Settings > Spaces > [Space name]**. Each requested
+permission has an **Allow this app to …** checkbox: **show notifications**,
+**read its settings**, **show a badge on its tab** and **share context with
+Copilot chat**. Every permission starts off. Select the ones you trust and
+save. Notification delivery also needs an enabled notification channel for
+the Space in **Notifications** settings.
+
+## Read settings and call Subspace
+
+The main app document receives a frozen `window.subspace` object. Its
+methods return promises. A denied call rejects with `Permission denied. Allow
+this action in the board's Subspace settings.`
+
+```javascript
+const info = await window.subspace.info();
+// { version: 1, permissions: ["settings", ...], notificationPermission: "denied" }
+
+const settings = await window.subspace.settings.get();
+await window.subspace.setBadge("3");
+await window.subspace.setContext({
+  label: "Selected note",
+  content: "Page-provided note text"
+});
+await window.subspace.notify({ title: "Notes updated", body: "Three new notes" });
+
+// Clear page-owned UI state.
+await window.subspace.setBadge(null);
+await window.subspace.setContext(null);
+```
+
+| Method | Permission | Result or limit |
+| --- | --- | --- |
+| `info()` | None | Bridge version, granted permissions and notification permission |
+| `settings.get()` | `settings` | Declared non-secret saved values, or defaults when unset |
+| `setBadge(textOrNull)` | `badge` | At most 8 characters, without control characters |
+| `setContext(valueOrNull)` | `context` | Label up to 100 characters, content up to 8192 UTF-8 bytes |
+| `notify({title, body})` | `notifications` | Title up to 100 characters, body up to 500, without control characters |
+
+Errors from the bridge (`spaces/web/src/bridge.rs` and
+`spaces/web/src/bridge/init.js`):
+
+| Message | Cause |
+| --- | --- |
+| `Permission denied. Allow this action in the board's Subspace settings.` | The permission is not requested or not allowed |
+| `A badge must be at most 8 characters, without control characters.` | Badge too long |
+| `Context is too long: use a label up to 100 characters and content up to 8192 bytes.` | Context too long |
+| `Use a notification title up to 100 characters and body up to 500 characters.` | Notification too long |
+| `Notifications are off. Choose a notification channel in Subspace Settings.` | No notification channel |
+| `Too many notifications. Wait five seconds.` | More than one notification in five seconds |
+| `The app manifest changed. Restart Subspace, then review its permissions in Settings.` | The manifest changed under a running page |
+| `Too many pending Subspace requests.` / `Subspace request is too large.` / `Subspace request timed out.` | Request limits below |
+
+Unknown setting keys and secret fields never appear in `settings.get()`.
+Unset fields without defaults are absent. A key also present in `secrets`
+is excluded, even if the manifest later describes it as non-secret.
+
+Native settings save values under `webBoards.<id>.settings` and secrets
+under `secrets` in the private config file. Saved secrets never populate
+inputs. Leave a secret input blank to keep it; replace or clear it
+explicitly. This bridge has no API that consumes or returns those secrets.
+They are not OS-keychain entries or encrypted app storage.
+
+Setting and permission edits apply on **Save** without restarting. The page
+can read the current values again. There is no change-event subscription.
+Cancel leaves the saved configuration unchanged.
+
+## Page Notification adapter
+
+```javascript
+const permission = await Notification.requestPermission();
+if (permission === "granted") {
+  new Notification("Notes updated", { body: "Three new notes" });
+}
+```
+
+`requestPermission()` reads the native decision. It does not display a web
+prompt or grant anything. Delivery uses Subspace's configured notification
+channel. The adapter reports `show` when the host accepts a request and
+`error` when it rejects one. Acceptance does not prove that the OS displayed
+an alert. At most one request per web Space is accepted every five seconds.
+
+This is a page adapter, not Web Push. It has no service-worker integration,
+notification actions, click/close callbacks or OS retraction. `close()` is
+a no-op. `Notification.permission` updates after `info()` or
+`requestPermission()`, so call one again after native permission edits.
+
+## Trust and compatibility
+
+Grants bind to the canonical app folder and the exact manifest bytes,
+including whitespace. Changing either needs new grants, so replacing or
+updating an imported web Space, which installs a new private folder, starts
+with every permission off. Restart after a manifest change in a manually
+configured folder, then review permissions. The running old bridge refuses
+calls once the manifest identity changes. Settings reads the current manifest
+each time it opens. Changing only JavaScript or other app files does not
+change the manifest fingerprint. Install updates only from a source you
+trust, or revoke permissions before updating.
+
+The native engine supplies the sender URL. Subspace also checks the current
+page's exact origin. Another site cannot use the bridge after navigation.
+Replies address one document, and badge/context state resets on navigation.
+Chat treats page-provided context as untrusted data, not instructions.
+
+Requests are limited to 16 KiB of UTF-8 JSON. There can be at most 32 pending
+calls, each with a 10-second timeout. Calls can time out during navigation,
+when the app closes, or when its bounded native event queue is full.
+
+Manifest apps are served with this Content Security Policy:
+
+```text
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob: https:; font-src 'self' data:;
+connect-src 'self' https: http://localhost:* http://127.0.0.1:* http://[::1]:*;
+frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'
+```
+
+Load scripts from app files (classic or ES modules), not inline script blocks,
+external script hosts or `eval`. Inline styles are allowed. Connections may
+use the app origin, HTTPS or loopback HTTP; the destination must still allow
+the app's cross-origin request. Frames, objects, base URL changes and form
+navigation are blocked. React/Vite client routing and JavaScript form
+handlers still work. Manifest-free folder apps retain their previous behavior
+and receive no bridge.
+
+The app is served from `subspace://<id>/` on macOS and
+`https://subspace.<id>/` on Windows. Root-relative paths load from the
+folder, and an address with no file extension that names no file returns
+`index.html`.
+
+The bridge provides no shell, process, filesystem, clipboard, arbitrary
+native API or credential access. macOS uses WKWebView and Windows uses
+WebView2. Linux has no web view and shows a message instead of the page.
+Windows CI builds and tests the code;
+native Windows runtime validation remains outstanding.

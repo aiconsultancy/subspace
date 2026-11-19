@@ -1,0 +1,7 @@
+{
+  "identity_provider": "dev",
+  "api_url": "http://127.0.0.1:3000",
+  "dev_email": "developer@example.com",
+  "dev_name": "Local Developer",
+  "dev_organisation": "local"
+}

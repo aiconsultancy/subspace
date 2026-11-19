@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="136 136 240 240" role="img" aria-labelledby="title description">
+  <title id="title">Subspace</title>
+  <desc id="description">An S drawn as two half-circle hooks joined by a long diagonal, in bold monochrome lines.</desc>
+  <g transform="translate(256 256) rotate(-45)" fill="none" stroke="#111111" stroke-width="18" stroke-linejoin="miter" stroke-linecap="butt"><path d="M-160 0H160"/><path d="M-104 0A104 104 0 0 1 92.2605 -48H-52"/><path d="M104 0A104 104 0 0 1-92.2605 48H52"/></g>
+</svg>

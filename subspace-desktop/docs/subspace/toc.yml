@@ -1,0 +1,32 @@
+- name: Subspace
+  href: index.md
+- name: Install and update
+  href: installation.md
+- name: Boards
+  href: boards.md
+- name: Settings and appearance
+  href: settings.md
+- name: Logs and retention
+  href: logging.md
+- name: Board guides
+  items:
+    - name: PRs
+      href: ../../spaces/github/help.md
+    - name: Copilot Agents
+      href: ../../spaces/github-copilot-agents/help.md
+    - name: Channels
+      href: ../../spaces/irc/help.md
+    - name: Issues
+      href: ../../spaces/issues/help.md
+    - name: Board Lab
+      href: ../../spaces/board-lab/help.md
+    - name: Actions
+      href: ../../spaces/actions/help.md
+    - name: Web Spaces
+      href: ../../spaces/web/help.md
+- name: Terminal guide
+  href: ../../terminal/panel/help.md
+- name: Installation reference
+  href: ../installation.md
+- name: Glossary
+  href: ../glossary.md

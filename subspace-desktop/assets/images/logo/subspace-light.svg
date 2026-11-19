@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="116 116 280 280">
+  <title>Subspace balanced bold logo</title>
+  <rect width="512" height="512" fill="black"/>
+  <g transform="translate(256 256) rotate(-45)" fill="none" stroke="white" stroke-width="18" stroke-linejoin="miter" stroke-linecap="butt">
+    <path d="M-160 0H160"/>
+    <path d="M-104 0A104 104 0 0 1 92.2605 -48H-52"/>
+    <path d="M104 0A104 104 0 0 1-92.2605 48H52"/>
+  </g>
+</svg>

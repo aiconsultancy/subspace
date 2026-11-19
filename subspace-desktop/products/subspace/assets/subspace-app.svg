@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">Subspace</title>
+  <desc id="description">An S drawn as two half-circle hooks joined by a long diagonal, in bold monochrome lines. White on a black rounded tile.</desc>
+  <defs><linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#262626"/><stop offset="1" stop-color="#0d0d0d"/></linearGradient></defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#t)"/>
+  <rect x="65" y="65" width="894" height="894" rx="199" fill="none" stroke="#ffffff" stroke-opacity=".14" stroke-width="2"/>
+  <svg x="212" y="212" width="600" height="600" viewBox="136 136 240 240"><g transform="translate(256 256) rotate(-45)" fill="none" stroke="#ffffff" stroke-width="18" stroke-linejoin="miter" stroke-linecap="butt"><path d="M-160 0H160"/><path d="M-104 0A104 104 0 0 1 92.2605 -48H-52"/><path d="M104 0A104 104 0 0 1-92.2605 48H52"/></g></svg>
+</svg>

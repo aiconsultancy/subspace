@@ -1,0 +1,4 @@
+[tasks.test]
+description = "Test the ready-built Weather web Space without network access"
+tools = { node = "26.5.0" }
+run = "node --test test/*.test.js"

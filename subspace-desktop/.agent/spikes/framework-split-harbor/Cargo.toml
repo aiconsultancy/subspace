@@ -1,0 +1,55 @@
+# Harbor: a white-label app built from the Subspace Framework.
+#
+# This workspace stands in for a separate repository. It is not a member of
+# the Subspace workspace, has its own lockfile and names nothing from
+# `products/`. It reaches the Framework only through the crates listed under
+# `[workspace.dependencies]`. Each `path` below is where a published version
+# requirement (`version = "0.5"`) or a pinned git dependency would go.
+[workspace]
+members = ["app", "spaces/hello"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+# The Framework's public crates: the shell and its headless commands, the
+# product descriptor, the Space kit and the agent-tool traits.
+subspace-framework = { workspace = true }
+# A Space that Subspace ships, reused unchanged beside Harbor's own.
+
+# Must be the version the Framework builds against: its types are part of the
+# Space interface.
+gpui-kit = "0.9.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Cargo applies a `[patch]` only from the workspace being built, so an app
+# inherits none of the Framework's. Without this the Framework still builds,
+# against the unpatched parser. See `vendor/markdown/PATCHED.md`.
+[patch.crates-io]
+markdown = { path = "../../../vendor/markdown" }
+
+# Profiles are also per workspace. The Markdown patch needs unwinding, and
+# GPUI is slow unoptimised.
+[profile.dev]
+panic = "unwind"
+codegen-units = 16
+debug = "limited"
+split-debuginfo = "unpacked"
+
+[profile.release]
+panic = "unwind"
+strip = false
+
+[profile.dev.package]
+markdown = { opt-level = 3 }
+resvg = { opt-level = 3 }
+rustybuzz = { opt-level = 3 }
+taffy = { opt-level = 3 }
+ttf-parser = { opt-level = 3 }
+gpui-pre = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }

@@ -1,0 +1,3 @@
+# Keep upstream vendored code out of Subspace's quality baseline.
+# All quality settings retain rustqual's built-in defaults.
+exclude_files = ["vendor/**"]

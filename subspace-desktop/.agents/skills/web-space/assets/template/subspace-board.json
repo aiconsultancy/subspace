@@ -1,0 +1,8 @@
+{
+  "name": "Hello",
+  "version": "0.1.0",
+  "permissions": ["settings"],
+  "settings": [
+    { "key": "greeting", "label": "Greeting", "type": "text", "default": "Hello" }
+  ]
+}
