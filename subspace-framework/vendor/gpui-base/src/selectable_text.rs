@@ -32,6 +32,10 @@ pub struct SelectableText {
     reveal_handler: Option<Box<RevealHandlerFn>>,
 }
 
+/// The range last revealed by a [`SelectableText`], so a reveal only runs
+/// when the requested range changes.
+struct RevealedRange(Range<usize>);
+
 impl SelectableText {
     /// Creates a run that owns its own selection.
     pub fn new(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Self {
@@ -73,8 +77,9 @@ impl SelectableText {
         self
     }
 
-    /// Styles UTF-8 ranges without changing the literal text or selection.
-    /// Backported from gpui-base 0.10.0's public highlight builder.
+    /// Styles ranges of the text, such as the matches of a search, as
+    /// [`StyledText::with_highlights`] does. The ranges are UTF-8 offsets, in
+    /// order and without overlap.
     pub fn highlights(
         mut self,
         highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
@@ -91,8 +96,9 @@ impl SelectableText {
     }
 
     /// Request that the visual line containing the start of this UTF-8 byte
-    /// range scroll into view. Supply the range while the reveal is pending.
-    /// Invalid ranges are ignored.
+    /// range scroll into view. The line is revealed once when the range is
+    /// first supplied or changes, matching `TextViewState::reveal_range`, so
+    /// the user can scroll away afterwards. Invalid ranges are ignored.
     pub fn reveal_range(mut self, range: Range<usize>) -> Self {
         self.reveal_range = Some(range);
         self
@@ -109,11 +115,24 @@ impl SelectableText {
         self
     }
 
-    fn reveal(&self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
-        let Some(range) = self.reveal_range.as_ref() else {
+    fn reveal(
+        &self,
+        global_id: Option<&GlobalElementId>,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let (Some(range), Some(global_id)) = (self.reveal_range.as_ref(), global_id) else {
             return;
         };
         if self.text.get(range.clone()).is_none() {
+            return;
+        }
+        let changed = window.with_element_state(global_id, |revealed: Option<RevealedRange>, _| {
+            let changed = revealed.is_none_or(|revealed| revealed.0 != *range);
+            (changed, RevealedRange(range.clone()))
+        });
+        if !changed {
             return;
         }
         let layout = self.styled_text.layout();
@@ -252,7 +271,7 @@ impl Element for SelectableText {
             .with_text_bounds(vec![bounds])
             .with_rendered_element(handle, window, cx);
         handle.register(registration, window, cx);
-        self.reveal(bounds, window, cx);
+        self.reveal(global_id, bounds, window, cx);
         hitbox
     }
 
@@ -357,6 +376,52 @@ mod tests {
         });
     }
 
+    struct HighlightedTestView;
+
+    impl Render for HighlightedTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let mark = gpui::HighlightStyle {
+                background_color: Some(gpui::red()),
+                font_weight: Some(gpui::FontWeight::BOLD),
+                ..Default::default()
+            };
+            div().size_full().child(TextSelectionLayer).child(
+                div()
+                    .w(px(240.))
+                    .h(px(32.))
+                    .child(SelectableText::new("local", "alpha beta").highlights([(6..10, mark)])),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn highlighted_text_selects_and_copies_as_plain_text(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| HighlightedTestView);
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        cx.simulate_mouse_down(
+            gpui::point(px(1.), px(12.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_move(
+            gpui::point(px(220.), px(12.)),
+            Some(MouseButton::Left),
+            Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            gpui::point(px(220.), px(12.)),
+            MouseButton::Left,
+            Modifiers::default(),
+        );
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+            assert_eq!(TextSelection::selected_text(window, cx), "alpha beta");
+        });
+    }
+
     struct RevealTestView {
         first: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
         last: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
@@ -402,6 +467,29 @@ mod tests {
         assert!(last.top() >= first.bottom());
         assert_eq!(last.size.height, first.size.height);
         assert_eq!(invalid.get(), None);
+    }
+
+    #[gpui::test]
+    fn reveal_runs_once_per_range(cx: &mut TestAppContext) {
+        let first = Rc::new(Cell::new(None));
+        let last = Rc::new(Cell::new(None));
+        let invalid = Rc::new(Cell::new(None));
+        let (view, cx) = cx.add_window_view(|_, _| RevealTestView {
+            first: first.clone(),
+            last: last.clone(),
+            invalid: invalid.clone(),
+        });
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+        assert!(first.take().is_some());
+
+        // Redrawing with the same range must not reveal again.
+        cx.update(|window, cx| {
+            view.update(cx, |_, cx| cx.notify());
+            let _ = window.draw(cx);
+        });
+        assert_eq!(first.get(), None);
     }
 
     struct CopyCallbackTestView {

@@ -212,10 +212,11 @@ All three desktop manifests patch `gpui-base` 0.9.1 from the same vendor
 directory. The published Framework's default features compile against the
 registry's GPUI Kit.
 
-Track the upstream pull requests for [selectable text reveal](https://github.com/longbridge/gpui-kit/pull/4052),
-[shared linked-image click handling](https://github.com/longbridge/gpui-kit/pull/4053) and
-[selection press latch recovery](https://github.com/longbridge/gpui-kit/pull/4054)
-when checking whether a GPUI Kit release can replace the patch.
+Upstream has merged selectable text reveal and shared linked-image click
+handling. The Framework uses `TextView::on_link_click` to supply the URL
+to the text menu on secondary click. See the
+[patch status and retirement checks](../vendor/gpui-base/SUBSPACE-PATCH.md#upstream-status)
+when choosing a replacement GPUI Kit release.
 
 If the two folders become separate repositories, copy `vendor/markdown` and
 `vendor/gpui-base` from the Framework's repository into

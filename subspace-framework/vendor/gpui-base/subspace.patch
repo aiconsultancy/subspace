@@ -1,5 +1,5 @@
 diff --git a/src/selectable_text.rs b/src/selectable_text.rs
-index 3f4d1123..70379bbe 100644
+index 3f4d1123..436ebc69 100644
 --- a/src/selectable_text.rs
 +++ b/src/selectable_text.rs
 @@ -1,12 +1,16 @@
@@ -23,7 +23,7 @@ index 3f4d1123..70379bbe 100644
  
  /// Plain text that participates in the window-scoped [`TextSelection`](crate::TextSelection).
  ///
-@@ -24,6 +28,8 @@ pub struct SelectableText {
+@@ -24,8 +28,14 @@ pub struct SelectableText {
      document_order: u64,
      text_style: Option<TextStyleRefinement>,
      selection_color: Option<Hsla>,
@@ -31,8 +31,14 @@ index 3f4d1123..70379bbe 100644
 +    reveal_handler: Option<Box<RevealHandlerFn>>,
  }
  
++/// The range last revealed by a [`SelectableText`], so a reveal only runs
++/// when the requested range changes.
++struct RevealedRange(Range<usize>);
++
  impl SelectableText {
-@@ -50,6 +56,8 @@ impl SelectableText {
+     /// Creates a run that owns its own selection.
+     pub fn new(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Self {
+@@ -50,6 +60,8 @@ impl SelectableText {
              document_order: 0,
              text_style: None,
              selection_color: None,
@@ -41,12 +47,13 @@ index 3f4d1123..70379bbe 100644
          }
      }
  
-@@ -65,6 +73,16 @@ impl SelectableText {
+@@ -65,6 +77,17 @@ impl SelectableText {
          self
      }
  
-+    /// Styles UTF-8 ranges without changing the literal text or selection.
-+    /// Backported from gpui-base 0.10.0's public highlight builder.
++    /// Styles ranges of the text, such as the matches of a search, as
++    /// [`StyledText::with_highlights`] does. The ranges are UTF-8 offsets, in
++    /// order and without overlap.
 +    pub fn highlights(
 +        mut self,
 +        highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
@@ -58,13 +65,14 @@ index 3f4d1123..70379bbe 100644
      /// Overrides the selection background, which defaults to the theme's
      /// `colors.selection` token.
      pub fn selection_color(mut self, color: Hsla) -> Self {
-@@ -72,6 +90,47 @@ impl SelectableText {
+@@ -72,6 +95,61 @@ impl SelectableText {
          self
      }
  
 +    /// Request that the visual line containing the start of this UTF-8 byte
-+    /// range scroll into view. Supply the range while the reveal is pending.
-+    /// Invalid ranges are ignored.
++    /// range scroll into view. The line is revealed once when the range is
++    /// first supplied or changes, matching `TextViewState::reveal_range`, so
++    /// the user can scroll away afterwards. Invalid ranges are ignored.
 +    pub fn reveal_range(mut self, range: Range<usize>) -> Self {
 +        self.reveal_range = Some(range);
 +        self
@@ -81,11 +89,24 @@ index 3f4d1123..70379bbe 100644
 +        self
 +    }
 +
-+    fn reveal(&self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut App) {
-+        let Some(range) = self.reveal_range.as_ref() else {
++    fn reveal(
++        &self,
++        global_id: Option<&GlobalElementId>,
++        bounds: Bounds<Pixels>,
++        window: &mut Window,
++        cx: &mut App,
++    ) {
++        let (Some(range), Some(global_id)) = (self.reveal_range.as_ref(), global_id) else {
 +            return;
 +        };
 +        if self.text.get(range.clone()).is_none() {
++            return;
++        }
++        let changed = window.with_element_state(global_id, |revealed: Option<RevealedRange>, _| {
++            let changed = revealed.is_none_or(|revealed| revealed.0 != *range);
++            (changed, RevealedRange(range.clone()))
++        });
++        if !changed {
 +            return;
 +        }
 +        let layout = self.styled_text.layout();
@@ -106,18 +127,64 @@ index 3f4d1123..70379bbe 100644
      fn paint_selection(
          layout: &gpui::TextLayout,
          range: Range<usize>,
-@@ -193,6 +252,7 @@ impl Element for SelectableText {
+@@ -193,6 +271,7 @@ impl Element for SelectableText {
              .with_text_bounds(vec![bounds])
              .with_rendered_element(handle, window, cx);
          handle.register(registration, window, cx);
-+        self.reveal(bounds, window, cx);
++        self.reveal(global_id, bounds, window, cx);
          hitbox
      }
  
-@@ -297,6 +357,53 @@ mod tests {
+@@ -297,6 +376,122 @@ mod tests {
          });
      }
  
++    struct HighlightedTestView;
++
++    impl Render for HighlightedTestView {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let mark = gpui::HighlightStyle {
++                background_color: Some(gpui::red()),
++                font_weight: Some(gpui::FontWeight::BOLD),
++                ..Default::default()
++            };
++            div().size_full().child(TextSelectionLayer).child(
++                div()
++                    .w(px(240.))
++                    .h(px(32.))
++                    .child(SelectableText::new("local", "alpha beta").highlights([(6..10, mark)])),
++            )
++        }
++    }
++
++    #[gpui::test]
++    fn highlighted_text_selects_and_copies_as_plain_text(cx: &mut TestAppContext) {
++        let (_, cx) = cx.add_window_view(|_, _| HighlightedTestView);
++        cx.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++
++        cx.simulate_mouse_down(
++            gpui::point(px(1.), px(12.)),
++            MouseButton::Left,
++            Modifiers::default(),
++        );
++        cx.simulate_mouse_move(
++            gpui::point(px(220.), px(12.)),
++            Some(MouseButton::Left),
++            Modifiers::default(),
++        );
++        cx.simulate_mouse_up(
++            gpui::point(px(220.), px(12.)),
++            MouseButton::Left,
++            Modifiers::default(),
++        );
++        cx.update(|window, cx| {
++            let _ = window.draw(cx);
++            assert_eq!(TextSelection::selected_text(window, cx), "alpha beta");
++        });
++    }
++
 +    struct RevealTestView {
 +        first: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
 +        last: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
@@ -165,11 +232,34 @@ index 3f4d1123..70379bbe 100644
 +        assert_eq!(invalid.get(), None);
 +    }
 +
++    #[gpui::test]
++    fn reveal_runs_once_per_range(cx: &mut TestAppContext) {
++        let first = Rc::new(Cell::new(None));
++        let last = Rc::new(Cell::new(None));
++        let invalid = Rc::new(Cell::new(None));
++        let (view, cx) = cx.add_window_view(|_, _| RevealTestView {
++            first: first.clone(),
++            last: last.clone(),
++            invalid: invalid.clone(),
++        });
++        cx.update(|window, cx| {
++            let _ = window.draw(cx);
++        });
++        assert!(first.take().is_some());
++
++        // Redrawing with the same range must not reveal again.
++        cx.update(|window, cx| {
++            view.update(cx, |_, cx| cx.notify());
++            let _ = window.draw(cx);
++        });
++        assert_eq!(first.get(), None);
++    }
++
      struct CopyCallbackTestView {
          handle: TextSelectionHandle,
      }
 diff --git a/src/text/inline.rs b/src/text/inline.rs
-index 67b5fe9d..5b49634e 100644
+index 67b5fe9d..a408c785 100644
 --- a/src/text/inline.rs
 +++ b/src/text/inline.rs
 @@ -1,3 +1,5 @@
@@ -178,52 +268,35 @@ index 67b5fe9d..5b49634e 100644
  mod selection_paint;
  
  #[cfg(target_family = "wasm")]
-@@ -1504,6 +1506,29 @@ impl Element for Inline {
+@@ -1504,8 +1506,9 @@ impl Element for Inline {
              });
          }
  
+-        if !is_selection {
+-            // click to open link
 +        if !self.links.is_empty() {
-+            // Let the owner capture the actual link before an ancestor builds
-+            // its right-down menu, including when this view has a selection.
-+            let context_handler = GlobalState::global(cx)
-+                .text_view_state()
-+                .and_then(|state| state.read(cx).link_context_menu_handler.clone());
-+            if let Some(handler) = context_handler {
-+                let links = self.links.clone();
-+                let text_layout = text_layout.clone();
-+                let hitbox = hitbox.clone();
-+                window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-+                    if phase.bubble()
-+                        && event.button == MouseButton::Right
-+                        && hitbox.is_hovered(window)
-+                        && let Some(link) =
-+                            Self::link_for_position(&text_layout, &links, event.position)
-+                    {
-+                        handler(&link.url, event, window, cx);
-+                    }
-+                });
-+            }
-+        }
-+
-         if !is_selection {
-             // click to open link
++            // Auxiliary clicks for the text menu must reach the handler even
++            // when a link is part of the current selection.
              window.on_mouse_event({
-@@ -1517,6 +1542,13 @@ impl Element for Inline {
+                 let links = self.links.clone();
+                 let text_layout = text_layout.clone();
+@@ -1517,9 +1520,11 @@ impl Element for Inline {
                      if !phase.bubble() || !hitbox.is_hovered(window) {
                          return;
                      }
-+                    if event.button == MouseButton::Right
-+                        && text_view_state
-+                            .as_ref()
-+                            .is_some_and(|state| state.read(cx).link_context_menu_handler.is_some())
-+                    {
-+                        return;
-+                    }
-                     if text_view_state
-                         .as_ref()
-                         .is_some_and(|state| state.read(cx).has_selection(cx))
+-                    if text_view_state
+-                        .as_ref()
+-                        .is_some_and(|state| state.read(cx).has_selection(cx))
++                    if event.button != gpui::MouseButton::Right
++                        && (is_selection
++                            || text_view_state
++                                .as_ref()
++                                .is_some_and(|state| state.read(cx).has_selection(cx)))
+                     {
+                         return;
+                     }
 diff --git a/src/text/inline_flow.rs b/src/text/inline_flow.rs
-index 8081fa02..d3002681 100644
+index 8081fa02..1ebf3cb8 100644
 --- a/src/text/inline_flow.rs
 +++ b/src/text/inline_flow.rs
 @@ -1,3 +1,5 @@
@@ -248,15 +321,7 @@ index 8081fa02..d3002681 100644
  
  use super::{
      inline::{Inline, InlineHighlight, InlineState, code_insets, text_runs, text_size_ranges},
-@@ -302,6 +303,7 @@ impl InlineFlow {
-         _title: &str,
-         size: Size<Pixels>,
-         link_click_handler: Option<Arc<LinkClickHandlerFn>>,
-+        cx: &App,
-     ) -> AnyElement {
-         img(source.clone())
-             .id(ix)
-@@ -310,31 +312,10 @@ impl InlineFlow {
+@@ -310,31 +311,7 @@ impl InlineFlow {
              .w(size.width)
              .h(size.height)
              .when_some(link.clone(), |this, link| {
@@ -285,23 +350,12 @@ index 8081fa02..d3002681 100644
 -                            cx,
 -                        );
 -                    })
-+                let context_handler = crate::GlobalState::global(cx)
-+                    .text_view_state()
-+                    .and_then(|state| state.read(cx).link_context_menu_handler.clone());
-+                linked_image(this, link.url, link_click_handler, context_handler)
++                linked_image(this, link.url, link_click_handler)
              })
              .into_any_element()
      }
-@@ -748,6 +729,7 @@ impl Element for InlineFlow {
-                         title.as_str(),
-                         fragment_size,
-                         self.link_click_handler.clone(),
-+                        cx,
-                     );
-                     element.prepaint_as_root(
-                         bounds.origin + origin,
 diff --git a/src/text/inline_object.rs b/src/text/inline_object.rs
-index 72173945..f78c6a1d 100644
+index 72173945..9ef6fbf2 100644
 --- a/src/text/inline_object.rs
 +++ b/src/text/inline_object.rs
 @@ -1,3 +1,5 @@
@@ -310,48 +364,30 @@ index 72173945..f78c6a1d 100644
  use std::{
      cell::RefCell,
      rc::Rc,
-@@ -365,12 +367,31 @@ impl Element for InlineObject {
-         }
-         if let Some(link) = self.link.clone() {
-             window.set_cursor_style(CursorStyle::PointingHand, hitbox);
-+            let context_handler = view
-+                .as_ref()
-+                .and_then(|view| view.read(cx).link_context_menu_handler.clone());
-+            if let Some(handler) = context_handler {
-+                let hitbox = hitbox.clone();
-+                let url = link.url.clone();
-+                window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-+                    if phase.bubble()
-+                        && event.button == MouseButton::Right
-+                        && hitbox.is_hovered(window)
-+                    {
-+                        handler(&url, event, window, cx);
-+                    }
-+                });
-+            }
-             let link_hitbox = hitbox.clone();
-             let link_view = view.clone();
-             let handler = self.link_click_handler.clone();
+@@ -371,9 +373,10 @@ impl Element for InlineObject {
              window.on_mouse_event(move |event: &gpui::MouseUpEvent, phase, window, cx| {
                  if !phase.bubble()
                      || !link_hitbox.is_hovered(window)
-+                    || (event.button == MouseButton::Right
+-                    || link_view
+-                        .as_ref()
+-                        .is_some_and(|view| view.read(cx).has_selection(cx))
++                    || (event.button != gpui::MouseButton::Right
 +                        && link_view
 +                            .as_ref()
-+                            .is_some_and(|view| view.read(cx).link_context_menu_handler.is_some()))
-                     || link_view
-                         .as_ref()
-                         .is_some_and(|view| view.read(cx).has_selection(cx))
-diff --git a/src/text/link_context_tests.rs b/src/text/link_context_tests.rs
++                            .is_some_and(|view| view.read(cx).has_selection(cx)))
+                 {
+                     return;
+                 }
+diff --git a/src/text/link_click_tests.rs b/src/text/link_click_tests.rs
 new file mode 100644
-index 00000000..5251ad83
+index 00000000..c2198940
 --- /dev/null
-+++ b/src/text/link_context_tests.rs
-@@ -0,0 +1,145 @@
++++ b/src/text/link_click_tests.rs
+@@ -0,0 +1,124 @@
 +use std::sync::{Arc, Mutex};
 +
 +use gpui::{
-+    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, Modifiers, MouseButton,
++    AppContext as _, ClickEvent, Context, Entity, IntoElement, Modifiers, MouseButton,
 +    ParentElement as _, Pixels, Point, Render, SharedString, Styled as _, TestAppContext, Window,
 +    div, point, px,
 +};
@@ -359,46 +395,25 @@ index 00000000..5251ad83
 +use super::{TextView, TextViewState};
 +use crate::{TextSelection, TextSelectionLayer};
 +
-+#[derive(Default)]
-+struct Events {
-+    link: Option<SharedString>,
-+    ancestor: Option<SharedString>,
-+    activations: Vec<MouseButton>,
-+}
++type Clicks = Arc<Mutex<Vec<(SharedString, MouseButton)>>>;
 +
 +struct LinkView {
 +    state: Entity<TextViewState>,
-+    events: Arc<Mutex<Events>>,
++    clicks: Clicks,
 +}
 +
 +impl Render for LinkView {
 +    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-+        let context_events = self.events.clone();
-+        let ancestor_events = self.events.clone();
-+        let click_events = self.events.clone();
-+        div()
-+            .w(px(400.))
-+            .child(TextSelectionLayer)
-+            .on_mouse_down(MouseButton::Right, move |_, _, _| {
-+                let mut events = ancestor_events.lock().unwrap();
-+                events.ancestor = events.link.clone();
-+            })
-+            .child(
-+                TextView::new(&self.state)
-+                    .selectable(true)
-+                    .on_link_context_menu(move |url, _, _, _| {
-+                        context_events.lock().unwrap().link = Some(url.clone());
-+                    })
-+                    .on_link_click(move |_, event, _, _| {
-+                        if let gpui::ClickEvent::Mouse(click) = event {
-+                            click_events
-+                                .lock()
-+                                .unwrap()
-+                                .activations
-+                                .push(click.up.button);
-+                        }
-+                    }),
-+            )
++        let clicks = self.clicks.clone();
++        div().w(px(280.)).child(TextSelectionLayer).child(
++            TextView::new(&self.state)
++                .selectable(true)
++                .on_link_click(move |url, event, _, _| {
++                    if let ClickEvent::Mouse(click) = event {
++                        clicks.lock().unwrap().push((url.clone(), click.up.button));
++                    }
++                }),
++        )
 +    }
 +}
 +
@@ -408,17 +423,17 @@ index 00000000..5251ad83
 +    "iVBORw0KGgoAAAANSUhEUgAAACgAAAAYCAYAAACIhL/AAAAANUlEQVR4nO3OMREAIAwAsfpXVleggnuGDNkzs3u+lgcEBeuAoGAdEBSsA4KCdUBQsA4IPnYBtcGYyGMVk+kAAAAASUVORK5CYII=",
 +);
 +
-+fn check_secondary_press(
++fn check_auxiliary_click(
 +    source: &str,
 +    at: Point<Pixels>,
 +    expected_text: Option<&str>,
 +    cx: &mut TestAppContext,
 +) {
 +    cx.update(crate::init);
-+    let events = Arc::new(Mutex::new(Events::default()));
++    let clicks = Clicks::default();
 +    let (view, cx) = cx.add_window_view(|_, cx| LinkView {
 +        state: cx.new(|cx| TextViewState::markdown(source, cx)),
-+        events: events.clone(),
++        clicks: clicks.clone(),
 +    });
 +    cx.run_until_parked();
 +    cx.update(|window, cx| {
@@ -435,13 +450,12 @@ index 00000000..5251ad83
 +    }
 +
 +    cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::default());
++    assert!(clicks.lock().unwrap().is_empty());
 +    cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::default());
-+    {
-+        let events = events.lock().unwrap();
-+        assert_eq!(events.link.as_deref(), Some(URL));
-+        assert_eq!(events.ancestor.as_deref(), Some(URL));
-+        assert!(events.activations.is_empty());
-+    }
++    assert_eq!(
++        clicks.lock().unwrap().as_slice(),
++        &[(URL.into(), MouseButton::Right)]
++    );
 +    assert_eq!(
 +        cx.update(|window, cx| TextSelection::selected_text(window, cx)),
 +        selected
@@ -451,22 +465,23 @@ index 00000000..5251ad83
 +        TextSelection::clear(window, cx);
 +        window.draw(cx).clear(cx);
 +    });
-+    cx.simulate_mouse_down(at, MouseButton::Right, Modifiers::default());
-+    cx.simulate_mouse_up(at, MouseButton::Right, Modifiers::default());
-+    assert!(events.lock().unwrap().activations.is_empty());
-+    cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
-+    cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
-+    cx.simulate_mouse_down(at, MouseButton::Middle, Modifiers::default());
-+    cx.simulate_mouse_up(at, MouseButton::Middle, Modifiers::default());
++    for button in [MouseButton::Left, MouseButton::Middle] {
++        cx.simulate_mouse_down(at, button, Modifiers::default());
++        cx.simulate_mouse_up(at, button, Modifiers::default());
++    }
 +    assert_eq!(
-+        events.lock().unwrap().activations,
-+        [MouseButton::Left, MouseButton::Middle]
++        clicks.lock().unwrap().as_slice(),
++        &[
++            (URL.into(), MouseButton::Right),
++            (URL.into(), MouseButton::Left),
++            (URL.into(), MouseButton::Middle),
++        ]
 +    );
 +}
 +
 +#[gpui::test]
-+fn a_formatted_link_reports_the_context_event_with_a_selection(cx: &mut TestAppContext) {
-+    check_secondary_press(
++fn a_formatted_link_reports_the_auxiliary_click_with_a_selection(cx: &mut TestAppContext) {
++    check_auxiliary_click(
 +        &format!("[alpha **bravo**]({URL}) tail"),
 +        point(px(20.), px(12.)),
 +        Some("alpha bravo"),
@@ -475,8 +490,8 @@ index 00000000..5251ad83
 +}
 +
 +#[gpui::test]
-+fn a_standalone_linked_image_reports_the_context_event(cx: &mut TestAppContext) {
-+    check_secondary_press(
++fn a_standalone_linked_image_reports_the_auxiliary_click(cx: &mut TestAppContext) {
++    check_auxiliary_click(
 +        &format!("[![dot]({IMAGE})]({URL})"),
 +        point(px(12.), px(12.)),
 +        None,
@@ -485,8 +500,8 @@ index 00000000..5251ad83
 +}
 +
 +#[gpui::test]
-+fn an_inline_linked_image_reports_the_context_event(cx: &mut TestAppContext) {
-+    check_secondary_press(
++fn an_inline_linked_image_reports_the_auxiliary_click(cx: &mut TestAppContext) {
++    check_auxiliary_click(
 +        &format!("head [![dot]({IMAGE})]({URL}) tail"),
 +        point(px(60.), px(12.)),
 +        Some("head"),
@@ -494,7 +509,7 @@ index 00000000..5251ad83
 +    );
 +}
 diff --git a/src/text/node.rs b/src/text/node.rs
-index d460ee57..57a3aae5 100644
+index d460ee57..cbff42e5 100644
 --- a/src/text/node.rs
 +++ b/src/text/node.rs
 @@ -1,3 +1,5 @@
@@ -512,23 +527,7 @@ index d460ee57..57a3aae5 100644
      },
      theme::ActiveTheme as _,
  };
-@@ -2758,6 +2760,7 @@ pub(crate) struct NodeContext {
-     pub(crate) table_actions: Option<Arc<TableActionsFn>>,
-     pub(crate) image_source: Option<Arc<super::text_view::ImageSourceFn>>,
-     pub(crate) link_click_handler: Option<Arc<LinkClickHandlerFn>>,
-+    pub(crate) link_context_menu_handler: Option<Arc<super::text_view::LinkContextMenuHandlerFn>>,
-     pub(crate) task_toggle_handler: Option<Arc<TaskToggleHandlerFn>>,
-     pub(crate) markdown_extensions: Arc<MarkdownExtensions>,
-     /// This frame's streamed fade-in, when any text is still fading.
-@@ -3045,7 +3048,6 @@ impl Paragraph {
-                         .into_any_element(),
-                     );
-                 }
--                let link_click_handler = node_cx.link_click_handler.clone();
-                 child_nodes.push(
-                     img(node_cx.image_source(image))
-                         .id(ix)
-@@ -3053,32 +3055,12 @@ impl Paragraph {
+@@ -3053,32 +3055,7 @@ impl Paragraph {
                          .max_w(relative(1.))
                          .when_some(image.width, |this, width| this.w(width))
                          .when_some(image.link.clone(), |this, link| {
@@ -558,51 +557,12 @@ index d460ee57..57a3aae5 100644
 -                                        cx,
 -                                    );
 -                                })
-+                            linked_image(
-+                                this,
-+                                link.url,
-+                                node_cx.link_click_handler.clone(),
-+                                node_cx.link_context_menu_handler.clone(),
-+                            )
++                            linked_image(this, link.url, link_click_handler.clone())
                          })
                          .into_any_element(),
                  );
-diff --git a/src/text/state.rs b/src/text/state.rs
-index 395d368c..dfe8ee3e 100644
---- a/src/text/state.rs
-+++ b/src/text/state.rs
-@@ -1,3 +1,5 @@
-+// Modified by the Subspace contributors. See SUBSPACE-PATCH.md and subspace.patch.
-+
- use futures::Stream as _;
- #[cfg(not(target_family = "wasm"))]
- use std::time::Instant;
-@@ -132,6 +134,7 @@ pub struct TextViewState {
-     pub(super) table_actions: Option<std::sync::Arc<TableActionsFn>>,
-     pub(super) image_source: Option<std::sync::Arc<super::text_view::ImageSourceFn>>,
-     pub(super) link_click_handler: Option<std::sync::Arc<LinkClickHandlerFn>>,
-+    pub(super) link_context_menu_handler: Option<Arc<super::text_view::LinkContextMenuHandlerFn>>,
-     pub(super) link_tooltip: Option<std::sync::Arc<super::text_view::LinkTooltipFn>>,
-     pub(super) hovered_link_tooltip: Option<(SharedString, gpui::AnyView)>,
-     pub(super) link_tooltip_target: Option<(usize, SharedString)>,
-@@ -241,6 +244,7 @@ impl TextViewState {
-             code_block_highlighter: None,
-             table_actions: None,
-             link_click_handler: None,
-+            link_context_menu_handler: None,
-             link_tooltip: None,
-             hovered_link_tooltip: None,
-             link_tooltip_target: None,
-@@ -1144,6 +1148,7 @@ impl Render for TextViewState {
-             code_block_highlighter: self.code_block_highlighter.clone(),
-             table_actions: self.table_actions.clone(),
-             link_click_handler: self.link_click_handler.clone(),
-+            link_context_menu_handler: self.link_context_menu_handler.clone(),
-             task_toggle_handler: self.task_toggle_handler.clone(),
-             image_source: self.image_source.clone(),
-             markdown_extensions: self.markdown_extensions.clone(),
 diff --git a/src/text/text_view.rs b/src/text/text_view.rs
-index c2ba36f5..ba9af348 100644
+index c2ba36f5..309e9ff8 100644
 --- a/src/text/text_view.rs
 +++ b/src/text/text_view.rs
 @@ -1,11 +1,13 @@
@@ -622,121 +582,36 @@ index c2ba36f5..ba9af348 100644
  };
  
  use crate::StyledExt;
-@@ -109,6 +111,9 @@ pub(crate) type ImageSourceFn = dyn Fn(&gpui::SharedUri) -> gpui::ImageSource +
- pub(crate) type LinkClickHandlerFn =
-     dyn Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync;
+@@ -155,6 +157,28 @@ impl TaskToggleEvent {
+ /// may hold a `ScrollHandle`.
+ pub(crate) type RevealHandlerFn = dyn Fn(Bounds<Pixels>, &mut Window, &mut App);
  
-+pub(crate) type LinkContextMenuHandlerFn =
-+    dyn Fn(&SharedString, &gpui::MouseDownEvent, &mut Window, &mut App) + Send + Sync;
-+
- pub(crate) type LinkTooltipFn =
-     dyn Fn(&SharedString, &mut Window, &mut App) -> AnyView + Send + Sync;
- pub(crate) type TaskToggleHandlerFn = dyn Fn(&TaskToggleEvent, &mut Window, &mut App) + Send + Sync;
-@@ -175,6 +180,44 @@ pub(crate) fn handle_link_click(
-     }
- }
- 
++/// Make a linked image activate its link on primary and auxiliary clicks.
 +pub(super) fn linked_image(
 +    image: Stateful<Img>,
 +    url: SharedString,
 +    click_handler: Option<Arc<LinkClickHandlerFn>>,
-+    context_handler: Option<Arc<LinkContextMenuHandlerFn>>,
 +) -> Stateful<Img> {
-+    let handles_secondary = context_handler.is_some();
-+    let click_url = url.clone();
-+    let primary_handler = click_handler.clone();
++    let aux_url = url.clone();
++    let aux_handler = click_handler.clone();
 +    image
 +        .cursor_pointer()
-+        .when_some(context_handler, |image, handler| {
-+            let url = url.clone();
-+            image.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-+                handler(&url, event, window, cx);
-+            })
-+        })
 +        .on_click(move |event, window, cx| {
-+            TextSelection::end(window, cx);
-+            cx.stop_propagation();
-+            handle_link_click(
-+                &primary_handler,
-+                click_url.clone(),
-+                event.clone(),
-+                window,
-+                cx,
-+            );
-+        })
-+        .on_aux_click(move |event, window, cx| {
-+            if handles_secondary && event.is_right_click() {
-+                return;
-+            }
 +            TextSelection::end(window, cx);
 +            cx.stop_propagation();
 +            handle_link_click(&click_handler, url.clone(), event.clone(), window, cx);
 +        })
++        .on_aux_click(move |event, window, cx| {
++            TextSelection::end(window, cx);
++            cx.stop_propagation();
++            handle_link_click(&aux_handler, aux_url.clone(), event.clone(), window, cx);
++        })
 +}
 +
- /// A text view that can render Markdown or HTML.
- ///
- /// ## Goals
-@@ -210,6 +253,7 @@ pub struct TextView {
-     code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
-     table_actions: Option<Arc<TableActionsFn>>,
-     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
-+    link_context_menu_handler: Option<Arc<LinkContextMenuHandlerFn>>,
-     link_tooltip: Option<Arc<LinkTooltipFn>>,
-     task_toggle_handler: Option<Arc<TaskToggleHandlerFn>>,
-     image_source: Option<Arc<ImageSourceFn>>,
-@@ -262,6 +306,7 @@ impl TextView {
-             code_block_highlighter: None,
-             table_actions: None,
-             link_click_handler: None,
-+            link_context_menu_handler: None,
-             link_tooltip: None,
-             task_toggle_handler: None,
-             image_source: None,
-@@ -291,6 +336,7 @@ impl TextView {
-             code_block_highlighter: None,
-             table_actions: None,
-             link_click_handler: None,
-+            link_context_menu_handler: None,
-             link_tooltip: None,
-             task_toggle_handler: None,
-             image_source: None,
-@@ -320,6 +366,7 @@ impl TextView {
-             code_block_highlighter: None,
-             table_actions: None,
-             link_click_handler: None,
-+            link_context_menu_handler: None,
-             link_tooltip: None,
-             task_toggle_handler: None,
-             image_source: None,
-@@ -498,6 +545,18 @@ impl TextView {
-         self
-     }
- 
-+    /// Reports a secondary press on a link before a containing context menu
-+    /// opens. The native hit-test preserves the selection and formatted label.
-+    /// When configured, the corresponding secondary release does not activate
-+    /// the link. The handler may let the event bubble to its menu host.
-+    pub fn on_link_context_menu<F>(mut self, handler: F) -> Self
-+    where
-+        F: Fn(&SharedString, &gpui::MouseDownEvent, &mut Window, &mut App) + Send + Sync + 'static,
-+    {
-+        self.link_context_menu_handler = Some(Arc::new(handler));
-+        self
-+    }
-+
-     /// Show a tooltip that follows the pointer while it is over a link.
-     ///
-     /// The builder receives the link's URL. The view caches the tooltip
-@@ -832,6 +891,7 @@ impl Element for TextView {
-             state.code_block_highlighter = code_block_highlighter;
-             state.table_actions = self.table_actions.clone();
-             state.link_click_handler = self.link_click_handler.clone();
-+            state.link_context_menu_handler = self.link_context_menu_handler.clone();
-             state.link_tooltip = self.link_tooltip.clone();
-             state.task_toggle_handler = self.task_toggle_handler.clone();
-             state.image_source = self.image_source.clone();
-@@ -1637,7 +1697,7 @@ mod tests {
+ pub(crate) fn handle_link_click(
+     handler: &Option<Arc<LinkClickHandlerFn>>,
+     url: SharedString,
+@@ -1637,7 +1661,7 @@ mod tests {
          fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
              self.renders.fetch_add(1, Ordering::Relaxed);
              div().child(
@@ -745,16 +620,16 @@ index c2ba36f5..ba9af348 100644
                      .markdown_block_parser(|_, _| None),
              )
          }
-@@ -5162,3 +5222,7 @@ mod tests {
+@@ -5162,3 +5186,7 @@ mod tests {
          );
      }
  }
 +
 +#[cfg(test)]
-+#[path = "link_context_tests.rs"]
-+mod link_context_tests;
++#[path = "link_click_tests.rs"]
++mod link_click_tests;
 diff --git a/src/text_selection.rs b/src/text_selection.rs
-index e6adbd0e..3136a095 100644
+index e6adbd0e..fde62dbf 100644
 --- a/src/text_selection.rs
 +++ b/src/text_selection.rs
 @@ -1,3 +1,5 @@
@@ -763,14 +638,13 @@ index e6adbd0e..3136a095 100644
  use std::{
      cell::{Cell, RefCell},
      collections::HashMap,
-@@ -3287,6 +3289,16 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
+@@ -3287,6 +3289,15 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
                  state.prepare_for_mouse_down(event.click_count == 1 && event.modifiers.shift, cx)
              });
              dispatch_clear_handlers(handlers, cx);
-+            // The latch only stops a second layer preparing this same press.
-+            // A release that never reaches the layer (an element stopped it,
-+            // or it happened outside the window) must not leave it set, or
-+            // the next press keeps a stale selection that blocks link clicks.
++
++            // Selection layers share this latch for one dispatch. A release
++            // may be stopped by a child or occur outside the window.
 +            let latch = state.downgrade();
 +            cx.defer(move |cx| {
 +                if let Some(state) = latch.upgrade() {
@@ -780,7 +654,7 @@ index e6adbd0e..3136a095 100644
          } else if event.click_count == 1 {
              if GlobalState::is_text_selection_suppressed(cx) {
                  state.update(cx, |state, _| state.pending_extension_anchor = None);
-@@ -3447,10 +3459,7 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
+@@ -3447,10 +3458,7 @@ fn paint_text_selection(state: &Entity<WindowSelectionState>, window: &mut Windo
          if phase.bubble()
              && let Some(state) = mouse_up_state.upgrade()
          {
@@ -792,13 +666,10 @@ index e6adbd0e..3136a095 100644
          }
      });
  
-@@ -5793,6 +5802,24 @@ mod tests {
+@@ -5793,6 +5801,21 @@ mod tests {
          assert_eq!(painted_selection(cx), "two three\nfour five");
      }
  
-+    /// A press whose release the layer never sees (stopped by an
-+    /// element, or outside the window) must not leave the next press unable
-+    /// to clear the old selection.
 +    #[gpui::test]
 +    fn a_press_without_a_release_does_not_keep_a_stale_selection(cx: &mut TestAppContext) {
 +        let (_, cx) = cx.add_window_view(|_, _| SelectableTextsView {
@@ -808,7 +679,7 @@ index e6adbd0e..3136a095 100644
 +
 +        press_at("one two three", 0, 1, false, cx);
 +        assert_eq!(drag_to("one two three", 7, cx), "one two");
-+        // No release: the next press must still clear the selection.
++
 +        press_at("four five six", 2, 1, false, cx);
 +        release(1, cx);
 +        assert_eq!(painted_selection(cx), "");

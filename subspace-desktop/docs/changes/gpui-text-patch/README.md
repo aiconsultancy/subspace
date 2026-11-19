@@ -1,6 +1,8 @@
 # Selectable find results and link menus
 
 The desktop enables the [Framework's GPUI Kit text patch](../../../../subspace-framework/docs/changes/gpui-text-patch/README.md).
+A secondary click on native Markdown uses the link destination reported by
+GPUI Kit's `TextView::on_link_click` callback to offer **Copy link**.
 
 ## Evidence
 

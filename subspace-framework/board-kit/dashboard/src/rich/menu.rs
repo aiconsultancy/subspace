@@ -11,6 +11,12 @@ use crate::{AddSelectionToChat, links, set_selection};
 use super::plain::PlainState;
 use super::view::RichTextContext;
 
+#[cfg(feature = "gpui-kit-text-patch")]
+#[path = "menu_link.rs"]
+mod link;
+#[cfg(feature = "gpui-kit-text-patch")]
+pub(super) use link::LinkMenuPress;
+
 #[derive(Clone)]
 pub(super) enum Source {
     Rich(RichTextContext),
@@ -28,9 +34,9 @@ impl Source {
         }
     }
 
-    fn link(&self) -> Option<String> {
+    fn take_link(&self) -> Option<String> {
         match self {
-            Self::Rich(context) => context.link(),
+            Self::Rich(context) => context.take_link(),
             _ => None,
         }
     }
@@ -51,31 +57,30 @@ pub(super) fn with_source<E>(element: E, source: Source, chat: MenuChat) -> Cont
 where
     E: InteractiveElement + ParentElement + Styled,
 {
-    element.anchored_context_menu(move |menu, window, cx| {
-        let payload = source.payload(window, cx);
-        contents(menu, source.clone(), payload, chat, cx)
-    })
+    element.anchored_context_menu(move |menu, window, cx| build(menu, &source, chat, window, cx))
 }
 
-fn contents(
+fn build(
     menu: PopupMenu,
-    source: Source,
-    payload: String,
+    source: &Source,
     chat: MenuChat,
-    _: &mut Context<PopupMenu>,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
+    let payload = source.payload(window, cx);
     let copy = payload.clone();
     let mut menu = menu.item(
         PopupMenuItem::new("Copy")
             .icon(subspace_lucide::IconName::Copy)
             .on_click(move |_, _, cx| links::copy(copy.clone(), cx)),
     );
-    if let Some(url) = source.link() {
+    if let Some(url) = source.take_link() {
         menu = menu.item(PopupMenuItem::new("Copy link").on_click(move |_, _, cx| {
             links::copy(url.clone(), cx);
         }));
     }
     if !matches!(source, Source::Fallback(_)) {
+        let source = source.clone();
         menu = menu.item(
             PopupMenuItem::new("Select all").on_click(move |_, window, cx| {
                 source.select_all(window, cx);
