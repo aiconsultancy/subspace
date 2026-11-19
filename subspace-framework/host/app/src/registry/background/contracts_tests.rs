@@ -101,7 +101,8 @@ fn declarations_are_listed_without_creating_the_board() {
         "Fixture",
         |_, _| panic!("listing must not create a configured board"),
     );
-    assert!(configured.contracts.declarations().is_empty());
+    // A configured board declares its type's roles under its own ID.
+    assert_eq!(configured.contracts, RESPONDER);
 }
 
 #[test]

@@ -1,11 +1,11 @@
 //! The issue profile: what Report issue may include about this build.
 
-use serde_json::Value;
 use subspace_core::diagnostics::IssueDiagnostics;
 use subspace_product::ProductContext;
 use subspace_report_issue::Diagnostics;
 
 use super::build_identity;
+use crate::theme::bundled_theme_id;
 
 /// Inputs are descriptor IDs or embedded appearance identities, never paths.
 pub(crate) fn collect(
@@ -28,27 +28,6 @@ pub(crate) fn collect(
         Some(id) => facts.with_active_board(id),
         None => facts,
     }
-}
-
-/// Custom theme names can contain private data, so report only their category.
-fn bundled_theme_id(name: &str) -> &'static str {
-    crate::theme::SUBSPACE_THEMES
-        .iter()
-        .chain(crate::theme::GPUI_KIT_THEMES)
-        .copied()
-        .find(|(_, content)| contains_theme(content, name))
-        .map_or("custom", |(id, _)| id)
-}
-
-fn contains_theme(content: &str, name: &str) -> bool {
-    serde_json::from_str::<Value>(content)
-        .ok()
-        .and_then(|value| value.get("themes").and_then(Value::as_array).cloned())
-        .is_some_and(|themes| {
-            themes
-                .iter()
-                .any(|theme| theme.get("name").and_then(Value::as_str) == Some(name))
-        })
 }
 
 #[cfg(test)]

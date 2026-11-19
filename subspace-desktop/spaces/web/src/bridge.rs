@@ -1,10 +1,12 @@
 //! The board-owned bridge. Authority is the intersection of a manifest's
 //! requests and native Settings grants, bound to its folder and manifest.
 
+pub(crate) mod issues;
 pub(crate) mod protocol;
 pub(crate) mod runtime;
 #[cfg(test)]
 mod tests;
+pub(crate) mod theme;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -15,6 +17,7 @@ use subspace_framework::dashboard::settings::FieldKind;
 
 use crate::app::{app_origin, same_origin};
 use crate::manifest::{self, Manifest, Permission};
+use issues::IssueCall;
 use protocol::{Context, Message, Operation};
 
 const MAX_BADGE_CHARS: usize = 8;
@@ -34,11 +37,20 @@ pub(crate) struct Bridge {
     pub context: Option<Context>,
     last_notification: Option<Instant>,
     document_epoch: Option<u64>,
+    /// The broker's name for this board, the configured ID.
+    pub board: &'static str,
+    /// The theme last pushed to the page, so an unchanged one is not sent.
+    pub pushed_theme: Option<Value>,
 }
 
+/// What the runtime finishes with the app after a call is allowed.
 pub(crate) enum Effect {
     None,
     Notify(String),
+    /// Answer with the theme in effect.
+    Theme,
+    /// Ask the `issues` contract.
+    Issues(IssueCall),
 }
 
 impl Bridge {
@@ -56,11 +68,18 @@ impl Bridge {
             context: None,
             last_notification: None,
             document_epoch: None,
+            board: issues::board_id(&board.id),
+            pushed_theme: None,
         })
     }
 
-    pub(crate) fn allows(&self, permission: Permission, config: &WebBoard) -> bool {
+    /// Whether the manifest asks for `permission`, granted or not.
+    pub(crate) fn requests(&self, permission: Permission) -> bool {
         self.manifest.permissions.contains(&permission)
+    }
+
+    pub(crate) fn allows(&self, permission: Permission, config: &WebBoard) -> bool {
+        self.requests(permission)
             && config.source == WebBoardSource::Folder(self.root.clone())
             && config
                 .permissions
@@ -88,10 +107,15 @@ impl Bridge {
         }
         let required = match operation {
             Operation::Info => return Ok((self.info(config, notifications_on), Effect::None)),
+            Operation::Theme => return Ok((Value::Null, Effect::Theme)),
             Operation::Settings => Permission::Settings,
             Operation::Badge(_) => Permission::Badge,
             Operation::Context(_) => Permission::Context,
             Operation::Notify(_) => Permission::Notifications,
+            Operation::Secrets => Permission::Secrets,
+            Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
+                Permission::Issues
+            }
         };
         if !self.allows(required, config) {
             return Err(DENIED);
@@ -146,7 +170,11 @@ impl Bridge {
                 self.context = context.clone();
             }
             Operation::Notify(message) => return self.notification(message, notifications_on, now),
-            Operation::Info => {}
+            Operation::Secrets => return Ok((self.secrets(config), Effect::None)),
+            Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
+                return Ok((Value::Null, Effect::Issues(IssueCall::parse(operation)?)));
+            }
+            Operation::Info | Operation::Theme => {}
         }
         Ok((Value::Null, Effect::None))
     }
@@ -190,6 +218,22 @@ impl Bridge {
             .collect();
         json!({"version": 1, "permissions": allowed,
             "notificationPermission": if notifications_on && self.allows(Permission::Notifications, config) { "granted" } else { "denied" }})
+    }
+
+    /// The saved values of the secrets the manifest declares, and nothing
+    /// else from the private config. Unset or empty secrets are absent.
+    fn secrets(&self, config: &WebBoard) -> Value {
+        let values = self
+            .manifest
+            .settings
+            .iter()
+            .filter(|field| matches!(field.kind, FieldKind::Secret))
+            .filter_map(|field| {
+                let secret = config.secrets.get(&field.key)?.expose();
+                (!secret.is_empty()).then(|| (field.key.clone(), Value::from(secret)))
+            })
+            .collect();
+        Value::Object(values)
     }
 
     fn settings(&self, config: &WebBoard) -> Value {

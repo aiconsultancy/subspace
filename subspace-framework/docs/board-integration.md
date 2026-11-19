@@ -222,7 +222,9 @@ terminal panel is an example.
 
 ### Theme tokens, density and shared widgets
 
-- **What**: `subspace_dashboard::tokens` maps the active theme; `Density`,
+- **What**: `subspace_dashboard::tokens` maps the active theme, and its
+  `ThemeId` global names the bundled theme file the active variant comes from
+  (`one-dark`, `cupertino`, or `custom` for a user's theme); `Density`,
   `Typography` and the shared widgets (`feedback`, `panel`, `menu`, `composer`,
   `chat_input`, `rich`, `code`, `dates`, `toggle`, `icon_button`, `action`,
   `chart`, `native_grid`) keep boards consistent.
@@ -656,7 +658,10 @@ fn contracts() -> BoardContracts {
 The roles are `publishes` and `subscribes` for events, `requests` and
 `responds` for requests. `BoardRegistration::new` captures the declarations
 with the other static facts, and `BoardRegistration::contracts` lists them
-for Settings, docs and tests. Configured boards declare none. Registration
+for Settings, docs and tests. Configured boards (`BoardRegistration::configured`)
+declare their type's `contracts()` under each configured ID, so a configured
+type may publish, subscribe and request but never respond: two instances
+would be two responders. Registration
 rejects malformed names, a role declared twice and a request that more than
 one included board answers.
 

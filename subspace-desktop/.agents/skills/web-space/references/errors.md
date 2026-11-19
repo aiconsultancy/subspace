@@ -13,7 +13,7 @@ and from `scripts/package-web-space.py`, which prints the same texts after
 | `subspace-board.json: expected name to be text of 1 to 60 characters.` | Add or shorten `name`. `version` has the same rule with 40. |
 | `subspace-board.json: invalid JSON (…).` | Fix the JSON; no comments, trailing commas or byte-order mark. |
 | `subspace-board.json: settings[N]: …` | Fix setting N as the message says; rules in the reference's [Declare an app](../../../../docs/web-spaces-reference.md#declare-an-app). |
-| `Unknown permission "…" ignored.` (warning) | Use only `notifications`, `settings`, `badge`, `context`. |
+| `Unknown permission "…" ignored.` (warning) | Use only `notifications`, `settings`, `badge`, `context`, `secrets`, `issues`. |
 | `subspace-board.json is larger than 256 KiB.` | Move data out of the manifest. |
 | `The package contains an unsafe or unsupported filename. Use portable ASCII names without .git or device names.` | Rename non-ASCII names, names ending in `.` or space, `CON`/`NUL`/`COM1`…; remove `.git`. |
 | `The package has duplicate or platform-colliding paths.` | Rename files that differ only by case. |
@@ -51,5 +51,8 @@ and from `scripts/package-web-space.py`, which prints the same texts after
 | `Permission denied. Allow this action in the board's Subspace settings.` | Request the permission in the manifest, then allow it in **Settings > Spaces > [Space name]** and save. |
 | `Notifications are off. Choose a notification channel in Subspace Settings.` | Turn on a notification channel for the Space. |
 | `Too many notifications. Wait five seconds.` | Send at most one notification per five seconds. |
+| `Resolve at most 50 distinct issue identifiers.` | Split `issues.resolve` calls into batches of 50. |
+| `Use issue identifiers of at most 32 characters, without control characters.` | Pass identifiers such as `ABC-827` as strings. |
+| `No Space that answers issue requests recognises this issue identifier.` | Check `issues.scope()`: no Space answers, the user is signed out, or the identifier's project key is not in `teamKeys`. |
 | `The app manifest changed. Restart Subspace, then review its permissions in Settings.` | Restart and allow the permissions again. |
 | A fetch fails | Use HTTPS (or loopback HTTP) and make the server allow the app origin (`subspace://<id>` on macOS, `https://subspace.<id>` on Windows). |
