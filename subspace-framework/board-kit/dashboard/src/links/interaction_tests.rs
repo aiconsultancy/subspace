@@ -2,10 +2,12 @@ use super::{external, external_marked_with_label};
 use crate::Tokens;
 use gpui_kit::test::{TestSupportExt as _, TestWindowExt as _};
 use gpui_kit::{
-    AppContext as _, Bounds, ClipboardItem, Context, FocusHandle, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, Styled as _, TestAppContext, VisualTestContext,
-    Window, WindowBounds, WindowOptions, div, px, size,
+    AppContext as _, Bounds, ClipboardItem, Context, Element as _, FocusHandle,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, RenderOnce as _, Role,
+    Styled as _, TestAppContext, VisualTestContext, Window, WindowBounds, WindowOptions, accesskit,
+    canvas, div, px, size,
 };
+use std::{cell::RefCell, rc::Rc};
 
 const WEB_URL: &str = "https://example.com/releases?product=subspace";
 
@@ -82,6 +84,52 @@ fn mount_link(cx: &mut TestAppContext, url: &'static str, marked: bool) -> Visua
     let mut cx = VisualTestContext::from_window(window, cx);
     settle(&mut cx);
     cx
+}
+
+/// Renders the production link during a draw and records the role and
+/// accessibility node it writes, as GPUI does for assistive technology.
+struct LinkSemantics {
+    captured: Rc<RefCell<Option<(Option<Role>, accesskit::Node)>>>,
+}
+
+impl Render for LinkSemantics {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let captured = self.captured.clone();
+        canvas(
+            move |_, window, cx| {
+                let element = super::link(
+                    "external-link".into(),
+                    (
+                        "example.com".into(),
+                        "Open project repository: example.com".into(),
+                    ),
+                    WEB_URL.into(),
+                    &Tokens::one_dark(),
+                    true,
+                )
+                .render(window, cx)
+                .into_element();
+                let role = element.a11y_role();
+                let mut node = accesskit::Node::new(role.unwrap_or(Role::Unknown));
+                element.write_a11y_info(&mut node);
+                *captured.borrow_mut() = Some((role, node));
+            },
+            |_, _, _, _| {},
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_marked_link_is_a_link_named_for_its_purpose_not_its_host(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let captured = Rc::new(RefCell::new(None));
+    let probe = captured.clone();
+    let (_, cx) = cx.add_window_view(move |_, _| LinkSemantics { captured: probe });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let (role, node) = captured.borrow_mut().take().unwrap();
+    assert_eq!(role, Some(Role::Link));
+    assert_eq!(node.label(), Some("Open project repository: example.com"));
+    assert!(node.supports_action(accesskit::Action::Click));
 }
 
 #[gpui_kit::test]
