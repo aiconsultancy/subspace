@@ -56,12 +56,19 @@ The full API is in the
   (`bridge/protocol.rs`), and the JavaScript methods and pushed events
   (`tests/bridge.test.mjs`). The Framework's appearance snapshot test covers
   `ThemeId`.
-- Settings shows the two new **Allow this app to …** checkboxes only for a
+- Settings shows the two new **Allow this app to …** switches only for a
   manifest that requests them; they are drawn by the existing permission
-  rows. Screenshots are still to capture with `make capture` before a pull
-  request.
-- Not checked in a running app: WebKit delivery of pushed events and
-  navigation to the Issues Space from a web page.
+  rows.
+- Checked end to end with Fleet Console in the capture build against a live
+  Fleet API: `theme()`, `secrets.get()`, `issues.scope` and `issues.resolve`
+  through the signed-in Issues Space, `setBadge` and `setContext`. See the
+  [Fleet Console record](../fleet-console-web-space/README.md#in-subspace-against-a-live-fleet-api)
+  for its screenshots. Capture screenshots of a web Space need the page
+  mirror the capture build now draws (`spaces/web/src/mirror.rs`).
+- Not checked in a running app: a live theme switch delivering
+  `subspace:theme`, and `issues.open` switching to the Issues Space.
+
+![Settings for a web Space that asks for every permission, including the new secrets and issues switches](evidence/settings-permissions.png)
 
 ## Board checklist: web (changed parts)
 
@@ -75,7 +82,7 @@ The full API is in the
 - [x] No tools, search or notifications carry issue content; nothing is
   stored.
 - [x] `help.md`, the reference, the guide and the `web-space` skill updated.
-- [ ] Screenshots of the new Settings checkboxes from the capture build.
+- [x] Screenshots of the new Settings switches from the capture build.
 
 ## Tasks
 
@@ -86,4 +93,50 @@ The full API is in the
   `subspace:issues-changed`.
 - [x] Framework `ThemeId` and configured-board contracts.
 - [x] Docs, help, skill, packaging script and tests.
-- [ ] Capture screenshots for the pull request.
+- [x] Capture screenshots for the pull request.
+
+## Follow-up: page-owned secrets (`secrets.set`)
+
+### Intent
+
+Fleet Console lets the user add several fleets in the page, each with its
+own Stargate token. A manifest can only declare a fixed set of secret
+fields, so the page needs to save secrets it creates at run time.
+
+### Spec
+
+- `subspace.secrets.set(key, valueOrNull)` needs `secrets`. It saves one
+  secret, or deletes it for `null`, and resolves once the config file has
+  it. Keys are 1 to 40 letters, digits, `_` or `-`, starting with a letter;
+  values 1 to 4096 characters without control characters.
+- A key the manifest declares as a secret writes that declared secret; one it
+  declares as a non-secret setting is refused. At most 32 secrets of the
+  page's own (undeclared keys); replacing or deleting one is always allowed.
+- `secrets.get()` returns the declared secrets with saved values and every
+  secret the page saved. Declared non-secret keys never appear.
+- Storage: the Space's `secrets` in the private config file, the same object
+  as the declared secrets, written through the checked immediate edit and
+  applied to the running configuration without reloading any Space. Removing
+  the Space removes them; replacing it keeps them.
+- Only a shown Space with nothing over it saves (`Open this Space to save a
+  secret.`). Settings covers the Space while open, so a page never writes the
+  file behind an open Settings, whose Save would then refuse a changed file.
+- Settings shows **This app has saved N secrets**, never the keys or values,
+  with **Clear**, which removes them all on Save. The Framework gains
+  `BoardFields::with_app_secrets()` and `SettingsFile::board_secret_keys` for
+  this; any configured board can opt in.
+
+### Delivery
+
+- Framework tests: the count and Clear on Save, keeping declared secrets,
+  and no line for a board that does not opt in (`board_field_tests/app_secrets.rs`);
+  `board_secret_keys` (`services/core`).
+- Desktop tests: key, value, setting-key and 32-secret checks; what
+  `secrets.get()` returns; the write keeping the rest of the entry; a save
+  reaching the file and the running configuration (`bridge/secrets.rs`);
+  grant gating (`bridge/tests.rs`); protocol parsing; the JavaScript method's
+  shapes and type checks (`tests/bridge.test.mjs`).
+- Captured in the capture build with one page-owned secret saved: the
+  Settings line and its Clear button.
+
+![Settings for Fleet Console: the declared token's field, then This app has saved 1 secret with Clear](evidence/settings-saved-secrets.png)
