@@ -171,7 +171,12 @@ pub(crate) fn offline_with(
         let (status, body) = custom(request)
             .or_else(|| refusal(&request.path, &answers))
             .unwrap_or_else(|| (200, api(&request.path, &answers).to_string()));
-        (status, Vec::new(), body.into_bytes())
+        let headers = if status == 403 && request.path.starts_with("/api/v1/decisions") {
+            vec![("content-type".into(), "application/problem+json".into())]
+        } else {
+            Vec::new()
+        };
+        (status, headers, body.into_bytes())
     });
     Offline { mock, switches }
 }
@@ -182,9 +187,14 @@ pub(crate) fn board_with_hub<'a>(
     offline: &Offline,
     cx: &'a mut TestAppContext,
 ) -> (Entity<Issues>, &'a mut VisualTestContext) {
+    let (board, cx) = super::mount(cx);
+    attach_hub(offline, &board, cx);
+    (board, cx)
+}
+
+pub(crate) fn attach_hub(offline: &Offline, board: &Entity<Issues>, cx: &mut VisualTestContext) {
     cx.executor().allow_parking();
     let (hub, address) = fixture_hub(offline);
-    let (board, cx) = super::mount(cx);
     cx.update(|window, cx| {
         link::install(cx, hub, Some(address));
         board.update(cx, |board, cx| {
@@ -192,7 +202,6 @@ pub(crate) fn board_with_hub<'a>(
             board.activate(window, cx);
         });
     });
-    (board, cx)
 }
 pub(crate) fn settle_board(
     board: &Entity<Issues>,

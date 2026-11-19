@@ -1,4 +1,6 @@
-use super::{Hub, HubError, IssueSnapshot, IssueStatus, ReadPriority, lock, worker::Task};
+use super::{
+    Hub, HubError, IssueSnapshot, IssueStatus, ReadPriority, Shared, State, lock, worker::Task,
+};
 use crate::{IssueQuery, PageRequest};
 
 impl Hub {
@@ -26,34 +28,7 @@ impl Hub {
     pub fn reload_issue(&self) -> Result<(), HubError> {
         let mut state = lock(&self.0.state);
         state.running()?;
-        let Some(issue) = state
-            .snapshot
-            .issue
-            .as_mut()
-            .filter(|issue| issue.profile_id == crate::PROFILE_ID)
-        else {
-            return Ok(());
-        };
-        // A refresh retires pending reads, but keeps this issue's loaded
-        // content until the response tells us whether it remains available.
-        issue.status = IssueStatus::Loading;
-        issue.milestone_loading = false;
-        issue.children_loading = false;
-        issue.children_failed = false;
-        issue.relations_loading = false;
-        issue.relations_failed = false;
-        issue.pull_requests.loading = false;
-        issue.pull_requests.error = None;
-        issue.timeline.loading = false;
-        issue.images = Default::default();
-        issue.files = Default::default();
-        let identifier = issue.identifier.clone();
-        state.issue_revision = state.issue_revision.wrapping_add(1);
-        state.changed();
-        if state.snapshot.me.is_some() {
-            self.0
-                .enqueue(&mut state, Task::Issue(identifier), ReadPriority::Visible);
-        }
+        self.0.reload_open_issue(&mut state);
         Ok(())
     }
     pub fn close_issue(&self) {
@@ -127,5 +102,38 @@ impl Hub {
         state.changed();
         self.0.enqueue(&mut state, task, ReadPriority::LaterPage);
         Ok(())
+    }
+}
+
+impl Shared {
+    pub(super) fn reload_open_issue(&self, state: &mut State) {
+        let Some(issue) = state
+            .snapshot
+            .issue
+            .as_mut()
+            .filter(|issue| issue.profile_id == crate::PROFILE_ID)
+        else {
+            return;
+        };
+        // A refresh retires workers, but keeps this issue's loaded content
+        // and decision read intents until we learn whether it is still available.
+        issue.status = IssueStatus::Loading;
+        issue.milestone_loading = false;
+        issue.children_loading = false;
+        issue.children_failed = false;
+        issue.relations_loading = false;
+        issue.relations_failed = false;
+        issue.pull_requests.loading = false;
+        issue.pull_requests.error = None;
+        issue.decisions.pause();
+        issue.timeline.loading = false;
+        issue.images = Default::default();
+        issue.files = Default::default();
+        let identifier = issue.identifier.clone();
+        state.issue_revision = state.issue_revision.wrapping_add(1);
+        state.changed();
+        if state.snapshot.me.is_some() {
+            self.enqueue(state, Task::Issue(identifier), ReadPriority::Visible);
+        }
     }
 }

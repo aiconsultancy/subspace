@@ -1,4 +1,4 @@
-use super::external;
+use super::{external, external_marked_with_label};
 use crate::Tokens;
 use gpui_kit::test::{TestSupportExt as _, TestWindowExt as _};
 use gpui_kit::{
@@ -12,6 +12,7 @@ const WEB_URL: &str = "https://example.com/releases?product=subspace";
 struct ExternalLinkFixture {
     url: &'static str,
     focus: FocusHandle,
+    marked: bool,
 }
 
 impl Render for ExternalLinkFixture {
@@ -30,17 +31,33 @@ impl Render for ExternalLinkFixture {
                     .id("external-link-host")
                     .test_support()
                     .flex()
-                    .child(external(
-                        "external-link",
-                        "Project repository",
-                        self.url,
-                        &Tokens::one_dark(),
-                    )),
+                    .child(self.link()),
             )
     }
 }
 
+impl ExternalLinkFixture {
+    fn link(&self) -> gpui_kit::AnyElement {
+        let tokens = Tokens::one_dark();
+        if self.marked {
+            external_marked_with_label(
+                "external-link",
+                "example.com",
+                "Open project repository: example.com",
+                self.url,
+                &tokens,
+            )
+        } else {
+            external("external-link", "Project repository", self.url, &tokens)
+        }
+    }
+}
+
 fn mount(cx: &mut TestAppContext, url: &'static str) -> VisualTestContext {
+    mount_link(cx, url, false)
+}
+
+fn mount_link(cx: &mut TestAppContext, url: &'static str, marked: bool) -> VisualTestContext {
     cx.update(gpui_kit::init);
     let (window, _) = cx.update(|cx| {
         gpui_kit::open_window(
@@ -56,7 +73,7 @@ fn mount(cx: &mut TestAppContext, url: &'static str) -> VisualTestContext {
                 cx.new(|cx| {
                     let focus = cx.focus_handle();
                     focus.focus(window, cx);
-                    ExternalLinkFixture { url, focus }
+                    ExternalLinkFixture { url, focus, marked }
                 })
             },
         )
@@ -65,6 +82,18 @@ fn mount(cx: &mut TestAppContext, url: &'static str) -> VisualTestContext {
     let mut cx = VisualTestContext::from_window(window, cx);
     settle(&mut cx);
     cx
+}
+
+#[gpui_kit::test]
+fn a_marked_link_paints_its_host_and_still_opens_the_full_url(cx: &mut TestAppContext) {
+    let mut cx = mount_link(cx, WEB_URL, true);
+    cx.update(|window, cx| {
+        let texts = gpui_kit::base::test_support::texts(window);
+        assert!(texts.iter().any(|text| text.text() == "example.com"));
+        window.press("tab", cx);
+        window.press("enter", cx);
+    });
+    assert_eq!(cx.opened_url().as_deref(), Some(WEB_URL));
 }
 
 fn settle(cx: &mut VisualTestContext) {

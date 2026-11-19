@@ -117,6 +117,7 @@ fn enqueue_open(shared: &Shared, state: &mut super::State) {
         .filter(|issue| issue.profile_id == crate::PROFILE_ID)
     {
         issue.status = IssueStatus::Loading;
+        issue.decisions.pause();
         let identifier = issue.identifier.clone();
         shared.enqueue(state, Task::Issue(identifier), ReadPriority::Visible);
     }

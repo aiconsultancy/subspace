@@ -148,6 +148,7 @@ fn take_recheck(
     issue.updated_at = Some(Instant::now());
     milestone::queue(shared, state);
     state.refresh_media(identifier);
+    crate::hub::decisions::refresh(shared, state);
     for task in [
         Task::Refresh(identifier.into()),
         // Links and unlinks keep the issue's version: read the head again.

@@ -133,10 +133,12 @@ impl Issues {
         let mode = self.issue_view.timeline.mode;
         let (label, next) = match mode {
             TimelineMode::Comments => ("Show all issue activity", TimelineMode::All),
-            TimelineMode::All => ("Show issue comments", TimelineMode::Comments),
+            TimelineMode::All | TimelineMode::Decisions => {
+                ("Show issue comments", TimelineMode::Comments)
+            }
         };
         let weak = self.weak.clone();
-        vec![
+        let mut commands = vec![
             PaletteCommand::new("Focus discussion", keys::FocusTimeline).shortcut("m"),
             PaletteCommand::callback(label, move |window, cx| {
                 _ = weak.update(cx, |this, cx| {
@@ -144,7 +146,20 @@ impl Issues {
                     this.focus_timeline(window, cx);
                 });
             }),
-        ]
+        ];
+        if mode != TimelineMode::Decisions {
+            let weak = self.weak.clone();
+            commands.push(PaletteCommand::callback(
+                "Show issue decisions",
+                move |window, cx| {
+                    _ = weak.update(cx, |this, cx| {
+                        this.show_timeline(TimelineMode::Decisions, cx);
+                        this.focus_timeline(window, cx);
+                    });
+                },
+            ));
+        }
+        commands
     }
 
     fn list_commands(&self) -> Vec<PaletteCommand> {

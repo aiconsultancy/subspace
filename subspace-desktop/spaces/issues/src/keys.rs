@@ -40,7 +40,7 @@ pub(crate) const HELP: &[KeyHelp] = &[
     KeyHelp::new("j / ↓", "Next row"),
     KeyHelp::new("k / ↑", "Previous row"),
     KeyHelp::new("Enter", "Open issue or fold group"),
-    KeyHelp::new("Esc", "Close the attachment, else back to issues"),
+    KeyHelp::new("Esc", "Close the attachment or decision, else go back"),
     KeyHelp::new("j / k", "Next or previous issue in detail"),
     KeyHelp::new("1–4", "My issues / Active / Backlog / All issues"),
     KeyHelp::new("5", "Issue activity"),
@@ -60,6 +60,7 @@ pub(crate) fn bind(cx: &mut App) {
     let detail = view_keys(DETAIL_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("escape", DismissDetail, Some(&detail)),
+        KeyBinding::new("escape", DismissDetail, Some(crate::decision::CONTEXT)),
         KeyBinding::new(
             "escape",
             subspace_framework::dashboard::find_in_page::Close,
@@ -134,9 +135,12 @@ fn navigation_handlers(root: Div, cx: &mut Context<Issues>) -> Div {
             this.go_back(window, cx);
         }
     }))
-    // Escape closes the attachment panel first, the page's topmost layer.
+    // Escape closes the topmost viewer before navigating the issue page.
     .on_action(cx.listener(|this, _: &DismissDetail, window, cx| {
-        if this.menu.is_none() && !this.close_text(window, cx) {
+        if this.menu.is_none()
+            && !this.close_text(window, cx)
+            && !crate::decision::close(this, window, cx)
+        {
             this.go_back(window, cx);
         }
     }))

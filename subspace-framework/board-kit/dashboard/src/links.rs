@@ -1,7 +1,7 @@
 //! Open in browser and copy (REQ-15). Only `http`, `https` and `mailto`
 //! links leave the app.
 
-use gpui_kit::base::Link;
+use gpui_kit::base::{Link, TestTextExt as _};
 use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::{Icon, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -20,7 +20,8 @@ pub fn external(
     url: impl Into<SharedString>,
     tokens: &crate::Tokens,
 ) -> AnyElement {
-    external_link(id.into(), label.into(), url.into(), tokens, false)
+    let label = label.into();
+    external_link(id.into(), (label.clone(), label), url.into(), tokens, false)
 }
 
 /// An [`external`] link with a trailing decorative external-link glyph, for
@@ -31,12 +32,31 @@ pub fn external_marked(
     url: impl Into<SharedString>,
     tokens: &crate::Tokens,
 ) -> AnyElement {
-    external_link(id.into(), label.into(), url.into(), tokens, true)
+    let label = label.into();
+    external_marked_with_label(id, label.clone(), label, url, tokens)
+}
+
+/// A marked external link with a separate accessible name, for visible
+/// labels (such as hosts) that don't explain the destination's purpose.
+pub fn external_marked_with_label(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    accessible_name: impl Into<SharedString>,
+    url: impl Into<SharedString>,
+    tokens: &crate::Tokens,
+) -> AnyElement {
+    external_link(
+        id.into(),
+        (text.into(), accessible_name.into()),
+        url.into(),
+        tokens,
+        true,
+    )
 }
 
 fn external_link(
     id: ElementId,
-    label: SharedString,
+    (text, accessible_name): (SharedString, SharedString),
     url: SharedString,
     tokens: &crate::Tokens,
     marked: bool,
@@ -46,7 +66,7 @@ fn external_link(
     let focus_background = tokens.select;
     Link::new(id)
         .href(url.clone())
-        .accessibility_label(label.clone())
+        .accessibility_label(accessible_name)
         .text_color(accent)
         .text_decoration_1()
         .rounded_sm()
@@ -56,7 +76,7 @@ fn external_link(
         .open_with(|url, _, _, cx| {
             open(url, cx);
         })
-        .child(label)
+        .child(text.clone().test_text(text))
         .when(marked, |link| {
             link.flex()
                 .min_w_0()

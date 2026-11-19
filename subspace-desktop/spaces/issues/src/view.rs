@@ -2,7 +2,7 @@
 //! the four tabs, the toolbar, the summary, then the grouped list or a
 //! state in its place (design `list`, `list-loading`, `list-signed-out`).
 
-mod issue;
+pub(crate) mod issue;
 mod render;
 pub(crate) use issue::section_heading;
 pub(crate) mod lanes;

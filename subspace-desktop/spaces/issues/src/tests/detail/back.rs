@@ -103,6 +103,33 @@ fn from_a_channel_back_names_it_and_returns_there(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn closing_a_decision_keeps_the_channel_as_the_first_origin(cx: &mut TestAppContext) {
+    use crate::tests::decisions;
+
+    let fixture = decisions::normal_fixture();
+    let (board, cx) = board_with_hub(&fixture, cx);
+    settle_board(&board, cx, |board| board.issue("issue:1").is_some());
+    let (seen, _subscription) = returns(&board, cx);
+    arrive_by_link(&board, Some(channel()), "SUB-1", cx);
+    decisions::choose(&board, cx);
+    decisions::settle_page(&board, cx);
+    decisions::open_row(&board, cx);
+    decisions::settle_detail(&board, cx, decisions::NEW);
+    assert!(has(cx, "decision-panel"));
+
+    press(cx, "escape");
+    assert!(!has(cx, "decision-panel"));
+    assert_eq!(
+        label(cx, "issue-back").as_deref(),
+        Some("Back to #discovery")
+    );
+    assert!(seen.borrow().is_empty());
+
+    press(cx, "escape");
+    assert_eq!(*seen.borrow(), [channel()]);
+}
+
+#[gpui_kit::test]
 fn the_palette_back_names_its_destination_but_is_recent_by_a_static_key(cx: &mut TestAppContext) {
     let (_fixture, board, cx) = ready(cx);
     arrive_by_link(&board, Some(channel()), "SUB-1", cx);

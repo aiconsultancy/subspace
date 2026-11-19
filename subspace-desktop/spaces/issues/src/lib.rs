@@ -62,6 +62,8 @@ use crate::scope::Access;
 /// The board id, also its key context and the prefix of its preferences.
 pub(crate) const ID: &str = "issues";
 
+mod decision;
+
 pub struct Issues {
     authoring: authoring::AuthoringView,
     /// Where the issue page's Back goes.
@@ -69,6 +71,7 @@ pub struct Issues {
     editor: Option<editing::IssueEditor>,
     project_move: Option<project_move::ProjectMove>,
     media: media::MediaView,
+    decision: Option<decision::DecisionPanel>,
     weak: WeakEntity<Self>,
     focus: FocusHandle,
     list: ListState,
@@ -294,7 +297,7 @@ impl Dashboard for Issues {
     }
 
     fn modal(&self, cx: &App) -> Option<Modal> {
-        if self.media.is_open() {
+        if self.media.is_open() || self.decision.is_some() {
             return Some(Modal::Dialog);
         }
         (self.menu.is_some()
@@ -309,6 +312,11 @@ impl Dashboard for Issues {
     fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.media.is_open() {
             self.close_image(window, cx);
+            return;
+        }
+        if self.decision.is_some()
+            && (self.close_text(window, cx) || decision::close(self, window, cx))
+        {
             return;
         }
         self.menu_anchors.dismiss(window, cx);
