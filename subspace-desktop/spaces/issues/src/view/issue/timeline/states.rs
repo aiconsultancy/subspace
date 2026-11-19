@@ -23,7 +23,7 @@ pub(super) fn empty(
     let copy = match (mode, complete) {
         (TimelineMode::Comments, true) => "No comments yet",
         (TimelineMode::Comments, false) => "No comments in the loaded activity",
-        (TimelineMode::All, _) => "No activity yet",
+        (TimelineMode::All | TimelineMode::Decisions, _) => "No activity yet",
     };
     div().text_color(tokens.muted).child(copy)
 }

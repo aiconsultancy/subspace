@@ -9,18 +9,18 @@ use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Div, InteractiveElement as _, IntoElement, ParentElement, SharedString,
-    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
+    StatefulInteractiveElement as _, Styled, TestSupportExt as _, div,
 };
 use subspace_framework::dashboard::{Tokens, truncated};
 use subspace_framework::lucide::SvgIcon;
 
-pub(super) struct Fact {
+pub(crate) struct Fact {
     pub(super) label: &'static str,
     pub(super) value: String,
 }
 
 impl Fact {
-    pub(super) fn new(label: &'static str, value: impl Into<String>) -> Self {
+    pub(crate) fn new(label: &'static str, value: impl Into<String>) -> Self {
         Self {
             label,
             value: value.into(),
@@ -68,7 +68,7 @@ pub(super) fn empty(text: impl Into<SharedString>, tokens: &Tokens) -> Div {
         .child(text.into())
 }
 
-pub(super) fn fact(fact: Fact, prefix: &str, tokens: &Tokens) -> AnyElement {
+pub(crate) fn fact(fact: Fact, prefix: &str, tokens: &Tokens) -> AnyElement {
     let id = SharedString::from(format!("issue-{prefix}-value:{}", fact.label));
     fact_row(fact.label, fact.value.clone(), prefix, tokens)
         .child(value(id, fact.value, tokens))
@@ -123,4 +123,22 @@ pub(super) fn fact_row(
 
 pub(super) fn grid() -> Div {
     v_flex().gap_1().w_full().min_w_0()
+}
+pub(super) fn behind_decision<T: Styled + ParentElement>(page: T, modal: bool) -> T {
+    if modal {
+        page.relative().child(div().absolute().inset_0().occlude())
+    } else {
+        page
+    }
+}
+
+pub(super) fn side_width(issues: &crate::Issues, tokens: &Tokens) -> f32 {
+    if issues.decision.is_some() {
+        subspace_framework::dashboard::panel::clamp_width(
+            f32::from(tokens.panel_width),
+            issues.width,
+        )
+    } else {
+        crate::media::text::panel_width(issues, tokens)
+    }
 }

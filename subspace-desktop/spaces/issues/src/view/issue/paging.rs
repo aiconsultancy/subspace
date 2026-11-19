@@ -1,10 +1,10 @@
-use crate::{Issues, requests::Request};
-use gpui_kit::component::h_flex;
+use crate::{Issues, decision::words, requests::Request};
+use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::{
     Context, Div, InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
     Styled as _, TestSupportExt as _, div,
 };
-use subspace_api_client::hub::IssueSnapshot;
+use subspace_api_client::hub::{IssueSnapshot, IssueStatus, ReadError};
 use subspace_framework::dashboard::Tokens;
 use subspace_framework::dashboard::action::{ActionState, Intent, action_button};
 use subspace_framework::lucide::IconName;
@@ -13,6 +13,7 @@ use subspace_framework::lucide::IconName;
 pub(super) enum Rows {
     Relations,
     PullRequests,
+    Decisions,
 }
 
 pub(super) fn label(loading: bool, failed: bool, remaining: Option<usize>) -> String {
@@ -29,7 +30,39 @@ pub(super) fn render(
     tokens: &Tokens,
     cx: &mut Context<Issues>,
 ) -> Div {
-    let (id, kind, loading, failed, request) = match rows {
+    let (id, kind, loading, failed, request) = control(rows, open);
+    let button = action_button(
+        id,
+        Intent::Neutral,
+        Some(if failed {
+            IconName::RotateCw
+        } else {
+            IconName::ChevronDown
+        }),
+        label(loading, failed, None),
+    )
+    .accessibility_label(format!("{} {kind}", label(loading, failed, None)))
+    .on_click(cx.listener(move |this, _, window, cx| {
+        if !matches!(rows, Rows::Decisions) {
+            this.focus_list(window, cx);
+        }
+        this.request(request.clone(), cx);
+    }));
+    let button = if loading {
+        ActionState::Busy.apply(button)
+    } else if matches!(rows, Rows::Decisions) && !failed {
+        button.disabled(!open.can_load_more_decisions())
+    } else {
+        button
+    };
+    h_flex()
+        .gap_2()
+        .children(failed.then(|| failure(rows, open, id, kind, tokens)))
+        .child(button)
+}
+
+fn control(rows: Rows, open: &IssueSnapshot) -> (&'static str, &'static str, bool, bool, Request) {
+    match rows {
         Rows::Relations => (
             "issue-more-relations",
             "relations",
@@ -44,32 +77,60 @@ pub(super) fn render(
             open.pull_requests_failed(),
             Request::MorePullRequests,
         ),
-    };
-    let button = action_button(
-        id,
-        Intent::Neutral,
-        Some(if failed {
-            IconName::RotateCw
-        } else {
-            IconName::ChevronDown
-        }),
-        label(loading, failed, None),
-    )
-    .accessibility_label(format!("{} {kind}", label(loading, failed, None)))
-    .on_click(cx.listener(move |this, _, window, cx| {
-        this.focus_list(window, cx);
-        this.request(request.clone(), cx);
-    }));
-    h_flex()
-        .gap_2()
-        .children(
-            failed.then(|| failure_notice(id, failure_label(kind, has_rows(rows, open)), tokens)),
+        Rows::Decisions => decision_control(open),
+    }
+}
+
+fn decision_control(open: &IssueSnapshot) -> (&'static str, &'static str, bool, bool, Request) {
+    let failed = open.decisions_failed().is_some();
+    let offline = *open.status() == IssueStatus::Error(ReadError::Network);
+    if failed && !offline {
+        (
+            "issue-decisions-retry",
+            "decisions",
+            false,
+            true,
+            Request::RetryDecisions,
         )
-        .child(if loading {
-            ActionState::Busy.apply(button)
-        } else {
-            button
-        })
+    } else {
+        (
+            "issue-decisions-more",
+            "decisions",
+            open.decisions_loading(),
+            false,
+            Request::MoreDecisions,
+        )
+    }
+}
+
+fn failure(rows: Rows, open: &IssueSnapshot, id: &str, kind: &str, tokens: &Tokens) -> Div {
+    if !matches!(rows, Rows::Decisions) {
+        return div().child(failure_notice(
+            id,
+            failure_label(kind, has_rows(rows, open)),
+            tokens,
+        ));
+    }
+    let message = if open.decisions_refresh_failed() {
+        "Couldn’t refresh decisions"
+    } else {
+        "Couldn’t load more decisions"
+    };
+    v_flex()
+        .min_w_0()
+        .child(failure_notice(
+            "issue-decisions-more",
+            message.into(),
+            tokens,
+        ))
+        .children(open.decisions_failed().and_then(|error| match error {
+            ReadError::SignInNeeded | ReadError::Network => Some(words::notice(
+                tokens,
+                "issue-decisions-more-hint",
+                words::failure(error, message),
+            )),
+            _ => None,
+        }))
 }
 
 fn has_rows(rows: Rows, open: &IssueSnapshot) -> bool {
@@ -79,10 +140,15 @@ fn has_rows(rows: Rows, open: &IssueSnapshot) -> bool {
             .and_then(|d| d.relations.as_ref())
             .is_some_and(|p| !p.items.is_empty()),
         Rows::PullRequests => open.pull_requests().is_some_and(|p| !p.items.is_empty()),
+        Rows::Decisions => open.decisions().is_some_and(|p| !p.items.is_empty()),
     }
 }
 
-fn failure_notice(id: &str, message: String, tokens: &Tokens) -> impl gpui_kit::IntoElement {
+fn failure_notice(
+    id: &str,
+    message: String,
+    tokens: &Tokens,
+) -> impl gpui_kit::IntoElement + use<> {
     div()
         .id(format!("{id}-error"))
         .aria_label(message.clone())

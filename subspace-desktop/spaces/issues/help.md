@@ -139,6 +139,13 @@ The timeline starts on **Comments**. Choose **All** to include other activity.
 **Show earlier comments** or **Show earlier activity** reveals earlier entries.
 Replies appear beneath their root comment. Deleted comments show a tombstone.
 
+Choose **Decisions** under **Activity** to read decisions linked to the issue.
+**Show more** loads another page. The newest logged decisions appear first,
+even when the dates shown are in a different order. This tab has no comment
+composer. Open a decision here or from a **Decision logged** entry in **All**.
+Both open the same side panel. Use the panel's Back arrow to return after
+following a supersede link.
+
 Choose **Back** or press Escape to return to where you opened the issue. Its
 label names the place, such as **Back to issues** or **Back to #discovery**.
 An issue opened from the list returns to the selected list row, with your
@@ -148,8 +155,9 @@ opened any other way, such as from search, the palette or a notification,
 returns to the issues list. Issues you open
 from the issue page, such as a parent or sub-issue, keep that first place, so
 Back leaves the issues rather than stepping through them. If the place is gone,
-for example a channel you left, Back shows the issues list. If an
-attachment is open beside the issue, Escape closes it first. Use `j`
+for example a channel you left, Back shows the issues list. Escape closes a
+text attachment viewer first, then the decision panel, then follows the issue's
+Back destination. Use `j`
 and `k` to move between issues. Right-click a list row to open it or copy
 its title or identifier. Supported Markdown media references show images or file chips.
 
@@ -264,7 +272,7 @@ large to show, and an empty file says so. If the file cannot be read, choose
 | --- | --- |
 | `j` / Down, `k` / Up | Move through list rows; `j` / `k` step between issues in detail. |
 | Enter | Open an issue, fold a group or read more rows. |
-| Escape | Close a menu or an open attachment, or return from detail to the list. |
+| Escape | Close a menu, then dismiss the text attachment viewer, then the decision panel, then follow the issue's Back destination. |
 | `1`–`4` | My issues, Active, Backlog, All issues. |
 | `5` | Activity. |
 | `m` | Focus the detail timeline. |
