@@ -18,9 +18,11 @@ use subspace_product::ValidatedProduct;
 pub(crate) use background::sync_backgrounds;
 pub use configuration::BoardConfiguration;
 pub use configured::ConfiguredBoards;
+#[cfg(test)]
+pub(crate) use configured::apply_board_selection;
 pub use configured::reload_configured_boards;
 pub(crate) use configured::retain_provider;
-pub(crate) use configured::{apply_board_selection, apply_running_config, desktop_sets};
+pub(crate) use configured::{apply_running_config, desktop_sets};
 
 /// Creates a board's view. Compiled-in boards use `DashboardHandle::new`;
 /// a configured board captures its own settings.

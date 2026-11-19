@@ -13,6 +13,11 @@ connections, credential priority, enabled Spaces, Space order, automatic
 refresh, terminal placement, themes and fonts. The
 [appearance guide](https://github.com/aiconsultancy/subspace/blob/main/subspace-framework/docs/appearance.md) covers additional appearance controls.
 
+To close a Space, right-click its tab and choose **Close Space**. It is the
+same as turning off the Space's **Enabled** switch in Settings and choosing
+**Save**. To reopen it, turn **Enabled** back on. The last open Space can't be
+closed.
+
 To use GitHub without the GitHub CLI or a token, open a GitHub Space's page,
 such as **Spaces > PRs**, and choose **Sign in with GitHub**. Sign-in and
 **Sign out** apply at once; see

@@ -29,6 +29,7 @@ use subspace_lucide::IconName;
 
 use super::keys::{chat_key, palette_key};
 use super::navigation::NavigationMode;
+use super::space_menu::with_space_menu;
 use super::{SubspaceApp, ToggleChat};
 
 /// Toolbar layout, in pixels.
@@ -62,6 +63,8 @@ struct TabData {
     icon: Option<&'static str>,
     badge: Option<SharedString>,
     active: bool,
+    /// Whether the tab's menu can close its Space: not the last one.
+    closable: bool,
 }
 
 impl SubspaceApp {
@@ -113,13 +116,15 @@ impl SubspaceApp {
         let active = data.active;
         let click_weak = weak.clone();
         let drag_weak = weak.clone();
+        let menu_weak = weak.clone();
         let inline = move |_: &mut Window, cx: &mut App| {
             let click_weak = click_weak.clone();
             let button =
                 Self::dashboard_tab_button(&data, tokens, cx).on_click(move |_, window, cx| {
                     _ = click_weak.update(cx, |app, cx| app.switch_to_tab(id, window, cx));
                 });
-            reorder::draggable_tab(button, &data, tokens, drag_weak.clone())
+            let tab = reorder::draggable_tab(button, &data, tokens, drag_weak.clone());
+            with_space_menu(tab, id, data.closable, menu_weak.clone())
         };
         let popup_weak = weak;
         let popup = PopupEntry::new(move || {
@@ -152,6 +157,7 @@ impl SubspaceApp {
     /// their remembered measured widths.
     fn sync_tab_units(&mut self, tokens: Tokens, cx: &mut Context<Self>) {
         let weak = cx.weak_entity();
+        let closable = self.can_close_space();
         let units: Vec<OverflowUnit> = self
             .dashboards
             .iter()
@@ -164,6 +170,7 @@ impl SubspaceApp {
                     icon: dashboard.icon,
                     badge: dashboard.badge(cx),
                     active: self.shows_current(index),
+                    closable,
                 };
                 Self::tab_unit(data, tokens, weak.clone())
             })

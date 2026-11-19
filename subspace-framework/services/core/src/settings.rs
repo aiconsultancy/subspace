@@ -170,6 +170,17 @@ impl SettingsFile {
         self.write_root(root)
     }
 
+    /// Persist the board choices (`boards`) without changing other settings,
+    /// as Save writes them: a missing id uses the product default.
+    pub fn save_board_choices(
+        &mut self,
+        boards: &BTreeMap<String, bool>,
+    ) -> Result<(), SettingsError> {
+        let mut root = self.root.clone();
+        merge::write_board_choices(&mut root, boards);
+        self.write_root(root)
+    }
+
     fn check_current(&self) -> Result<(), SettingsError> {
         if read_existing(&self.file)? != self.original {
             return Err(SettingsError::Stale);
@@ -403,6 +414,33 @@ mod tests {
             Value::Object(reopened.values().terminal.clone()),
             serde_json::json!({"fontFamily": "Menlo"})
         );
+    }
+
+    #[test]
+    fn board_choices_save_alone_and_match_a_full_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.json");
+        fs::write(&file, r#"{"boards": {"irc": true}, "autoRefresh": false}"#).unwrap();
+        let mut alone = SettingsFile::open(&file).unwrap();
+        let mut boards = alone.values().boards.clone();
+        boards.insert("github".into(), false);
+        alone.save_board_choices(&boards).unwrap();
+        assert_eq!(
+            json(&file),
+            serde_json::json!({"boards": {"github": false, "irc": true}, "autoRefresh": false})
+        );
+
+        let full = dir.path().join("full.json");
+        fs::write(&full, r#"{"boards": {"irc": true}, "autoRefresh": false}"#).unwrap();
+        let mut saved = SettingsFile::open(&full).unwrap();
+        let mut values = saved.values().clone();
+        values.boards.clone_from(&boards);
+        saved.save(&values).unwrap();
+        assert_eq!(json(&full)["boards"], json(&file)["boards"]);
+        assert_eq!(alone.values().boards, saved.values().boards);
+
+        alone.save_board_choices(&BTreeMap::new()).unwrap();
+        assert!(json(&file).get("boards").is_none());
     }
 
     fn source() -> &'static str {

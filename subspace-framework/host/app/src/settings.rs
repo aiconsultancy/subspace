@@ -4,6 +4,7 @@
 #[cfg(test)]
 mod background_update_tests;
 mod background_updates;
+pub(crate) mod board_choice;
 #[cfg(test)]
 pub(crate) mod board_editor_tests;
 mod board_editors;
@@ -687,19 +688,7 @@ impl Settings {
     /// Shows and hides the saved board choice without a restart. When the
     /// board set cannot be rebuilt, the choice applies after a restart.
     fn apply_board_choice(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(services) = cx.try_global::<subspace_dashboard::Services>() else {
-            self.services_saved = true;
-            return;
-        };
-        let config = (*services.config).clone();
-        if let Err(error) = crate::registry::apply_board_selection(config, window, cx) {
-            subspace_core::log::Logger::new("settings").record(
-                subspace_core::log::Level::Warn,
-                format!("Board choice applies after a restart: {error}"),
-                &[],
-            );
-            self.services_saved = true;
-        }
+        self.services_saved |= !board_choice::apply_saved_boards(window, cx);
     }
 
     fn runtime_settings_changed(&self, cx: &App) -> bool {
@@ -1063,12 +1052,17 @@ fn mirror_services(
         }
     }
     if !values.board_fields.is_empty() || values.boards != config.boards {
-        let saved = config::load(&file).0;
-        config.web_boards = saved.web_boards;
-        config.boards = saved.boards;
+        load_saved_boards(&mut config, &file);
     }
     config.board_settings.extend(saved_boards);
     services.config = Arc::new(config);
+}
+
+/// Reads the saved board choices and web Spaces into `config`.
+fn load_saved_boards(config: &mut config::Config, file: &std::path::Path) {
+    let saved = config::load(file).0;
+    config.web_boards = saved.web_boards;
+    config.boards = saved.boards;
 }
 
 /// What to report when the services saved but the appearance did not.
