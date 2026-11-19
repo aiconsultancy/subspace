@@ -11,13 +11,15 @@ use subspace_framework::dashboard::{
 };
 
 use super::issues::{self, IssueCall};
-use super::{Bridge, Effect, protocol, theme};
+use super::{Bridge, Effect, protocol, secrets, theme};
 use crate::{WebBoard, WebBoardConfig, manifest::Permission, page::Page};
 
 pub(crate) struct Incoming<'a> {
     pub source: &'a str,
     pub body: &'a str,
     pub epoch: u64,
+    /// The Space is shown and nothing covers it, such as Settings.
+    pub shown: bool,
 }
 
 pub(crate) fn receive(
@@ -31,6 +33,7 @@ pub(crate) fn receive(
         source,
         body,
         epoch,
+        shown,
     } = message;
     let Some(current) = page.url(cx) else { return };
     if !page.is_current(epoch) || !bridge.trusted(source, &current) {
@@ -43,17 +46,17 @@ pub(crate) fn receive(
     bridge.enter_document(epoch);
     let result = bridge
         .call(&request.operation, config, on, Instant::now())
-        .and_then(|(value, effect)| finish(bridge.board, config, value, effect, cx));
+        .and_then(|(value, effect)| finish(config, value, effect, shown, cx));
     let reply = protocol::reply(&request, result, &bridge.origin);
     page.respond(epoch, &reply, cx)
 }
 
 /// Completes an allowed call with what only the app can do.
 fn finish(
-    board: &'static str,
     config: &WebBoardConfig,
     value: Value,
     effect: Effect,
+    shown: bool,
     cx: &mut Context<WebBoard>,
 ) -> Result<Value, &'static str> {
     match effect {
@@ -65,7 +68,11 @@ fn finish(
             Ok(value)
         }
         Effect::Theme => Ok(theme::current(cx)),
-        Effect::Issues(call) => issue(board, call, cx),
+        Effect::Issues(call) => issue(issues::board_id(&config.id), call, cx),
+        // Only a page the user can see saves secrets: never one behind
+        // Settings, whose own Save would then find the file changed.
+        Effect::SaveSecret(_) if !shown => Err(secrets::NOT_SHOWN),
+        Effect::SaveSecret(write) => secrets::save(&config.id, &write, cx).map(|()| Value::Null),
     }
 }
 

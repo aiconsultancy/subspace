@@ -176,7 +176,7 @@ them, as there is no change event.
 Setting types are `text`, `url`, `number`, `boolean`, `select` and `secret`.
 `settings.get()` never returns secret values. An app that needs its own
 token asks for the `secrets` permission and reads it with `secrets.get()`
-([Read the app's secrets](web-spaces-reference.md#read-the-apps-secrets)).
+([Read and save the app's secrets](web-spaces-reference.md#read-and-save-the-apps-secrets)).
 The full method list and limits are in
 [Read settings and call Subspace](web-spaces-reference.md#read-settings-and-call-subspace).
 

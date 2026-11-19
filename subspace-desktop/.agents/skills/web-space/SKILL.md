@@ -59,9 +59,12 @@ message. The worked example is
   ([Follow the app's theme](../../../docs/web-spaces-reference.md#follow-the-apps-theme)).
 - [ ] Secrets: `settings.get()` never returns them. Only `secrets.get()`, with
   the `secrets` permission, returns the saved `secret` fields the manifest
-  declares. Send a secret only to its service; never into a URL, context,
-  notification or page storage
-  ([Read the app's secrets](../../../docs/web-spaces-reference.md#read-the-apps-secrets)).
+  declares and the page's own. `secrets.set(key, value)` saves one of the
+  page's own (at most 32, up to 4096 characters, `null` deletes) while the
+  Space is shown; use it for credentials the user adds in the page, such as
+  one token per account. Send a secret only to its service; never into a
+  URL, context, notification or page storage
+  ([Read and save the app's secrets](../../../docs/web-spaces-reference.md#read-and-save-the-apps-secrets)).
 - [ ] Issues: with `issues`, `issues.scope()`, `issues.resolve(ids)` (at most
   50 distinct) and `issues.open(id)` reach the Issues Space as Channels'
   issue tiles do. Re-resolve on `subspace:issues-changed`; `pending` answers

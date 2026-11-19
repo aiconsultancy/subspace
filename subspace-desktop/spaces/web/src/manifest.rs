@@ -9,6 +9,7 @@ use serde_json::{Map, Value};
 use subspace_framework::dashboard::settings::FieldSpec;
 
 mod fields;
+pub(crate) use fields::valid_key;
 
 pub(crate) const MANIFEST: &str = "subspace-board.json";
 const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
