@@ -1,0 +1,11 @@
+# The whole system on one machine: PostgreSQL, the API with development
+# sign-in, and Ergo IRC, all published on 127.0.0.1 only. Use the root
+# Makefile (`make stack-up`), which generates the local IRC credentials in
+# .stack/ before the first start and then seeds demo data.
+name: subspace
+
+include:
+  - path: subspace-api/compose.yaml
+  - path:
+      - subspace-irc/compose.yaml
+      - scripts/local-stack/irc.compose.yaml

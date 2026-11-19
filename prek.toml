@@ -1,13 +1,14 @@
 # Repository-wide hooks. prek runs in workspace mode: each project keeps its
-# own prek.toml (see subspace-desktop/subspace/prek.toml), and its hooks see
-# only that project's files.
+# own prek.toml (subspace-framework/prek.toml and subspace-desktop/prek.toml),
+# and its hooks see only that project's files and run in its folder.
 #
 # Install once with `prek install`; run by hand with `prek run --all-files`.
 
 default_install_hook_types = ["pre-commit", "pre-push"]
 
-# Vendored third-party files keep their upstream bytes.
-exclude = "(^|/)vendor/|^subspace-desktop/subspace/\\.agents/skills/"
+# Vendored third-party files and installed agent skills keep their upstream
+# bytes.
+exclude = "(^|/)vendor/|(^|/)\\.agents/skills/"
 
 [[repos]]
 repo = "builtin"
@@ -24,4 +25,12 @@ hooks = [
     { id = "check-yaml" },
     { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"] },
     { id = "end-of-file-fixer" },
+]
+
+# Release tooling at the root: Release Please's config, the lockfile sync and
+# the release workflows (`make release-check`).
+[[repos]]
+repo = "local"
+hooks = [
+    { id = "release-check", name = "release: make release-check", entry = "make release-check", language = "system", stages = ["pre-push"], files = "^(scripts/|\\.github/|release-please-config\\.json$|\\.release-please-manifest\\.json$|.*Cargo\\.(toml|lock)$)", pass_filenames = false },
 ]

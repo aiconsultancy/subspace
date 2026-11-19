@@ -1,0 +1,66 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/v17.6.0/schemas/config.json",
+  "release-type": "simple",
+  "separate-pull-requests": true,
+  "include-component-in-tag": true,
+  "include-v-in-tag": true,
+  "tag-separator": "-",
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "pull-request-header": "A release pull request from the release workflow. See docs/ways-of-working.md#releases in subspace-desktop.",
+  "packages": {
+    "subspace-framework": {
+      "component": "subspace-framework",
+      "pull-request-title-pattern": "chore(framework): release ${version}",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        },
+        {
+          "type": "generic",
+          "path": "Cargo.toml"
+        },
+        {
+          "type": "toml",
+          "path": "/subspace-desktop/Cargo.toml",
+          "jsonpath": "$.workspace.dependencies['subspace-framework'].version"
+        },
+        {
+          "type": "toml",
+          "path": "/subspace-desktop/terminal/panel/Cargo.toml",
+          "jsonpath": "$.dependencies['subspace-framework'].version"
+        },
+        {
+          "type": "toml",
+          "path": "/subspace-desktop/terminal/runtime/Cargo.toml",
+          "jsonpath": "$.dependencies['subspace-framework'].version"
+        }
+      ]
+    },
+    "subspace-desktop": {
+      "component": "subspace-desktop",
+      "pull-request-title-pattern": "chore(subspace): release ${version}",
+      "draft": true,
+      "force-tag-creation": true,
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "terminal/panel/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "terminal/runtime/Cargo.toml",
+          "jsonpath": "$.package.version"
+        }
+      ]
+    }
+  }
+}
