@@ -29,6 +29,9 @@ mod session;
 mod settings_dialog;
 mod shell;
 mod shortcuts;
+mod space_menu;
+#[cfg(test)]
+mod space_menu_tests;
 mod state;
 mod surface;
 mod terminal_dock;

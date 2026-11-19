@@ -122,6 +122,14 @@ fn write_choices(
     root.insert(key.into(), values.into());
 }
 
+/// Writes the board choices alone, as Save does.
+pub(super) fn write_board_choices(
+    root: &mut Map<String, Value>,
+    boards: &std::collections::BTreeMap<String, bool>,
+) {
+    write_choices(root, "boards", boards);
+}
+
 pub(super) fn write_board_order(root: &mut Map<String, Value>, order: &[String]) {
     root.insert(
         "boardOrder".into(),

@@ -8,6 +8,7 @@ mod sizing;
 mod interaction_tests;
 
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::ContextMenu;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -19,6 +20,7 @@ use subspace_dashboard::{Tokens, glass, prefs};
 use subspace_lucide::IconName;
 
 use super::SubspaceApp;
+use super::space_menu::with_space_menu;
 use super::toolbar::style::tab_badge;
 use sizing::{BUTTON, ICON};
 
@@ -185,15 +187,17 @@ impl SubspaceApp {
         collapsed: bool,
         tokens: &Tokens,
         cx: &mut Context<Self>,
-    ) -> Vec<Button> {
+    ) -> Vec<ContextMenu<Button>> {
         let family = cx.theme().font_family.clone();
+        let closable = self.can_close_space();
+        let app = cx.weak_entity();
         self.dashboards
             .iter()
             .enumerate()
             .map(|(index, dashboard)| {
                 let active = self.shows_current(index);
                 let color = glass::label_color(active, tokens);
-                rail_button(
+                let button = rail_button(
                     ("vertical-dashboard-tab", index),
                     active,
                     collapsed,
@@ -234,7 +238,8 @@ impl SubspaceApp {
                             row.child(tab_badge(badge, tokens, cx))
                         }),
                 )
-                .on_click(cx.listener(move |app, _, window, cx| app.switch_to(index, window, cx)))
+                .on_click(cx.listener(move |app, _, window, cx| app.switch_to(index, window, cx)));
+                with_space_menu(button, dashboard.id, closable, app.clone())
             })
             .collect()
     }
