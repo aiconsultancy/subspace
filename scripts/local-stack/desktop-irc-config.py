@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from tempfile import NamedTemporaryFile
 
@@ -58,14 +59,61 @@ def stack_config(password_file):
     return {"networks": networks, "captainNotifications": False}
 
 
-def matches_endpoint(saved, local):
-    host = saved.get("host")
-    return (
-        isinstance(saved.get("id"), str)
-        and isinstance(host, str)
-        and host.lower().rstrip(".") in LOCAL_HOSTS
-        and saved.get("port", 6697) == local["port"]
+def is_loopback(network):
+    host = network.get("host")
+    return isinstance(host, str) and host.lower().rstrip(".") in LOCAL_HOSTS
+
+
+def can_adopt(network):
+    if any(network.get(key) for key in ("password", "caCert", "clientCert", "clientKey")):
+        return False
+    sasl = network.get("sasl")
+    return sasl is None or (
+        isinstance(sasl, dict) and not sasl.get("external")
+        and (not sasl or sasl.get("username") == "developer")
     )
+
+
+def managed_id(network_id, local_id):
+    return network_id == local_id or re.fullmatch(rf"{local_id}-local(?:-[0-9]+)?", network_id) is not None
+
+
+def free_id(network_id, used):
+    if network_id not in used:
+        return network_id
+    candidate = f"{network_id}-local"
+    suffix = 2
+    while candidate in used:
+        candidate = f"{network_id}-local-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def find_network(networks, matched, local):
+    local_id = local["id"]
+    on_port, stale, protected = [], [], False
+    for index, network in enumerate(networks):
+        if index in matched or not isinstance(network, dict) or not isinstance(network.get("id"), str):
+            continue
+        network_id = network["id"]
+        managed = managed_id(network_id, local_id)
+        loopback = is_loopback(network)
+        endpoint = loopback and network.get("port", 6697) == local["port"]
+        if not (managed or endpoint):
+            continue
+        if not loopback or not can_adopt(network):
+            protected = True
+            continue
+        # Leave the other listener's managed entry available for its own pass.
+        if any(other != local_id and managed_id(network_id, other) for other in NETWORK_IDS):
+            continue
+        if managed and endpoint:
+            return index, protected
+        if endpoint:
+            on_port.append(index)
+        elif managed:
+            stale.append(index)
+    return next(iter(on_port or stale), None), protected
 
 
 def merge(config, local_config):
@@ -73,25 +121,20 @@ def merge(config, local_config):
         raise ValueError("expected a JSON object with a networks array")
 
     networks = config.setdefault("networks", [])
+    used = {entry["id"] for entry in networks if isinstance(entry, dict) and isinstance(entry.get("id"), str)}
     matched = set()
     for local in local_config["networks"]:
-        candidates = [
-            (index, entry) for index, entry in enumerate(networks)
-            if index not in matched and isinstance(entry, dict)
-        ]
-        match = next(((i, n) for i, n in candidates if n.get("id") == local["id"]), None)
-        if match is None or not matches_endpoint(match[1], local):
-            # A stale managed ID must not move onto a hand-added endpoint.
-            match = next((
-                (i, n) for i, n in candidates
-                if n.get("id") not in NETWORK_IDS and matches_endpoint(n, local)
-            ), match)
-        if match is None:
+        index, protected = find_network(networks, matched, local)
+        if index is None:
+            network_id = free_id(local["id"], used)
+            if protected:
+                print(f"local-stack: kept existing IRC connection and added {network_id}", file=sys.stderr)
+            used.add(network_id)
             matched.add(len(networks))
-            networks.append(local)
+            networks.append({**local, "id": network_id})
             continue
 
-        index, network = match
+        network = networks[index]
         matched.add(index)
         sasl = network.get("sasl")
         sasl = sasl if isinstance(sasl, dict) else {}
@@ -109,6 +152,15 @@ def encode(config):
     return json.dumps(config, indent=2, ensure_ascii=True, allow_nan=False) + "\n"
 
 
+def keep_latest_backup(path):
+    backups = sorted(
+        backup for backup in path.parent.iterdir()
+        if re.fullmatch(rf"{re.escape(path.name)}\.\d{{8}}T\d{{12}}Z\.bak", backup.name)
+    )
+    for backup in backups[:-1]:
+        backup.unlink()
+
+
 def install(path, local_config):
     if path.is_symlink():
         path = path.resolve()
@@ -123,10 +175,16 @@ def install(path, local_config):
         except (json.JSONDecodeError, UnicodeDecodeError):
             raise ValueError("could not read existing settings as JSON") from None
 
+    encoded = encode(config).encode()
+    if encoded == previous:
+        keep_latest_backup(path)
+        print(f"IRC config unchanged at {path}")
+        return
+
     os.umask(0o077)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete_on_close=False) as temp:
-        temp.write(encode(config))
+    with NamedTemporaryFile(dir=path.parent, delete_on_close=False) as temp:
+        temp.write(encoded)
         temp.close()
         if previous is not None:
             timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
@@ -134,6 +192,7 @@ def install(path, local_config):
             with backup.open("xb") as file:
                 file.write(previous)
         os.replace(temp.name, path)
+    keep_latest_backup(path)
     print(f"{'Created' if previous is None else 'Updated'} IRC config at {path}")
 
 
