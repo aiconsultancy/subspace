@@ -8,6 +8,7 @@ mod secrets;
 mod tests;
 
 use std::collections::VecDeque;
+use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -25,6 +26,7 @@ use crate::session::{self, Carry, Output, Session};
 const TICK: Duration = Duration::from_secs(10);
 const IDLE_LIMIT: Duration = Duration::from_secs(120);
 const PING_LIMIT: Duration = Duration::from_secs(60);
+const WRITE_LIMIT: Duration = Duration::from_secs(30);
 const READ_BUFFER_SIZE: usize = 4096;
 const MAX_RETRY_DELAY_SECS: u64 = 60;
 
@@ -355,9 +357,14 @@ impl Link {
         output.quit.then_some(End::Quit)
     }
 
-    async fn write_output(&mut self, bytes: &[u8]) -> std::io::Result<()> {
-        self.write.write_all(bytes).await?;
-        self.write.flush().await
+    async fn write_output(&mut self, bytes: &[u8]) -> io::Result<()> {
+        let write = async {
+            self.write.write_all(bytes).await?;
+            self.write.flush().await
+        };
+        time::timeout(WRITE_LIMIT, write)
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "The IRC write timed out"))?
     }
 
     fn lost(&self, error: impl ToString) -> End {
