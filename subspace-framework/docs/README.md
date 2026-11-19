@@ -8,8 +8,8 @@ from here or from a page it links.
 ## Using the Framework
 
 - [Developer overview](../README.md): what the Framework is, the facade crate
-  and its features, how an app depends on it and the Markdown patch every
-  consumer copies.
+  and its features, how an app depends on it, the required Markdown patch
+  and the optional GPUI Kit text patch.
 - [Glossary](glossary.md): Framework, App, Space, board, channel, update source
   and the cache terms.
 - [AGENTS.md](../AGENTS.md): the layer rules, component rules, conventions and
@@ -70,4 +70,6 @@ If you want to build a Space or know what the Framework offers one, read
 
 ## Change records
 
+- [Selectable text in find in page](changes/gpui-text-patch/README.md): native
+  range highlights, reveal and Markdown link context actions.
 - [Restart after an update](changes/restart-after-update/README.md): About and Settings restart routing and regression coverage.

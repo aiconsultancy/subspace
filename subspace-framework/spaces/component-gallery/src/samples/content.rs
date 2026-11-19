@@ -238,13 +238,11 @@ pub(super) fn find_in_page(
     let text = rich::rich_text(
         "gallery-find-text",
         Format::Markdown,
-        "Find a **needle** here, and a second NEEDLE below. Right-click a [link](https://example.com/component-gallery) or select part of this block.",
+        "Find a **needle** here. Right-click the [fixture link](https://example.com/component-gallery) for its text menu.",
     );
-    let content = gpui_kit::component::v_flex()
-        .gap_3()
-        .p_3()
-        .child(open)
-        .child(text);
+    let plain = rich::plain_text("gallery-find-literal", "Select this plain-text needle.");
+    let content = gpui_kit::component::v_flex().gap_3().p_3();
+    let content = content.child(open).child(plain).child(text);
     let content = subspace_dashboard::find_in_page::surface("gallery-find", content, window, cx);
     vec![sample(
         "Local find and text menu",

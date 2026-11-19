@@ -68,6 +68,8 @@ test-support = [
 ]
 # The debug-only screenshot capture build.
 capture = ["host", "subspace-shell/capture"]
+# For app workspaces that apply the vendored gpui-base patch.
+gpui-kit-text-patch = ["space", "subspace-dashboard/gpui-kit-text-patch"]
 
 [dependencies]
 subspace-product.workspace = true
@@ -111,10 +113,11 @@ workspace = true
 [workspace]
 # The facade crate at the root, the Framework's layers and its catalogue Space.
 members = ["services/*", "board-kit/*", "runtimes/*", "host/*", "clients/*", "spaces/*"]
-exclude = ["vendor/markdown"]
+exclude = ["vendor/gpui-base", "vendor/markdown"]
 resolver = "2"
 
 [patch.crates-io]
+gpui-base = { path = "vendor/gpui-base" }
 markdown = { path = "vendor/markdown" }
 
 # Kept only for its `links` metadata; see the comment on the dependency below.

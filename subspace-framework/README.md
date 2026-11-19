@@ -28,6 +28,20 @@ Status: early (0.1). The API will change between minor versions.
 | `component-gallery` | `component_gallery` | Apps that include the component catalogue Space |
 | `test-support` | `client_test_support`, plus each enabled crate's test helpers | Dev-dependencies only |
 | `capture` | the shell's screenshot capture build (implies `host`) | Debug capture builds |
+| `gpui-kit-text-patch` | Selectable find-in-page matches and Markdown link context actions (implies `space`) | App workspaces using the vendored `gpui-base` 0.9.1 patch |
+
+Enabling `gpui-kit-text-patch` with the crates.io copy of `gpui-base` fails
+to compile because it lacks the required text APIs. To enable the feature,
+copy this repository's [patched crate](vendor/gpui-base/SUBSPACE-PATCH.md)
+and add the override to your workspace root manifest:
+
+```toml
+[patch.crates-io]
+gpui-base = { path = "vendor/gpui-base" }
+```
+
+Leave the feature off in docs.rs builds. Reserve `--all-features` for
+workspaces with the override.
 
 `product` (the GPUI-free product descriptor types) is always present, so
 `default-features = false` gives a fast build for packaging helpers.
@@ -192,6 +206,13 @@ gpui-pre-platform = { opt-level = 3 }
 - **GPUI Kit.** Use `gpui-kit` 0.9.1, the version the Framework is built
   with; GPUI Kit pins its matching GPUI. Enable the tree-sitter grammar
   features your code views need.
+- **Optional text patch.** The default Framework build works with registry
+  GPUI Kit. An app can enable `gpui-kit-text-patch` and add the
+  [vendored `gpui-base` 0.9.1 patch](vendor/gpui-base/SUBSPACE-PATCH.md) to
+  its root `[patch.crates-io]` table. This keeps plain text selectable while
+  showing find-in-page matches, reveals the matching line, and adds **Copy
+  link** to the Markdown text menu. The patch also fixes stale selection
+  after a missed mouse release.
 - **Rust** 1.99 or newer (edition 2024).
 - **Build-time downloads.** With `host` or `agent`, `github-copilot-sdk`
   downloads the Copilot CLI it bundles; set `COPILOT_SKIP_CLI_DOWNLOAD=1` to
