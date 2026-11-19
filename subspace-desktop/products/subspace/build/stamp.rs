@@ -141,21 +141,44 @@ fn git_commit_hash(repository: &Path) -> Option<String> {
     git_output(repository, &["rev-parse", "--short", "HEAD"])
 }
 
+/// Git hooks export repository-local variables which override `current_dir`.
+/// Clear Git's `rev-parse --local-env-vars` set only on the child command, so
+/// source archives and other checkouts never inherit the hook's identity.
+fn git_command(repository: &Path) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(repository);
+    for variable in [
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+    ] {
+        command.env_remove(variable);
+    }
+    command
+}
+
 fn git_dirty(repository: &Path) -> bool {
-    Command::new("git")
+    git_command(repository)
         .args(["status", "--porcelain", "--untracked-files=no"])
-        .current_dir(repository)
         .output()
         .ok()
         .is_some_and(|output| output.status.success() && !output.stdout.is_empty())
 }
 
 fn git_output(repository: &Path, arguments: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .args(arguments)
-        .current_dir(repository)
-        .output()
-        .ok()?;
+    let output = git_command(repository).args(arguments).output().ok()?;
     let value = String::from_utf8(output.stdout).ok()?;
     output.status.success().then(|| value.trim().to_owned())
 }
@@ -330,11 +353,24 @@ mod tests {
                 "{expected}: {lines:?}"
             );
         }
-        let watched = format!(
-            "cargo:rerun-if-changed={}",
-            folder.path().join("spaces").display()
+        for source in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "spaces",
+            "clients",
+            "products",
+            "terminal",
+        ] {
+            let watched = format!(
+                "cargo:rerun-if-changed={}",
+                folder.path().join(source).display()
+            );
+            assert!(lines.contains(&watched), "{watched}: {lines:?}");
+        }
+        assert!(
+            !lines.iter().any(|line| line.ends_with("HEAD")),
+            "a source archive must not watch an inherited checkout's HEAD: {lines:?}"
         );
-        assert!(lines.contains(&watched));
     }
 
     #[test]
@@ -361,6 +397,12 @@ mod tests {
             .iter()
             .find_map(|line| line.strip_prefix("cargo:rustc-env=SUBSPACE_BUILD_COMMIT="))
             .unwrap();
+        if workspace.join(".git").exists() || workspace.join("../.git").exists() {
+            assert_ne!(
+                commit, "unknown",
+                "a real checkout must retain its identity"
+            );
+        }
         // A source archive without git stamps `unknown`, like a folder.
         if commit != "unknown" {
             assert!(commit.chars().all(|c| c.is_ascii_hexdigit()), "{commit}");

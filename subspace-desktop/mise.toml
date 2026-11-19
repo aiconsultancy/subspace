@@ -48,6 +48,11 @@ description = "Test the installable Weather web Space without network access"
 tools = { node = "26.5.0" }
 run = "node --test web-spaces/examples/weather/test/*.test.js"
 
+[tasks.component-gallery-space-test]
+description = "Build and test the React component-gallery web Space"
+tools = { node = "26.5.0" }
+run = "cd web-spaces/examples/component-gallery && npm ci && npx playwright install chromium --only-shell && npm run build && bash ../../../scripts/run-gallery-browser-tests.sh npm test"
+
 [tasks.package-web-space]
 description = "Validate a web Space folder and write a reproducible ZIP (FOLDER [OUT.zip])"
 run = "python3 scripts/package-web-space.py"
@@ -102,7 +107,7 @@ exit "$status"
 
 [tasks.check]
 description = "Architecture, format check, lint, Rust tests and script fixtures"
-depends = ["architecture", "board-docs", "docs-index", "fmt-check", "lint", "test", "script-test", "web-bridge-test", "weather-space-test"]
+depends = ["architecture", "board-docs", "docs-index", "fmt-check", "lint", "test", "script-test", "web-bridge-test", "weather-space-test", "component-gallery-space-test"]
 
 [tasks.board-docs]
 description = "Check every composed board guide, local links and embedded image sources"

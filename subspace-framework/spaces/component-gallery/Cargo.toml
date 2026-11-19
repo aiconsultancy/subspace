@@ -22,6 +22,8 @@ gpui-kit.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
+image.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

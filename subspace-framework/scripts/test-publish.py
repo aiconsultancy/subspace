@@ -9,6 +9,15 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
+
+GIT_LOCAL_ENV_VARS = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT", "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE", "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX",
+    "GIT_SHALLOW_FILE", "GIT_COMMON_DIR",
+)
 
 SCRIPT = Path(__file__).with_name("publish.sh")
 SPEC = importlib.util.spec_from_file_location("publish", Path(__file__).with_name("publish.py"))
@@ -67,19 +76,17 @@ class Registry(BaseHTTPRequestHandler):
 
 class PublishScriptTests(unittest.TestCase):
     def setUp(self) -> None:
+        # A real pre-push hook's Git context must not override fixture cwd.
+        self.git_env = {key: value for key, value in os.environ.items()
+                        if key not in GIT_LOCAL_ENV_VARS}
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         base = Path(temp.name)
         self.root, self.state, bin_dir = base / "framework", base / "state", base / "bin"
         for directory in (self.root, self.state, bin_dir):
             directory.mkdir()
-        # Hooks export repository-local variables. Remove them before creating
-        # the fixture, and use the same environment for Git and the script.
-        local = subprocess.check_output(
-            ["git", "rev-parse", "--local-env-vars"], text=True).splitlines()
-        self.env = {name: value for name, value in os.environ.items() if name not in local}
         # Fixture commits must never use the developer's signing configuration.
-        self.env.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+        self.git_env.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
         (bin_dir / "cargo").write_text(FAKE_CARGO)
         (bin_dir / "cargo").chmod(0o755)
         self.packages = [
@@ -97,16 +104,16 @@ class PublishScriptTests(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         url = f"http://127.0.0.1:{server.server_address[1]}"
-        self.env.update({"PATH": f"{bin_dir}:{os.environ['PATH']}",
+        self.env = {**self.git_env, "PATH": f"{bin_dir}:{self.git_env['PATH']}",
                     "FAKE_STATE": str(self.state), "SUBSPACE_PUBLISH_ROOT": str(self.root),
                     "SUBSPACE_PUBLISH_API": url, "SUBSPACE_PUBLISH_INDEX": url,
-                    "SUBSPACE_PUBLISH_TIME_SCALE": "0"})
+                    "SUBSPACE_PUBLISH_TIME_SCALE": "0"}
         for name in ("CARGO_REGISTRY_TOKEN", "GITHUB_ACTIONS", "GITHUB_REF_NAME"):
             self.env.pop(name, None)
 
     def git(self, *args: str, cwd: Path | None = None) -> str:
         return subprocess.run(["git", *args], cwd=cwd or self.root, check=True, text=True,
-                              capture_output=True, env=self.env).stdout.strip()
+                              env=self.git_env, capture_output=True).stdout.strip()
 
     def git_repository(self, remote: Path) -> None:
         self.git("init", "-q", "-b", "main")
@@ -224,6 +231,50 @@ class PublishScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("subspace-test 0.1.0: failed", result.stdout)
         self.assertIn("subspace-framework 0.1.0: not reached", result.stdout)
+
+
+class FixtureGitEnvironmentTests(unittest.TestCase):
+    def test_hook_context_does_not_change_parent_identity_or_fixture_repository(self) -> None:
+        # Even the RED run can modify only this scratch parent, never the checkout.
+        clean = {key: value for key, value in os.environ.items() if key not in GIT_LOCAL_ENV_VARS}
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "parent"
+            parent.mkdir()
+
+            def git(*args: str) -> str:
+                return subprocess.run(["git", *args], cwd=parent, env=clean, check=True,
+                                      capture_output=True, text=True).stdout.strip()
+
+            self.assertEqual(set(git("rev-parse", "--local-env-vars").splitlines()),
+                             set(GIT_LOCAL_ENV_VARS))
+            git("init", "-q", "-b", "parent-fixture")
+            git("config", "user.name", "Parent fixture")
+            git("config", "user.email", "parent@example.test")
+            (parent / "parent.txt").write_text("isolated parent\n")
+            git("add", ".")
+            git("commit", "-qm", "isolated parent")
+            config = parent / ".git/config"
+            before = config.read_bytes()
+            hook = {"GIT_DIR": str(parent / ".git"), "GIT_WORK_TREE": str(parent),
+                    "GIT_COMMON_DIR": str(parent / ".git"),
+                    "GIT_INDEX_FILE": str(parent / ".git/index"), "GIT_PREFIX": ""}
+            fixture = PublishScriptTests("test_a_dry_run_reports_refusals_and_uploads_nothing")
+            try:
+                with patch.dict(os.environ, hook):
+                    fixture.setUp()
+                    self.assertEqual(fixture.git("rev-parse", "--show-toplevel"),
+                                     str(fixture.root.resolve()))
+                    self.assertEqual(fixture.git("config", "user.name"), "Fixture")
+                    self.assertTrue(fixture.git("rev-parse", "HEAD"))
+                    self.assertTrue(set(fixture.env).isdisjoint(GIT_LOCAL_ENV_VARS))
+                    result = fixture.publish("--dry-run")
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("Dry run passed; nothing was uploaded.", result.stdout)
+                    self.assertEqual({key: os.environ[key] for key in hook}, hook)
+                self.assertEqual(config.read_bytes(), before)
+                self.assertEqual(git("config", "user.name"), "Parent fixture")
+            finally:
+                fixture.doCleanups()
 
 
 if __name__ == "__main__":

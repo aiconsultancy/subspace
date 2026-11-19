@@ -1,0 +1,81 @@
+{
+  "sourceRevision": "42b07e3377fd2a3ed892d7413bf15ca0199b8f24",
+  "platform": "linux",
+  "context": "GPUI TestPlatform / HeadlessAppContext",
+  "renderer": "current_headless_renderer / WgpuHeadlessRenderer",
+  "bodyFont": "Inter",
+  "monoFont": "JetBrainsMono Nerd Font",
+  "width": 800,
+  "height": 600,
+  "scaleFactor": 2,
+  "graphicsIcd": "/usr/share/vulkan/icd.d/lvp_icd.json",
+  "cards": [
+    {
+      "item": "action::action_button",
+      "theme": "Subspace One Dark",
+      "png": "one-dark-action-button.png",
+      "cardBounds": {
+        "x": 14.0,
+        "y": 14.0,
+        "width": 772.0,
+        "height": 192.0
+      }
+    },
+    {
+      "item": "fields::input",
+      "theme": "Subspace One Dark",
+      "png": "one-dark-input.png",
+      "cardBounds": {
+        "x": 14.0,
+        "y": 14.0,
+        "width": 772.0,
+        "height": 194.0
+      }
+    },
+    {
+      "item": "feedback::error_box",
+      "theme": "Subspace One Dark",
+      "png": "one-dark-error-box.png",
+      "cardBounds": {
+        "x": 14.0,
+        "y": 14.0,
+        "width": 772.0,
+        "height": 380.0
+      }
+    },
+    {
+      "item": "action::action_button",
+      "theme": "Cupertino Dark",
+      "png": "cupertino-dark-action-button.png",
+      "cardBounds": {
+        "x": 14.0,
+        "y": 14.0,
+        "width": 772.0,
+        "height": 191.0
+      }
+    },
+    {
+      "item": "fields::input",
+      "theme": "Cupertino Dark",
+      "png": "cupertino-dark-input.png",
+      "cardBounds": {
+        "x": 14.0,
+        "y": 14.0,
+        "width": 772.0,
+        "height": 193.0
+      }
+    },
+    {
+      "item": "feedback::error_box",
+      "theme": "Cupertino Dark",
+      "png": "cupertino-dark-error-box.png",
+      "cardBounds": {
+        "x": 14.0,
+        "y": 14.0,
+        "width": 772.0,
+        "height": 379.0
+      }
+    }
+  ],
+  "limits": "Fixture cards at rest only; no installed app, real configuration, native window chrome, pointer/keyboard workflow or cross-platform proof."
+}

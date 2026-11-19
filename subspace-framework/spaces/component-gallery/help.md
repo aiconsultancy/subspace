@@ -119,6 +119,10 @@ The tests check that each name is unique, that every card renders, that the
 catalogue and the gallery list the same names, and that each GPUI Kit card's
 used mark matches the source.
 
+The opt-in [Linux offscreen proof](tests/README.md) captures actual catalogue
+cards through GPUI's test platform and WGPU renderer. It uses isolated theme
+fixtures and does not launch an installed application.
+
 ## Keyboard shortcuts
 
 `/` opens the item search for the gallery. The shared app keys and the native

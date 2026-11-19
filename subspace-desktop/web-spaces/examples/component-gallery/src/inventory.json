@@ -1,0 +1,1802 @@
+[
+  {
+    "id": "buttons-icon-button-iconbutton",
+    "name": "icon_button::IconButton",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/icon_button.rs",
+    "states": "Current global size. Settings selects Small, Medium, Large or Extra large.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "buttons-icon-button-latched",
+    "name": "icon_button::latched",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/icon_button.rs",
+    "states": "Off; On, each labelled with current global icon size.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "action-button",
+    "name": "action::action_button",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/action.rs",
+    "states": "Accept; Reject; Caution; Primary; Neutral; Quiet; No icon; Disabled; Selected; Selected and toggled.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "buttons-action-actionstate",
+    "name": "action::ActionState",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/action.rs",
+    "states": "Idle/Save; Busy/Saving…; Success/Saved; Failure/Save failed.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "buttons-action-menu-button",
+    "name": "action::menu_button",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/action.rs",
+    "states": "Inactive; Active (non-default); Disabled.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "buttons-action-header-button",
+    "name": "action::header_button",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/action.rs",
+    "states": "Accept; Reject; Caution; Primary; Neutral; Quiet; Disabled.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "buttons-action-icon-button",
+    "name": "action::icon_button",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/action.rs",
+    "states": "Accept; Reject; Caution; Primary; Neutral; Quiet; Disabled.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "buttons-action-toolbar-button",
+    "name": "action::toolbar_button",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/action.rs",
+    "states": "Six intents × icon only/with label; Disabled; Loading.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "buttons-feedback-retry-action",
+    "name": "feedback::retry_action",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Default; Disabled",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "buttons-feedback-recovery-action",
+    "name": "feedback::recovery_action",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Caution; Disabled",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "buttons-feedback-configure-action",
+    "name": "feedback::configure_action",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Default; Disabled",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "buttons-panel-service-link",
+    "name": "panel::service_link",
+    "section": "buttons",
+    "sectionTitle": "Buttons",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/panel.rs",
+    "states": "Default",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "choices-segmented-control",
+    "name": "segmented::control",
+    "section": "choices",
+    "sectionTitle": "Choices",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/segmented.rs",
+    "states": "No choice yet; Selected; With icons",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "choices-tabs-tab-bar",
+    "name": "tabs::tab_bar",
+    "section": "choices",
+    "sectionTitle": "Choices",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/tabs.rs",
+    "states": "Icon, selected; Plain; Count; Busy; Count and busy; Disabled",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "choices-toggle-switch",
+    "name": "toggle::switch",
+    "section": "choices",
+    "sectionTitle": "Choices",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/toggle.rs",
+    "states": "Seven backgrounds × six states. Backgrounds: Window, Panel, Secondary panel, Sidebar, Popover, Selected row, Active list row. States: off, on, disabled off, disabled on, small off, small on. Fixed fixture callbacks.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "choices-toggle-toggle-row",
+    "name": "toggle::toggle_row",
+    "section": "choices",
+    "sectionTitle": "Choices",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/toggle.rs",
+    "states": "On; Off; Disabled; Long label wraps",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "choices-slider-control",
+    "name": "slider::control",
+    "section": "choices",
+    "sectionTitle": "Choices",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/slider.rs",
+    "states": "Value; Disabled",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "input",
+    "name": "fields::input",
+    "section": "inputs",
+    "sectionTitle": "Inputs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/fields.rs",
+    "states": "Search; Configuration; Compact; Disabled; Masked",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inputs-fields-labelled-input",
+    "name": "fields::labelled_input",
+    "section": "inputs",
+    "sectionTitle": "Inputs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/fields.rs",
+    "states": "Inline; Stacked; Error",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inputs-fields-code-editor",
+    "name": "fields::code_editor",
+    "section": "inputs",
+    "sectionTitle": "Inputs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/fields.rs",
+    "states": "Default",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inputs-fields-form-field",
+    "name": "fields::form_field",
+    "section": "inputs",
+    "sectionTitle": "Inputs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/fields.rs",
+    "states": "Label above its control",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inputs-fields-heading",
+    "name": "fields::heading",
+    "section": "inputs",
+    "sectionTitle": "Inputs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/fields.rs",
+    "states": "Settings page group",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inputs-fields-note",
+    "name": "fields::note",
+    "section": "inputs",
+    "sectionTitle": "Inputs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/fields.rs",
+    "states": "Muted help under a control",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inputs-fields-field-error",
+    "name": "fields::field_error",
+    "section": "inputs",
+    "sectionTitle": "Inputs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/fields.rs",
+    "states": "Validation under its control",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inputs-fields-path-input",
+    "name": "fields::path_input",
+    "section": "inputs",
+    "sectionTitle": "Inputs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/fields.rs",
+    "states": "Choose… opens the file picker; Disabled",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inputs-fields-textarea",
+    "name": "fields::textarea",
+    "section": "inputs",
+    "sectionTitle": "Inputs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/fields.rs",
+    "states": "Multiline value",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inputs-secret-secret-field",
+    "name": "secret::secret_field",
+    "section": "inputs",
+    "sectionTitle": "Inputs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/secret.rs",
+    "states": "Saved; click Clear; Not saved",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inputs-reveal-button",
+    "name": "reveal::button",
+    "section": "inputs",
+    "sectionTitle": "Inputs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/reveal.rs",
+    "states": "Platform label; disabled so the gallery opens no folder",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "menus-anchored-dropdown-menu",
+    "name": "anchored::dropdown_menu",
+    "section": "menus",
+    "sectionTitle": "Menus",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/anchored.rs",
+    "states": "Closed trigger; open popup with checked option, plain option, separator and disabled option.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "menus-anchored-select",
+    "name": "anchored::select",
+    "section": "menus",
+    "sectionTitle": "Menus",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/anchored.rs",
+    "states": "Value; Placeholder; Small; Disabled",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "menus-anchored-color-select",
+    "name": "anchored::color_select",
+    "section": "menus",
+    "sectionTitle": "Menus",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/anchored.rs",
+    "states": "Swatch and hex value; click for the palette, HSLA and hex",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "menus-menu-menuanchors",
+    "name": "menu::MenuAnchors",
+    "section": "menus",
+    "sectionTitle": "Menus",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/menu/anchors.rs",
+    "states": "Closed trigger; filterable popup with checked option, glyph option and plain option.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "menus-anchored-anchor",
+    "name": "anchored::Anchor",
+    "section": "menus",
+    "sectionTitle": "Menus",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/anchored.rs",
+    "states": "Retained popover body; Escape closes it",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "menus-row-menu-rowmenu",
+    "name": "row_menu::RowMenu",
+    "section": "menus",
+    "sectionTitle": "Menus",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/row_menu.rs",
+    "states": "A row's standard context menu",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "menus-repositories-repositorypicker",
+    "name": "repositories::RepositoryPicker",
+    "section": "menus",
+    "sectionTitle": "Menus",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/repositories.rs",
+    "states": "Fixture search; favourite stars; filter toggle. Five fixed example repositories.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "dialogs-dialog-frame",
+    "name": "dialog::frame",
+    "section": "dialogs",
+    "sectionTitle": "Dialogs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/dialog.rs",
+    "states": "D540 with footer",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "dialogs-dialog-footer",
+    "name": "dialog::footer",
+    "section": "dialogs",
+    "sectionTitle": "Dialogs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/dialog.rs",
+    "states": "Cancel → Save; Cancel → Delete; Keep editing → Discard.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "dialogs-dialog-backdrop",
+    "name": "dialog::backdrop",
+    "section": "dialogs",
+    "sectionTitle": "Dialogs",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/dialog.rs",
+    "states": "Bounded",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-copy-details-copydetails",
+    "name": "copy_details::CopyDetails",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/copy_details.rs",
+    "states": "Error, activate to copy and confirm; About, without an error",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-github-sign-in-status",
+    "name": "github_sign_in::status",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/github_sign_in/view.rs",
+    "states": "Ready sign-in button; busy sign-in button; Starting; Continue in the browser; Device code with Copy code/Open GitHub/Cancel; Failed. Fixture code OCTO-1234; starts no sign-in.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-feedback-skeleton",
+    "name": "feedback::skeleton",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Loading",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-feedback-loading-line",
+    "name": "feedback::loading_line",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Loading",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-feedback-empty-line",
+    "name": "feedback::empty_line",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Empty",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-feedback-empty",
+    "name": "feedback::empty",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Empty",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-feedback-configuration",
+    "name": "feedback::configuration",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Needs configuration",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "error-box",
+    "name": "feedback::error_box",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Error with Retry",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-feedback-error-box-with-settings",
+    "name": "feedback::error_box_with_settings",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Error with Retry and Configure",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-feedback-error-box-with-actions",
+    "name": "feedback::error_box_with_actions",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Error with actions",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-feedback-error-banner",
+    "name": "feedback::error_banner",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Error with Retry",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-feedback-error-banner-with-actions",
+    "name": "feedback::error_banner_with_actions",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/feedback.rs",
+    "states": "Error with actions",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "feedback-toast",
+    "name": "Toast",
+    "section": "feedback",
+    "sectionTitle": "Feedback",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/lib.rs",
+    "states": "Info; Error",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "content-badge-badge",
+    "name": "badge::badge",
+    "section": "content",
+    "sectionTitle": "Content",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/badge.rs",
+    "states": "Count; Accent; Key hint",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "content-links-external",
+    "name": "links::external",
+    "section": "content",
+    "sectionTitle": "Content",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/links.rs",
+    "states": "Default",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "content-links-external-marked",
+    "name": "links::external_marked",
+    "section": "content",
+    "sectionTitle": "Content",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/links.rs",
+    "states": "Marked",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "content-truncated-text",
+    "name": "truncated::text",
+    "section": "content",
+    "sectionTitle": "Content",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/truncated.rs",
+    "states": "Shortened; Wrapped",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "content-rich-plain-text",
+    "name": "rich::plain_text",
+    "section": "content",
+    "sectionTitle": "Content",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/rich.rs",
+    "states": "Selectable",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "content-rich-rich-text",
+    "name": "rich::rich_text",
+    "section": "content",
+    "sectionTitle": "Content",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/rich.rs",
+    "states": "Markdown; HTML",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "content-typography-group-heading",
+    "name": "typography::group_heading",
+    "section": "content",
+    "sectionTitle": "Content",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/typography.rs",
+    "states": "Default",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "content-toolbar-label-label",
+    "name": "toolbar_label::label",
+    "section": "content",
+    "sectionTitle": "Content",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/toolbar_label.rs",
+    "states": "One account",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "content-avatar-person",
+    "name": "avatar::person",
+    "section": "content",
+    "sectionTitle": "Content",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/avatar.rs",
+    "states": "Initials",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "content-avatar-group",
+    "name": "avatar::group",
+    "section": "content",
+    "sectionTitle": "Content",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/avatar.rs",
+    "states": "One person; Two people; Three people (limit 2)",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "messaging-chat-input-chatinput",
+    "name": "chat_input::ChatInput",
+    "section": "messaging",
+    "sectionTitle": "Messaging",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/chat_input.rs",
+    "states": "Agent: Markdown with Write and Preview; Message: plain text, Return sends",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "messaging-chat-input-completion-completionlist",
+    "name": "chat_input::completion::CompletionList",
+    "section": "messaging",
+    "sectionTitle": "Messaging",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/chat_input/completion.rs",
+    "states": "Command, people and a channel",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "messaging-composer-composer",
+    "name": "composer::Composer",
+    "section": "messaging",
+    "sectionTitle": "Messaging",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/composer.rs",
+    "states": "Write and Preview with a submit action",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "messaging-chat-bubble-bubble",
+    "name": "chat_bubble::bubble",
+    "section": "messaging",
+    "sectionTitle": "Messaging",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/chat_bubble.rs",
+    "states": "Transcript bubble",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "messaging-chat-bubble-message",
+    "name": "chat_bubble::message",
+    "section": "messaging",
+    "sectionTitle": "Messaging",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/chat_bubble.rs",
+    "states": "Sender, header and text",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "messaging-avatar-sender",
+    "name": "avatar::sender",
+    "section": "messaging",
+    "sectionTitle": "Messaging",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/avatar.rs",
+    "states": "Initials in a rounded square",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "messaging-avatar-member",
+    "name": "avatar::member",
+    "section": "messaging",
+    "sectionTitle": "Messaging",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/avatar.rs",
+    "states": "Extra small, control radius",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "navigation-glass-nav-button",
+    "name": "glass::nav_button",
+    "section": "navigation",
+    "sectionTitle": "Navigation and chrome",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/glass.rs",
+    "states": "Current destination and two others",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "navigation-glass-control",
+    "name": "glass::control",
+    "section": "navigation",
+    "sectionTitle": "Navigation and chrome",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/glass.rs",
+    "states": "Rest; Latched",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "navigation-overflow-toolbar-overflowtoolbar",
+    "name": "overflow_toolbar::OverflowToolbar",
+    "section": "navigation",
+    "sectionTitle": "Navigation and chrome",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/overflow_toolbar.rs",
+    "states": "Too narrow for five actions; open the chevron",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "navigation-surface-header-surfaceheader",
+    "name": "surface_header::SurfaceHeader",
+    "section": "navigation",
+    "sectionTitle": "Navigation and chrome",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/surface_header.rs",
+    "states": "Title, description, an action and Close",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "navigation-tokens-tokens",
+    "name": "tokens::Tokens",
+    "section": "navigation",
+    "sectionTitle": "Navigation and chrome",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/tokens.rs",
+    "states": "Surfaces and lines; Text and tones",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "lists-and-tables-list-render",
+    "name": "list::render",
+    "section": "lists-and-tables",
+    "sectionTitle": "Lists and tables",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/list/view.rs",
+    "states": "Two groups of fixture rows, one muted; Group notes: loading and empty",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "lists-and-tables-native-grid-nativegrid",
+    "name": "native_grid::NativeGrid",
+    "section": "lists-and-tables",
+    "sectionTitle": "Lists and tables",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/native_grid.rs",
+    "states": "3 × 3 fixture",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "lists-and-tables-chart-chart",
+    "name": "chart::Chart",
+    "section": "lists-and-tables",
+    "sectionTitle": "Lists and tables",
+    "library": "Subspace",
+    "source": "board-kit/dashboard/src/chart.rs",
+    "states": "Bar",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inconsistencies-github-mode-switch",
+    "name": "github::mode_switch",
+    "section": "inconsistencies",
+    "sectionTitle": "Inconsistencies (one-offs)",
+    "library": "Subspace",
+    "source": "subspace-desktop/spaces/github/src/detail.rs",
+    "states": "Shared segmented::control: Approve selected; Request changes; Comment. Not a copy of the one-off review mode buttons.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inconsistencies-board-lab-row-actions",
+    "name": "board-lab::row_actions",
+    "section": "inconsistencies",
+    "sectionTitle": "Inconsistencies (one-offs)",
+    "library": "Subspace",
+    "source": "subspace-desktop/spaces/board-lab/src/project_settings/view.rs",
+    "states": "Shared segmented::control: Keep selected; Replace; Clear. Not copied selected action buttons.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inconsistencies-github-check-run-link",
+    "name": "github::check_run_link",
+    "section": "inconsistencies",
+    "sectionTitle": "Inconsistencies (one-offs)",
+    "library": "Subspace",
+    "source": "subspace-desktop/spaces/github/src/detail/panel.rs",
+    "states": "Shared: links::external",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inconsistencies-inline-confirmations",
+    "name": "inline-confirmations",
+    "section": "inconsistencies",
+    "sectionTitle": "Inconsistencies (one-offs)",
+    "library": "Subspace",
+    "source": "subspace-desktop/spaces/web/src/manager/view.rs",
+    "states": "Shared: dialog::frame with dialog::footer",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "inconsistencies-inconsistencies-size-and-radius-strip",
+    "name": "inconsistencies::size_and_radius_strip",
+    "section": "inconsistencies",
+    "sectionTitle": "Inconsistencies (one-offs)",
+    "library": "Subspace",
+    "source": "spaces/component-gallery/src/samples/inconsistencies/strip.rs",
+    "states": "Measured replica boxes, not live one-offs: badge::badge height/radius/padding-x 16/7/5 px; github::mode_switch 20/4/8 px.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-window",
+    "name": "shell::window",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/app/src/app/shell.rs",
+    "states": "Built from links: gpui_kit::component::resizable::ResizablePanelGroup, gpui_kit::component::Root. No Open action.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-toolbar",
+    "name": "shell::toolbar",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/app/src/app/toolbar.rs",
+    "states": "Built from links: glass::nav_button, overflow_toolbar::OverflowToolbar, icon_button::IconButton, badge::badge. No Open action.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-navigation-rail",
+    "name": "shell::navigation_rail",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/app/src/app/navigation.rs",
+    "states": "Built from links: glass::nav_button, badge::badge. Open dispatches subspace_app::ToggleNavigationMode; disabled if action is unavailable.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-status-bar",
+    "name": "shell::status_bar",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/app/src/status_bar.rs",
+    "states": "Built from links: icon_button::IconButton, gpui_kit::component::spinner::Spinner, gpui_kit::component::status_bar::StatusBar. No Open action.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-command-palette",
+    "name": "shell::command_palette",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/app/src/app/palette_view.rs",
+    "states": "Built from links: gpui_kit::component::command::Command, badge::badge. Open dispatches subspace_app::TogglePalette; disabled if action is unavailable.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-help",
+    "name": "shell::help",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/app/src/app/help.rs",
+    "states": "Built from links: rich::rich_text, gpui_kit::component::collapsible::Collapsible, gpui_kit::component::dock::DockArea. Open dispatches subspace_app::ToggleHelp; disabled if action is unavailable.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-settings-dialog",
+    "name": "shell::settings_dialog",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/app/src/app/settings_dialog.rs",
+    "states": "Built from links: fields::form_field, fields::heading, fields::note, toggle::toggle_row, secret::secret_field, anchored::select, gpui_kit::component::tree::Tree, gpui_kit::component::dialog::AlertDialog. Open dispatches subspace_app::OpenSettings; disabled if action is unavailable.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-about-dialog",
+    "name": "shell::about_dialog",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/app/src/app/about_dialog.rs",
+    "states": "Built from links: copy_details::CopyDetails, links::external, gpui_kit::component::group_box::GroupBox, gpui_kit::component::progress::Progress, gpui_kit::component::dialog::Dialog. Open dispatches subspace_app::OpenAbout; disabled if action is unavailable.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-report-issue",
+    "name": "shell::report_issue",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/report-issue/src/lib.rs",
+    "states": "Built from links: toggle::toggle_row, gpui_kit::component::input::Textarea, action::action_button, gpui_kit::component::collapsible::Collapsible. Open dispatches subspace_app::OpenReportIssue; disabled if action is unavailable.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-theme-designer",
+    "name": "shell::theme_designer",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/app/src/jig/view.rs",
+    "states": "Built from links: gpui_kit::component::accordion::Accordion, segmented::control, toggle::toggle_row, gpui_kit::component::slider::Slider, tokens::Tokens. Open dispatches subspace_app::ToggleJig; disabled if action is unavailable.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-toasts",
+    "name": "shell::toasts",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/app/src/app/toasts.rs",
+    "states": "Built from links: Toast, action::icon_button, links::external. No Open action.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-chat-panel",
+    "name": "shell::chat_panel",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/chat/src/lib.rs",
+    "states": "Built from links: chat_input::ChatInput, chat_input::completion::CompletionList, chat_bubble::bubble, tabs::tab_bar, gpui_kit::component::attachment::Attachment. Open dispatches subspace_app::ToggleChat; disabled if action is unavailable.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-chat-canvas",
+    "name": "shell::chat_canvas",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/chat/src/agent_chat/canvas.rs",
+    "states": "Built from links: chart::Chart, action::action_button. No Open action.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-search-view",
+    "name": "shell::search_view",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "host/search-ui/src/search_view.rs",
+    "states": "Built from links: surface_header::SurfaceHeader, fields::input, icon_button::latched, toggle::switch. Open dispatches subspace_app::OpenSearchView; disabled if action is unavailable.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "shell-shell-log-view",
+    "name": "shell::log_view",
+    "section": "shell",
+    "sectionTitle": "Shell surfaces",
+    "library": "Shell",
+    "source": "board-kit/dashboard/src/log_view.rs",
+    "states": "Built from links: surface_header::SurfaceHeader, tabs::tab_bar, overflow_toolbar::OverflowToolbar, icon_button::latched. Open dispatches subspace_app::OpenLogView; disabled if action is unavailable.",
+    "usage": "Not a Kit card"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-accordion-accordion",
+    "name": "gpui_kit::component::accordion::Accordion",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/accordion.rs",
+    "states": "Interactive, one open at a time",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-alert-alert",
+    "name": "gpui_kit::component::alert::Alert",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/alert.rs",
+    "states": "Info with title; Success; Warning; Error with title; Banner.",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-attachment-attachment",
+    "name": "gpui_kit::component::attachment::Attachment",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/attachment.rs",
+    "states": "Complete; Uploading; Failed",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-avatar-avatar",
+    "name": "gpui_kit::component::avatar::Avatar",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/avatar/avatar.rs",
+    "states": "Initials; Placeholder; Small; Group with a limit",
+    "usage": "Used; prefer `avatar::person`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-badge-badge",
+    "name": "gpui_kit::component::badge::Badge",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/badge.rs",
+    "states": "Count; Over the maximum; Dot; Icon",
+    "usage": "Unused; prefer `badge::badge`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-breadcrumb-breadcrumb",
+    "name": "gpui_kit::component::breadcrumb::Breadcrumb",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/breadcrumb.rs",
+    "states": "Path with a disabled step",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-bubble-bubble",
+    "name": "gpui_kit::component::bubble::Bubble",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/bubble.rs",
+    "states": "Primary; Secondary",
+    "usage": "Used; prefer `chat_bubble::bubble`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-button-button",
+    "name": "gpui_kit::component::button::Button",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/button/button.rs",
+    "states": "Primary; Default; Outline; Ghost; Danger. Icon; loading; disabled; selected. Outline button group with Week selected.",
+    "usage": "Used; prefer `action::action_button`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-checkbox-checkbox",
+    "name": "gpui_kit::component::checkbox::Checkbox",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/checkbox.rs",
+    "states": "Interactive; Disabled",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-clipboard-clipboard",
+    "name": "gpui_kit::component::clipboard::Clipboard",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/clipboard.rs",
+    "states": "Copies a fixture value",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-collapsible-collapsible",
+    "name": "gpui_kit::component::collapsible::Collapsible",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/collapsible.rs",
+    "states": "Interactive; click Details",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-button-dropdownbutton",
+    "name": "gpui_kit::component::button::DropdownButton",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/button/dropdown_button.rs",
+    "states": "Main action and menu trigger",
+    "usage": "Unused; prefer `anchored::dropdown_menu`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-empty-empty",
+    "name": "gpui_kit::component::empty::Empty",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/empty.rs",
+    "states": "Media, title, description and action",
+    "usage": "Unused; prefer `feedback::empty`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-icon",
+    "name": "gpui_kit::component::Icon",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/icon.rs",
+    "states": "Extra-small; small; default; large. Semantic success/warning/error colours.",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-basic-gpui-kit-img",
+    "name": "gpui_kit::img",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "GPUI: the img element, re-exported by gpui_kit",
+    "states": "Embedded SVG",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-kbd-kbd",
+    "name": "gpui_kit::component::kbd::Kbd",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/kbd.rs",
+    "states": "Shortcuts; Outline",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-label-label",
+    "name": "gpui_kit::component::label::Label",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/label.rs",
+    "states": "Plain; With secondary text; Highlighted match; Masked",
+    "usage": "Unused; prefer `fields::form_field`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-link-link",
+    "name": "gpui_kit::component::link::Link",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/link.rs",
+    "states": "External; Disabled",
+    "usage": "Used; prefer `links::external`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-marker-marker",
+    "name": "gpui_kit::component::marker::Marker",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/marker.rs",
+    "states": "Plain; Separator; Border; Loading",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-message-message",
+    "name": "gpui_kit::component::message::Message",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/message.rs",
+    "states": "Received and sent",
+    "usage": "Used; prefer `chat_bubble::message`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-message-scroller-messagescroller",
+    "name": "gpui_kit::component::message_scroller::MessageScroller",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/message_scroller.rs",
+    "states": "Follows the end; scroll up for the jump button",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-pagination-pagination",
+    "name": "gpui_kit::component::pagination::Pagination",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/pagination.rs",
+    "states": "Interactive; Compact",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-progress-progress",
+    "name": "gpui_kit::component::progress::Progress",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/progress/progress.rs",
+    "states": "Bar, accent; Bar, red; Circle; Circle, loading",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-questionnaire-questionnaire",
+    "name": "gpui_kit::component::questionnaire::Questionnaire",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/questionnaire/mod.rs",
+    "states": "Two questions; choose and go next",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-radio-radio",
+    "name": "gpui_kit::component::radio::Radio",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/radio.rs",
+    "states": "Group; Disabled",
+    "usage": "Unused; prefer `segmented::control`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-rating-rating",
+    "name": "gpui_kit::component::rating::Rating",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/rating.rs",
+    "states": "Interactive; Disabled",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-separator-separator",
+    "name": "gpui_kit::component::separator::Separator",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/separator.rs",
+    "states": "Horizontal; Labelled; Dashed; Vertical",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-shimmer-shimmertext",
+    "name": "gpui_kit::component::shimmer::ShimmerText",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/shimmer.rs",
+    "states": "Streaming text",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-skeleton-skeleton",
+    "name": "gpui_kit::component::skeleton::Skeleton",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/skeleton.rs",
+    "states": "Row placeholder",
+    "usage": "Unused; prefer `feedback::skeleton`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-slider-slider",
+    "name": "gpui_kit::component::slider::Slider",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/slider.rs",
+    "states": "Horizontal; Disabled",
+    "usage": "Used; prefer `slider::control`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-spinner-spinner",
+    "name": "gpui_kit::component::spinner::Spinner",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/spinner.rs",
+    "states": "xsmall; small; medium",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-stepper-stepper",
+    "name": "gpui_kit::component::stepper::Stepper",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/stepper/stepper.rs",
+    "states": "Interactive; click a step",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-switch-switch",
+    "name": "gpui_kit::component::switch::Switch",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/switch.rs",
+    "states": "Interactive, through toggle::switch; Disabled",
+    "usage": "Used; prefer `toggle::switch`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-tag-tag",
+    "name": "gpui_kit::component::tag::Tag",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/tag.rs",
+    "states": "Default; Primary; Secondary; Success; Warning; Danger; Info. Outline; Small; rounded-full Pill.",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-text-textview",
+    "name": "gpui_kit::component::text::TextView",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/text/compat.rs",
+    "states": "Markdown; HTML",
+    "usage": "Used; prefer `rich::rich_text`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-button-toggle",
+    "name": "gpui_kit::component::button::Toggle",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/button/toggle.rs",
+    "states": "Interactive; Segmented group",
+    "usage": "Unused; prefer `icon_button::latched`"
+  },
+  {
+    "id": "kit-basic-gpui-kit-component-tooltip-tooltip",
+    "name": "gpui_kit::component::tooltip::Tooltip",
+    "section": "kit-basic",
+    "sectionTitle": "Basic components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/tooltip.rs",
+    "states": "Text; hover to show; Custom element; hover to show",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-input-input",
+    "name": "gpui_kit::component::input::Input",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/input/input.rs",
+    "states": "Placeholder, clean button; Prefix icon; Masked; Disabled",
+    "usage": "Used; prefer `fields::input`"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-input-textarea",
+    "name": "gpui_kit::component::input::Textarea",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/input/textarea.rs",
+    "states": "Fixed rows",
+    "usage": "Used; prefer `fields::textarea`"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-input-editor",
+    "name": "gpui_kit::component::input::Editor",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/input/editor.rs",
+    "states": "Rust, with line numbers",
+    "usage": "Used; prefer `fields::code_editor`"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-select-select",
+    "name": "gpui_kit::component::select::Select",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/select.rs",
+    "states": "Through anchored::select",
+    "usage": "Used; prefer `anchored::select`"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-combobox-combobox",
+    "name": "gpui_kit::component::combobox::Combobox",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/combobox.rs",
+    "states": "Searchable; Multiple",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-input-numberinput",
+    "name": "gpui_kit::component::input::NumberInput",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/input/number_input.rs",
+    "states": "Step buttons",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-date-picker-datepicker",
+    "name": "gpui_kit::component::date_picker::DatePicker",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/time/date_picker.rs",
+    "states": "Click to open the calendar",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-time-field-timefield",
+    "name": "gpui_kit::component::time_field::TimeField",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/time/time_field.rs",
+    "states": "Hours and minutes; type or use arrow keys",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-input-otpinput",
+    "name": "gpui_kit::component::input::OtpInput",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/input/otp_input.rs",
+    "states": "Six digits, masked",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-speech-speechbutton",
+    "name": "gpui_kit::component::speech::SpeechButton",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/speech/button.rs",
+    "states": "Unsupported in this build. Speech feature is not enabled; no microphone opens.",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-color-picker-colorpicker",
+    "name": "gpui_kit::component::color_picker::ColorPicker",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/color_picker.rs",
+    "states": "Click the swatch",
+    "usage": "Used; prefer `anchored::color_select`"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-form-v-form",
+    "name": "gpui_kit::component::form::v_form",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/form/form.rs",
+    "states": "Vertical; Horizontal",
+    "usage": "Unused; prefer `fields::form_field`"
+  },
+  {
+    "id": "kit-form-gpui-kit-component-input-inputgroup",
+    "name": "gpui_kit::component::input::InputGroup",
+    "section": "kit-form",
+    "sectionTitle": "Form components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/input/group.rs",
+    "states": "Text addons",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-description-list-descriptionlist",
+    "name": "gpui_kit::component::description_list::DescriptionList",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/description_list.rs",
+    "states": "Bordered, two columns",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-group-box-groupbox",
+    "name": "gpui_kit::component::group_box::GroupBox",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/group_box.rs",
+    "states": "Titled; Outline",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-root",
+    "name": "gpui_kit::component::Root",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/root.rs (re-exported from gpui-base)",
+    "states": "This window's Root shows the notification",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-theme",
+    "name": "gpui_kit::component::Theme",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/theme/mod.rs",
+    "states": "Swatches: background; foreground; primary; secondary; muted; accent; border; popover; sidebar; info; success; warning; danger; ring.",
+    "usage": "Used; prefer `tokens::Tokens`"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-dialog-dialog",
+    "name": "gpui_kit::component::dialog::Dialog",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/dialog/dialog.rs",
+    "states": "Opens a dialog with Cancel and OK",
+    "usage": "Used; prefer `dialog::frame`"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-dialog-alertdialog",
+    "name": "gpui_kit::component::dialog::AlertDialog",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/dialog/alert_dialog.rs",
+    "states": "Asks before a consequential action",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-notification-notification",
+    "name": "gpui_kit::component::notification::Notification",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/notification.rs",
+    "states": "Info; Success; Warning; Error, opened by separate buttons in the window Root.",
+    "usage": "Used; prefer `Toast`"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-popover-popover",
+    "name": "gpui_kit::component::popover::Popover",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/popover.rs",
+    "states": "Through anchored::Anchor; click to open",
+    "usage": "Unused; prefer `anchored::Anchor`"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-hover-card-hovercard",
+    "name": "gpui_kit::component::hover_card::HoverCard",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/hover_card.rs",
+    "states": "Hover the name",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-resizable-resizablepanelgroup",
+    "name": "gpui_kit::component::resizable::ResizablePanelGroup",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/resizable.rs (gpui-base)",
+    "states": "Two panes",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-scroll-scrollable",
+    "name": "gpui_kit::component::scroll::Scrollable",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/scroll/scrollable.rs",
+    "states": "Vertical scrollbar",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-sheet-sheet",
+    "name": "gpui_kit::component::sheet::Sheet",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/sheet.rs",
+    "states": "Slides in from the edge",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-sidebar-sidebar",
+    "name": "gpui_kit::component::sidebar::Sidebar",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/sidebar/mod.rs",
+    "states": "Click a destination",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-status-bar-statusbar",
+    "name": "gpui_kit::component::status_bar::StatusBar",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/status_bar.rs",
+    "states": "Leading and trailing regions",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-toolbar-toolbar",
+    "name": "gpui_kit::component::toolbar::Toolbar",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/toolbar.rs",
+    "states": "Grouped commands",
+    "usage": "Unused; prefer `overflow_toolbar::OverflowToolbar`"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-titlebar",
+    "name": "gpui_kit::component::TitleBar",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/title_bar.rs",
+    "states": "Shown only: dragging would move the window",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-layout-gpui-kit-component-focustrapelement",
+    "name": "gpui_kit::component::FocusTrapElement",
+    "section": "kit-layout",
+    "sectionTitle": "Layout components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/focus_trap.rs (gpui-base)",
+    "states": "Click a field, then Tab: focus stays inside",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-diff-diff",
+    "name": "gpui_kit::component::diff::Diff",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/diff/mod.rs",
+    "states": "One file, one hunk",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-calendar-calendar",
+    "name": "gpui_kit::component::calendar::Calendar",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/time/calendar.rs",
+    "states": "Click a day",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-carousel-carousel",
+    "name": "gpui_kit::component::carousel::Carousel",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/carousel/carousel.rs",
+    "states": "Previous and next",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-command-command",
+    "name": "gpui_kit::component::command::Command",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/command/command.rs",
+    "states": "Filter as you type",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-chart-barchart",
+    "name": "gpui_kit::component::chart::BarChart",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/chart/mod.rs",
+    "states": "BarChart; LineChart; AreaChart, two series; PieChart and donut; RadarChart; CandlestickChart; SankeyChart",
+    "usage": "Unused; prefer `chart::Chart`"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-plot-plot",
+    "name": "gpui_kit::component::plot::Plot",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/plot/mod.rs (gpui-base)",
+    "states": "A custom Plot that paints one line",
+    "usage": "Used; prefer `chart::Chart`"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-list-list",
+    "name": "gpui_kit::component::list::List",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/list/list.rs",
+    "states": "Searchable; click or use the arrow keys",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-menu-popupmenu",
+    "name": "gpui_kit::component::menu::PopupMenu",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/menu/popup_menu.rs",
+    "states": "Dropdown, through anchored::dropdown_menu; Context menu, through anchored",
+    "usage": "Used; prefer `anchored::dropdown_menu`"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-native-menu-nativemenu",
+    "name": "gpui_kit::component::native_menu::NativeMenu",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/native_menu/mod.rs",
+    "states": "The operating system's own menu",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-setting-settings",
+    "name": "gpui_kit::component::setting::Settings",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/setting/mod.rs",
+    "states": "One page, one group",
+    "usage": "Unused; prefer `fields::form_field`"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-table-datatable",
+    "name": "gpui_kit::component::table::DataTable",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/table/data_table.rs",
+    "states": "Click a header to sort",
+    "usage": "Unused; prefer `native_grid::NativeGrid`"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-table-table",
+    "name": "gpui_kit::component::table::Table",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/table/table.rs",
+    "states": "Header and three rows",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-dock-dockarea",
+    "name": "gpui_kit::component::dock::DockArea",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/dock/mod.rs",
+    "states": "Tabs and a split; drag a tab",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-grid-layout-gridlayoutstate",
+    "name": "gpui_kit::component::grid_layout::GridLayoutState",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/grid_layout/mod.rs (gpui-base)",
+    "states": "Drag or resize a tile",
+    "usage": "Unused"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-tab-tabbar",
+    "name": "gpui_kit::component::tab::TabBar",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/tab/tab_bar.rs",
+    "states": "Default; Underline; Pill; Outline; Segmented; Disabled tab",
+    "usage": "Used; prefer `tabs::tab_bar`"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-tree-tree",
+    "name": "gpui_kit::component::tree::Tree",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/tree.rs",
+    "states": "Click a folder to expand it",
+    "usage": "Used"
+  },
+  {
+    "id": "kit-advanced-gpui-kit-component-v-virtual-list",
+    "name": "gpui_kit::component::v_virtual_list",
+    "section": "kit-advanced",
+    "sectionTitle": "Advanced components",
+    "library": "Kit",
+    "source": "gpui-component 0.9.1: src/virtual_list.rs (gpui-base)",
+    "states": "A thousand rows; only visible ones render",
+    "usage": "Unused"
+  }
+]

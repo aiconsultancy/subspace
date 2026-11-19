@@ -1,0 +1,78 @@
+{
+  "renderer": "headless Chromium",
+  "cases": [
+    {
+      "id": "one-dark-action-button",
+      "theme": "one-dark",
+      "card": "action-button",
+      "viewport": {
+        "width": 800,
+        "height": 600
+      },
+      "scaleFactor": 2,
+      "browser": "159.0.8154.6"
+    },
+    {
+      "id": "one-dark-input",
+      "theme": "one-dark",
+      "card": "input",
+      "viewport": {
+        "width": 800,
+        "height": 600
+      },
+      "scaleFactor": 2,
+      "browser": "159.0.8154.6"
+    },
+    {
+      "id": "one-dark-error-box",
+      "theme": "one-dark",
+      "card": "error-box",
+      "viewport": {
+        "width": 800,
+        "height": 600
+      },
+      "scaleFactor": 2,
+      "browser": "159.0.8154.6"
+    },
+    {
+      "id": "cupertino-dark-action-button",
+      "theme": "cupertino-dark",
+      "card": "action-button",
+      "viewport": {
+        "width": 800,
+        "height": 600
+      },
+      "scaleFactor": 2,
+      "browser": "159.0.8154.6"
+    },
+    {
+      "id": "cupertino-dark-input",
+      "theme": "cupertino-dark",
+      "card": "input",
+      "viewport": {
+        "width": 800,
+        "height": 600
+      },
+      "scaleFactor": 2,
+      "browser": "159.0.8154.6"
+    },
+    {
+      "id": "cupertino-dark-error-box",
+      "theme": "cupertino-dark",
+      "card": "error-box",
+      "viewport": {
+        "width": 800,
+        "height": 600
+      },
+      "scaleFactor": 2,
+      "browser": "159.0.8154.6"
+    }
+  ],
+  "interactions": [
+    "theme/component selectors",
+    "editable/disabled inputs",
+    "mask toggle",
+    "clipboard refusal",
+    "card-change reset"
+  ]
+}
