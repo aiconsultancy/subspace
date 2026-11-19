@@ -99,9 +99,12 @@ impl Render for PlainState {
                 let state = state.clone();
                 let range = range.clone();
                 cx.defer(move |cx| {
-                    _ = state.update(cx, |state, _| {
+                    _ = state.update(cx, |state, cx| {
                         if state.reveal.as_ref() == Some(&range) {
                             state.reveal = None;
+                            // Let Kit forget this reveal before a later find
+                            // command explicitly requests the same range.
+                            cx.notify();
                         }
                     });
                 });

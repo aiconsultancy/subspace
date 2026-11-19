@@ -10,7 +10,7 @@ when the label is selected.
 
 Finding a match retains native selection and copy. Moving through the
 matches reveals the visual line containing the active one. A secondary
-press over a rendered link exposes its destination to the enclosing text
+click over a rendered link exposes its destination to the enclosing text
 menu and preserves the selection. The next primary press can clear a
 selection even if the previous release never reached the selection layer.
 
@@ -21,15 +21,18 @@ The Component gallery's `find_in_page::surface` sample includes a literal
 match and a Markdown link. The Framework feature is opt-in so normal
 registry builds can continue to use the published GPUI Kit.
 
-Related upstream changes are in open pull requests.
-
-- [Reveal a selectable text range](https://github.com/longbridge/gpui-kit/pull/4052).
-- [Share linked-image click handling](https://github.com/longbridge/gpui-kit/pull/4053).
-- [Clear the selection press latch after mouse-down dispatch](https://github.com/longbridge/gpui-kit/pull/4054) (draft).
+The backport follows the merged [selectable-text reveal](https://github.com/longbridge/gpui-kit/pull/4052)
+and [linked-image click handling](https://github.com/longbridge/gpui-kit/pull/4053).
+The text menu waits for the secondary `ClickEvent` from
+`TextView::on_link_click` before it shows its items. The local selection
+compatibility change delivers that event even if the link is selected.
+The [press latch fix](https://github.com/longbridge/gpui-kit/pull/4054) is open
+upstream and remains in the backport.
 
 ## Verification
 
-The dashboard tests exercise copying a selected link and selecting a
-plain-text match while find is open. The vendored crate covers range
-geometry, secondary presses on formatted links and linked images, and
-selection recovery after a missed release.
+The dashboard tests exercise copying a selected link across a redraw
+between press and release and selecting a plain-text match while find is
+open. The vendored crate covers reveal geometry and deduplication,
+auxiliary clicks on formatted links and linked images, and selection
+recovery after a missed release.

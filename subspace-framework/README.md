@@ -211,8 +211,9 @@ gpui-pre-platform = { opt-level = 3 }
   [vendored `gpui-base` 0.9.1 patch](vendor/gpui-base/SUBSPACE-PATCH.md) to
   its root `[patch.crates-io]` table. This keeps plain text selectable while
   showing find-in-page matches, reveals the matching line, and adds **Copy
-  link** to the Markdown text menu. The patch also fixes stale selection
-  after a missed mouse release.
+  link** to the Markdown text menu using `TextView::on_link_click` on
+  secondary clicks. The patch also fixes stale selection after a missed
+  mouse release.
 - **Rust** 1.99 or newer (edition 2024).
 - **Build-time downloads.** With `host` or `agent`, `github-copilot-sdk`
   downloads the Copilot CLI it bundles; set `COPILOT_SKIP_CLI_DOWNLOAD=1` to
