@@ -25,6 +25,8 @@ mod spelling;
 mod split;
 
 #[cfg(test)]
+mod cleanroom_acceptance;
+#[cfg(test)]
 mod tests;
 
 use std::collections::{BTreeMap, BTreeSet};

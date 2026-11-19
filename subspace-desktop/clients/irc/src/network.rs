@@ -1,5 +1,7 @@
 //! Owns one network's transport, reconnect policy and session delivery.
 
+#[cfg(test)]
+mod cleanroom_acceptance;
 mod offline;
 mod secrets;
 #[cfg(test)]
