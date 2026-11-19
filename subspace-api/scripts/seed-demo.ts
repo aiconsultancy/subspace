@@ -1,26 +1,22 @@
-// Seeds fictional demo data for the local stack through the public HTTP API:
-// two fleets on the local IRC server, an initiative and a project for each,
-// labels, issues and initiative stakeholders. It signs in with development
-// auth as the desktop's default identity, so that user owns the data and sees
-// it in the initiative picker. Running it again leaves existing records alone.
-//
-// bun scripts/seed-demo.ts
-//
-// SEED_API_URL defaults to http://127.0.0.1:3000. SEED_IRC_HOST,
-// SEED_IRC_PLAIN_PORT and SEED_IRC_TLS_PORT name the IRC endpoints that
-// desktops use, defaulting to 127.0.0.1, 6667 and 6697.
+// The root stack calls this once for the workspace and again, on demand, for
+// the fictional Fallow Reach rehearsal. Standalone API users can run seed:demo.
+import { client, type Client, type Identified, type SeedIssue, type Versioned } from "./demo/api";
+import { conversations } from "./demo/conversations";
+import { dateAt, decisions, evidence, initiatives, labels, people, projects } from "./demo/data";
+import { demoGitHub } from "./demo/github";
+import { seedHistory, type SeedHistory } from "./demo/history";
+import { chatScreenshot, image, issueFile } from "./demo/media";
+import { defaults } from "./demo/settings";
 
-export {};
-
-const api = (process.env.SEED_API_URL ?? "http://127.0.0.1:3000").replace(/\/+$/, "");
-const ircHost = process.env.SEED_IRC_HOST ?? "127.0.0.1";
-const plainPort = port("SEED_IRC_PLAIN_PORT", 6667);
-const tlsPort = port("SEED_IRC_TLS_PORT", 6697);
 const identity = {
-  email: process.env.SEED_EMAIL ?? "developer@example.com",
-  name: process.env.SEED_NAME ?? "Local Developer",
-  organisation: process.env.SEED_ORGANISATION ?? "local",
+  email: process.env.SEED_EMAIL ?? defaults.email,
+  name: process.env.SEED_NAME ?? defaults.name,
+  organisation: process.env.SEED_ORGANISATION ?? defaults.organisation,
 };
+const rootStack = process.env.SEED_ROOT_STACK === "1";
+const workspaceOnly = process.argv.includes("--workspace-only");
+const includeChat = process.argv.includes("--with-irc");
+const ircHost = process.env.SEED_IRC_HOST ?? "127.0.0.1";
 
 function port(name: string, fallback: number) {
   const value = Number(process.env[name] ?? fallback);
@@ -28,253 +24,474 @@ function port(name: string, fallback: number) {
   return value;
 }
 
-type Json = Record<string, any>;
-let token = "";
-
-async function call(method: string, path: string, body?: unknown, allow404 = false) {
-  const response = await fetch(`${api}/api/v1${path}`, {
-    method,
-    headers: {
-      Accept: "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  if (allow404 && response.status === 404) return null;
-  const text = await response.text();
-  if (!response.ok) throw new Error(`${method} ${path} returned ${response.status}: ${text}`);
-  return text ? (JSON.parse(text) as Json) : {};
-}
-
-async function all(path: string) {
-  const items: Json[] = [];
-  let cursor: string | undefined;
-  do {
-    const separator = path.includes("?") ? "&" : "?";
-    const page = (await call(
-      "GET",
-      `${path}${separator}limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
-    ))!;
-    items.push(...page.items);
-    cursor = page.nextCursor ?? undefined;
-  } while (cursor);
-  return items;
-}
-
 const fleets = [
   {
     slug: "aurora",
     name: "Aurora fleet",
     ircHost,
-    ircPort: plainPort,
+    ircPort: port("SEED_IRC_PLAIN_PORT", 6667),
     ircTls: false,
     rearAdmiralName: "Rear Admiral Vega",
     captainNames: ["Captain Lyra", "Captain Orion"],
+    agents: [
+      { handle: "aurora-admiral", name: "Rear Admiral Vega", rank: "rearAdmiral", ship: null },
+      { handle: "aurora-lyra", name: "Captain Lyra", rank: "captain", ship: "Lattice" },
+      { handle: "aurora-orion", name: "Captain Orion", rank: "captain", ship: "Plover" },
+    ],
   },
   {
     slug: "borealis",
     name: "Borealis fleet",
     ircHost,
-    ircPort: tlsPort,
+    ircPort: port("SEED_IRC_TLS_PORT", 6697),
     ircTls: true,
     rearAdmiralName: "Rear Admiral Polaris",
     captainNames: ["Captain Rigel"],
-  },
-];
-
-const initiatives = [
-  {
-    name: "Navigation console",
-    fleet: "aurora",
-    channels: "#aurora-nav #aurora-command",
-    description: "Course plotting, star charts and the navigation console's live telemetry.",
-    stakeholders: [
-      { name: "Product Owner", role: "Accepts navigation features", slackHandle: "@nav-product" },
-      { name: "Flight Operations", role: "Signs off releases", teamsHandle: "flight-ops" },
+    agents: [
+      { handle: "borealis-admiral", name: "Rear Admiral Polaris", rank: "rearAdmiral", ship: null },
+      { handle: "borealis-rigel", name: "Captain Rigel", rank: "captain", ship: "Lantern" },
     ],
-    project: { key: "NAV", name: "Navigation console" },
   },
-  {
-    name: "Warp diagnostics",
-    fleet: "borealis",
-    channels: "#borealis-warp #borealis-command",
-    description: "Diagnostics, alerting and reports for the warp core simulator.",
-    stakeholders: [
-      { name: "Engineering Lead", role: "Owns the diagnostics roadmap", slackHandle: "@warp-lead" },
-    ],
-    project: { key: "WARP", name: "Warp diagnostics" },
-  },
-];
+] as const;
 
-const labels = [
-  { name: "bug", color: "#e5484d" },
-  { name: "feature", color: "#5b5bd6" },
-  { name: "performance", color: "#f76b15" },
-  { name: "docs", color: "#30a46c" },
-];
-
-// state is a workflow state type; priority 1 is urgent and 4 is low.
-const issues: Record<string, Json[]> = {
-  NAV: [
-    {
-      title: "Render star chart tiles off the UI thread",
-      summary: "Panning the chart stalls while tiles decode; move decoding to a worker pool.",
-      state: "started",
-      priority: 2,
-      labels: ["performance"],
-      estimate: 3,
-    },
-    {
-      title: "Course correction preview ignores relay drift",
-      summary: "The preview path assumes a fixed relay position, so plotted burns land short.",
-      state: "unstarted",
-      priority: 1,
-      labels: ["bug"],
-      estimate: 2,
-    },
-    {
-      title: "Add waypoint search to the console",
-      summary: "Find waypoints by name or sector from the command palette.",
-      state: "backlog",
-      priority: 3,
-      labels: ["feature"],
-    },
-    {
-      title: "Document the telemetry frame format",
-      summary: "Describe each field of the telemetry frame for captains writing new parsers.",
-      state: "completed",
-      priority: 4,
-      labels: ["docs"],
-    },
-    {
-      title: "Retry telemetry uploads with backoff",
-      summary: "Dropped uplinks lose a frame; retry with jittered backoff before giving up.",
-      state: "triage",
-      priority: 2,
-      labels: ["bug"],
-    },
-  ],
-  WARP: [
-    {
-      title: "Alert when plasma temperature trends upwards",
-      summary: "Raise an alert when the five-minute trend exceeds the configured threshold.",
-      state: "started",
-      priority: 2,
-      labels: ["feature"],
-      estimate: 5,
-    },
-    {
-      title: "Diagnostics report times out on long runs",
-      summary: "Reports over six hours of samples exceed the request timeout.",
-      state: "unstarted",
-      priority: 1,
-      labels: ["bug", "performance"],
-    },
-    {
-      title: "Export simulator runs as CSV",
-      summary: "Let engineers download a run's samples for offline analysis.",
-      state: "backlog",
-      priority: 3,
-      labels: ["feature"],
-    },
-  ],
+type Actor = { userId: string; api: Client };
+type Fleet = Identified & { irc: { host: string; port: number; tls: boolean } };
+type Initiative = Identified & {
+  name: string;
+  fleetId: string | null;
+  stakeholders: { name: string }[];
 };
+type Project = Versioned & { initiativeId: string | null; estimateScale: string };
+type Comment = Identified & { body: string; actualAuthor: { userId: string } };
+type Todo = Versioned & { text: string; done: boolean };
 
-const { accessToken } = (await call("POST", "/auth/dev/token", identity))!;
-token = accessToken;
-const me = (await call("GET", "/me"))!;
-console.log(
-  `Signed in as ${me.displayName} (${identity.email}) in organisation ${identity.organisation}`,
-);
+const issueDate = (index: number, number: number) => dateAt(-24 + ((index * 2 + number) % 12), 9);
+const day = (offset: number) => dateAt(offset).slice(0, 10);
 
-const fleetIds = new Map<string, string>();
-for (const { slug, ...fields } of fleets) {
-  const existing = await call("GET", `/fleets/${slug}`, undefined, true);
-  const fleet = existing
-    ? await call("PATCH", `/fleets/${slug}`, fields)
-    : await call("POST", "/fleets", { slug, ...fields });
-  fleetIds.set(slug, fleet!.id);
-  console.log(
-    `Fleet ${slug}: IRC ${fields.ircTls ? "ircs" : "irc"}://${fields.ircHost}:${fields.ircPort}`,
-  );
+async function signIn(email: string, name: string): Promise<Actor> {
+  const { accessToken } = await client().write<{ accessToken: string }>("POST", "/auth/dev/token", {
+    ...identity,
+    email,
+    name,
+  });
+  const api = client(accessToken);
+  const { userId } = await api.get<{ userId: string }>("/me");
+  return { userId, api };
 }
 
-let labelRows = await all("/labels?includeArchived=true");
-for (const label of labels) {
-  if (!labelRows.some((row) => row.name === label.name)) {
-    labelRows.push((await call("POST", "/labels", label))!);
-  }
-}
-
-const existingInitiatives = await all("/initiatives");
-for (const spec of initiatives) {
-  let initiative = existingInitiatives.find((row) => row.name === spec.name);
-  if (!initiative) {
-    initiative = (await call("POST", "/initiatives", {
-      name: spec.name,
-      ownerId: me.userId,
-      description: spec.description,
-      status: "active",
-      channelConfiguration: { channels: spec.channels, memberUserIds: [me.userId] },
-    }))!;
-    for (const stakeholder of spec.stakeholders) {
-      await call("POST", `/initiatives/${initiative.id}/stakeholders`, stakeholder);
-    }
-  }
-  const fleetId = fleetIds.get(spec.fleet)!;
-  if (initiative.fleetId !== fleetId) {
-    await call("PUT", `/initiatives/${initiative.id}/fleet`, { fleetId });
-  }
-
-  let project = await call("GET", `/projects/${spec.project.key}`, undefined, true);
-  if (!project) {
-    project = (await call("POST", "/projects", {
-      key: spec.project.key,
-      name: spec.project.name,
-      leadId: me.userId,
-      status: "started",
-    }))!;
-  }
-  if (!project) throw new Error(`Project ${spec.project.key} could not be created`);
-  if (project.initiativeId !== initiative.id) {
-    project = (await call("PUT", `/projects/${spec.project.key}/initiative`, {
-      initiativeId: initiative.id,
-      version: project.version,
-    }))!;
-  }
-  if (project.estimateScale === "notUsed") {
-    project = (await call("PUT", `/projects/${spec.project.key}/estimate-scale`, {
-      scale: "fibonacci",
-      version: project.version,
-    }))!.project;
-  }
-
-  const projectId = project!.id as string;
-  const page = (await call(
-    "GET",
-    `/issues?project=${spec.project.key}&includeArchived=true&limit=1`,
-  ))!;
-  if (page.items.length === 0) {
-    const states = (await call("GET", `/projects/${spec.project.key}/workflow-states`))!
-      .items as Json[];
-    for (const issue of issues[spec.project.key] ?? []) {
-      const state = states.find((row) => row.type === issue.state) ?? states[0]!;
-      await call("POST", "/issues", {
-        projectId,
-        title: issue.title,
-        summary: issue.summary,
-        stateId: state.id,
-        priority: issue.priority,
-        estimate: issue.estimate ?? null,
-        assigneeId: issue.state === "backlog" ? null : me.userId,
-        labelIds: labelRows
-          .filter((row) => (issue.labels as string[]).includes(row.name))
-          .map((row) => row.id),
+async function seedFleets(admin: Client) {
+  const ids = new Map<string, string>();
+  for (const { slug, agents: _agents, ...fields } of fleets) {
+    let fleet = await admin.find<Fleet>(`/fleets/${slug}`);
+    if (!fleet) {
+      fleet = await admin.write<Fleet>("POST", "/fleets", { slug, ...fields });
+    } else if (
+      fleet.irc.host !== fields.ircHost ||
+      fleet.irc.port !== fields.ircPort ||
+      fleet.irc.tls !== fields.ircTls
+    ) {
+      fleet = await admin.write<Fleet>("PATCH", `/fleets/${slug}`, {
+        ircHost: fields.ircHost,
+        ircPort: fields.ircPort,
+        ircTls: fields.ircTls,
       });
     }
+    ids.set(slug, fleet.id);
   }
-  console.log(
-    `Initiative "${spec.name}" (${spec.channels}) on fleet ${spec.fleet}, project ${spec.project.key}`,
-  );
+  return ids;
 }
+
+async function seedActors(developer: Actor) {
+  const actors = new Map([["developer", developer]]);
+  const { api } = developer;
+  const existing = await api.all<{ serviceTokenClientId: string }>("/agents");
+  for (const person of people) {
+    actors.set(person.handle, await signIn(`${person.handle}@example.com`, person.name));
+  }
+  for (const fleet of fleets) {
+    for (const { handle, ...agent } of fleet.agents) {
+      const email = `${handle}@example.com`;
+      if (!existing.some((row) => row.serviceTokenClientId === email)) {
+        await api.write("POST", "/agents", {
+          ...agent,
+          fleet: fleet.name,
+          defaultModel: "rehearsal-model",
+          serviceTokenClientId: email,
+        });
+      }
+      actors.set(handle, await signIn(email, agent.name));
+    }
+  }
+  return actors;
+}
+
+async function seedInitiatives(
+  developer: Actor,
+  actors: Map<string, Actor>,
+  fleetIds: Map<string, string>,
+) {
+  const { api } = developer;
+  const existing = await api.all<Initiative>("/initiatives?includeArchived=true");
+  const result = [];
+  for (const spec of initiatives) {
+    let row = existing.find(({ name }) => name === spec.name);
+    if (!row) {
+      row = await api.write<Initiative>("POST", "/initiatives", {
+        name: spec.name,
+        description: spec.description,
+        ownerId: actors.get(spec.stakeholders[0]!)!.userId,
+        status: "active",
+        targetDate: day(14),
+        channelConfiguration: {
+          channels: spec.channels,
+          memberUserIds: [...actors.values()].map(({ userId }) => userId),
+        },
+      });
+    }
+    const fleetId = fleetIds.get(spec.fleet)!;
+    if (row.fleetId !== fleetId) {
+      await api.write("PUT", `/initiatives/${row.id}/fleet`, { fleetId });
+    }
+    for (const person of people.filter(({ handle }) => spec.stakeholders.includes(handle))) {
+      if (!row.stakeholders.some(({ name }) => name === person.name)) {
+        await api.write("POST", `/initiatives/${row.id}/stakeholders`, {
+          name: person.name,
+          role: person.role,
+          slackHandle: `@${person.handle}`,
+        });
+      }
+    }
+    result.push(row.id);
+  }
+  return result;
+}
+
+function description(spec: (typeof projects)[number], summary: string, number: number) {
+  const fixture = evidence[spec.key];
+  if (number !== 1) {
+    return `## Pilot scope\n\n${summary}\n\n[Rehearsal notes](https://example.com/fallow-reach/${spec.key.toLowerCase()})`;
+  }
+  return [
+    "## Fallow Reach rehearsal",
+    summary,
+    fixture.report,
+    "| Pass | Input | Evidence |\n| --- | --- | --- |\n| Baseline | Synthetic replay | Operator trace |\n| Pilot | Two repeat runs | Review screenshot |",
+    `\`\`\`sh\n${fixture.code}\n\`\`\``,
+    "### Acceptance\n\n- [x] Record the baseline\n- [ ] Repeat on the pilot configuration\n- [ ] Review the result with operations",
+    `[Rehearsal notes](https://example.com/fallow-reach/${spec.key.toLowerCase()})`,
+  ].join("\n\n");
+}
+
+async function seedProject(
+  admin: Client,
+  spec: (typeof projects)[number],
+  index: number,
+  initiativeId: string,
+  actors: Map<string, Actor>,
+  labelIds: Map<string, string>,
+  history: SeedHistory | null,
+) {
+  const path = `/projects/${spec.key}`;
+  const lead = actors.get(spec.lead)!;
+  const captain = actors.get(spec.captain)!;
+  let project = await admin.find<Project>(path);
+  if (!project) {
+    project = await admin.write<Project>("POST", "/projects", {
+      name: spec.name,
+      key: spec.key,
+      leadId: lead.userId,
+      description: spec.brief,
+      status: spec.status,
+      priority: index === 3 ? 1 : 2,
+      startDate: day(-24),
+      targetDate: day(12 + index * 3),
+    });
+  }
+  if (project.initiativeId !== initiativeId) {
+    project = await admin.write<Project>("PUT", `${path}/initiative`, {
+      initiativeId,
+      version: project.version,
+    });
+  }
+  if (project.estimateScale === "notUsed") {
+    ({ project } = await admin.write<{ project: Project }>("PUT", `${path}/estimate-scale`, {
+      scale: "fibonacci",
+      version: project.version,
+    }));
+  }
+  const states = await admin.all<Identified & { type: string }>(`${path}/workflow-states`);
+  const existing = await admin.all<SeedIssue>(`/issues?project=${spec.key}&includeArchived=true`);
+  const result: SeedIssue[] = [];
+  for (const [offset, [title, summary, state, label, priority, parent]] of spec.issues.entries()) {
+    const number = offset + 1;
+    let issue = existing.find((row) => row.title === title);
+    const text = description(spec, summary, number);
+    if (!issue) {
+      issue = await (offset % 2 === 0 ? captain.api : lead.api).write<SeedIssue>(
+        "POST",
+        "/issues",
+        {
+          projectId: project.id,
+          title,
+          summary,
+          description: text,
+          stateId: states.find((row) => row.type === (state === "duplicate" ? "triage" : state))!
+            .id,
+          assigneeId: state === "backlog" ? null : offset % 3 === 0 ? captain.userId : lead.userId,
+          ownerId: lead.userId,
+          priority,
+          estimate: [2, 3, 5, 8][offset % 4],
+          dueDate: day(state === "completed" ? -7 + (offset % 5) : 2 + (offset % 8)),
+          labelIds: [labelIds.get(label)!],
+          parentId: parent ? result[parent - 1]!.id : null,
+          ...(state === "duplicate" ? { relations: { duplicateOf: result[0]!.id } } : {}),
+        },
+      );
+      await history?.issue(issue.id, issueDate(index, number));
+    } else if (number <= 5 && issue.version === 1) {
+      // Enrich the old starter issues while preserving existing descriptions and edits.
+      const detail = await admin.get<SeedIssue & { description: string | null }>(
+        `/issues/${issue.id}`,
+      );
+      if (!detail.description) {
+        issue = await admin.write<SeedIssue>("PATCH", `/issues/${issue.id}`, {
+          version: detail.version,
+          description: text,
+        });
+      }
+    }
+    result.push(issue);
+  }
+  return { ...project, issues: result };
+}
+
+async function addComment(
+  author: Actor,
+  issue: SeedIssue,
+  body: string,
+  when: string,
+  history: SeedHistory | null,
+  parent?: string,
+) {
+  const path = `/issues/${issue.id}/comments`;
+  const prior = (await author.api.all<Comment>(parent ? `${path}/${parent}/replies` : path)).find(
+    (row) => row.body === body && row.actualAuthor.userId === author.userId,
+  );
+  if (prior) return prior.id;
+  const saved = await author.api.write<Comment>("POST", path, {
+    body,
+    ...(parent ? { parentCommentId: parent } : {}),
+  });
+  await history?.comment(issue.id, saved.id, when);
+  return saved.id;
+}
+
+async function seedTodos(author: Actor, issue: SeedIssue, texts: readonly string[]) {
+  const path = `/issues/${issue.id}/todos`;
+  const prior = await author.api.all<Todo>(path);
+  const missing = texts.filter((text) => !prior.some((row) => row.text === text));
+  if (!missing.length) return;
+  const { items } = await author.api.write<{ items: Todo[] }>("POST", path, {
+    items: missing.map((text) => ({ text })),
+  });
+  const first = items.find((item) => item.text === texts[0]);
+  if (first)
+    await author.api.write("PATCH", `${path}/${first.id}`, { version: first.version, done: true });
+}
+
+async function seedCollaboration(
+  spec: (typeof projects)[number],
+  index: number,
+  rows: SeedIssue[],
+  actors: Map<string, Actor>,
+  history: SeedHistory | null,
+) {
+  const fixture = evidence[spec.key];
+  const lead = actors.get(spec.lead)!;
+  const captain = actors.get(spec.captain)!;
+  const issue = rows[0]!;
+  const media = await issueFile(lead.api, issue.id, fixture.file, image(fixture.file), "images");
+  const thread = await addComment(
+    lead,
+    issue,
+    `${fixture.report}\n\n![${fixture.alt}](nett-media:${media.id})`,
+    dateAt(-12 + index, 10),
+    history,
+  );
+  await addComment(captain, issue, fixture.response, dateAt(-9 + index, 14), history, thread);
+  await addComment(
+    actors.get("developer")!,
+    issue,
+    fixture.next,
+    dateAt(-6 + index, 15),
+    history,
+    thread,
+  );
+  await seedTodos(captain, issue, fixture.todos);
+
+  const secondary = rows[1]!;
+  const followUp = [
+    [
+      "The drift only starts after the second burn. Use three waypoints and keep the relay's original coordinates in the trace.",
+      "Confirmed. I will add a case that recomputes the second leg without changing the first.",
+    ],
+    [
+      "The six-hour report stalls after 18,000 samples. Shorter reports stay responsive.",
+      "I can page by sample range. Let's keep the same CSV column order for comparisons.",
+    ],
+    [
+      "At regional zoom the eastern checkpoint label covers the corridor. The checkpoint should yield first.",
+      "I will keep the corridor pinned and use the narrow-window snapshot for the review.",
+    ],
+    [
+      "The new counters agree after the first handover. We still need the delayed acknowledgement case.",
+      "I can add the delayed case to the simulator run and compare sent and replayed counts.",
+    ],
+  ][index]!;
+  const followUpThread = await addComment(
+    lead,
+    secondary,
+    followUp[0]!,
+    dateAt(-8 + index, 10),
+    history,
+  );
+  await addComment(
+    captain,
+    secondary,
+    followUp[1]!,
+    dateAt(-5 + index, 15),
+    history,
+    followUpThread,
+  );
+  if (spec.key === "NAV" || spec.key === "RELAY") {
+    const log = spec.key === "NAV" ? "tile-replay.txt" : "relay-handover.txt";
+    const text =
+      spec.key === "NAV"
+        ? "09:41:01 replay=fallow-reach cache=cold\n09:41:02 decode_ms=87 pointer_ms=4\n09:41:04 decode_ms=41 cache=warm\n"
+        : "relay handover rehearsal\nframes sent: 240\nframes acknowledged: 240\nreplays filtered: 1\n";
+    const attachment = await issueFile(
+      captain.api,
+      issue.id,
+      log,
+      new Blob([text], { type: "text/plain" }),
+      "attachments",
+    );
+    await addComment(
+      captain,
+      issue,
+      `[Download the rehearsal trace](nett-media:${attachment.mediaId})`,
+      dateAt(-2, 11),
+      history,
+      thread,
+    );
+  }
+  return media.url;
+}
+
+async function seedDecisions(
+  admin: Client,
+  projectsByKey: Map<string, { id: string; issues: SeedIssue[]; media: string }>,
+) {
+  const unsupported = [404, 405, 501];
+  const notice = "Demo decisions skipped: this API does not expose decision writes and reads.";
+  const enabled = await admin.find("/decisions?limit=1", unsupported);
+  if (!enabled) {
+    console.error(notice);
+    return;
+  }
+
+  const known = new Map(
+    (await admin.all<SeedIssue>("/decisions")).map((row) => [row.title, row.id]),
+  );
+  for (const spec of decisions) {
+    if (known.has(spec.title)) continue;
+    const project = projectsByKey.get(spec.key)!;
+    const issueIds = spec.issues.map((number) => project.issues[number - 1]!.id);
+    const created = await admin.optionalWrite<Identified>(
+      "POST",
+      "/decisions",
+      {
+        projectId: project.id,
+        issueIds,
+        title: spec.title,
+        decision: spec.decision,
+        why: spec.why,
+        context: `Pilot evidence is attached to ${project.issues[0]!.identifier}.`,
+        evidenceKind: "documentOrUrl",
+        evidenceReference: project.media,
+        evidenceExcerpt: evidence[spec.key].alt,
+        implications: "Update the rehearsal checklist and use this result for the next review.",
+        status: spec.status,
+        decidedOn: day(spec.day),
+        tags: ["pilot", "fallow-reach"],
+        supersedesId: "supersedes" in spec ? known.get(spec.supersedes) : null,
+      },
+      unsupported,
+    );
+    if (!created) {
+      console.error(notice);
+      return;
+    }
+    known.set(spec.title, created.id);
+  }
+}
+
+async function main() {
+  const history = rootStack
+    ? await seedHistory(process.env.DATABASE_URL, identity.organisation)
+    : null;
+  try {
+    const developer = await signIn(identity.email, identity.name);
+    const { api } = developer;
+    const fleetIds = await seedFleets(api);
+    if (workspaceOnly) {
+      console.error("Local workspace ready (demo data disabled).");
+      return;
+    }
+
+    const actors = await seedActors(developer);
+    const initiativeIds = await seedInitiatives(developer, actors, fleetIds);
+    const labelIds = new Map(
+      (await api.all<Identified & { name: string }>("/labels?includeArchived=true")).map((row) => [
+        row.name,
+        row.id,
+      ]),
+    );
+    for (const label of labels) {
+      if (!labelIds.has(label.name)) {
+        const { id } = await api.write<Identified>("POST", "/labels", label);
+        labelIds.set(label.name, id);
+      }
+    }
+
+    const github = await demoGitHub(api, rootStack);
+    const projectsByKey = new Map<string, { id: string; issues: SeedIssue[]; media: string }>();
+    for (const [index, spec] of projects.entries()) {
+      const project = await seedProject(
+        api,
+        spec,
+        index,
+        initiativeIds[spec.initiative]!,
+        actors,
+        labelIds,
+        history,
+      );
+      const media = await seedCollaboration(spec, index, project.issues, actors, history);
+      await github?.(spec.key, project.issues, index, spec.captain);
+      projectsByKey.set(spec.key, { ...project, media });
+    }
+    await seedDecisions(api, projectsByKey);
+    if (includeChat) {
+      const screenshot = await chatScreenshot(developer.api, evidence.NAV.file);
+      const byKey = new Map([...projectsByKey].map(([key, row]) => [key, row.issues]));
+      console.log(JSON.stringify(conversations(byKey, screenshot)));
+    }
+    console.error(
+      `Fallow Reach demo ready: ${projects.length} projects, ${projects.reduce((sum, project) => sum + project.issues.length, 0)} issues.`,
+    );
+  } finally {
+    await history?.close();
+  }
+}
+
+await main();

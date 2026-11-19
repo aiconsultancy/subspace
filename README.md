@@ -131,11 +131,32 @@ Channels Space to sign in to both local IRC listeners as `developer`.
 | PostgreSQL | `127.0.0.1:5432` | `POSTGRES_PORT` |
 | IRC | `127.0.0.1:6667` (plain), `6697` (TLS, self-signed), `8097` (WebSocket) | `IRC_PLAIN_PORT`, `IRC_TLS_PORT`, `IRC_WS_PORT` |
 
-Everything binds to `127.0.0.1` only. The demo data is the organisation
-`local`, the user `developer@example.com`, two fleets on the local IRC server
-(`aurora` on the plain port and `borealis` on the TLS port), an initiative and
-project for each (Navigation console with `NAV` issues, and Warp diagnostics
-with `WARP` issues), and IRC accounts for the developer and the fleets' agents.
+Everything binds to `127.0.0.1` only. The `local` organisation has the
+`developer@example.com` account, the bootstrap Local workspace, and IRC
+accounts for the developer and fleet agents. The two demo fleets share Ergo:
+`aurora` uses the plain listener and `borealis` uses TLS.
+
+The default seed adds the fictional Fallow Reach rehearsal. Navigation console,
+Warp diagnostics and Relay reliability span four projects (`NAV`, `MAP`,
+`WARP` and `RELAY`) with 48 issues, decision records, threaded comments, todos,
+review screenshots and local simulated pull requests and deployments. The
+Channels Space has conversation history in six channels, including a screenshot
+in `#aurora-nav`. The same screenshot is kept on the issue for when the IRC
+upload expires. No agent processes or GitHub credentials are needed.
+
+To start with the developer account, fleet records, IRC accounts and just the
+bootstrap workspace, use either command on a fresh stack:
+
+```sh
+make stack-up DEMO=0
+SUBSPACE_STACK_DEMO_DATA=0 make stack-up
+```
+
+The switch controls seeding on that run and keeps existing data. Run
+`make stack-demo` to add missing fixtures to a running stack. Run
+`make stack-reset` followed by `make stack-up` to recreate the scenario with
+the same issue keys, content and rehearsal dates. The reset removes the local
+database, uploaded files, channel history and generated credentials.
 
 Check the API with a development token:
 
@@ -183,13 +204,20 @@ the other fleet switches connection.
 
 | Command | Effect |
 | --- | --- |
-| `make stack-up` | Start the stack, seed demo data and configure Channels |
+| `make stack-up` | Start the stack, seed demo data and configure Channels. Use `DEMO=0` for a clean workspace. |
 | `make stack-desktop-config` | Install the local IRC networks using the generated passwords |
-| `make stack-seed` | Seed again, keeping existing records |
+| `make stack-demo` | Add or top up the demo data and channel history. `make stack-seed` is an alias. |
 | `make stack-logs` | Follow the logs |
 | `make stack-down` | Stop the stack and keep its data |
 | `make stack-reset` | Remove the containers, data volumes and generated passwords |
 | `make dev-token` | Print a development bearer token |
+
+`make stack-check` checks the stack commands with fixtures. For a live check,
+use a fresh checkout with a distinct `COMPOSE_PROJECT_NAME` and spare ports
+for all five bindings. Set `SUBSPACE_STACK_DESKTOP_CONFIG=0` to skip the
+desktop config write, start that stack with `DEMO=0`, then run
+`make stack-check STACK_LIVE=1` with the same environment. It adds the demo
+and checks that a second seed preserves the API and IRC data.
 
 ## How we run it
 
