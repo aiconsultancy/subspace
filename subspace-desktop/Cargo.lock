@@ -10102,10 +10102,15 @@ dependencies = [
 name = "subspace-web-board"
 version = "0.9.0"
 dependencies = [
+ "block2 0.6.2",
  "gpui-kit",
  "gpui-webview",
  "hex",
  "lb-wry",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "objc2-web-kit",
  "percent-encoding",
  "serde",
  "serde_json",
