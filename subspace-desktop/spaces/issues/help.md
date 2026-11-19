@@ -140,11 +140,10 @@ The timeline starts on **Comments**. Choose **All** to include other activity.
 Replies appear beneath their root comment. Deleted comments show a tombstone.
 
 Choose **Decisions** under **Activity** to read decisions linked to the issue.
-**Show more** loads another page. The newest logged decisions appear first,
-even when the dates shown are in a different order. This tab has no comment
-composer. Open a decision here or from a **Decision logged** entry in **All**.
-Both open the same side panel. Use the panel's Back arrow to return after
-following a supersede link.
+**Show more** loads another page. The most recently decided appear first.
+This tab has no comment composer. Open a decision here or from a
+**Decision logged** entry in **All**. Both open the same side panel. Use
+the panel's Back arrow to return after following a supersede link.
 
 Choose **Back** or press Escape to return to where you opened the issue. Its
 label names the place, such as **Back to issues** or **Back to #discovery**.
