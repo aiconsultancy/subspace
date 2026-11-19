@@ -2760,7 +2760,6 @@ pub(crate) struct NodeContext {
     pub(crate) table_actions: Option<Arc<TableActionsFn>>,
     pub(crate) image_source: Option<Arc<super::text_view::ImageSourceFn>>,
     pub(crate) link_click_handler: Option<Arc<LinkClickHandlerFn>>,
-    pub(crate) link_context_menu_handler: Option<Arc<super::text_view::LinkContextMenuHandlerFn>>,
     pub(crate) task_toggle_handler: Option<Arc<TaskToggleHandlerFn>>,
     pub(crate) markdown_extensions: Arc<MarkdownExtensions>,
     /// This frame's streamed fade-in, when any text is still fading.
@@ -3048,6 +3047,7 @@ impl Paragraph {
                         .into_any_element(),
                     );
                 }
+                let link_click_handler = node_cx.link_click_handler.clone();
                 child_nodes.push(
                     img(node_cx.image_source(image))
                         .id(ix)
@@ -3055,12 +3055,7 @@ impl Paragraph {
                         .max_w(relative(1.))
                         .when_some(image.width, |this, width| this.w(width))
                         .when_some(image.link.clone(), |this, link| {
-                            linked_image(
-                                this,
-                                link.url,
-                                node_cx.link_click_handler.clone(),
-                                node_cx.link_context_menu_handler.clone(),
-                            )
+                            linked_image(this, link.url, link_click_handler.clone())
                         })
                         .into_any_element(),
                 );

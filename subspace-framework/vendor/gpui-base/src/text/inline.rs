@@ -1507,30 +1507,8 @@ impl Element for Inline {
         }
 
         if !self.links.is_empty() {
-            // Let the owner capture the actual link before an ancestor builds
-            // its right-down menu, including when this view has a selection.
-            let context_handler = GlobalState::global(cx)
-                .text_view_state()
-                .and_then(|state| state.read(cx).link_context_menu_handler.clone());
-            if let Some(handler) = context_handler {
-                let links = self.links.clone();
-                let text_layout = text_layout.clone();
-                let hitbox = hitbox.clone();
-                window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                    if phase.bubble()
-                        && event.button == MouseButton::Right
-                        && hitbox.is_hovered(window)
-                        && let Some(link) =
-                            Self::link_for_position(&text_layout, &links, event.position)
-                    {
-                        handler(&link.url, event, window, cx);
-                    }
-                });
-            }
-        }
-
-        if !is_selection {
-            // click to open link
+            // Auxiliary clicks for the text menu must reach the handler even
+            // when a link is part of the current selection.
             window.on_mouse_event({
                 let links = self.links.clone();
                 let text_layout = text_layout.clone();
@@ -1542,16 +1520,11 @@ impl Element for Inline {
                     if !phase.bubble() || !hitbox.is_hovered(window) {
                         return;
                     }
-                    if event.button == MouseButton::Right
-                        && text_view_state
-                            .as_ref()
-                            .is_some_and(|state| state.read(cx).link_context_menu_handler.is_some())
-                    {
-                        return;
-                    }
-                    if text_view_state
-                        .as_ref()
-                        .is_some_and(|state| state.read(cx).has_selection(cx))
+                    if event.button != gpui::MouseButton::Right
+                        && (is_selection
+                            || text_view_state
+                                .as_ref()
+                                .is_some_and(|state| state.read(cx).has_selection(cx)))
                     {
                         return;
                     }

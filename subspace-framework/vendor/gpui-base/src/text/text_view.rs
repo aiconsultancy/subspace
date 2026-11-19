@@ -111,9 +111,6 @@ pub(crate) type ImageSourceFn = dyn Fn(&gpui::SharedUri) -> gpui::ImageSource + 
 pub(crate) type LinkClickHandlerFn =
     dyn Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync;
 
-pub(crate) type LinkContextMenuHandlerFn =
-    dyn Fn(&SharedString, &gpui::MouseDownEvent, &mut Window, &mut App) + Send + Sync;
-
 pub(crate) type LinkTooltipFn =
     dyn Fn(&SharedString, &mut Window, &mut App) -> AnyView + Send + Sync;
 pub(crate) type TaskToggleHandlerFn = dyn Fn(&TaskToggleEvent, &mut Window, &mut App) + Send + Sync;
@@ -160,6 +157,28 @@ impl TaskToggleEvent {
 /// may hold a `ScrollHandle`.
 pub(crate) type RevealHandlerFn = dyn Fn(Bounds<Pixels>, &mut Window, &mut App);
 
+/// Make a linked image activate its link on primary and auxiliary clicks.
+pub(super) fn linked_image(
+    image: Stateful<Img>,
+    url: SharedString,
+    click_handler: Option<Arc<LinkClickHandlerFn>>,
+) -> Stateful<Img> {
+    let aux_url = url.clone();
+    let aux_handler = click_handler.clone();
+    image
+        .cursor_pointer()
+        .on_click(move |event, window, cx| {
+            TextSelection::end(window, cx);
+            cx.stop_propagation();
+            handle_link_click(&click_handler, url.clone(), event.clone(), window, cx);
+        })
+        .on_aux_click(move |event, window, cx| {
+            TextSelection::end(window, cx);
+            cx.stop_propagation();
+            handle_link_click(&aux_handler, aux_url.clone(), event.clone(), window, cx);
+        })
+}
+
 pub(crate) fn handle_link_click(
     handler: &Option<Arc<LinkClickHandlerFn>>,
     url: SharedString,
@@ -178,44 +197,6 @@ pub(crate) fn handle_link_click(
     } {
         cx.open_url(&url);
     }
-}
-
-pub(super) fn linked_image(
-    image: Stateful<Img>,
-    url: SharedString,
-    click_handler: Option<Arc<LinkClickHandlerFn>>,
-    context_handler: Option<Arc<LinkContextMenuHandlerFn>>,
-) -> Stateful<Img> {
-    let handles_secondary = context_handler.is_some();
-    let click_url = url.clone();
-    let primary_handler = click_handler.clone();
-    image
-        .cursor_pointer()
-        .when_some(context_handler, |image, handler| {
-            let url = url.clone();
-            image.on_mouse_down(MouseButton::Right, move |event, window, cx| {
-                handler(&url, event, window, cx);
-            })
-        })
-        .on_click(move |event, window, cx| {
-            TextSelection::end(window, cx);
-            cx.stop_propagation();
-            handle_link_click(
-                &primary_handler,
-                click_url.clone(),
-                event.clone(),
-                window,
-                cx,
-            );
-        })
-        .on_aux_click(move |event, window, cx| {
-            if handles_secondary && event.is_right_click() {
-                return;
-            }
-            TextSelection::end(window, cx);
-            cx.stop_propagation();
-            handle_link_click(&click_handler, url.clone(), event.clone(), window, cx);
-        })
 }
 
 /// A text view that can render Markdown or HTML.
@@ -253,7 +234,6 @@ pub struct TextView {
     code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
     table_actions: Option<Arc<TableActionsFn>>,
     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
-    link_context_menu_handler: Option<Arc<LinkContextMenuHandlerFn>>,
     link_tooltip: Option<Arc<LinkTooltipFn>>,
     task_toggle_handler: Option<Arc<TaskToggleHandlerFn>>,
     image_source: Option<Arc<ImageSourceFn>>,
@@ -306,7 +286,6 @@ impl TextView {
             code_block_highlighter: None,
             table_actions: None,
             link_click_handler: None,
-            link_context_menu_handler: None,
             link_tooltip: None,
             task_toggle_handler: None,
             image_source: None,
@@ -336,7 +315,6 @@ impl TextView {
             code_block_highlighter: None,
             table_actions: None,
             link_click_handler: None,
-            link_context_menu_handler: None,
             link_tooltip: None,
             task_toggle_handler: None,
             image_source: None,
@@ -366,7 +344,6 @@ impl TextView {
             code_block_highlighter: None,
             table_actions: None,
             link_click_handler: None,
-            link_context_menu_handler: None,
             link_tooltip: None,
             task_toggle_handler: None,
             image_source: None,
@@ -542,18 +519,6 @@ impl TextView {
         F: Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync + 'static,
     {
         self.link_click_handler = Some(Arc::new(handler));
-        self
-    }
-
-    /// Reports a secondary press on a link before a containing context menu
-    /// opens. The native hit-test preserves the selection and formatted label.
-    /// When configured, the corresponding secondary release does not activate
-    /// the link. The handler may let the event bubble to its menu host.
-    pub fn on_link_context_menu<F>(mut self, handler: F) -> Self
-    where
-        F: Fn(&SharedString, &gpui::MouseDownEvent, &mut Window, &mut App) + Send + Sync + 'static,
-    {
-        self.link_context_menu_handler = Some(Arc::new(handler));
         self
     }
 
@@ -891,7 +856,6 @@ impl Element for TextView {
             state.code_block_highlighter = code_block_highlighter;
             state.table_actions = self.table_actions.clone();
             state.link_click_handler = self.link_click_handler.clone();
-            state.link_context_menu_handler = self.link_context_menu_handler.clone();
             state.link_tooltip = self.link_tooltip.clone();
             state.task_toggle_handler = self.task_toggle_handler.clone();
             state.image_source = self.image_source.clone();
@@ -5224,5 +5188,5 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "link_context_tests.rs"]
-mod link_context_tests;
+#[path = "link_click_tests.rs"]
+mod link_click_tests;

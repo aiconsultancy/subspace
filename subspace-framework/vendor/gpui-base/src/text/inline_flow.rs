@@ -303,7 +303,6 @@ impl InlineFlow {
         _title: &str,
         size: Size<Pixels>,
         link_click_handler: Option<Arc<LinkClickHandlerFn>>,
-        cx: &App,
     ) -> AnyElement {
         img(source.clone())
             .id(ix)
@@ -312,10 +311,7 @@ impl InlineFlow {
             .w(size.width)
             .h(size.height)
             .when_some(link.clone(), |this, link| {
-                let context_handler = crate::GlobalState::global(cx)
-                    .text_view_state()
-                    .and_then(|state| state.read(cx).link_context_menu_handler.clone());
-                linked_image(this, link.url, link_click_handler, context_handler)
+                linked_image(this, link.url, link_click_handler)
             })
             .into_any_element()
     }
@@ -729,7 +725,6 @@ impl Element for InlineFlow {
                         title.as_str(),
                         fragment_size,
                         self.link_click_handler.clone(),
-                        cx,
                     );
                     element.prepaint_as_root(
                         bounds.origin + origin,
