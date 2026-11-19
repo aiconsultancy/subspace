@@ -108,7 +108,7 @@ seeded demo data.
 
 ## Run the whole system locally
 
-You need Docker with Compose v2, `openssl` and Python 3.12 for Channels
+You need Docker with Compose v2, `openssl` and Python 3.12 or newer for Channels
 configuration. The desktop app also needs the toolchain from
 [`subspace-desktop/mise.toml`](subspace-desktop/mise.toml)
 (`mise install` in that folder).
@@ -122,8 +122,10 @@ make stack-up
 This generates random IRC passwords in `.stack/` (an owner-only folder that Git
 ignores), then starts PostgreSQL, the API and Ergo from the root
 [`compose.yaml`](compose.yaml), with the API's development sign-in enabled.
-It then seeds fictional demo data through the API and configures the desktop's
-Channels Space to sign in to both local IRC listeners as `developer`.
+It configures the desktop's Channels Space to sign in to both local IRC
+listeners as `developer`. The default seed creates fictional demo records
+through the API and sets historical timestamps on new issues and comments
+in the local database. Use `DEMO=0` to skip the rehearsal.
 
 | Service | Address on this machine | Override |
 | --- | --- | --- |
@@ -155,7 +157,8 @@ SUBSPACE_STACK_DEMO_DATA=0 make stack-up
 The switch controls seeding on that run and keeps existing data. Run
 `make stack-demo` to add missing fixtures to a running stack. Run
 `make stack-reset` followed by `make stack-up` to recreate the scenario with
-the same issue keys, content and rehearsal dates. The reset removes the local
+the same issue keys and content. Rehearsal dates use fixed offsets from
+Monday at 00:00 UTC in the seed week. The reset removes the local
 database, uploaded files, channel history and generated credentials.
 
 Check the API with a development token:
@@ -176,16 +179,21 @@ make run
 [`subspace-desktop/mise.terminal.toml`](subspace-desktop/mise.terminal.toml)
 (`MISE_ENV=terminal mise install`). `make run FEATURES=` builds without it.
 
-Both IRC networks read the SASL password from `.stack/irc/developer.password`.
-The stack writes `irc/config.json` beside the desktop's main `config.json`,
-with mode `0600`. On macOS this is under
+By default, `make stack-up` writes `irc/config.json` beside the desktop's
+main `config.json`, with mode `0600`. This is shared app configuration,
+including for the installed release. Both IRC networks read the SASL
+password from the absolute `.stack/irc/developer.password` path in the
+worktree that ran the command. Keep that worktree available while using its
+IRC stack. On macOS the config is under
 `~/Library/Application Support/subspace/`, or under `~/.config/subspace/`
 if the main config file already exists there. On Linux the folder is
 `${XDG_CONFIG_HOME:-$HOME/.config}/subspace/`.
 
-When updating an existing file, the stack keeps a private timestamped backup.
-It matches each listener by network ID (`aurora` or `borealis`) or by
-loopback host and port. A hand-added connection on that endpoint takes
+The stack skips unchanged writes and keeps one private timestamped backup.
+It matches loopback entries by network ID or host and port. It can adopt
+entries without credentials or using the `developer` SASL password account.
+It keeps other credentials and custom certificates intact and adds a local
+entry under a free ID if needed. A hand-added connection it can adopt takes
 precedence over a managed ID on a different endpoint. For host matching,
 `localhost`, `irc.localhost`, `::1` and `127.0.0.1` are equivalent.
 Existing connections keep their IDs, names and other settings such as

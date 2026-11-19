@@ -148,9 +148,9 @@ NETT to ship their reads on dev, in whatever order NETT ships them.
 - [ ] **5. The rest of the list and issue view**
   - [x] The list's Assignee, Priority and Filters menus, the hidden sub-issues
     summary and the My issues count (section 3).
-    List fidelity with the approved design (`evidence/design/list-1440-dark.png`
-    and `compare-list-1440-light.png`), so the list is laid out as it is in
-    NETT's desktop app (jt). Slice 2b's captures show where it differs:
+    The list follows the approved desktop design. The original design images
+    were [removed for publication](../public-repository-examples/README.md).
+    Slice 2b's captures show where it differs:
     - [x] identifiers in the code font;
     - [x] each group's count straight after its name, as in NETT, not at the
       end of the line;

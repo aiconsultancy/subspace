@@ -44,8 +44,10 @@ again fills in missing fixtures.
 `SEED_IRC_HOST`, `SEED_IRC_PLAIN_PORT` and `SEED_IRC_TLS_PORT` set the fleets'
 IRC endpoints. From the repository root, `make stack-up` also adds IRC history and
 primes the local GitHub webhook with a generated key for simulated deployment
-and pull request events. The root seed dates its new issue and comment events
-to the rehearsal timeline. The four synthetic issue screenshots can be
+and pull request events. The rehearsal timeline uses fixed offsets from Monday
+at 00:00 UTC in the seed week. The root seed sets the creation timestamps
+of new issues and comments and their creation events directly in the local
+database. The four synthetic issue screenshots can be
 regenerated with `python3 scripts/demo/generate-art.py` using Python 3.12 and
 `rsvg-convert`.
 

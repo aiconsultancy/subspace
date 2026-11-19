@@ -11,9 +11,5 @@ from older issue revisions and from attachments that have been replaced
 or closed.
 
 Focused client and board tests exercise the response checks, reload during a
-read, and a late result arriving after a different attachment opens. Captures
-use the fictional NETT `text-attachments` scenario on macOS.
-
-| Before | Markdown | Plain text | Empty file |
-| --- | --- | --- | --- |
-| File chips | Rendered document | Selectable notes | Empty viewer |
+read, and a late result arriving after a different attachment opens.
+The macOS captures were [removed for publication](../public-repository-examples/README.md).

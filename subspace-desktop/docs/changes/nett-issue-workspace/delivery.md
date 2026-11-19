@@ -2044,9 +2044,10 @@ remain outside this delivery. No live NETT or WorkOS verification is included.
 
 ### Captures and remaining design differences
 
-These five unedited Xvfb frames were inspected against
-`evidence/design/list-1440-dark.png`, `compare-list-1440-light.png` and the
-slice 2 review captures. The app uses Cupertino Dark, an isolated HOME, the
+These five unedited Xvfb frames were inspected against the approved designs
+and the slice 2 review captures. The original list design images were
+[removed for publication](../public-repository-examples/README.md).
+The app uses Cupertino Dark, an isolated HOME, the
 DejaVu Sans/Mono fonts and the local fixture server's `--rows design` mode.
 Both API origins use numeric loopback; other boards and chat are disabled,
 update checks are off, and proxy settings refuse other destinations. The
