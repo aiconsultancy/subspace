@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use chrono::{DateTime, TimeDelta, Utc};
 
 use super::{Output, Session, metadata, numerics};
 use crate::model::{Event, LineKind, Sasl};
@@ -32,6 +33,7 @@ const WANTED: &[&str] = &[
     "userhost-in-names",
 ];
 const CHUNK_SIZE: usize = 400;
+const SASL_LIMIT: TimeDelta = TimeDelta::seconds(30);
 
 #[derive(Debug, Default)]
 pub struct Caps {
@@ -47,8 +49,9 @@ pub struct Caps {
 enum Authentication {
     #[default]
     Idle,
-    InProgress,
+    InProgress(DateTime<Utc>),
     Finished,
+    TimedOut,
 }
 
 impl Caps {
@@ -152,11 +155,25 @@ fn progress(session: &mut Session, out: &mut Output) {
         && let Some(credentials) = &session.config.sasl
     {
         out.send(Message::new("AUTHENTICATE", [mechanism(credentials)]));
-        caps.sasl = Authentication::InProgress;
+        caps.sasl = Authentication::InProgress(session.now);
     }
-    if caps.list_complete && caps.awaiting == 0 && caps.sasl != Authentication::InProgress {
+    if caps.list_complete
+        && caps.awaiting == 0
+        && !matches!(caps.sasl, Authentication::InProgress(_))
+    {
         out.send(Message::new("CAP", ["END"]));
         close(session, out);
+    }
+}
+
+pub(super) fn expire_sasl(session: &mut Session, out: &mut Output) {
+    if session.caps.open
+        && let Authentication::InProgress(started) = session.caps.sasl
+        && session.now - started >= SASL_LIMIT
+    {
+        session.caps.sasl = Authentication::TimedOut;
+        out.send(Message::new("AUTHENTICATE", ["*"]));
+        progress(session, out);
     }
 }
 
@@ -183,6 +200,9 @@ fn mechanism(credentials: &Sasl) -> &'static str {
 }
 
 pub(super) fn authenticate(session: &mut Session, message: &Message, out: &mut Output) {
+    if session.caps.sasl == Authentication::TimedOut {
+        return;
+    }
     let Some(credentials) = session
         .config
         .sasl
@@ -217,6 +237,8 @@ pub(super) fn sasl_failed(session: &mut Session, message: &Message, out: &mut Ou
 
 fn sasl_result(session: &mut Session, message: &Message, kind: LineKind, out: &mut Output) {
     numerics::server_line(session, message, kind, out);
-    session.caps.sasl = Authentication::Finished;
+    if session.caps.sasl != Authentication::TimedOut {
+        session.caps.sasl = Authentication::Finished;
+    }
     progress(session, out);
 }
