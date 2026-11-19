@@ -22,6 +22,13 @@ pub struct DecisionQuery {
 }
 
 impl DecisionQuery {
+    pub fn for_issue(identifier: impl Into<String>) -> Self {
+        Self {
+            issue: Some(identifier.into()),
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn parameters(&self, page: &PageRequest) -> Result<Vec<(String, String)>, Error> {
         let mut query = Vec::new();
         for (key, value) in [
@@ -30,7 +37,9 @@ impl DecisionQuery {
             ("tag", &self.tag),
             ("q", &self.q),
         ] {
-            query.extend(value.iter().map(|value| (key.into(), value.clone())));
+            if let Some(value) = value.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                query.push((key.into(), value.into()));
+            }
         }
         for status in &self.status {
             query.push(("status".into(), decision_status(*status)?.into()));

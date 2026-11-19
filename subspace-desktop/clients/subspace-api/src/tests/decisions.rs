@@ -12,7 +12,9 @@ use chrono::NaiveDate;
 use serde_json::{Value, json};
 use subspace_framework::client_test_support::Mock;
 
-fn row() -> Value {
+mod hub;
+
+pub(crate) fn row() -> Value {
     json!({
         "id":"00000000-0000-0000-0000-000000000001", "title":"Use the decision client",
         "status":"accepted", "decidedOn":"2026-11-17",
@@ -21,7 +23,7 @@ fn row() -> Value {
         "supersedesId":"00000000-0000-0000-0000-000000000003", "supersededById":null,
         "supersedes":{"id":"00000000-0000-0000-0000-000000000003","title":"Prior choice","status":"superseded"},
         "supersededBy":null,
-        "issues":{"items":[{"id":"00000000-0000-0000-0000-000000000004","identifier":"SUB-53","title":"Fixture issue"}],"count":1},
+        "issues":{"items":[{"id":"00000000-0000-0000-0000-000000000004","identifier":"SUB-7","title":"Fixture issue"}],"count":1},
         "tags":["client"], "madeByType":"agent", "madeByUserId":null,
         "madeByAgentName":"Fixture crew", "madeByAgentRank":"crew", "madeByAgentModel":"fixture-model",
         "evidenceKind":"documentOrUrl", "evidenceReference":"https://example.invalid/design", "evidenceExcerpt":null,
@@ -30,7 +32,7 @@ fn row() -> Value {
     })
 }
 
-fn detail() -> Value {
+pub(crate) fn detail() -> Value {
     let mut value = row();
     let fields = json!({
         "decision":"Add read calls", "context":"Issue details", "why":"Retain context",
@@ -64,7 +66,7 @@ fn list_and_detail_decode_the_contract() {
         DecisionStatus::Superseded
     );
     assert!(item.superseded_by.is_none());
-    assert_eq!(item.issues.items[0].identifier, "SUB-53");
+    assert_eq!(item.issues.items[0].identifier, "SUB-7");
     assert_eq!(item.issues.count, 1);
     assert_eq!(item.tags, ["client"]);
     assert_eq!(item.made_by_type, DecisionMakerType::Agent);
@@ -77,7 +79,7 @@ fn list_and_detail_decode_the_contract() {
     assert_eq!(item.version, Some(7));
     assert_eq!(item.revision_number, 2);
     let detail: DecisionDetail = serde_json::from_value(detail()).unwrap();
-    assert_eq!(detail.item.id, item.id);
+    assert_eq!(detail.id, item.id);
     assert_eq!(detail.decision, "Add read calls");
     assert_eq!(detail.context, "Issue details");
     assert_eq!(detail.why, "Retain context");
@@ -92,7 +94,7 @@ fn list_and_detail_decode_the_contract() {
         detail.provenance.evidence_kind,
         Some(DecisionEvidenceKind::IrcMessage)
     );
-    assert_eq!(detail.recorded_by.kind, DecisionMakerType::Agent);
+    assert_eq!(detail.recorded_by.kind, "agent");
     assert!(detail.recorded_by.available);
 }
 
@@ -151,7 +153,7 @@ fn unknown_enums_are_forward_compatible() {
         decoded.provenance.made_by_agent_rank,
         Some(AgentRank::Other)
     );
-    assert_eq!(decoded.recorded_by.kind, DecisionMakerType::Other);
+    assert_eq!(decoded.recorded_by.kind, "futureKind");
 }
 
 #[test]
@@ -167,16 +169,13 @@ fn unset_and_invalid_dates_are_not_shown_as_real_dates() {
 #[test]
 fn list_and_detail_use_the_expected_paths_and_preserve_not_found() {
     let mock = Mock::new(|request| match request.path.as_str() {
-        "/api/v1/decisions?issue=SUB-53&limit=50" => (200, page(vec![row()], Some("opaque+/="))),
+        "/api/v1/decisions?issue=SUB-7&limit=50" => (200, page(vec![row()], Some("opaque+/="))),
         "/api/v1/decisions/00000000-0000-0000-0000-000000000001" => (200, detail().to_string()),
         "/api/v1/decisions/00000000-0000-0000-0000-000000000099" => (404, "{}".into()),
         _ => (400, "{}".into()),
     });
     let api = client(&mock);
-    let query = DecisionQuery {
-        issue: Some("SUB-53".into()),
-        ..Default::default()
-    };
+    let query = DecisionQuery::for_issue("SUB-7");
     let list = api.decisions(&query, &PageRequest::default()).unwrap();
     assert_eq!(list.items.len(), 1);
     assert_eq!(list.next_cursor.as_deref(), Some("opaque+/="));
@@ -218,7 +217,7 @@ fn cursor_is_opaque_limits_are_capped_and_zero_is_invalid() {
         cursor: Some(cursor.into()),
     };
     let query = DecisionQuery {
-        issue: Some("SUB-53".into()),
+        issue: Some("SUB-7".into()),
         ..Default::default()
     };
     assert!(client(&mock).decisions(&query, &page).is_ok());
@@ -244,7 +243,7 @@ fn cursor_is_opaque_limits_are_capped_and_zero_is_invalid() {
 #[test]
 fn all_filters_encode_repeated_status_and_escaped_text() {
     let query = DecisionQuery {
-        issue: Some("SUB-53".into()),
+        issue: Some("SUB-7".into()),
         project: Some("SUB".into()),
         status: vec![
             DecisionStatus::Proposed,
@@ -262,7 +261,7 @@ fn all_filters_encode_repeated_status_and_escaped_text() {
         .finish();
     assert_eq!(
         encoded,
-        "issue=SUB-53&project=SUB&tag=a%26b&q=why+this%3F&status=proposed&status=accepted&status=rejected&status=superseded&madeByType=human&limit=50"
+        "issue=SUB-7&project=SUB&tag=a%26b&q=why+this%3F&status=proposed&status=accepted&status=rejected&status=superseded&madeByType=human&limit=50"
     );
     let agent = DecisionQuery {
         made_by_type: Some(DecisionMakerType::Agent),
@@ -290,4 +289,20 @@ fn all_filters_encode_repeated_status_and_escaped_text() {
         unknown.parameters(&PageRequest::default()),
         Err(Error::InvalidRequest)
     ));
+}
+
+#[test]
+fn textual_filters_are_trimmed_and_blanks_are_omitted() {
+    let mut query = DecisionQuery::for_issue(" SUB-7 \t");
+    query.project = Some(" \n ".into());
+    query.tag = Some(" ui ".into());
+    query.q = Some(String::new());
+    assert_eq!(
+        query.parameters(&PageRequest::default()).unwrap(),
+        [
+            ("issue".into(), "SUB-7".into()),
+            ("tag".into(), "ui".into()),
+            ("limit".into(), "50".into()),
+        ]
+    );
 }

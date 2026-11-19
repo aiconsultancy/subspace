@@ -37,6 +37,8 @@ pub(super) enum Task {
     Relations(String, crate::PageRequest, u64),
     /// Pull requests; a continuation applies only to its epoch.
     PullRequests(String, crate::PageRequest, u64),
+    Decisions(super::decisions::DecisionsRequest),
+    Decision(super::decision::DecisionRequest),
     Timeline(super::timeline::TimelineRequest),
     Refresh(String),
     /// A live hint: the open issue again, keeping what is shown.
@@ -92,6 +94,14 @@ impl Job {
             return false;
         }
         match &self.task {
+            Task::Decisions(request) => {
+                state.issue_current(self.generation, self.issue_revision)
+                    && super::decisions::current(state, request)
+            }
+            Task::Decision(request) => {
+                state.issue_current(self.generation, self.issue_revision)
+                    && super::decision::current(state, request)
+            }
             Task::List(_)
             | Task::ListHead(_)
             | Task::SearchProbe(_)
@@ -230,6 +240,8 @@ fn dispatch(shared: &Shared, job: Job) {
             super::pull_requests::load(shared, &job, (identifier, page, *epoch))
         }
         Task::Timeline(request) => timeline::load(shared, &job, request.clone()),
+        Task::Decisions(request) => super::decisions::load(shared, &job, request),
+        Task::Decision(request) => super::decision::load(shared, &job, request),
         Task::Refresh(identifier) => timeline::refresh(shared, &job, identifier),
         Task::Recheck(identifier) => detail::recheck(shared, &job, identifier),
         Task::ListHead(query) => list::head(shared, &job, query),
