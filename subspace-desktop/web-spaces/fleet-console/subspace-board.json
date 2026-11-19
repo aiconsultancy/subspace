@@ -1,0 +1,35 @@
+{
+  "name": "Fleet Console",
+  "version": "1.0.0",
+  "permissions": ["settings", "secrets", "issues", "badge", "context", "notifications"],
+  "settings": [
+    {
+      "key": "endpoint",
+      "label": "Stargate API address",
+      "type": "url",
+      "help": "HTTPS address of the fleet's Stargate API on a private network (Tailscale, Cloudflare Access), or http://localhost:<port> through an SSH tunnel."
+    },
+    {
+      "key": "token",
+      "label": "API token",
+      "type": "secret",
+      "help": "Run stargate api token on the fleet VM and paste the result."
+    },
+    {
+      "key": "motion",
+      "label": "Motion",
+      "type": "select",
+      "options": ["Full", "Reduced"],
+      "default": "Full",
+      "help": "Reduced replaces the warp with a short crossfade and stops orbits and the radar sweep."
+    },
+    {
+      "key": "perfReadout",
+      "label": "Frame-time readout",
+      "type": "select",
+      "options": ["Off", "On"],
+      "default": "Off",
+      "help": "Shows frame times, frame rate and the quality level over the map. Shift+P shows or hides it while the map has focus."
+    }
+  ]
+}
