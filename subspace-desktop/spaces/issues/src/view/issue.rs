@@ -1,13 +1,14 @@
 //! The full-width issue page. The top row stays available while the issue
 //! scrolls, including during loads and errors.
 
+mod decision_panel;
 mod header;
 mod header_progress;
 mod more;
 mod notices;
 mod page;
 mod paging;
-mod panel;
+pub(crate) mod panel;
 mod properties;
 mod pull_requests;
 mod record;
@@ -54,14 +55,16 @@ pub(super) fn render(
         .test_support()
         .flex_1()
         .min_h_0()
-        .child(header::path(issues, visible_detail(open), tokens, cx))
-        // The attachment panel sits right of the page, under the path bar.
+        .child(panel::behind_decision(
+            div().child(header::path(issues, open.detail(), tokens, cx)),
+            issues.decision.is_some(),
+        ))
         .child(
             gpui_kit::component::h_flex()
                 .items_stretch()
                 .flex_1()
                 .min_h_0()
-                .child(
+                .child(panel::behind_decision(
                     v_flex()
                         .id("issues-detail-scroll")
                         .flex_1()
@@ -73,17 +76,14 @@ pub(super) fn render(
                             issues.issue_view.scroll.clone(),
                             body(issues, open, tokens, cx),
                         )),
-                )
-                .children(crate::media::text::panel(issues, tokens, window, cx)),
+                    issues.decision.is_some(),
+                ))
+                .children(
+                    crate::media::text::panel(issues, tokens, window, cx)
+                        .or_else(|| decision_panel::render(issues, tokens, cx)),
+                ),
         )
         .into_any_element()
-}
-
-fn visible_detail(open: &IssueSnapshot) -> Option<&IssueDetail> {
-    match open.status() {
-        IssueStatus::Loaded | IssueStatus::Error(ReadError::Network) => open.detail(),
-        _ => None,
-    }
 }
 
 fn body(
@@ -92,7 +92,7 @@ fn body(
     tokens: &Tokens,
     cx: &mut Context<Issues>,
 ) -> AnyElement {
-    if let Some(detail) = visible_detail(open) {
+    if let Some(detail) = open.detail() {
         return content(issues, detail, open, tokens, cx).into_any_element();
     }
     let identifier = open.identifier();
@@ -248,9 +248,9 @@ fn columns(
         )
 }
 
-/// One column below this page width: the window less an open attachment.
+/// Measure the page, not the adjacent viewer.
 fn stacked(issues: &Issues, tokens: &Tokens) -> bool {
-    issues.width - crate::media::text::panel_width(issues, tokens) < TWO_COLUMNS_MIN_WIDTH
+    issues.width - panel::side_width(issues, tokens) < TWO_COLUMNS_MIN_WIDTH
 }
 
 fn description(

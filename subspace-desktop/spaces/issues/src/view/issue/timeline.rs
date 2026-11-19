@@ -1,5 +1,7 @@
 //! The issue's local timeline. The board-wide Activity tab is independent.
 
+mod activity_tabs;
+mod decisions;
 mod rows;
 mod states;
 
@@ -14,7 +16,6 @@ use subspace_api_client::hub::{IssueSnapshot, IssueStatus};
 use subspace_framework::dashboard::{
     Tokens,
     action::{ActionState, Intent, action_button},
-    tabs::{self, TabSpec},
 };
 use subspace_framework::lucide::IconName;
 
@@ -26,11 +27,8 @@ pub(super) fn render(
     tokens: &Tokens,
     cx: &mut Context<Issues>,
 ) -> impl gpui_kit::IntoElement {
-    let timeline = &issues.issue_view.timeline;
     let focus = issues.issue_view.timeline_focus.as_ref();
-    // The heading and its Comments/All switch sit above the filled group, as
-    // every other section's heading does.
-    let panel = v_flex()
+    v_flex()
         .id("issue-timeline")
         .test_support()
         .anchor_scroll(focus.map(|focus| focus.anchor.clone()))
@@ -38,34 +36,45 @@ pub(super) fn render(
         .gap_3()
         .child(
             h_flex()
+                .id("issue-timeline-heading")
+                .test_support()
                 .justify_between()
+                .flex_wrap()
                 .gap_2()
-                .child(super::section_heading(
-                    "Activity",
-                    IconName::MessagesSquare,
-                    tokens,
-                ))
                 .child(
-                    tabs::tab_bar("issue-timeline-tabs")
-                        .selected_index(timeline.mode.tab_index())
-                        .child(tabs::tab(TabSpec::plain("Comments")))
-                        .child(tabs::tab(TabSpec::plain("All")))
-                        .on_click(cx.listener(|this, index: &usize, _, cx| {
-                            this.show_timeline(TimelineMode::at(*index), cx);
-                        })),
-                ),
+                    super::section_heading("Activity", IconName::MessagesSquare, tokens)
+                        .id("issue-timeline-title")
+                        .test_support()
+                        .when(super::stacked(issues, tokens), |heading| heading.w_full()),
+                )
+                .child(activity_tabs::render(issues, issue, tokens, cx)),
         )
-        .when_some(focus, |panel, focus| panel.track_focus(&focus.handle));
-    panel.child(
-        GroupBox::new().fill().child(
-            v_flex()
-                .min_w_0()
-                .gap_3()
-                .children(controls(issues, issue, cx))
-                .child(content(issues, issue, tokens, cx))
-                .child(crate::authoring::view::root(issues, tokens, cx)),
-        ),
-    )
+        .child(
+            GroupBox::new()
+                .fill()
+                .child(body(issues, issue, tokens, cx)),
+        )
+}
+
+fn body(issues: &Issues, issue: &IssueSnapshot, tokens: &Tokens, cx: &mut Context<Issues>) -> Div {
+    match issues.issue_view.timeline.mode {
+        TimelineMode::Decisions => decisions::render(issue, tokens, cx),
+        _ => discussion(issues, issue, tokens, cx),
+    }
+}
+
+fn discussion(
+    issues: &Issues,
+    issue: &IssueSnapshot,
+    tokens: &Tokens,
+    cx: &mut Context<Issues>,
+) -> Div {
+    v_flex()
+        .min_w_0()
+        .gap_3()
+        .children(controls(issues, issue, cx))
+        .child(content(issues, issue, tokens, cx))
+        .child(crate::authoring::view::root(issues, tokens, cx))
 }
 
 fn content(
@@ -124,6 +133,7 @@ fn controls(issues: &Issues, issue: &IssueSnapshot, cx: &mut Context<Issues>) ->
                 format!("Show {hidden}{suffix} earlier comments")
             }
             TimelineMode::Comments => "Show earlier comments".into(),
+            TimelineMode::Decisions => return None,
         }
     };
     let button = action_button(

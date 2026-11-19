@@ -1,15 +1,15 @@
-//! All-view decision entries; detail navigation is installed in slice 4.
+//! Decision entries in the All activity timeline.
+use crate::decision::words::{status, status_badge};
 use gpui_kit::base::TestTextExt as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
     Context, Div, InteractiveElement as _, ParentElement as _, StatefulInteractiveElement as _,
     Styled as _, TestSupportExt as _,
 };
-use subspace_api_client::model::{DecisionStatus, DecisionSummary, IssueActivity};
+use subspace_api_client::model::{DecisionSummary, IssueActivity};
 use subspace_framework::dashboard::{
     Tokens,
     action::{Intent, action_button},
-    badge::badge,
     rich::plain_text,
 };
 use subspace_framework::lucide::IconName;
@@ -36,16 +36,12 @@ pub(super) fn render(
         .gap_2()
         .child(decision_text(entry, "title", &title));
     if let Some(decision) = decision {
-        let (label, color) = status(decision.status, tokens);
-        heading = heading.child(badge(label, tokens.surface, color).test_text(label));
+        heading = heading.child(status_badge(decision.status, tokens));
     }
     let mut row = v_flex()
         .id(format!("timeline-event:{}", entry.id))
         .aria_label(match decision {
-            Some(decision) => format!(
-                "{title}, {}, {actor}, {timestamp}",
-                status(decision.status, tokens).0
-            ),
+            Some(decision) => format!("{title}, {}, {actor}, {timestamp}", status(decision.status)),
             None => "Decision logged, details unavailable".into(),
         })
         .test_support()
@@ -57,7 +53,8 @@ pub(super) fn render(
         .child(decision_text(entry, "byline", &byline));
     if let Some(decision) = decision {
         let id = decision.id.clone();
-        let (label, _) = status(decision.status, tokens);
+        let title = decision.title.clone();
+        let label = status(decision.status);
         row = row.child(
             action_button(
                 format!("issue-activity-decision:{}", entry.id),
@@ -69,7 +66,10 @@ pub(super) fn render(
                 "Open decision {}, {label}, logged by {actor}",
                 decision.title
             ))
-            .on_click(cx.listener(move |this, _, _, _| this.open_timeline_decision(&id))),
+            .focus_on_click()
+            .on_click(cx.listener(move |this, _, window, cx| {
+                crate::decision::open(this, &id, &title, window, cx)
+            })),
         );
     }
     gpui_kit::div().child(row)
@@ -84,21 +84,6 @@ fn summary(decision: Option<&DecisionSummary>) -> String {
         Some(decision) => format!("Decision logged · {}", decision.title),
         None => "Decision logged · Earlier decision unavailable".into(),
     }
-}
-
-fn status(status: DecisionStatus, tokens: &Tokens) -> (&'static str, gpui_kit::Hsla) {
-    match status {
-        DecisionStatus::Accepted => ("Accepted", tokens.green),
-        DecisionStatus::Rejected => ("Rejected", tokens.red),
-        DecisionStatus::Proposed => ("Proposed", tokens.muted),
-        DecisionStatus::Superseded => ("Superseded", tokens.muted),
-        _ => ("Unknown status", tokens.muted),
-    }
-}
-
-impl crate::Issues {
-    /// Safe no-op until the read-only panel is delivered in slice 4.
-    fn open_timeline_decision(&mut self, _id: &str) {}
 }
 
 #[cfg(test)]

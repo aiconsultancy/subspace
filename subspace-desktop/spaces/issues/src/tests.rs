@@ -4,6 +4,7 @@
 mod activity;
 mod authoring;
 mod board_view;
+mod decisions;
 mod detail;
 mod editing;
 mod first_pages;

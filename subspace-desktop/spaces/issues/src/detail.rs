@@ -104,6 +104,7 @@ impl Issues {
         if self.issue_view.snapshot.is_none() {
             self.back.opened_from_list();
         }
+        self.decision = None;
         self.issue_view = IssueView::default();
         self.request(Request::OpenIssue { identifier }, cx);
     }
@@ -135,6 +136,7 @@ impl Issues {
         self.back.closed();
         self.authoring.clear();
         self.media.close_issue();
+        self.decision = None;
         let was_open = self.issue_view.snapshot.is_some();
         self.issue_view = IssueView::default();
         if let Some(hub) = &self.hub {
@@ -177,11 +179,13 @@ impl Issues {
             .issue()
             .filter(|issue| issue.profile_id() == self.profile)
         else {
+            self.decision = None;
             self.issue_view = IssueView::default();
             self.follow_comments(snapshot, cx);
             return;
         };
         self.issue_view.follow(issue, cx);
+        crate::decision::follow(&mut self.decision, issue);
         self.settle_state_change();
         self.start_timeline(issue, cx);
         self.follow_comments(snapshot, cx);

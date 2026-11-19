@@ -296,7 +296,7 @@ impl Issues {
                 focus.focus(window, cx);
             }
         } else if let Some(focus) = &self.issue_view.timeline_focus {
-            focus.handle.focus(window, cx);
+            focus.tab(self.issue_view.timeline.mode).focus(window, cx);
         }
         cx.notify();
     }

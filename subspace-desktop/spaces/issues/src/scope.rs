@@ -2,6 +2,7 @@
 use crate::listing::{Failure, Listing, Status, updated};
 pub(crate) const SIGN_IN_MESSAGE: &str = "Sign in under Settings › Account, then try again.";
 pub(crate) const NETWORK_MESSAGE: &str = "Couldn't reach Subspace API. Try again.";
+pub(crate) const READ_ERROR_MESSAGE: &str = "Subspace API couldn't be read.";
 use std::time::Instant;
 use subspace_api_client::hub::LiveStatus;
 
@@ -66,22 +67,20 @@ pub(crate) struct ScreenText {
 pub(crate) fn screen_text(screen: &Screen, _profile: &str) -> ScreenText {
     let Screen::Failed(failure) = screen;
     let (title, message) = match failure {
-        Failure::Edge => ("Sign-in required", SIGN_IN_MESSAGE),
+        Failure::Edge => ("Sign-in required", SIGN_IN_MESSAGE.into()),
         Failure::Forbidden => (
             "Access denied",
-            "Subspace API refused access. Try again after access is restored.",
+            "Subspace API refused access. Try again after access is restored.".into(),
         ),
         Failure::Unexpected { .. } => (
             "Couldn't load issues",
-            "Subspace API couldn't be read. Try again, or copy the details.",
+            format!("{READ_ERROR_MESSAGE} Try again, or copy the details."),
         ),
-        Failure::Network | Failure::Offline => {
-            ("Offline", "Couldn't reach Subspace API. Try again.")
-        }
+        Failure::Network | Failure::Offline => ("Offline", NETWORK_MESSAGE.into()),
     };
     ScreenText {
         title: title.into(),
-        message: message.into(),
+        message,
         error: true,
     }
 }
