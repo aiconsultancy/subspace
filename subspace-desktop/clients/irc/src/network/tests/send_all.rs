@@ -9,7 +9,7 @@ use std::task::{Context, Poll};
 use chrono::Utc;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use super::super::{End, EventSink, Link, NetCommand};
+use super::super::{End, EventSink, Link, NetCommand, WRITE_LIMIT};
 use crate::model::{BufferKey, Command, Event, NetworkConfig, NetworkId, SendResult, Target};
 use crate::session::{Carry, Session};
 
@@ -19,6 +19,7 @@ enum Failure {
     BeforeAnyByte,
     AfterBytes(usize),
     OnFlush,
+    StalledWrite,
 }
 
 /// A connection that never answers and fails its writes as `failure` says,
@@ -53,6 +54,7 @@ impl AsyncWrite for Failing {
             Failure::BeforeAnyByte => 0,
             Failure::AfterBytes(limit) => limit.saturating_sub(wire.len()),
             Failure::OnFlush => bytes.len(),
+            Failure::StalledWrite => return Poll::Pending,
         };
         if room == 0 {
             return Poll::Ready(Err(broken()));
@@ -158,6 +160,29 @@ async fn a_write_failing_after_a_prefix_is_uncertain_and_echoes_nothing() {
 async fn a_failed_flush_is_uncertain_and_echoes_nothing() {
     let wire = uncertain_without_echo(Failure::OnFlush).await;
     assert!(wire.contains("hello"), "the lines were written: {wire}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_stalled_write_times_out_without_reporting_success() {
+    let start = tokio::time::Instant::now();
+    let lines = ["hello", "UPL-AAECAwQFBgcICQoLDA0ODw a.txt (4 bytes)"];
+    let (end, events, wire) =
+        tokio::time::timeout(WRITE_LIMIT * 2, send_over(Failure::StalledWrite, &lines))
+            .await
+            .expect("the stalled write should end the connection");
+    assert_eq!(start.elapsed(), WRITE_LIMIT);
+    assert!(
+        matches!(end, Some(End::Lost { error, registered: true }) if error.contains("timed out"))
+    );
+    assert_eq!(wire, "");
+    assert!(matches!(
+        events.as_slice(),
+        [Event::Sent {
+            id: 9,
+            result: SendResult::Uncertain(_),
+            ..
+        }]
+    ));
 }
 
 #[tokio::test]
