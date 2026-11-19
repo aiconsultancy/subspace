@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="referrer" content="no-referrer">
+  <title>Fleet Console</title>
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="src/main.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#inspector">Skip to the inspector</a>
+  <div class="app" id="app">
+    <header class="toolbar">
+      <nav class="crumbs" id="crumbs" aria-label="Location"></nav>
+      <div class="stats" id="stats" aria-label="Fleet summary"></div>
+      <span class="conn" id="conn" data-tone="muted"><i aria-hidden="true"></i><span id="conn-label">Starting</span></span>
+    </header>
+
+    <div class="banner" id="banner" hidden>
+      <p class="banner-text"><b id="banner-title"></b> <span id="banner-body"></span></p>
+      <button class="btn" id="retry" type="button">Retry</button>
+    </div>
+
+    <div class="body">
+      <div class="stage" id="stage" tabindex="0" role="group" aria-label="Map" aria-describedby="stage-keys">
+        <p class="sr-only" id="stage-keys">Escape pulls out a tier. Shift+P shows or hides the frame-time readout.</p>
+        <canvas id="scene" role="img" aria-label="Fleet map"></canvas>
+        <canvas id="labels" aria-hidden="true"></canvas>
+        <div class="hint" aria-hidden="true">
+          <span class="sample" id="sample-chip" hidden>Sample data</span>
+          <span id="hint">Click a ship to warp in</span>
+        </div>
+        <nav class="depth" id="depth" aria-label="Tiers"></nav>
+        <div class="tip" id="tip" hidden></div>
+      </div>
+      <aside class="inspector" id="inspector" aria-label="Inspector" tabindex="-1"></aside>
+    </div>
+
+    <footer class="ticker" aria-label="Recent fleet activity">
+      <span class="lbl" id="ticker-label">Live · /api/v1/events</span>
+      <ul id="ticker"></ul>
+    </footer>
+
+    <div class="toast" id="toast" role="status" hidden></div>
+    <p class="sr-only" id="announce" aria-live="polite"></p>
+  </div>
+</body>
+</html>
