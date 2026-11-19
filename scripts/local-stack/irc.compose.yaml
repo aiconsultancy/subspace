@@ -27,3 +27,9 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      - type: bind
+        source: ../scripts/local-stack/seed-irc.py
+        target: /run/subspace-stack/seed-irc.py
+        read_only: true
+        bind:
+          create_host_path: false

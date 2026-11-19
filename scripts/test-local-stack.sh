@@ -15,7 +15,7 @@ cd "$checkout"
 
 export PATH="$fixture/bin:$PATH" HOME="$fixture/home" DOCKER_LOG="$fixture/docker.log"
 export SUBSPACE_STACK_DESKTOP_CONFIG_FILE="$fixture/settings/irc/config.json"
-unset SUBSPACE_STACK_DESKTOP_CONFIG XDG_CONFIG_HOME
+unset SUBSPACE_STACK_DESKTOP_CONFIG SUBSPACE_STACK_DEMO_DATA XDG_CONFIG_HOME
 export IRC_PLAIN_PORT=16667 IRC_TLS_PORT=16697
 config="$SUBSPACE_STACK_DESKTOP_CONFIG_FILE"
 cat >"$fixture/bin/docker" <<'SH'
@@ -24,13 +24,16 @@ set -euo pipefail
 if [ "${EXPECT_MISSING_CONFIG:-0}" = 1 ]; then
     test ! -e "$SUBSPACE_STACK_DESKTOP_CONFIG_FILE"
 fi
-printf '%s %s\n' "$1" "$2" >>"$DOCKER_LOG"
+printf '%s\n' "$*" >>"$DOCKER_LOG"
 SH
 chmod 755 "$fixture/bin/docker"
 
 EXPECT_MISSING_CONFIG=1 make -s stack-up >"$fixture/up"
 grep -Fxq "Created IRC config at $config" "$fixture/up"
-diff -u <(printf 'compose up\ncompose exec\n') "$DOCKER_LOG"
+grep -Eq '^compose up .*--wait$' "$DOCKER_LOG"
+grep -Eq '^compose exec .* seed:demo --with-irc$' "$DOCKER_LOG"
+grep -Fxq 'compose exec -T irc python3 /run/subspace-stack/seed-irc.py' "$DOCKER_LOG"
+test "$(wc -l <"$DOCKER_LOG" | tr -d ' ')" = 3
 bash scripts/local-stack.sh desktop-irc-config >"$fixture/printed.json"
 cmp "$fixture/printed.json" "$config"
 python3 - "$config" <<'PY'
@@ -76,7 +79,7 @@ cp "$config" "$fixture/previous.json"
 chmod 644 "$config"
 make -s stack-desktop-config >"$fixture/merge"
 grep -Fxq "Updated IRC config at $config" "$fixture/merge"
-diff -u <(printf 'compose up\ncompose exec\n') "$DOCKER_LOG"
+test "$(wc -l <"$DOCKER_LOG" | tr -d ' ')" = 3
 python3 - "$config" "$fixture/previous.json" <<'PY'
 import json
 from pathlib import Path
@@ -181,5 +184,30 @@ else
     XDG_CONFIG_HOME="$fixture/xdg" make -s stack-desktop-config >"$fixture/xdg-output"
     grep -Fxq "Created IRC config at $fixture/xdg/subspace/irc/config.json" "$fixture/xdg-output"
 fi
+
+for setting in environment make-variable; do
+    : >"$DOCKER_LOG"
+    if [ "$setting" = environment ]; then
+        SUBSPACE_STACK_DESKTOP_CONFIG=0 SUBSPACE_STACK_DEMO_DATA=0 make -s stack-up >/dev/null
+    else
+        SUBSPACE_STACK_DESKTOP_CONFIG=0 SUBSPACE_STACK_DEMO_DATA=1 make -s stack-up DEMO=0 >/dev/null
+    fi
+    grep -Eq '^compose exec .* seed:demo --workspace-only$' "$DOCKER_LOG"
+    test "$(wc -l <"$DOCKER_LOG" | tr -d ' ')" = 2
+done
+
+: >"$DOCKER_LOG"
+SUBSPACE_STACK_DEMO_DATA=0 make -s stack-demo >/dev/null
+grep -Eq '^compose exec .* seed:demo --with-irc$' "$DOCKER_LOG"
+grep -Fxq 'compose exec -T irc python3 /run/subspace-stack/seed-irc.py' "$DOCKER_LOG"
+test "$(wc -l <"$DOCKER_LOG" | tr -d ' ')" = 2
+
+: >"$DOCKER_LOG"
+if make -s stack-up DEMO=invalid >"$fixture/invalid-demo" 2>&1; then
+    echo "expected an invalid demo switch to fail" >&2
+    exit 1
+fi
+grep -Fq 'SUBSPACE_STACK_DEMO_DATA must be 0 or 1' "$fixture/invalid-demo"
+test ! -s "$DOCKER_LOG"
 
 echo "local-stack fixtures passed"

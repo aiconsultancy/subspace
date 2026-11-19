@@ -10,7 +10,7 @@ BOTH := build test check format fmt-check lint quality audit
 
 STACK := bash scripts/local-stack.sh
 
-.PHONY: help hooks release-check $(BOTH) stack-up stack-down stack-logs stack-reset stack-seed stack-desktop-config stack-check dev-token
+.PHONY: help hooks release-check $(BOTH) stack-up stack-down stack-logs stack-reset stack-demo stack-seed stack-desktop-config stack-check dev-token
 
 help: ## Show available targets
 	@printf "Repository targets (run in %s/, then %s/):\n" "$(FRAMEWORK)" "$(DESKTOP)"
@@ -30,7 +30,10 @@ release-check: ## Release Please's config, the lockfile sync and the release wor
 	mise -C $(DESKTOP) exec -- python3 "$(CURDIR)/scripts/sync-lockfiles.py" --check
 	@if command -v actionlint >/dev/null; then actionlint .github/workflows/*.yml; else echo "actionlint is not installed; workflows not linted"; fi
 
-stack-up: ## Start the local stack, seed demo data and configure Channels
+ifneq ($(origin DEMO),undefined)
+stack-up: export SUBSPACE_STACK_DEMO_DATA = $(DEMO)
+endif
+stack-up: ## Start the local stack and configure Channels (DEMO=0 for an empty workspace)
 	$(STACK) up
 
 stack-down: ## Stop the local stack and keep its data
@@ -42,14 +45,17 @@ stack-logs: ## Follow the local stack's logs
 stack-reset: ## Remove the local stack's containers, data and generated passwords
 	$(STACK) reset
 
-stack-seed: ## Seed the local stack's demo data again
-	$(STACK) seed
+stack-demo: ## Add or top up demo data and IRC history on the running stack
+	$(STACK) demo
+
+stack-seed: stack-demo ## Alias for stack-demo
 
 stack-desktop-config: ## Install the local IRC networks using the generated passwords
 	@$(STACK) stack-desktop-config
 
-stack-check: ## Check the local stack script against fixtures
+stack-check: ## Check the stack commands (STACK_LIVE=1 also checks running services)
 	bash scripts/test-local-stack.sh
+	@if [ "$(STACK_LIVE)" = 1 ]; then bash scripts/test-local-stack-live.sh; fi
 
 dev-token: ## Print a development bearer token for the local API
 	@$(STACK) token
