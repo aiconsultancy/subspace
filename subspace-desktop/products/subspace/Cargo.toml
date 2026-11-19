@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-subspace-framework = { workspace = true, features = ["host", "search-onnx", "component-gallery"] }
+subspace-framework = { workspace = true, features = ["host", "search-onnx", "component-gallery", "gpui-kit-text-patch"] }
 subspace-api-client = { path = "../../clients/subspace-api" }
 subspace-github-board = { path = "../../spaces/github" }
 subspace-github-copilot-agents-board = { path = "../../spaces/github-copilot-agents" }

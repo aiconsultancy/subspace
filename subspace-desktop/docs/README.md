@@ -163,6 +163,8 @@ shared quick-start fragments live in `subspace/includes/`.
 
 ## Change records
 
+- [Selectable find results and link menus](changes/gpui-text-patch/README.md):
+  before-and-after evidence from the Component gallery fixture.
 - [Subspace API, accounts and fleets](changes/subspace-api-accounts/README.md):
   the Issues client, provider-neutral sign-in, initiative and fleet switching
   in Channels, and what came across from a downstream fork.

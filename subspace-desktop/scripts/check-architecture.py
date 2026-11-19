@@ -3,7 +3,7 @@
 Products compose Spaces; Spaces, clients and the terminal crates reach the
 Framework only through the `subspace-framework` crate, without its host
 features or modules. Nothing reaches outside this folder except the
-documented Framework dependency and Markdown patch.
+documented Framework dependency and vendored patches.
 """
 
 import json
@@ -26,11 +26,14 @@ ALLOWED = {
 FRAMEWORK = "subspace-framework"
 FRAMEWORK_ROOT = ROOT.parent / FRAMEWORK
 # Facade features for app builders only.
-HOST_FEATURES = {"host", "capture"}
-# The Markdown patch: the Framework's copy, or this folder's own copy once
+HOST_FEATURES = {"host", "capture", "gpui-kit-text-patch"}
+# The Framework's patches, or this folder's own copies once
 # the two folders are separate repositories (docs/publishing.md in the
 # Framework).
-PATCHES = {"markdown": (FRAMEWORK_ROOT / "vendor/markdown", ROOT / "vendor/markdown")}
+PATCHES = {
+    name: (FRAMEWORK_ROOT / "vendor" / name, ROOT / "vendor" / name)
+    for name in ("gpui-base", "markdown")
+}
 
 
 def group(directory: Path) -> tuple[str, str | None]:
@@ -123,15 +126,15 @@ def dependency_violation(directory: Path, package: dict, dependency: dict,
 
 
 def patch_violations(manifest: str) -> list[str]:
-    """Only the Framework's Markdown patch may be applied."""
+    """Only the documented Framework patches may be applied."""
     path = ROOT / manifest
     table = tomllib.loads(path.read_text()).get("patch", {}).get("crates-io", {})
     failures = []
     for name, entry in table.items():
         target = (path.parent / entry.get("path", "")).resolve()
         if target not in PATCHES.get(name, ()):
-            failures.append(f"{manifest}: [patch.crates-io] {name} must be a vendor/markdown "
-                            f"copy (the Framework's or this folder's); no other patch is permitted")
+            failures.append(f"{manifest}: [patch.crates-io] {name} must be a documented "
+                            "vendored patch at the Framework or desktop vendor path")
     return failures
 
 
