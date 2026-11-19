@@ -1,0 +1,37 @@
+services:
+  irc:
+    build:
+      context: .
+    init: true
+    environment:
+      IRC_SERVER_NAME: ${IRC_SERVER_NAME:-irc.localhost}
+      IRC_ENABLE_PLAIN: ${IRC_ENABLE_PLAIN:-true}
+      IRC_ENABLE_WS: ${IRC_ENABLE_WS:-true}
+      IRC_WS_ORIGIN: ${IRC_WS_ORIGIN:-}
+      IRC_BCRYPT_COST: ${IRC_BCRYPT_COST:-12}
+      IRC_TLS_CERT: ${IRC_TLS_CERT:-}
+      IRC_TLS_KEY: ${IRC_TLS_KEY:-}
+      IRC_OPER_NAME: ${IRC_OPER_NAME:-}
+      IRC_OPER_PASSWORD: ${IRC_OPER_PASSWORD:-}
+      IRC_OPER_PASSWORD_FILE: ${IRC_OPER_PASSWORD_FILE:-}
+      IRC_ACCOUNTS_JSON: ${IRC_ACCOUNTS_JSON:-}
+      IRC_ACCOUNTS_FILE: ${IRC_ACCOUNTS_FILE:-}
+      IRC_CHANNELS_JSON: ${IRC_CHANNELS_JSON:-}
+      IRC_CHANNELS_FILE: ${IRC_CHANNELS_FILE:-}
+      IRC_CHANNEL_FOUNDER: ${IRC_CHANNEL_FOUNDER:-}
+    ports:
+      - "${IRC_PLAIN_BIND:-127.0.0.1}:${IRC_PLAIN_PORT:-6667}:6667"
+      - "${IRC_TLS_BIND:-127.0.0.1}:${IRC_TLS_PORT:-6697}:6697"
+      - "${IRC_WS_BIND:-127.0.0.1}:${IRC_WS_PORT:-8097}:8097"
+    volumes:
+      - irc-data:/ircd
+    healthcheck:
+      test: ["CMD-SHELL", "openssl s_client -connect 127.0.0.1:6697 -brief </dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  irc-data:
