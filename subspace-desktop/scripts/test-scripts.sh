@@ -28,6 +28,7 @@ MINGW* | MSYS* | CYGWIN* | Windows_NT)
     python3 -B "$root/scripts/test-release-files.py"
     bash "$root/scripts/test-check-licences.sh"
     bash "$root/scripts/test-release-assets.sh"
+    bash "$root/scripts/test-sign-windows.sh"
     bash "$root/scripts/test-prerelease-products.sh"
     ;;
 esac
