@@ -165,6 +165,17 @@ impl IssueDecisions {
         self.epoch = self.epoch.wrapping_add(1);
     }
 
+    /// An explicit refresh replaces a pending continuation with a fresh
+    /// cursor chain to the loaded depth plus the requested page. The cached
+    /// rows and their cursor stay until that refresh succeeds, so an offline
+    /// failure keeps them. Reconnects and offline retries keep the
+    /// continuation instead, through `pause`.
+    pub(super) fn restart(&mut self) {
+        if self.pending == Some(Read::More) {
+            self.pending = Some(self.refresh_intent());
+        }
+    }
+
     fn accept(&mut self, read: Option<Read>, offline: bool) -> bool {
         if read == Some(Read::First) && self.opened {
             return false;

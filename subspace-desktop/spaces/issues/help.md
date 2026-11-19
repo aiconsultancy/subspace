@@ -143,7 +143,9 @@ Choose **Decisions** under **Activity** to read decisions linked to the issue.
 **Show more** loads another page. The most recently decided appear first.
 This tab has no comment composer. Open a decision here or from a
 **Decision logged** entry in **All**. Both open the same side panel. Use
-the panel's Back arrow to return after following a supersede link.
+the panel's Back arrow to return after following a supersede link. In the
+panel, Tab moves between its controls and scrolls each one into view, and
+the arrow keys, Page Up, Page Down, Home and End scroll the decision.
 
 Choose **Back** or press Escape to return to where you opened the issue. Its
 label names the place, such as **Back to issues** or **Back to #discovery**.
@@ -272,6 +274,7 @@ large to show, and an empty file says so. If the file cannot be read, choose
 | `j` / Down, `k` / Up | Move through list rows; `j` / `k` step between issues in detail. |
 | Enter | Open an issue, fold a group or read more rows. |
 | Escape | Close a menu, then dismiss the text attachment viewer, then the decision panel, then follow the issue's Back destination. |
+| ↑ / ↓, Page Up / Page Down, Home / End | Scroll an open decision. |
 | `1`–`4` | My issues, Active, Backlog, All issues. |
 | `5` | Activity. |
 | `m` | Focus the detail timeline. |

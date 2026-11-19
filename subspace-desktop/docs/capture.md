@@ -64,9 +64,10 @@ X11 window after presenting its frame. It does not capture the entire display.
 ## Decisions fixture
 
 Open **SUB-1** to capture three fictional decisions and their entries in the
-**All** activity timeline. **Use one review queue** links to its superseded
-decision, **Keep separate review queues**, and to issue **SUB-4**. Open
-**SUB-2** for an issue with no decisions.
+**All** activity timeline. They have different decided-on dates and list
+newest decided first, as Subspace API orders them. **Use one review queue**
+links to its superseded decision, **Keep separate review queues**, and to
+issue **SUB-4**. Open **SUB-2** for an issue with no decisions.
 
 Set `CAPTURE_DECISION_SCENARIO=missing` to leave the superseded decision
 listed while its detail returns 404. Use `forbidden` for 403 or

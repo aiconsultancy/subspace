@@ -1,4 +1,5 @@
 use super::super::panel::{Fact, fact};
+use super::reveal;
 use crate::{
     Issues,
     decision::{self, Entry, words},
@@ -7,7 +8,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, Div, FontWeight, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
+    ParentElement as _, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _,
     TestSupportExt as _, div,
 };
 use subspace_api_client::model::{DecisionDetail, DecisionSummary};
@@ -72,7 +73,7 @@ pub(super) fn summary(detail: &DecisionDetail, tokens: &Tokens) -> Div {
         ))
 }
 
-pub(super) fn provenance(detail: &DecisionDetail, tokens: &Tokens) -> Div {
+pub(super) fn provenance(detail: &DecisionDetail, scroll: &ScrollHandle, tokens: &Tokens) -> Div {
     let recorder = &detail.recorded_by;
     let agent = if recorder.kind == "agent" {
         " (agent)"
@@ -90,7 +91,7 @@ pub(super) fn provenance(detail: &DecisionDetail, tokens: &Tokens) -> Div {
             "decision",
             tokens,
         ))
-        .child(evidence(detail, tokens))
+        .child(evidence(detail, scroll, tokens))
         .child(fact(
             Fact::new(
                 "Recorded",
@@ -116,7 +117,7 @@ pub(super) fn provenance(detail: &DecisionDetail, tokens: &Tokens) -> Div {
         )
 }
 
-fn evidence(detail: &DecisionDetail, tokens: &Tokens) -> Div {
+fn evidence(detail: &DecisionDetail, scroll: &ScrollHandle, tokens: &Tokens) -> Div {
     let label = detail
         .evidence_kind
         .map(words::evidence)
@@ -129,7 +130,7 @@ fn evidence(detail: &DecisionDetail, tokens: &Tokens) -> Div {
             detail
                 .evidence_reference
                 .as_deref()
-                .map(|value| evidence_reference(value, tokens)),
+                .map(|value| evidence_reference(value, scroll, tokens)),
         )
         .children(
             detail.evidence_excerpt.as_deref().map(|text| {
@@ -138,7 +139,7 @@ fn evidence(detail: &DecisionDetail, tokens: &Tokens) -> Div {
         )
 }
 
-fn evidence_reference(value: &str, tokens: &Tokens) -> AnyElement {
+fn evidence_reference(value: &str, scroll: &ScrollHandle, tokens: &Tokens) -> AnyElement {
     const ID: &str = "decision-evidence-reference";
     let Some(safe) = links::safe_url(value) else {
         return feedback::empty_line(tokens, ID, value.to_owned()).into_any_element();
@@ -149,31 +150,36 @@ fn evidence_reference(value: &str, tokens: &Tokens) -> AnyElement {
         .as_ref()
         .and_then(url::Url::host_str)
         .unwrap_or("Email link");
-    links::external_marked_with_label(
+    let link = links::external_marked_with_label(
         ID,
         host.to_owned(),
         format!("Open evidence link: {host}"),
         safe,
         tokens,
-    )
+    );
+    reveal::scope(ID, scroll, link).into_any_element()
 }
 
 pub(super) fn related(
     detail: &DecisionDetail,
+    scroll: &ScrollHandle,
     tokens: &Tokens,
     cx: &mut Context<Issues>,
 ) -> Option<Div> {
     let older = relation(
-        detail.supersedes_id.as_deref(),
-        detail.supersedes.as_ref(),
+        (detail.supersedes_id.as_deref(), detail.supersedes.as_ref()),
         Direction::Earlier,
+        scroll,
         tokens,
         cx,
     );
     let newer = relation(
-        detail.superseded_by_id.as_deref(),
-        detail.superseded_by.as_ref(),
+        (
+            detail.superseded_by_id.as_deref(),
+            detail.superseded_by.as_ref(),
+        ),
         Direction::Newer,
+        scroll,
         tokens,
         cx,
     );
@@ -190,8 +196,9 @@ pub(super) fn related(
                     .children(linked.items.iter().map(|issue| {
                         let id = issue.identifier.clone();
                         let text = format!("{id} {}", issue.title);
-                        action_button(
-                            format!("decision-issue:{id}"),
+                        let key = format!("decision-issue:{id}");
+                        let button = action_button(
+                            key.clone(),
                             Intent::Quiet,
                             Some(IconName::CircleDot),
                             "",
@@ -207,7 +214,8 @@ pub(super) fn related(
                                     this.open_detail(id.clone(), cx);
                                 }
                             },
-                        ))
+                        ));
+                        reveal::scope(key, scroll, button)
                     }))
             }),
     )
@@ -229,9 +237,9 @@ impl Direction {
 }
 
 fn relation(
-    id: Option<&str>,
-    target: Option<&DecisionSummary>,
+    (id, target): (Option<&str>, Option<&DecisionSummary>),
     direction: Direction,
+    scroll: &ScrollHandle,
     tokens: &Tokens,
     cx: &mut Context<Issues>,
 ) -> Option<Div> {
@@ -241,31 +249,27 @@ fn relation(
             let id = target.id.clone();
             let name = target.title.clone();
             let status = words::status(target.status);
-            action_button(
-                format!("{prefix}:{id}"),
-                Intent::Quiet,
-                Some(IconName::Scale),
-                "",
-            )
-            .min_w_0()
-            .max_w_full()
-            .child(truncated::text(
-                format!("{prefix}-title:{id}"),
-                format!("{name} · {status}"),
-            ))
-            .accessibility_label(format!("Open {action} decision {name}, {status}"))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                decision::follow_link(
-                    this,
-                    Entry {
-                        id: id.clone(),
-                        title: name.clone(),
-                    },
-                    window,
-                    cx,
-                );
-            }))
-            .into_any_element()
+            let key = format!("{prefix}:{id}");
+            let button = action_button(key.clone(), Intent::Quiet, Some(IconName::Scale), "")
+                .min_w_0()
+                .max_w_full()
+                .child(truncated::text(
+                    format!("{prefix}-title:{id}"),
+                    format!("{name} · {status}"),
+                ))
+                .accessibility_label(format!("Open {action} decision {name}, {status}"))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    decision::follow_link(
+                        this,
+                        Entry {
+                            id: id.clone(),
+                            title: name.clone(),
+                        },
+                        window,
+                        cx,
+                    );
+                }));
+            reveal::scope(key, scroll, button).into_any_element()
         }
         None => {
             id?;

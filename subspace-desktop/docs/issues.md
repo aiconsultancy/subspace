@@ -377,7 +377,11 @@ issue starts on **Comments**.
 Press `m` to focus the selected Activity tab, Left or Right to move between
 tabs, and Enter or Space to select. Tab to a decision and activate it.
 The modal panel starts on **Close decision**, keeps Tab and Shift+Tab inside
-and blocks pointer interaction with the issue page underneath. Use its Back
+and scrolls each control it reaches into view. The arrow keys, Page Up,
+Page Down, Home and End scroll the decision from any control in the panel.
+The issue page underneath blocks the pointer, is hidden from assistive
+technology, and hands focus back to the panel if one of its controls takes
+it another way, such as a screen reader's focus action. Use its Back
 arrow after following a supersede link. Escape dismisses a text viewer first
 if one is open, then closes the decision panel and restores focus to its
 opener (or the Issues board if the opener is gone). Escape again follows the

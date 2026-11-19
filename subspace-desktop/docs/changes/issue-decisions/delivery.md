@@ -27,7 +27,7 @@ before this change.
 | State | Image |
 | --- | --- |
 | Before: SUB-1's Activity has only Comments and All | ![Before](evidence/before-comments.png) |
-| The Decisions tab on SUB-1: three linked decisions with their status, project, date, and maker or successor | ![Decisions tab](evidence/after-tabs-decisions.png) |
+| The Decisions tab on SUB-1: three linked decisions, newest decided first, with their status, project, date, and maker or successor | ![Decisions tab](evidence/after-tabs-decisions.png) |
 | **Use one review queue** in the side panel, scrolled down: the decision text, maker, evidence link showing its host, the decision it supersedes and linked issues SUB-1 and SUB-4 | ![Decision panel](evidence/after-panel.png) |
 | After following **Supersedes**: the earlier decision, with Back to return | ![Followed decision](evidence/after-panel-followed.png) |
 | Escape closes the panel, keeps the Decisions tab and returns focus to the opener | ![Panel closed](evidence/after-panel-escape.png) |
@@ -41,7 +41,10 @@ before this change.
 The panel's width is clamped to at least 320 px and at most 75% of the
 window, so at 700 px it is 525 px wide. This is intended.
 
-The keyboard walkthrough was not captured natively. The capture harness
+Tab revealing clipped controls, the scroll keys and the inert issue page
+behind the panel are covered by headless tests
+(`tests/decisions/keyboard.rs`), not captures. The keyboard walkthrough was
+not captured natively. The capture harness
 focuses the Space again before every `key:` step, so Enter doesn't activate
 a focused tab. The headless test
 `keyboard_only_from_activity_to_decision_and_back` covers the same keyboard

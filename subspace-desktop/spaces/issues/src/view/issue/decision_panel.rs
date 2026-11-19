@@ -1,14 +1,14 @@
 //! Shared decision detail: structure stays the same for either opener.
+mod reveal;
 mod sections;
 
 use crate::Issues;
-use crate::decision::{self, DecisionPanel, words};
+use crate::decision::{self, DecisionPanel, Step, words};
 use gpui_kit::base::FocusTrapElement as _;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, Context, Div, InteractiveElement as _, IntoElement as _, KeyContext,
-    ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
-    TestSupportExt as _, div, px,
+    AnyElement, Context, Div, InteractiveElement, IntoElement as _, KeyContext, ParentElement as _,
+    Role, SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div, px,
 };
 use subspace_api_client::{
     hub::{DecisionReadStatus, IssueSnapshot, IssueStatus, ReadError},
@@ -34,36 +34,62 @@ pub(super) fn render(
     let mut keys = KeyContext::new_with_defaults(cx.platform_info().os);
     keys.add(MODAL_CONTEXT);
     keys.add(decision::CONTEXT);
+    let panel_element = v_flex()
+        .id("decision-panel")
+        .role(Role::Dialog)
+        .aria_label(format!("Decision {}", entry.title))
+        .test_support()
+        .key_context(keys)
+        .flex_shrink_0()
+        .h_full()
+        .min_h_0()
+        .w(px(clamp_width(f32::from(tokens.panel_width), issues.width)))
+        .max_w_full()
+        .bg(tokens.surface)
+        .border_l_1()
+        .border_color(tokens.line)
+        .child(header(panel, tokens, cx))
+        .child(
+            div()
+                .id("decision-panel-body")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&panel.scroll)
+                .px(tokens.pad_x)
+                .py_4()
+                .child(body(panel, issues.issue_view.snapshot.as_ref(), tokens, cx)),
+        );
     Some(
-        v_flex()
-            .id("decision-panel")
-            .role(Role::Dialog)
-            .aria_label(format!("Decision {}", entry.title))
-            .test_support()
-            .key_context(keys)
-            .flex_shrink_0()
-            .h_full()
-            .min_h_0()
-            .w(px(clamp_width(f32::from(tokens.panel_width), issues.width)))
-            .max_w_full()
-            .bg(tokens.surface)
-            .border_l_1()
-            .border_color(tokens.line)
-            .child(header(panel, tokens, cx))
-            .child(
-                div()
-                    .id("decision-panel-body")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&panel.scroll)
-                    .px(tokens.pad_x)
-                    .py_4()
-                    .child(body(panel, issues.issue_view.snapshot.as_ref(), tokens, cx)),
-            )
+        scroll_keys(panel_element, cx)
             .focus_trap("decision-panel", &panel.trap)
             .into_any_element(),
     )
+}
+
+/// Arrow, page and Home/End keys scroll the body from any control in the
+/// panel, so reasoning without links can still be read by keyboard.
+fn scroll_keys<E: InteractiveElement>(panel: E, cx: &mut Context<Issues>) -> E {
+    let step = |step: Step| {
+        move |this: &mut Issues, cx: &mut Context<Issues>| {
+            decision::scroll(this, step, cx);
+        }
+    };
+    let up = step(Step::Up);
+    let down = step(Step::Down);
+    let page_up = step(Step::PageUp);
+    let page_down = step(Step::PageDown);
+    let top = step(Step::Top);
+    let bottom = step(Step::Bottom);
+    panel
+        .on_action(cx.listener(move |this, _: &decision::ScrollUp, _, cx| up(this, cx)))
+        .on_action(cx.listener(move |this, _: &decision::ScrollDown, _, cx| down(this, cx)))
+        .on_action(cx.listener(move |this, _: &decision::ScrollPageUp, _, cx| page_up(this, cx)))
+        .on_action(
+            cx.listener(move |this, _: &decision::ScrollPageDown, _, cx| page_down(this, cx)),
+        )
+        .on_action(cx.listener(move |this, _: &decision::ScrollToTop, _, cx| top(this, cx)))
+        .on_action(cx.listener(move |this, _: &decision::ScrollToBottom, _, cx| bottom(this, cx)))
 }
 
 fn header(panel: &DecisionPanel, tokens: &Tokens, cx: &mut Context<Issues>) -> Div {
@@ -173,8 +199,8 @@ fn content(
         .gap_4()
         .child(sections::summary(detail, tokens))
         .children(panel.markdown.as_ref().map(|fields| prose(fields, tokens)))
-        .child(sections::provenance(detail, tokens))
-        .children(sections::related(detail, tokens, cx))
+        .child(sections::provenance(detail, &panel.scroll, tokens))
+        .children(sections::related(detail, &panel.scroll, tokens, cx))
 }
 
 const HEADINGS: [&str; 5] = ["Decision", "Context", "Why", "Implications", "Alternatives"];
