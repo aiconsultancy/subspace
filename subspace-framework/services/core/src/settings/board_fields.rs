@@ -33,6 +33,12 @@ pub(super) fn secret_present(root: &Map<String, Value>, section: &[String], key:
     child(root, section, SECRETS).is_some_and(|secrets| secrets.contains_key(key))
 }
 
+pub(super) fn secret_keys(root: &Map<String, Value>, section: &[String]) -> Vec<String> {
+    child(root, section, SECRETS)
+        .map(|secrets| secrets.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
 pub(super) fn permission(root: &Map<String, Value>, section: &[String], key: &str) -> bool {
     child(root, section, "permissions")
         .and_then(|permissions| permissions.get(key))
@@ -139,7 +145,7 @@ mod tests {
 
     use serde_json::{Map, Value, json};
 
-    use super::{BoardFieldEdits, secret_present, validate, values, write};
+    use super::{BoardFieldEdits, secret_keys, secret_present, validate, values, write};
     use crate::{Secret, settings::TokenEdit};
 
     fn root() -> Map<String, Value> {
@@ -165,6 +171,8 @@ mod tests {
         assert!(secret_present(&root, &section(), "token"));
         assert!(!secret_present(&root, &section(), "other"));
         assert!(values(&root, &["webBoards".into(), "missing".into()]).is_empty());
+        assert_eq!(secret_keys(&root, &section()), ["token"]);
+        assert!(secret_keys(&root, &["webBoards".into(), "missing".into()]).is_empty());
     }
 
     #[test]

@@ -1,3 +1,4 @@
+mod app_secrets;
 mod integration;
 
 use std::path::Path;
