@@ -53,10 +53,12 @@ export function conversations(projectIssues: Map<string, SeedIssue[]>, screensho
     "#borealis-warp": [
       [
         "developer",
+        `@borealis-rigel Is the 09:42 spike in ${ref("WARP")} calibration noise or a real rise?`,
         `@borealis-rigel Is the 09:42 alarm in ${ref("WARP")} a calibration spike or a real rise?`,
       ],
       [
         "borealis-rigel",
+        "The 09:42 crossing is noise. `warp replay thermal-rise --window 5m` shows the sustained rise firing the alert around 09:46:45 UTC.",
         "The first crossing is noise. `warp replay thermal-rise --window 5m` shows the sustained rise a minute later.",
       ],
       [
