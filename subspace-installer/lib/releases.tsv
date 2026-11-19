@@ -1,0 +1,11 @@
+# tool arch version repository asset sha256 archive-member
+mise amd64 2026.11.5 jdx/mise mise-v2026.11.5-linux-x64 7a5b051d6f17d335c502f8047a5175cf3103f347d91942771c60da4e302ebcb0 -
+mise arm64 2026.11.5 jdx/mise mise-v2026.11.5-linux-arm64 3cb907fc1d3f033afab40b4a8efca4fd71440bf91b63bfca3beb3302b0f3a6d5 -
+bun amd64 1.4.4 oven-sh/bun bun-linux-x64-baseline.zip e0446eb55995772eb9894bebae9a6be368d985a8b9271ee124486f9946eedd76 bun-linux-x64-baseline/bun
+bun arm64 1.4.4 oven-sh/bun bun-linux-aarch64.zip baa6bb36f51d6e58561e02bbea825038a9df454f673d6d776e8bbf86f8c7850e bun-linux-aarch64/bun
+opencode amd64 2.3.2 anomalyco/opencode opencode-linux-x64-baseline.tar.gz 563b5d663637226b6e3bb4bb6803281bc39b0d2cd88db06d674b6420aab009b0 opencode
+opencode arm64 2.3.2 anomalyco/opencode opencode-linux-arm64.tar.gz 9d10185acdb72336e086e699ca363a6065f410fd3c1caed0dc8046e95ac06ccb opencode
+cli-proxy-api amd64 8.0.78 router-for-me/CLIProxyAPI CLIProxyAPI_8.0.78_linux_amd64_no-plugin.tar.gz 4f1d96513338ea26619cf7d34a15c4c37b59fb046a28600317dc6233f39c4294 cli-proxy-api
+cli-proxy-api arm64 8.0.78 router-for-me/CLIProxyAPI CLIProxyAPI_8.0.78_linux_aarch64_no-plugin.tar.gz 12146199f576c67aba89951e09d0d0a18ff1bee26c72406ac100a8ab03718866 cli-proxy-api
+agentsview amd64 0.47.0 kenn-io/agentsview agentsview_0.47.0_linux_amd64.tar.gz a49876edf9fe8d0641978afe69d776540175852a446a5d42a6d439215eb0dc45 agentsview
+agentsview arm64 0.47.0 kenn-io/agentsview agentsview_0.47.0_linux_arm64.tar.gz 587936c600ecef1a0b18ecabf384c75c4ea503c37f9032ef1117c023544edeaa agentsview

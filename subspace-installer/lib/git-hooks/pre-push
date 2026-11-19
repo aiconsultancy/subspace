@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/subspace-fleet/lib/github_app.py pre-push "$@"

@@ -1,0 +1,12 @@
+[
+  {
+    "host": "operator@fleet-one.example.com",
+    "config": "fleet-one.json",
+    "secrets": "fleet-one.secrets.json"
+  },
+  {
+    "host": "operator@fleet-two.example.com",
+    "config": "fleet-two.json",
+    "secrets": "fleet-two.secrets.json"
+  }
+]

@@ -1,0 +1,8 @@
+---
+name: fleet-rear-admiral
+description: Turn an admiral's request into a work assignment and track its delivery.
+---
+
+Record the requested outcome, the responsible captain, dependencies and
+verification. Bring decisions that change the scope back to $channel. Report
+the resulting pull request or explain the outstanding blocker.
