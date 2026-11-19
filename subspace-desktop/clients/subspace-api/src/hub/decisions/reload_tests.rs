@@ -187,3 +187,74 @@ fn tail(id: &str, title: &str) -> Value {
     item["id"] = json!(id);
     item
 }
+
+#[test]
+fn explicit_refresh_during_show_more_rereads_from_the_first_page() {
+    let (old, old_request) = held_reply();
+    let mock = restart_fixture(old_request);
+    let hub = connected(&mock);
+    hub.activate_decisions().unwrap();
+    wait(&hub, |s| s.issue().unwrap().decisions().is_some());
+    let job = pending_job(&hub, Read::More);
+    let Task::Decisions(request) = &job.task else {
+        unreachable!()
+    };
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(|| load(&hub.0, &job, request));
+        old.started.recv_timeout(DEADLINE).unwrap();
+        hub.reload_issue().unwrap();
+        wait_for_refresh(&hub);
+        assert_eq!(titles(&hub.snapshot()), ["Fresh head", "Fresh tail"]);
+        old.release.send(()).unwrap();
+        worker.join().unwrap();
+    });
+    // The superseded continuation cannot land on the fresh chain.
+    assert_eq!(titles(&hub.snapshot()), ["Fresh head", "Fresh tail"]);
+    let reads: Vec<String> = mock
+        .requests()
+        .into_iter()
+        .map(|r| r.path)
+        .filter(|path| path.starts_with("/api/v1/decisions"))
+        .collect();
+    assert_eq!(reads, [FIRST, OLD_NEXT, FIRST, FRESH_NEXT]);
+    hub.stop();
+}
+
+#[test]
+fn a_restarted_continuation_keeps_the_cached_cursor_until_the_refresh_lands() {
+    let mut decisions = super::IssueDecisions::default();
+    assert!(decisions.stage(Some(Read::First)));
+    let page: crate::model::Page<crate::model::DecisionListItem> =
+        serde_json::from_str(&page(vec![named("Original head")], Some("old"))).unwrap();
+    decisions.install(Read::First, Ok((page, 1)));
+    assert!(decisions.stage(Some(Read::More)));
+    decisions.restart();
+    assert!(decisions.pending == Some(Read::Refresh(2)));
+    assert_eq!(
+        decisions.page.as_ref().unwrap().next_cursor.as_deref(),
+        Some("old")
+    );
+    // A refresh that fails keeps the rows and asks to retry the same depth.
+    decisions.install(Read::Refresh(2), Err(crate::Error::Network));
+    assert!(decisions.retry == Some(Read::Refresh(2)));
+    assert_eq!(decisions.page.as_ref().unwrap().items.len(), 1);
+}
+
+fn restart_fixture(old: impl Fn() + Send + Sync + 'static) -> Mock {
+    let first = AtomicBool::new(true);
+    let held = AtomicBool::new(true);
+    Mock::new(move |request| match request.path.as_str() {
+        FIRST if first.swap(false, Ordering::Relaxed) => {
+            (200, page(vec![named("Original head")], Some("old")))
+        }
+        FIRST => (200, page(vec![named("Fresh head")], Some("fresh"))),
+        OLD_NEXT => {
+            if held.swap(false, Ordering::Relaxed) {
+                old();
+            }
+            (200, page(vec![tail(OLD_TAIL_ID, "Obsolete tail")], None))
+        }
+        FRESH_NEXT => (200, page(vec![tail(FRESH_TAIL_ID, "Fresh tail")], None)),
+        _ => common(request),
+    })
+}

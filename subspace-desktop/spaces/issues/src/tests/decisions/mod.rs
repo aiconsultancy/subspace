@@ -1,5 +1,6 @@
 mod fixture;
 mod history;
+mod keyboard;
 mod panel;
 mod recovery;
 
@@ -16,7 +17,7 @@ use std::sync::{
 
 pub(super) const NEW: &str = "00000000-0000-0000-0000-000000000001";
 pub(super) use fixture::normal_fixture;
-use fixture::{fixture, switched};
+use fixture::{LONG_LINKS, fixture, long_fixture, switched};
 const OLD: &str = "00000000-0000-0000-0000-000000000002";
 const FIRST: &str = "/api/v1/decisions?issue=SUB-1&limit=50";
 const NEXT: &str = "/api/v1/decisions?issue=SUB-1&limit=50&cursor=next";

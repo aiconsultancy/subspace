@@ -56,16 +56,37 @@ pub fn external_marked_with_label(
 
 fn external_link(
     id: ElementId,
-    (text, accessible_name): (SharedString, SharedString),
+    labels: (SharedString, SharedString),
     url: SharedString,
     tokens: &crate::Tokens,
     marked: bool,
 ) -> AnyElement {
+    link(id, labels, url.clone(), tokens, marked)
+        .anchored_context_menu(move |menu, _, _| {
+            let url = url.clone();
+            menu.item(
+                PopupMenuItem::new("Copy link")
+                    .icon(subspace_lucide::IconName::Copy)
+                    .on_click(move |_, _, cx| copy(url.to_string(), cx)),
+            )
+        })
+        .into_any_element()
+}
+
+/// The themed link itself, before its context menu: the element that owns
+/// the link role, the accessible name and keyboard activation.
+fn link(
+    id: ElementId,
+    (text, accessible_name): (SharedString, SharedString),
+    url: SharedString,
+    tokens: &crate::Tokens,
+    marked: bool,
+) -> Link {
     let accent = tokens.accent;
     let hover_foreground = tokens.fg_strong;
     let focus_background = tokens.select;
     Link::new(id)
-        .href(url.clone())
+        .href(url)
         .accessibility_label(accessible_name)
         .text_color(accent)
         .text_decoration_1()
@@ -84,15 +105,6 @@ fn external_link(
                 .gap_1()
                 .child(Icon::from(subspace_lucide::IconName::ExternalLink).xsmall())
         })
-        .anchored_context_menu(move |menu, _, _| {
-            let url = url.clone();
-            menu.item(
-                PopupMenuItem::new("Copy link")
-                    .icon(subspace_lucide::IconName::Copy)
-                    .on_click(move |_, _, cx| copy(url.to_string(), cx)),
-            )
-        })
-        .into_any_element()
 }
 
 /// The URL when it is absolute and `http`, `https` or `mailto`; else `None`.
