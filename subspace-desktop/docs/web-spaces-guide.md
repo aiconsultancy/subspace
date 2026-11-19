@@ -174,9 +174,37 @@ Subspace settings.` Edits apply on Save; read `settings.get()` again to see
 them, as there is no change event.
 
 Setting types are `text`, `url`, `number`, `boolean`, `select` and `secret`.
-Secret values are stored by Subspace but never sent to the page. The full
-method list and limits are in
+`settings.get()` never returns secret values. An app that needs its own
+token asks for the `secrets` permission and reads it with `secrets.get()`
+([Read the app's secrets](web-spaces-reference.md#read-the-apps-secrets)).
+The full method list and limits are in
 [Read settings and call Subspace](web-spaces-reference.md#read-settings-and-call-subspace).
+
+To match Subspace's look, read `subspace.theme()` at start, which needs no
+permission, and listen for its changes:
+
+```javascript
+function applyTheme(theme) {
+  const root = document.documentElement;
+  root.style.colorScheme = theme.mode;
+  for (const [name, value] of Object.entries(theme.tones)) {
+    root.style.setProperty(`--${name}`, value);
+  }
+  document.body.style.fontFamily = theme.fonts.ui;
+}
+
+async function followTheme() {
+  const subspace = window.subspace;
+  if (typeof subspace?.theme !== "function") return;
+  window.addEventListener("subspace:theme", (event) => applyTheme(event.detail));
+  applyTheme(await subspace.theme());
+}
+```
+
+See [Follow the app's theme](web-spaces-reference.md#follow-the-apps-theme).
+An app that shows issue references can ask the Issues Space about them with
+the `issues` permission, as Channels does
+([Show issues](web-spaces-reference.md#show-issues)).
 
 Changing the manifest changes its fingerprint, so a new manifest needs the
 permissions allowed again ([Trust and compatibility](web-spaces-reference.md#trust-and-compatibility)).

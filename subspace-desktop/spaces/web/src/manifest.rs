@@ -22,6 +22,8 @@ pub(crate) enum Permission {
     Settings,
     Badge,
     Context,
+    Secrets,
+    Issues,
 }
 
 impl Permission {
@@ -31,6 +33,8 @@ impl Permission {
             "settings" => Self::Settings,
             "badge" => Self::Badge,
             "context" => Self::Context,
+            "secrets" => Self::Secrets,
+            "issues" => Self::Issues,
             _ => return None,
         })
     }
@@ -50,6 +54,8 @@ impl Permission {
             Self::Settings => ("settings", "read its settings"),
             Self::Badge => ("badge", "show a badge on its tab"),
             Self::Context => ("context", "share context with Copilot chat"),
+            Self::Secrets => ("secrets", "read its saved secrets"),
+            Self::Issues => ("issues", "read and open issues"),
         }
     }
 }
@@ -210,6 +216,31 @@ mod tests {
             Some("Where notes live")
         );
         assert_eq!(manifest.settings[4].kind, FieldKind::Secret);
+    }
+
+    #[test]
+    fn secrets_and_issues_are_separate_permissions_with_their_own_labels() {
+        let text = json!({
+            "name": "Fleet", "version": "1",
+            "permissions": ["issues", "secrets", "Secrets", "issue"]
+        })
+        .to_string();
+        let manifest = parse(&text).unwrap();
+        assert_eq!(
+            manifest.permissions.iter().copied().collect::<Vec<_>>(),
+            [Permission::Secrets, Permission::Issues]
+        );
+        assert_eq!(
+            manifest.warnings,
+            [
+                "Unknown permission \"Secrets\" ignored.",
+                "Unknown permission \"issue\" ignored."
+            ]
+        );
+        assert_eq!(Permission::Secrets.name(), "secrets");
+        assert_eq!(Permission::Secrets.label(), "read its saved secrets");
+        assert_eq!(Permission::Issues.name(), "issues");
+        assert_eq!(Permission::Issues.label(), "read and open issues");
     }
 
     #[test]

@@ -27,6 +27,16 @@ pub(crate) enum Operation {
     Context(Option<Context>),
     #[serde(rename = "notify")]
     Notify(Message),
+    #[serde(rename = "theme")]
+    Theme,
+    #[serde(rename = "secrets.get")]
+    Secrets,
+    #[serde(rename = "issues.scope")]
+    IssueScope,
+    #[serde(rename = "issues.resolve")]
+    IssueResolve(Vec<String>),
+    #[serde(rename = "issues.open")]
+    IssueOpen(String),
 }
 
 #[derive(Clone, Deserialize)]
@@ -71,9 +81,16 @@ pub(crate) fn reply(
     format!("if(location.origin === {origin}) window.__subspaceReply?.({value});")
 }
 
+/// An event for the page's current document, dispatched by the bridge's
+/// `__subspaceEvent` only while that document still has the app's origin.
+pub(crate) fn event(name: &str, detail: &Value, origin: &str) -> String {
+    let (name, origin) = (json!(name), json!(origin));
+    format!("if(location.origin === {origin}) window.__subspaceEvent?.({name}, {detail});")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse, reply};
+    use super::{event, parse, reply};
     use serde_json::json;
 
     #[test]
@@ -85,10 +102,37 @@ mod tests {
         assert!(parse(&valid).is_some());
         assert!(parse(&message("injected()", json!({"method": "info"}))).is_none());
         assert!(parse(&message("a", json!({"method": "exec"}))).is_none());
+        for operation in [
+            json!({"method": "theme"}),
+            json!({"method": "secrets.get"}),
+            json!({"method": "issues.scope"}),
+            json!({"method": "issues.resolve", "value": ["ABC-1"]}),
+            json!({"method": "issues.open", "value": "ABC-1"}),
+        ] {
+            assert!(
+                parse(&message("ab", operation.clone())).is_some(),
+                "{operation}"
+            );
+        }
+        assert!(
+            parse(&message(
+                "ab",
+                json!({"method": "issues.resolve", "value": "ABC-1"})
+            ))
+            .is_none()
+        );
+        assert!(parse(&message("ab", json!({"method": "issues.open", "value": 1}))).is_none());
         assert!(parse(&"a".repeat(16_385)).is_none());
         let request = parse(&valid).unwrap();
         let reply = reply(&request, Ok(json!({"x": "\";evil()"})), "subspace://notes");
         assert!(reply.contains("location.origin === \"subspace://notes\""));
         assert!(reply.contains("\\\";evil()"));
+    }
+
+    #[test]
+    fn events_are_origin_checked_and_their_detail_is_data() {
+        let script = event("theme", &json!({"name": "\";evil()"}), "subspace://notes");
+        assert!(script.starts_with("if(location.origin === \"subspace://notes\")"));
+        assert!(script.contains("__subspaceEvent?.(\"theme\", {\"name\":\"\\\";evil()\"})"));
     }
 }

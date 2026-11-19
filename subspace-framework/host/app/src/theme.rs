@@ -16,11 +16,12 @@ use gpui_kit::{App, Styled as _, px};
 use loader::{ThemeChoices, default_theme, load_registered_themes};
 use subspace_dashboard::density::{self, BODY_FONT_DEFAULT, Density, DensityPreview};
 use subspace_dashboard::prefs;
-use subspace_dashboard::tokens::ThemeTones;
+use subspace_dashboard::tokens::{ThemeId, ThemeTones};
 use subspace_dashboard::typography::{GroupHeading, Typography};
 
 pub(crate) use document::{FontChoices, GroupHeadingChoices, KIT_RADII, ThemeDocument};
 
+pub(crate) use loader::bundled_theme_id;
 pub(crate) use loader::validate_custom_theme;
 pub(crate) use loader::validate_product_themes;
 
@@ -134,6 +135,7 @@ pub(crate) struct AppearanceSnapshot {
     density: Density,
     typography: Typography,
     tones: ThemeTones,
+    id: ThemeId,
     preview: bool,
 }
 
@@ -144,6 +146,7 @@ impl AppearanceSnapshot {
             density: cx.try_global::<Density>().cloned().unwrap_or_default(),
             typography: cx.try_global::<Typography>().cloned().unwrap_or_default(),
             tones: cx.try_global::<ThemeTones>().cloned().unwrap_or_default(),
+            id: cx.try_global::<ThemeId>().cloned().unwrap_or_default(),
             preview: cx
                 .try_global::<DensityPreview>()
                 .is_some_and(|preview| preview.0),
@@ -154,6 +157,7 @@ impl AppearanceSnapshot {
         cx.set_global(self.density.clone());
         cx.set_global(self.typography.clone());
         cx.set_global(self.tones.clone());
+        cx.set_global(self.id.clone());
         cx.set_global(DensityPreview(self.preview));
         // A mode change reloads that mode's registered config over the edit,
         // dropping adjustments such as the switch track, so switch mode first.
@@ -212,6 +216,8 @@ pub(crate) fn apply_document(
         theme.font_family = resolved.body.into();
         theme.mono_font_family = resolved.mono.into();
     });
+    let id = bundled_theme_id(Theme::global(cx).theme_name());
+    cx.set_global(ThemeId(id.to_owned()));
     sync_font_sizes(cx);
     Ok(resolved.warnings)
 }

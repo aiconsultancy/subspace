@@ -22,7 +22,11 @@ function fixture(origin = appOrigin, main = true) {
       return id;
     },
     clearTimeout(id) { timers.delete(id); },
+    CustomEvent,
   };
+  const events = new EventTarget();
+  window.addEventListener = events.addEventListener.bind(events);
+  window.dispatchEvent = events.dispatchEvent.bind(events);
   window.top = main ? window : {};
   window.self = window;
   const script = readFileSync(new URL("../src/bridge/init.js", import.meta.url), "utf8")
@@ -99,4 +103,43 @@ test("serialization errors do not consume pending request slots", async () => {
   }
   assert.equal(messages.length, 1);
   assert.equal(timers.size, 0);
+});
+
+test("theme, secrets and issues send their documented methods and values", async () => {
+  const { window, messages, answer } = fixture();
+  answer(messages[0], { notificationPermission: "denied" });
+  const theme = window.subspace.theme();
+  assert.deepEqual(messages[1].operation, { method: "theme" });
+  answer(messages[1], { id: "one-dark", mode: "dark" });
+  assert.equal((await theme).mode, "dark");
+  const secrets = window.subspace.secrets.get();
+  assert.deepEqual(messages[2].operation, { method: "secrets.get" });
+  answer(messages[2], { token: "t" });
+  assert.equal((await secrets).token, "t");
+  const scope = window.subspace.issues.scope();
+  assert.deepEqual(messages[3].operation, { method: "issues.scope" });
+  answer(messages[3], null);
+  assert.equal(await scope, null);
+  const resolved = window.subspace.issues.resolve(["ABC-1", 7]);
+  assert.deepEqual(messages[4].operation, { method: "issues.resolve", value: ["ABC-1", "7"] });
+  answer(messages[4], [{ identifier: "ABC-1", state: "pending" }]);
+  assert.equal((await resolved)[0].state, "pending");
+  const opened = window.subspace.issues.open("ABC-1");
+  assert.deepEqual(messages[5].operation, { method: "issues.open", value: "ABC-1" });
+  answer(messages[5], null);
+  assert.equal(await opened, undefined);
+  await assert.rejects(window.subspace.issues.resolve("ABC-1"), /expects an array/);
+  assert.equal(messages.length, 6);
+  assert.ok(Object.isFrozen(window.subspace.issues) && Object.isFrozen(window.subspace.secrets));
+});
+
+test("native pushes become window events", () => {
+  const { window } = fixture();
+  const seen = [];
+  window.addEventListener("subspace:theme", event => seen.push(["theme", event.detail.mode]));
+  window.addEventListener("subspace:issues-changed", event => seen.push([event.type]));
+  window.__subspaceEvent("theme", { mode: "light" });
+  window.__subspaceEvent("issues-changed", null);
+  window.__subspaceEvent("unknown", {});
+  assert.deepEqual(seen, [["theme", "light"], ["subspace:issues-changed"]]);
 });

@@ -166,10 +166,10 @@ class PackageTests(unittest.TestCase):
 
     def test_manifest_size_and_unknown_permission(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            folder = space(Path(temp), manifest(permissions=["badge", "camera"]))
+            folder = space(Path(temp), manifest(permissions=["issues", "badge", "camera", "secrets"]))
             status, out, _ = self.run_script(str(folder), "--check")
             self.assertEqual(status, 0)
-            self.assertIn("permissions: badge", out)
+            self.assertIn("permissions: badge, secrets, issues", out)
             self.assertIn('warning: Unknown permission "camera" ignored.', out)
             write(folder, "subspace-board.json", manifest(pad=" " * 256 * 1024))
             self.fails(folder, "subspace-board.json is larger than 256 KiB.")

@@ -6,6 +6,7 @@ use std::path::Path;
 
 use gpui_kit::component::{ThemeRegistry, ThemeSet};
 use gpui_kit::{App, Global};
+use serde_json::Value;
 use subspace_dashboard::CurrentProduct;
 use subspace_product::ValidatedProduct;
 
@@ -37,6 +38,29 @@ fn variant_names(id: &str) -> Result<Vec<String>, String> {
         .into_iter()
         .map(|theme| theme.name.to_string())
         .collect())
+}
+
+/// The product theme id of the embedded file that holds the variant `name`,
+/// or `custom`. Custom theme names can contain private data, so only their
+/// category leaves the app.
+pub(crate) fn bundled_theme_id(name: &str) -> &'static str {
+    SUBSPACE_THEMES
+        .iter()
+        .chain(GPUI_KIT_THEMES)
+        .copied()
+        .find(|(_, content)| contains_theme(content, name))
+        .map_or("custom", |(id, _)| id)
+}
+
+fn contains_theme(content: &str, name: &str) -> bool {
+    serde_json::from_str::<Value>(content)
+        .ok()
+        .and_then(|value| value.get("themes").and_then(Value::as_array).cloned())
+        .is_some_and(|themes| {
+            themes
+                .iter()
+                .any(|theme| theme.get("name").and_then(Value::as_str) == Some(name))
+        })
 }
 
 /// Every declared document must be embedded, and one of them must contain

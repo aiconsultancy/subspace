@@ -33,6 +33,14 @@ pub struct ThemeTones(pub BTreeMap<String, Hsla>);
 
 impl Global for ThemeTones {}
 
+/// The product theme id of the active theme, such as `one-dark` or
+/// `cupertino`: the bundled theme file its variant comes from, or `custom`
+/// for a user's own theme. The host sets it with each theme it applies.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ThemeId(pub String);
+
+impl Global for ThemeId {}
+
 /// The colours as `0xRRGGBB`, named after the CSS custom properties.
 pub mod hex {
     pub const BG: u32 = 0x101115;

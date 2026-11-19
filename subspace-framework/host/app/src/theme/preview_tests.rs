@@ -10,7 +10,7 @@ use gpui_kit::{App, BorrowAppContext as _, TestAppContext};
 use serde_json::json;
 use subspace_core::state::State;
 use subspace_dashboard::density::{self, Density, DensityPreview};
-use subspace_dashboard::tokens::ThemeTones;
+use subspace_dashboard::tokens::{ThemeId, ThemeTones};
 use subspace_dashboard::typography::Typography;
 use subspace_dashboard::{CurrentProduct, prefs};
 use subspace_product::{OsKind, PlatformEnv, ProductContext, fixture};
@@ -228,8 +228,11 @@ fn appearance_snapshot_restores_every_preview_global_exactly(cx: &mut TestAppCon
         let group_heading = cx.global::<Typography>().group_heading.clone();
         let tones = cx.global::<ThemeTones>().0.clone();
         let density = cx.global::<Density>().clone();
+        let id = cx.global::<ThemeId>().clone();
+        assert_ne!(id.0, "solarized");
 
         preview_selection("Solarized Dark", &installed_choices(cx), cx).unwrap();
+        assert_eq!(cx.global::<ThemeId>().0, "solarized");
         cx.global_mut::<Density>().set("--row-h", 47.0);
         cx.set_global(DensityPreview(false));
         snapshot.restore(cx);
@@ -239,6 +242,7 @@ fn appearance_snapshot_restores_every_preview_global_exactly(cx: &mut TestAppCon
         assert_eq!(cx.global::<Typography>().heading, heading);
         assert_eq!(cx.global::<Typography>().group_heading, group_heading);
         assert_eq!(cx.global::<ThemeTones>().0, tones);
+        assert_eq!(cx.global::<ThemeId>(), &id);
         assert_eq!(cx.global::<Density>(), &density);
         assert!(cx.global::<DensityPreview>().0);
     });

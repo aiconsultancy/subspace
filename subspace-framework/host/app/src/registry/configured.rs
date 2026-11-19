@@ -166,7 +166,10 @@ impl BoardRegistration {
             configuration: None,
             artwork: D::ARTWORK,
             connection: D::connection_settings(),
-            contracts: Default::default(),
+            // Every instance declares its type's roles under its own ID. A
+            // configured type must not respond: two instances would be two
+            // responders, which registration rejects.
+            contracts: D::contracts(),
         }
     }
 }
