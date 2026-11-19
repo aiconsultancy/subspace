@@ -22,6 +22,8 @@ Each guide states its prerequisites, controls, actions, keyboard shortcuts,
 settings, troubleshooting steps and limits. Read those prerequisites before
 connecting a service. A successful sign-in does not grant service permissions.
 
-Use [Settings](settings.md) to choose enabled boards and their order. Some
+Use [Settings](settings.md) to choose enabled boards and their order.
+Right-click a board's tab and choose **Close Space** to turn it off without
+opening Settings, or **Space settings…** to open its Settings page. Some
 boards are off by default, platform-specific or experimental. The
 [developer overview](../../README.md) records those build differences.
