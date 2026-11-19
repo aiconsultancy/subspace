@@ -52,6 +52,9 @@ and from `scripts/package-web-space.py`, which prints the same texts after
 | `Notifications are off. Choose a notification channel in Subspace Settings.` | Turn on a notification channel for the Space. |
 | `Too many notifications. Wait five seconds.` | Send at most one notification per five seconds. |
 | `Resolve at most 50 distinct issue identifiers.` | Split `issues.resolve` calls into batches of 50. |
+| `This app has saved 32 secrets, the most it may. Delete one before saving another.` | Delete secrets the page no longer uses with `secrets.set(key, null)`. |
+| `This key is one of the app's settings, not a secret. Choose another key.` | Use a key the manifest does not declare as a non-secret setting. |
+| `Open this Space to save a secret.` | Call `secrets.set` in answer to the user, while the Space is shown. |
 | `Use issue identifiers of at most 32 characters, without control characters.` | Pass identifiers such as `ABC-827` as strings. |
 | `No Space that answers issue requests recognises this issue identifier.` | Check `issues.scope()`: no Space answers, the user is signed out, or the identifier's project key is not in `teamKeys`. |
 | `The app manifest changed. Restart Subspace, then review its permissions in Settings.` | Restart and allow the permissions again. |

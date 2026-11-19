@@ -19,6 +19,8 @@ const EVENTS_PER_POLL: usize = 16;
 
 pub(crate) struct Page {
     view: Entity<WebView>,
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    snapshots: Arc<std::sync::Mutex<super::snapshot::Snapshots>>,
     events: Receiver<PageEvent>,
     overflow: Arc<AtomicBool>,
     epoch: Arc<AtomicU64>,
@@ -63,9 +65,15 @@ impl Page {
         let raw = build_macos(start, profile, reporter, window)?;
         #[cfg(windows)]
         let (raw, context) = build_windows(start, profile, reporter, window)?;
+        #[cfg(all(target_os = "macos", debug_assertions))]
+        if std::env::var_os("SUBSPACE_CAPTURE_DIR").is_some() {
+            super::snapshot::keep_drawing(&raw);
+        }
         let view = cx.new(|cx| WebView::new(raw, window, cx));
         Ok(Self {
             view,
+            #[cfg(all(target_os = "macos", debug_assertions))]
+            snapshots: Arc::default(),
             events,
             overflow,
             epoch,
@@ -115,6 +123,14 @@ impl Page {
     /// script checks the document's origin itself before dispatching.
     pub(crate) fn push(&self, script: &str, cx: &App) {
         let _ = self.script(script, cx);
+    }
+
+    /// Debug capture only: starts a snapshot of the page and returns the
+    /// last finished one as PNG bytes.
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    pub(crate) fn snapshot(&self, cx: &App) -> Option<Vec<u8>> {
+        super::snapshot::request(self.view.read(cx).raw(), &self.snapshots);
+        super::snapshot::take(&self.snapshots)
     }
 
     pub(crate) fn back(&self, cx: &App) -> Result<(), String> {
@@ -204,6 +220,7 @@ fn configure<'a>(
     let builder = match &start.app {
         Some(app) => {
             let builder = serve_app(builder, app, board);
+            let builder = capture_visible(builder);
             if app.bridge_enabled {
                 install_bridge(builder, &app.origin, events.clone())
             } else {
@@ -244,6 +261,15 @@ fn configure<'a>(
         })
         .with_document_title_changed_handler(move |title| events.send(PageEvent::Title(title)))
         .with_url(&start.url)
+}
+
+/// Debug capture builds only: see `snapshot::VISIBLE_SCRIPT`.
+fn capture_visible(builder: wry::WebViewBuilder<'_>) -> wry::WebViewBuilder<'_> {
+    #[cfg(all(target_os = "macos", debug_assertions))]
+    if std::env::var_os("SUBSPACE_CAPTURE_DIR").is_some() {
+        return builder.with_initialization_script(super::snapshot::VISIBLE_SCRIPT);
+    }
+    builder
 }
 
 /// Inject only in the app's main document. Wry supplies the source URI

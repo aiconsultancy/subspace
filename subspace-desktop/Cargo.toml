@@ -55,6 +55,13 @@ gpui-kit = { version = "0.9.1", features = [
 ] }
 gpui-webview = "=0.9.1"
 wry = { package = "lb-wry", version = "=0.53.3" }
+# Debug capture builds snapshot a web Space's WKWebView, which GPUI's own
+# scene does not contain. The versions are Wry's own.
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSBitmapImageRep", "NSImage", "NSImageRep"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSDictionary", "NSError"] }
+objc2-web-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-app-kit", "WKPreferences", "WKSnapshotConfiguration", "WKWebView", "WKWebViewConfiguration"] }
 
 anyhow = "1"
 base64 = "0.23"

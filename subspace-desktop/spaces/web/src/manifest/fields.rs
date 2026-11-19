@@ -52,7 +52,7 @@ fn field(entry: &Value) -> Result<FieldSpec, String> {
     ))
 }
 
-fn valid_key(key: &str) -> bool {
+pub(crate) fn valid_key(key: &str) -> bool {
     key.len() <= MAX_KEY_CHARS
         && key.starts_with(|c: char| c.is_ascii_alphabetic())
         && key

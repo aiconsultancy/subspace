@@ -14,7 +14,9 @@ use super::Settings;
 use super::form::{Choice, choice, token_edit};
 use crate::registry::BoardRegistration;
 
+mod app_secrets;
 mod reconcile;
+pub(super) use app_secrets::{AppSecrets, app_secrets_text};
 pub(super) use reconcile::reconcile;
 
 /// One board's run-time settings.
@@ -24,6 +26,8 @@ pub(super) struct Draft {
     pub notes: Vec<String>,
     pub fields: Vec<Field>,
     pub permissions: Vec<Grant>,
+    /// Secrets the board's app saved itself, when it saves any.
+    pub app_secrets: Option<AppSecrets>,
 }
 
 pub(super) struct Grant {
@@ -113,6 +117,7 @@ fn draft(
                 }
             })
             .collect(),
+        app_secrets: fields.app_secrets.then(|| AppSecrets::of(fields, file)),
     }
 }
 
@@ -187,6 +192,9 @@ fn board_edits(draft: &Draft, cx: &App) -> Result<BoardFieldEdits, String> {
             }
         }
     }
+    if let Some(app) = &draft.app_secrets {
+        secrets.extend(app.edits());
+    }
     Ok(BoardFieldEdits {
         section: draft.section.clone(),
         values,
@@ -253,6 +261,9 @@ pub(super) fn accept(
         }
         for field in &mut draft.fields {
             accept_field(field, file, &draft.section, window, cx);
+        }
+        if let Some(app) = &mut draft.app_secrets {
+            *app = AppSecrets::load(file, &draft.section, &draft.fields);
         }
     }
 }

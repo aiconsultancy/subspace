@@ -18,6 +18,10 @@ pub struct BoardFields {
     pub notes: Vec<String>,
     /// Explicit user grants, separate from settings the app may read.
     pub permissions: Vec<PermissionSpec>,
+    /// The board's app saves secrets of its own in the section's
+    /// `secrets`, beside the declared fields. Settings then says how many it
+    /// saved, never what they are, and offers Clear.
+    pub app_secrets: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,7 +77,15 @@ impl BoardFields {
             fields,
             notes,
             permissions,
+            app_secrets: false,
         }
+    }
+
+    /// The app saves secrets of its own: see [`BoardFields::app_secrets`].
+    // qual:api (an app's web Space boards set it)
+    pub fn with_app_secrets(mut self) -> Self {
+        self.app_secrets = true;
+        self
     }
 }
 

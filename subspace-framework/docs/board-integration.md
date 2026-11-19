@@ -101,7 +101,11 @@ stale.
   `BoardRegistration::new::<subspace_name_board::Name>().description("…")`.
   Configured boards, such as web boards, use `BoardRegistration::configured`
   with `with_configuration` and `with_field_source`; they get no agent tools,
-  search, features or background work of their own.
+  search, features or background work of their own. A field source's
+  `BoardFields` lists the fields, notes and grants Settings shows;
+  `with_app_secrets()` adds a read-only count of the secrets the board's app
+  saved itself in its section's `secrets`, beside the declared fields, with
+  **Clear**, which applies on Save. Settings never reads their values.
 - **Use it when**: always. Do not add per-board code to the shell.
 - **Tests**: `products/subspace/src/main.rs` checks icons, artwork, help
   contents, the documented tool table and which boards are retained.

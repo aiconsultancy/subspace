@@ -66,6 +66,8 @@ impl Profile {
 
 #[cfg(any(target_os = "macos", windows))]
 mod native;
+#[cfg(all(target_os = "macos", debug_assertions))]
+mod snapshot;
 
 #[cfg(any(target_os = "macos", windows))]
 pub(crate) use native::Page;

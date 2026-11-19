@@ -143,3 +143,20 @@ test("native pushes become window events", () => {
   window.__subspaceEvent("unknown", {});
   assert.deepEqual(seen, [["theme", "light"], ["subspace:issues-changed"]]);
 });
+
+test("secrets.set sends a key and a value, or null to delete, and nothing else", async () => {
+  const { window, messages, answer } = fixture();
+  answer(messages[0], { notificationPermission: "denied" });
+  const saved = window.subspace.secrets.set("fleet-a", "token-a");
+  assert.deepEqual(messages[1].operation, { method: "secrets.set", value: { key: "fleet-a", value: "token-a" } });
+  answer(messages[1], null);
+  assert.equal(await saved, undefined);
+  const deleted = window.subspace.secrets.set("fleet-a", null);
+  assert.deepEqual(messages[2].operation.value, { key: "fleet-a", value: null });
+  answer(messages[2], null, "Open this Space to save a secret.");
+  await assert.rejects(deleted, /Open this Space/);
+  for (const [key, value] of [[1, "t"], ["fleet-a", undefined], ["fleet-a", 7]]) {
+    await assert.rejects(window.subspace.secrets.set(key, value), /expects a key/);
+  }
+  assert.equal(messages.length, 3);
+});
