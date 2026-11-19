@@ -1,6 +1,9 @@
 //! IRC with IRCv3 for Subspace: protocol parsing, connections and per-network
 //! session state, run on a background runtime and driven by [`Command`]s.
 
+#[cfg(test)]
+mod cleanroom_acceptance;
+
 mod codec;
 mod connection;
 pub mod format;
