@@ -1,0 +1,17 @@
+[package]
+name = "subspace-contracts"
+documentation = "https://docs.rs/subspace-contracts"
+description = "Subspace Framework: typed, versioned board-to-board contracts. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+url.workspace = true
+
+[lints]
+workspace = true

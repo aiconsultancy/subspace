@@ -1,0 +1,23 @@
+[package]
+name = "subspace-lucide"
+documentation = "https://docs.rs/subspace-lucide"
+description = "Subspace Framework: Lucide icons for GPUI Kit controls, selected by the linker. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+# Not used in code: its `links` metadata gives the build script the icon directory.
+gpui-kit-assets.workspace = true
+
+[lints]
+workspace = true
+
+# Kept only for its `links` metadata; see the comment above.
+[package.metadata.cargo-shear]
+ignored = ["gpui-kit-assets"]

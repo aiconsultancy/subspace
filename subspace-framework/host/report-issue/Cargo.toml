@@ -1,0 +1,35 @@
+[package]
+name = "subspace-report-issue"
+documentation = "https://docs.rs/subspace-report-issue"
+description = "Subspace Framework: issue reports with explicit diagnostics and image consent. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+subspace-client-github.workspace = true
+subspace-dashboard.workspace = true
+subspace-lucide.workspace = true
+gpui-kit.workspace = true
+image.workspace = true
+
+[dev-dependencies]
+subspace-client-test-support = { workspace = true, features = ["test-support"] }
+subspace-core.workspace = true
+gpui-kit = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+serde_json.workspace = true
+
+[[example]]
+name = "report_issue_fixture"
+required-features = ["test-support"]
+
+[lints]
+workspace = true

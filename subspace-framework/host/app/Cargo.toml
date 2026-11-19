@@ -1,0 +1,72 @@
+[package]
+name = "subspace-shell"
+documentation = "https://docs.rs/subspace-shell"
+description = "Subspace Framework shell: the window, switcher, palette, help, Settings and themes. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+capture = ["gpui-kit/test-support", "dep:subspace-contracts"]
+# Report issue: the action, its toolbar control and label setting, the
+# status bar command and the form. Off, none of it is compiled.
+report-issue = ["dep:subspace-report-issue"]
+test-support = ["gpui-kit/test-support", "subspace-product/test-support"]
+
+[dependencies]
+chrono.workspace = true
+subspace-core.workspace = true
+subspace-account.workspace = true
+subspace-agent-tools.workspace = true
+subspace-contracts = { workspace = true, optional = true }
+subspace-dashboard.workspace = true
+subspace-github-auth.workspace = true
+subspace-chat.workspace = true
+subspace-mcp.workspace = true
+subspace-lucide.workspace = true
+subspace-product.workspace = true
+subspace-update.workspace = true
+subspace-search.workspace = true
+subspace-search-ui.workspace = true
+subspace-report-issue = { workspace = true, optional = true }
+subspace-client-github.workspace = true
+gpui-kit.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sysinfo.workspace = true
+tokio.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust.workspace = true
+raw-window-handle.workspace = true
+x11rb.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_System_Console",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+subspace-product = { workspace = true, features = ["test-support"] }
+subspace-chat = { workspace = true, features = ["test-support"] }
+gpui-kit = { workspace = true, features = ["test-support"] }
+subspace-agent-tools = { workspace = true, features = ["test-support"] }
+subspace-contracts.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[[example]]
+name = "report_issue_shell"
+required-features = ["test-support", "report-issue"]
+
+[[example]]
+name = "copy_error_details_shell"
+required-features = ["test-support"]

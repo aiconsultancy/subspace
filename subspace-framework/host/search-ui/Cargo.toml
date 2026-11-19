@@ -1,0 +1,25 @@
+[package]
+name = "subspace-search-ui"
+documentation = "https://docs.rs/subspace-search-ui"
+description = "Subspace Framework: the retained full-text search view and source settings. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+chrono.workspace = true
+subspace-dashboard.workspace = true
+subspace-lucide.workspace = true
+subspace-search.workspace = true
+gpui-kit.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

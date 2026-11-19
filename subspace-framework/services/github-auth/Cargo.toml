@@ -1,0 +1,27 @@
+[package]
+name = "subspace-github-auth"
+documentation = "https://docs.rs/subspace-github-auth"
+description = "Subspace Framework: Sign in with GitHub, the OAuth browser and device flows. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[dependencies]
+base64.workspace = true
+subspace-auth-return.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+subspace-core.workspace = true
+thiserror.workspace = true
+ureq.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

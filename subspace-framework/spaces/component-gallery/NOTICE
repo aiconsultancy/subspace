@@ -1,0 +1,9 @@
+subspace-component-gallery-board third-party notices
+
+This crate embeds third-party material. Its own code is licensed under the
+Apache License 2.0 (LICENSE).
+
+- assets/component.svg: Lucide's component.svg as GPUI Kit 0.9.1 ships it,
+  with an explicit stroke. ISC License, Copyright (c) Lucide Icons and
+  Contributors. Licence text: assets/LICENSE-LUCIDE. Provenance:
+  assets/README.md.

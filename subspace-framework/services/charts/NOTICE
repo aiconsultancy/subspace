@@ -1,0 +1,16 @@
+subspace-charts third-party notices
+
+This crate embeds third-party material. Its own code is licensed under the
+Apache License 2.0 (LICENSE).
+
+- vendor/flint-chart-0.5.1/chartjs.js: the published dist/chartjs/index.js of
+  flint-chart 0.5.1, unchanged, compiled into the crate with include_str!.
+  MIT License, Copyright (c) Microsoft Corporation.
+  Licence text: vendor/flint-chart-0.5.1/LICENSE.
+  Source: https://github.com/microsoft/flint-chart
+- src/guide.md, and the guide text in src/lib.rs: adapted from flint-chart's
+  flint-chart-author agent skill. MIT License, Copyright (c) Microsoft
+  Corporation (the same licence text).
+
+QuickJS reaches the crate through the rquickjs dependency (MIT), which
+carries its own licence.

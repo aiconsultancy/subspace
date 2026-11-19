@@ -1,0 +1,42 @@
+[package]
+name = "subspace-agent"
+documentation = "https://docs.rs/subspace-agent"
+description = "Subspace Framework agent runtime: Copilot, Pi and ACP chat engines. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+subspace-agent-model.workspace = true
+subspace-agent-tools.workspace = true
+subspace-core.workspace = true
+subspace-charts.workspace = true
+mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
+roxmltree = "0.21"
+# The gh CLI account behind a credential, for the chat identity.
+subspace-client-github.workspace = true
+base64.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true
+# Canvas is experimental; keep the tested SDK and its bundled CLI together.
+# Keep `failure::SDK_VERSION` equal to this pin; a test checks it.
+github-copilot-sdk = "=1.0.34"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "process", "io-util"] }
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+subspace-agent-tools = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "subspace-search"
+documentation = "https://docs.rs/subspace-search"
+description = "Subspace Framework: scoped persistent SQLite full-text search. Internal crate; apps depend on `subspace-framework`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+categories.workspace = true
+keywords.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rusqlite = { workspace = true, features = ["hooks"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,113 @@
+//! The issue profile: what Report issue may include about this build.
+
+use serde_json::Value;
+use subspace_core::diagnostics::IssueDiagnostics;
+use subspace_product::ProductContext;
+use subspace_report_issue::Diagnostics;
+
+use super::build_identity;
+
+/// Inputs are descriptor IDs or embedded appearance identities, never paths.
+pub(crate) fn collect(
+    context: &ProductContext,
+    active_board: Option<&str>,
+    theme_name: &str,
+    icon_size: &str,
+) -> Diagnostics {
+    let facts = IssueDiagnostics::from(build_identity(context))
+        .with_appearance(bundled_theme_id(theme_name), icon_size);
+    let board = active_board.filter(|id| {
+        context.product.boards.len() > 1
+            && context
+                .product
+                .boards
+                .iter()
+                .any(|board| board.id.as_str() == *id)
+    });
+    match board {
+        Some(id) => facts.with_active_board(id),
+        None => facts,
+    }
+}
+
+/// Custom theme names can contain private data, so report only their category.
+fn bundled_theme_id(name: &str) -> &'static str {
+    crate::theme::SUBSPACE_THEMES
+        .iter()
+        .chain(crate::theme::GPUI_KIT_THEMES)
+        .copied()
+        .find(|(_, content)| contains_theme(content, name))
+        .map_or("custom", |(id, _)| id)
+}
+
+fn contains_theme(content: &str, name: &str) -> bool {
+    serde_json::from_str::<Value>(content)
+        .ok()
+        .and_then(|value| value.get("themes").and_then(Value::as_array).cloned())
+        .is_some_and(|themes| {
+            themes
+                .iter()
+                .any(|theme| theme.get("name").and_then(Value::as_str) == Some(name))
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use subspace_product::{OsKind, PlatformEnv, ProductContext, fixture};
+    use subspace_report_issue::{Draft, prepare};
+
+    use super::{bundled_theme_id, collect};
+    use crate::app::report_issue::target;
+
+    fn context() -> ProductContext {
+        let known = fixture::products().unwrap();
+        let sentinel = PathBuf::from("/test-only-private-home/config-and-logs");
+        let env = PlatformEnv {
+            os: OsKind::Linux,
+            home: sentinel.clone(),
+            xdg_config_home: Some(sentinel.clone()),
+            xdg_state_home: Some(sentinel.clone()),
+            app_data: Some(sentinel.clone()),
+            local_app_data: Some(sentinel.clone()),
+        };
+        ProductContext::new(known[0].clone(), env)
+    }
+
+    #[test]
+    fn diagnostic_allowlist_excludes_private_context_and_custom_names() {
+        let mut context = context();
+        context.product.display_name = "test-only-private-hostname".into();
+        context.product.icon_paths = vec!["/test-only-private-image-path".into()];
+        let diagnostics = collect(
+            &context,
+            Some("test-only-private-tunnel-name"),
+            "test-only-private-theme-and-token",
+            "medium",
+        );
+        let repository = target(Some("example-org/example-app")).unwrap().unwrap();
+        let report = prepare(&Draft::new("A test-only report"), &diagnostics, &repository).unwrap();
+        assert!(!report.body().contains("test-only-private"));
+        assert!(!report.body().contains("config-and-logs"));
+        assert_eq!(diagnostics.product_id(), context.product.id.as_str());
+        assert_eq!(diagnostics.app_version(), context.version);
+        assert_eq!(diagnostics.os(), Some("linux"));
+        assert_eq!(diagnostics.active_board(), None);
+        assert_eq!(diagnostics.theme_id(), Some("custom"));
+        assert_eq!(diagnostics.icon_size(), Some("medium"));
+    }
+
+    #[test]
+    fn registered_board_and_embedded_theme_keep_safe_identities() {
+        let mut context = context();
+        context.build.commit = "abc1234";
+        context.build.dirty = true;
+        let board = context.product.boards[0].id.as_str();
+        let diagnostics = collect(&context, Some(board), crate::theme::THEME_NAME, "small");
+        assert_eq!(diagnostics.active_board(), Some(board));
+        assert_eq!(diagnostics.theme_id(), Some("one-dark"));
+        assert_eq!(bundled_theme_id("not-an-embedded-theme"), "custom");
+        assert_eq!(diagnostics.commit(), Some("abc1234-dirty"));
+    }
+}
