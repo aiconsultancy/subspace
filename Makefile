@@ -23,6 +23,7 @@ hooks: ## Install the prek commit and push hooks for both projects
 	prek install
 
 release-check: ## Release Please's config, the lockfile sync and the release workflows
+	@cmp -s LICENSE $(FRAMEWORK)/LICENSE || { echo "The Framework's LICENSE must match the repository LICENSE" >&2; exit 1; }
 	mise -C $(DESKTOP) exec -- python3 "$(CURDIR)/scripts/test-release-tooling.py"
 	bash scripts/test-release-lockfiles.sh
 	bash scripts/test-release-rebuild.sh
