@@ -31,6 +31,8 @@ pub(crate) enum Operation {
     Theme,
     #[serde(rename = "secrets.get")]
     Secrets,
+    #[serde(rename = "secrets.set")]
+    SecretsSet(super::secrets::SecretWrite),
     #[serde(rename = "issues.scope")]
     IssueScope,
     #[serde(rename = "issues.resolve")]
@@ -105,6 +107,8 @@ mod tests {
         for operation in [
             json!({"method": "theme"}),
             json!({"method": "secrets.get"}),
+            json!({"method": "secrets.set", "value": {"key": "fleet-a", "value": "t"}}),
+            json!({"method": "secrets.set", "value": {"key": "fleet-a", "value": null}}),
             json!({"method": "issues.scope"}),
             json!({"method": "issues.resolve", "value": ["ABC-1"]}),
             json!({"method": "issues.open", "value": "ABC-1"}),
@@ -122,6 +126,8 @@ mod tests {
             .is_none()
         );
         assert!(parse(&message("ab", json!({"method": "issues.open", "value": 1}))).is_none());
+        let extra = json!({"method": "secrets.set", "value": {"key": "a", "value": "t", "x": 1}});
+        assert!(parse(&message("ab", extra)).is_none());
         assert!(parse(&"a".repeat(16_385)).is_none());
         let request = parse(&valid).unwrap();
         let reply = reply(&request, Ok(json!({"x": "\";evil()"})), "subspace://notes");

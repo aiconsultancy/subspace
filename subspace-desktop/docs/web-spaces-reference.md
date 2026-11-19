@@ -219,7 +219,8 @@ await window.subspace.setContext(null);
 | `setContext(valueOrNull)` | `context` | Label up to 100 characters, content up to 8192 UTF-8 bytes |
 | `notify({title, body})` | `notifications` | Title up to 100 characters, body up to 500, without control characters |
 | `theme()` | None | The app's theme: tones, mode, id, name and fonts ([Follow the app's theme](#follow-the-apps-theme)) |
-| `secrets.get()` | `secrets` | Saved values of the secrets the manifest declares ([Read the app's secrets](#read-the-apps-secrets)) |
+| `secrets.get()` | `secrets` | Saved values of the declared secrets and of the page's own ([Read and save the app's secrets](#read-and-save-the-apps-secrets)) |
+| `secrets.set(key, valueOrNull)` | `secrets` | Saves or deletes one secret; at most 32 beyond the declared ones, each up to 4096 characters |
 | `issues.scope()` | `issues` | The scope issue identifiers are recognised in, or `null` ([Show issues](#show-issues)) |
 | `issues.resolve(identifiers)` | `issues` | One resolution per distinct identifier, at most 50 distinct, each up to 32 characters |
 | `issues.open(identifier)` | `issues` | Opens the issue in the Space that answers issue requests |
@@ -235,6 +236,13 @@ Errors from the bridge (`spaces/web/src/bridge.rs` and
 | `Use a notification title up to 100 characters and body up to 500 characters.` | Notification too long |
 | `Notifications are off. Choose a notification channel in Subspace Settings.` | No notification channel |
 | `Too many notifications. Wait five seconds.` | More than one notification in five seconds |
+| `Use a secret key of 1 to 40 letters, digits, _ or -, starting with a letter.` | `secrets.set` with a malformed key |
+| `This key is one of the app's settings, not a secret. Choose another key.` | `secrets.set` with a key the manifest declares as a non-secret setting |
+| `Use a secret of 1 to 4096 characters, without control characters, or null to delete it.` | `secrets.set` with an empty, long or malformed value |
+| `This app has saved 32 secrets, the most it may. Delete one before saving another.` | A 33rd secret of the page's own |
+| `Open this Space to save a secret.` | `secrets.set` while another Space is shown or something covers this one, such as Settings |
+| `Subspace could not save the secret. Check the config file in Settings, then try again.` | The config file could not be read or written, or the Space is no longer in it |
+| `secrets.set expects a key and a string value, or null to delete it.` | `secrets.set` with a non-string key or value (a `TypeError`, before any request) |
 | `Resolve at most 50 distinct issue identifiers.` | `issues.resolve` with more than 50 distinct identifiers |
 | `Use issue identifiers of at most 32 characters, without control characters.` | An empty, long or malformed identifier |
 | `No Space that answers issue requests recognises this issue identifier.` | `issues.open` with no scope, or an identifier whose project key is not in it |
@@ -250,7 +258,8 @@ Native settings save values under `webBoards.<id>.settings` and secrets
 under `secrets` in the private config file. Saved secrets never populate
 inputs. Leave a secret input blank to keep it; replace or clear it
 explicitly. Only `secrets.get()`, with the `secrets` permission, returns
-them to the page. They are not OS-keychain entries or encrypted app storage.
+them to the page, and `secrets.set()` lets the page save its own beside
+them. They are not OS-keychain entries or encrypted app storage.
 
 Setting and permission edits apply on **Save** without restarting. The page
 can read the current values again. Settings and secrets have no change
@@ -304,18 +313,46 @@ only when the value differs from the last one sent to the page. A newly
 loaded document gets no event until something changes: call `theme()` at
 start.
 
-## Read the app's secrets
+## Read and save the app's secrets
 
 ```javascript
 const { token } = await window.subspace.secrets.get();
+
+// One token per account the user adds in the page:
+await window.subspace.secrets.set("fleet-staging", tokenTheUserPasted);
+await window.subspace.secrets.set("fleet-staging", null); // delete it
 ```
 
-`secrets.get()` needs the `secrets` permission. It returns an object with
-the saved value of each setting the manifest declares with
-`"type": "secret"`, keyed by setting key. A secret with no saved value, or
-an empty one, is absent. Nothing else in the private config is reachable:
-other web Spaces' secrets, service tokens and keys the manifest does not
-declare as secrets stay out.
+Both need the `secrets` permission.
+
+`secrets.get()` returns an object of the app's secrets, keyed by key: each
+setting the manifest declares with `"type": "secret"` that has a saved
+value, and every secret the page saved itself. A secret with no saved value,
+or an empty one, is absent. A key the manifest declares as a non-secret
+setting is never returned. Nothing else in the private config is reachable:
+other web Spaces' secrets and service tokens stay out.
+
+`secrets.set(key, value)` saves one secret, and `value` `null` deletes it.
+It resolves once the secret is in the config file, and the next
+`secrets.get()` returns it.
+
+- `key` is 1 to 40 ASCII letters, digits, `_` or `-`, starting with a letter.
+  A key the manifest declares as a secret writes that declared secret, the
+  same one the user can replace in Settings. A key it declares as a
+  non-secret setting is refused.
+- `value` is 1 to 4096 characters without control characters.
+- The page may keep at most 32 secrets of its own, beyond the declared ones.
+  Replacing or deleting one of them is always allowed.
+- The Space must be the one shown, with nothing over it, so a page saves only
+  while the user can see it, and never behind Settings, whose own Save would
+  then find the file changed under it.
+
+The page's secrets are saved with the Space's other secrets, under
+`webBoards.<id>.secrets` in the private config file, and are removed with
+the Space. Replacing or updating the Space keeps them; its grants start off
+again. Settings never shows them: the Space's page says **This app has saved
+N secrets**, and **Clear** removes them all on Save (the declared secrets have
+their own fields).
 
 A page granted `secrets` holds its secrets in its own JavaScript memory, so
 anything the page loads can read them. Keep the page's scripts in its own
@@ -463,8 +500,8 @@ folder, and an address with no file extension that names no file returns
 `index.html`.
 
 The bridge provides no shell, process, filesystem, clipboard or arbitrary
-native API, and no credential access beyond the app's own declared secrets
-once `secrets` is allowed. macOS uses WKWebView and Windows uses
+native API, and no credential access beyond the app's own secrets once
+`secrets` is allowed. macOS uses WKWebView and Windows uses
 WebView2. Linux has no web view and shows a message instead of the page.
 Windows CI builds and tests the code;
 native Windows runtime validation remains outstanding.

@@ -4,6 +4,7 @@
 pub(crate) mod issues;
 pub(crate) mod protocol;
 pub(crate) mod runtime;
+pub(crate) mod secrets;
 #[cfg(test)]
 mod tests;
 pub(crate) mod theme;
@@ -51,6 +52,8 @@ pub(crate) enum Effect {
     Theme,
     /// Ask the `issues` contract.
     Issues(IssueCall),
+    /// Save a checked `secrets.set`.
+    SaveSecret(secrets::SecretWrite),
 }
 
 impl Bridge {
@@ -112,7 +115,7 @@ impl Bridge {
             Operation::Badge(_) => Permission::Badge,
             Operation::Context(_) => Permission::Context,
             Operation::Notify(_) => Permission::Notifications,
-            Operation::Secrets => Permission::Secrets,
+            Operation::Secrets | Operation::SecretsSet(_) => Permission::Secrets,
             Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
                 Permission::Issues
             }
@@ -170,7 +173,9 @@ impl Bridge {
                 self.context = context.clone();
             }
             Operation::Notify(message) => return self.notification(message, notifications_on, now),
-            Operation::Secrets => return Ok((self.secrets(config), Effect::None)),
+            Operation::Secrets | Operation::SecretsSet(_) => {
+                return secrets::call(&self.manifest, config, operation);
+            }
             Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
                 return Ok((Value::Null, Effect::Issues(IssueCall::parse(operation)?)));
             }
@@ -218,22 +223,6 @@ impl Bridge {
             .collect();
         json!({"version": 1, "permissions": allowed,
             "notificationPermission": if notifications_on && self.allows(Permission::Notifications, config) { "granted" } else { "denied" }})
-    }
-
-    /// The saved values of the secrets the manifest declares, and nothing
-    /// else from the private config. Unset or empty secrets are absent.
-    fn secrets(&self, config: &WebBoard) -> Value {
-        let values = self
-            .manifest
-            .settings
-            .iter()
-            .filter(|field| matches!(field.kind, FieldKind::Secret))
-            .filter_map(|field| {
-                let secret = config.secrets.get(&field.key)?.expose();
-                (!secret.is_empty()).then(|| (field.key.clone(), Value::from(secret)))
-            })
-            .collect();
-        Value::Object(values)
     }
 
     fn settings(&self, config: &WebBoard) -> Value {

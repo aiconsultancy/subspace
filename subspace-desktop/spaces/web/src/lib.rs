@@ -148,6 +148,7 @@ impl WebBoard {
                 source: &source,
                 body: &body,
                 epoch,
+                shown: self.active && !self.covered,
             };
             return page_bridge::receive(self, message, cx);
         }
