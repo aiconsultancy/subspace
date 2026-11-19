@@ -122,8 +122,10 @@ make stack-up
 This generates random IRC passwords in `.stack/` (an owner-only folder that Git
 ignores), then starts PostgreSQL, the API and Ergo from the root
 [`compose.yaml`](compose.yaml), with the API's development sign-in enabled.
-It then seeds fictional demo data through the API and configures the desktop's
-Channels Space to sign in to both local IRC listeners as `developer`.
+It configures the desktop's Channels Space to sign in to both local IRC
+listeners as `developer`. The default seed creates fictional demo records
+through the API and sets historical timestamps on new issues and comments
+in the local database. Use `DEMO=0` to skip the rehearsal.
 
 | Service | Address on this machine | Override |
 | --- | --- | --- |
@@ -155,7 +157,8 @@ SUBSPACE_STACK_DEMO_DATA=0 make stack-up
 The switch controls seeding on that run and keeps existing data. Run
 `make stack-demo` to add missing fixtures to a running stack. Run
 `make stack-reset` followed by `make stack-up` to recreate the scenario with
-the same issue keys, content and rehearsal dates. The reset removes the local
+the same issue keys and content. Rehearsal dates use fixed offsets from
+Monday at 00:00 UTC in the seed week. The reset removes the local
 database, uploaded files, channel history and generated credentials.
 
 Check the API with a development token:

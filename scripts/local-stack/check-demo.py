@@ -3,6 +3,7 @@
 import json
 import sys
 from collections import Counter
+from datetime import date, timedelta
 from hashlib import sha256
 from urllib.request import Request, urlopen
 
@@ -53,6 +54,10 @@ def check_demo():
         "Relay reliability": "aurora",
     }
     assert sum(len(row["stakeholders"]) for row in initiatives.values()) == 6
+    navigation = get(f"/initiatives/{initiatives['Navigation console']['id']}")
+    target = date.fromisoformat(navigation["targetDate"])
+    week = target - timedelta(days=14)
+    assert week.weekday() == 0, week
     users = items("/users")
     assert len(items("/agents")) == 5
     assert Counter(row["kind"] for row in users) == {"human": 4, "agent": 5}
@@ -67,6 +72,12 @@ def check_demo():
     assert len({row["assignee"]["kind"] for row in issues if row["assignee"]}) == 2
     assert sum(row["parentId"] is not None for row in issues) == 10
     assert all(row["dueDate"] and row["estimate"] and row["labels"] for row in issues)
+    for issue in issues:
+        due = (date.fromisoformat(issue["dueDate"]) - week).days
+        if issue["state"]["type"] == "completed":
+            assert -7 <= due <= -3, issue["identifier"]
+        else:
+            assert 7 <= due <= 14, issue["identifier"]
     states = Counter(row["state"]["type"] for row in issues)
     assert set(states) == {"triage", "backlog", "unstarted", "started", "completed", "canceled", "duplicate"}
 
@@ -82,6 +93,8 @@ def check_demo():
             snapshots.append(activity)
             comments = items(f"{path}/comments")
             assert len(comments) == 1
+            if key == "WARP" and index == 1:
+                assert "09:46:45 UTC" in comments[0]["body"]
             replies = items(f"{path}/comments/{comments[0]['id']}/replies")
             counts["comments"] += len(comments) + len(replies)
             assert any(reply["actualAuthor"]["kind"] == "agent" for reply in replies)

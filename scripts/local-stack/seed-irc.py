@@ -101,9 +101,11 @@ def apply(channels, accounts, journal):
             reader = None
             history = set()
             joined = set()
-            for nick, message in lines:
-                key = hashlib.sha256(f"{channel}\0{nick}\0{message}".encode()).hexdigest()
-                if key in journal:
+            for nick, message, *previous in lines:
+                # Earlier wording still identifies the same fixture on an upgraded stack.
+                variants = [message, *previous]
+                keys = [hashlib.sha256(f"{channel}\0{nick}\0{text}".encode()).hexdigest() for text in variants]
+                if any(key in journal for key in keys):
                     continue
                 if nick not in clients:
                     clients[nick] = Client(scope, nick, accounts[nick])
@@ -116,10 +118,10 @@ def apply(channels, accounts, journal):
                     # Recover a message accepted before a previous seed stopped
                     # or posted by a previous version without a journal entry.
                     history = set(client.history(channel))
-                if (nick, message) not in history:
+                if all((nick, text) not in history for text in variants):
                     client.post(channel, message)
                     posted += 1
-                journal[key] = True
+                journal[keys[0]] = True
                 # Replace atomically, so a cancelled process can resume.
                 replacement = Path("/ircd/demo-history.tmp")
                 replacement.write_text(json.dumps(journal), encoding="utf-8")
