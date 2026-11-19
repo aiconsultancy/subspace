@@ -280,6 +280,21 @@ the Framework and then the desktop app, and the app's own targets, such as
 `make run`, run in `subspace-desktop/`. Plain `make` lists them. Contributors
 and coding agents should start with [AGENTS.md](AGENTS.md).
 
+## Licence
+
+Subspace is licensed under the [Apache License 2.0](LICENSE).
+See [NOTICE](NOTICE) for attribution and links to third-party notices.
+See also the [desktop third-party licences](subspace-desktop/licenses/),
+the [web component gallery notices](subspace-desktop/web-spaces/examples/component-gallery/public/),
+the [Framework crate notices](subspace-framework/docs/publishing-audit.md#licence-and-notices),
+and the licences for the vendored
+[GPUI Base](subspace-framework/vendor/gpui-base/LICENSE-APACHE) and
+[Markdown](subspace-framework/vendor/markdown/license) crates.
+
+The IRC client protocol layer was reimplemented in a clean room.
+The [clean-room log](subspace-desktop/clients/irc/CLEANROOM.md) records the
+specification, implementation and review.
+
 ## Status
 
 Early development.
