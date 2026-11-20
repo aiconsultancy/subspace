@@ -59,7 +59,7 @@ trap 'rm -rf "$stage"' EXIT
 app="$(SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET="$oauth_secret" bash "$root/scripts/build-macos-app.sh" "$stage" "$target")"
 # A build cache that ignored the variable would ship without it.
 if [[ -n "$oauth_secret" ]] && ! LC_ALL=C grep -qF -f <(printf '%s\n' "$oauth_secret") "$app/Contents/MacOS/$binary_name"; then
-	echo 'the built app does not contain the GitHub OAuth client secret; run cargo clean -p subspace-github-auth, then package again' >&2
+	echo 'the built app does not contain the GitHub OAuth client secret' >&2
 	exit 1
 fi
 unset oauth_secret

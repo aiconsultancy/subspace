@@ -36,18 +36,15 @@ load_product
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_MINIMUM_VERSION"
 rustup target add "$target" >&2
 scratch="$(mktemp -d)"
-release_build_dir=""
-trap 'rm -rf "$scratch" "${release_build_dir:+$release_build_dir}"' EXIT
+trap 'rm -rf "$scratch"' EXIT
 release_cargo_args "$target"
 generate_rust_licences "$scratch/THIRD_PARTY_LICENSES" "$target"
-release_build_dir="$(new_release_build_dir)"
-CARGO_TARGET_DIR="$release_build_dir" cargo build --release --locked -p "$binary_name" "${release_args[@]}" >&2
+python3 scripts/release-files.py build "$target_dir" "$binary_name" "$scratch" "${release_args[@]}"
 unset SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET
-build_dir="$release_build_dir/$target/release"
 
 app="$out_dir/$display_name.app"
 rm -rf "$app"
-create_bundle "$build_dir/$binary_name" "$app" "$bundle_id" "$display_name"
+create_bundle "$scratch/$binary_name" "$app" "$bundle_id" "$display_name"
 cp "${rust_std_notices[@]}" "$app/Contents/Resources/licenses/rust-std/"
 cp "$scratch/THIRD_PARTY_LICENSES" "$app/Contents/Resources/"
 bash "$root/scripts/bundle-mise.sh" "$app" >&2

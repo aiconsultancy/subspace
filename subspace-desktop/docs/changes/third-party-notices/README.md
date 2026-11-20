@@ -50,5 +50,11 @@ notice or a compiler version mismatch stops packaging before Cargo runs.
 the copied notices against the Framework checkout Cargo actually selected.
 Packaging uses Cargo's normal dependency tree to limit the report to the
 selected target and features and omit compile-time proc macros.
+
+Release builds reuse `release-pkg/` within Cargo's target directory, keyed by
+target and feature set. A lock covers the build and the copy of Cargo's
+reported executable into the staging directory with its licence report. A
+separate lock serialises writers of each archive and its checksum in `dist/`.
+The packaging fixtures exercise cache reuse, concurrent builds and writers.
 Verification also covers the gallery build, its tests, Web Space package
 validation, the desktop documentation checks and the public repository guard.

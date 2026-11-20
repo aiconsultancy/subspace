@@ -35,19 +35,15 @@ case "$target" in
 esac
 mkdir -p "$root/dist"
 stage="$(mktemp -d "$root/dist/.$product-release.XXXXXX")"
-release_build_dir=""
-trap 'rm -rf "$stage" "${release_build_dir:+$release_build_dir}"' EXIT
+trap 'rm -rf "$stage"' EXIT
 stage_product_licences "$stage" "$target"
 cp "${rust_std_notices[@]}" "$stage/licenses/rust-std/"
 release_cargo_args "$target"
 generate_rust_licences "$stage/THIRD_PARTY_LICENSES" "$target"
-# Cargo writes the same executable name for every feature set. Keep it
-# private to this invocation until it is archived with the licence report.
-release_build_dir="$(new_release_build_dir)"
-CARGO_TARGET_DIR="$release_build_dir" cargo build --release --locked -p "$binary_name" "${release_args[@]}"
-build_dir="$release_build_dir/$target/release"
+# Stage Cargo's executable with this run's report before releasing the cache lock.
+python3 scripts/release-files.py build "$target_dir" "$binary_name" "$stage" "${release_args[@]}"
 if [[ "$host" = "$target" ]]; then
-    reported_metadata="$("$build_dir/$binary_name$exe" __product_metadata | tr -d '\r')"
+    reported_metadata="$("$stage/$binary_name$exe" __product_metadata | tr -d '\r')"
     reported="$(jq -er .version <<<"$reported_metadata")"
     if [[ "$reported" != "$version" ]]; then
         echo "$binary_name reports '$reported', expected '$version'" >&2
@@ -61,7 +57,7 @@ if [[ "$host" = "$target" ]]; then
 else
     echo "skipped the metadata version check: $host cannot run $target binaries"
 fi
-cp "$build_dir/$binary_name$exe" "$root/README.md" "$stage/"
+cp "$root/README.md" "$stage/"
 chmod 755 "$stage/$binary_name$exe"
 printf '%s\n' "$product_metadata" >"$stage/product.json"
 name="$binary_name-$version-$target"
@@ -77,11 +73,14 @@ esac
 case "$target" in
     *-windows-*)
         archive="$name.zip"
-        (cd "$stage"; if command -v 7z >/dev/null 2>&1; then 7z a -tzip -bso0 "$archive" "${files[@]}"; else zip -qr "$archive" "${files[@]}"; fi)
+        if command -v 7z >/dev/null 2>&1; then
+            archive_command=(7z a -tzip -bso0 "$archive")
+        else
+            archive_command=(zip -qr "$archive")
+        fi
         ;;
-    *) archive="$name.tar.gz"; (cd "$stage"; tar -czf "$archive" "${files[@]}") ;;
+    *) archive="$name.tar.gz"; archive_command=(tar -czf "$archive") ;;
 esac
-mv -f "$stage/$archive" "$root/dist/$archive"
-(cd "$root/dist"; if command -v sha256sum >/dev/null 2>&1; then sha256sum "$archive" >"$archive.sha256"; else shasum -a 256 "$archive" >"$archive.sha256"; fi)
+python3 scripts/release-files.py publish "$stage/$archive" "$root/dist" "${archive_command[@]}" "${files[@]}" >&2
 echo "$root/dist/$archive"
 echo "$root/dist/$archive.sha256"

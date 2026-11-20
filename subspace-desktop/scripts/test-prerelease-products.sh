@@ -117,10 +117,26 @@ check_packaging_failures() {
     cmp "$archive.sha256" "$backup.sha256"
 }
 
+assert_lock_held() {
+    python3 - "$1" <<'PY'
+import fcntl
+import sys
+
+with open(sys.argv[1], "rb") as lock:
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        pass
+    else:
+        sys.exit("expected another process to hold the lock")
+PY
+}
+
 check_concurrent_archives() {
     local version="$1" binary="$2" gate="$fixture/concurrent" target=aarch64-apple-darwin
-    local first waited archive="$fixture/dist/$binary-$version-$target.tar.gz"
+    local first waited terminal_cache default_cache archive="$fixture/dist/$binary-$version-$target.tar.gz"
     mkdir -p "$gate/with-terminal" "$gate/without-terminal"
+    : >"$fixture/release-cache.log"
     FIXTURE_BUILD_GATE="$gate" SUBSPACE_BUILD_FEATURES=terminal \
         bash "$fixture/scripts/package-release.sh" "$target" "$version" >"$gate/with.log" 2>&1 &
     first=$!
@@ -129,7 +145,9 @@ check_concurrent_archives() {
         kill -0 "$first" 2>/dev/null || break
         sleep 0.1
     done
+    terminal_cache="$(sed -n '1p' "$fixture/release-cache.log")"
     if [[ -f "$gate/built" ]] &&
+       assert_lock_held "$terminal_cache/.package.lock" &&
        SUBSPACE_BUILD_FEATURES='' bash "$fixture/scripts/package-release.sh" "$target" "$version" &&
        tar -xzf "$archive" -C "$gate/without-terminal"; then
         touch "$gate/resume"
@@ -148,6 +166,60 @@ check_concurrent_archives() {
         echo 'archive without Terminal contains Terminal dependency licences' >&2
         return 1
     fi
+    default_cache="$(sed -n '2p' "$fixture/release-cache.log")"
+    test "$terminal_cache" != "$default_cache"
+    test -x "$terminal_cache/$target/release/from-cargo/$binary"
+    SUBSPACE_BUILD_FEATURES='terminal,terminal' bash "$fixture/scripts/package-release.sh" "$target" "$version"
+    test "$(tail -n 1 "$fixture/release-cache.log")" = "$terminal_cache"
+}
+
+check_concurrent_publication() {
+    local version="$1" binary="$2" target=x86_64-unknown-linux-gnu gate="$fixture/publish-gate"
+    local archive="$binary-$version-$target.tar.gz" first second waited
+    mkdir -p "$gate/second"
+    cat >"$fixture/bin/tar" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" = -czf && -n "${PUBLISH_GATE:-}" ]]; then
+    touch "$PUBLISH_GATE/tar-started"
+    for ((waited = 0; waited < 300; waited++)); do
+        if [[ -f "$PUBLISH_GATE/resume" ]]; then exec /usr/bin/tar "$@"; fi
+        sleep 0.1
+    done
+    exit 28
+fi
+exec /usr/bin/tar "$@"
+EOF
+    chmod 755 "$fixture/bin/tar"
+    PUBLISH_GATE="$gate" SUBSPACE_BUILD_FEATURES=terminal \
+        bash "$fixture/scripts/package-release.sh" "$target" "$version" >"$gate/first.log" 2>&1 &
+    first=$!
+    for ((waited = 0; waited < 300; waited++)); do
+        [[ ! -f "$gate/tar-started" ]] || break
+        kill -0 "$first" 2>/dev/null || break
+        sleep 0.1
+    done
+    # The archive writer must hold the same lock throughout compression and
+    # publication. Confirm that an independent process can't acquire it.
+    if [[ ! -f "$gate/tar-started" ]] || ! assert_lock_held "$fixture/dist/.locks/$archive.lock"; then
+        touch "$gate/resume"
+        wait "$first" || cat "$gate/first.log" >&2
+        return 1
+    fi
+    (cd "$fixture/dist"; shasum -a 256 -c "$archive.sha256")
+    FIXTURE_BUILD_GATE="$gate/second" SUBSPACE_BUILD_FEATURES='' \
+        bash "$fixture/scripts/package-release.sh" "$target" "$version" >"$gate/second.log" 2>&1 &
+    second=$!
+    for ((waited = 0; waited < 300; waited++)); do
+        [[ ! -f "$gate/second/built" ]] || break
+        kill -0 "$second" 2>/dev/null || break
+        sleep 0.1
+    done
+    touch "$gate/second/resume" "$gate/resume"
+    test -f "$gate/second/built"
+    wait "$first" || { cat "$gate/first.log" >&2; return 1; }
+    wait "$second" || { cat "$gate/second.log" >&2; return 1; }
+    (cd "$fixture/dist"; shasum -a 256 -c "$archive.sha256")
 }
 
 write_channel_metadata "$input" stable
@@ -195,6 +267,7 @@ for channel in stable nightly alpha beta integration; do
         check_packaged_licences "$fixture/unpacked-windows" x86_64-pc-windows-msvc
         check_packaging_failures "$version" "$fixture/dist/$binary-$version-x86_64-unknown-linux-gnu.tar.gz"
         check_concurrent_archives "$version" "$binary"
+        check_concurrent_publication "$version" "$binary"
     fi
     if [[ "$(/usr/bin/uname -s)" = Darwin ]]; then
         bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
