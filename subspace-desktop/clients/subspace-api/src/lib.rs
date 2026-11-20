@@ -1,5 +1,5 @@
 //! Blocking Subspace API or NETT reads and writes. Use the hub or a
-//! background task. The product chooses the backend once; see [`backend`].
+//! background task. The product chooses the backend once; see [`backend()`].
 mod activity;
 pub mod backend;
 pub mod chat_uploads;
