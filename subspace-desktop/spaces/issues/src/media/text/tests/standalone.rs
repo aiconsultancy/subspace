@@ -6,13 +6,16 @@ use crate::tests::{
     offline::{self, Offline, Switches, board_with_hub, settle_board},
     render,
 };
-use gpui_kit::TestAppContext;
+use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use serde_json::json;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
+use subspace_api_client::hub::{AttachmentTarget, Hub};
 use subspace_framework::client_test_support::Mock;
+
+use crate::Issues;
 
 const ADDED: &[u8] = b"Added from the panel.\n";
 const ADDED_SHA256: &str = "2adc398650f8af005f37cac02a4bd256d81327e6a541ee22f31027d88dc6998a";
@@ -119,10 +122,6 @@ fn with_the_capability_a_file_is_added_through_the_hub_and_listed(cx: &mut TestA
 fn a_file_chosen_for_one_issue_is_not_added_to_another(cx: &mut TestAppContext) {
     serve_standalone_for_test(Some(true));
     let (fixture, board, cx, posts) = opened(cx);
-    let file = || Some(("added.txt".into(), "text/plain".into(), ADDED.to_vec()));
-    let error = |board: &gpui_kit::Entity<crate::Issues>, cx: &mut gpui_kit::VisualTestContext| {
-        board.read_with(cx, |board, _| board.attachment_error.clone())
-    };
     let changed = Some(crate::media::files::CHANGED.to_owned());
     // The person starts choosing a file on SUB-1, then opens SUB-2 before
     // the file has been read.
@@ -131,32 +130,71 @@ fn a_file_chosen_for_one_issue_is_not_added_to_another(cx: &mut TestAppContext) 
         let target = hub.attachment_target().unwrap();
         (hub, target)
     });
-    let open =
-        |board: &gpui_kit::Entity<crate::Issues>,
-         cx: &mut gpui_kit::VisualTestContext,
-         identifier: &'static str| {
-            board.update(cx, |board, cx| board.open_detail(identifier.into(), cx));
-            settle_board(board, cx, |board| {
-                board.issue_view.snapshot.as_ref().is_some_and(|issue| {
-                    issue.identifier() == identifier && issue.detail().is_some()
-                })
-            });
-        };
-    open(&board, cx, "SUB-2");
-    board.update(cx, |board, _| board.attach_picked(&hub, &target, file()));
-    assert_eq!(error(&board, cx), changed);
+    open_issue(&board, cx, "SUB-2");
+    board.update(cx, |board, _| {
+        board.attach_picked(&hub, &target, picked_file())
+    });
+    assert_eq!(attachment_error(&board, cx), changed);
 
     // Chosen on SUB-2, which is then closed and opened again: the same
     // identifier, but another opening.
     let reopened = hub.attachment_target().unwrap();
-    open(&board, cx, "SUB-1");
-    open(&board, cx, "SUB-2");
-    board.update(cx, |board, _| board.attach_picked(&hub, &reopened, file()));
-    assert_eq!(error(&board, cx), changed);
+    open_issue(&board, cx, "SUB-1");
+    open_issue(&board, cx, "SUB-2");
+    board.update(cx, |board, _| {
+        board.attach_picked(&hub, &reopened, picked_file())
+    });
+    assert_eq!(attachment_error(&board, cx), changed);
 
     // Chosen in another hub that is still running, as after an
     // organisation switch: not the board's, so nothing is added.
-    let (other, _) = crate::tests::offline::fixture_hub(&fixture);
+    let (other, other_target) = another_hubs_attachment_target(&fixture);
+    board.update(cx, |board, _| {
+        board.attach_picked(&other, &other_target, picked_file())
+    });
+    assert_eq!(attachment_error(&board, cx), changed);
+    other.stop();
+
+    // A file the client refuses keeps its own reason.
+    let current = hub.attachment_target().unwrap();
+    let large = vec![b'a'; 10_000_001];
+    board.update(cx, |board, _| {
+        board.attach_picked(
+            &hub,
+            &current,
+            Some(("large.txt".into(), "text/plain".into(), large)),
+        );
+    });
+    assert_eq!(
+        attachment_error(&board, cx),
+        Some(subspace_api_client::uploads::UploadError::InvalidImage.message())
+    );
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert_eq!(posts.load(Ordering::SeqCst), 0, "nothing was sent");
+    serve_standalone_for_test(None);
+}
+
+fn picked_file() -> Option<(String, String, Vec<u8>)> {
+    Some(("added.txt".into(), "text/plain".into(), ADDED.to_vec()))
+}
+
+fn attachment_error(board: &Entity<Issues>, cx: &mut VisualTestContext) -> Option<String> {
+    board.read_with(cx, |board, _| board.attachment_error.clone())
+}
+
+fn open_issue(board: &Entity<Issues>, cx: &mut VisualTestContext, identifier: &'static str) {
+    board.update(cx, |board, cx| board.open_detail(identifier.into(), cx));
+    settle_board(board, cx, |board| {
+        board
+            .issue_view
+            .snapshot
+            .as_ref()
+            .is_some_and(|issue| issue.identifier() == identifier && issue.detail().is_some())
+    });
+}
+
+fn another_hubs_attachment_target(fixture: &Offline) -> (Hub, AttachmentTarget) {
+    let (other, _) = offline::fixture_hub(fixture);
     other
         .activate(subspace_api_client::ListQuery::new(
             subspace_api_client::ListTab::All,
@@ -174,27 +212,5 @@ fn a_file_chosen_for_one_issue_is_not_added_to_another(cx: &mut TestAppContext) 
             "the other hub's issue"
         );
     };
-    board.update(cx, |board, _| {
-        board.attach_picked(&other, &other_target, file())
-    });
-    assert_eq!(error(&board, cx), changed);
-    other.stop();
-
-    // A file the client refuses keeps its own reason.
-    let current = hub.attachment_target().unwrap();
-    let large = vec![b'a'; 10_000_001];
-    board.update(cx, |board, _| {
-        board.attach_picked(
-            &hub,
-            &current,
-            Some(("large.txt".into(), "text/plain".into(), large)),
-        );
-    });
-    assert_eq!(
-        error(&board, cx),
-        Some(subspace_api_client::uploads::UploadError::InvalidImage.message())
-    );
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    assert_eq!(posts.load(Ordering::SeqCst), 0, "nothing was sent");
-    serve_standalone_for_test(None);
+    (other, other_target)
 }

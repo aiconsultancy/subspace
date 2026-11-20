@@ -107,6 +107,21 @@ fn launched_with_stray_subspace_settings(cx: &mut TestAppContext) {
     let nett_mock = Mock::new(|request| nett(&request.path));
     let nett_url = format!("{}/api", nett_mock.base_url());
 
+    let resolved = resolve_nett_launch(&nett_url);
+    if phase == "install" {
+        launch::install(&resolved).unwrap();
+        assert_eq!(subspace_api_client::backend(), Backend::Nett);
+        subspace_api_client::configure_nett_origin(&nett_url).unwrap();
+        return;
+    }
+    assert_eq!(phase, "exercise");
+    assert_nett_account_and_features(&resolved, &subspace_api, nett_mock.base_url());
+    assert_issues_read_nett();
+    assert_catalogue_reads_nett(cx);
+    assert_nett_requests_are_scoped(&nett_mock);
+}
+
+fn resolve_nett_launch(nett_url: &str) -> launch::Launch {
     // Launched with that environment, the product refuses to start and
     // installs nothing.
     let refused = launch::resolve(&nett_build(), std::env::vars()).unwrap_err();
@@ -120,25 +135,22 @@ fn launched_with_stray_subspace_settings(cx: &mut TestAppContext) {
     // does; the stray variables stay in the process for the libraries.
     let resolved = launch::resolve(
         &nett_build(),
-        [("SUBSPACE_NETT_API_URL".to_owned(), nett_url.clone())],
+        [("SUBSPACE_NETT_API_URL".to_owned(), nett_url.to_owned())],
     )
     .unwrap();
     assert_eq!(resolved.api_url, "");
     assert_eq!(resolved.nett_api_url, nett_url);
-    if phase == "install" {
-        launch::install(&resolved).unwrap();
-        assert_eq!(subspace_api_client::backend(), Backend::Nett);
-        subspace_api_client::configure_nett_origin(&nett_url).unwrap();
-        return;
-    }
-    assert_eq!(phase, "exercise");
+    resolved
+}
+
+fn assert_nett_account_and_features(resolved: &launch::Launch, subspace_api: &str, origin: &str) {
     // The installer enables on-disk organisation choices. Use the same
     // resolved origin here and keep the account journey in memory on every OS.
     subspace_api_client::configure_nett_origin(&resolved.nett_api_url).unwrap();
     subspace_api_client::use_native_account(|| 1, |_| None, || Ok(Secret::new("nett-token")));
     assert_eq!(subspace_api_client::backend(), Backend::Nett);
     assert!(
-        subspace_api_client::configure_api_origin(&subspace_api).is_err(),
+        subspace_api_client::configure_api_origin(subspace_api).is_err(),
         "the Subspace API origin can never be configured in a NETT build"
     );
     let capabilities = subspace_api_client::capabilities();
@@ -154,7 +166,7 @@ fn launched_with_stray_subspace_settings(cx: &mut TestAppContext) {
     // only one, which retires that client.
     let first = Client::new().unwrap();
     assert_eq!(first.service(), Backend::Nett);
-    assert!(first.api_origin().starts_with(nett_mock.base_url()));
+    assert!(first.api_origin().starts_with(origin));
     assert_eq!(first.me().unwrap().display_name, "Ada Fixture");
     assert!(first.account_changed());
     let client = Client::new().unwrap();
@@ -172,7 +184,9 @@ fn launched_with_stray_subspace_settings(cx: &mut TestAppContext) {
         Some(IssueSaveError::Unavailable)
     );
     assert!(client.fleet("fleet").is_err());
+}
 
+fn assert_issues_read_nett() {
     // The hub the Issues Space starts reads NETT.
     let hub = Hub::start().unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -183,7 +197,9 @@ fn launched_with_stray_subspace_settings(cx: &mut TestAppContext) {
     }
     assert_eq!(hub.snapshot().projects()[0].key, "OPS");
     hub.stop();
+}
 
+fn assert_catalogue_reads_nett(cx: &mut TestAppContext) {
     // The initiative catalogue Channels and Issues share reads NETT too.
     let catalog = cx.update(Catalog::shared);
     catalog.update(cx, |catalog, cx| catalog.refresh(cx));
@@ -192,7 +208,9 @@ fn launched_with_stray_subspace_settings(cx: &mut TestAppContext) {
         assert_eq!(catalog.hint(), None, "the catalogue read completed");
         assert!(catalog.memberships().is_empty());
     });
+}
 
+fn assert_nett_requests_are_scoped(nett_mock: &Mock) {
     let nett_requests = nett_mock.requests();
     assert!(nett_requests.iter().all(|request| {
         request
