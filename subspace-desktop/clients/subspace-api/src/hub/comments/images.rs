@@ -162,15 +162,8 @@ impl Hub {
         if !state.current(generation) {
             return Err(UploadError::Removed);
         }
-        state
-            .attachment_buffers
-            .retain(|buffer| buffer.strong_count() > 0);
-        let total: usize = state
-            .attachment_buffers
-            .iter()
-            .filter_map(std::sync::Weak::upgrade)
-            .map(|buffer| buffer.len())
-            .sum();
+        let (total, cancels) = state.room_for(bytes.len(), Instant::now());
+        self.0.cancel_reservations(cancels);
         let draft = state
             .drafts
             .get_mut(target.0)

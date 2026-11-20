@@ -207,6 +207,48 @@ fn a_ninth_upload_waiting_on_an_issue_is_refused_until_one_goes() {
     hub.stop();
 }
 
+#[test]
+fn an_upload_kept_for_a_closed_issue_shows_again_under_the_key_it_moved_to() {
+    let mock = NettMock::serving(&["attachments", "issueMoves"]);
+    mock.config(&json!({"checkingPolls": 1, "retryAfterSeconds": 600}));
+    let hub = attachments_hub(&mock, "nett-fixture-attach-moved");
+    hub.add_attachment(
+        "moved.txt",
+        "text/plain",
+        b"Checked after the issue moved.\n".to_vec(),
+    )
+    .unwrap();
+    // NETT is still checking the bytes when the person moves away.
+    failed_upload(&hub, &crate::hub::AttachmentUpload::checks);
+    hub.close_issue();
+    // Someone moves the issue to another team meanwhile.
+    let mover = own_client(&mock, "nett-fixture-attach-mover");
+    let web = mover
+        .all_projects()
+        .unwrap()
+        .into_iter()
+        .find(|team| team.key == "WEB")
+        .unwrap();
+    let issue = mover.issue("OPS-1").unwrap();
+    let version = u32::try_from(issue.fields.version).unwrap();
+    let preview = mover
+        .preview_issue_move(&issue.fields.id, &web.id, version)
+        .unwrap();
+    let moved = mover.move_issue(&preview).unwrap().issue.fields.identifier;
+    assert!(moved.starts_with("WEB-"));
+    // Opened under its new key, the issue finds its upload once its detail
+    // says it is the same issue.
+    hub.open_issue(&moved, crate::PROFILE_ID).unwrap();
+    wait_for("the upload, shown again", &|| {
+        upload_files(&hub).uploads().len() == 1
+    });
+    assert!(
+        upload_files(&hub).uploads()[0].checks(),
+        "Check completes it"
+    );
+    hub.stop();
+}
+
 /// The first upload attempt's row, once it has failed as arranged.
 fn failed_upload(
     hub: &crate::hub::Hub,

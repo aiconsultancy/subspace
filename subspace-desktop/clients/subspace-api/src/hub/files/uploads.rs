@@ -4,8 +4,10 @@
 mod parking;
 mod sending;
 
+pub(in crate::hub) use parking::{Cancel, Parking};
+
 use crate::{
-    hub::{AttachmentState, Hub, lock},
+    hub::{AttachmentState, Hub, Shared, lock},
     uploads::{ImageDeclaration, UploadError},
 };
 use std::sync::Arc;
@@ -154,16 +156,9 @@ impl Hub {
             return Err(UploadError::Removed);
         }
         // Every buffer still held, by drafts or uploads, counts against
-        // the budget across the app.
-        state
-            .attachment_buffers
-            .retain(|buffer| buffer.strong_count() > 0);
-        let held: usize = state
-            .attachment_buffers
-            .iter()
-            .filter_map(std::sync::Weak::upgrade)
-            .map(|buffer| buffer.len())
-            .sum();
+        // the budget across the app; uploads kept out of sight make room.
+        let (held, cancels) = state.room_for(bytes.len(), std::time::Instant::now());
+        self.0.cancel_reservations(cancels);
         let Some(issue) = state.snapshot.issue.as_mut().filter(|i| {
             i.detail.is_some() && i.identifier == target.issue && i.opening == target.opening
         }) else {
@@ -233,16 +228,20 @@ impl Hub {
             return;
         };
         let upload = issue.files.uploads.remove(index);
-        let identifier = issue.identifier.clone();
+        let cancel = upload.cancel_on(&issue.identifier);
         state.changed();
-        if let Some(transfer) = upload.transfer {
-            let shared = Arc::clone(&self.0);
-            sending::run(move || {
-                shared
-                    .client
-                    .cancel_issue_attachment(&identifier, &transfer)
-            });
-        }
+        self.0.cancel_reservations(cancel.into_iter().collect());
+    }
+}
+
+impl Shared {
+    /// Cancels the reservations of uploads let go, best effort, on the
+    /// upload pool.
+    pub(in crate::hub) fn cancel_reservations(self: &Arc<Self>, cancels: Vec<Cancel>) {
+        cancels.into_iter().for_each(|(issue, transfer)| {
+            let shared = Arc::clone(self);
+            sending::run(move || shared.client.cancel_issue_attachment(&issue, &transfer));
+        });
     }
 }
 

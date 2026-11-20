@@ -1,6 +1,6 @@
 //! Sending an upload, or completing its transfer, on a small pool, and
 //! recording what the attempt did.
-use super::AttachmentUpload;
+use super::{AttachmentUpload, Cancel};
 use crate::hub::{AttachmentState, Shared, lock};
 use crate::{model::IssueMedia, uploads::UploadError};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, mpsc};
@@ -43,17 +43,36 @@ pub(super) fn run(job: impl FnOnce() + Send + 'static) {
         .send(Box::new(job));
 }
 
+/// What one attempt did: its outcome, the transfer it holds and whether
+/// its bytes may have gone.
+type Outcome = (
+    Result<Option<IssueMedia>, UploadError>,
+    Option<String>,
+    bool,
+);
+
 /// Sends `upload`, or completes its transfer once its bytes may be stored,
 /// and records the outcome on its row, wherever its issue's uploads are.
 pub(super) fn send(
-    shared: &Shared,
+    shared: &Arc<Shared>,
     generation: crate::hub::ScopeGeneration,
     identifier: &str,
     upload: &AttachmentUpload,
 ) {
-    // Once the bytes may be stored, only the transfer is completed.
-    let (result, transfer, bytes_sent) = match upload.transfer.as_ref().filter(|_| upload.checks())
-    {
+    let outcome = attempt(shared, identifier, upload);
+    let mut state = lock(&shared.state);
+    if !state.current(generation) {
+        return;
+    }
+    let cancels = record(shared, &mut state, (identifier, upload), outcome);
+    state.changed();
+    shared.cancel_reservations(cancels);
+}
+
+/// Sends `upload`, or, once its bytes may be stored, only completes its
+/// transfer.
+fn attempt(shared: &Shared, identifier: &str, upload: &AttachmentUpload) -> Outcome {
+    match upload.transfer.as_ref().filter(|_| upload.checks()) {
         Some(transfer) => (
             shared
                 .client
@@ -74,28 +93,44 @@ pub(super) fn send(
                 attempt.bytes_sent,
             )
         }
-    };
-    let mut state = lock(&shared.state);
-    if !state.current(generation) {
-        return;
     }
-    // The issue may have closed meanwhile: its uploads were kept aside, and
-    // the outcome is kept with them for when it reopens.
-    let open = state
-        .snapshot
-        .issue
-        .as_ref()
-        .is_some_and(|issue| issue.identifier == identifier);
-    let Some(row) = state.upload_row(identifier, &upload.id) else {
-        return;
+}
+
+/// Records `outcome` on the upload's row. The issue may have closed
+/// meanwhile: its uploads were kept aside, and the outcome is kept with
+/// them for when it reopens, unless it failed with nothing left to check.
+/// Returns the reservations to cancel: that one's, or one made by an upload
+/// let go while its attempt was under way, which is no one's now.
+fn record(
+    shared: &Shared,
+    state: &mut crate::hub::State,
+    (identifier, upload): (&str, &AttachmentUpload),
+    (result, transfer, bytes_sent): Outcome,
+) -> Vec<Cancel> {
+    let open = state.upload_open(&upload.id);
+    let Some(row) = state.upload_row(&upload.id) else {
+        let stored = matches!(result, Ok(Some(_)));
+        return transfer
+            .filter(|_| !stored)
+            .map(|transfer| (identifier.to_owned(), transfer))
+            .into_iter()
+            .collect();
     };
-    if settle(row, result, transfer, bytes_sent) {
-        state.remove_upload(identifier, &upload.id);
+    let stored = settle(row, result, transfer, bytes_sent);
+    let kept = open || row.worth_keeping();
+    if stored {
+        state.remove_upload(&upload.id);
         if open {
-            crate::hub::files::reload_files(shared, &mut state);
+            crate::hub::files::reload_files(shared, state);
         }
+    } else if !kept {
+        let gone = state.remove_upload(&upload.id);
+        return gone
+            .and_then(|gone| gone.cancel_on(identifier))
+            .into_iter()
+            .collect();
     }
-    state.changed();
+    Vec::new()
 }
 
 /// Records what an attempt did to `row`. True when the file was stored.
