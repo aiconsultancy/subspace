@@ -57,16 +57,21 @@ pub(super) async fn wait_for_scope_epoch_or_capabilities(
 }
 
 /// Reads the organisation's capability list again, as it is due, and tells
-/// the Spaces to read their initiatives again only if it changed.
-pub(super) fn recheck_capabilities(weak: &Weak<Shared>, client: &crate::Client) {
-    let changed = match client.nett_refresh_served() {
-        Ok(changed) => changed,
-        Err(_) => {
-            client.nett_served_unreadable();
-            false
-        }
-    };
-    if changed {
+/// the Spaces to read their initiatives again if it is not the revision the
+/// stream saw, `seen`. Another read may have found the change first, in
+/// which case this one finds none of its own.
+pub(super) fn recheck_capabilities(weak: &Weak<Shared>, client: &crate::Client, seen: Option<u64>) {
+    if client.nett_refresh_served().is_err() {
+        client.nett_served_unreadable();
+    }
+    announce_if_changed(weak, client, seen);
+}
+
+/// Tells the Spaces to read their initiatives again if the capability list
+/// is no longer the revision `seen`, whichever read changed it. A first
+/// list is no change.
+pub(super) fn announce_if_changed(weak: &Weak<Shared>, client: &crate::Client, seen: Option<u64>) {
+    if seen.is_some() && client.nett_served_revision() != seen {
         announce(weak);
     }
 }
@@ -90,3 +95,6 @@ pub(super) fn announce(weak: &Weak<Shared>) {
         state.changed();
     }
 }
+
+#[cfg(test)]
+mod capabilities_tests;

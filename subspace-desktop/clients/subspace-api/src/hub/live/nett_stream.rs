@@ -18,7 +18,7 @@ use crate::backend::Feature;
 use crate::hub::{ScopeGeneration, Shared, State, lock};
 use crate::live::{self, LiveError};
 use capabilities::{
-    Woken, announce, recheck_capabilities, refresh_scope, scope_epoch,
+    Woken, announce_if_changed, recheck_capabilities, refresh_scope, scope_epoch,
     wait_for_scope_epoch_or_capabilities, wait_for_scope_or_epoch_change,
 };
 use std::collections::BTreeSet;
@@ -139,10 +139,9 @@ impl Stream<'_> {
             wait_for_scope_epoch_or_capabilities(self.weak, scope, epoch, self.client, revision)
                 .await;
         match woken {
-            Woken::Due => recheck_capabilities(self.weak, self.client),
-            // A first list is no change to announce.
-            Woken::Changed if revision.is_some() => announce(self.weak),
-            Woken::Changed | Woken::Moved => {}
+            Woken::Due => recheck_capabilities(self.weak, self.client, revision),
+            Woken::Changed => announce_if_changed(self.weak, self.client, revision),
+            Woken::Moved => {}
         }
         Next::Again
     }
