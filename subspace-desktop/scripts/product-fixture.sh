@@ -136,6 +136,11 @@ BINARY
     *) echo "unexpected cargo operation: $*" >&2; exit 24 ;;
 esac
 EOF
+    # Packaging runs `cargo-about about ...`, which the fake cargo answers.
+    cat >"$fixture/bin/cargo-about" <<'EOF'
+#!/usr/bin/env bash
+exec "$FIXTURE/bin/cargo" "$@"
+EOF
     # The login keychain: FAKE_OAUTH_SECRET is the GitHub OAuth client secret
     # item, else there is none. Never the real keychain.
     cat >"$fixture/bin/security" <<'EOF'

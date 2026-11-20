@@ -69,20 +69,18 @@ check_failure() {
 echo 'fixture drift' >>"$framework/host/chat/assets/LICENSE-OCTICONS"
 check_failure 'OCTICONS-LICENSE.txt must match'
 # Reuse the real policy output and simulate a registry Framework source.
-REAL_CARGO="$(command -v cargo)"
-export REAL_CARGO
-cat >"$scratch/bin/cargo" <<'EOF'
+REAL_CARGO_ABOUT="$(command -v cargo-about)"
+export REAL_CARGO_ABOUT
+cat >"$scratch/bin/cargo-about" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-"$REAL_CARGO" "$@"
-if [[ "$1" = about ]]; then
-    while [[ "$1" != --output-file ]]; do shift; done
-    jq '(.crates[].package | select(.name == "subspace-framework") | .source) =
-        "registry+https://github.com/rust-lang/crates.io-index"' "$2" >"$2.new"
-    mv "$2.new" "$2"
-fi
+"$REAL_CARGO_ABOUT" "$@"
+while [[ "$1" != --output-file ]]; do shift; done
+jq '(.crates[].package | select(.name == "subspace-framework") | .source) =
+    "registry+https://github.com/rust-lang/crates.io-index"' "$2" >"$2.new"
+mv "$2.new" "$2"
 EOF
-chmod +x "$scratch/bin/cargo"
+chmod +x "$scratch/bin/cargo-about"
 PATH="$scratch/bin:$PATH" bash "$desktop/scripts/check-licences.sh" >"$scratch/check.log"
 grep -F 'Skipping local notice comparison for the published Subspace Framework crate' "$scratch/check.log"
 copy_notice host/chat/assets/LICENSE-OCTICONS spaces/actions/assets/OCTICONS-LICENSE.txt
