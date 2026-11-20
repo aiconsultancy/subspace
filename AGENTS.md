@@ -83,9 +83,10 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
 Every pull request needs clearance from two independent model reviews before
 it merges: Claude Opus 5.5 at high effort and GPT-6.2 Sol at high effort. They
 come on top of the project checks, never instead of them. Review the diff
-before opening the pull request: run both reviews on the local branch
-(`review --local origin/main`) and deal with what they find first, so the pull
-request opens already reviewed. The clearances also gate the merge.
+before opening the pull request: fetch the target branch, run both reviews on
+the local branch against it (`git fetch origin && review --local
+origin/<target>`), and deal with what they find first, so the pull request
+opens already reviewed. The clearances also gate the merge.
 
 Run both reviews with the **trusted** copy of
 [`scripts/review-pr.sh`](scripts/review-pr.sh), the one on the canonical
@@ -95,22 +96,25 @@ substitute another copy:
 
 ```sh
 review() (
-  d=$(mktemp -d) &&
+  d=$(mktemp -d) && trap 'rm -rf "$d"' EXIT &&
   tg() { env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_GLOBAL=/dev/null \
     GIT_CONFIG_NOSYSTEM=1 git "$@"; } &&
   tg init -q --bare --template= "$d/r.git" &&
   tg -C "$d/r.git" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
-    fetch -q https://github.com/aiconsultancy/subspace.git main &&
+    fetch -q --depth=1 https://github.com/aiconsultancy/subspace.git main &&
   tg -C "$d/r.git" show FETCH_HEAD:scripts/review-pr.sh > "$d/review-pr.sh" &&
   test -s "$d/review-pr.sh" && bash "$d/review-pr.sh" "$@"
 )
-review --pr <number>                          # the pushed head
-review --local origin/main                    # this clone's HEAD, before pushing
-review --pr <number> --since <cleared-head>   # added commits only
+review --local origin/<target>                   # this clone's HEAD, before opening
+review --local origin/<target> --since <cleared> # commits added after a local review
+review --pr <number>                             # the pushed head
+review --pr <number> --since <cleared>           # commits added after a --pr review
 ```
 
 Each step must succeed before the next runs, so a failed fetch never runs a
-stale or empty launcher.
+stale or empty launcher. The launcher passes only `PATH` and `HOME` to Git, so
+a `gh` signed in through `GH_TOKEN` alone, a proxy, or a custom CA bundle needs
+those variables added to `tg`.
 
 It needs `git`, `gh`, `codex`, `claude`, `python3` and `gitleaks`, and runs
 from Claude Code and from Codex alike. It:
@@ -169,8 +173,11 @@ that reason under **Reviews**, never a plan to fix it later.
 
 **After changes.**
 - When new commits are added on top of a cleared head, run both reviews with
-  `--since <cleared head>`. The script refuses unless this clone holds a clear
-  receipt for that head, pull request, target and merge base.
+  `--since <cleared head>` in the same mode as the cleared review. The script
+  refuses unless this clone holds a clear receipt for that head, pull request
+  (or local branch), target and merge base. A local receipt does not carry
+  over to `--pr`: after the pull request opens, keep reviewing locally on the
+  same branch, or run a full `--pr` review.
 - Run both full reviews again after any rebase or rewritten history, after a
   change that does more than fix findings, and whenever the pull request's
   target branch changes.
