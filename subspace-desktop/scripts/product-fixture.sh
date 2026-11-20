@@ -9,7 +9,7 @@ setup_product_fixture() {
     trap 'rm -rf "${fixture_repo:?}"' EXIT
     fixture="$fixture_repo/subspace-desktop"
     mkdir -p "$fixture/scripts" "$fixture/bin" "$fixture/metadata" "$fixture/spaces/actions/assets"
-    cp "$root/scripts/"{product.sh,prerelease-common.sh,run-app.sh,package-release.sh,package-macos.sh,package-macos-ci.sh,build-macos-app.sh,install-macos.sh,github-oauth-secret.sh,resolve-licence-notices.py} "$fixture/scripts/"
+    cp "$root/scripts/"{product.sh,prerelease-common.sh,run-app.sh,package-release.sh,package-macos.sh,package-macos-ci.sh,build-macos-app.sh,install-macos.sh,github-oauth-secret.sh,release-files.py,resolve-licence-notices.py} "$fixture/scripts/"
     cp "$root/"{README.md,NOTICE,about.jq,about.toml,native-notices.json} "$fixture/"
     cp "$root/../"{LICENSE,NOTICE} "$fixture_repo/"
     cp -R "$root/licenses" "$fixture/licenses"
@@ -172,16 +172,22 @@ case "$1" in
             test ! -e "$(dirname "$SUBSPACE_MACOS_KEYCHAIN")/AuthKey.p8"
             test ! -e "$(dirname "$SUBSPACE_MACOS_KEYCHAIN")/certificate.p12"
         fi
-        target=""; package=""; release=debug
+        target=""; package=""; release=debug; json=0
         while [ "$#" -gt 0 ]; do
             case "$1" in
                 --target) target="$2"; shift ;;
                 -p) package="$2"; shift ;;
                 --release) release=release ;;
+                --message-format=json-render-diagnostics) json=1 ;;
             esac
             shift
         done
         directory="${CARGO_TARGET_DIR:-$FIXTURE/target}${target:+/$target}/$release"
+        if [[ "$json" = 1 ]]; then
+            printf '%s\n' "$CARGO_TARGET_DIR" >>"$FIXTURE/release-cache.log"
+            # Use a non-default executable path to catch path guessing.
+            directory="$directory/from-cargo"
+        fi
         mkdir -p "$directory"
         exe=""; case "$target" in *-windows-*) exe=.exe ;; esac
         cat >"$directory/$package$exe" <<'BINARY'
@@ -199,6 +205,10 @@ BINARY
         # stands for a stale build cache that did not.
         if [ -n "${SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET:-}" ] && [ "${FAKE_DROP_OAUTH_SECRET:-0}" != 1 ]; then
             printf '# %s\n' "$SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET" >>"$directory/$package$exe"
+        fi
+        if [[ "$json" = 1 ]]; then
+            jq -nc --arg package "$package" --arg executable "$directory/$package$exe" \
+                '{reason:"compiler-artifact",target:{name:$package,kind:["bin"]},executable:$executable,fresh:true}'
         fi
         if [[ -n "${FIXTURE_BUILD_GATE:-}" ]]; then
             touch "$FIXTURE_BUILD_GATE/built"

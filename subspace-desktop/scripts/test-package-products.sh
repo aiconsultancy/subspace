@@ -72,7 +72,7 @@ host_archive="$fixture/dist/$binary-$version-$host_target.tar.gz"
 : >"$fixture/binary.log"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-release.sh" "$host_target" "$version"
-grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal" "$fixture/cargo.log"
+grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics" "$fixture/cargo.log"
 grep -Eq "^about -L debug generate --locked --fail --manifest-path products/subspace/Cargo.toml .*--target $host_target --features terminal " "$fixture/cargo.log"
 grep -Eq "^tree .*--target $host_target --features terminal$" "$fixture/cargo.log"
 bash "$fixture/scripts/package-release.sh" "$host_target" "$version"
@@ -149,7 +149,7 @@ cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
-grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal" "$fixture/cargo.log"
+grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics" "$fixture/cargo.log"
 grep -Eq "^about -L debug generate .*--target $host_target --features terminal " "$fixture/cargo.log"
 app="$fixture/dist/$name.app"
 test -x "$app/Contents/MacOS/$binary"
@@ -201,7 +201,7 @@ unset FAKE_BUILD_FAIL
 : >"$fixture/mise.log"
 env -u FEATURES -u SUBSPACE_BUILD_FEATURES -u MISE_ENV HOME="$fixture/home" \
     make -f "$root/Makefile" install-macos
-if ! grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal" "$fixture/cargo.log"; then
+if ! grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics" "$fixture/cargo.log"; then
     echo "install-macos must enable Terminal by default" >&2
     exit 1
 fi
@@ -212,7 +212,7 @@ cmp "$metadata" "$installed/Contents/Resources/product.json"
 : >"$fixture/cargo.log"
 HOME="$fixture/home" make -f "$root/Makefile" install-macos \
     FEATURES=terminal,capture TARGET="$host_target"
-grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal,capture" "$fixture/cargo.log"
+grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal,capture --message-format=json-render-diagnostics" "$fixture/cargo.log"
 grep -Eq "^about -L debug generate .*--target $host_target --features terminal,capture " "$fixture/cargo.log"
 : >"$fixture/cargo.log"
 HOME="$fixture/home" make -f "$root/Makefile" install-macos FEATURES=

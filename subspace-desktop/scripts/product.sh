@@ -127,11 +127,6 @@ release_cargo_args() {
     fi
 }
 
-new_release_build_dir() {
-    mkdir -p "$target_dir" || return
-    mktemp -d "$target_dir/.subspace-release.XXXXXX"
-}
-
 release_target_supported() {
     local supported_target
     for supported_target in "${RELEASE_TARGETS[@]}"; do
