@@ -91,9 +91,15 @@ The clearances also gate the merge.
 Run both reviews with the **trusted** copy of
 [`scripts/review-pr.sh`](scripts/review-pr.sh), the one on the canonical
 repository's `main`, never the copy in the change under review. Take the
-launcher below from `main`'s copy of this file as well (`git show
-<remote>/main:AGENTS.md`), never from a branch under review, which could change
-it. It fetches the script into a private scratch repository with no Git
+launcher below from the canonical `main` too, read straight from GitHub rather
+than from any local branch, tag or checkout, which could hold a changed copy:
+
+```sh
+gh api --hostname github.com -H 'Accept: application/vnd.github.raw' \
+  'repos/aiconsultancy/subspace/contents/AGENTS.md?ref=refs/heads/main'
+```
+
+The launcher fetches the script into a private scratch repository with no Git
 configuration, so no URL rewrite can substitute another copy:
 
 ```sh
@@ -188,8 +194,9 @@ that reason under **Reviews**, never a plan to fix it later.
   the pull request's clearance, check against GitHub's view of the pull
   request (`gh pr view "$pr" --json headRefOid,baseRefName,baseRefOid`) that
   the reviewed head is the pull request's head, that the reviewed target is
-  its base branch, and that `git merge-base <headRefOid> <baseRefOid>` is the
-  merge base that was reviewed.
+  its base branch (the remote you fetched must be the pull request's base
+  repository, and the branch names must match), and that `git merge-base
+  <headRefOid> <baseRefOid>` is the merge base that was reviewed.
 - Any reused clearance, from a local or a `--pr` review, needs the merge base
   between the head and the pull request's base to be unchanged. If the base
   branch's history was rewritten, run both full reviews again.
@@ -201,10 +208,18 @@ that reason under **Reviews**, never a plan to fix it later.
   <new>` and that `git merge-base <target> <old>` equals `git merge-base
   <target> <new>`, and record both commits. The new commits, messages
   included, were never scanned, so scan them before publishing with the same
-  strict settings the script uses: `git log -p -m "<merge base>..<new>" |
-  gitleaks stdin --no-banner --redact --ignore-gitleaks-allow --config
-  <file containing "[extend] useDefault = true">`. Any other head that differs
-  from the reviewed one needs a review of its own.
+  strict settings the script uses, independent of local Git settings:
+
+  ```sh
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git \
+    -c attr.tree=4b825dc642cb6eb9a060e54bf8d69288fbee4904 log -p -m \
+    --no-textconv --no-ext-diff --format=fuller "$base..$new" |
+    gitleaks stdin --no-banner --redact --ignore-gitleaks-allow \
+      --config "$rules" --gitleaks-ignore-path "$(mktemp -d)"
+  ```
+
+  where `$rules` is a file containing `[extend]` and `useDefault = true`. Any
+  other head that differs from the reviewed one needs a review of its own.
 
 **Recording and merging.**
 - Record every review under **Reviews** in the pull request: the range and
@@ -215,11 +230,13 @@ that reason under **Reviews**, never a plan to fix it later.
   runners (`prek.toml`, `mise.toml`, `Makefile`) or the script itself, a person
   reads those changes as well.
 - Tick both review checkboxes only when both reviews of the final head are
-  clear. Just before merging, check again that the merge base between the
-  pull request's head and its base (`gh pr view --json headRefOid,baseRefOid`)
-  is the one reviewed: it can move even without a force push, for example when
-  the base gains a commit the head already contains. If it moved, review again.
-  Then merge with `gh pr merge --match-head-commit <final head>`.
+  clear. Just before merging, check again (`gh pr view "$pr" --json
+  headRefOid,baseRefName,baseRefOid`) that the base branch is the one reviewed
+  and that the merge base between the head and the base is the one reviewed: it
+  can move even without a force push, for example when the base gains a commit
+  the head already contains. If either changed, review again. Then merge with
+  `gh pr merge "$pr" --match-head-commit <final head>`. GitHub cannot bind the
+  merge to a merge base, so keep that check immediately before the merge.
 
 **Exceptions.**
 - **Release Please.** Its pull requests and the release workflow's automated
