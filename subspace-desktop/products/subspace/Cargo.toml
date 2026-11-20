@@ -32,6 +32,8 @@ capture = ["subspace-framework/capture"]
 
 [dev-dependencies]
 subspace-framework = { workspace = true, features = ["test-support"] }
+# The NETT zero-traffic test drives the shared initiative catalogue.
+gpui-kit = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 # The build script's modules, tested through the app's tests.
 serde.workspace = true
