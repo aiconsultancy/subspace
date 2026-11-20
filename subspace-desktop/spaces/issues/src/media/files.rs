@@ -335,7 +335,8 @@ impl Issues {
         else {
             return;
         };
-        let picker = cx.prompt_for_new_path(std::path::Path::new("."), Some(&media.file_name));
+        let picker =
+            cx.prompt_for_new_path(&save_folder(), Some(&suggested_name(&media.file_name)));
         cx.spawn(async move |this, cx| {
             let Ok(Ok(Some(path))) = picker.await else {
                 return;
@@ -379,6 +380,44 @@ fn read_at_most(reader: impl std::io::Read, limit: usize) -> Option<Vec<u8>> {
     (bytes.len() <= limit).then_some(bytes)
 }
 
+/// Where a saved attachment goes unless the person chooses otherwise: the
+/// Downloads folder, else the home folder, rather than wherever the app
+/// happened to start.
+fn save_folder() -> std::path::PathBuf {
+    std::env::home_dir().map_or_else(
+        || std::path::PathBuf::from("."),
+        |home| {
+            let downloads = home.join("Downloads");
+            if downloads.is_dir() { downloads } else { home }
+        },
+    )
+}
+
+/// The name a saved attachment is offered under. The name comes from the
+/// service, so it is never a path, a hidden file or a run of control
+/// characters: separators and control characters become `_`, and leading
+/// dots and spaces and trailing dots and spaces go.
+fn suggested_name(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned
+        .trim_start_matches(['.', ' '])
+        .trim_end_matches(['.', ' ']);
+    if trimmed.is_empty() {
+        "attachment".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
 /// The whole file row opens the attachment panel, with the chip's words. `place`
 /// keeps the Attachments row and an inline reference to the same file apart.
 pub(super) fn open_button(
@@ -420,7 +459,7 @@ fn open_label(label: &str, tokens: &Tokens) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_at_most, read_chosen};
+    use super::{read_at_most, read_chosen, suggested_name};
 
     /// Counts the bytes read through it.
     struct Counted<R> {
@@ -466,5 +505,15 @@ mod tests {
         let (name, mime, bytes) = read_chosen(&path).unwrap();
         assert_eq!((name.as_str(), mime.as_str()), ("small.txt", "text/plain"));
         assert_eq!(bytes, b"Small enough.\n");
+    }
+
+    #[test]
+    fn a_saved_attachment_is_offered_under_a_plain_file_name() {
+        assert_eq!(suggested_name("notes.txt"), "notes.txt");
+        assert_eq!(suggested_name(".zshrc"), "zshrc");
+        assert_eq!(suggested_name("../../.ssh/config"), "_.._.ssh_config");
+        assert_eq!(suggested_name("a\\b:c\u{7}.pdf"), "a_b_c_.pdf");
+        assert_eq!(suggested_name("report.pdf. "), "report.pdf");
+        assert_eq!(suggested_name(" ... "), "attachment");
     }
 }
