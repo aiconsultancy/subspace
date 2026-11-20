@@ -1,6 +1,9 @@
 //! Full Subspace composition. The shared shell owns all startup and window code.
 
 mod identity;
+mod launch;
+#[path = "../build/settings.rs"]
+mod settings;
 
 include!(concat!(env!("OUT_DIR"), "/organization_logo.rs"));
 
@@ -26,15 +29,15 @@ const SETTINGS_EXTENSIONS: &[subspace_framework::shell::SettingsExtension] =
     .with_github_credentials()];
 
 fn main() -> ExitCode {
-    if identity::configure_api_origin().is_err() {
-        eprintln!(
-            "The Subspace API URL must be HTTPS (or HTTP on a loopback address), optionally ending in /api, without credentials, query or fragment."
-        );
+    if let Err(message) = identity::configure_backend() {
+        eprintln!("{message}");
         return ExitCode::FAILURE;
     }
+    let mut descriptor = subspace_descriptor::subspace_descriptor();
+    identity::adjust_descriptor(&mut descriptor);
     subspace_framework::shell::launch(
         subspace_framework::shell::ProductBuild {
-            descriptor: subspace_descriptor::subspace_descriptor(),
+            descriptor,
             display_name_prefix: Some(env!("SUBSPACE_BUILD_TITLE_PREFIX")),
             default_theme_override: option_env!("SUBSPACE_DEFAULT_THEME"),
             version: env!("CARGO_PKG_VERSION"),

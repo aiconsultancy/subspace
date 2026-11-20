@@ -1,9 +1,13 @@
-//! The app's identity provider and Subspace API origin. The selected build
-//! config (`build-config.json`, or `SUBSPACE_BUILD_CONFIG`) sets the defaults;
-//! the same-named `SUBSPACE_*` environment variables override them at run
-//! time. Nothing here names a real tenant, client or API.
+//! The app's tracker backend, identity provider and API origin. The selected
+//! build config (`build-config.json`, or `SUBSPACE_BUILD_CONFIG`) sets the
+//! defaults; the same-named `SUBSPACE_*` environment variables override them
+//! at run time. A NETT build (`api_backend: "nett"`) signs in with WorkOS
+//! device authorisation, talks only to its NETT API and refuses every
+//! Subspace API setting. Nothing here names a real tenant, client or API.
 
-use std::sync::Arc;
+use crate::launch::{self, Launch, Stamped};
+use crate::settings::ApiBackend;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use subspace_framework::account::{Error, Provider};
 use subspace_framework::shell::{AccountRegistration, AccountTokenSource, account_session};
@@ -11,103 +15,106 @@ use subspace_framework::shell::{AccountRegistration, AccountTokenSource, account
 const MINIMUM_API_TOKEN_VALIDITY: Duration = Duration::from_secs(120);
 /// The resource name the app registers for Subspace API tokens.
 const API_RESOURCE: &str = "subspace-api";
-
-/// One setting: its run-time variable and its build-time value.
-struct Setting {
-    env: &'static str,
-    built: &'static str,
-}
-
-impl Setting {
-    fn value(&self) -> String {
-        resolve(std::env::var(self.env).ok(), self.built)
-    }
-}
-
-const PROVIDER: Setting = Setting {
-    env: "SUBSPACE_IDENTITY_PROVIDER",
-    built: env!("SUBSPACE_BUILD_IDENTITY_PROVIDER"),
-};
-const API_URL: Setting = Setting {
-    env: "SUBSPACE_API_URL",
-    built: env!("SUBSPACE_BUILD_API_URL"),
-};
-const WORKOS_CLIENT_ID: Setting = Setting {
-    env: "SUBSPACE_WORKOS_CLIENT_ID",
-    built: env!("SUBSPACE_BUILD_WORKOS_CLIENT_ID"),
-};
-const WORKOS_API_URL: Setting = Setting {
-    env: "SUBSPACE_WORKOS_API_URL",
-    built: env!("SUBSPACE_BUILD_WORKOS_API_URL"),
-};
-const WORKOS_REDIRECT_PORT: Setting = Setting {
-    env: "SUBSPACE_WORKOS_REDIRECT_PORT",
-    built: env!("SUBSPACE_BUILD_WORKOS_REDIRECT_PORT"),
-};
-const ENTRA_TENANT_ID: Setting = Setting {
-    env: "SUBSPACE_ENTRA_TENANT_ID",
-    built: env!("SUBSPACE_BUILD_ENTRA_TENANT_ID"),
-};
-const ENTRA_CLIENT_ID: Setting = Setting {
-    env: "SUBSPACE_ENTRA_CLIENT_ID",
-    built: env!("SUBSPACE_BUILD_ENTRA_CLIENT_ID"),
-};
-const ENTRA_AUTHORITY: Setting = Setting {
-    env: "SUBSPACE_ENTRA_AUTHORITY",
-    built: env!("SUBSPACE_BUILD_ENTRA_AUTHORITY"),
-};
-const ENTRA_API_SCOPE: Setting = Setting {
-    env: "SUBSPACE_ENTRA_API_SCOPE",
-    built: env!("SUBSPACE_BUILD_ENTRA_API_SCOPE"),
-};
-const DEV_EMAIL: Setting = Setting {
-    env: "SUBSPACE_DEV_EMAIL",
-    built: env!("SUBSPACE_BUILD_DEV_EMAIL"),
-};
-const DEV_NAME: Setting = Setting {
-    env: "SUBSPACE_DEV_NAME",
-    built: env!("SUBSPACE_BUILD_DEV_NAME"),
-};
-const DEV_ORGANISATION: Setting = Setting {
-    env: "SUBSPACE_DEV_ORGANISATION",
-    built: env!("SUBSPACE_BUILD_DEV_ORGANISATION"),
-};
+/// The resource name a NETT build registers for NETT API tokens.
+const NETT_RESOURCE: &str = "nett-api";
 const ORGANIZATION_NAME: &str = env!("SUBSPACE_BUILD_ORGANIZATION_NAME");
 
-/// A set variable wins, even when empty: `SUBSPACE_IDENTITY_PROVIDER=` turns
-/// sign-in off for one run.
-fn resolve(runtime: Option<String>, built: &str) -> String {
-    runtime
-        .unwrap_or_else(|| built.to_owned())
-        .trim()
-        .to_owned()
+/// What the build script stamped from the selected build config.
+const STAMPED: Stamped = Stamped {
+    backend: env!("SUBSPACE_BUILD_API_BACKEND"),
+    provider: env!("SUBSPACE_BUILD_IDENTITY_PROVIDER"),
+    api_url: env!("SUBSPACE_BUILD_API_URL"),
+    nett_api_url: env!("SUBSPACE_BUILD_NETT_API_URL"),
+    workos_client_id: env!("SUBSPACE_BUILD_WORKOS_CLIENT_ID"),
+    workos_api_url: env!("SUBSPACE_BUILD_WORKOS_API_URL"),
+    workos_redirect_port: env!("SUBSPACE_BUILD_WORKOS_REDIRECT_PORT"),
+    entra_tenant_id: env!("SUBSPACE_BUILD_ENTRA_TENANT_ID"),
+    entra_client_id: env!("SUBSPACE_BUILD_ENTRA_CLIENT_ID"),
+    entra_authority: env!("SUBSPACE_BUILD_ENTRA_AUTHORITY"),
+    entra_api_scope: env!("SUBSPACE_BUILD_ENTRA_API_SCOPE"),
+    dev_email: env!("SUBSPACE_BUILD_DEV_EMAIL"),
+    dev_name: env!("SUBSPACE_BUILD_DEV_NAME"),
+    dev_organisation: env!("SUBSPACE_BUILD_DEV_ORGANISATION"),
+};
+
+/// The run's configuration, resolved once at launch; every later reader
+/// sees the same values.
+static LAUNCH: OnceLock<Launch> = OnceLock::new();
+
+/// Whether this is a NETT build.
+pub(crate) fn nett() -> bool {
+    ApiBackend::parse(STAMPED.backend) == Some(ApiBackend::Nett)
 }
 
-/// Installs the API base URL before Spaces start. Empty leaves Issues and
-/// the Channels initiative picker without a service.
-pub(crate) fn configure_api_origin() -> Result<(), subspace_api_client::Error> {
-    let url = API_URL.value();
-    if url.is_empty() {
-        return Ok(());
-    }
-    subspace_api_client::configure_api_origin(&url)
+/// The run's `SUBSPACE_*` variables. A value that is not Unicode counts as
+/// unset, as `std::env::var` treats it.
+fn variables() -> impl Iterator<Item = (String, String)> {
+    std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+}
+
+/// Resolves the launch from the stamped settings and the environment, then
+/// installs the build's one backend before Spaces start. A wrong setting
+/// installs nothing, so a NETT build never reaches Subspace API.
+pub(crate) fn configure_backend() -> Result<(), String> {
+    let resolved = launch::resolve(&STAMPED, variables())?;
+    launch::install(&resolved)?;
+    let _ = LAUNCH.set(resolved);
+    Ok(())
 }
 
 /// The native account the shell offers, when the config names a provider.
 pub(crate) fn registration() -> Option<AccountRegistration> {
-    (!PROVIDER.value().is_empty()).then_some(AccountRegistration {
-        provider,
-        configure: Some(configure_subspace_api),
+    let launch = LAUNCH.get()?;
+    if launch.provider.is_empty() {
+        return None;
+    }
+    Some(if launch.backend == ApiBackend::Nett {
+        AccountRegistration {
+            provider: nett_provider,
+            configure: Some(configure_nett_api),
+        }
+    } else {
+        AccountRegistration {
+            provider,
+            configure: Some(configure_subspace_api),
+        }
     })
+}
+
+/// WorkOS device authorisation with the environment's one accepted client.
+fn nett_provider(namespace: &str) -> Option<Arc<dyn Provider>> {
+    use subspace_framework::workos_auth::{Config, SessionManager};
+    let built = (|| -> Result<Arc<dyn Provider>, Error> {
+        let launch = LAUNCH.get().ok_or(Error::Unconfigured)?;
+        let mut config = Config::new(&launch.workos_client_id)?
+            .with_organization(ORGANIZATION_NAME)
+            .with_resource(NETT_RESOURCE)?
+            .with_device_authorization();
+        if !launch.workos_api_url.is_empty() {
+            config = config.with_api_url(&launch.workos_api_url)?;
+        }
+        Ok(Arc::new(SessionManager::system(config, namespace)))
+    })();
+    match built {
+        Ok(provider) => Some(provider),
+        Err(error) => {
+            eprintln!("Sign-in is off: the WorkOS configuration is incomplete ({error})");
+            None
+        }
+    }
 }
 
 /// `namespace` is the bundle identifier, which keeps keychain entries apart.
 fn provider(namespace: &str) -> Option<Arc<dyn Provider>> {
-    let built: Result<Arc<dyn Provider>, Error> = match PROVIDER.value().as_str() {
-        "dev" => dev(),
-        "workos" => workos(namespace),
-        "entra" => entra(namespace),
-        _ => Err(Error::Unconfigured),
+    let built: Result<Arc<dyn Provider>, Error> = match LAUNCH.get() {
+        Some(launch) => match launch.provider.as_str() {
+            "dev" => dev(launch),
+            "workos" => workos(launch, namespace),
+            "entra" => entra(launch, namespace),
+            _ => Err(Error::Unconfigured),
+        },
+        None => Err(Error::Unconfigured),
     };
     match built {
         Ok(provider) => Some(provider),
@@ -120,51 +127,74 @@ fn provider(namespace: &str) -> Option<Arc<dyn Provider>> {
     }
 }
 
-fn dev() -> Result<Arc<dyn Provider>, Error> {
+fn dev(launch: &Launch) -> Result<Arc<dyn Provider>, Error> {
     let user = subspace_api_client::DevUser {
-        email: DEV_EMAIL.value(),
-        name: DEV_NAME.value(),
-        organisation: DEV_ORGANISATION.value(),
+        email: launch.dev_email.clone(),
+        name: launch.dev_name.clone(),
+        organisation: launch.dev_organisation.clone(),
     };
     Ok(Arc::new(subspace_api_client::DevSignIn::new(
-        &API_URL.value(),
+        &launch.api_url,
         user,
     )?))
 }
 
-fn workos(namespace: &str) -> Result<Arc<dyn Provider>, Error> {
+fn workos(launch: &Launch, namespace: &str) -> Result<Arc<dyn Provider>, Error> {
     use subspace_framework::workos_auth::{Config, SessionManager};
-    let mut config = Config::new(&WORKOS_CLIENT_ID.value())?
+    let mut config = Config::new(&launch.workos_client_id)?
         .with_organization(ORGANIZATION_NAME)
         .with_resource(API_RESOURCE)?;
-    let api = WORKOS_API_URL.value();
-    if !api.is_empty() {
-        config = config.with_api_url(&api)?;
+    if !launch.workos_api_url.is_empty() {
+        config = config.with_api_url(&launch.workos_api_url)?;
     }
-    let port = WORKOS_REDIRECT_PORT.value();
-    if !port.is_empty() {
-        config = config.with_redirect_port(port.parse().map_err(|_| Error::Unconfigured)?);
+    if !launch.workos_redirect_port.is_empty() {
+        config = config.with_redirect_port(
+            launch
+                .workos_redirect_port
+                .parse()
+                .map_err(|_| Error::Unconfigured)?,
+        );
     }
     Ok(Arc::new(SessionManager::system(config, namespace)))
 }
 
-fn entra(namespace: &str) -> Result<Arc<dyn Provider>, Error> {
+fn entra(launch: &Launch, namespace: &str) -> Result<Arc<dyn Provider>, Error> {
     use subspace_framework::entra_auth::{Config, SessionManager};
-    let mut config = Config::new(&ENTRA_TENANT_ID.value(), &ENTRA_CLIENT_ID.value())?
+    let mut config = Config::new(&launch.entra_tenant_id, &launch.entra_client_id)?
         .with_organization(ORGANIZATION_NAME);
-    let authority = ENTRA_AUTHORITY.value();
-    if !authority.is_empty() {
-        config = config.with_authority(&authority)?;
+    if !launch.entra_authority.is_empty() {
+        config = config.with_authority(&launch.entra_authority)?;
     }
-    let scope = ENTRA_API_SCOPE.value();
-    if !scope.is_empty() {
-        config = config.with_scope(API_RESOURCE, &scope)?;
+    if !launch.entra_api_scope.is_empty() {
+        config = config.with_scope(API_RESOURCE, &launch.entra_api_scope)?;
     }
     Ok(Arc::new(SessionManager::system(config, namespace)))
 }
 
 fn configure_subspace_api(source: AccountTokenSource) {
+    use_account(source, API_RESOURCE);
+}
+
+fn configure_nett_api(source: AccountTokenSource) {
+    use_account(source, NETT_RESOURCE);
+}
+
+/// Long enough that any held token counts as too short-lived, so asking
+/// for it renews the token.
+const FORCE_RENEWAL: std::time::Duration = std::time::Duration::from_secs(10 * 365 * 24 * 3600);
+
+fn use_account(source: AccountTokenSource, resource: &'static str) {
     let account = source.clone();
+    let renewing = source.clone();
+    // After the service refuses a token the app still holds, ask for one so
+    // long-lived that the held token cannot satisfy it: the provider renews
+    // and keeps the fresh token, which the next ordinary request returns.
+    subspace_api_client::use_token_renewal(move || {
+        let _ = renewing.token_for(resource, FORCE_RENEWAL);
+        renewing
+            .token_for(resource, MINIMUM_API_TOKEN_VALIDITY)
+            .is_ok()
+    });
     subspace_api_client::use_native_account(
         move || account.generation(),
         |cx| {
@@ -174,11 +204,25 @@ fn configure_subspace_api(source: AccountTokenSource) {
         },
         move || {
             source
-                .token_for(API_RESOURCE, MINIMUM_API_TOKEN_VALIDITY)
+                .token_for(resource, MINIMUM_API_TOKEN_VALIDITY)
                 .map(|grant| grant.token)
                 .map_err(api_error)
         },
     );
+}
+
+/// A NETT build has no update channel of its own yet, so the public
+/// updater must not replace it, and Issues is its main Space.
+pub(crate) fn adjust_descriptor(descriptor: &mut subspace_framework::product::ProductDescriptor) {
+    if !nett() {
+        return;
+    }
+    descriptor.update = None;
+    for board in &mut descriptor.boards {
+        if board.id == "issues" {
+            board.default_enabled = true;
+        }
+    }
 }
 
 fn api_error(error: Error) -> subspace_api_client::Error {
@@ -190,14 +234,19 @@ fn api_error(error: Error) -> subspace_api_client::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{api_error, resolve};
+    use super::{STAMPED, api_error};
+    use crate::launch::resolve;
     use subspace_framework::account::Error;
 
     #[test]
-    fn a_run_time_variable_overrides_the_build_config_even_when_empty() {
-        assert_eq!(resolve(None, " dev "), "dev");
-        assert_eq!(resolve(Some("workos".into()), "dev"), "workos");
-        assert_eq!(resolve(Some(String::new()), "dev"), "");
+    fn the_stamped_build_resolves_without_run_time_overrides() {
+        // Whatever config this binary was stamped with, it must resolve on
+        // its own: the build script already refused an invalid one.
+        let launch = resolve(&STAMPED, Vec::new()).unwrap();
+        assert_eq!(
+            launch.backend == crate::settings::ApiBackend::Nett,
+            super::nett()
+        );
     }
 
     #[test]
