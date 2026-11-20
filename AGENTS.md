@@ -82,33 +82,53 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
 
 Every pull request needs clearance from two independent model reviews before
 it merges: Claude Opus 5.5 at high effort and GPT-6.2 Sol at high effort. They
-come on top of the project checks, never instead of them. A draft can be
-opened before the reviews; the clearances gate the merge.
+come on top of the project checks, never instead of them. Review the diff
+before opening the pull request: fetch the target branch from the remote the
+pull request will target, run both reviews on the local branch against it, and
+deal with what they find first, so the pull request opens already reviewed.
+The clearances also gate the merge.
 
 Run both reviews with the **trusted** copy of
 [`scripts/review-pr.sh`](scripts/review-pr.sh), the one on the canonical
-repository's `main`, never the copy in the change under review. Fetch it into
-a private scratch repository with no Git configuration, so no URL rewrite can
-substitute another copy:
+repository's `main`, never the copy in the change under review. Take the
+launcher below from the canonical `main` too, read straight from GitHub rather
+than from any local branch, tag or checkout, which could hold a changed copy:
+
+```sh
+gh api --hostname github.com -H 'Accept: application/vnd.github.raw' \
+  'repos/aiconsultancy/subspace/contents/AGENTS.md?ref=refs/heads/main'
+```
+
+The launcher fetches the script into a private scratch repository with no Git
+configuration, so no URL rewrite can substitute another copy:
 
 ```sh
 review() (
-  d=$(mktemp -d) &&
+  d=$(mktemp -d) && trap 'rm -rf "$d"' EXIT &&
   tg() { env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_GLOBAL=/dev/null \
     GIT_CONFIG_NOSYSTEM=1 git "$@"; } &&
   tg init -q --bare --template= "$d/r.git" &&
   tg -C "$d/r.git" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
-    fetch -q https://github.com/aiconsultancy/subspace.git main &&
+    fetch -q --depth=1 https://github.com/aiconsultancy/subspace.git refs/heads/main &&
   tg -C "$d/r.git" show FETCH_HEAD:scripts/review-pr.sh > "$d/review-pr.sh" &&
   test -s "$d/review-pr.sh" && bash "$d/review-pr.sh" "$@"
 )
-review --pr <number>                          # the pushed head
-review --local origin/main                    # this clone's HEAD, before pushing
-review --pr <number> --since <cleared-head>   # added commits only
+git fetch "$remote" "+refs/heads/$target:refs/remotes/$remote/$target" &&
+  review --local "refs/remotes/$remote/$target"     # this clone's HEAD, before opening
+review --local "refs/remotes/$remote/$target" --since "$cleared"  # after a local review
+review --pr "$pr"                                   # the pushed head
+review --pr "$pr" --since "$cleared"                # commits added after a --pr review
 ```
 
-Each step must succeed before the next runs, so a failed fetch never runs a
-stale or empty launcher.
+These commands are for the person or agent preparing the pull request. Here
+`$remote` is the name of the remote the pull request targets (for example
+`origin` or `public`), `$target` its branch, `$pr` the pull request number and
+`$cleared` the last cleared head. Each step of the launcher must succeed before
+the next runs, so a failed fetch never runs a stale or empty launcher. The
+launcher passes only `PATH` and `HOME` to Git, so a `gh` signed in through
+`GH_TOKEN` alone, a proxy, or a custom CA bundle needs those variables added to
+`tg`. A proxy or CA bundle can then see or alter the fetch, so use only ones
+you control.
 
 It needs `git`, `gh`, `codex`, `claude`, `python3` and `gitleaks`, and runs
 from Claude Code and from Codex alike. It:
@@ -155,21 +175,41 @@ It exits 0 when both reviews are clear, 1 when either is not clear, and 2
 when a review did not run or could not be checked.
 
 **Clearance.** A review clears when it finished, read the change, and ended
-with `Verdict: clear`, meaning no critical or high finding remains. Fix every
-critical and high finding, or show that it is wrong. Fix or rebut the others
-with a reason.
+with `Verdict: clear`, meaning no critical or high finding remains. Critical
+and high findings block the merge: fix each one, or show that it is wrong.
+
+**Lesser findings.** Medium and low findings do not block, so the agent decides
+which ones are worth fixing, and should lean towards fixing them in the same
+pull request before it merges. Listing findings in the pull request as
+"follow-ups" does not track them; it only records technical debt. Leave a
+finding unfixed only when you have decided it is not worth fixing, and record
+that reason under **Reviews**, never a plan to fix it later.
 
 **After changes.**
 - When new commits are added on top of a cleared head, run both reviews with
-  `--since <cleared head>`. The script refuses unless this clone holds a clear
-  receipt for that head, pull request, target and merge base.
+  `--since <cleared head>` in the same mode as the cleared review. The script
+  refuses unless this clone holds a clear receipt for that head, pull request
+  (or local branch), target and merge base. A local receipt does not carry
+  over to `--pr`: after the pull request opens, keep reviewing locally on the
+  same branch, or run a full `--pr` review. Before counting a local review as
+  the pull request's clearance, check against GitHub's view of the pull
+  request (`gh pr view "$pr" --repo aiconsultancy/subspace --json
+  headRefOid,baseRefName,baseRefOid`) that the reviewed head is exactly the
+  pull request's head, that the reviewed target is its base branch (the remote
+  you fetched must be the pull request's base repository, and the branch names
+  must match), and that `git merge-base <headRefOid> <baseRefOid>` is the merge
+  base that was reviewed, after fetching the base so that `baseRefOid` exists
+  locally. This is a check you run by hand; when in doubt, run a full `--pr`
+  review, which checks the same things itself.
+- Any reused clearance, from a local or a `--pr` review, needs the merge base
+  between the head and the pull request's base to be unchanged. If the base
+  branch's history was rewritten, run both full reviews again.
 - Run both full reviews again after any rebase or rewritten history, after a
   change that does more than fix findings, and whenever the pull request's
   target branch changes.
-- Re-signing or rewording commits needs no new review when both the tree and
-  the merge base with the target are unchanged. Check `git diff --quiet <old>
-  <new>` and that `git merge-base <target> <old>` equals `git merge-base
-  <target> <new>`, and record both commits.
+- Any other new head, including one that only re-signs or rewords commits,
+  needs a review of its own, so that the script scans and reviews exactly what
+  merges.
 
 **Recording and merging.**
 - Record every review under **Reviews** in the pull request: the range and
@@ -180,7 +220,16 @@ with a reason.
   runners (`prek.toml`, `mise.toml`, `Makefile`) or the script itself, a person
   reads those changes as well.
 - Tick both review checkboxes only when both reviews of the final head are
-  clear. Merge with `gh pr merge --match-head-commit <final head>`.
+  clear. Just before merging, check again (`gh pr view "$pr" --repo
+  aiconsultancy/subspace --json headRefOid,baseRefName,baseRefOid`) that the
+  base branch is the one reviewed and that the merge base between the head and
+  the base is the one reviewed: it can move even without a force push, for
+  example when the base gains a commit the head already contains. If either
+  changed, review again. Then merge with `gh pr merge "$pr" --repo
+  aiconsultancy/subspace --match-head-commit <final head>`. GitHub cannot bind
+  the merge to a merge base, so keep that check immediately before the merge.
+- Push commits in the form they will merge in (signed, reworded) before the
+  final review, so the reviewed head is the pull request's head.
 
 **Exceptions.**
 - **Release Please.** Its pull requests and the release workflow's automated
