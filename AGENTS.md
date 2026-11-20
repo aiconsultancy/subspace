@@ -109,18 +109,19 @@ review() (
     GIT_CONFIG_NOSYSTEM=1 git "$@"; } &&
   tg init -q --bare --template= "$d/r.git" &&
   tg -C "$d/r.git" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
-    fetch -q --depth=1 https://github.com/aiconsultancy/subspace.git main &&
+    fetch -q --depth=1 https://github.com/aiconsultancy/subspace.git refs/heads/main &&
   tg -C "$d/r.git" show FETCH_HEAD:scripts/review-pr.sh > "$d/review-pr.sh" &&
   test -s "$d/review-pr.sh" && bash "$d/review-pr.sh" "$@"
 )
 git fetch "$remote" "+refs/heads/$target:refs/remotes/$remote/$target" &&
-  review --local "$remote/$target"                  # this clone's HEAD, before opening
-review --local "$remote/$target" --since "$cleared" # commits added after a local review
+  review --local "refs/remotes/$remote/$target"     # this clone's HEAD, before opening
+review --local "refs/remotes/$remote/$target" --since "$cleared"  # after a local review
 review --pr "$pr"                                   # the pushed head
 review --pr "$pr" --since "$cleared"                # commits added after a --pr review
 ```
 
-Here `$remote` is the name of the remote the pull request targets (for example
+These commands are for the person or agent preparing the pull request. Here
+`$remote` is the name of the remote the pull request targets (for example
 `origin` or `public`), `$target` its branch, `$pr` the pull request number and
 `$cleared` the last cleared head. Each step of the launcher must succeed before
 the next runs, so a failed fetch never runs a stale or empty launcher. The
@@ -197,8 +198,9 @@ that reason under **Reviews**, never a plan to fix it later.
   pull request's head, that the reviewed target is its base branch (the remote
   you fetched must be the pull request's base repository, and the branch names
   must match), and that `git merge-base <headRefOid> <baseRefOid>` is the merge
-  base that was reviewed. That check, not the local fetch, is what lets a local
-  review count.
+  base that was reviewed, after fetching the base so that `baseRefOid` exists
+  locally. This is a check you run by hand; when in doubt, run a full `--pr`
+  review, which checks the same things itself.
 - Any reused clearance, from a local or a `--pr` review, needs the merge base
   between the head and the pull request's base to be unchanged. If the base
   branch's history was rewritten, run both full reviews again.
@@ -206,8 +208,8 @@ that reason under **Reviews**, never a plan to fix it later.
   change that does more than fix findings, and whenever the pull request's
   target branch changes.
 - Any other new head, including one that only re-signs or rewords commits,
-  needs a review of its own: the script, not a hand-run check, decides what was
-  reviewed and scanned.
+  needs a review of its own, so that the script scans and reviews exactly what
+  merges.
 
 **Recording and merging.**
 - Record every review under **Reviews** in the pull request: the range and
