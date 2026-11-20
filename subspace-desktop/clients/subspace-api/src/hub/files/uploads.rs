@@ -3,6 +3,8 @@
 //! while it is closed, and, once their bytes may be stored, completed
 //! rather than sent again.
 mod again;
+#[cfg(debug_assertions)]
+mod capture;
 mod sending;
 mod store;
 
@@ -341,6 +343,8 @@ impl Shared {
     /// Follows the open issue in the upload store, as every use of it does,
     /// cancelling the reservations of what it lets go.
     pub(in crate::hub) fn follow_uploads(&self, state: &mut State) {
+        #[cfg(debug_assertions)]
+        capture::seed(state);
         let cancels = state.follow_uploads(Instant::now());
         self.cancel_reservations(cancels);
     }
