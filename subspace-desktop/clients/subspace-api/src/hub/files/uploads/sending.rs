@@ -12,7 +12,9 @@ type Job = Box<dyn FnOnce() + Send>;
 
 /// Runs `job` on the upload pool. Standalone uploads run on a small pool,
 /// not a thread each: at most [`WORKERS`] send at once, and the rest wait
-/// their turn, holding only the bytes [`admit`](super::admit) allowed.
+/// their turn, holding only the bytes admission allowed: on their issue
+/// ([`admit_here`](super::admit_here)), then in the shared budget
+/// ([`UploadStore::room`](super::UploadStore::room)).
 pub(super) fn run(job: impl FnOnce() + Send + 'static) {
     static POOL: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
     let pool = POOL.get_or_init(|| {
@@ -51,36 +53,53 @@ type Outcome = (
     bool,
 );
 
-/// Where an attempt goes: the reference its issue is open under, and the
-/// issue's stable ID, under which a reservation it leaves behind is
-/// cancelled and its outcome matched to the open issue.
+/// The issue an attempt is for. Every request names it by its stable ID,
+/// which still names it after a move; a reservation it leaves behind is
+/// cancelled under it, and its outcome matched to the open issue by it.
 pub(super) struct Attempt {
-    reference: String,
     issue: UploadIssue,
 }
 
 impl Attempt {
-    pub(super) fn new(reference: &str, issue: UploadIssue) -> Self {
-        Self {
-            reference: reference.to_owned(),
-            issue,
-        }
+    pub(super) fn new(issue: UploadIssue) -> Self {
+        Self { issue }
     }
+}
+
+/// Whether a job starts its attempt.
+enum Start {
+    /// Its upload still waits for it.
+    Run,
+    /// Its upload was let go while it waited for the pool: the reservation
+    /// it holds is no one's.
+    LetGo,
+    /// The account or hub it was for is gone.
+    Gone,
 }
 
 /// Sends `upload`, or completes its transfer once its bytes may be stored,
 /// and records the outcome on its row, wherever its issue's uploads are. A
-/// job whose upload was let go while it waited for the pool sends nothing.
+/// job whose upload was let go while it waited for the pool sends nothing
+/// and cancels the reservation it holds.
 pub(super) fn send(
     shared: &Shared,
     generation: crate::hub::ScopeGeneration,
     attempt: &Attempt,
     upload: &AttachmentUpload,
 ) {
-    if !wanted(shared, generation, &upload.id) {
-        return;
+    match start(shared, generation, &upload.id) {
+        Start::Run => {}
+        Start::LetGo => {
+            let cancel = upload
+                .transfer
+                .clone()
+                .map(|transfer| (attempt.issue.id.clone(), transfer));
+            shared.cancel_reservations(cancel.into_iter().collect());
+            return;
+        }
+        Start::Gone => return,
     }
-    let outcome = transfer(shared, &attempt.reference, upload);
+    let outcome = transfer(shared, &attempt.issue.id, upload);
     let mut state = lock(&shared.state);
     if !state.current(generation) {
         return;
@@ -90,14 +109,20 @@ pub(super) fn send(
     shared.cancel_reservations(cancels);
 }
 
-/// Whether the upload `id` still waits for its attempt in this scope.
-fn wanted(shared: &Shared, generation: crate::hub::ScopeGeneration, id: &str) -> bool {
+/// Whether the job for the upload `id` starts, in this scope.
+fn start(shared: &Shared, generation: crate::hub::ScopeGeneration, id: &str) -> Start {
     let state = lock(&shared.state);
-    state.current(generation) && state.uploads.contains(id)
+    if !state.current(generation) {
+        Start::Gone
+    } else if state.uploads.contains(id) {
+        Start::Run
+    } else {
+        Start::LetGo
+    }
 }
 
-/// Sends `upload` to the issue `reference` names, or, once its bytes may be
-/// stored, only completes its transfer.
+/// Sends `upload` to the issue `reference`, its ID, names, or, once its
+/// bytes may be stored, only completes its transfer.
 fn transfer(shared: &Shared, reference: &str, upload: &AttachmentUpload) -> Outcome {
     match upload.transfer.as_ref().filter(|_| upload.checks()) {
         Some(transfer) => (
