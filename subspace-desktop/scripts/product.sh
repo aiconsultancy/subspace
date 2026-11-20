@@ -4,6 +4,13 @@
 # Oldest macOS release that Subspace supports. Builds export it as
 # MACOSX_DEPLOYMENT_TARGET and the app bundle declares it.
 MACOS_MINIMUM_VERSION=15.0
+# The native archive targets also form the licence policy check's graph.
+RELEASE_TARGETS=(
+    aarch64-apple-darwin
+    x86_64-unknown-linux-gnu
+    aarch64-unknown-linux-gnu
+    x86_64-pc-windows-msvc
+)
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=prerelease-common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/prerelease-common.sh"
@@ -59,6 +66,112 @@ load_product() {
     target_dir="$(resolve_target_dir "${CARGO_TARGET_DIR:-$(jq -er '.target_directory' <<<"$metadata")}")"
 }
 
+load_release_toolchain() {
+    local expected compiler_version sysroot notice
+    # The Rust tool entry in mise.toml is an inline table with a version pin.
+    expected="$(sed -nE 's/^rust[[:space:]]*=[[:space:]]*\{[[:space:]]*version[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$root/mise.toml")"
+    if [[ ! "$expected" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "could not read the pinned Rust version from $root/mise.toml" >&2
+        return 1
+    fi
+    # Use the checked compiler for Cargo's metadata helper and release build.
+    export RUSTC="${RUSTC:-${CARGO_BUILD_RUSTC:-rustc}}"
+    compiler_version="$("$RUSTC" --version)" || return
+    if [[ "$compiler_version" != "rustc $expected "* ]]; then
+        echo "packaging requires Rust $expected from mise.toml; $RUSTC reports $compiler_version" >&2
+        return 1
+    fi
+    sysroot="$("$RUSTC" --print sysroot)" || return
+    sysroot="$(resolve_target_dir "$sysroot")" || return
+    rust_std_notices=(
+        "$sysroot/share/doc/rust/COPYRIGHT-library.html"
+        "$sysroot/share/doc/rust/licenses/Apache-2.0.txt"
+        "$sysroot/share/doc/rust/licenses/MIT.txt"
+    )
+    for notice in "${rust_std_notices[@]}"; do
+        if [[ ! -f "$notice" || ! -r "$notice" ]]; then
+            echo "missing or unreadable Rust standard library notice: $notice" >&2
+            return 1
+        fi
+    done
+}
+
+require_product_licences() {
+    local notice
+    for notice in "$root/../LICENSE" "$root/NOTICE"; do
+        if [[ ! -f "$notice" || ! -r "$notice" ]]; then
+            echo "missing or unreadable product licence input: $notice (expected the Subspace monorepo layout)" >&2
+            return 1
+        fi
+    done
+}
+
+stage_product_licences() {
+    local destination="$1" target="$2" notice
+    local octicons="$destination/licenses/icons/octicons"
+    require_product_licences || return
+    mkdir -p "$octicons" || return
+    for notice in "$root/licenses/"*; do
+        if [[ "${notice##*/}" = webview2 && "$target" != *-windows-* ]]; then continue; fi
+        cp -R "$notice" "$destination/licenses/" || return
+    done
+    cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$octicons/" || return
+    cp "$root/../LICENSE" "$destination/LICENSE" || return
+    cp "$root/NOTICE" "$destination/NOTICE"
+}
+
+release_cargo_args() {
+    release_args=(--target "$1")
+    if [[ -n "${SUBSPACE_BUILD_FEATURES:-}" ]]; then
+        release_args+=(--features "$SUBSPACE_BUILD_FEATURES")
+    fi
+}
+
+release_target_supported() {
+    local supported_target
+    for supported_target in "${RELEASE_TARGETS[@]}"; do
+        if [[ "$supported_target" = "$1" ]]; then return 0; fi
+    done
+    return 1
+}
+
+scan_rust_licences() {
+    local scratch="$1"
+    shift
+    # The debug diagnostics identify each crate that fell back to SPDX text.
+    # JSON can group a fallback and an identical source-backed file together.
+    # Run cargo-about directly: a `cargo` wrapper that resolves tools per
+    # folder (mise's command wrappers do) can hide the `cargo about` subcommand.
+    cargo-about about -L debug generate --locked --fail --manifest-path products/subspace/Cargo.toml \
+        --format json "$@" --output-file "$scratch/licences.json" 2>"$scratch/about.log" || {
+        grep -v DEBUG "$scratch/about.log" >&2
+        return 1
+    }
+    grep -E 'WARN|ERROR' "$scratch/about.log" >&2 || true
+}
+
+check_rust_licences() (
+    scratch="$(mktemp -d)" || return
+    trap 'rm -rf "$scratch"' EXIT
+    scan_rust_licences "$scratch" "$@" || return
+    python3 scripts/resolve-licence-notices.py "$scratch/licences.json" "$scratch/about.log"
+)
+
+generate_rust_licences() (
+    local output="$1" licence_target="$2"
+    local release_args
+    unset SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET
+    release_cargo_args "$licence_target"
+    scratch="$(mktemp -d)" || return
+    trap 'rm -rf "$scratch"' EXIT
+    cargo tree --locked --color never -p "$product" --edges normal,no-proc-macro \
+        --prefix none --format '{p}' "${release_args[@]}" >"$scratch/linked" || return
+    scan_rust_licences "$scratch" "${release_args[@]}" --config about.toml || return
+    python3 scripts/resolve-licence-notices.py "$scratch/licences.json" "$scratch/about.log" \
+        --tree "$scratch/linked" --target "$licence_target" >"$scratch/resolved.json" || return
+    jq -er --arg target "$licence_target" -f about.jq "$scratch/resolved.json" >"$output"
+)
+
 create_bundle() {
     local root="${root:?}"
     local binary="$1" app="$2" identifier="$3" label="$4"
@@ -69,12 +182,12 @@ create_bundle() {
     icon_name="$(basename "$icon" .icns)"
     test -x "$binary" || { echo "missing product executable: $binary" >&2; return 1; }
     test -f "$icon" || { echo "missing product icon: $icon" >&2; return 1; }
+    stage_product_licences "$app/Contents/Resources" aarch64-apple-darwin || return
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "$binary" "$app/Contents/MacOS/$binary_name"
     chmod 755 "$app/Contents/MacOS/$binary_name"
     cp "$icon" "$app/Contents/Resources/$icon_name.icns"
     printf '%s\n' "$product_metadata" >"$app/Contents/Resources/product.json"
-    cp -R "$root/licenses" "$app/Contents/Resources/licenses"
     cat >"$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

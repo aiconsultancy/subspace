@@ -4,7 +4,7 @@ This crate's own code is licensed under the Apache License 2.0 (LICENSE).
 
 - build.rs and src/lib.rs are ported from gpui-lucide in suxiaoshao/gupi,
   Apache License 2.0 (the same licence text as LICENSE).
-  Source: https://github.com/suxiaoshao/gupi
+  Source: https://github.com/suxiaoshao/gupi/tree/9fb1bf1a298e66425b691d74df6ec4a5cbb9c19e/crates/gpui-lucide
 - The build script embeds the Lucide SVG icons that the gpui-kit-assets
   dependency ships. ISC License, Copyright (c) Lucide Icons and Contributors.
   Licence text: LICENSE-LUCIDE.

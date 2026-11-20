@@ -53,7 +53,10 @@ The committed `dist/` is the installable package. It contains external JS/CSS,
 local fonts and the permission-free `subspace-board.json`. No CDN, WASM,
 server-side runtime or host CSP change is required. Rebuild after source or
 reference changes. Font provenance and upstream licences are in
-`public/fonts/`; shadcn/ui attribution is in `public/licences/`.
+`public/fonts/`. The shadcn/ui attribution is in `public/licences/`.
+`npm run build` generates [THIRD_PARTY_NOTICES](dist/THIRD_PARTY_NOTICES)
+from the installed JavaScript and Tailwind CSS packages, including the
+licence for Vite's bundled preload helper.
 
 Install `dist/` through **Settings > Application > Web Spaces > Add board… >
 Local folder**, then **Validate source** and **Install now**. Folder installs

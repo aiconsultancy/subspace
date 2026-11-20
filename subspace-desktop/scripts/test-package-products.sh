@@ -6,7 +6,7 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product-fixture.sh
 source "$root/scripts/product-fixture.sh"
-setup_product_fixture
+setup_product_fixture ""
 # Exercise the real Make target without installing tools or touching host apps.
 cat >"$fixture/bin/mise" <<'EOF'
 #!/usr/bin/env bash
@@ -47,7 +47,7 @@ for path_source in metadata environment; do
     fi
     bash "$fixture/scripts/package-release.sh" x86_64-pc-windows-msvc "$version"
     grep -Fxq -- "$expected_path" "$fixture/cygpath.log"
-    grep -Fq -- "build --release --locked --target x86_64-pc-windows-msvc -p $binary" "$fixture/cargo.log"
+    grep -Fq -- "build --release --locked -p $binary --target x86_64-pc-windows-msvc" "$fixture/cargo.log"
     grep -Fxq -- '__product_metadata' "$fixture/binary.log"
     test -f "$fixture/dist/$binary-$version-x86_64-pc-windows-msvc.zip"
 done
@@ -72,7 +72,9 @@ host_archive="$fixture/dist/$binary-$version-$host_target.tar.gz"
 : >"$fixture/binary.log"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-release.sh" "$host_target" "$version"
-grep -Fq -- "--features terminal" "$fixture/cargo.log"
+grep -Fq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics " "$fixture/cargo.log"
+grep -Eq "^about -L debug generate --locked --fail --manifest-path products/subspace/Cargo.toml .*--target $host_target --features terminal " "$fixture/cargo.log"
+grep -Eq "^tree .*--target $host_target --features terminal$" "$fixture/cargo.log"
 bash "$fixture/scripts/package-release.sh" "$host_target" "$version"
 grep -Fxq -- '__product_metadata' "$fixture/binary.log"
 cp "$host_archive" "$fixture/previous.tar.gz"
@@ -83,6 +85,50 @@ if bash "$fixture/scripts/package-release.sh" "$host_target" "$version"; then
     exit 1
 fi
 unset FAKE_BINARY_VERSION
+cmp "$fixture/previous.tar.gz" "$host_archive"
+cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
+cp "$fixture/cargo.log" "$fixture/before-toolchain-check.log"
+rust_copyright="$fixture/fake sysroot/share/doc/rust/COPYRIGHT-library.html"
+mv "$rust_copyright" "$rust_copyright.bak"
+if bash "$fixture/scripts/package-release.sh" "$host_target" "$version" >"$fixture/rust-notice.log" 2>&1; then
+    echo 'expected a missing Rust standard library notice to stop packaging' >&2
+    exit 1
+fi
+grep -Fq "missing or unreadable Rust standard library notice: $rust_copyright" "$fixture/rust-notice.log"
+mv "$rust_copyright.bak" "$rust_copyright"
+if FAKE_RUST_VERSION=1.77.0-nightly bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile' >"$fixture/rust-version.log" 2>&1; then
+    echo 'expected a Rust version mismatch to stop packaging' >&2
+    exit 1
+fi
+grep -Fq 'packaging requires Rust 1.77.0 from mise.toml; rustc reports rustc 1.77.0-nightly' "$fixture/rust-version.log"
+cmp "$fixture/before-toolchain-check.log" "$fixture/cargo.log"
+builds_before="$(grep -c '^build ' "$fixture/cargo.log")"
+if FAKE_LICENCE_FAIL=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version"; then
+    echo 'expected failed licence policy to stop packaging' >&2
+    exit 1
+fi
+if FAKE_MISSING_LICENCE=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version"; then
+    echo 'expected incomplete licence report to stop packaging' >&2
+    exit 1
+fi
+if FAKE_FALLBACK_LOG_CHANGED=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version" >"$fixture/fallback.log" 2>&1; then
+    echo 'expected unrecognised fallback diagnostics to stop packaging' >&2
+    exit 1
+fi
+grep -Fq 'missing cargo-about fallback diagnostics for fixture-generic v1.0.0 (MIT,' "$fixture/fallback.log"
+if FAKE_CLARIFICATION_FAIL=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version" >"$fixture/clarification.log" 2>&1; then
+    echo 'expected a failed clarification checksum to stop packaging' >&2
+    exit 1
+fi
+grep -Fq 'clarification failed its source validation' "$fixture/clarification.log"
+mv "$fixture/linked-licence.txt" "$fixture/linked-licence.bak"
+if bash "$fixture/scripts/package-release.sh" "$host_target" "$version" >"$fixture/source-notice.log" 2>&1; then
+    echo 'expected a missing source-backed notice to stop packaging' >&2
+    exit 1
+fi
+grep -Fq 'cannot read source-backed licence' "$fixture/source-notice.log"
+mv "$fixture/linked-licence.bak" "$fixture/linked-licence.txt"
+test "$(grep -c '^build ' "$fixture/cargo.log")" = "$builds_before"
 cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 builds_before="$(grep -c '^build ' "$fixture/cargo.log")"
@@ -103,9 +149,13 @@ cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
-grep -Fq -- "--features terminal" "$fixture/cargo.log"
+grep -Fq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics " "$fixture/cargo.log"
+grep -Eq "^about -L debug generate .*--target $host_target --features terminal " "$fixture/cargo.log"
 app="$fixture/dist/$name.app"
 test -x "$app/Contents/MacOS/$binary"
+grep -Fxq '# features: terminal' "$app/Contents/MacOS/$binary"
+grep -Fxq -- '- fixture-terminal v1.0.0' "$app/Contents/Resources/THIRD_PARTY_LICENSES"
+test ! -e "$fixture/target/$host_target/release/$binary"
 test "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" = "$identifier"
 test "$(plutil -extract CFBundleDisplayName raw -o - "$app/Contents/Info.plist")" = "$name"
 test "$(plutil -extract LSMinimumSystemVersion raw -o - "$app/Contents/Info.plist")" = 15.0
@@ -134,11 +184,16 @@ grep -Fxq 'security find-generic-password' "$fixture/security.log"
 : >"$fixture/cargo.log"
 FAKE_OAUTH_SECRET=fixture-oauth-secret bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile' >"$fixture/package.out" 2>&1
 grep -Fxq 'oauth secret' "$fixture/cargo.log"
+secret_cache="$(tail -n 1 "$fixture/release-cache.log")"
+[[ "$secret_cache" != "$fixture/target/release-pkg/"* ]]
+test ! -e "$secret_cache"
+grep -Fq fixture-oauth-secret "$app/Contents/MacOS/$binary"
 if grep -Fq fixture-oauth-secret "$fixture/package.out" "$fixture/actions.log"; then echo 'the OAuth secret was printed' >&2; exit 1; fi
 if FAKE_OAUTH_SECRET=fixture-oauth-secret FAKE_DROP_OAUTH_SECRET=1 bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile' 2>"$fixture/package.err"; then
     echo 'an app without the OAuth secret must not be packaged' >&2; exit 1
 fi
-grep -Fq 'does not contain the GitHub OAuth client secret' "$fixture/package.err"
+grep -Fq 'verify the login keychain item or SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET, then package again' "$fixture/package.err"
+test ! -e "$(tail -n 1 "$fixture/release-cache.log")"
 if grep -Fq fixture-oauth-secret "$fixture/package.err"; then echo 'the OAuth secret was printed' >&2; exit 1; fi
 : >"$fixture/actions.log"
 export FAKE_BUILD_FAIL=1
@@ -151,7 +206,7 @@ unset FAKE_BUILD_FAIL
 : >"$fixture/mise.log"
 env -u FEATURES -u SUBSPACE_BUILD_FEATURES -u MISE_ENV HOME="$fixture/home" \
     make -f "$root/Makefile" install-macos
-if ! grep -Fxq -- "build --release --locked --target $host_target -p $binary --features terminal" "$fixture/cargo.log"; then
+if ! grep -Fq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics " "$fixture/cargo.log"; then
     echo "install-macos must enable Terminal by default" >&2
     exit 1
 fi
@@ -162,7 +217,8 @@ cmp "$metadata" "$installed/Contents/Resources/product.json"
 : >"$fixture/cargo.log"
 HOME="$fixture/home" make -f "$root/Makefile" install-macos \
     FEATURES=terminal,capture TARGET="$host_target"
-grep -Fxq -- "build --release --locked --target $host_target -p $binary --features terminal,capture" "$fixture/cargo.log"
+grep -Fq -- "build --release --locked -p $binary --target $host_target --features terminal,capture --message-format=json-render-diagnostics " "$fixture/cargo.log"
+grep -Eq "^about -L debug generate .*--target $host_target --features terminal,capture " "$fixture/cargo.log"
 : >"$fixture/cargo.log"
 HOME="$fixture/home" make -f "$root/Makefile" install-macos FEATURES=
 if grep -Fq -- --features "$fixture/cargo.log"; then

@@ -10,13 +10,14 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
-host="$(rustc -vV | sed -n 's/^host: //p')"
+load_release_toolchain
+host="$("$RUSTC" -vV | sed -n 's/^host: //p')"
 target="${1:-$host}"
 expected_version="${2:-}"
-case "$target" in
-    x86_64-unknown-linux-gnu | aarch64-unknown-linux-gnu | aarch64-apple-darwin | x86_64-pc-windows-msvc) ;;
-    *) echo "unsupported release target: $target" >&2; exit 2 ;;
-esac
+if ! release_target_supported "$target"; then
+    echo "unsupported release target: $target" >&2
+    exit 2
+fi
 load_product
 if [[ -n "$expected_version" ]] && [[ "$version" != "${expected_version#v}" ]]; then
     echo "Cargo.toml has version $version, but the release is $expected_version" >&2
@@ -32,14 +33,18 @@ case "$target" in
         ;;
     *-apple-darwin) export MACOSX_DEPLOYMENT_TARGET="$MACOS_MINIMUM_VERSION" ;;
 esac
-build_args=(build --release --locked --target "$target" -p "$binary_name")
-if [[ -n "${SUBSPACE_BUILD_FEATURES:-}" ]]; then
-    build_args+=(--features "$SUBSPACE_BUILD_FEATURES")
-fi
-cargo "${build_args[@]}"
-build_dir="$target_dir/$target/release"
+mkdir -p "$root/dist"
+stage="$(mktemp -d "$root/dist/.$product-release.XXXXXX")"
+trap 'rm -rf "$stage"' EXIT
+require_product_licences
+release_cargo_args "$target"
+generate_rust_licences "$stage/THIRD_PARTY_LICENSES" "$target"
+# Stage Cargo's executable with this run's report before releasing the cache lock.
+python3 scripts/release-files.py build "$target_dir" "$binary_name" "$stage" "${release_args[@]}"
+stage_product_licences "$stage" "$target"
+cp "${rust_std_notices[@]}" "$stage/licenses/rust-std/"
 if [[ "$host" = "$target" ]]; then
-    reported_metadata="$("$build_dir/$binary_name$exe" __product_metadata | tr -d '\r')"
+    reported_metadata="$("$stage/$binary_name$exe" __product_metadata | tr -d '\r')"
     reported="$(jq -er .version <<<"$reported_metadata")"
     if [[ "$reported" != "$version" ]]; then
         echo "$binary_name reports '$reported', expected '$version'" >&2
@@ -53,15 +58,11 @@ if [[ "$host" = "$target" ]]; then
 else
     echo "skipped the metadata version check: $host cannot run $target binaries"
 fi
-mkdir -p "$root/dist"
-stage="$(mktemp -d "$root/dist/.$product-release.XXXXXX")"
-trap 'rm -rf "$stage"' EXIT
-cp "$build_dir/$binary_name$exe" "$root/README.md" "$stage/"
-cp -R "$root/licenses" "$stage/licenses"
+cp "$root/README.md" "$stage/"
 chmod 755 "$stage/$binary_name$exe"
 printf '%s\n' "$product_metadata" >"$stage/product.json"
 name="$binary_name-$version-$target"
-files=("$binary_name$exe" README.md product.json licenses)
+files=("$binary_name$exe" README.md product.json LICENSE NOTICE THIRD_PARTY_LICENSES licenses)
 case "$target" in
     *-linux-*)
         svg_relative="$(jq -er '.icon_paths[] | select(endswith(".svg"))' <<<"$product_metadata")"
@@ -73,11 +74,14 @@ esac
 case "$target" in
     *-windows-*)
         archive="$name.zip"
-        (cd "$stage"; if command -v 7z >/dev/null 2>&1; then 7z a -tzip -bso0 "$archive" "${files[@]}"; else zip -qr "$archive" "${files[@]}"; fi)
+        if command -v 7z >/dev/null 2>&1; then
+            archive_command=(7z a -tzip -bso0 "$archive")
+        else
+            archive_command=(zip -qr "$archive")
+        fi
         ;;
-    *) archive="$name.tar.gz"; (cd "$stage"; tar -czf "$archive" "${files[@]}") ;;
+    *) archive="$name.tar.gz"; archive_command=(tar -czf "$archive") ;;
 esac
-mv -f "$stage/$archive" "$root/dist/$archive"
-(cd "$root/dist"; if command -v sha256sum >/dev/null 2>&1; then sha256sum "$archive" >"$archive.sha256"; else shasum -a 256 "$archive" >"$archive.sha256"; fi)
+python3 scripts/release-files.py publish "$stage/$archive" "$root/dist" "${archive_command[@]}" "${files[@]}" >&2
 echo "$root/dist/$archive"
 echo "$root/dist/$archive.sha256"

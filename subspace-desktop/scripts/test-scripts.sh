@@ -25,6 +25,8 @@ MINGW* | MSYS* | CYGWIN* | Windows_NT)
 	;;
 *)
     python3 "$root/scripts/test-prereleases.py"
+    python3 -B "$root/scripts/test-release-files.py"
+    bash "$root/scripts/test-check-licences.sh"
     bash "$root/scripts/test-release-assets.sh"
     bash "$root/scripts/test-prerelease-products.sh"
     ;;

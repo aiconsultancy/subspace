@@ -429,6 +429,20 @@ fi
         project = self.repository / PROJECT
         (project / "Cargo.toml").write_text('[workspace.package]\nversion = "0.2.1"\n')
         (project / "Cargo.lock").write_text('[[package]]\nname = "subspace"\nversion = "0.2.1"\n')
+        (project / "mise.toml").write_text('[tools]\nrust = { version = "1.77.0" }\n')
+        rust_docs = self.root / "sysroot/share/doc/rust"
+        (rust_docs / "licenses").mkdir(parents=True)
+        for notice in ("COPYRIGHT-library.html", "licenses/Apache-2.0.txt", "licenses/MIT.txt"):
+            (rust_docs / notice).write_text("Fixture standard library notice\n")
+        rustc = self.root / "bin/rustc"
+        rustc.write_text("""#!/bin/sh
+case "$*" in
+  --version) echo 'rustc 1.77.0 (fixture)' ;;
+  '--print sysroot') echo "$FIXTURE/sysroot" ;;
+  *) exit 1 ;;
+esac
+""")
+        rustc.chmod(0o755)
         (self.repository / ".gitignore").write_text(f"/{PROJECT}/dist/\n")
         self.git("add", ".")
         self.git("commit", "-qm", "fix(subspace): update release fixture")
@@ -463,7 +477,7 @@ printf 'fixture app\\n' >"dist/Subspace_${version}_darwin_arm64.zip"
                         self.root / "bin/launchctl"):
             command.chmod(0o755)
         self.env.update(SUBSPACE_PACKAGE_ROOT=str(project), SUBSPACE_RELEASE_PACKAGE=str(package),
-                        SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET="fixture-oauth-secret")
+                        SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET="fixture-oauth-secret", RUSTC=str(rustc))
         return project
 
     def test_local_integration_release_stamps_builds_and_restores_the_clean_checkout(self) -> None:
