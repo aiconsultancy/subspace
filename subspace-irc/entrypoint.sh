@@ -12,6 +12,7 @@ bcrypt_cost=${IRC_BCRYPT_COST:-12}
 cert=${IRC_TLS_CERT:-}
 key=${IRC_TLS_KEY:-}
 oper=${IRC_OPER_NAME:-}
+history_database=${IRC_HISTORY_DATABASE:-sqlite}
 
 die() { printf 'subspace-irc: %s\n' "$*" >&2; exit 1; }
 
@@ -27,6 +28,47 @@ esac
 case $bcrypt_cost in
     [4-9]|[12][0-9]|3[01]) ;;
     *) die 'IRC_BCRYPT_COST must be an integer from 4 to 31' ;;
+esac
+
+# Persistent history: SQLite in the data volume (default), or a PostgreSQL
+# database, for example beside the Subspace API's on the same host.
+case $history_database in
+    sqlite)
+        history_block=$(printf '    sqlite:\n        enabled: true\n        database-path: /ircd/history.db\n        busy-timeout: 5s\n        max-conns: 1')
+        ;;
+    postgresql)
+        pg_host=${IRC_POSTGRES_HOST:-}
+        pg_port=${IRC_POSTGRES_PORT:-5432}
+        pg_user=${IRC_POSTGRES_USER:-ergo}
+        pg_database=${IRC_POSTGRES_DATABASE:-ergo_history}
+        pg_ssl=${IRC_POSTGRES_SSL_MODE:-disable}
+        case $pg_host in
+            ''|*[!A-Za-z0-9.-]*) die 'IRC_POSTGRES_HOST must be a host name or IP address' ;;
+        esac
+        case $pg_port in
+            ''|*[!0-9]*) die 'IRC_POSTGRES_PORT must be a number' ;;
+        esac
+        for name in "$pg_user" "$pg_database"; do
+            case $name in
+                ''|*[!A-Za-z0-9_]*) die 'IRC_POSTGRES_USER and IRC_POSTGRES_DATABASE use letters, digits and underscores' ;;
+            esac
+        done
+        case $pg_ssl in
+            disable|require|verify-ca|verify-full) ;;
+            *) die 'IRC_POSTGRES_SSL_MODE must be disable, require, verify-ca or verify-full' ;;
+        esac
+        case "${IRC_POSTGRES_PASSWORD_FILE:+file}${IRC_POSTGRES_PASSWORD:+env}" in
+            file) pg_password=$(cat "$IRC_POSTGRES_PASSWORD_FILE") || die 'Cannot read IRC_POSTGRES_PASSWORD_FILE' ;;
+            env) pg_password=$IRC_POSTGRES_PASSWORD ;;
+            fileenv) die 'Set only one of IRC_POSTGRES_PASSWORD and IRC_POSTGRES_PASSWORD_FILE' ;;
+            '') die 'PostgreSQL history needs IRC_POSTGRES_PASSWORD_FILE or IRC_POSTGRES_PASSWORD' ;;
+        esac
+        quoted_pg_password=$(printf '%s' "$pg_password" | jq -Rsc .)
+        unset pg_password IRC_POSTGRES_PASSWORD
+        history_block=$(printf '    postgresql:\n        enabled: true\n        host: "%s"\n        port: %s\n        ssl-mode: "%s"\n        user: "%s"\n        password: %s\n        history-database: "%s"\n        timeout: 3s\n        max-conns: 4\n        connect-timeout: 10s\n        application-name: "subspace-irc"' \
+            "$pg_host" "$pg_port" "$pg_ssl" "$pg_user" "$quoted_pg_password" "$pg_database")
+        ;;
+    *) die 'IRC_HISTORY_DATABASE must be sqlite or postgresql' ;;
 esac
 
 # Hold the same lock across provisioning and normal service. Ergo also locks
@@ -155,8 +197,10 @@ origins=$(jq -cn --arg origin "$ws_origin" '
 ')
 
 render_config() {
-    SERVER_NAME=$server_name LISTENERS=$1 WS_ORIGINS=$origins OPERS=$opers BCRYPT_COST=$bcrypt_cost awk '
+    SERVER_NAME=$server_name LISTENERS=$1 WS_ORIGINS=$origins OPERS=$opers BCRYPT_COST=$bcrypt_cost \
+        HISTORY_DATABASE=$history_block awk '
         /@@LISTENERS@@/ { print ENVIRON["LISTENERS"]; next }
+        /@@HISTORY_DATABASE@@/ { print ENVIRON["HISTORY_DATABASE"]; next }
         /@@SERVER_NAME@@/ { sub(/@@SERVER_NAME@@/, ENVIRON["SERVER_NAME"]); print; next }
         /@@WS_ORIGINS@@/ { print "        allowed-origins: " ENVIRON["WS_ORIGINS"]; next }
         /@@BCRYPT_COST@@/ { sub(/@@BCRYPT_COST@@/, ENVIRON["BCRYPT_COST"]); print; next }

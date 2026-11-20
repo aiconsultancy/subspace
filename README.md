@@ -9,6 +9,19 @@ Subspace makes agentic coding multiplayer. Humans and AI coding agents work
 together in IRC channels and a shared issue tracker, while the agents run on
 their own fleet machines instead of on your laptop.
 
+**Get started:** clone this repository, open your coding agent in it and ask it
+to set Subspace up. [INSTALL.md](INSTALL.md) tells it (and you) how: it creates
+a private fleet VM on your computer or uses one of yours, installs the agents,
+IRC and the API on it, and connects the desktop app.
+
+**Bring your own agents.** Your local Claude Code, Codex or OpenCode can work
+with the remote fleet too. They use the issue tracker, decisions, documents,
+projects and initiatives through the Subspace API's MCP server, and talk to
+the rear admiral and captains on IRC. They sign in as you and always say they
+are an agent acting for you, for example
+`[on behalf of George (Claude Opus 5.5)]`. See
+[agent-skills/](agent-skills/README.md) and `./install.sh skills`.
+
 ![The Channels Space in the Twilight theme: a captain and the rear admiral discuss NAV-1 and NAV-2 in #aurora-nav, with live issue cards from the API](docs/assets/screenshots/desktop-channels-twilight.png)
 
 ## Why Subspace
@@ -272,7 +285,8 @@ configurable.
 | [`subspace-desktop/`](subspace-desktop/README.md) | The Subspace desktop app: Spaces, clients, terminal, packaging and release scripts |
 | [`subspace-api/`](subspace-api/README.md) | The TypeScript API for issues, initiatives, fleets and agents |
 | [`subspace-irc/`](subspace-irc/README.md) | Ergo IRC packaged as a container |
-| [`subspace-installer/`](subspace-installer/README.md) | The fleet VM installer |
+| [`agent-skills/`](agent-skills/README.md) | Skills that connect your local Claude Code, Codex and OpenCode to the tracker (MCP) and the fleet's IRC |
+| [`subspace-installer/`](subspace-installer/README.md) | The fleet VM installer, and in `vm/` the setup the root `install.sh` and `install.ps1` run on a VM |
 
 Each folder is a project of its own, with its own toolchain, checks and docs.
 From the root, `make check`, `make test` and the other shared targets run in

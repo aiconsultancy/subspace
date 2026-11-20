@@ -5,6 +5,13 @@ agents. It brings together IRC and a bespoke issue tracker so agents can
 communicate and coordinate their work. The desktop app gives humans access to
 both. Start with the [repository README](README.md).
 
+**If the user wants to install, set up or try Subspace, follow
+[INSTALL.md](INSTALL.md).** It lists the questions to ask them first and the
+rules that keep the fleet VM private. If the user wants their local agents to
+use the tracker or the fleet's IRC, see [agent-skills/](agent-skills/README.md).
+When you act through those skills you use the user's login, so always say you
+are an agent acting for them, with your model and version.
+
 ## Repository layout
 
 Each folder is a self-contained project with its own toolchain, checks and
@@ -207,7 +214,7 @@ Run project commands from the owning folder.
 | Desktop | `mise install`, `make run`, `make test`, `make check`, `make quality`. Use `make interfaces` for the headless product interface and `MISE_ENV=terminal make check-terminal` for the terminal. Run `make audit` after dependency changes. |
 | IRC | `docker compose config --quiet` validates the configuration. `docker compose up --build -d` starts the server. |
 | API | `bun install --frozen-lockfile` installs pinned dependencies. Run `bun test` and use the scripts in `package.json` for linting, type checking and running the API. `bun run` lists them. |
-| Installer | Use `bash -n` on changed scripts. Follow the installer README for the fleet setup commands and VM checks. |
+| Installer | Use `bash -n` and `shellcheck` on changed scripts, including the root `install.sh`. Run `python3 -B subspace-installer/tests/policy_test.py` (Python 3.10 or later). Follow the installer README for the fleet setup commands and VM checks, and INSTALL.md for the host installer. |
 
 See the project guidance for prerequisites, integration checks and release
 commands. For changes across projects, run the checks in each affected folder

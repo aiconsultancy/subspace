@@ -7,7 +7,11 @@ const { ircSchema } = await import(`${source}/config.ts`);
 const { fold, parseMessage } = await import(`${source}/irc/protocol.ts`);
 const { routeIrcMessage } = await import(`${source}/irc/routing.ts`);
 const raw = await Bun.file(runtime.config).json();
-const roster = Object.fromEntries(raw.irc.map((entry) => [entry.id, ircSchema.parse(entry)]));
+// Older Stargate releases used zod schemas; current ones use Effect Schema.
+const parse = typeof ircSchema.parse === "function"
+  ? (entry) => ircSchema.parse(entry)
+  : (await import(Bun.resolveSync("effect", source))).Schema.decodeUnknownSync(ircSchema);
+const roster = Object.fromEntries(raw.irc.map((entry) => [entry.id, parse(entry)]));
 
 function admitted(name, channel, account, text) {
   const config = roster[name];

@@ -221,6 +221,15 @@ checkout_source() {
     git -C "$staging" -c advice.detachedHead=false fetch -q --depth=1 "$repo" "$revision"
     git -C "$staging" checkout -q --detach FETCH_HEAD
     [[ $(git -C "$staging" rev-parse HEAD) == "$revision" ]] || die "Unexpected $name revision."
+    # Fetch the release tag that points at this commit, if any, so the checkout knows its
+    # version (Stargate reports `git tag --points-at HEAD` through its Fleet API).
+    local tag
+    tag=$(git ls-remote --tags "$repo" 2>/dev/null | awk -v sha="$revision" \
+        '$1 == sha { ref = $2; sub("^refs/tags/", "", ref); sub("[\\^][{][}]$", "", ref); print ref }' |
+        grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1) || true
+    if [[ -n $tag ]]; then
+        git -C "$staging" fetch -q --depth=1 --no-tags "$repo" "refs/tags/$tag:refs/tags/$tag" || true
+    fi
     chmod -R a+rX "$staging"
     mv -T -- "$staging" "$destination"
     touch "$state/pending"
