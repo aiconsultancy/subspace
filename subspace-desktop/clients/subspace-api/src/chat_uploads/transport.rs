@@ -39,11 +39,12 @@ impl Client {
         validate(upload)
     }
     pub fn check_chat_upload(&self, draft: &UploadDraft) -> Result<Upload, UploadError> {
-        self.chat_service()?;
         if self.backend == crate::Backend::Nett {
-            // A wait NETT asked for holds: nothing at all is sent before it.
-            self.nett_chat_wait(draft)?;
+            // A wait NETT asked for holds: nothing at all is sent before it,
+            // not even a read of the capability list.
+            crate::nett::chat_wait(draft)?;
         }
+        self.chat_service()?;
         let user = self.me().map_err(UploadError::from)?.user_id;
         let upload = if self.backend == crate::Backend::Nett {
             validate(self.nett_check_chat_upload(draft)?)?

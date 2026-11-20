@@ -6,10 +6,18 @@ static FORMAT_CHARACTERS: LazyLock<Option<regex::Regex>> =
     LazyLock::new(|| regex::Regex::new(r"\p{Cf}").ok());
 
 pub(super) fn normalize_name(name: &str) -> Result<String, UploadError> {
-    let format = FORMAT_CHARACTERS
+    without_format_characters(name)
+        .map(|name| name.trim().to_owned())
+        .ok_or(UploadError::InvalidImage)
+}
+
+/// `name` without Unicode format characters, the bidirectional controls
+/// among them, which can make a name read as something it is not. `None`
+/// when they cannot be told apart.
+pub fn without_format_characters(name: &str) -> Option<String> {
+    FORMAT_CHARACTERS
         .as_ref()
-        .ok_or(UploadError::InvalidImage)?;
-    Ok(format.replace_all(name, "").trim().to_owned())
+        .map(|format| format.replace_all(name, "").into_owned())
 }
 
 pub fn file_mime(path: &Path) -> Option<&'static str> {
@@ -28,13 +36,19 @@ pub fn file_mime(path: &Path) -> Option<&'static str> {
     }
 }
 
-pub(super) fn validate(name: &str, mime: &str, bytes: &[u8]) -> Result<(), UploadError> {
-    let image = crate::media::supported_image(mime);
-    let limit = if image {
+/// The largest file of type `mime` an upload accepts: images up to
+/// [`MAX_IMAGE_BYTES`], other files up to [`MAX_FILE_BYTES`].
+pub fn max_bytes(mime: &str) -> usize {
+    if crate::media::supported_image(mime) {
         MAX_IMAGE_BYTES
     } else {
         MAX_FILE_BYTES
-    };
+    }
+}
+
+pub(super) fn validate(name: &str, mime: &str, bytes: &[u8]) -> Result<(), UploadError> {
+    let image = crate::media::supported_image(mime);
+    let limit = max_bytes(mime);
     if name.is_empty()
         || name.encode_utf16().count() > MAX_NAME_UNITS
         || name.chars().any(char::is_control)

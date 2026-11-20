@@ -95,7 +95,29 @@ impl Client {
         // A body read after the account or organisation changed belongs to
         // no one, however the read was shared.
         self.current()?;
+        #[cfg(test)]
+        crate::native::test_lease::read_accepted();
         Ok(value)
+    }
+
+    /// The issue `reference`, read afresh by `deadline`, waiting for a place
+    /// among the account's requests included: never a read already in
+    /// flight, which could predate a change just made, and tried once. A
+    /// reply read after the account or organisation changed belongs to no
+    /// one.
+    pub(crate) fn nett_issue_within(
+        &self,
+        reference: &str,
+        deadline: std::time::Instant,
+    ) -> Result<crate::model::IssueDetail, Error> {
+        let url = self.endpoint(&["issues", reference], &[])?;
+        let mut value: Value =
+            transport::get_within(&self.agent, &url, self.access_jwt.as_ref(), deadline)?;
+        self.current()?;
+        #[cfg(test)]
+        crate::native::test_lease::read_accepted();
+        wire::normalise(&mut value);
+        serde_json::from_value(value).map_err(|_| Error::InvalidResponse)
     }
 
     fn coalesced_read(&self, url: &url::Url) -> Result<Value, Error> {
@@ -155,16 +177,25 @@ impl Client {
     }
 
     /// Whether NETT serves `feature` for this client's organisation, reading
-    /// its capability list the first time it is needed.
+    /// its capability list the first time it is needed and again once it is
+    /// due: after [`crate::backend::SERVED_FOR`], or after an explicit
+    /// reload. A list read before still answers while it cannot be read
+    /// again.
     pub(crate) fn nett_serves(&self, feature: crate::backend::Feature) -> Result<bool, Error> {
         let Some(org) = self.org.as_deref() else {
             return Ok(false);
         };
         let origin = self.base.as_str();
         let account = self.flow_account();
-        if !crate::backend::served_known(origin, org, account) {
-            // A NETT without the list serves none of the coming features.
-            self.nett_refresh_served()?;
+        if !crate::backend::served_current(origin, org, account) {
+            match self.nett_refresh_served() {
+                Ok(_) => {}
+                Err(_) if crate::backend::served_known(origin, org, account) => {
+                    crate::backend::served_unreadable(origin, org, account);
+                }
+                // A NETT without the list serves none of the coming features.
+                Err(error) => return Err(error),
+            }
         }
         Ok(crate::backend::nett_serves(
             origin,
@@ -174,13 +205,62 @@ impl Client {
         ))
     }
 
+    /// Whether the organisation's capability list was read and is not yet
+    /// due to be read again.
+    pub(crate) fn nett_served_current(&self) -> bool {
+        self.org.as_deref().is_some_and(|org| {
+            crate::backend::served_current(self.base.as_str(), org, self.flow_account())
+        })
+    }
+
+    /// Which revision of the organisation's capability list is held, `None`
+    /// before one was read: it moves whenever any read finds it changed.
+    pub(crate) fn nett_served_revision(&self) -> Option<u64> {
+        self.org.as_deref().and_then(|org| {
+            crate::backend::served_revision(self.base.as_str(), org, self.flow_account())
+        })
+    }
+
+    /// Keeps a capability list that could not be read again answering for a
+    /// while, so the failing read is not repeated at once.
+    pub(crate) fn nett_served_unreadable(&self) {
+        if let Some(org) = self.org.as_deref() {
+            crate::backend::served_unreadable(self.base.as_str(), org, self.flow_account());
+        }
+    }
+
+    /// An explicit reload: a pause NETT asked for ends, so what the person
+    /// asked for is sent now, and the organisation's capability list is read
+    /// again, so a feature NETT enabled meanwhile is offered. Subspace API
+    /// has neither.
+    pub(crate) fn resume_nett(&self) {
+        if self.backend == crate::Backend::Nett {
+            crate::nett::flow::resume(self.flow_account());
+            self.nett_reread_served();
+        }
+    }
+
+    /// Asks for the organisation's capability list to be read again the
+    /// next time a feature is checked, as an explicit reload does.
+    pub(crate) fn nett_reread_served(&self) {
+        if let Some(org) = self.org.as_deref() {
+            crate::backend::reread_served(self.base.as_str(), org, self.flow_account());
+        }
+    }
+
     /// Reads the organisation's capability list again, replacing what was
     /// known: after the update stream closed or was refused, the
-    /// organisation may serve less, or more, than before.
-    pub(crate) fn nett_refresh_served(&self) -> Result<(), Error> {
+    /// organisation may serve less, or more, than before. Returns whether
+    /// the list changed.
+    ///
+    /// The list is kept for the account the read was made for. If another
+    /// account signed in while it was read, it belongs to no one and is
+    /// dropped, even when both accounts share the organisation.
+    pub(crate) fn nett_refresh_served(&self) -> Result<bool, Error> {
         let Some(org) = self.org.as_deref() else {
-            return Ok(());
+            return Ok(false);
         };
+        let account = self.flow_account();
         let names = match self.nett_value(&["desktop", "capabilities"], &[]) {
             Ok(list) => list
                 .get("features")
@@ -193,13 +273,15 @@ impl Client {
             Err(Error::NotFound | Error::Forbidden) => Vec::new(),
             Err(error) => return Err(error),
         };
-        crate::backend::record_served(
+        if self.flow_account() != account {
+            return Err(Error::SignInNeeded);
+        }
+        Ok(crate::backend::record_served(
             self.base.as_str(),
             org,
-            self.flow_account(),
+            account,
             &crate::backend::parse_features(&names),
-        );
-        Ok(())
+        ))
     }
 
     /// Issue teams as the desktop's projects.
@@ -396,5 +478,127 @@ impl Client {
             .into_iter()
             .filter(|label| label.state == "active")
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::backend::{Feature, SERVED_FOR, served_known};
+    use crate::native::test_lease;
+    use crate::{Client, Error};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use subspace_framework::client_test_support::Mock;
+    use subspace_framework::core::Secret;
+
+    const ORG: &str = "00000000-0000-4000-8000-0000000000c1";
+
+    fn client(mock: &Mock, token: &str) -> Client {
+        Client::nett_loopback(
+            &format!("{}/api", mock.base_url()),
+            Some(ORG),
+            Some(Secret::new(token)),
+        )
+        .unwrap()
+        .without_live()
+    }
+
+    /// Serves the capability list, attachments and updates once `enabled`
+    /// and a 404 before, or a 500 once enabled when `broken`; counts the
+    /// reads.
+    fn capabilities(enabled: &Arc<AtomicBool>, reads: &Arc<AtomicUsize>, broken: bool) -> Mock {
+        let (enabled, reads) = (Arc::clone(enabled), Arc::clone(reads));
+        Mock::new(move |request| {
+            if !request.path.ends_with("/desktop/capabilities") {
+                return (404, "{}".into());
+            }
+            reads.fetch_add(1, Ordering::SeqCst);
+            match (
+                broken && enabled.load(Ordering::SeqCst),
+                enabled.load(Ordering::SeqCst),
+            ) {
+                (true, _) => (500, "{}".into()),
+                (false, true) => (200, r#"{"features":["attachments","updates"]}"#.into()),
+                (false, false) => (404, "{}".into()),
+            }
+        })
+    }
+
+    #[test]
+    fn a_capability_list_read_as_another_account_signs_in_is_kept_for_no_one() {
+        let mock = Mock::new(|request| {
+            if request.path.ends_with("/desktop/capabilities") {
+                (200, r#"{"features":["attachments","updates"]}"#.into())
+            } else {
+                (404, "{}".into())
+            }
+        });
+        let mut client = client(&mock, "nett-capabilities-switch");
+        // Bound to account 1's lease, as a native client is.
+        test_lease::set(Some(1));
+        test_lease::set_account(Some(1));
+        client.native_lease = Some(crate::NativeLease(Some(1)));
+        // Account 2, in the same organisation, signs in right after the
+        // list's reply was accepted, before it is kept.
+        test_lease::AFTER_READ.with(|next| next.set(Some(2)));
+        let result = client.nett_refresh_served();
+        test_lease::set(None);
+        test_lease::set_account(None);
+        let origin = client.base.as_str();
+        assert_eq!(result, Err(Error::SignInNeeded));
+        assert!(
+            !served_known(origin, ORG, 2),
+            "account 2 never inherits account 1's features"
+        );
+        assert!(
+            !served_known(origin, ORG, 1),
+            "and the stale read is dropped"
+        );
+    }
+
+    #[test]
+    fn a_capability_list_read_before_a_feature_was_enabled_is_read_again() {
+        let (enabled, reads) = (Arc::new(AtomicBool::new(false)), Arc::default());
+        let mock = capabilities(&enabled, &reads, false);
+        let client = client(&mock, "nett-capabilities-enabled");
+        assert_eq!(client.nett_serves(Feature::Attachments), Ok(false));
+        assert_eq!(client.nett_serves(Feature::Updates), Ok(false));
+        assert_eq!(reads.load(Ordering::SeqCst), 1, "the absent list is kept");
+        // NETT enables the features while the app runs; an explicit reload
+        // reads the list again.
+        enabled.store(true, Ordering::SeqCst);
+        client.nett_reread_served();
+        assert!(!client.nett_served_current());
+        assert_eq!(client.nett_serves(Feature::Attachments), Ok(true));
+        assert_eq!(client.nett_serves(Feature::Updates), Ok(true));
+        assert_eq!(reads.load(Ordering::SeqCst), 2);
+        // Without a reload, a list past its lifetime is read again too.
+        let later = std::time::Instant::now() + SERVED_FOR + std::time::Duration::from_secs(1);
+        assert!(crate::backend::served_current(
+            client.base.as_str(),
+            ORG,
+            client.flow_account()
+        ));
+        assert!(!crate::backend::served_current_at(
+            client.base.as_str(),
+            ORG,
+            client.flow_account(),
+            later
+        ));
+    }
+
+    #[test]
+    fn a_capability_list_that_cannot_be_read_again_still_answers() {
+        let (enabled, reads) = (Arc::new(AtomicBool::new(false)), Arc::default());
+        let mock = capabilities(&enabled, &reads, true);
+        let client = client(&mock, "nett-capabilities-broken");
+        assert_eq!(client.nett_serves(Feature::Attachments), Ok(false));
+        // The list is due again, but NETT fails to answer: what was known
+        // still answers, and the failing read is not repeated at once.
+        enabled.store(true, Ordering::SeqCst);
+        client.nett_reread_served();
+        assert_eq!(client.nett_serves(Feature::Attachments), Ok(false));
+        assert_eq!(client.nett_serves(Feature::Updates), Ok(false));
+        assert_eq!(reads.load(Ordering::SeqCst), 2);
     }
 }

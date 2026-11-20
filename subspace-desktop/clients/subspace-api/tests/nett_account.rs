@@ -4,98 +4,109 @@
 //! process, because the backend and the account are chosen once.
 
 use serde_json::{Value, json};
-use std::io::{BufRead as _, BufReader};
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use subspace_api_client::chat_uploads::{UploadDraft, UploadError};
-use subspace_api_client::{Client, ListQuery, ListTab, nett};
+use subspace_api_client::issue_writes::IssueSaveError;
+use subspace_api_client::model::IssueMedia;
+use subspace_api_client::uploads::{ImageDeclaration, UploadError as CommentUploadError};
+use subspace_api_client::{Client, Error, ListQuery, ListTab, nett};
 use subspace_framework::core::Secret;
+
+#[path = "../src/tests/nett/process.rs"]
+mod process;
+use process::NettProcess as Mock;
 
 /// Fixture traffic stays on loopback: no proxy from the environment sees it.
 fn direct() -> ureq::Agent {
-    ureq::Agent::config_builder().proxy(None).build().into()
-}
-
-struct Mock {
-    child: Child,
-    origin: String,
+    ureq::Agent::config_builder()
+        .proxy(None)
+        .timeout_global(Some(Duration::from_secs(5)))
+        .build()
+        .into()
 }
 
 impl Mock {
-    fn start(features: &[&str]) -> Self {
-        let script =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/nett_api_test_server.py");
-        let mut child = Command::new(
-            subspace_framework::core::path::find_tool("python3")
-                .expect("python3 runs the NETT mock"),
-        )
-        .arg("-I")
-        .arg(&script)
-        .args(["--port", "0"])
-        .args(features.iter().flat_map(|feature| ["--serve", feature]))
-        .env_clear()
-        // Windows Python needs SYSTEMROOT to open a socket.
-        .envs(std::env::var_os("SYSTEMROOT").map(|root| ("SYSTEMROOT", root)))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("python3 runs the NETT mock");
-        let mut line = String::new();
-        if let Some(stdout) = child.stdout.take() {
-            let _ = BufReader::new(stdout).read_line(&mut line);
-        }
-        let origin = line
-            .trim()
-            .strip_prefix("NETT fixture listening on ")
-            .map(str::to_owned)
-            .expect("the NETT mock started");
-        Self { child, origin }
-    }
-
-    fn hook(&self, path: &str, body: &Value) -> Value {
-        let mut response = direct()
+    fn hook(&self, path: &str, body: &Value) {
+        direct()
             .post(&format!("{}/__fixture/{path}", self.origin))
             .header("Content-Type", "application/json")
             .send(body.to_string())
             .unwrap();
-        serde_json::from_str(&response.body_mut().read_to_string().unwrap()).unwrap_or(Value::Null)
     }
 
-    fn requests(&self, method: &str, prefix: &str) -> usize {
+    fn request_log(&self) -> Vec<Value> {
         let mut response = direct()
             .get(&format!("{}/__fixture/requests", self.origin))
             .call()
             .unwrap();
-        let log: Vec<Value> =
-            serde_json::from_str(&response.body_mut().read_to_string().unwrap()).unwrap();
-        log.iter()
-            .filter(|r| {
-                r["method"] == method && r["path"].as_str().is_some_and(|p| p.starts_with(prefix))
-            })
+        serde_json::from_str(&response.body_mut().read_to_string().unwrap()).unwrap()
+    }
+
+    fn requests(&self, method: &str, path: &str) -> usize {
+        self.request_log()
+            .iter()
+            .filter(|entry| matches_request(entry, method, path))
             .count()
     }
 }
 
-impl Drop for Mock {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
+fn matches_request(entry: &Value, method: &str, path: &str) -> bool {
+    entry["method"] == method
+        && entry["path"].as_str().is_some_and(|actual| {
+            path.strip_suffix('*')
+                .map_or_else(|| actual == path, |prefix| actual.starts_with(prefix))
+        })
 }
 
-/// Waits until NETT has answered a request to `path` beyond the first
-/// `before`, while its slow body is still on the way.
-fn arrived(mock: &Mock, method: &str, path: &str, before: usize) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while mock.requests(method, path) == before {
-        assert!(std::time::Instant::now() < deadline, "no request to {path}");
+/// Wait for NETT to send successful headers, then retire the scope while
+/// the response body is held. `retire` can verify any fixture state first.
+fn late_reply<T: Send + 'static>(
+    mock: &Mock,
+    method: &str,
+    path: &str,
+    call: impl FnOnce() -> T + Send + 'static,
+    retire: impl FnOnce(),
+) -> T {
+    let before = mock.requests(method, path);
+    mock.hook(
+        "config",
+        &json!({"slowBody": {"path": path, "seconds": 10, "waitForRelease": true}}),
+    );
+    let worker = std::thread::spawn(call);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let status = loop {
+        let status = mock
+            .request_log()
+            .iter()
+            .filter(|entry| matches_request(entry, method, path))
+            .skip(before)
+            .find_map(|entry| entry["slowBodyHeadersStatus"].as_u64());
+        if let Some(status) = status {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no response headers for {method} {path}"
+        );
         std::thread::sleep(Duration::from_millis(20));
-    }
-    std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(
+        status, 200,
+        "{method} {path} succeeded before the scope changed"
+    );
+    assert!(
+        !worker.is_finished(),
+        "the response body should still be held"
+    );
+    retire();
+    assert!(
+        !worker.is_finished(),
+        "the response body arrived before its release"
+    );
+    mock.hook("config", &json!({"slowBody": null}));
+    worker.join().unwrap()
 }
 
 /// A fixed UUID's text, numbered `n`.
@@ -119,30 +130,40 @@ fn identifiers(client: &Client, initiative: &str) -> Vec<String> {
 
 #[test]
 fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
-    let mock = Mock::start(&["chatUploads", "attachments", "issueMoves"]);
+    let mock = Mock::start(&["chatUploads", "attachments", "issueMoves"], &[]);
     let account = Arc::new(AtomicU64::new(1));
     let token = Arc::new(Mutex::new("nett-fixture-access".to_owned()));
-    subspace_api_client::configure_nett_origin(&format!("{}/api", mock.origin)).unwrap();
-    {
-        let (account, token) = (account.clone(), token.clone());
-        subspace_api_client::use_native_account(
-            move || account.load(Ordering::SeqCst),
-            |_| None,
-            move || Ok(Secret::new(token.lock().unwrap().clone())),
-        );
-    }
+    install_account(&mock, account.clone(), token.clone());
 
+    let works = assert_context_follows_the_account(&mock, &account);
+    assert_planning_projects_are_account_scoped(&mock, &account, &token, &works);
+    assert_prepared_uploads_are_retired(&mock, &account, &token, &works);
+    assert_late_reads_and_grants_are_discarded(&mock, &account, &works);
+    let second = assert_organisation_switch_discards_old_replies(&mock, &works);
+    assert_switching_organisations_clears_wait(&mock, &works, &second);
+    assert_capabilities_are_read_for_each_account(&mock, &account, &works);
+}
+
+fn install_account(mock: &Mock, account: Arc<AtomicU64>, token: Arc<Mutex<String>>) {
+    subspace_api_client::configure_nett_origin(&format!("{}/api", mock.origin)).unwrap();
+    subspace_api_client::use_native_account(
+        move || account.load(Ordering::SeqCst),
+        |_| None,
+        move || Ok(Secret::new(token.lock().unwrap().clone())),
+    );
+}
+
+fn assert_context_follows_the_account(mock: &Mock, account: &AtomicU64) -> String {
     // A context body that arrives after the account changed belongs to no
     // one: it is dropped, and the menu shows nothing from it.
-    mock.hook(
-        "config",
-        &json!({"slowBody": {"path": "/api/v1/auth/context", "seconds": 1.0, "times": 1}}),
+    let response = late_reply(
+        mock,
+        "GET",
+        "/api/v1/auth/context",
+        || Client::new().unwrap().me(),
+        || account.store(2, Ordering::SeqCst),
     );
-    let before = mock.requests("GET", "/api/v1/auth/context");
-    let reading = std::thread::spawn(|| Client::new().unwrap().me());
-    arrived(&mock, "GET", "/api/v1/auth/context", before);
-    account.store(2, Ordering::SeqCst);
-    assert!(reading.join().unwrap().is_err());
+    assert_eq!(response.err(), Some(Error::SignInNeeded));
     let menu = nett::snapshot();
     assert!(menu.organisations.is_empty() && menu.selected.is_none());
     assert_eq!(menu.status, nett::Status::Unknown);
@@ -166,7 +187,15 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
     account.store(3, Ordering::SeqCst);
     assert!(nett::snapshot().organisations.is_empty());
     assert!(!nett::select_organisation(&works));
+    works
+}
 
+fn assert_planning_projects_are_account_scoped(
+    mock: &Mock,
+    account: &AtomicU64,
+    token: &Mutex<String>,
+    works: &str,
+) {
     // Two people in one organisation who see different planning projects
     // never share the initiative's project list.
     mock.hook(
@@ -178,7 +207,7 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         &json!({"org": works, "project": "Launch", "user": "grace"}),
     );
     Client::new().unwrap().me().unwrap();
-    assert!(nett::select_organisation(&works));
+    assert!(nett::select_organisation(works));
     let ada = Client::new().unwrap();
     let platform = ada
         .member_initiatives()
@@ -192,114 +221,84 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
     account.store(4, Ordering::SeqCst);
     let me = Client::new().unwrap().me().unwrap();
     assert_eq!(me.display_name, "Grace Fixture");
-    nett::select_organisation(&works);
+    nett::select_organisation(works);
     let grace = Client::new().unwrap();
     assert!(
         identifiers(&grace, &platform).is_empty(),
         "Grace cannot see Launch, so Ada's list is not hers"
     );
+}
 
+fn assert_prepared_uploads_are_retired(
+    mock: &Mock,
+    account: &AtomicU64,
+    token: &Mutex<String>,
+    works: &str,
+) {
     // An upload prepared for one account is not sent for the next: the
     // prepare reply arrives after the account changed.
     *token.lock().unwrap() = "nett-fixture-access".to_owned();
     account.store(5, Ordering::SeqCst);
     Client::new().unwrap().me().unwrap();
-    nett::select_organisation(&works);
+    nett::select_organisation(works);
     let client = Client::new().unwrap();
-    mock.hook(
-        "config",
-        &json!({"slowBody": {"path": format!("/api/v1/orgs/{works}/chat/uploads/prepare"),
-                             "seconds": 1.0, "times": 1}}),
-    );
     let draft = UploadDraft::new(
         "notes.txt".into(),
         "text/plain".into(),
         b"Prepared for the previous account.\n".to_vec(),
     )
     .unwrap();
-    let before = mock.requests(
+    let response = late_reply(
+        mock,
         "POST",
         &format!("/api/v1/orgs/{works}/chat/uploads/prepare"),
+        move || client.create_chat_upload(&draft),
+        || account.store(6, Ordering::SeqCst),
     );
-    let uploading = std::thread::spawn(move || client.create_chat_upload(&draft));
-    arrived(
-        &mock,
-        "POST",
-        &format!("/api/v1/orgs/{works}/chat/uploads/prepare"),
-        before,
-    );
-    account.store(6, Ordering::SeqCst);
-    assert_eq!(uploading.join().unwrap().err(), Some(UploadError::Access));
+    assert_eq!(response.err(), Some(UploadError::Access));
     assert_eq!(
-        mock.requests("PUT", "/u/"),
+        mock.requests("PUT", "/u/*"),
         0,
         "the upload URL was never used"
     );
 
     // Comment media prepared for one account is not sent for the next.
     Client::new().unwrap().me().unwrap();
-    nett::select_organisation(&works);
+    nett::select_organisation(works);
     let client = Client::new().unwrap();
-    mock.hook(
-        "config",
-        &json!({"slowBody": {"path": format!("/api/v1/orgs/{works}/issues/media/prepare"),
-                             "seconds": 1.0, "times": 1}}),
-    );
-    let bytes = b"Prepared for the previous account.\n".to_vec();
-    let declaration =
-        subspace_api_client::uploads::ImageDeclaration::new("comment.txt", "text/plain", &bytes)
-            .unwrap();
-    let draft = uuid_text(1);
-    let key = uuid_text(2);
-    let before = mock.requests(
+    let response = late_reply(
+        mock,
         "POST",
         &format!("/api/v1/orgs/{works}/issues/media/prepare"),
+        move || comment_upload(&client, 1),
+        || account.store(7, Ordering::SeqCst),
     );
-    let uploading = std::thread::spawn(move || {
-        client.upload_comment_media("OPS-1", (&draft, &key), &declaration, &bytes)
-    });
-    arrived(
-        &mock,
-        "POST",
-        &format!("/api/v1/orgs/{works}/issues/media/prepare"),
-        before,
-    );
-    account.store(9, Ordering::SeqCst);
-    assert!(uploading.join().unwrap().is_err());
+    assert_eq!(response.err(), Some(CommentUploadError::SignInNeeded));
     assert_eq!(
-        mock.requests("PUT", "/u/"),
+        mock.requests("PUT", "/u/*"),
         0,
         "the comment upload URL was never used"
     );
+}
 
-    // Any organisation read whose body arrives after the account changed
-    // is dropped, not handed to its caller.
-    Client::new().unwrap().me().unwrap();
-    nett::select_organisation(&works);
+fn assert_late_reads_and_grants_are_discarded(mock: &Mock, account: &AtomicU64, works: &str) {
+    // A successful issue read is also discarded if the account changes.
+    assert!(Client::new().unwrap().me().is_ok());
+    assert!(nett::select_organisation(works));
     let client = Client::new().unwrap();
-    mock.hook(
-        "config",
-        &json!({"slowBody": {"path": format!("/api/v1/orgs/{works}/issues/OPS-1"),
-                             "seconds": 1.0, "times": 1}}),
-    );
-    let before = mock.requests("GET", &format!("/api/v1/orgs/{works}/issues/OPS-1"));
-    let reading = std::thread::spawn(move || client.issue("OPS-1"));
-    arrived(
-        &mock,
+    let response = late_reply(
+        mock,
         "GET",
         &format!("/api/v1/orgs/{works}/issues/OPS-1"),
-        before,
+        move || client.issue("OPS-1"),
+        || account.store(8, Ordering::SeqCst),
     );
-    account.store(7, Ordering::SeqCst);
-    assert!(
-        reading.join().unwrap().is_err(),
-        "the late issue is not returned"
-    );
+    assert_eq!(response.err(), Some(Error::SignInNeeded));
 
     // A file grant that arrives after the account changed is neither kept
     // nor redeemed.
     Client::new().unwrap().me().unwrap();
-    nett::select_organisation(&works);
+    nett::select_organisation(works);
     let client = Client::new().unwrap();
     let log = client
         .attachments("OPS-1", &subspace_api_client::PageRequest::default())
@@ -308,31 +307,23 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         .into_iter()
         .find(|m| m.file_name == "restore-log.txt")
         .unwrap();
-    mock.hook(
-        "config",
-        &json!({"slowBody": {"path": format!("/api/v1/orgs/{works}/files/grants"),
-                             "seconds": 1.0, "times": 1}}),
-    );
-    let files_before = mock.requests("GET", "/files/");
-    let before = mock.requests("POST", &format!("/api/v1/orgs/{works}/files/grants"));
-    let fetching = std::thread::spawn(move || client.fetch_text(&log, 1024));
-    arrived(
-        &mock,
+    let files_before = mock.requests("GET", "/files/*");
+    let response = late_reply(
+        mock,
         "POST",
         &format!("/api/v1/orgs/{works}/files/grants"),
-        before,
+        move || client.fetch_text(&log, 1024),
+        || account.store(9, Ordering::SeqCst),
     );
-    account.store(8, Ordering::SeqCst);
-    assert!(
-        fetching.join().unwrap().is_err(),
-        "the late grant gives no bytes"
-    );
+    assert_eq!(response.err(), Some(Error::SignInNeeded));
     assert_eq!(
-        mock.requests("GET", "/files/"),
+        mock.requests("GET", "/files/*"),
         files_before,
         "the grant was never redeemed"
     );
+}
 
+fn assert_organisation_switch_discards_old_replies(mock: &Mock, works: &str) -> String {
     // Replies whose bodies arrive after the organisation changed belong to
     // no one: a managed media completion, its checking state, a to-do save
     // and a move preview.
@@ -343,63 +334,97 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         .find(|org| org.name == "Second Fixture Org")
         .unwrap()
         .id;
-    // The organisation changes once NETT has answered the slow request,
-    // while its body is still on the way.
-    let late = |method: &str, path: String, call: Box<dyn FnOnce(Client) -> bool + Send>| {
-        assert!(nett::select_organisation(&works));
-        let client = Client::new().unwrap();
-        mock.hook(
-            "config",
-            &json!({"slowBody": {"path": path, "seconds": 1.5, "times": 1}}),
-        );
-        let prefix = path.trim_end_matches('*').to_owned();
-        let before = mock.requests(method, &prefix);
-        let calling = std::thread::spawn(move || call(client));
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while mock.requests(method, &prefix) == before {
-            assert!(std::time::Instant::now() < deadline, "no request to {path}");
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        std::thread::sleep(Duration::from_millis(200));
-        assert!(nett::select_organisation(&second));
-        assert!(
-            calling.join().unwrap(),
-            "the late reply was not used: {path}"
-        );
-    };
-    let comment = |n: u8| {
-        Box::new(move |client: Client| {
-            let bytes = format!("Comment file {n}.\n").into_bytes();
-            let declaration = subspace_api_client::uploads::ImageDeclaration::new(
-                "comment.txt",
-                "text/plain",
-                &bytes,
-            )
-            .unwrap();
-            client
-                .upload_comment_media(
-                    "OPS-1",
-                    (&uuid_text(n), &uuid_text(n + 1)),
-                    &declaration,
-                    &bytes,
-                )
-                .is_err()
-        }) as Box<dyn FnOnce(Client) -> bool + Send>
-    };
-    // NETT may answer a completion with the ready media at once.
-    mock.hook("config", &json!({"mediaReadyAtOnce": true}));
-    late(
-        "POST",
-        format!("/api/v1/orgs/{works}/issues/media/from-upload"),
-        comment(3),
+    discard_old_organisation_replies(mock, works, &second);
+    second
+}
+
+fn assert_switching_organisations_clears_wait(mock: &Mock, works: &str, second: &str) {
+    // A day-long wait NETT asks for ends when the person chooses an
+    // organisation.
+    assert!(nett::select_organisation(works));
+    let teams = format!("/api/v1/orgs/{works}/issue-teams");
+    mock.hook(
+        "config",
+        &json!({"failNext": [{"method": "GET", "path": teams, "status": 503,
+                              "retryAfter": 86_400, "times": 1}]}),
     );
-    mock.hook("config", &json!({"mediaReadyAtOnce": false}));
-    late(
-        "GET",
-        format!("/api/v1/orgs/{works}/issues/media/uploads/*"),
-        comment(5),
+    let client = Client::new().unwrap();
+    let page = subspace_api_client::PageRequest::default();
+    assert!(client.projects(&page).is_err());
+    assert!(client.projects(&page).is_err(), "paused, not sent");
+    assert!(nett::select_organisation(second));
+    assert!(
+        Client::new().unwrap().projects(&page).is_ok(),
+        "sent at once"
     );
-    assert!(nett::select_organisation(&works));
+}
+
+fn assert_capabilities_are_read_for_each_account(mock: &Mock, account: &AtomicU64, works: &str) {
+    // Another account reads its own capability list, even in the same
+    // organisation.
+    let page = subspace_api_client::PageRequest::default();
+    assert!(nett::select_organisation(works));
+    Client::new().unwrap().attachments("OPS-1", &page).unwrap();
+    let capabilities = format!("/api/v1/orgs/{works}/desktop/capabilities");
+    let read = mock.requests("GET", &capabilities);
+    account.store(10, Ordering::SeqCst);
+    Client::new().unwrap().me().unwrap();
+    assert!(nett::select_organisation(works));
+    Client::new().unwrap().attachments("OPS-1", &page).unwrap();
+    assert_eq!(
+        mock.requests("GET", &capabilities),
+        read + 1,
+        "read again for the new account"
+    );
+}
+
+fn comment_upload(client: &Client, n: u8) -> Result<IssueMedia, CommentUploadError> {
+    let bytes = format!("Comment file {n}.\n").into_bytes();
+    let declaration = ImageDeclaration::new("comment.txt", "text/plain", &bytes).unwrap();
+    client.upload_comment_media(
+        "OPS-1",
+        (&uuid_text(n), &uuid_text(n + 1)),
+        &declaration,
+        &bytes,
+    )
+}
+
+fn discard_old_organisation_replies(mock: &Mock, works: &str, second: &str) {
+    for (ready_at_once, draft, method, route) in [
+        (true, 3, "POST", "/from-upload"),
+        (false, 5, "GET", "/uploads/*"),
+    ] {
+        mock.hook("config", &json!({"mediaReadyAtOnce": ready_at_once}));
+        assert!(nett::select_organisation(works));
+        let reader = Client::new().unwrap();
+        let worker = reader.clone();
+        let response = late_reply(
+            mock,
+            method,
+            &format!("/api/v1/orgs/{works}/issues/media{route}"),
+            move || comment_upload(&worker, draft),
+            || {
+                // A replay of the same reservation sees ready media. The
+                // first request already stored it and no bytes go again.
+                let sent = mock.requests("PUT", "/u/*");
+                assert_eq!(
+                    comment_upload(&reader, draft).unwrap().file_name,
+                    "comment.txt"
+                );
+                assert_eq!(mock.requests("PUT", "/u/*"), sent);
+                assert!(nett::select_organisation(second));
+            },
+        );
+        // After sending bytes, the public error asks the caller to check
+        // the transfer even if the cause was a retired scope.
+        assert_eq!(response.err(), Some(CommentUploadError::Checking));
+    }
+    discard_saved_todo_reply(mock, works, second);
+    discard_move_preview_reply(mock, works, second);
+}
+
+fn discard_saved_todo_reply(mock: &Mock, works: &str, second: &str) {
+    assert!(nett::select_organisation(works));
     let client = Client::new().unwrap();
     let issue = client.issue("OPS-1").unwrap().fields.id;
     let list = client.issue_lists("OPS-1").unwrap().remove(0);
@@ -413,16 +438,29 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         "/api/v1/orgs/{works}/issues/{issue}/lists/{}/items/{}",
         list.id, item.id
     );
-    late(
+    let (worker, edited) = (client.clone(), item.clone());
+    let response = late_reply(
+        mock,
         "PUT",
-        path,
-        Box::new(move |client: Client| {
-            client
-                .set_issue_list_item_done("OPS-1", &item, true)
-                .is_err()
-        }),
+        &path,
+        move || worker.set_issue_list_item_done("OPS-1", &edited, true),
+        || {
+            let saved = client
+                .issue_list_items("OPS-1", &list.id)
+                .unwrap()
+                .into_iter()
+                .find(|saved| saved.id == item.id)
+                .unwrap();
+            assert!(saved.completed);
+            assert!(saved.version > item.version);
+            assert!(nett::select_organisation(second));
+        },
     );
-    assert!(nett::select_organisation(&works));
+    assert_eq!(response.err(), Some(IssueSaveError::SignIn));
+}
+
+fn discard_move_preview_reply(mock: &Mock, works: &str, second: &str) {
+    assert!(nett::select_organisation(works));
     let client = Client::new().unwrap();
     let web = client
         .all_projects()
@@ -434,44 +472,12 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
     let root = client.issue("OPS-2").unwrap();
     let version = u32::try_from(root.fields.version).unwrap();
     let id = root.fields.id;
-    late(
+    let response = late_reply(
+        mock,
         "POST",
-        format!("/api/v1/orgs/{works}/issues/{id}/move-preview"),
-        Box::new(move |client: Client| client.preview_issue_move(&id, &web, version).is_err()),
+        &format!("/api/v1/orgs/{works}/issues/{id}/move-preview"),
+        move || client.preview_issue_move(&id, &web, version),
+        || assert!(nett::select_organisation(second)),
     );
-
-    // A day-long wait NETT asks for ends when the person chooses an
-    // organisation.
-    assert!(nett::select_organisation(&works));
-    let teams = format!("/api/v1/orgs/{works}/issue-teams");
-    mock.hook(
-        "config",
-        &json!({"failNext": [{"method": "GET", "path": teams, "status": 503,
-                              "retryAfter": 86_400, "times": 1}]}),
-    );
-    let client = Client::new().unwrap();
-    let page = subspace_api_client::PageRequest::default();
-    assert!(client.projects(&page).is_err());
-    assert!(client.projects(&page).is_err(), "paused, not sent");
-    assert!(nett::select_organisation(&second));
-    assert!(
-        Client::new().unwrap().projects(&page).is_ok(),
-        "sent at once"
-    );
-
-    // Another account reads its own capability list, even in the same
-    // organisation.
-    assert!(nett::select_organisation(&works));
-    Client::new().unwrap().attachments("OPS-1", &page).unwrap();
-    let capabilities = format!("/api/v1/orgs/{works}/desktop/capabilities");
-    let read = mock.requests("GET", &capabilities);
-    account.store(10, Ordering::SeqCst);
-    Client::new().unwrap().me().unwrap();
-    assert!(nett::select_organisation(&works));
-    Client::new().unwrap().attachments("OPS-1", &page).unwrap();
-    assert_eq!(
-        mock.requests("GET", &capabilities),
-        read + 1,
-        "read again for the new account"
-    );
+    assert_eq!(response.err(), Some(IssueSaveError::SignIn));
 }

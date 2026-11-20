@@ -25,7 +25,7 @@ impl Client {
         }
         if !self.backend_supports_uploads() {
             return Err(UploadError::Refused {
-                status: 501,
+                status: StatusCode::NOT_IMPLEMENTED.as_u16(),
                 retry_after: 0,
             });
         }

@@ -15,6 +15,9 @@ impl Hub {
             IssueStatus::Unavailable
         };
         state.snapshot.issue = Some(IssueSnapshot::new(identifier, profile_id, status));
+        // The issue it replaces keeps its uploads aside; this one shows its
+        // own, kept from when it last closed.
+        self.0.follow_uploads(&mut state);
         state.changed();
         if profile_id == crate::PROFILE_ID && state.snapshot.me.is_some() {
             self.0.enqueue(
@@ -30,14 +33,20 @@ impl Hub {
     pub fn reload_issue(&self) -> Result<(), HubError> {
         let mut state = lock(&self.0.state);
         state.running()?;
-        self.0.resume_nett();
+        self.0.client.resume_nett();
         self.0.refresh_open_issue(&mut state);
         Ok(())
     }
+    /// Closes the open issue. Its standalone uploads still in progress or
+    /// awaiting a check are kept for a while, and shown again when it
+    /// reopens, so a transfer whose bytes may be stored can still be checked
+    /// or cancelled. Those that failed with nothing to check are let go and
+    /// their reservations cancelled.
     pub fn close_issue(&self) {
         let mut state = lock(&self.0.state);
         state.issue_revision = state.issue_revision.wrapping_add(1);
         state.snapshot.issue = None;
+        self.0.follow_uploads(&mut state);
         state.changed();
     }
     pub fn load_more_subissues(&self) -> Result<(), HubError> {
@@ -139,9 +148,9 @@ impl Shared {
         issue.decisions.pause();
         issue.timeline.loading = false;
         issue.images = Default::default();
-        // Uploads in progress are kept through a refresh of the same
-        // opening: their transfers may already hold stored bytes.
-        issue.files.clear_keeping_uploads();
+        // Uploads in progress stay in the upload store through a refresh:
+        // their transfers may already hold stored bytes.
+        issue.files.clear();
         let identifier = issue.identifier.clone();
         state.issue_revision = state.issue_revision.wrapping_add(1);
         state.changed();

@@ -4,57 +4,24 @@
 //! account and the renewal are chosen once.
 
 use serde_json::{Value, json};
-use std::io::{BufRead as _, BufReader};
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use subspace_api_client::hub::{Hub, HubStatus, LiveStatus};
 use subspace_api_client::{Client, ListQuery, ListTab, nett};
 use subspace_framework::core::Secret;
+
+#[path = "../src/tests/nett/process.rs"]
+mod process;
+use process::NettProcess as Mock;
 
 /// Fixture traffic stays on loopback: no proxy from the environment sees it.
 fn direct() -> ureq::Agent {
     ureq::Agent::config_builder().proxy(None).build().into()
 }
 
-struct Mock {
-    child: Child,
-    origin: String,
-}
-
 impl Mock {
-    fn start() -> Self {
-        let script =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/nett_api_test_server.py");
-        let mut child = Command::new(
-            subspace_framework::core::path::find_tool("python3")
-                .expect("python3 runs the NETT mock"),
-        )
-        .arg("-I")
-        .arg(&script)
-        .args(["--port", "0", "--serve", "updates"])
-        .env_clear()
-        // Windows Python needs SYSTEMROOT to open a socket.
-        .envs(std::env::var_os("SYSTEMROOT").map(|root| ("SYSTEMROOT", root)))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("python3 runs the NETT mock");
-        let mut line = String::new();
-        if let Some(stdout) = child.stdout.take() {
-            let _ = BufReader::new(stdout).read_line(&mut line);
-        }
-        let origin = line
-            .trim()
-            .strip_prefix("NETT fixture listening on ")
-            .map(str::to_owned)
-            .expect("the NETT mock started");
-        Self { child, origin }
-    }
-
     /// Update streams opened so far.
     fn streams(&self) -> usize {
         let mut response = direct()
@@ -77,13 +44,6 @@ impl Mock {
     }
 }
 
-impl Drop for Mock {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 fn wait(what: &str, done: &dyn Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(15);
     while !done() {
@@ -94,7 +54,15 @@ fn wait(what: &str, done: &dyn Fn() -> bool) {
 
 #[test]
 fn a_refused_token_is_renewed_once_and_the_stream_carries_on() {
-    let mock = Mock::start();
+    let mock = Mock::start(&["updates"], &[]);
+    let renewals = install_renewing_account(&mock);
+    let hub = open_issue_on_live_hub();
+    assert_first_renewal_keeps_content(&mock, &hub, &renewals);
+    assert_second_renewal_recovers_content(&mock, &hub, &renewals);
+    hub.stop();
+}
+
+fn install_renewing_account(mock: &Mock) -> Arc<AtomicUsize> {
     mock.hook(
         "tokens",
         &json!({"token": "nett-fixture-first", "user": "ada"}),
@@ -114,7 +82,7 @@ fn a_refused_token_is_renewed_once_and_the_stream_carries_on() {
         );
     }
     {
-        let (token, renewals) = (token.clone(), renewals.clone());
+        let renewals = renewals.clone();
         // The provider's renewal: a fresh token from now on.
         subspace_api_client::use_token_renewal(move || {
             let n = renewals.fetch_add(1, Ordering::SeqCst);
@@ -123,6 +91,10 @@ fn a_refused_token_is_renewed_once_and_the_stream_carries_on() {
             true
         });
     }
+    renewals
+}
+
+fn open_issue_on_live_hub() -> Hub {
     Client::new().unwrap().me().unwrap();
     let works = nett::snapshot()
         .organisations
@@ -136,55 +108,68 @@ fn a_refused_token_is_renewed_once_and_the_stream_carries_on() {
         .unwrap();
     hub.open_issue("OPS-1", subspace_api_client::PROFILE_ID)
         .unwrap();
-    let shown = |hub: &Hub| {
-        let snapshot = hub.snapshot();
-        snapshot.live() == LiveStatus::Live
-            && snapshot.status() == &HubStatus::Ready
-            && snapshot.list().is_some()
-            && snapshot
-                .issue()
-                .is_some_and(|issue| issue.detail().is_some())
-    };
     wait("a live stream, the list and the issue", &|| shown(&hub));
+    hub
+}
+
+fn shown(hub: &Hub) -> bool {
+    let snapshot = hub.snapshot();
+    snapshot.live() == LiveStatus::Live
+        && snapshot.status() == &HubStatus::Ready
+        && snapshot.list().is_some()
+        && snapshot
+            .issue()
+            .is_some_and(|issue| issue.detail().is_some())
+}
+
+fn assert_first_renewal_keeps_content(mock: &Mock, hub: &Hub, renewals: &AtomicUsize) {
     // NETT revokes the token before it expires: the stream closes, and the
     // reads that catch up are refused. The token is renewed once, the list
     // and the issue are read again with it, and the stream opens again.
     // Nothing asks the person to sign in.
     let cleared = Arc::new(AtomicUsize::new(0));
-    let watching = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let watcher = {
-        let (hub, cleared, watching) = (hub.clone(), cleared.clone(), watching.clone());
-        std::thread::spawn(move || {
-            while watching.load(Ordering::SeqCst) {
-                let snapshot = hub.snapshot();
-                let issue = snapshot
-                    .issue()
-                    .is_some_and(|issue| issue.detail().is_some());
-                if snapshot.list().is_none()
-                    || !issue
-                    || matches!(snapshot.status(), HubStatus::Error(_))
-                {
-                    cleared.fetch_add(1, Ordering::SeqCst);
-                }
-                std::thread::sleep(Duration::from_millis(2));
-            }
-        })
-    };
+    let watching = Arc::new(AtomicBool::new(true));
+    let watcher = watch_for_cleared_issue(hub, &cleared, &watching);
     mock.hook("tokens/revoke", &json!({"token": "nett-fixture-first"}));
     wait("the renewal", &|| renewals.load(Ordering::SeqCst) == 1);
     wait("the stream opened again", &|| mock.streams() >= 2);
-    wait("everything back", &|| shown(&hub));
+    wait("everything back", &|| shown(hub));
     std::thread::sleep(Duration::from_millis(500));
     watching.store(false, Ordering::SeqCst);
     watcher.join().unwrap();
     assert_eq!(renewals.load(Ordering::SeqCst), 1, "renewed once");
-    assert!(shown(&hub), "the list, the issue and the stream stay");
+    assert!(shown(hub), "the list, the issue and the stream stay");
     assert_eq!(
         cleared.load(Ordering::SeqCst),
         0,
         "nothing was cleared and no sign-in was asked for"
     );
+}
 
+fn watch_for_cleared_issue(
+    hub: &Hub,
+    cleared: &Arc<AtomicUsize>,
+    watching: &Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    let (hub, cleared, watching) = (hub.clone(), cleared.clone(), watching.clone());
+    std::thread::spawn(move || {
+        while watching.load(Ordering::SeqCst) {
+            let snapshot = hub.snapshot();
+            let issue = snapshot
+                .issue()
+                .is_some_and(|issue| issue.detail().is_some());
+            if snapshot.list().is_none()
+                || !issue
+                || matches!(snapshot.status(), HubStatus::Error(_))
+            {
+                cleared.fetch_add(1, Ordering::SeqCst);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    })
+}
+
+fn assert_second_renewal_recovers_content(mock: &Mock, hub: &Hub, renewals: &AtomicUsize) {
     // The renewed token is refused too, soon after: the reads that catch
     // up count that as a failed renewal and clear what is shown. The
     // stream's own renewal then succeeds, and the list and the issue are
@@ -196,6 +181,5 @@ fn a_refused_token_is_renewed_once_and_the_stream_carries_on() {
         renewals.load(Ordering::SeqCst) == 2
     });
     wait("the stream opened a third time", &|| mock.streams() >= 3);
-    wait("everything back again", &|| shown(&hub));
-    hub.stop();
+    wait("everything back again", &|| shown(hub));
 }

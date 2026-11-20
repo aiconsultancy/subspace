@@ -89,6 +89,7 @@ pub struct HubSnapshot {
 
 impl HubSnapshot {
     /// Changes when the Spaces should read their initiatives again.
+    // qual:allow(dry, boilerplate) reason: "Readers preserve the immutable snapshot boundary; mutation belongs to the hub."
     pub fn scope_epoch(&self) -> u64 {
         self.scope_epoch
     }
@@ -196,6 +197,10 @@ pub(super) struct State {
     reference_count: usize,
     pub drafts: super::comments::Drafts,
     pub attachment_buffers: Vec<std::sync::Weak<[u8]>>,
+    /// Every standalone upload, kept under its issue's ID: the open
+    /// issue's, and those of closed issues still in progress or awaiting a
+    /// check, shown again when their issue reopens.
+    pub uploads: super::files::UploadStore,
     pub live_reads: super::live::LiveReads,
     pub project_refresh: super::live::ProjectRefresh,
     /// The renewal of a token NETT refused, shared by reads and the stream.
@@ -243,6 +248,7 @@ impl State {
             reference_count: 0,
             drafts: HashMap::new(),
             attachment_buffers: Vec::new(),
+            uploads: super::files::UploadStore::default(),
             live_reads: super::live::LiveReads::default(),
             project_refresh: super::live::ProjectRefresh::default(),
             renewal: super::renewal::Renewal::default(),

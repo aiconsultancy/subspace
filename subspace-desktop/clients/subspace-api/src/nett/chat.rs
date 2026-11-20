@@ -28,6 +28,15 @@ fn held_draft(draft: &UploadDraft) -> String {
     format!("chat:{}", draft.id())
 }
 
+/// Refuses a check while a wait NETT gave for the draft's completion
+/// lasts: nothing is read, prepared or completed before then.
+pub(crate) fn chat_wait(draft: &UploadDraft) -> Result<(), UploadError> {
+    match transfer::wait_left(&held_draft(draft)) {
+        Some(_) => Err(UploadError::Unavailable),
+        None => Ok(()),
+    }
+}
+
 fn sleep(delay: Duration) {
     std::thread::sleep(delay);
 }
@@ -101,15 +110,6 @@ impl Client {
                 Err(_) => Err(UploadError::Unconfirmed),
             },
             Err(error) => Err(chat_error(error)),
-        }
-    }
-
-    /// Refuses a check while a wait NETT gave for the draft's completion
-    /// lasts: nothing is read, prepared or completed before then.
-    pub(crate) fn nett_chat_wait(&self, draft: &UploadDraft) -> Result<(), UploadError> {
-        match transfer::wait_left(&held_draft(draft)) {
-            Some(_) => Err(UploadError::Unavailable),
-            None => Ok(()),
         }
     }
 
