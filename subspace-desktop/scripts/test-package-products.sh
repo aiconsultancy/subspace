@@ -6,7 +6,7 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product-fixture.sh
 source "$root/scripts/product-fixture.sh"
-setup_product_fixture
+setup_product_fixture ""
 # Exercise the real Make target without installing tools or touching host apps.
 cat >"$fixture/bin/mise" <<'EOF'
 #!/usr/bin/env bash
@@ -47,7 +47,7 @@ for path_source in metadata environment; do
     fi
     bash "$fixture/scripts/package-release.sh" x86_64-pc-windows-msvc "$version"
     grep -Fxq -- "$expected_path" "$fixture/cygpath.log"
-    grep -Fq -- "build --release --locked --target x86_64-pc-windows-msvc -p $binary" "$fixture/cargo.log"
+    grep -Fq -- "build --release --locked -p $binary --target x86_64-pc-windows-msvc" "$fixture/cargo.log"
     grep -Fxq -- '__product_metadata' "$fixture/binary.log"
     test -f "$fixture/dist/$binary-$version-x86_64-pc-windows-msvc.zip"
 done
@@ -72,7 +72,9 @@ host_archive="$fixture/dist/$binary-$version-$host_target.tar.gz"
 : >"$fixture/binary.log"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-release.sh" "$host_target" "$version"
-grep -Fq -- "--features terminal" "$fixture/cargo.log"
+grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal" "$fixture/cargo.log"
+grep -Eq "^about generate --locked --fail --manifest-path products/subspace/Cargo.toml .*--target $host_target --features terminal " "$fixture/cargo.log"
+grep -Eq "^tree .*--target $host_target --features terminal$" "$fixture/cargo.log"
 bash "$fixture/scripts/package-release.sh" "$host_target" "$version"
 grep -Fxq -- '__product_metadata' "$fixture/binary.log"
 cp "$host_archive" "$fixture/previous.tar.gz"
@@ -83,6 +85,16 @@ if bash "$fixture/scripts/package-release.sh" "$host_target" "$version"; then
     exit 1
 fi
 unset FAKE_BINARY_VERSION
+cmp "$fixture/previous.tar.gz" "$host_archive"
+cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
+if FAKE_LICENCE_FAIL=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version"; then
+    echo 'expected failed licence policy to stop packaging' >&2
+    exit 1
+fi
+if FAKE_MISSING_LICENCE=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version"; then
+    echo 'expected incomplete licence report to stop packaging' >&2
+    exit 1
+fi
 cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 builds_before="$(grep -c '^build ' "$fixture/cargo.log")"
@@ -103,7 +115,8 @@ cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
-grep -Fq -- "--features terminal" "$fixture/cargo.log"
+grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal" "$fixture/cargo.log"
+grep -Eq "^about generate .*--target $host_target --features terminal " "$fixture/cargo.log"
 app="$fixture/dist/$name.app"
 test -x "$app/Contents/MacOS/$binary"
 test "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" = "$identifier"
@@ -151,7 +164,7 @@ unset FAKE_BUILD_FAIL
 : >"$fixture/mise.log"
 env -u FEATURES -u SUBSPACE_BUILD_FEATURES -u MISE_ENV HOME="$fixture/home" \
     make -f "$root/Makefile" install-macos
-if ! grep -Fxq -- "build --release --locked --target $host_target -p $binary --features terminal" "$fixture/cargo.log"; then
+if ! grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal" "$fixture/cargo.log"; then
     echo "install-macos must enable Terminal by default" >&2
     exit 1
 fi
@@ -162,7 +175,8 @@ cmp "$metadata" "$installed/Contents/Resources/product.json"
 : >"$fixture/cargo.log"
 HOME="$fixture/home" make -f "$root/Makefile" install-macos \
     FEATURES=terminal,capture TARGET="$host_target"
-grep -Fxq -- "build --release --locked --target $host_target -p $binary --features terminal,capture" "$fixture/cargo.log"
+grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal,capture" "$fixture/cargo.log"
+grep -Eq "^about generate .*--target $host_target --features terminal,capture " "$fixture/cargo.log"
 : >"$fixture/cargo.log"
 HOME="$fixture/home" make -f "$root/Makefile" install-macos FEATURES=
 if grep -Fq -- --features "$fixture/cargo.log"; then

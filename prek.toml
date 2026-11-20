@@ -23,7 +23,7 @@ hooks = [
     { id = "check-json" },
     { id = "check-toml" },
     { id = "check-yaml" },
-    { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"] },
+    { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"], exclude = "^subspace-desktop/licenses/charts/LICENSE-QUICKJS-NG$" },
     { id = "end-of-file-fixer" },
 ]
 

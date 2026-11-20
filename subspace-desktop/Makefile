@@ -44,6 +44,10 @@ capture: ## macOS/Linux screenshots from an isolated fixture build, with the ter
 check: ## Architecture, format check, lint, Rust tests and script fixtures
 	mise run check
 
+.PHONY: licence-check
+licence-check: ## Check Rust release licences and copied notices
+	mise run licence-check
+
 check-terminal: ## Check the excluded Terminal crates with Zig enabled
 	MISE_ENV=terminal mise run check-terminal
 

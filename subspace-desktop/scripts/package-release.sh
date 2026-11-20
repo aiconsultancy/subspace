@@ -13,10 +13,10 @@ source "$root/scripts/product.sh"
 host="$(rustc -vV | sed -n 's/^host: //p')"
 target="${1:-$host}"
 expected_version="${2:-}"
-case "$target" in
-    x86_64-unknown-linux-gnu | aarch64-unknown-linux-gnu | aarch64-apple-darwin | x86_64-pc-windows-msvc) ;;
-    *) echo "unsupported release target: $target" >&2; exit 2 ;;
-esac
+if ! release_target_supported "$target"; then
+    echo "unsupported release target: $target" >&2
+    exit 2
+fi
 load_product
 if [[ -n "$expected_version" ]] && [[ "$version" != "${expected_version#v}" ]]; then
     echo "Cargo.toml has version $version, but the release is $expected_version" >&2
@@ -32,11 +32,8 @@ case "$target" in
         ;;
     *-apple-darwin) export MACOSX_DEPLOYMENT_TARGET="$MACOS_MINIMUM_VERSION" ;;
 esac
-build_args=(build --release --locked --target "$target" -p "$binary_name")
-if [[ -n "${SUBSPACE_BUILD_FEATURES:-}" ]]; then
-    build_args+=(--features "$SUBSPACE_BUILD_FEATURES")
-fi
-cargo "${build_args[@]}"
+release_cargo_args "$target"
+cargo build --release --locked -p "$binary_name" "${release_args[@]}"
 build_dir="$target_dir/$target/release"
 if [[ "$host" = "$target" ]]; then
     reported_metadata="$("$build_dir/$binary_name$exe" __product_metadata | tr -d '\r')"
@@ -58,10 +55,11 @@ stage="$(mktemp -d "$root/dist/.$product-release.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 cp "$build_dir/$binary_name$exe" "$root/README.md" "$stage/"
 stage_product_licences "$stage"
+stage_rust_licences "$stage" "$target"
 chmod 755 "$stage/$binary_name$exe"
 printf '%s\n' "$product_metadata" >"$stage/product.json"
 name="$binary_name-$version-$target"
-files=("$binary_name$exe" README.md product.json LICENSE NOTICE licenses)
+files=("$binary_name$exe" README.md product.json LICENSE NOTICE THIRD_PARTY_LICENSES licenses)
 case "$target" in
     *-linux-*)
         svg_relative="$(jq -er '.icon_paths[] | select(endswith(".svg"))' <<<"$product_metadata")"
