@@ -223,17 +223,8 @@ fn an_upload_kept_for_a_closed_issue_shows_again_under_the_key_it_moved_to() {
     hub.close_issue();
     // Someone moves the issue to another team meanwhile.
     let mover = own_client(&mock, "nett-fixture-attach-mover");
-    let web = mover
-        .all_projects()
-        .unwrap()
-        .into_iter()
-        .find(|team| team.key == "WEB")
-        .unwrap();
-    let issue = mover.issue("OPS-1").unwrap();
-    let version = u32::try_from(issue.fields.version).unwrap();
-    let preview = mover
-        .preview_issue_move(&issue.fields.id, &web.id, version)
-        .unwrap();
+    let (web, issue, version) = super::moves::move_inputs_for(&mover, "OPS-1");
+    let preview = mover.preview_issue_move(&issue, &web, version).unwrap();
     let moved = mover.move_issue(&preview).unwrap().issue.fields.identifier;
     assert!(moved.starts_with("WEB-"));
     // Opened under its new key, the issue finds its upload once its detail
