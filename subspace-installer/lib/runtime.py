@@ -45,7 +45,7 @@ TOOL_ENV = {"MISE_DATA_DIR": str(TOOL_HOME), "MISE_GLOBAL_CONFIG_FILE": str(ETC 
             "MISE_SYSTEM_CONFIG_DIR": str(TOOL_HOME / "system-config")}
 FLEET_PATH = f"{APP}/bin:{TOOL_HOME}/shims:/usr/local/bin:/usr/bin:/bin"
 STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
-STARGATE_REF = "a2fa0028687cd93661841aa964901655fda4aa5d"
+STARGATE_REF = "df03d10b039c126a2fc0b5522bf7841ef07bc799"
 SUBSPACE_REPO = "https://github.com/aiconsultancy/subspace.git"
 LOOPBACK = "127.0.0.1"
 # Matches the Ergo container's service group in subspace-irc/Dockerfile.
@@ -234,7 +234,7 @@ def irc_config(value, slug, check_files):
     if "compose" in value:
         require(mode == "local", "IRC compose settings require local mode.")
     if mode == "local":
-        compose = fields(value.get("compose", {}), "irc.compose", "repo ref tlsBind tlsPort tlsCert tlsKey serverName operator channels", ["operator"])
+        compose = fields(value.get("compose", {}), "irc.compose", "repo ref tlsBind tlsPort tlsCert tlsKey serverName operator channels history", ["operator"])
         irc["compose"] = source({key: compose[key] for key in ("repo", "ref") if key in compose}, "IRC source", SUBSPACE_REPO)
         for key in ("tlsCert", "tlsKey"):
             if key in compose:
@@ -253,6 +253,7 @@ def irc_config(value, slug, check_files):
             tlsBind=bind, tlsPort=port(compose.get("tlsPort", 6697)),
             serverName=server_name, operator=pattern(compose["operator"], ERGO_ACCOUNT, "Ergo operator account"),
             channels=[channel(name) for name in channels],
+            history=history_config(compose.get("history", {})),
         )
     if "advertise" in value:
         advertised = fields(value["advertise"], "irc.advertise", "host port tls websocketUrl", ["host", "port", "tls"])
@@ -260,6 +261,26 @@ def irc_config(value, slug, check_files):
         if "websocketUrl" in advertised:
             irc["advertise"]["websocketUrl"] = url(advertised["websocketUrl"], "IRC WebSocket URL", True, websocket=True)
     return irc
+
+
+def history_config(value):
+    """Ergo's persistent history: SQLite in its volume, or a PostgreSQL database such as the API's."""
+    value = fields(value, "irc.compose.history", "database host port user name network sslMode")
+    database = pattern(value.get("database", "sqlite"), r"sqlite|postgresql", "IRC history database (sqlite or postgresql)")
+    if database == "sqlite":
+        require(value.keys() <= {"database"}, "SQLite IRC history takes no connection settings.")
+        return {"database": "sqlite"}
+    require("host" in value, "PostgreSQL IRC history needs a host.")
+    history = {
+        "database": "postgresql", "host": host(value["host"]), "port": port(value.get("port", 5432)),
+        "user": pattern(value.get("user", "ergo"), r"[A-Za-z0-9_]{1,63}", "IRC history user"),
+        "name": pattern(value.get("name", "ergo_history"), r"[A-Za-z0-9_]{1,63}", "IRC history database name"),
+        "sslMode": pattern(value.get("sslMode", "disable"), r"disable|require|verify-ca|verify-full", "IRC history sslMode"),
+    }
+    if "network" in value:
+        # An existing Docker network that reaches the database, such as the API's Compose network.
+        history["network"] = pattern(value["network"], r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", "IRC history Docker network")
+    return history
 
 
 def api_config(value):
@@ -422,6 +443,15 @@ def medical_config(value, irc, agents):
             "http5xxTag": tag, "intervalSeconds": interval, "channel": room, "account": account_name, "target": target}
 
 
+def history_password(irc, private):
+    postgres = irc["mode"] == "local" and irc["compose"]["history"]["database"] == "postgresql"
+    secret = private.get("ircHistoryPassword")
+    if postgres:
+        return string(secret, "ircHistoryPassword", 256)
+    require(secret is None, "ircHistoryPassword is only for PostgreSQL IRC history.")
+    return None
+
+
 def validate(config, credentials, check_files=True):
     cfg = fields(config, "fleet", "slug name rearAdmiral captains harness crew repositories stakeholders usage medical irc stargate dashboard proxy agentsview api operatorUsers toolchains maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
@@ -481,7 +511,14 @@ def validate(config, credentials, check_files=True):
     proxy_port = port(proxy.get("port", 8317))
     retries = proxy.get("requestRetries", 2)
     require(type(retries) is int and 0 <= retries <= 10, "Proxy requestRetries must be between 0 and 10.")
+    stargate = fields(cfg.get("stargate", {}), "stargate", "repo ref api")
+    stargate_api = None
+    if "api" in stargate:
+        # Stargate's private Fleet API, on loopback for operators and their tunnels or proxies.
+        stargate_api = {"port": port(fields(stargate["api"], "stargate.api", "port").get("port", 8484))}
     listeners = [dashboard["port"], proxy_port, view["port"]]
+    if stargate_api:
+        listeners.append(stargate_api["port"])
     if irc["mode"] == "local":
         listeners += [irc["port"], irc["compose"]["tlsPort"], 8097]
     require(len(set(listeners)) == len(listeners), "Fleet listeners need distinct ports.")
@@ -496,7 +533,7 @@ def validate(config, credentials, check_files=True):
             "githubPolicy.protectedBranches must be an array of branch patterns.")
     protected = [pattern(branch, r"[a-zA-Z0-9*?._/-]{1,120}", "GitHub protected branch pattern") for branch in protected]
 
-    private = fields(credentials, "secrets", "proxyKey ircPasswords ircOperatorPassword apiToken", ["proxyKey", "ircPasswords"])
+    private = fields(credentials, "secrets", "proxyKey ircPasswords ircOperatorPassword ircHistoryPassword apiToken", ["proxyKey", "ircPasswords"])
     proxy_key = pattern(private["proxyKey"], r"[a-zA-Z0-9_=-]{20,256}", "proxy client key")
     passwords = private["ircPasswords"]
     require(isinstance(passwords, dict), "ircPasswords must be an object.")
@@ -537,10 +574,12 @@ def validate(config, credentials, check_files=True):
         "integrations": integrations_config(cfg), "operators": operators, "protectedBranches": protected,
         "toolchains": toolchain_config(cfg.get("toolchains", {})),
         "maintenance": maintenance_config(cfg.get("maintenance", {})),
-        "stargate": source(cfg.get("stargate", {}), "Stargate source", STARGATE_REPO, STARGATE_REF),
+        "stargate": {**source({key: stargate[key] for key in ("repo", "ref") if key in stargate},
+                              "Stargate source", STARGATE_REPO, STARGATE_REF), "api": stargate_api},
         "dashboard": dashboard, "agentsview": view, "api": api,
         "proxy": {"port": proxy_port, "requestRetries": retries, "key": proxy_key},
         "passwords": passwords, "operatorPassword": operator_password, "token": token, "listeners": listeners,
+        "historyPassword": history_password(irc, private),
     }
 
 
@@ -926,6 +965,8 @@ def render_firewall(cfg):
     clients = {pwd.getpwnam(f"ss-{person['id']}").pw_uid for person in cfg["members"]}
     clients.add(pwd.getpwnam(GATEWAY).pw_uid)
     ports = {service: cfg[service]["port"] for service in ("dashboard", "agentsview", "proxy")}
+    if cfg["stargate"]["api"]:
+        ports["stargate-api"] = cfg["stargate"]["api"]["port"]
     config = ETC / "firewall.nft"
     write(config, rules(ports, admins, clients), 0o600)
     write(SYSTEMD / FIREWALL, "\n".join([
@@ -1063,7 +1104,25 @@ def render_irc(cfg, extra):
             write(location, Path(local[setting]).read_text(), 0o440, ERGO_GID)
             volumes.append(f"{location}:/run/subspace/{filename}:ro")
             service_env[var] = f"/run/subspace/{filename}"
-    write(config_dir / "override.json", json_text({"services": {"irc": {"environment": service_env, "volumes": volumes}}}))
+    history = local["history"]
+    service = {"environment": service_env, "volumes": volumes}
+    override = {"services": {"irc": service}}
+    service_env["IRC_HISTORY_DATABASE"] = history["database"]
+    history_path = config_dir / "history-password"
+    if history["database"] == "postgresql":
+        write(history_path, cfg["historyPassword"], 0o440, ERGO_GID)
+        volumes.append(f"{history_path}:/run/subspace/history-password:ro")
+        service_env.update({
+            "IRC_POSTGRES_HOST": history["host"], "IRC_POSTGRES_PORT": history["port"],
+            "IRC_POSTGRES_USER": history["user"], "IRC_POSTGRES_DATABASE": history["name"],
+            "IRC_POSTGRES_SSL_MODE": history["sslMode"], "IRC_POSTGRES_PASSWORD_FILE": "/run/subspace/history-password",
+        })
+        if "network" in history:
+            service["networks"] = ["default", history["network"]]
+            override["networks"] = {history["network"]: {"external": True}}
+    else:
+        history_path.unlink(missing_ok=True)
+    write(config_dir / "override.json", json_text(override))
     write(config_dir / "source", str(APP / "src" / f"irc-{local['ref']}" / "subspace-irc") + "\n")
     unit = f"{PREFIX}irc.service"
     write(SYSTEMD / unit, f"""[Unit]
@@ -1075,7 +1134,7 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart={APP}/lib/runtime.py irc up
 ExecStop={APP}/lib/runtime.py irc stop
-TimeoutStartSec=300
+TimeoutStartSec=600
 [Install]
 WantedBy=multi-user.target
 """, 0o644)
@@ -1270,6 +1329,11 @@ def render(cfg, extra, prune=False):
             writable.extend(paths)
             dashboard_socket = data / "dashboard.sock"
             dashboard_user = user
+            if cfg["stargate"]["api"]:
+                settings["api"] = {
+                    "listen": f"{LOOPBACK}:{cfg['stargate']['api']['port']}",
+                    "allowedNetworks": ["127.0.0.0/8", "::1/128"], "fleetName": cfg["name"],
+                }
         name = "stargate" if is_primary else f"stargate-{group}"
         config_path = save_settings(name, settings, user)
         runtime_path = save_settings(group, {
@@ -1381,7 +1445,7 @@ def compose(args):
         "-f", str(directory / "override.json"),
     ]
     if args == ["up"]:
-        args = ["up", "--detach", "--wait", "--wait-timeout", "90", "--build"]
+        args = ["up", "--detach", "--wait", "--wait-timeout", "240", "--build"]
     env = {key: value for key, value in os.environ.items() if not key.startswith(("IRC_", "COMPOSE_"))}
     os.execvpe("docker", [*opts, *args], env)
 

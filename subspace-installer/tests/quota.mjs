@@ -5,11 +5,19 @@ const runtime = await Bun.file("/etc/subspace-fleet/gateway.json").json();
 const { QuotaWatch, quotaWatchSchema } = await import(`${dirname(runtime.entrypoint)}/quota-watch.ts`);
 const settings = await Bun.file(runtime.config).json();
 const stateFile = join(process.argv[2], "quota-fixture.json");
-const config = quotaWatchSchema.parse({ ...settings.quotaWatch, stateFile });
-assert(!quotaWatchSchema.safeParse({
+// Older Stargate releases used zod schemas; current ones use Effect Schema.
+const effect = typeof quotaWatchSchema.parse === "function"
+  ? null
+  : (await import(Bun.resolveSync("effect", dirname(runtime.entrypoint)))).Schema;
+const parse = effect ? effect.decodeUnknownSync(quotaWatchSchema) : (value) => quotaWatchSchema.parse(value);
+const valid = (value) => {
+  try { parse(value); return true; } catch { return false; }
+};
+const config = parse({ ...settings.quotaWatch, stateFile });
+assert(!valid({
   ...config,
   thresholds: { claude: { limitAtPercent: 35, pauseAtPercent: 20 } },
-}).success);
+}));
 
 const messages = [];
 let now = Date.now();

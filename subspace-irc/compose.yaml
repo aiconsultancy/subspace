@@ -19,6 +19,14 @@ services:
       IRC_CHANNELS_JSON: ${IRC_CHANNELS_JSON:-}
       IRC_CHANNELS_FILE: ${IRC_CHANNELS_FILE:-}
       IRC_CHANNEL_FOUNDER: ${IRC_CHANNEL_FOUNDER:-}
+      IRC_HISTORY_DATABASE: ${IRC_HISTORY_DATABASE:-sqlite}
+      IRC_POSTGRES_HOST: ${IRC_POSTGRES_HOST:-}
+      IRC_POSTGRES_PORT: ${IRC_POSTGRES_PORT:-5432}
+      IRC_POSTGRES_USER: ${IRC_POSTGRES_USER:-ergo}
+      IRC_POSTGRES_DATABASE: ${IRC_POSTGRES_DATABASE:-ergo_history}
+      IRC_POSTGRES_SSL_MODE: ${IRC_POSTGRES_SSL_MODE:-disable}
+      IRC_POSTGRES_PASSWORD_FILE: ${IRC_POSTGRES_PASSWORD_FILE:-}
+      IRC_POSTGRES_PASSWORD: ${IRC_POSTGRES_PASSWORD:-}
     ports:
       - "${IRC_PLAIN_BIND:-127.0.0.1}:${IRC_PLAIN_PORT:-6667}:6667"
       - "${IRC_TLS_BIND:-127.0.0.1}:${IRC_TLS_PORT:-6697}:6697"
@@ -30,7 +38,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
-      start_period: 10s
+      start_period: 180s
     restart: unless-stopped
 
 volumes:

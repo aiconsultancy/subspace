@@ -102,11 +102,7 @@ lock-file: /ircd/ircd.lock
 datastore:
     path: /ircd/ircd.db
     autoupgrade: true
-    sqlite:
-        enabled: true
-        database-path: /ircd/history.db
-        busy-timeout: 5s
-        max-conns: 1
+@@HISTORY_DATABASE@@
 
 languages:
     enabled: true
