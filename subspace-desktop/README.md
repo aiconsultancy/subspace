@@ -544,9 +544,9 @@ GPUI Kit's matching asset pin remains deliberate.
 Framework's third-party code (Flint charts, themes, the Mermaid renderer) and
 the terminal's. The Framework keeps its own copies with its crates.
 
-Each Space's `assets/` directory holds its service marks. Each file names its
-source and licence in a comment: the GitHub mark comes from simple-icons
-(CC0). Board glyphs are unique.
+Each Space's `assets/` directory holds its service marks. The GitHub mark
+comes from Simple Icons (CC0). The Copilot Agents, Actions and Channels icons
+have [licences and attribution](licenses/icons/README.md).
 
 On Linux, GPUI needs these packages (Ubuntu names):
 `gcc g++ clang libfontconfig-dev libwayland-dev libxkbcommon-x11-dev

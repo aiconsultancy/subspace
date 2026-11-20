@@ -65,3 +65,26 @@ test('bundled fonts ship with upstream licences, not an invented patch licence',
   assert.match(read('fonts/NerdFonts-license-audit.md'), /Font Awesome/);
   assert.match(read('fonts/provenance.md'), /3\.5\.1/);
 });
+
+test('bundled dependencies ship the licence texts from their locked versions', () => {
+  const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+  const notices = read('THIRD_PARTY_NOTICES');
+  const licences = {
+    '@radix-ui/react-compose-refs': 'LICENSE',
+    '@radix-ui/react-slot': 'LICENSE',
+    'class-variance-authority': 'LICENSE',
+    clsx: 'license',
+    'lucide-react': 'LICENSE',
+    react: 'LICENSE',
+    'react-dom': 'LICENSE',
+    scheduler: 'LICENSE',
+    'tailwind-merge': 'LICENSE.md',
+    tailwindcss: 'LICENSE',
+  };
+  for (const [name, file] of Object.entries(licences)) {
+    const packagePath = join('node_modules', name);
+    const { version, license } = lock.packages[`node_modules/${name}`];
+    const text = readFileSync(join(root, packagePath, file), 'utf8').trim();
+    assert.ok(notices.includes(`## ${name} - ${version} (${license})\n\n${text}\n`), name);
+  }
+});

@@ -6,5 +6,9 @@ export default defineConfig({
   base: './',
   plugins: [react(), tailwindcss()],
   resolve: { alias: { '@': new URL('./src', import.meta.url).pathname } },
-  build: { assetsInlineLimit: 0, modulePreload: { polyfill: false } },
+  build: {
+    assetsInlineLimit: 0,
+    modulePreload: { polyfill: false },
+    license: { fileName: 'THIRD_PARTY_NOTICES' },
+  },
 });
