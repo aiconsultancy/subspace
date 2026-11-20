@@ -10,6 +10,7 @@ fn choice(tab: Tab, project: ProjectScope, search: &str, sub_issues: SubIssues) 
         search: search.into(),
         sub_issues,
         filters: Default::default(),
+        initiative: None,
     }
 }
 

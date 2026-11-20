@@ -15,6 +15,9 @@ pub enum CommentState {
 pub struct CommentDraft {
     pub(super) body: String,
     pub(super) lease: u64,
+    /// The draft NETT keeps this comment's uploaded media under, claimed
+    /// by the comment when it is posted. A new one follows each post.
+    pub(super) media_draft: String,
     pub(super) images: Vec<super::images::Attachment>,
     pub(super) intakes: usize,
     pub(super) submitted: Option<String>,
@@ -39,6 +42,7 @@ impl CommentDraft {
         Self {
             body: String::new(),
             lease: super::images::next_id(),
+            media_draft: uuid::Uuid::new_v4().to_string(),
             images: Vec::new(),
             intakes: 0,
             submitted: None,
@@ -118,7 +122,8 @@ impl CommentDraft {
             return None;
         }
         let intent = match CommentIntent::new(&self.bound_body(), parent) {
-            Ok(intent) => intent,
+            Ok(intent) if self.images.is_empty() => intent,
+            Ok(intent) => intent.with_media_draft(&self.media_draft),
             Err(error) => {
                 self.state = CommentState::Failed(error);
                 return None;
@@ -135,6 +140,7 @@ impl CommentDraft {
             Ok(_) => {
                 self.body.clear();
                 self.images.clear();
+                self.media_draft = uuid::Uuid::new_v4().to_string();
                 self.submitted = None;
                 self.state = CommentState::Editing;
                 self.notice = Some("Posted.");

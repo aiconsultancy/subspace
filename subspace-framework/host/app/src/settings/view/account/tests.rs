@@ -105,3 +105,29 @@ fn open_account(
     ));
     settings
 }
+
+#[gpui_kit::test]
+fn device_sign_in_shows_the_code_to_confirm_in_the_browser(cx: &mut TestAppContext) {
+    cx.update(|cx| native::fixture("device", cx).unwrap());
+    let root = tempfile::tempdir().unwrap();
+    let settings = open_account(root.path(), cx);
+    cx.simulate_window_resize(settings.into(), size(px(760.), px(900.)));
+    cx.update_window(settings.into(), |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.find("settings-account-cancel").visible());
+        assert!(window.find("settings-account-reopen").visible());
+    })
+    .unwrap();
+    cx.update(|cx| {
+        let account = native::shared(cx).unwrap();
+        assert_eq!(account.read(cx).code.as_deref(), Some("ABCD-EFGH"));
+    });
+    assert_eq!(
+        super::status_text(Status::Waiting, false, "WorkOS", Some("ABCD-EFGH")).as_deref(),
+        Some("Check that your browser shows the code ABCD-EFGH, then confirm it there.")
+    );
+    assert_eq!(
+        super::status_text(Status::Waiting, false, "WorkOS", None).as_deref(),
+        Some("Complete sign-in in your browser.")
+    );
+}

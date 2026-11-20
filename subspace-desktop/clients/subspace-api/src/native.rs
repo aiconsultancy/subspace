@@ -1,6 +1,7 @@
 //! Native credentials stay inside the API transport and are scoped to one origin.
 use gpui_kit::App;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use subspace_framework::core::Secret;
 use ureq::http::{HeaderValue, Request, Response, StatusCode, Uri, header::AUTHORIZATION};
 use ureq::middleware::MiddlewareNext;
@@ -25,6 +26,20 @@ static ACCOUNT: OnceLock<Account> = OnceLock::new();
 /// a loopback address, where a local development API listens.
 pub fn configure_api_origin(value: &str) -> Result<(), Error> {
     let base = api_base(value)?;
+    crate::backend::claim(crate::Backend::Subspace)?;
+    install_origin(base)
+}
+
+/// Installs a NETT build's API base URL once, before Spaces start, and makes
+/// NETT the process's only backend: the Subspace API origin can then never
+/// be configured. The same URL rules apply.
+pub fn configure_nett_origin(value: &str) -> Result<(), Error> {
+    let base = api_base(value)?;
+    crate::backend::claim(crate::Backend::Nett)?;
+    install_origin(base)
+}
+
+fn install_origin(base: Url) -> Result<(), Error> {
     if ORIGIN.get_or_init(|| base.clone()) != &base {
         return Err(Error::InvalidRequest);
     }
@@ -85,19 +100,106 @@ pub fn use_native_account(
     });
 }
 
-pub(crate) fn generation() -> Option<u64> {
-    ACCOUNT.get().map(|account| (account.generation)())
+type Renewal = Box<dyn Fn() -> bool + Send + Sync>;
+static RENEWAL: OnceLock<Renewal> = OnceLock::new();
+
+/// Registers how to renew the account's API token on demand, for when the
+/// service refuses a token the app still holds as valid. The function
+/// returns whether a fresh token is now available.
+pub fn use_token_renewal(renew: impl Fn() -> bool + Send + Sync + 'static) {
+    let _ = RENEWAL.set(Box::new(renew));
 }
 
-/// Whether the product has a usable session for this client's account generation.
+/// Renews the account's API token once, as after a refused bearer. False
+/// when nothing can renew it. One renewal runs at a time: a caller that
+/// waited for another's renewal of the same account, or comes just after
+/// one, uses its token. Another account's renewal never stands for this one.
+pub(crate) fn renew_token() -> bool {
+    static RENEWED: std::sync::Mutex<Option<(Option<u64>, std::time::Instant)>> =
+        std::sync::Mutex::new(None);
+    let Some(renew) = RENEWAL.get() else {
+        return false;
+    };
+    let mut last = RENEWED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let account = account_generation();
+    if recently_renewed(*last, account, std::time::Instant::now()) {
+        return true;
+    }
+    let renewed = renew();
+    if renewed {
+        *last = Some((account, std::time::Instant::now()));
+    }
+    renewed
+}
+
+/// Whether `last`, the latest renewal and its account, stands for a renewal
+/// `account` asks for at `now`.
+fn recently_renewed(
+    last: Option<(Option<u64>, std::time::Instant)>,
+    account: Option<u64>,
+    now: std::time::Instant,
+) -> bool {
+    const RECENT: std::time::Duration = std::time::Duration::from_secs(5);
+    last.is_some_and(|(renewed, at)| {
+        renewed == account && now.saturating_duration_since(at) < RECENT
+    })
+}
+
+/// The signed-in account's generation alone. Reading it notices an account
+/// change and drops what was kept for the previous account.
+pub(crate) fn account_generation() -> Option<u64> {
+    let generation = ACCOUNT.get().map(|account| (account.generation)())?;
+    if SEEN.swap(generation, Ordering::SeqCst) != generation {
+        account_changed();
+    }
+    Some(generation)
+}
+
+/// The last account generation seen; `u64::MAX` before the first.
+static SEEN: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Private state kept per account goes when the account changes: cached
+/// file grants, NETT organisations and their caches.
+fn account_changed() {
+    crate::nett::media::forget_grants();
+    crate::nett::scope::forget_account();
+}
+
+/// What a client's lease is bound to: the account, and for NETT also the
+/// selected organisation, so choosing another one retires every client.
+pub(crate) fn generation() -> Option<u64> {
+    #[cfg(test)]
+    if let Some(lease) = test_lease::get() {
+        return Some(lease);
+    }
+    let account = account_generation()?;
+    Some(match crate::backend::backend() {
+        crate::Backend::Subspace => account,
+        crate::Backend::Nett => account
+            .wrapping_shl(32)
+            .wrapping_add(crate::nett::scope::generation() & 0xffff_ffff),
+    })
+}
+
+/// Whether the product has a usable session for this client's account
+/// generation. A NETT client's lease also names its organisation, so it is
+/// compared with the current lease as a whole.
 pub(crate) fn ready(cx: &App, lease: Option<u64>) -> bool {
     ACCOUNT.get().is_some_and(|account| {
-        (account.ready_generation)(cx)
-            .is_some_and(|ready| lease == Some(ready) && (account.generation)() == ready)
+        (account.ready_generation)(cx).is_some_and(|ready| {
+            (account.generation)() == ready && lease.is_some() && lease == generation()
+        })
     })
 }
 
 pub(crate) fn agent(lease: Option<u64>) -> ureq::Agent {
+    agent_with(lease, crate::backend::backend() == crate::Backend::Nett)
+}
+
+/// The native agent, with NETT's flow control when `nett`.
+fn agent_with(lease: Option<u64>, nett: bool) -> ureq::Agent {
     ureq::Agent::config_builder()
         .tls_config(
             subspace_framework::core::http::agent()
@@ -110,7 +212,7 @@ pub(crate) fn agent(lease: Option<u64>) -> ureq::Agent {
         .http_status_as_error(false)
         .max_redirects(0)
         .middleware(move |request: Request<SendBody>, next: MiddlewareNext| {
-            authenticate(request, next, lease)
+            authenticate(request, next, lease, nett)
         })
         .build()
         .into()
@@ -120,19 +222,35 @@ fn authenticate(
     mut request: Request<SendBody>,
     next: MiddlewareNext,
     lease: Option<u64>,
+    nett: bool,
 ) -> Result<Response<Body>, ureq::Error> {
+    // NETT: take a place among the account's requests first, so the lease
+    // and bearer below are checked after any wait, just before sending.
+    let account = account_generation().unwrap_or_default();
+    let permit = if nett {
+        match crate::nett::flow::acquire(account) {
+            Ok(permit) => Some(permit),
+            Err(wait) => return Ok(crate::nett::flow::refused(wait)),
+        }
+    } else {
+        None
+    };
     let Some(value) = bearer(request.uri(), lease).map_err(|err| ureq::Error::Other(err.into()))?
     else {
         return Ok(signed_out());
     };
     request.headers_mut().insert(AUTHORIZATION, value);
+    crate::nett::add_organisation_header(&mut request);
     let result = next.handle(request);
     if lease != generation() {
         return Err(ureq::Error::Other(
             "The account changed during the request".into(),
         ));
     }
-    result
+    match (permit, result) {
+        (Some(permit), Ok(response)) => Ok(crate::nett::flow::hold(account, permit, response)),
+        (_, result) => result,
+    }
 }
 
 /// Resolve a current, sensitive bearer for either of the private API transports.
@@ -176,8 +294,27 @@ mod tests {
 
     use super::{
         agent, bearer, configure_api_origin, configured_api_origin, generation, private_api, ready,
-        use_native_account,
+        recently_renewed, use_native_account,
     };
+
+    #[test]
+    fn a_renewal_stands_only_for_the_same_account_and_only_briefly() {
+        let now = std::time::Instant::now();
+        let last = Some((Some(1), now));
+        assert!(recently_renewed(
+            last,
+            Some(1),
+            now + std::time::Duration::from_secs(2)
+        ));
+        // Another account, just signed in, renews its own token.
+        assert!(!recently_renewed(last, Some(2), now));
+        assert!(!recently_renewed(
+            last,
+            Some(1),
+            now + std::time::Duration::from_secs(6)
+        ));
+        assert!(!recently_renewed(None, Some(1), now));
+    }
     use subspace_framework::core::Secret;
     use url::Url;
 
@@ -205,10 +342,57 @@ mod tests {
         let header = bearer(&stream, lease).unwrap().unwrap();
         assert!(header.is_sensitive());
         assert_eq!(header.to_str().unwrap(), "Bearer fixture-sse-token");
+        // What was kept for account 1 goes when the account changes: its
+        // cached grants and its NETT organisations, which are not shown to
+        // or selectable by the next account.
+        crate::nett::media::remember_for_test(FIXTURE_ORIGIN, 1);
+        let org = "00000000-0000-0000-0000-0000000000a1";
+        let organisations: Vec<crate::nett::Organisation> = serde_json::from_value(
+            serde_json::json!([{"id": org.to_uppercase(), "name": "Fixture Works"}]),
+        )
+        .unwrap();
+        crate::nett::scope::observe(Some(1), "user-1", organisations, None);
+        assert_eq!(crate::nett::snapshot().organisations.len(), 1);
+        assert!(crate::nett::scope::select(org));
+        assert_eq!(
+            crate::nett::snapshot().selected.as_deref(),
+            Some(org.to_uppercase().as_str()),
+            "the organisation's own spelling is kept"
+        );
+        // A reply read under another account is ignored.
+        assert!(!crate::nett::scope::observe(
+            Some(7),
+            "user-7",
+            Vec::new(),
+            None
+        ));
+        // A NETT request waiting for a place while the account changes is
+        // checked when it gets one, and never sent for the old account.
+        let held: Vec<_> = (0..crate::nett::flow::CONCURRENT)
+            .map(|_| crate::nett::flow::acquire(1).unwrap())
+            .collect();
+        let queued = std::thread::spawn(move || {
+            super::agent_with(lease, true)
+                .get(format!("{FIXTURE_ORIGIN}/v1/me"))
+                .call()
+                .map(|response| response.status().as_u16())
+                .map_err(|_| ())
+        });
+        std::thread::sleep(std::time::Duration::from_millis(100));
         version.store(2, Ordering::Relaxed);
         assert_eq!(generation(), Some(2));
         cx.update(|app| assert!(!ready(app, lease)));
+        drop(held);
+        assert_eq!(
+            queued.join().unwrap(),
+            Ok(401),
+            "refused before sending, not sent to the old account's host"
+        );
         assert!(bearer(&stream, lease).unwrap().is_none());
+        assert_eq!(crate::nett::media::cached_for_test(FIXTURE_ORIGIN), 0);
+        let after = crate::nett::snapshot();
+        assert!(after.organisations.is_empty() && after.selected.is_none());
+        assert!(!crate::nett::scope::select(org));
         let result = agent(lease)
             .get(format!("{FIXTURE_ORIGIN}/v1/me"))
             .call()
@@ -257,5 +441,33 @@ mod tests {
         configure_api_origin(&format!("{FIXTURE_ORIGIN}/")).unwrap();
         assert_eq!(configured_api_origin(), Some(FIXTURE_ORIGIN));
         assert!(configure_api_origin("https://other.example.test/api").is_err());
+    }
+}
+
+/// A lease a unit test moves on its own thread, to retire a client at an
+/// exact point: right after a reply was accepted, before what follows it.
+#[cfg(test)]
+pub(crate) mod test_lease {
+    use std::cell::Cell;
+
+    thread_local! {
+        static LEASE: Cell<Option<u64>> = const { Cell::new(None) };
+        /// The lease to move to once the next reply has been read and
+        /// accepted.
+        pub(crate) static AFTER_REPLY: Cell<Option<u64>> = const { Cell::new(None) };
+    }
+
+    pub(crate) fn set(lease: Option<u64>) {
+        LEASE.with(|current| current.set(lease));
+    }
+
+    pub(crate) fn get() -> Option<u64> {
+        LEASE.with(Cell::get)
+    }
+
+    pub(crate) fn reply_accepted() {
+        if let Some(lease) = AFTER_REPLY.with(Cell::take) {
+            set(Some(lease));
+        }
     }
 }

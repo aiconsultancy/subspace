@@ -74,6 +74,8 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Issues>) -> Issues {
         seen: None,
         syncing: false,
         hidden_selection: None,
+        scope_epoch: 0,
+        attachment_error: None,
         profile_label: None,
         live: Default::default(),
         poll: None,
@@ -107,7 +109,9 @@ impl Issues {
     /// The hub's name for its profile, such as *Subspace API fixture*, else the
     /// offered profile's.
     pub(crate) fn profile_name(&self) -> &str {
-        self.profile_label.as_deref().unwrap_or("Subspace API")
+        self.profile_label
+            .as_deref()
+            .unwrap_or(subspace_api_client::service_name())
     }
 
     pub(crate) fn is_ready(&self) -> bool {

@@ -22,6 +22,9 @@ pub enum ListTab {
 pub struct ListQuery {
     tab: ListTab,
     project: Option<String>,
+    /// A NETT initiative: issues in its planning projects. Subspace API
+    /// scopes initiatives through their projects instead and never sets it.
+    initiative: Option<String>,
     search: String,
     show_subissues: bool,
     toolbar: Toolbar,
@@ -76,6 +79,14 @@ impl ListQuery {
     }
     pub fn project(mut self, project: Option<&str>) -> Self {
         self.project = project
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_owned);
+        self
+    }
+    /// Only issues in this NETT initiative's planning projects.
+    pub fn initiative(mut self, initiative: Option<&str>) -> Self {
+        self.initiative = initiative
             .map(str::trim)
             .filter(|v| !v.is_empty())
             .map(str::to_owned);
@@ -177,6 +188,11 @@ impl ListQuery {
                 .iter()
                 .map(|project| ("project".into(), project.clone())),
         );
+        parameters.extend(
+            self.initiative
+                .iter()
+                .map(|initiative| ("initiative".into(), initiative.clone())),
+        );
         if !self.show_subissues {
             parameters.push(("parent".into(), "none".into()));
         }
@@ -205,6 +221,7 @@ impl std::fmt::Debug for ListQuery {
         f.debug_struct("ListQuery")
             .field("tab", &self.tab)
             .field("project", &self.project)
+            .field("initiative", &self.initiative)
             .field("search", &"[redacted]")
             .field("show_subissues", &self.show_subissues)
             .field("toolbar", &self.toolbar)

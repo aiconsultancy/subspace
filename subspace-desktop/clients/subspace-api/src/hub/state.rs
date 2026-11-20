@@ -32,7 +32,11 @@ pub enum ReadError {
     SignInNeeded,
     Forbidden,
     Network,
-    Response { status: Option<u16> },
+    Response {
+        status: Option<u16>,
+    },
+    /// A NETT account with several organisations has not chosen one.
+    OrganisationNeeded,
 }
 
 impl From<crate::Error> for ReadError {
@@ -41,6 +45,7 @@ impl From<crate::Error> for ReadError {
             crate::Error::SignInNeeded => Self::SignInNeeded,
             crate::Error::Forbidden => Self::Forbidden,
             crate::Error::Network => Self::Network,
+            crate::Error::OrganisationNeeded => Self::OrganisationNeeded,
             crate::Error::NotFound => Self::Response {
                 status: Some(ureq::http::StatusCode::NOT_FOUND.as_u16()),
             },
@@ -77,9 +82,17 @@ pub struct HubSnapshot {
     pub(super) issue: Option<issue::IssueSnapshot>,
     pub(super) activity: Option<activity::ActivitySnapshot>,
     pub(super) live: super::LiveStatus,
+    /// Bumped when the update stream closed and what the organisation
+    /// serves was read again: the Spaces read their initiatives again.
+    pub(super) scope_epoch: u64,
 }
 
 impl HubSnapshot {
+    /// Changes when the Spaces should read their initiatives again.
+    pub fn scope_epoch(&self) -> u64 {
+        self.scope_epoch
+    }
+
     /// How changes made elsewhere reach this snapshot.
     // qual:allow(dry, boilerplate) reason: "Readers preserve the immutable snapshot boundary; mutation belongs to the hub."
     pub fn live(&self) -> super::LiveStatus {
@@ -185,6 +198,8 @@ pub(super) struct State {
     pub attachment_buffers: Vec<std::sync::Weak<[u8]>>,
     pub live_reads: super::live::LiveReads,
     pub project_refresh: super::live::ProjectRefresh,
+    /// The renewal of a token NETT refused, shared by reads and the stream.
+    pub renewal: super::renewal::Renewal,
 }
 
 impl State {
@@ -213,6 +228,7 @@ impl State {
                 issue: None,
                 activity: None,
                 live: super::LiveStatus::Connecting,
+                scope_epoch: 0,
             },
             initial_access_retry: true,
             api_origin: origin.into(),
@@ -229,6 +245,7 @@ impl State {
             attachment_buffers: Vec::new(),
             live_reads: super::live::LiveReads::default(),
             project_refresh: super::live::ProjectRefresh::default(),
+            renewal: super::renewal::Renewal::default(),
         }
     }
     pub fn is_running(&self) -> bool {

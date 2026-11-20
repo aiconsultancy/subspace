@@ -52,14 +52,26 @@ pub(super) fn facts(detail: &IssueDetail, projects: &[Project]) -> Vec<Fact> {
 fn context(detail: &IssueDetail, projects: &[Project]) -> Vec<Fact> {
     let f = &detail.fields;
     let project = projects.iter().find(|project| project.id == f.project_id);
-    vec![
-        Fact::new(
-            "Project",
-            project.map_or_else(
-                || f.project_key.clone(),
-                |p| format!("{} · {}", p.key, p.name),
+    let namespace = project.map_or_else(
+        || f.project_key.clone(),
+        |p| format!("{} · {}", p.key, p.name),
+    );
+    // In NETT the desktop project is the issue team, and the planning
+    // project is a separate, optional link.
+    let mut facts = if crate::pickers::teams() {
+        vec![
+            Fact::new("Team", namespace),
+            Fact::new(
+                "Project",
+                f.planning_project
+                    .as_ref()
+                    .map_or_else(|| "No project".to_owned(), |p| p.name.clone()),
             ),
-        ),
+        ]
+    } else {
+        vec![Fact::new("Project", namespace)]
+    };
+    facts.extend([
         Fact::new(
             "Milestone",
             if f.milestone_id.is_some() {
@@ -90,15 +102,12 @@ fn context(detail: &IssueDetail, projects: &[Project]) -> Vec<Fact> {
                 "Issue"
             },
         ),
-    ]
+    ]);
+    facts
 }
 
 pub(super) fn person(person: &Person) -> String {
-    if person.is_former_member {
-        format!("{} (former member)", person.display_name)
-    } else {
-        person.display_name.clone()
-    }
+    person.fact_label()
 }
 
 pub(super) fn render(

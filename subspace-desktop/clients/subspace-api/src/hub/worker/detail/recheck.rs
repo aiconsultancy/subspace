@@ -21,15 +21,66 @@ use std::time::Instant;
 /// taken; only a reply older than what is held is dropped.
 pub(in crate::hub::worker) fn recheck(shared: &Shared, job: &Job, identifier: &str) {
     let held = Held::of(&lock(&shared.state));
+    let sent = Instant::now();
     let result = shared
         .client
         .issue(identifier)
         .and_then(|detail| repage(shared, identifier, detail, held));
+    // NETT: access went, so what was shown goes too, unless a token refused
+    // before it expired was renewed and the issue is read again.
+    let refused = match result {
+        Err(
+            error @ (crate::Error::SignInNeeded | crate::Error::Forbidden | crate::Error::NotFound),
+        ) if shared.client.service() == crate::Backend::Nett => {
+            crate::hub::renewal::stands(shared, job.generation, sent, error).then_some(error)
+        }
+        _ => None,
+    };
     let mut state = lock(&shared.state);
-    if let Ok(detail) = result {
-        take_recheck(shared, job, &mut state, (identifier, held), detail);
+    match (result, refused) {
+        (Ok(detail), _) => take_recheck(shared, job, &mut state, (identifier, held), detail),
+        (Err(_), Some(error)) => retire(job, &mut state, identifier, error),
+        _ => {}
     }
     land_recheck(shared, job, &mut state);
+}
+
+/// Clears an issue the person can no longer read, as a failed first read
+/// would have. Its revision is retired too, so no read already out for it
+/// can bring any of it back.
+fn retire(job: &Job, state: &mut State, identifier: &str, error: crate::Error) {
+    if !job.current(state) {
+        return;
+    }
+    if !state
+        .snapshot
+        .issue
+        .as_ref()
+        .is_some_and(|issue| issue.identifier == identifier)
+    {
+        return;
+    }
+    state.issue_revision = state.issue_revision.wrapping_add(1);
+    let Some(issue) = state.snapshot.issue.as_mut() else {
+        return;
+    };
+    issue.detail = None;
+    issue.milestone_name = None;
+    issue.milestone_loading = false;
+    issue.updated_at = None;
+    issue.timeline.reset();
+    issue.pull_requests = Default::default();
+    issue.todos = Default::default();
+    issue.decisions = Default::default();
+    issue.decision = Default::default();
+    issue.images = Default::default();
+    issue.files.clear_keeping_uploads();
+    issue.status = if error == crate::Error::NotFound {
+        IssueStatus::Unavailable
+    } else {
+        IssueStatus::Error(error.into())
+    };
+    state.changed();
 }
 
 /// How many sub-issue and relation rows the open issue shows.
@@ -147,6 +198,7 @@ fn take_recheck(
     super::replaced_pages(issue);
     issue.updated_at = Some(Instant::now());
     milestone::queue(shared, state);
+    crate::hub::todos::queue(shared, state);
     state.refresh_media(identifier);
     crate::hub::decisions::refresh(shared, state);
     for task in [

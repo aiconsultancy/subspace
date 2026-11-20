@@ -5,7 +5,7 @@ use subspace_account::{Account, Error, ProviderInfo};
 pub(crate) fn seed(state: &str, cx: &mut App) -> Result<(), String> {
     let status = match state {
         "signed-out" | "signed-in" => Status::Idle,
-        "waiting" | "switching" => Status::Waiting,
+        "waiting" | "switching" | "device" => Status::Waiting,
         "completing" => Status::Completing,
         "keychain" => Status::Failed(Error::Keychain),
         "reconnecting" => Status::Refreshing,
@@ -17,7 +17,7 @@ pub(crate) fn seed(state: &str, cx: &mut App) -> Result<(), String> {
     };
     let account = (!matches!(
         state,
-        "signed-out" | "waiting" | "completing" | "unavailable"
+        "signed-out" | "waiting" | "device" | "completing" | "unavailable"
     ))
     .then(|| Account {
         tenant: "00000000-0000-0000-0000-000000000001".into(),
@@ -34,11 +34,13 @@ pub(crate) fn seed(state: &str, cx: &mut App) -> Result<(), String> {
         )),
         browser: true,
     };
+    let code = (state == "device").then(|| "ABCD-EFGH".to_owned());
     if let Some(entity) = shared(cx) {
         entity.update(cx, |this, cx| {
             this.account = account;
             this.provider = provider;
             this.status = status;
+            this.code = code;
             cx.notify();
         });
     } else {
@@ -52,6 +54,7 @@ pub(crate) fn seed(state: &str, cx: &mut App) -> Result<(), String> {
             retry: Retry::Restore,
             cancel: None,
             url: None,
+            code,
             run: 0,
         });
         cx.set_global(Shared(entity));

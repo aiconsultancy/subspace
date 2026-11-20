@@ -25,6 +25,9 @@ impl Client {
         project: &str,
         id: &str,
     ) -> Result<Option<String>, crate::Error> {
+        if self.backend == crate::Backend::Nett {
+            return Ok(None);
+        }
         let page: crate::model::Page<Milestone> = self.get(
             &["projects", project, "milestones"],
             &[

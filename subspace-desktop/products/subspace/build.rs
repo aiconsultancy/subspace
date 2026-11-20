@@ -6,6 +6,10 @@
 mod branding;
 #[path = "build/config.rs"]
 mod config;
+// The run-time override checks are the app's; the build script uses the rest.
+#[allow(dead_code)]
+#[path = "build/settings.rs"]
+mod settings;
 #[path = "build/stamp.rs"]
 mod stamp;
 #[path = "build/windows_resources.rs"]

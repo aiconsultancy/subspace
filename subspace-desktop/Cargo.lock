@@ -9513,6 +9513,7 @@ dependencies = [
  "subspace-terminal-panel",
  "subspace-web-board",
  "tempfile",
+ "url",
  "uuid",
 ]
 

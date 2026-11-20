@@ -1,6 +1,7 @@
 //! Memory-only drafts. Ambiguous writes stay frozen until a complete thread check.
 mod checking;
 mod images;
+pub(super) use images::next_attachment_id;
 pub use images::{Attachment, AttachmentState, ImageIntake};
 mod draft;
 mod reading;

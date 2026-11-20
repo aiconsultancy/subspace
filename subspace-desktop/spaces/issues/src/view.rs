@@ -47,6 +47,7 @@ fn header(issues: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) -> Div {
         scope::live_line(&issues.access, issues.live),
         |header, live| header.child(live_indicator(live, issues.live, tokens)),
     )
+    .children(crate::organisation::button(issues, cx))
 }
 
 /// The live indicator's dot, small beside secondary text.
@@ -57,7 +58,7 @@ fn live_indicator(words: &'static str, live: LiveStatus, tokens: &Tokens) -> imp
     let colour = match live {
         LiveStatus::Live => tokens.green,
         LiveStatus::Reconnecting | LiveStatus::Connecting => tokens.yellow,
-        LiveStatus::Polling => tokens.muted,
+        LiveStatus::Polling | LiveStatus::Off => tokens.muted,
     };
     h_flex()
         .id("issues-live")
@@ -242,7 +243,10 @@ fn body_element(
                     .aria_label("Loading issues")
                     .test_support()
                     .child(feedback::skeleton(tokens))
-                    .child("The first load can take up to a minute while Subspace API wakes."),
+                    .child(format!(
+                        "The first load can take up to a minute while {} wakes.",
+                        subspace_api_client::service_name()
+                    )),
             )
             .into_any_element(),
         Body::Screen { screen, .. } => frame

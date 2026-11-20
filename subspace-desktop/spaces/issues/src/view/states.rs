@@ -106,6 +106,14 @@ fn action_element(
     }
 }
 
+/// What the copied details say of a failed issue read, naming the service.
+fn issue_read_failed() -> String {
+    format!(
+        "The {} issue read failed.",
+        subspace_api_client::service_name()
+    )
+}
+
 /// **Copy details**: the status and the kind of read only, never a body,
 /// a query or an identifier.
 fn details(screen: &Screen, issue_read: bool, text: &ScreenText) -> ErrorDetails {
@@ -119,7 +127,7 @@ fn details(screen: &Screen, issue_read: bool, text: &ScreenText) -> ErrorDetails
     if issue_read {
         ErrorDetails::new(
             "Couldn't load issue",
-            "The Subspace API issue read failed.",
+            issue_read_failed(),
             "Issue detail read",
         )
         .with_code(code)
@@ -135,4 +143,15 @@ fn screen_text(screen: &Screen, profile: &str, identifier: Option<&str>) -> Scre
         text.title = format!("Couldn't load {identifier}");
     }
     text
+}
+
+#[cfg(test)]
+mod details_tests {
+    #[test]
+    fn the_default_build_names_subspace_api_in_copied_issue_details() {
+        assert_eq!(
+            super::issue_read_failed(),
+            "The Subspace API issue read failed."
+        );
+    }
 }

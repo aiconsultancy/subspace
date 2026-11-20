@@ -124,7 +124,16 @@ pub(super) fn load(shared: &Shared, job: &Job, issue: &str, cursor: Option<&str>
         cursor: cursor.map(str::to_owned),
         ..PageRequest::default()
     };
+    let sent = std::time::Instant::now();
     let result = shared.client.issue_images(issue, &page);
+    // A NETT token refused before it expires is renewed rather than shown
+    // as signed out.
+    let refused = match result {
+        Err(error @ (crate::Error::SignInNeeded | crate::Error::Forbidden)) => {
+            super::renewal::stands(shared, job.generation, sent, error)
+        }
+        _ => false,
+    };
     let mut state = lock(&shared.state);
     if !job.current(&state) {
         return;
@@ -139,7 +148,7 @@ pub(super) fn load(shared: &Shared, job: &Job, issue: &str, cursor: Option<&str>
         Err(error) => {
             images.failed = true;
             images.rescan.abandon();
-            if matches!(error, crate::Error::SignInNeeded | crate::Error::Forbidden) {
+            if refused {
                 state.snapshot.status = super::HubStatus::Error(error.into());
                 state.changed();
                 return;
