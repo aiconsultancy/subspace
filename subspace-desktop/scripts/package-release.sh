@@ -18,6 +18,7 @@ if ! release_target_supported "$target"; then
     echo "unsupported release target: $target" >&2
     exit 2
 fi
+require_product_licences "$target"
 load_product
 if [[ -n "$expected_version" ]] && [[ "$version" != "${expected_version#v}" ]]; then
     echo "Cargo.toml has version $version, but the release is $expected_version" >&2
@@ -36,7 +37,6 @@ esac
 mkdir -p "$root/dist"
 stage="$(mktemp -d "$root/dist/.$product-release.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
-require_product_licences
 release_cargo_args "$target"
 generate_rust_licences "$stage/THIRD_PARTY_LICENSES" "$target"
 # Stage Cargo's executable with this run's report before releasing the cache lock.

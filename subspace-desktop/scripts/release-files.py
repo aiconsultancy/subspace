@@ -6,6 +6,7 @@ from contextlib import ExitStack, contextmanager
 import errno
 import hashlib
 import json
+import lzma
 import math
 import os
 from pathlib import Path
@@ -17,16 +18,19 @@ import signal
 import socket
 import subprocess
 import sys
+import tarfile
 from tempfile import TemporaryDirectory, TemporaryFile, mkdtemp
 import time
+from urllib.request import urlopen
 from uuid import uuid4
 
 
 OAUTH_SECRET = "SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET"
 LOCK_TIMEOUT = "SUBSPACE_RELEASE_LOCK_TIMEOUT"
+ORT_LINK_PATH = "ORT_LIB_PATH"
 # ort-sys 2.0.0-rc.15 reads these in build/ and src/internal/dirs.rs.
 ORT_OVERRIDES = {
-    "ORT_LIB_PATH", "ORT_LIB_LOCATION", "ORT_LIB_PROFILE", "ORT_VCPKG_TARGET",
+    ORT_LINK_PATH, "ORT_LIB_LOCATION", "ORT_LIB_PROFILE", "ORT_VCPKG_TARGET",
     "ORT_IOS_XCFWK_PATH", "ORT_IOS_XCFWK_LOCATION", "ORT_EXT_IOS_XCFWK_PATH",
     "ORT_EXT_IOS_XCFWK_LOCATION", "ORT_PREFER_DYNAMIC_LINK", "ORT_SKIP_DOWNLOAD",
     "ORT_OFFLINE", "ORT_CXX_STDLIB", "CXXSTDLIB", "ORT_CUDA_VERSION", "CUDA_HOME",
@@ -128,7 +132,89 @@ def verify_onnx_config(config, env, target):
                          "linkage overrides: " + ", ".join(sorted(overrides)))
 
 
-def cargo_executable(messages, binary, onnx):
+def onnx_distribution(args, pin, config_flags, env):
+    command = ["cargo", "metadata", "--locked", "--format-version=1", "--filter-platform",
+               args.target, "--manifest-path", f"products/{args.binary}/Cargo.toml", *config_flags]
+    if args.features:
+        command.extend(["--features", args.features])
+    metadata = json.loads(subprocess.check_output(command, env=env))
+    packages = [package for package in metadata["packages"]
+                if package["name"] == pin["crate"] and package["version"] == pin["crate_version"]
+                and package["source"] == "registry+https://github.com/rust-lang/crates.io-index"]
+    if len(packages) != 1:
+        raise ValueError(f"expected the pinned {pin['crate']} v{pin['crate_version']} from crates.io")
+    table_name = "build/download/dist.tsv"
+    table = (Path(packages[0]["manifest_path"]).parent / table_name).read_bytes()
+    if hashlib.sha256(table).hexdigest() != pin["artifacts"][table_name]:
+        raise ValueError("ONNX Runtime distribution table checksum mismatch")
+    variant = "coreml" if args.target == "aarch64-apple-darwin" else "none"
+    for row in table.decode().splitlines()[1:]:
+        if row and not row.startswith("#"):
+            target, features, url, digest = row.split("\t")
+            if (target, features) == (args.target, variant):
+                return url, digest
+    raise ValueError(f"no pinned ONNX Runtime {variant} distribution for {args.target}")
+
+
+def ort_download_cache(target):
+    home = Path.home()
+    base = home / ("Library/Caches" if sys.platform == "darwin" else ".cache")
+    if os.name == "nt":
+        base = Path(os.environ.get("LOCALAPPDATA", home / "AppData/Local"))
+    return base / "ort.pyke.io" / "dfbin" / target
+
+
+def extract_onnx_archive(archive, destination):
+    # ort-sys 2.0.0-rc.15's downloads use raw LZMA2 with a 64 MiB dictionary.
+    filters = [{"id": lzma.FILTER_LZMA2, "dict_size": 1 << 26}]
+    try:
+        with lzma.open(archive, "rb", format=lzma.FORMAT_RAW, filters=filters) as decoded, \
+                tarfile.open(fileobj=decoded, mode="r|") as contents:
+            for member in contents:
+                path = Path(member.name)
+                if path.anchor or ".." in path.parts or not (member.isfile() or member.isdir()):
+                    raise ValueError(f"unsupported ONNX Runtime archive member: {member.name}")
+                target = destination / path
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with contents.extractfile(member) as source, target.open("xb") as output:
+                        shutil.copyfileobj(source, output)
+    except (EOFError, lzma.LZMAError, tarfile.TarError) as exc:
+        raise ValueError(f"could not extract pinned ONNX Runtime archive: {exc}") from exc
+    if not (destination / "libonnxruntime.a").is_file():
+        raise ValueError("pinned ONNX Runtime archive does not contain libonnxruntime.a")
+
+
+def prepare_onnx_archive(cache, private, target, url, digest):
+    name = f"{digest}.tar.lzma2"
+    upstream = ort_download_cache(target) / name
+    cached = cache / name
+    archive = private / name
+    # ort-sys normally keeps only its digest-keyed extracted directory.
+    # Reuse compressed downloads when available, including our own warm cache.
+    if upstream.exists():
+        shutil.copyfile(upstream, archive)
+    elif cached.exists():
+        shutil.copyfile(cached, archive)
+    else:
+        with urlopen(url, timeout=60) as source, archive.open("xb") as output:
+            shutil.copyfileobj(source, output)
+    checksum = hashlib.sha256()
+    with archive.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            checksum.update(chunk)
+    if checksum.hexdigest() != digest:
+        raise ValueError(f"ONNX Runtime archive checksum mismatch for {target}")
+    library_dir = private / "lib"
+    extract_onnx_archive(archive, library_dir)
+    if not cached.exists():
+        archive.replace(cached)
+    return library_dir
+
+
+def cargo_executable(messages, binary, onnx, library_dir):
     executables = set()
     onnx_scripts = []
     for line in messages:
@@ -147,15 +233,14 @@ def cargo_executable(messages, binary, onnx):
     if len(executables) != 1:
         raise ValueError(f"expected one Cargo executable for {binary}, found {len(executables)}")
     if onnx:
-        # The pinned build script emits this cfg only in its download branch.
-        # Check the actual build too, including fresh Cargo artefacts and
-        # overrides introduced by a wrapper only when invoking `cargo build`.
+        # Check the actual build too, including overrides introduced by a
+        # wrapper only when invoking `cargo build`.
         version = onnx["crate_version"]
         if (len(onnx_scripts) != 1
                 or not onnx_scripts[0]["package_id"].endswith(f"@{version}")
-                or "pyke" not in onnx_scripts[0]["cfgs"]
+                or onnx_scripts[0]["linked_paths"] != [f"native={library_dir}"]
                 or "static=onnxruntime" not in onnx_scripts[0]["linked_libs"]):
-            raise ValueError("Cargo did not link the pinned ONNX Runtime download")
+            raise ValueError("Cargo did not link the verified ONNX Runtime archive")
     return executables.pop()
 
 
@@ -321,7 +406,7 @@ def build(args):
     features = sorted(set(re.findall(r"[^,\s]+", args.features)))
     # Keep room for dependency build paths on Windows.
     key = hashlib.sha256(",".join(features).encode()).hexdigest()[:24]
-    cache = args.target_dir / "release-pkg" / f"{args.target}-{key}"
+    cache = args.target_dir.resolve() / "release-pkg" / f"{args.target}-{key}"
     command = ["cargo", "build", "--release", "--locked", "-p", args.binary,
                "--target", args.target]
     if args.features:
@@ -347,11 +432,19 @@ def build(args):
         if onnx:
             verify_onnx_config(config, env, args.target)
         cleanup.enter_context(exclusive_lock(cache / ".package.lock"))
+        library_dir = None
+        if onnx:
+            url, digest = onnx_distribution(args, onnx, config_flags, env)
+            private = Path(cleanup.enter_context(TemporaryDirectory(prefix="onnxruntime-", dir=cache)))
+            library_dir = prepare_onnx_archive(cache, private, args.target, url, digest)
+            env[ORT_LINK_PATH] = str(library_dir)
+            # Force MBX to execute the build script with the fresh link path.
+            env["MBX_BUILD_SCRIPT_EXECUTION"] = "0"
         messages = cleanup.enter_context(TemporaryFile(mode="w+", encoding="utf-8"))
         # The supervisor owns the lock. Cargo and its descendants never inherit it.
         run_cargo([*command, *config_flags, *build_flags], root, env, messages)
         messages.seek(0)
-        executable = cargo_executable(messages, args.binary, onnx)
+        executable = cargo_executable(messages, args.binary, onnx, library_dir)
         suffix = ".exe" if "-windows-" in args.target else ""
         shutil.copy2(executable, args.stage / (args.binary + suffix))
 

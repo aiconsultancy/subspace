@@ -53,7 +53,7 @@ check_packaged_licences() {
         charts/LICENSE-FLINT-CHART charts/LICENSE-QUICKJS-NG charts/LICENSE-RQUICKJS \
         fonts/LICENSE-INTER fonts/LICENSE-JETBRAINS-MONO fonts/README.md \
         icons/LICENSE-FEATHER icons/LICENSE-LOBE-ICONS icons/LICENSE-LUCIDE \
-        markdown/LICENSE onnxruntime/LICENSE onnxruntime/ThirdPartyNotices.txt \
+        markdown/LICENSE \
         rust-std/README.md \
         terminal/LICENSE-APACHE terminal/LICENSE-GHOSTTY terminal/LICENSE-MIT terminal/LICENSE-PORTABLE-PTY \
         themes/gpui-kit/LICENSE-APACHE themes/gpui-kit/PROVENANCE.md; do
@@ -63,11 +63,15 @@ check_packaged_licences() {
         cmp "$fixture/fake sysroot/share/doc/rust/$file" "$destination/licenses/rust-std/${file##*/}"
     done
     if [[ "$target" = *-windows-* ]]; then
+        test ! -e "$destination/licenses/onnxruntime"
         for file in LICENSE.txt NOTICE.txt README.md; do
             cmp "$root/licenses/webview2/$file" "$destination/licenses/webview2/$file"
         done
     else
         test ! -e "$destination/licenses/webview2"
+        for file in LICENSE ThirdPartyNotices.txt README.md; do
+            cmp "$root/licenses/onnxruntime/$file" "$destination/licenses/onnxruntime/$file"
+        done
     fi
     for file in README.md OCTICONS-LICENSE.txt; do
         cmp "$root/spaces/actions/assets/$file" "$destination/licenses/icons/octicons/$file"
@@ -91,7 +95,7 @@ check_packaging_failures() {
     local builds_before
     builds_before="$(grep -c '^build ' "$fixture/cargo.log")"
 
-    for notice in "$fixture/../LICENSE" "$fixture/NOTICE"; do
+    for notice in "$fixture/../LICENSE" "$fixture/NOTICE" "$fixture/licenses/icons/LICENSE-FEATHER"; do
         mv "$notice" "$notice.saved"
         expect_packaging_failure "missing or unreadable product licence input: $notice" "$linux" "$version"
         mv "$notice.saved" "$notice"
@@ -166,9 +170,15 @@ EOF
     expect_packaging_failure 'webview2 1.0.3650.58 artefact mismatch: licence checksum mismatch' "$windows" "$version"
     mv "$ort.saved" "$ort"
     mv "$loader.saved" "$loader"
+    local cached_archive
+    cached_archive="$(find "$fixture/target/release-pkg" -path "*/$linux-*/*.tar.lzma2" -print)"
+    cp "$cached_archive" "$cached_archive.saved"
+    printf 'tampered archive\n' >"$cached_archive"
+    expect_packaging_failure 'ONNX Runtime archive checksum mismatch' "$linux" "$version"
+    mv "$cached_archive.saved" "$cached_archive"
     test "$(grep -c '^build ' "$fixture/cargo.log")" = "$builds_before"
     FAKE_BUILD_ONLY_OVERRIDE=1 expect_packaging_failure \
-        'Cargo did not link the pinned ONNX Runtime download' "$linux" "$version"
+        'Cargo did not link the verified ONNX Runtime archive' "$linux" "$version"
     cmp "$archive" "$backup"
     cmp "$archive.sha256" "$backup.sha256"
     # Recognised diagnostics and the source-backed first crate can coexist.
