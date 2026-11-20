@@ -325,6 +325,12 @@ mod tests {
         ] {
             child.env(name, home.path());
         }
+        // A value that is not Unicode must not upset the child's checks.
+        #[cfg(unix)]
+        child.env(
+            "IDENTITY_TEST_NOT_UNICODE",
+            <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"\xff"),
+        );
         let run = child
             .args([
                 "--ignored",
@@ -349,8 +355,9 @@ mod tests {
         if std::env::var_os(INSTALL_CHILD).is_none() {
             return;
         }
-        let inherited: Vec<String> = std::env::vars()
-            .map(|(name, _)| name)
+        // Names only: a value need not be Unicode.
+        let inherited: Vec<String> = std::env::vars_os()
+            .map(|(name, _)| name.to_string_lossy().into_owned())
             .filter(|name| name.starts_with("SUBSPACE_") && name != INSTALL_CHILD)
             .collect();
         assert!(inherited.is_empty(), "inherited {inherited:?}");
