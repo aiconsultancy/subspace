@@ -1,7 +1,12 @@
 //! Reading a NETT move back: every previewed issue in the destination
-//! team, with a newer version and a number there. After a validated PATCH,
-//! which proves the move committed, a sub-issue found elsewhere or that
-//! cannot be read is reported unreconciled rather than doubting the move.
+//! team, with a newer version and a number there. NETT moves the whole
+//! subtree at once, so a root confirmed in the destination, by a validated
+//! PATCH reply or a check's own read, proves the move committed: a
+//! sub-issue then found elsewhere, unread or not read in time is reported
+//! unreconciled rather than doubting the move. Only a root still where it
+//! was shows the move did not happen; a root that cannot be read leaves it
+//! to be checked again. A check therefore finishes as soon as it reads the
+//! root, however large the move.
 //! The reads share one time budget, so a move that committed never waits
 //! behind a request timeout per sub-issue, and each is a fresh read, never
 //! one already in flight that could predate the move. A read that finds
@@ -107,23 +112,14 @@ fn reason(
     }
 }
 
-/// What a check makes of a read that did not show an issue moved: one read
-/// elsewhere means the plan did not happen; one not read leaves the move to
-/// be checked again.
-fn check_failure(read: &Option<Result<IssueDetail, Error>>) -> IssueSaveError {
-    match read {
-        Some(Ok(_)) => IssueSaveError::Conflict,
-        _ => IssueSaveError::Unconfirmed,
-    }
-}
-
 // qual:allow(coupling, oi) reason: "Move confirmation reads the issues back through the client's NETT reads."
 impl Client {
     /// Checks a confirmed or possibly confirmed NETT move without sending it
-    /// again: every previewed issue must now be in the destination team,
-    /// with a newer version than previewed and a number there. A read that
-    /// fails leaves the move unconfirmed, to be checked again; an issue
-    /// that did not move means the plan did not happen.
+    /// again. A root read back in the destination, newer than previewed and
+    /// numbered there, means the move committed, with any sub-issue not
+    /// found there listed as unreconciled; a root still where it was means
+    /// the plan did not happen; a root that cannot be read leaves the move
+    /// unconfirmed, to be checked again.
     pub fn verify_issue_move(&self, preview: &MovePreview) -> Result<MoveResult, IssueSaveError> {
         if self.backend != crate::Backend::Nett {
             return Err(IssueSaveError::Unavailable);
@@ -169,7 +165,7 @@ impl Client {
         let mut moved = vec![root_item];
         let mut unreconciled = Vec::new();
         for previewed in preview.issues.iter().skip(1) {
-            match self.read_back(preview, previewed, (checking, deadline))? {
+            match self.read_back(preview, previewed, deadline)? {
                 ReadBack::Moved(item) => moved.push(item),
                 ReadBack::Unreconciled(item) => unreconciled.push(item),
             }
@@ -193,18 +189,18 @@ impl Client {
         read.and_then(Result::ok).ok_or(IssueSaveError::Unconfirmed)
     }
 
-    /// Reads a previewed sub-issue back before `deadline`. A check needs
-    /// each one in the destination: one elsewhere means the plan did not
-    /// happen, and one not read leaves the move to be checked again. After
-    /// a validated PATCH, which proves the move committed, neither undoes
-    /// it: the sub-issue is reported unreconciled, with what reading it
-    /// found. A read that finds the account or organisation changed ends
+    /// Reads a previewed sub-issue back before `deadline`, once the root
+    /// was confirmed in the destination: from a validated PATCH reply or a
+    /// check's own read. NETT moves the whole subtree at once, so the move
+    /// committed, and a sub-issue found elsewhere, unread, or not read in
+    /// time never undoes it: it is reported unreconciled, with what reading
+    /// it found. A read that finds the account or organisation changed ends
     /// the check.
     fn read_back(
         &self,
         preview: &MovePreview,
         previewed: &MoveItem,
-        (checking, deadline): (bool, Instant),
+        deadline: Instant,
     ) -> Result<ReadBack, IssueSaveError> {
         let read = self.read_within(&previewed.id, deadline);
         self.current().map_err(|_| IssueSaveError::SignIn)?;
@@ -214,7 +210,6 @@ impl Client {
                 item.new_identifier = Some(current.fields.identifier);
                 Ok(ReadBack::Moved(item))
             }
-            read if checking => Err(check_failure(&read)),
             read => Ok(ReadBack::Unreconciled(Unreconciled::of(
                 previewed,
                 reason(preview, previewed, read),
@@ -234,5 +229,7 @@ impl Client {
     }
 }
 
+#[cfg(test)]
+mod check_tests;
 #[cfg(test)]
 mod reconcile_tests;
