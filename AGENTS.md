@@ -82,8 +82,10 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
 
 Every pull request needs clearance from two independent model reviews before
 it merges: Claude Opus 5.5 at high effort and GPT-6.2 Sol at high effort. They
-come on top of the project checks, never instead of them. A draft can be
-opened before the reviews; the clearances gate the merge.
+come on top of the project checks, never instead of them. Review the diff
+before opening the pull request: run both reviews on the local branch
+(`review --local origin/main`) and deal with what they find first, so the pull
+request opens already reviewed. The clearances also gate the merge.
 
 Run both reviews with the **trusted** copy of
 [`scripts/review-pr.sh`](scripts/review-pr.sh), the one on the canonical
@@ -155,9 +157,15 @@ It exits 0 when both reviews are clear, 1 when either is not clear, and 2
 when a review did not run or could not be checked.
 
 **Clearance.** A review clears when it finished, read the change, and ended
-with `Verdict: clear`, meaning no critical or high finding remains. Fix every
-critical and high finding, or show that it is wrong. Fix or rebut the others
-with a reason.
+with `Verdict: clear`, meaning no critical or high finding remains. Critical
+and high findings block the merge: fix each one, or show that it is wrong.
+
+**Lesser findings.** Medium and low findings do not block, so the agent decides
+which ones are worth fixing, and should lean towards fixing them in the same
+pull request before it merges. Listing findings in the pull request as
+"follow-ups" does not track them; it only records technical debt. Leave a
+finding unfixed only when you have decided it is not worth fixing, and record
+that reason under **Reviews**, never a plan to fix it later.
 
 **After changes.**
 - When new commits are added on top of a cleared head, run both reviews with
