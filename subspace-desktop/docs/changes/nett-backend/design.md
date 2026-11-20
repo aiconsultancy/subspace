@@ -304,7 +304,9 @@ NETT's file host, which never sees the bearer, a cookie or `x-org-id`.
   file from another transfer is someone else's. A record that names no
   transfer leaves the outcome unknown, to be checked again, unless the
   name, size or SHA-256 it gives shows another file; an incomplete record,
-  missing its type or digest, proves nothing. So does any read that
+  missing its type or digest, proves nothing, and neither does a malformed
+  field, such as an empty name, a size below one byte or a digest that is
+  not 64 hexadecimal digits. So does any read that
   fails. So does a record that names this transfer but cannot be
   read or differs from the file sent, and a reply that does not carry the
   list or show where it ends: only a complete read proves the upload
@@ -315,17 +317,29 @@ NETT's file host, which never sees the bearer, a cookie or `x-org-id`.
   refreshed, and when it closes: they are shown again, with whatever
   happened to them meanwhile, when it reopens in the same Issues hub,
   account and organisation, so a transfer whose bytes may be stored can
-  still be checked or cancelled. They are kept under the issue's ID, so
-  the issue finds them however it opens again, by its ID or under a new
-  key after a move. A closed issue keeps only uploads still under way or
-  awaiting a check that can change the outcome, for 15 minutes, and at
-  most eight closed issues keep any; an upload let go, for any of these
-  reasons, has its reservation cancelled and its bytes released. Uploads
-  run two at a time on a small pool, and the panel takes at most eight
-  uploads and 32 MiB waiting on an issue, and 64 MiB across comment drafts
-  and uploads, since a failed upload keeps its bytes for Retry. A file
-  that would not fit in that budget first lets go of failed uploads kept
-  for closed issues, which have no row to dismiss. Dismissing an upload that never
+  still be checked or cancelled. Every upload lives in one store from the
+  moment it is added, under the stable ID of its issue, which is known
+  then because a file is only added to an issue whose detail is read; the
+  open issue shows its own, so the issue finds them however it opens
+  again, by its ID or under a new key after a move, even if it closed
+  before its detail was read. Each use of the store, taking a snapshot
+  included, first follows the open issue: uploads of other issues count as
+  closed from then, each with its own close time, and a closed issue keeps
+  only uploads still under way or awaiting a check that can change the
+  outcome, for 15 minutes, with at most eight closed issues keeping any.
+  Expiry needs no timer and happens at the next use however long the hub
+  sat idle. An upload let go, for any of these reasons, has its reservation
+  cancelled under the issue's ID and its bytes released; a queued attempt
+  whose upload was let go sends nothing, and one that ends after it
+  cancels its reservation, or, if the file was stored, reads the open
+  issue's attachments again. Uploads run two at a time on a small pool,
+  and the panel takes at most eight uploads and 32 MiB waiting on an
+  issue, and 64 MiB across comment drafts and uploads, since a failed
+  upload keeps its bytes for Retry. A file is admitted on its issue or
+  draft first; only then, if it would not fit in the shared budget, are
+  failed uploads kept for closed issues let go, the issue closed first
+  first, and only as far as lets it in: if even all of them would not,
+  nothing goes and the file is refused. Dismissing an upload that never
   completed cancels its reservation with `DELETE …/attachments/pending/{uploadId}`. A file is
   added to the issue, opening, organisation and account it was chosen in,
   or not at all: closing and opening the same issue again counts as a
@@ -495,7 +509,14 @@ With `issueMoves`, Issues can move an issue to another team.
   sub-issue read back somewhere else was moved again since, and one that
   cannot be read may have been, so neither undoes the move's success. The
   editor lists each such sub-issue with what reading it found before it
-  opens the moved issue. A 503 on the move
+  opens the moved issue: moved again since, only for one newer than
+  previewed in a third team; not confirmed in the destination yet, for a
+  stale or unchanged read; could not be read back; or not read back in
+  time. Reading a move back takes at most 20 seconds in all, each read cut
+  to the time left and never shared with a read already in flight, which
+  could predate the move. A read that finds the account or organisation
+  changed ends the check with a request to sign in, and nothing it found
+  is returned. A 503 on the move
   itself may hide a move that committed, so it too is unconfirmed, to be
   checked; a 503 on a preview asks for a wait like a 429.
 - A 409 means the plan changed, and the editor asks for a fresh preview.
