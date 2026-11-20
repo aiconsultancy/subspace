@@ -2,8 +2,9 @@ use super::{Issues, Phase, picker};
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, Context, Div, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    Styled as _, div,
+    Styled as _, TestSupportExt as _, div,
 };
+use subspace_api_client::issue_moves::{Unreconciled, UnreconciledReason};
 use subspace_framework::dashboard::{
     Tokens,
     action::{Intent, action_button, icon_button, menu_button},
@@ -61,6 +62,7 @@ fn body(board: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) -> Div {
                     cx.listener(|this, _, window, cx| this.check_project_move(window, cx)),
                 ),
             ),
+        Phase::Moved(identifier, unreconciled) => moved(identifier, unreconciled, tokens, cx),
         Phase::Failed(error) => v_flex().gap_3().child(error.to_string()).child(
             action_button(
                 "issue-move-refresh",
@@ -71,6 +73,64 @@ fn body(board: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) -> Div {
             .on_click(cx.listener(|this, _, _, cx| this.load_move_preview(cx))),
         ),
         Phase::Preview(preview) => super::preview::render(preview, tokens, cx),
+    }
+}
+
+/// A move that committed with sub-issues it could not confirm in the
+/// destination: each is listed with what reading it back found, so the
+/// person checks them before relying on the move.
+fn moved(
+    identifier: &str,
+    unreconciled: &[Unreconciled],
+    tokens: &Tokens,
+    cx: &mut Context<Issues>,
+) -> Div {
+    let open = identifier.to_owned();
+    v_flex()
+        .gap_3()
+        .child(format!(
+            "Moved to {identifier}. These sub-issues could not be confirmed there. Check each one before relying on the move."
+        ))
+        .child(
+            v_flex()
+                .id("issue-move-unreconciled")
+                .test_support()
+                .gap_1()
+                .children(unreconciled.iter().map(|item| unreconciled_row(item, tokens))),
+        )
+        .child(
+            h_flex().justify_end().child(
+                action_button(
+                    "issue-move-open",
+                    Intent::Primary,
+                    Some(IconName::ChevronRight),
+                    format!("Open {identifier}"),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.finish_project_move(open.clone(), window, cx)
+                })),
+            ),
+        )
+}
+
+fn unreconciled_row(item: &Unreconciled, tokens: &Tokens) -> Div {
+    h_flex()
+        .gap_4()
+        .py_1()
+        .child(div().w_40().child(item.old_identifier.clone()))
+        .child(
+            div()
+                .text_color(tokens.muted)
+                .child(unreconciled_reason(item.reason)),
+        )
+}
+
+/// What reading a sub-issue back found, in words.
+fn unreconciled_reason(reason: UnreconciledReason) -> String {
+    match reason {
+        UnreconciledReason::Elsewhere => "Moved again since".into(),
+        UnreconciledReason::Unread(error) => format!("Could not be read back: {error}"),
+        _ => "Could not be confirmed".into(),
     }
 }
 
@@ -116,7 +176,7 @@ fn project_picker(board: &Issues, cx: &mut Context<Issues>) -> AnyElement {
         state.destination.is_some(),
     )
     .accessibility_label("Destination project")
-    .disabled(state.busy() || matches!(state.phase, Phase::Unconfirmed(_)))
+    .disabled(state.busy() || state.sent())
     .on_click(cx.listener(|this, _, window, cx| picker::open(this, window, cx)));
     board
         .menu_anchors
