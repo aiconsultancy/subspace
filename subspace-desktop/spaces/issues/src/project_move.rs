@@ -1,5 +1,6 @@
 //! Retained project move preview. Numbers are committed only after the exact list is confirmed.
 mod picker;
+mod preview;
 pub(crate) mod view;
 use crate::Issues;
 use gpui_kit::{AppContext as _, Context, FocusHandle, Window};
@@ -211,10 +212,10 @@ impl Issues {
 mod tests {
     use super::{Issues, Phase};
     use crate::tests::{
-        offline::{board_with_hub, offline_with, settle_board},
+        offline::{Offline, board_with_hub, offline_with, settle_board},
         render,
     };
-    use gpui_kit::TestAppContext;
+    use gpui_kit::{Context, Entity, TestAppContext, VisualTestContext, Window};
     use serde_json::json;
     use std::sync::{
         Arc,
@@ -227,24 +228,12 @@ mod tests {
         let returned = Arc::new(AtomicBool::new(false));
         let (calls, held, done) = (count.clone(), release.clone(), returned.clone());
         let fixture = offline_with(move |r| move_route(r, &calls, &held, &done));
-        let (board, cx) = board_with_hub(&fixture, cx);
-        settle_board(&board, cx, |b| b.can_create_issue());
-        board.update(cx, |b, cx| b.open_detail("SUB-2".into(), cx));
-        settle_board(&board, cx, Issues::can_edit_issue);
-        cx.update(|window, cx| {
-            board.update(cx, |b, cx| {
-                b.open_project_move(window, cx);
-                b.project_move.as_mut().unwrap().destination = Some("project-OPS".into());
-                b.load_move_preview(cx);
-            })
-        });
+        let (board, cx) = previewing_a_move_to_ops(&fixture, cx);
         settle_board(&board, cx, |_| count.load(Ordering::SeqCst) == 1);
         cx.update(|window, cx| {
             board.update(cx, |b, cx| {
                 b.close_project_move(window, cx);
-                b.open_project_move(window, cx);
-                b.project_move.as_mut().unwrap().destination = Some("project-OPS".into());
-                b.load_move_preview(cx);
+                ask_for_a_move_to_ops(b, window, cx);
             })
         });
         settle_board(
@@ -295,17 +284,7 @@ mod tests {
                      "stateName":"Done","cycleCleared":false,"milestoneCleared":false,"estimateCleared":false,
                      "parentDetached":false,"archived":true}]}).to_string()))
         });
-        let (board, cx) = board_with_hub(&fixture, cx);
-        settle_board(&board, cx, |b| b.can_create_issue());
-        board.update(cx, |b, cx| b.open_detail("SUB-2".into(), cx));
-        settle_board(&board, cx, Issues::can_edit_issue);
-        cx.update(|window, cx| {
-            board.update(cx, |b, cx| {
-                b.open_project_move(window, cx);
-                b.project_move.as_mut().unwrap().destination = Some("project-OPS".into());
-                b.load_move_preview(cx);
-            })
-        });
+        let (board, cx) = previewing_a_move_to_ops(&fixture, cx);
         settle_board(
             &board,
             cx,
@@ -331,6 +310,25 @@ mod tests {
             Some(true),
             "Move stays available in the default build"
         );
+    }
+    /// Mounts the board on `fixture`, opens SUB-2 and asks for a preview of
+    /// its move to OPS.
+    fn previewing_a_move_to_ops<'a>(
+        fixture: &Offline,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<Issues>, &'a mut VisualTestContext) {
+        let (board, cx) = board_with_hub(fixture, cx);
+        settle_board(&board, cx, |b| b.can_create_issue());
+        board.update(cx, |b, cx| b.open_detail("SUB-2".into(), cx));
+        settle_board(&board, cx, Issues::can_edit_issue);
+        cx.update(|window, cx| board.update(cx, |b, cx| ask_for_a_move_to_ops(b, window, cx)));
+        (board, cx)
+    }
+    /// Starts a move of the open issue to OPS and asks for its preview.
+    fn ask_for_a_move_to_ops(board: &mut Issues, window: &mut Window, cx: &mut Context<Issues>) {
+        board.open_project_move(window, cx);
+        board.project_move.as_mut().unwrap().destination = Some("project-OPS".into());
+        board.load_move_preview(cx);
     }
     fn move_route(
         r: &subspace_framework::client_test_support::Request,
