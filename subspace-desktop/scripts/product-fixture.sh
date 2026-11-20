@@ -21,6 +21,7 @@ setup_product_fixture() {
     printf 'Fixture Apache licence\n' >"$rust_docs/licenses/Apache-2.0.txt"
     printf 'Fixture MIT licence\n' >"$rust_docs/licenses/MIT.txt"
     echo 'Fixture linked licence' >"$fixture/linked-licence.txt"
+    printf 'Fixture generic licence' >"$fixture/fixture-canonical-mit.txt"
     checksum="$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$fixture/linked-licence.txt")"
     jq -n --arg checksum "$checksum" '
       [{crates: ["fixture-linked v1.0.0"], id: "MIT",
@@ -77,6 +78,12 @@ fork_url=https://example.com/fixture/fork
 fork_revision=1234567890abcdef1234567890abcdef12345678
 framework="$FIXTURE/../resolved-framework"
 case "$1" in
+    -Z)
+        if [[ -n "${FIXTURE_CARGO_CONFIG:-}" ]]; then
+            set -- "$@" --config "$FIXTURE_CARGO_CONFIG"
+        fi
+        exec "$FIXTURE_REAL_CARGO" "$@"
+        ;;
     run) cat "$FIXTURE/metadata/subspace.json" ;;
     metadata)
         target_directory="${FAKE_TARGET_DIRECTORY:-$FIXTURE/target}"
@@ -115,6 +122,7 @@ case "$1" in
           --arg fork "$fork_url" --arg rev "$fork_revision" --arg framework "$framework" \
           --arg native "$native_dir" --arg component "$component" --arg features "$features" \
           --arg native_version "${FAKE_NATIVE_VERSION:-}" --arg missing_fork "${FAKE_MISSING_FORK:-0}" \
+          --arg source_first "${FAKE_SOURCE_BACKED_FIRST:-0}" --rawfile canonical "$FIXTURE/fixture-canonical-mit.txt" \
           --slurpfile pins "$FIXTURE/native-notices.json" '
           def local_package($name; $version; $path):
             {name: $name, version: $version, source: null, id: ("path+file://" + $path + "#" + $name + "@" + $version),
@@ -143,8 +151,11 @@ case "$1" in
                used_by: [{crate: $product}]},
               {id: "Apache-2.0", text: "Fixture generic Apache licence", source_path: null,
                used_by: [{crate: $update}]},
-              {id: "MIT", text: "Fixture generic licence", source_path: null,
-               used_by: [{crate: $linked}, {crate: $generic}]},
+              ({id: "MIT", text: $canonical, source_path: null,
+                used_by: [{crate: $linked}, {crate: $generic}]}
+                | if $source_first == "1" then
+                    .source_path = ($native + "/LICENSE") | .used_by |= [{crate: $native_crate}] + .
+                  else . end),
               {id: "MIT", text: "Fixture native crate licence", source_path: "LICENSE",
                used_by: [{crate: $native_crate}]},
               {id: "MPL-2.0", text: "Fixture MPL licence", source_path: "LICENSE",
@@ -310,6 +321,8 @@ EOF
     chmod 755 "$fixture/bin/"*
     export FIXTURE="$fixture"
     export SUBSPACE_RUN_APP_ROOT="$fixture" SUBSPACE_PACKAGE_ROOT="$fixture"
+    FIXTURE_REAL_CARGO="$(rustup which cargo)"
+    export FIXTURE_REAL_CARGO
     export PATH="$fixture/bin:$PATH"
     unset CARGO_TARGET_DIR RUSTC CARGO_BUILD_RUSTC
 }
