@@ -37,8 +37,10 @@ account supplies a bearer token for Subspace API and renews it silently. `GET /v
 a new user with no initiative memberships. An app owner grants membership
 before the new user can read or write issue data.
 
-If the API returns 401, the board directs the user to **Settings > Account**. The client
-uses bounded timeouts and queues demand-driven reads to avoid startup fan-out.
+If Issues needs sign-in during startup, it retries once when the saved
+account becomes usable. If sign-in is still required, check **Settings >
+Account** and use **Retry**. The client uses bounded timeouts and queues
+demand-driven reads to avoid startup fan-out.
 
 ## Projects and issue data
 

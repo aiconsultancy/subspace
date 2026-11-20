@@ -1,4 +1,5 @@
 //! Shared memory snapshots and bounded background readers, with generation fences.
+mod access;
 mod activity;
 mod comments;
 mod decision;

@@ -82,6 +82,7 @@ impl Responder {
             });
             return;
         }
+        self.hub.reconnect_when_account_ready(cx);
         let version = self.hub.reference_version();
         if self.seen != version {
             self.seen = version;

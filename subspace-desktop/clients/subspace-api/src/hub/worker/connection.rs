@@ -42,6 +42,7 @@ pub(super) fn bootstrap(shared: &Shared, job: &Job) {
             state.snapshot.projects = projects;
             state.project_refresh.replaced();
             state.snapshot.status = HubStatus::Ready;
+            state.initial_access_retry = false;
             if retire {
                 enqueue_open(shared, &mut state);
             } else {

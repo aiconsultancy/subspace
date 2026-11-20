@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 use subspace_framework::account::{Error, Provider};
-use subspace_framework::shell::{AccountRegistration, AccountTokenSource};
+use subspace_framework::shell::{AccountRegistration, AccountTokenSource, account_session};
 
 const MINIMUM_API_TOKEN_VALIDITY: Duration = Duration::from_secs(120);
 /// The resource name the app registers for Subspace API tokens.
@@ -167,6 +167,11 @@ fn configure_subspace_api(source: AccountTokenSource) {
     let account = source.clone();
     subspace_api_client::use_native_account(
         move || account.generation(),
+        |cx| {
+            account_session(cx)
+                .filter(|session| session.is_current())
+                .map(|session| session.generation())
+        },
         move || {
             source
                 .token_for(API_RESOURCE, MINIMUM_API_TOKEN_VALIDITY)
