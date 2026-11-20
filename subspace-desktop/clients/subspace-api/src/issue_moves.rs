@@ -86,7 +86,14 @@ impl MovePreview {
 #[non_exhaustive]
 pub struct MoveResult {
     pub issue: IssueDetail,
+    /// The previewed issues read back in the destination, with their numbers
+    /// there, the root first.
     pub moved: Vec<MoveItem>,
+    /// Previewed sub-issues found elsewhere when read back after a NETT move
+    /// that committed: someone moved them again since. The move itself
+    /// succeeded; these are read again where they are now.
+    #[serde(default)]
+    pub unreconciled: Vec<String>,
 }
 
 // qual:allow(coupling, oi) reason: "The bounded HTTP seam owns single-attempt writes, access challenges and validated responses."
@@ -212,7 +219,10 @@ impl Client {
                 && preview_number(&current.fields.identifier, &preview.destination.key)
         };
         // A check reads the root itself: one still where it was proves the
-        // move never happened, so a fresh preview may follow.
+        // move never happened, so a fresh preview may follow. A root from a
+        // validated PATCH reply proves the whole subtree moved, so a
+        // sub-issue elsewhere now was moved again since, which is no
+        // conflict with this move.
         let checking = root.is_none();
         let root = match root {
             Some(root) => root,
@@ -228,6 +238,7 @@ impl Client {
             });
         }
         let mut moved = Vec::with_capacity(preview.issues.len());
+        let mut unreconciled = Vec::new();
         let mut root_item = first.clone();
         root_item.new_identifier = Some(root.fields.identifier.clone());
         moved.push(root_item);
@@ -236,13 +247,21 @@ impl Client {
                 .issue(&previewed.id)
                 .map_err(|_| IssueSaveError::Unconfirmed)?;
             if !moved_here(&current, previewed) {
-                return Err(IssueSaveError::Conflict);
+                if checking {
+                    return Err(IssueSaveError::Conflict);
+                }
+                unreconciled.push(previewed.id.clone());
+                continue;
             }
             let mut item = previewed.clone();
             item.new_identifier = Some(current.fields.identifier);
             moved.push(item);
         }
-        Ok(MoveResult { issue: root, moved })
+        Ok(MoveResult {
+            issue: root,
+            moved,
+            unreconciled,
+        })
     }
     /// Reads a move reply. Previews keep NETT's own field names; an issue
     /// detail is mapped like any other read.
@@ -298,5 +317,78 @@ impl Client {
         let response = transport::post_json(self, &url, &body, transport::READ_TIMEOUT)
             .map_err(|_| IssueSaveError::Unconfirmed)?;
         self.move_response(response, false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MovePreview;
+    use serde_json::{Value, json};
+    use subspace_framework::client_test_support::Mock;
+
+    const ROOT: &str = "00000000-0000-4000-8000-0000000000e1";
+    const CHILD: &str = "00000000-0000-4000-8000-0000000000e2";
+
+    fn issue(id: &str, identifier: &str, (team, key): (&str, &str), version: i64) -> Value {
+        let mut issue = crate::tests::detail(id);
+        issue["identifier"] = json!(identifier);
+        issue["projectId"] = json!(team);
+        issue["projectKey"] = json!(key);
+        issue["version"] = json!(version);
+        issue
+    }
+
+    fn item(id: &str, identifier: &str) -> Value {
+        json!({"id": id, "version": 2, "oldIdentifier": identifier, "newIdentifier": null,
+            "stateId": "state-1", "stateName": "Started", "cycleCleared": false,
+            "milestoneCleared": false, "estimateCleared": false, "parentDetached": false,
+            "archived": false})
+    }
+
+    #[test]
+    fn a_committed_move_stays_committed_when_a_sub_issue_moves_again_before_it_is_read() {
+        let mock = Mock::new(|request| {
+            let path = request.path.as_str();
+            if path.ends_with("/desktop/capabilities") {
+                (200, r#"{"features":["issueMoves"]}"#.into())
+            } else if request.method == "PATCH" && path.ends_with(&format!("/issues/{ROOT}")) {
+                // NETT moved the whole subtree and returns the root there.
+                let root = issue(ROOT, "WEB-7", ("team-web", "WEB"), 3);
+                (200, root.to_string())
+            } else if path.ends_with(&format!("/issues/{CHILD}")) {
+                // Someone else moved the sub-issue on before it was read.
+                let child = issue(CHILD, "OPS-9", ("team-ops", "OPS"), 4);
+                (200, child.to_string())
+            } else {
+                (404, "{}".into())
+            }
+        });
+        let client = crate::Client::nett_loopback(
+            &format!("{}/api", mock.base_url()),
+            Some("00000000-0000-4000-8000-0000000000e0"),
+            Some(subspace_framework::core::Secret::new("nett-move-reconcile")),
+        )
+        .unwrap()
+        .without_live();
+        let preview: MovePreview = serde_json::from_value(json!({
+            "token": "a".repeat(64),
+            "source": {"id": "team-ops", "key": "OPS", "name": "Operations"},
+            "destination": {"id": "team-web", "key": "WEB", "name": "Web"},
+            "issues": [item(ROOT, "OPS-2"), item(CHILD, "OPS-3")],
+            "reviewContext": {"snapshot": 1},
+        }))
+        .unwrap();
+        let result = client
+            .move_issue(&preview)
+            .unwrap_or_else(|error| panic!("the move committed, not {error:?}"));
+        assert_eq!(result.issue.fields.identifier, "WEB-7");
+        assert_eq!(result.unreconciled, [CHILD], "the sub-issue is read again");
+        assert_eq!(result.moved.len(), 1);
+        let patches = mock
+            .requests()
+            .iter()
+            .filter(|request| request.method == "PATCH")
+            .count();
+        assert_eq!(patches, 1, "the move is never sent again");
     }
 }
