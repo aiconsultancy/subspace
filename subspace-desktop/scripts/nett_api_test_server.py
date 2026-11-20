@@ -3240,6 +3240,7 @@ class Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         self.request_log = None
         self.revoked_streams = ()
+        self.body = b''
         self.admitted = 0
         if self.headers.get('Host') != urlsplit(self.server.origin).netloc:
             # Only the fixture's own numeric origin, so a page that rebinds a
@@ -3273,7 +3274,9 @@ class Handler(BaseHTTPRequestHandler):
             print(f'NETT fixture error: {type(error).__name__}', file=sys.stderr, flush=True)
             status, value = 500, Problem(500, 'The fixture could not answer this request.')
         finally:
-            # The body has been handled: its place in the intake goes.
+            # The body has been handled: its bytes go with its place in the
+            # intake, so an answer that streams for minutes holds neither.
+            self.body = b''
             self.server.intake.release(self.admitted)
             self.admitted = 0
         # Do not hold the fixture lock while waiting for a subscriber's write.

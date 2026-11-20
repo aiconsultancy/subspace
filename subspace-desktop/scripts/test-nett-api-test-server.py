@@ -1886,6 +1886,21 @@ class FailureHookTests(FileCase):
         self.assertNotEqual(status, 503)
         held(0)
 
+    def test_a_request_body_is_not_held_once_its_place_in_the_intake_goes(self):
+        held = []
+        respond = NETT.Handler.respond
+
+        def recording(handler, status, value):
+            held.append((len(handler.body), self.server.intake.held))
+            return respond(handler, status, value)
+
+        body, _ = self.upload(data=b'x' * 100, draftId=str(uuid.uuid4()))
+        with patch.object(NETT.Handler, 'respond', recording):
+            self.ok('POST', '/issues/media/prepare', body)
+        # By the time the answer is written, which for a stream lasts
+        # minutes, neither the bytes nor their place are held.
+        self.assertEqual(held, [(0, 0)])
+
     def test_the_request_log_says_when_each_request_arrived(self):
         hook(self, 'requests/clear', {})
         self.call('GET', '/api/v1/auth/context')
