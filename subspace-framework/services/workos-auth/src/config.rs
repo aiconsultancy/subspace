@@ -7,12 +7,22 @@ pub const DEFAULT_API_URL: &str = "https://api.workos.com";
 const CLIENT_LIMIT: usize = 128;
 const NAME_LIMIT: usize = 64;
 
+/// How the person signs in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Flow {
+    /// Authorisation code with PKCE and a loopback redirect.
+    Browser,
+    /// Device authorisation: the person confirms a code in the browser.
+    Device,
+}
+
 /// Non-secret configuration of one WorkOS AuthKit public client.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub(crate) client_id: String,
     pub(crate) api: url::Url,
     pub(crate) redirect_port: u16,
+    pub(crate) flow: Flow,
     resources: BTreeSet<String>,
     organization: String,
 }
@@ -33,6 +43,7 @@ impl Config {
             client_id: client_id.into(),
             api: url::Url::parse(DEFAULT_API_URL).map_err(|_| Error::Unconfigured)?,
             redirect_port: 0,
+            flow: Flow::Browser,
             resources: BTreeSet::new(),
             organization: String::new(),
         })
@@ -63,6 +74,16 @@ impl Config {
     // qual:api — Consumed by app crates through the Framework facade.
     pub fn with_redirect_port(mut self, port: u16) -> Self {
         self.redirect_port = port;
+        self
+    }
+
+    /// Sign in with WorkOS device authorisation instead of a loopback
+    /// redirect: the browser shows a code the person confirms, and the app
+    /// polls for the result. For clients that allow device authorisation
+    /// and have no loopback redirect registered.
+    // qual:api — Consumed by app crates through the Framework facade.
+    pub fn with_device_authorization(mut self) -> Self {
+        self.flow = Flow::Device;
         self
     }
 
@@ -99,6 +120,12 @@ impl Config {
         } else {
             Err(Error::Unconfigured)
         }
+    }
+
+    /// Whether the WorkOS API is a plain-HTTP loopback stand-in, which may
+    /// hand out loopback verification pages.
+    pub(crate) fn loopback(&self) -> bool {
+        self.api.scheme() == "http"
     }
 
     pub(crate) fn endpoint(&self, path: &str) -> String {
@@ -149,6 +176,13 @@ mod tests {
             "https://auth.example.com/user_management/authenticate"
         );
         assert_ne!(config.namespace("fixture"), default_namespace);
+    }
+
+    #[test]
+    fn device_authorisation_is_opt_in() {
+        let config = Config::new("client_0000000000").unwrap();
+        assert_eq!(config.flow, super::Flow::Browser);
+        assert_eq!(config.with_device_authorization().flow, super::Flow::Device);
     }
 
     #[test]

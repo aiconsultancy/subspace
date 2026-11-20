@@ -51,6 +51,8 @@ pub(crate) struct NativeAccount {
     retry: Retry,
     cancel: Option<Cancel>,
     url: Option<String>,
+    /// The user code to confirm in the browser, during device authorisation.
+    pub code: Option<String>,
     run: u64,
 }
 
@@ -121,12 +123,14 @@ impl NativeAccount {
                 }
             };
             let url = started.url.clone();
+            let code = started.code.clone();
             let current = this
                 .update(cx, |this, cx| {
                     if this.run != run {
                         return false;
                     }
                     this.url = url.clone();
+                    this.code = code.clone();
                     // A provider without a browser leg completes headlessly.
                     this.status = if url.is_some() {
                         Status::Waiting
@@ -169,6 +173,7 @@ impl NativeAccount {
         self.gate.open();
         self.run += 1;
         self.url = None;
+        self.code = None;
         self.status = self.before_sign_in;
         cx.notify();
     }
@@ -255,6 +260,7 @@ impl NativeAccount {
         let browser = matches!(self.status, Status::Waiting | Status::Completing);
         self.cancel = None;
         self.url = None;
+        self.code = None;
         self.reopen_leases(result.is_ok());
         match result {
             Ok(account) => {

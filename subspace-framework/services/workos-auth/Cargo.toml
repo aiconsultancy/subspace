@@ -1,7 +1,7 @@
 [package]
 name = "subspace-workos-auth"
 documentation = "https://docs.rs/subspace-workos-auth"
-description = "Subspace Framework: native WorkOS AuthKit sign-in through the system browser with PKCE and a loopback callback. Internal crate; apps depend on `subspace-framework`."
+description = "Subspace Framework: native WorkOS AuthKit sign-in through the system browser, with PKCE and a loopback callback or with device authorisation. Internal crate; apps depend on `subspace-framework`."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

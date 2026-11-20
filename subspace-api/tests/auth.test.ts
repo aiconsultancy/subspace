@@ -15,6 +15,26 @@ const jwks = Bun.serve({
 });
 afterAll(() => jwks.stop(true));
 
+test("the WorkOS client ID has the form the desktop also checks", () => {
+  const env = { DATABASE_URL: databaseUrl };
+  expect(
+    config({ ...env, WORKOS_CLIENT_ID: "client_00000000000000000000000000" }).workos?.clientId,
+  ).toBe("client_00000000000000000000000000");
+  for (const value of ["", "client_", "client id", "client_a-b", "other_123"]) {
+    expect(() => config({ ...env, WORKOS_CLIENT_ID: value })).toThrow("WORKOS_CLIENT_ID");
+  }
+});
+
+test("the example environment's WorkOS placeholders pass the same check", async () => {
+  const text = await Bun.file(new URL("../.env.example", import.meta.url)).text();
+  const clientId = /^# WORKOS_CLIENT_ID=(.*)$/m.exec(text)?.[1] ?? "";
+  expect(config({ DATABASE_URL: databaseUrl, WORKOS_CLIENT_ID: clientId }).workos?.clientId).toBe(
+    clientId,
+  );
+  const jwksUrl = /^# WORKOS_JWKS_URL=(.*)$/m.exec(text)?.[1] ?? "";
+  expect(jwksUrl.endsWith(`/${clientId}`)).toBe(true);
+});
+
 test("development sign-in requires explicit opt-in and a local listener", async () => {
   expect([...authProviders({})]).toEqual(["workos"]);
   const env = { DATABASE_URL: databaseUrl, AUTH_PROVIDERS: "dev", ENABLE_DEV_AUTH: "true" };
