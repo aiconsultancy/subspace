@@ -9,13 +9,19 @@ pub(super) fn scope_epoch(weak: &Weak<Shared>) -> u64 {
         .map_or(0, |shared| lock(&shared.state).snapshot.scope_epoch)
 }
 
-/// Until the followed scope changes or the capability list is read again.
-pub(super) async fn wait_for_scope_or_epoch_change(
+/// Until the followed scope changes, the capability list is read again for
+/// the stream, or any read finds it changed from `revision`, as an explicit
+/// reload that finds access back may.
+pub(super) async fn wait_for_scope_epoch_or_revision(
     weak: &Weak<Shared>,
     scope: &StreamScope,
     epoch: u64,
+    (client, revision): (&crate::Client, Option<u64>),
 ) {
-    while super::super::scope(weak).as_ref() == Some(scope) && scope_epoch(weak) == epoch {
+    while super::super::scope(weak).as_ref() == Some(scope)
+        && scope_epoch(weak) == epoch
+        && client.nett_served_revision() == revision
+    {
         tokio::time::sleep(SLICE).await;
     }
 }
