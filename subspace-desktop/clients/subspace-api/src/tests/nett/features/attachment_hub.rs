@@ -77,6 +77,16 @@ fn load_issue_attachments(mock: &NettMock, token: &str) -> Hub {
     hub
 }
 
+/// The organisation route `rest` under the open issue's ID, which uploads
+/// name it by.
+fn upload_path(mock: &NettMock, hub: &Hub, rest: &str) -> String {
+    let issue = hub
+        .snapshot()
+        .issue()
+        .and_then(|issue| issue.detail().cloned());
+    org_path(mock, &format!("issues/{}/{rest}", issue.unwrap().fields.id))
+}
+
 fn upload_files(hub: &Hub) -> FilesSnapshot {
     hub.snapshot()
         .issue()
@@ -88,7 +98,7 @@ fn upload_files(hub: &Hub) -> FilesSnapshot {
 fn dismissing_an_unfinished_upload_cancels_its_reservation() {
     let mock = NettMock::serving(&["attachments"]);
     let hub = attachments_hub(&mock, "nett-fixture-attach-cancel");
-    let complete = org_path(&mock, "issues/OPS-1/attachments/from-upload");
+    let complete = upload_path(&mock, &hub, "attachments/from-upload");
     mock.fail_next("POST", &complete, 400, None, 1);
     hub.add_attachment(
         "cancelled.txt",
@@ -121,7 +131,7 @@ fn a_rejected_or_forbidden_completion_offers_no_check() {
     for (status, name) in [(400, "rejected.txt"), (403, "forbidden.txt")] {
         let mock = NettMock::serving(&["attachments"]);
         let hub = attachments_hub(&mock, &format!("nett-fixture-attach-{status}"));
-        let complete = org_path(&mock, "issues/OPS-1/attachments/from-upload");
+        let complete = upload_path(&mock, &hub, "attachments/from-upload");
         mock.fail_next("POST", &complete, status, None, 1);
         hub.add_attachment(name, "text/plain", format!("{name}\n").into_bytes())
             .unwrap();
@@ -174,7 +184,7 @@ fn a_ninth_upload_waiting_on_an_issue_is_refused_until_one_goes() {
     let mock = NettMock::serving(&["attachments"]);
     let hub = attachments_hub(&mock, "nett-fixture-attach-budget");
     // Every reservation fails for now: the uploads wait, keeping their bytes.
-    let prepare = org_path(&mock, "issues/OPS-1/attachments/prepare");
+    let prepare = upload_path(&mock, &hub, "attachments/prepare");
     mock.fail_next("POST", &prepare, 500, None, 9);
     for n in 0..8 {
         hub.add_attachment(

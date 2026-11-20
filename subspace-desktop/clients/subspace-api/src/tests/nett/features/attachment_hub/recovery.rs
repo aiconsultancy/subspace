@@ -1,4 +1,4 @@
-use super::{NettMock, attachments_hub, failed_upload, org_path, upload_files, wait_for};
+use super::{NettMock, attachments_hub, failed_upload, upload_files, upload_path, wait_for};
 use crate::tests::nett::organisation;
 use crate::uploads::UploadError;
 use serde_json::json;
@@ -39,7 +39,7 @@ fn check_completes_the_transfer(mock: &NettMock, hub: &crate::hub::Hub, name: &s
 fn a_standalone_completion_whose_reply_was_lost_is_completed_again_not_resent() {
     let mock = NettMock::serving(&["attachments"]);
     let hub = attachments_hub(&mock, "nett-fixture-attach-dropped");
-    let complete = org_path(&mock, "issues/OPS-1/attachments/from-upload");
+    let complete = upload_path(&mock, &hub, "attachments/from-upload");
     mock.config(&json!({"dropNext": [{"method": "POST", "path": complete, "times": 1}]}));
     check_completes_the_transfer(&mock, &hub, "dropped.txt");
     hub.stop();
@@ -49,7 +49,7 @@ fn a_standalone_completion_whose_reply_was_lost_is_completed_again_not_resent() 
 fn a_standalone_completion_refused_sign_in_after_the_bytes_is_checked_not_resent() {
     let mock = NettMock::serving(&["attachments"]);
     let hub = attachments_hub(&mock, "nett-fixture-attach-401");
-    let complete = org_path(&mock, "issues/OPS-1/attachments/from-upload");
+    let complete = upload_path(&mock, &hub, "attachments/from-upload");
     mock.fail_next("POST", &complete, 401, None, 1);
     check_completes_the_transfer(&mock, &hub, "refused.txt");
     hub.stop();
@@ -92,7 +92,7 @@ fn wait_stored(hub: &crate::hub::Hub, name: &str) {
 fn a_completion_refused_after_the_upload_was_stored_finds_it_stored() {
     let mock = NettMock::serving(&["attachments"]);
     let hub = attachments_hub(&mock, "nett-fixture-attach-archived");
-    let complete = org_path(&mock, "issues/OPS-1/attachments/from-upload");
+    let complete = upload_path(&mock, &hub, "attachments/from-upload");
     // The completion is stored but its reply is lost; then the issue is
     // archived, so checking it again is refused with 409.
     mock.config(&json!({"dropNext": [{"method": "POST", "path": complete, "times": 1}]}));
@@ -115,7 +115,7 @@ fn a_completion_refused_after_the_upload_was_stored_finds_it_stored() {
 fn a_completion_refused_when_nothing_was_stored_reserves_anew() {
     let mock = NettMock::serving(&["attachments"]);
     let hub = attachments_hub(&mock, "nett-fixture-attach-lapsed");
-    let complete = org_path(&mock, "issues/OPS-1/attachments/from-upload");
+    let complete = upload_path(&mock, &hub, "attachments/from-upload");
     // The completion fails before anything is stored, then the reservation
     // lapses: the check is refused and the list shows no such file.
     mock.fail_next("POST", &complete, 500, None, 1);
@@ -139,7 +139,7 @@ fn a_completion_refused_when_nothing_was_stored_reserves_anew() {
 fn a_check_after_the_issue_was_refreshed_completes_the_same_transfer() {
     let mock = NettMock::serving(&["attachments"]);
     let hub = attachments_hub(&mock, "nett-fixture-attach-refresh");
-    let complete = org_path(&mock, "issues/OPS-1/attachments/from-upload");
+    let complete = upload_path(&mock, &hub, "attachments/from-upload");
     mock.config(&json!({"dropNext": [{"method": "POST", "path": complete, "times": 1}]}));
     hub.add_attachment(
         "refreshed.txt",
@@ -166,7 +166,7 @@ fn a_check_after_the_issue_was_refreshed_completes_the_same_transfer() {
 fn a_reservation_that_lapsed_before_its_bytes_is_made_again_under_a_new_key() {
     let mock = NettMock::serving(&["attachments"]);
     let hub = attachments_hub(&mock, "nett-fixture-attach-expired");
-    let prepare = org_path(&mock, "issues/OPS-1/attachments/prepare");
+    let prepare = upload_path(&mock, &hub, "attachments/prepare");
     // The reservation is made but its reply is lost, and then it lapses:
     // its key is refused from now on.
     mock.config(&json!({"dropNext": [{"method": "POST", "path": prepare, "times": 1}]}));
@@ -203,7 +203,7 @@ fn an_identical_file_from_another_upload_is_not_taken_for_this_one() {
     wait_stored(&hub, "twin.txt");
     // An identical second upload fails before anything is stored, and its
     // reservation lapses: the first file is someone else's upload.
-    let complete = org_path(&mock, "issues/OPS-1/attachments/from-upload");
+    let complete = upload_path(&mock, &hub, "attachments/from-upload");
     mock.fail_next("POST", &complete, 500, None, 1);
     hub.add_attachment("twin.txt", "text/plain", bytes).unwrap();
     let id = failed_upload(&hub, &|u| u.checks());

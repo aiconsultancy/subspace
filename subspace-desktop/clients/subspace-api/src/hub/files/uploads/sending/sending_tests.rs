@@ -22,15 +22,28 @@ fn hub(mock: &Mock, token: &str) -> Hub {
     hub
 }
 
-/// An attempt on OPS-1, read as [`ISSUE`], once since moved.
+/// OPS-1, read as [`ISSUE`], once since moved.
+fn issue() -> UploadIssue {
+    UploadIssue {
+        id: ISSUE.into(),
+        identifier: "OPS-1".into(),
+    }
+}
+
+/// An attempt on OPS-1, read as [`ISSUE`].
 fn attempt() -> Attempt {
-    Attempt::new(
-        "OPS-1",
-        UploadIssue {
-            id: ISSUE.into(),
-            identifier: "OPS-1".into(),
-        },
-    )
+    Attempt::new(issue())
+}
+
+fn wait_for(what: &str, done: &dyn Fn() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !done() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 }
 
 fn upload(state: AttachmentState) -> AttachmentUpload {
@@ -59,6 +72,71 @@ fn a_queued_upload_let_go_before_it_starts_sends_nothing() {
             .iter()
             .any(|request| request.path.contains("/attachments")),
         "nothing was sent"
+    );
+    hub.stop();
+}
+
+#[test]
+fn a_queued_check_let_go_before_it_starts_cancels_the_reservation_it_holds() {
+    let mock = Mock::new(|_| (500, "{}".into()));
+    let hub = hub(&mock, "nett-sending-queued-check");
+    let generation = lock(&hub.0.state).snapshot.generation;
+    // Check was pressed for a transfer whose bytes may be stored; its row
+    // went while the job waited for the pool.
+    let mut upload = upload(AttachmentState::Checking);
+    upload.transfer = Some("transfer-queued".into());
+    upload.bytes_sent = true;
+    send(&hub.0, generation, &attempt(), &upload);
+    wait_for("the cancellation", &|| {
+        mock.requests().iter().any(|request| {
+            request.method == "DELETE"
+                && request.path.ends_with(&format!(
+                    "/issues/{ISSUE}/attachments/pending/transfer-queued"
+                ))
+        })
+    });
+    assert!(
+        !mock
+            .requests()
+            .iter()
+            .any(|request| request.path.ends_with("/attachments/from-upload")),
+        "nothing was completed"
+    );
+    hub.stop();
+}
+
+#[test]
+fn every_attempt_names_its_issue_by_its_id() {
+    let mock = Mock::new(|request| {
+        if request.path.ends_with("/desktop/capabilities") {
+            (200, r#"{"features":["attachments"]}"#.into())
+        } else {
+            (500, "{}".into())
+        }
+    });
+    let hub = hub(&mock, "nett-sending-stable-id");
+    let upload = upload(AttachmentState::Uploading);
+    let generation = {
+        let mut state = lock(&hub.0.state);
+        let opening = state.snapshot.issue.as_ref().unwrap().opening;
+        state.uploads.add(upload.clone(), issue(), opening);
+        state.snapshot.generation
+    };
+    // OPS-1 may have moved, and its key stopped naming it, while the job
+    // waited for the pool.
+    send(&hub.0, generation, &attempt(), &upload);
+    let paths: Vec<String> = mock
+        .requests()
+        .into_iter()
+        .map(|request| request.path)
+        .filter(|path| path.contains("/attachments/"))
+        .collect();
+    assert!(!paths.is_empty());
+    assert!(
+        paths
+            .iter()
+            .all(|path| path.contains(&format!("/issues/{ISSUE}/attachments/"))),
+        "{paths:?}"
     );
     hub.stop();
 }

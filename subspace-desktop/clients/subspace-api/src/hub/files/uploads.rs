@@ -201,7 +201,7 @@ impl Hub {
             open.files.notice = None;
         }
         state.changed();
-        let attempt = sending::Attempt::new(&target.issue, issue);
+        let attempt = sending::Attempt::new(issue);
         let (shared, generation) = (Arc::clone(&self.0), target.generation);
         sending::run(move || sending::send(&shared, generation, &attempt, &upload));
         Ok(())
@@ -274,7 +274,6 @@ enum Retry {
 /// panel with why it must wait. `None` when there is nothing to retry.
 fn retry_row(state: &mut State, id: &str) -> Option<Retry> {
     let open = state.open_for_uploads();
-    let reference = state.snapshot.issue.as_ref()?.identifier.clone();
     let (upload, issue) = state.uploads.shown_row(open.as_ref(), id)?;
     if !upload.retryable() {
         return None;
@@ -291,7 +290,7 @@ fn retry_row(state: &mut State, id: &str) -> Option<Retry> {
         AttachmentState::Uploading
     };
     Some(Retry::Send(Box::new((
-        sending::Attempt::new(&reference, issue.clone()),
+        sending::Attempt::new(issue.clone()),
         upload.clone(),
     ))))
 }
