@@ -5,10 +5,8 @@ import argparse
 from collections import defaultdict
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 
 
@@ -17,14 +15,6 @@ FALLBACK = re.compile(
     r"falling back to canonical text"
 )
 CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index"
-# ort-sys 2.0.0-rc.15 reads these in build/ and src/internal/dirs.rs.
-ORT_OVERRIDES = {
-    "ORT_LIB_PATH", "ORT_LIB_LOCATION", "ORT_LIB_PROFILE", "ORT_VCPKG_TARGET",
-    "ORT_IOS_XCFWK_PATH", "ORT_IOS_XCFWK_LOCATION", "ORT_EXT_IOS_XCFWK_PATH",
-    "ORT_EXT_IOS_XCFWK_LOCATION", "ORT_PREFER_DYNAMIC_LINK", "ORT_SKIP_DOWNLOAD",
-    "ORT_OFFLINE", "ORT_CXX_STDLIB", "CXXSTDLIB", "ORT_CUDA_VERSION", "CUDA_HOME",
-    "NV_CUDA_CUDART_VERSION", "ORT_CACHE_DIR", "DOCS_RS",
-}
 # cargo-about 0.9.3 uses these exact spdx 0.13.6 texts as fallbacks. A
 # source-backed first entry can hide the fallback in a merged text group.
 CANONICAL_SPDX = {
@@ -130,42 +120,6 @@ def fallback_packages(report, diagnostics):
     return fallbacks
 
 
-def verify_onnx_config(root, target):
-    # Use Cargo's merged view, including ancestor and Cargo-home files and
-    # any --config used by the Cargo invocation. The pinned stable Cargo
-    # exposes config get with bootstrap, scoped to this inspection only.
-    result = subprocess.run(
-        ["cargo", "-Z", "unstable-options", "config", "get", "--format=json"],
-        cwd=root, env={**os.environ, "RUSTC_BOOTSTRAP": "1"},
-        capture_output=True, text=True, encoding="utf-8",
-    )
-    if result.returncode:
-        raise ValueError("could not inspect the resolved Cargo config for ONNX Runtime")
-    config = json.loads(result.stdout)
-    configured_env = config.get("env", {})
-    env_keys = os.environ.keys() | configured_env.keys()
-    overrides = ORT_OVERRIDES.intersection(env_keys)
-    # ort-sys uses this to redirect its download cache on Linux hosts.
-    if sys.platform == "linux" and "XDG_CACHE_HOME" in env_keys:
-        overrides.add("XDG_CACHE_HOME")
-    # Offline Cargo itself is harmless unless ort-sys reads a true value
-    # from the build-script environment and skips the pinned download.
-    offline_key = "CARGO_NET_OFFLINE"
-    offline = configured_env.get(offline_key, "")
-    if isinstance(offline, dict):
-        offline = offline.get("value")
-    if not isinstance(offline, str):
-        raise ValueError(f"invalid {offline_key} in Cargo's [env] configuration")
-    if any(value.lower() in {"true", "1"} for value in (os.environ.get(offline_key, ""), offline)):
-        overrides.add(offline_key)
-    # Cargo can also replace a links crate's build script entirely.
-    if "onnxruntime" in config.get("target", {}).get(target, {}):
-        overrides.add(f"target.{target}.onnxruntime")
-    if overrides:
-        raise ValueError("ONNX Runtime release notices require the pinned download without "
-                         "linkage overrides: " + ", ".join(sorted(overrides)))
-
-
 def verify_native_notices(root, target, linked):
     pins = json.loads((root / "native-notices.json").read_text(encoding="utf-8"))
     for component, pin in pins.items():
@@ -179,8 +133,6 @@ def verify_native_notices(root, target, linked):
                 f"{component} {pin['version']} notices require {pin['crate']} "
                 f"v{pin['crate_version']} from crates.io for {target}"
             )
-        if component == "onnxruntime":
-            verify_onnx_config(root, target)
         directory = Path(matches[0]["manifest_path"]).parent
         for filename, checksum in pin["artifacts"].items():
             try:

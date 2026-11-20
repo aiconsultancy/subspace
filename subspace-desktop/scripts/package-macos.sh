@@ -57,9 +57,9 @@ stage="$(mktemp -d "$root/dist/.$product-macos.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 # Only the build sees the secret; it is compiled into the executable.
 app="$(SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET="$oauth_secret" bash "$root/scripts/build-macos-app.sh" "$stage" "$target")"
-# A build cache that ignored the variable would ship without it.
+# Check the executable before signing.
 if [[ -n "$oauth_secret" ]] && ! LC_ALL=C grep -qF -f <(printf '%s\n' "$oauth_secret") "$app/Contents/MacOS/$binary_name"; then
-	echo 'the built app does not contain the GitHub OAuth client secret' >&2
+	echo 'the built app does not contain the GitHub OAuth client secret; verify the login keychain item or SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET, then package again' >&2
 	exit 1
 fi
 unset oauth_secret

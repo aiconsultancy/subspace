@@ -52,13 +52,18 @@ Packaging uses Cargo's normal dependency tree to limit the report to the
 selected target and features and omit compile-time proc macros.
 Packaging also checks each linked crate in a merged canonical SPDX text group
 for its own source text or a recognised fallback diagnostic. For ONNX Runtime,
-the release preflight rejects linkage overrides from the environment and
-Cargo's resolved configuration.
+the preflight checks Cargo's configuration from the build's working directory,
+with its environment and configuration arguments. Packaging also checks that
+the ort-sys build script selected the pinned static download.
 
 Release builds reuse `release-pkg/` within Cargo's target directory, keyed by
-target and feature set. A lock covers the build and the copy of Cargo's
-reported executable into the staging directory with its licence report. A
-separate lock serialises writers of each archive and its checksum in `dist/`.
+target and feature set. Each run refreshes the build stamp. Builds with a
+GitHub OAuth client secret use a private Cargo directory removed after staging.
+A lock covers the build and the copy of Cargo's reported executable into the
+staging directory with its licence report. A separate lock serialises writers
+of each archive and checksum in `dist/`. Lock waits time out after 30 minutes.
+The checksum is briefly withdrawn during replacement, and a failed rename
+restores the previous pair.
 The packaging fixtures exercise cache reuse, concurrent builds and writers,
 Cargo configuration overrides and merged licence provenance.
 Verification also covers the gallery build, its tests, Web Space package
