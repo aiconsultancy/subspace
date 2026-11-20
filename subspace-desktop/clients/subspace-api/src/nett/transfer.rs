@@ -218,6 +218,10 @@ pub(crate) fn complete(
             }
             202 => {
                 let wait = retry_after(&response);
+                // The reply holds one of the account's places until it is
+                // dropped: let it go before sleeping, so other requests are
+                // not held up behind a check that is only waiting.
+                drop(response);
                 if wait > MAX_COMPLETION_WAIT {
                     hold_until(upload_id, wait);
                     return Err(TransferError::Busy(wait));
@@ -374,6 +378,35 @@ pub(crate) fn fetch(url: &Url, expected: &Expected<'_>) -> Result<Vec<u8>, Error
 mod tests {
     use super::{TransferError, file_url, hold_until, wait_left};
     use url::Url;
+
+    #[test]
+    fn a_completion_waiting_on_a_202_holds_no_place_while_it_sleeps() {
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let mock = subspace_framework::client_test_support::Mock::with_headers(move |_| {
+            if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                (202, vec![("Retry-After".into(), "1".into())], "{}".into())
+            } else {
+                (201, Vec::new(), r#"{"id":"stored"}"#.into())
+            }
+        });
+        let client = crate::Client::nett_loopback(
+            &format!("{}/api", mock.base_url()),
+            Some("00000000-0000-4000-8000-000000000001"),
+            Some(subspace_framework::core::Secret::new(
+                "nett-completion-places",
+            )),
+        )
+        .unwrap()
+        .without_live();
+        let account = client.flow_account();
+        let held = std::cell::Cell::new(usize::MAX);
+        let record = super::complete(&client, &["chat", "uploads", "from-upload"], "u1", &|_| {
+            held.set(super::super::flow::active(account));
+        })
+        .unwrap();
+        assert_eq!(record["id"], "stored");
+        assert_eq!(held.get(), 0, "no place is held while waiting");
+    }
 
     #[test]
     fn a_long_wait_holds_the_transfer_for_five_minutes_at_most() {

@@ -92,6 +92,63 @@ impl std::fmt::Debug for AttachmentUpload {
 
 const CHANGED_ELSEWHERE: &str = "This attachment changed elsewhere. The list was read again.";
 
+/// Whether one more file of `size` bytes may be added beside `uploads`,
+/// with `held` bytes already held by drafts and uploads across the app: at
+/// most eight uploads and 32 MiB on one issue, and 64 MiB in all, as for a
+/// comment draft. A failed upload keeps its bytes for Retry, so it counts
+/// until it is stored or dismissed.
+fn admit(uploads: &[AttachmentUpload], held: usize, size: usize) -> Result<(), UploadError> {
+    let here: usize = uploads.iter().map(|upload| upload.bytes.len()).sum();
+    if uploads.len() >= crate::uploads::MAX_DRAFT_IMAGES
+        || here.saturating_add(size) > crate::uploads::MAX_DRAFT_BYTES
+        || held.saturating_add(size) > crate::uploads::MAX_TOTAL_BYTES
+    {
+        return Err(UploadError::Budget);
+    }
+    Ok(())
+}
+
+/// Standalone uploads run on a small pool, not a thread each: at most
+/// [`WORKERS`] send at once, and the rest wait their turn, holding only the
+/// bytes [`admit`] allowed.
+mod uploads {
+    use std::sync::{Arc, Mutex, OnceLock, PoisonError, mpsc};
+
+    pub(super) const WORKERS: usize = 2;
+
+    type Job = Box<dyn FnOnce() + Send>;
+
+    pub(super) fn run(job: impl FnOnce() + Send + 'static) {
+        static POOL: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
+        let pool = POOL.get_or_init(|| {
+            let (sender, receiver) = mpsc::channel::<Job>();
+            let receiver = Arc::new(Mutex::new(receiver));
+            for _ in 0..WORKERS {
+                let receiver = Arc::clone(&receiver);
+                let _ = std::thread::Builder::new()
+                    .name("subspace-attachments".into())
+                    .spawn(move || {
+                        loop {
+                            let job = receiver
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .recv();
+                            let Ok(job) = job else {
+                                return;
+                            };
+                            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
+                        }
+                    });
+            }
+            Mutex::new(sender)
+        });
+        let _ = pool
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .send(Box::new(job));
+    }
+}
+
 impl FilesSnapshot {
     /// Reads the list again from its first page, keeping what is shown
     /// until a complete scan says what is gone, and any upload in progress.
@@ -409,16 +466,30 @@ impl Hub {
         if !state.current(target.generation) {
             return Err(UploadError::Removed);
         }
+        // Every buffer still held, by drafts or uploads, counts against
+        // the budget across the app.
+        state
+            .attachment_buffers
+            .retain(|buffer| buffer.strong_count() > 0);
+        let held: usize = state
+            .attachment_buffers
+            .iter()
+            .filter_map(std::sync::Weak::upgrade)
+            .map(|buffer| buffer.len())
+            .sum();
         let Some(issue) = state.snapshot.issue.as_mut().filter(|i| {
             i.detail.is_some() && i.identifier == target.issue && i.opening == target.opening
         }) else {
             return Err(UploadError::Removed);
         };
+        admit(&issue.files.uploads, held, bytes.len())?;
+        let bytes: Arc<[u8]> = bytes.into();
+        let buffer = Arc::downgrade(&bytes);
         let upload = AttachmentUpload {
             id: super::comments::next_attachment_id(),
             request_key: uuid::Uuid::new_v4().to_string(),
             declaration,
-            bytes: bytes.into(),
+            bytes,
             state: AttachmentState::Uploading,
             transfer: None,
             bytes_sent: false,
@@ -428,9 +499,10 @@ impl Hub {
         issue.files.uploads.push(upload.clone());
         let identifier = issue.identifier.clone();
         let generation = target.generation;
+        state.attachment_buffers.push(buffer);
         state.changed();
         let shared = Arc::clone(&self.0);
-        std::thread::spawn(move || send(&shared, generation, &identifier, &upload));
+        uploads::run(move || send(&shared, generation, &identifier, &upload));
         Ok(())
     }
 
@@ -463,7 +535,7 @@ impl Hub {
         let identifier = issue.identifier.clone();
         state.changed();
         let shared = Arc::clone(&self.0);
-        std::thread::spawn(move || send(&shared, generation, &identifier, &upload));
+        uploads::run(move || send(&shared, generation, &identifier, &upload));
     }
 
     /// Stops showing an upload that failed, cancelling its reservation when
@@ -487,7 +559,7 @@ impl Hub {
         state.changed();
         if let Some(transfer) = upload.transfer {
             let shared = Arc::clone(&self.0);
-            std::thread::spawn(move || {
+            uploads::run(move || {
                 shared
                     .client
                     .cancel_issue_attachment(&identifier, &transfer)
@@ -653,4 +725,40 @@ fn send(
         reload_files(shared, &mut state);
     }
     state.changed();
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::{AttachmentUpload, admit};
+    use crate::{hub::AttachmentState, uploads::UploadError};
+
+    fn upload(size: usize) -> AttachmentUpload {
+        let bytes = vec![b'a'; size];
+        AttachmentUpload {
+            id: "u".into(),
+            request_key: "k".into(),
+            declaration: crate::uploads::ImageDeclaration::new("a.txt", "text/plain", &bytes)
+                .unwrap(),
+            bytes: bytes.into(),
+            state: AttachmentState::Failed(UploadError::Network),
+            transfer: None,
+            bytes_sent: false,
+            retry_at: None,
+        }
+    }
+
+    #[test]
+    fn uploads_on_one_issue_and_bytes_held_in_all_are_bounded() {
+        let mib = 1024 * 1024;
+        // Eight uploads waiting on one issue: a ninth is refused.
+        let eight: Vec<_> = (0..8).map(|_| upload(16)).collect();
+        assert_eq!(admit(&eight, 128, 16), Err(UploadError::Budget));
+        assert_eq!(admit(&eight[..7], 112, 16), Ok(()));
+        // At most 32 MiB on one issue, failed uploads included.
+        let held = [upload(9 * mib), upload(9 * mib), upload(9 * mib)];
+        assert_eq!(admit(&held, 27 * mib, 6 * mib), Err(UploadError::Budget));
+        assert_eq!(admit(&held, 27 * mib, 5 * mib), Ok(()));
+        // At most 64 MiB held across drafts and uploads.
+        assert_eq!(admit(&[], 60 * mib, 5 * mib), Err(UploadError::Budget));
+    }
 }

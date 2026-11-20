@@ -355,6 +355,16 @@ pub(crate) fn decision(item: &Value) -> Value {
         "updatedAt": text("updatedAt"),
     });
     if item.get("decision").is_some() {
+        // Who recorded the decision, which may not be who made it: named
+        // from the deciders when the recorder is one of them.
+        let recorder = item
+            .get("deciders")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find(|person| person.get("userId").and_then(Value::as_str) == Some(recorded_by))
+            .cloned()
+            .unwrap_or_default();
         let detail = json!({
             "decision": text("decision"),
             "context": text("context"),
@@ -365,9 +375,13 @@ pub(crate) fn decision(item: &Value) -> Value {
             "acceptedByUserId": item.get("acceptedByUserId").cloned().unwrap_or(Value::Null),
             "provenance": {"madeByType": "human", "madeByUserId": decider_id},
             "recordedBy": {
-                "userId": decider_id.unwrap_or(recorded_by),
-                "displayName": decider.get("displayName").and_then(Value::as_str).unwrap_or_default(),
-                "available": decider.get("available").and_then(Value::as_bool).unwrap_or(true),
+                "userId": recorded_by,
+                "displayName": recorder
+                    .get("displayName")
+                    .or_else(|| item.get("createdByName"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                "available": recorder.get("available").and_then(Value::as_bool).unwrap_or(true),
                 "kind": "human",
             },
         });
@@ -520,6 +534,24 @@ mod tests {
         assert_eq!(detail.item.made_by_user_id.as_deref(), Some("u1"));
         assert_eq!(detail.recorded_by.display_name, "Ada");
         assert_eq!(detail.why, "Speed");
+    }
+
+    #[test]
+    fn a_decision_recorded_by_someone_else_names_its_recorder() {
+        // Grace records a decision Ada made.
+        let value = decision(&json!({
+            "id": "d2", "title": "Ship Friday", "status": "accepted", "decidedOn": "2026-11-10",
+            "deciders": [{"userId": "u1", "displayName": "Ada", "available": true}],
+            "projectId": null, "project": null, "issues": {"items": [], "hasMore": false},
+            "version": 1, "revisionNumber": 1, "decision": "We ship.", "context": "", "why": "",
+            "implications": "", "createdByUserId": "u2", "createdAt": "2026-11-10T09:00:00Z",
+            "updatedAt": "2026-11-10T09:00:00Z"
+        }));
+        let detail: DecisionDetail = serde_json::from_value(value).unwrap();
+        assert_eq!(detail.item.made_by_user_id.as_deref(), Some("u1"));
+        assert_eq!(detail.item.recorded_by_user_id, "u2");
+        assert_eq!(detail.recorded_by.user_id, "u2");
+        assert_ne!(detail.recorded_by.display_name, "Ada");
     }
 
     #[test]
