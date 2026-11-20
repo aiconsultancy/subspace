@@ -3,26 +3,28 @@
 //! only ever added to an issue whose detail is read. The open issue shows
 //! its own. When an issue closes, its uploads still under way, or whose
 //! bytes may be stored and wait for a check that can still change the
-//! outcome, are kept for [`KEPT_FOR`] from when it closed, for at most
-//! [`MAX_CLOSED`] issues, and show again however the issue opens next: under
+//! outcome, are kept, and show again however the issue opens next: under
 //! the reference it was open under, by its ID, or under a new key after a
-//! move once its detail is read. The rest are let go.
+//! move once its detail is read. The rest, which stored nothing, are let
+//! go and their reservations cancelled under the issue's ID.
 //!
-//! Every use of the store, a snapshot included, first follows the open
-//! issue, which also lets go of what was kept too long, so expiry needs no
-//! timer. A file that would not fit in the shared budget lets go of failed
-//! uploads kept for closed issues only when that is what lets it in. An
-//! upload let go has its reservation cancelled under its issue's ID; one
-//! still under way is settled by its own attempt, which finds no row.
+//! An upload whose completion may have landed is never let go or cancelled
+//! by the store: only its outcome, a check or the person's Dismiss, ends
+//! it. What the store does let go is its bytes, which a check does not
+//! need: once its issue has been closed for [`KEPT_FOR`], once more than
+//! [`MAX_CLOSED`] closed issues keep uploads, or when a new file would not
+//! fit in the shared budget and letting them go is what lets it in. Every
+//! use of the store, a snapshot included, first follows the open issue, so
+//! this needs no timer.
 use super::AttachmentUpload;
 use crate::hub::{AttachmentState, IssueSnapshot};
 use crate::uploads::UploadError;
 use std::time::{Duration, Instant};
 
-/// How long a closed issue's uploads are kept for it to open again.
+/// How long a closed issue's uploads keep their bytes for it to open again.
 pub(in crate::hub) const KEPT_FOR: Duration = Duration::from_secs(15 * 60);
-/// Closed issues whose uploads are kept at once. Past this, the issue that
-/// closed first lets its uploads go.
+/// Closed issues whose uploads keep their bytes at once. Past this, the
+/// issue that closed first lets its uploads' bytes go.
 const MAX_CLOSED: usize = 8;
 
 /// A reservation to cancel: the issue it was made on and its transfer.
@@ -96,12 +98,10 @@ impl Entry {
         }
     }
 
-    /// Whether it is still kept at `now`: shown, or closed less than
-    /// [`KEPT_FOR`] ago and still worth keeping.
-    fn kept(&self, now: Instant) -> bool {
-        self.closed.is_none_or(|closed| {
-            now.saturating_duration_since(closed) < KEPT_FOR && self.upload.worth_keeping()
-        })
+    /// Whether it is still kept: shown, or closed and still worth keeping.
+    /// What stored nothing is not.
+    fn kept(&self) -> bool {
+        self.closed.is_none() || self.upload.worth_keeping()
     }
 
     /// Whether it was closed [`KEPT_FOR`] or longer by `now`.
@@ -110,12 +110,14 @@ impl Entry {
             .is_some_and(|closed| now.saturating_duration_since(closed) >= KEPT_FOR)
     }
 
-    /// When its issue closed, if letting it go makes room: a closed issue's
-    /// upload with no attempt under way, whose bytes nothing else holds,
-    /// so letting it go frees them.
+    /// When its issue closed, if letting its bytes go makes room: a closed
+    /// issue's upload with no attempt under way, whose bytes nothing else
+    /// holds, so letting them go frees them.
     fn idle_since(&self) -> Option<Instant> {
         self.closed.filter(|_| {
-            !self.upload.in_flight() && std::sync::Arc::strong_count(&self.upload.bytes) == 1
+            !self.upload.in_flight()
+                && !self.upload.released
+                && std::sync::Arc::strong_count(&self.upload.bytes) == 1
         })
     }
 
@@ -126,6 +128,13 @@ impl Entry {
 }
 
 impl AttachmentUpload {
+    /// Lets go of its bytes and keeps the rest: a check needs no bytes, and
+    /// sending again then needs the file chosen again.
+    fn release_bytes(&mut self) {
+        self.bytes = std::sync::Arc::from(Vec::new());
+        self.released = true;
+    }
+
     /// This upload as a snapshot shows it: everything but its bytes, which
     /// only the store and an attempt under way hold, so a snapshot kept
     /// after an upload goes never keeps its bytes from being freed.
@@ -195,22 +204,29 @@ impl UploadStore {
         });
     }
 
-    /// Follows the open issue at `now`. Uploads closed too long go first, so
-    /// reopening their issue never brings them back; then the open issue's
-    /// uploads show, the others count as closed from now if they did not
-    /// already, and closed uploads no longer worth keeping, and those of
-    /// closed issues past [`MAX_CLOSED`], go. Returns the reservations to
-    /// cancel.
+    /// Follows the open issue at `now`. Uploads closed [`KEPT_FOR`] or longer
+    /// let their bytes go; the open issue's uploads show, and the others
+    /// count as closed from now if they did not already. Closed uploads that
+    /// stored nothing go, and closed issues past [`MAX_CLOSED`] let their
+    /// uploads' bytes go. Returns the reservations to cancel: only those of
+    /// uploads that stored nothing.
     fn follow(&mut self, open: Option<&Open>, now: Instant) -> Vec<Cancel> {
-        let mut cancels = self.release(|entry| !entry.expired(now));
+        self.release_bytes(|entry| entry.expired(now));
         self.entries
             .iter_mut()
             .for_each(|entry| entry.follow(open, now));
-        cancels.extend(self.release(|entry| entry.kept(now)));
+        let cancels = self.release(Entry::kept);
         let kept = self.closed_issues_kept();
+        self.release_bytes(|entry| entry.closed.is_some() && !kept.contains(&entry.issue.id));
         cancels
-            .extend(self.release(|entry| entry.closed.is_none() || kept.contains(&entry.issue.id)));
-        cancels
+    }
+
+    /// Lets go of the bytes of every upload `release` names.
+    fn release_bytes(&mut self, release: impl Fn(&Entry) -> bool) {
+        self.entries
+            .iter_mut()
+            .filter(|entry| release(entry))
+            .for_each(|entry| entry.upload.release_bytes());
     }
 
     /// Lets go of every upload `keep` does not hold, with the reservations
@@ -270,25 +286,22 @@ impl UploadStore {
 
     /// Room for `size` more bytes beside the `held` bytes the app holds.
     /// Nothing goes if they fit. Otherwise closed issues' uploads with no
-    /// attempt under way, whose bytes only the store holds, go, the issue
-    /// that closed first first, only as far as lets them fit; if even all of
-    /// those would not, nothing goes and the file is refused. Only bytes
-    /// letting go actually frees are counted. Returns the reservations to
-    /// cancel.
-    pub(in crate::hub) fn room(
-        &mut self,
-        held: usize,
-        size: usize,
-    ) -> Result<Vec<Cancel>, UploadError> {
+    /// attempt under way, whose bytes only the store holds, let their bytes
+    /// go, the issue that closed first first, only as far as lets the file
+    /// fit; if even all of those would not, nothing goes and the file is
+    /// refused. The uploads themselves stay, to be checked.
+    pub(in crate::hub) fn room(&mut self, held: usize, size: usize) -> Result<(), UploadError> {
         let needed = held
             .saturating_add(size)
             .saturating_sub(crate::uploads::MAX_TOTAL_BYTES);
         let chosen = self.releasable(needed).ok_or(UploadError::Budget)?;
-        Ok(self.release(|entry| !chosen.contains(&entry.upload.id)))
+        self.release_bytes(|entry| chosen.contains(&entry.upload.id));
+        Ok(())
     }
 
-    /// The uploads to let go to free `needed` bytes, the issue that closed
-    /// first first, or `None` when letting go of all that can go would not.
+    /// The uploads whose bytes to let go to free `needed` bytes, the issue
+    /// that closed first first, or `None` when letting go of all that can go
+    /// would not.
     fn releasable(&self, needed: usize) -> Option<Vec<String>> {
         let mut idle: Vec<(Instant, &AttachmentUpload)> = self
             .entries
@@ -339,6 +352,13 @@ impl UploadStore {
         self.entries
             .iter()
             .any(|entry| entry.upload.transfer.as_deref() == Some(transfer))
+    }
+
+    /// Whether the upload holding transfer `transfer` let its bytes go.
+    pub(in crate::hub) fn released_transfer(&self, transfer: &str) -> bool {
+        self.entries.iter().any(|entry| {
+            entry.upload.transfer.as_deref() == Some(transfer) && entry.upload.released
+        })
     }
 }
 

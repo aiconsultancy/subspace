@@ -48,32 +48,35 @@ fn wait_for(what: &str, done: &dyn Fn() -> bool) {
 }
 
 #[test]
-fn a_snapshot_lets_go_of_uploads_kept_too_long_while_the_hub_was_idle() {
+fn a_snapshot_lets_the_bytes_of_uploads_kept_too_long_go_while_the_hub_was_idle() {
     let mock = Mock::new(|_| (204, String::new()));
     let hub = nett_hub(&mock, "nett-store-idle");
+    let upload = awaiting_check(8, "transfer-idle");
+    let bytes = upload.buffer_for_test();
     {
         let mut state = lock(&hub.0.state);
         open(&mut state, "OPS-1", Some(ISSUE));
-        add(&mut state, ISSUE, vec![awaiting_check(8, "transfer-idle")]);
+        add(&mut state, ISSUE, vec![upload]);
         state.snapshot.issue = None;
         // It closed long ago, and nothing used the store since.
         let long_ago = Instant::now().checked_sub(KEPT_FOR + Duration::from_secs(1));
-        state.follow_uploads(long_ago.unwrap());
+        state.follow_uploads(long_ago.expect("the machine has been up a while"));
     }
     let _ = hub.snapshot();
+    assert!(bytes.upgrade().is_none(), "its bytes went");
     assert!(
-        !lock(&hub.0.state)
+        lock(&hub.0.state)
             .uploads
-            .contains_transfer("transfer-idle")
+            .released_transfer("transfer-idle")
     );
-    wait_for("the cancellation", &|| {
-        mock.requests().iter().any(|request| {
-            request.method == "DELETE"
-                && request.path.ends_with(&format!(
-                    "/issues/{ISSUE}/attachments/pending/transfer-idle"
-                ))
-        })
-    });
+    // Its completion may have landed: its reservation is never cancelled.
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        !mock
+            .requests()
+            .iter()
+            .any(|request| request.method == "DELETE")
+    );
     hub.stop();
 }
 

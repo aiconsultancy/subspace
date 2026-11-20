@@ -200,8 +200,7 @@ impl Hub {
             return Ok(existing);
         }
         let held = state.held_bytes();
-        let cancels = state.uploads.room(held, bytes.len())?;
-        self.0.cancel_reservations(cancels);
+        state.uploads.room(held, bytes.len())?;
         let draft = state.drafts.get_mut(target.0).ok_or(UploadError::Removed)?;
         let buffer = Arc::downgrade(&bytes);
         let image = Attachment {
