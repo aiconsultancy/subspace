@@ -129,7 +129,9 @@ check_rust_licences() (
     trap 'rm -rf "$scratch"' EXIT
     # The debug diagnostics identify each crate that fell back to SPDX text.
     # JSON can group a fallback and an identical source-backed file together.
-    cargo about -L debug generate --locked --fail --manifest-path products/subspace/Cargo.toml \
+    # Run cargo-about directly: a `cargo` wrapper that resolves tools per
+    # folder (mise's command wrappers do) can hide the `cargo about` subcommand.
+    cargo-about about -L debug generate --locked --fail --manifest-path products/subspace/Cargo.toml \
         --format json "$@" --output-file "$scratch/licences.json" 2>"$scratch/about.log" || {
         grep -v DEBUG "$scratch/about.log" >&2
         return 1
