@@ -122,8 +122,12 @@ impl Hub {
         hub
     }
 
+    /// What the hub holds now, with the open issue's uploads. Taking it
+    /// is a use of the upload store, so what was kept too long goes.
     pub fn snapshot(&self) -> HubSnapshot {
-        lock(&self.0.state).snapshot.clone()
+        let mut state = lock(&self.0.state);
+        self.0.follow_uploads(&mut state);
+        state.view()
     }
     /// A hub's data and queued requests belong to its original account.
     pub fn account_changed(&self) -> bool {
@@ -265,7 +269,7 @@ impl Hub {
         state.snapshot.status = HubStatus::Stopped;
         state.snapshot.generation.0 = state.snapshot.generation.0.wrapping_add(1);
         state.drafts.clear();
-        state.parked_uploads.clear();
+        state.uploads.clear();
         state.snapshot.issue = None;
         state.snapshot.activity = None;
         state.snapshot.list = None;

@@ -1,16 +1,18 @@
 //! Standalone attachments being added: admitted within the shared byte
-//! budget, sent on a small pool, kept with their issue while it is closed,
-//! and, once their bytes may be stored, completed rather than sent again.
-mod parking;
+//! budget, sent on a small pool, kept in one store under their issue's ID
+//! while it is closed, and, once their bytes may be stored, completed
+//! rather than sent again.
 mod sending;
+mod store;
 
-pub(in crate::hub) use parking::{Cancel, Parking};
+pub(in crate::hub) use store::{Cancel, UploadIssue, UploadStore};
 
 use crate::{
-    hub::{AttachmentState, Hub, Shared, lock},
+    hub::{AttachmentState, Hub, Shared, State, lock},
     uploads::{ImageDeclaration, UploadError},
 };
 use std::sync::Arc;
+use std::time::Instant;
 
 /// A standalone attachment being added. It keeps its request key, the
 /// transfer it reserved and whether its bytes may have been stored: once
@@ -78,22 +80,46 @@ impl AttachmentUpload {
     }
 }
 
+#[cfg(test)]
+impl AttachmentUpload {
+    /// A failed upload of `size` bytes whose bytes may be stored under
+    /// `transfer`, waiting for a check.
+    pub(in crate::hub) fn awaiting_check_for_test(size: usize, transfer: &str) -> Self {
+        let mut upload = admission_tests::upload(8);
+        upload.bytes = vec![b'a'; size].into();
+        upload.id = crate::hub::comments::next_attachment_id();
+        upload.state = AttachmentState::Failed(UploadError::Unclear { retry_after: 0 });
+        upload.transfer = Some(transfer.to_owned());
+        upload.bytes_sent = true;
+        upload
+    }
+
+    /// Its bytes, as the shared budget counts them.
+    pub(in crate::hub) fn buffer_for_test(&self) -> std::sync::Weak<[u8]> {
+        Arc::downgrade(&self.bytes)
+    }
+}
+
 impl std::fmt::Debug for AttachmentUpload {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("AttachmentUpload([redacted])")
     }
 }
 
-/// Whether one more file of `size` bytes may be added beside `uploads`,
-/// with `held` bytes already held by drafts and uploads across the app: at
-/// most eight uploads and 32 MiB on one issue, and 64 MiB in all, as for a
-/// comment draft. A failed upload keeps its bytes for Retry, so it counts
-/// until it is stored or dismissed.
-fn admit(uploads: &[AttachmentUpload], held: usize, size: usize) -> Result<(), UploadError> {
-    let here: usize = uploads.iter().map(|upload| upload.bytes.len()).sum();
-    if uploads.len() >= crate::uploads::MAX_DRAFT_IMAGES
+/// Whether one more file of `size` bytes may wait on an issue beside
+/// `uploads`: at most eight uploads and 32 MiB, as for a comment draft. A
+/// failed upload keeps its bytes for Retry, so it counts until it is stored
+/// or dismissed. The budget across the app is the store's to decide, after
+/// this.
+fn admit_here<'a>(
+    uploads: impl Iterator<Item = &'a AttachmentUpload>,
+    size: usize,
+) -> Result<(), UploadError> {
+    let (count, here) = uploads.fold((0, 0usize), |(count, here), upload| {
+        (count + 1, here.saturating_add(upload.bytes.len()))
+    });
+    if count >= crate::uploads::MAX_DRAFT_IMAGES
         || here.saturating_add(size) > crate::uploads::MAX_DRAFT_BYTES
-        || held.saturating_add(size) > crate::uploads::MAX_TOTAL_BYTES
     {
         return Err(UploadError::Budget);
     }
@@ -141,7 +167,10 @@ impl Hub {
     }
 
     /// Adds a standalone attachment to `target`, refusing it when the open
-    /// issue or the scope is no longer the one the file was chosen for.
+    /// issue or the scope is no longer the one the file was chosen for. The
+    /// file is admitted on its issue first; only then does the shared budget
+    /// decide, letting go of uploads kept out of sight only if that lets it
+    /// in.
     pub fn add_attachment_to(
         &self,
         target: &AttachmentTarget,
@@ -155,27 +184,26 @@ impl Hub {
         if !state.current(target.generation) {
             return Err(UploadError::Removed);
         }
-        // Every buffer still held, by drafts or uploads, counts against
-        // the budget across the app; uploads kept out of sight make room.
-        let (held, cancels) = state.room_for(bytes.len(), std::time::Instant::now());
+        self.0.follow_uploads(&mut state);
+        let issue = target_issue(&state, target).ok_or(UploadError::Removed)?;
+        let open = state.open_for_uploads();
+        admit_here(state.uploads.shown(open.as_ref()), bytes.len())?;
+        let held = state.held_bytes();
+        let cancels = state.uploads.room(held, bytes.len())?;
         self.0.cancel_reservations(cancels);
-        let Some(issue) = state.snapshot.issue.as_mut().filter(|i| {
-            i.detail.is_some() && i.identifier == target.issue && i.opening == target.opening
-        }) else {
-            return Err(UploadError::Removed);
-        };
-        admit(&issue.files.uploads, held, bytes.len())?;
         let bytes: Arc<[u8]> = bytes.into();
-        let buffer = Arc::downgrade(&bytes);
+        state.attachment_buffers.push(Arc::downgrade(&bytes));
         let upload = AttachmentUpload::new(declaration, bytes);
-        issue.files.notice = None;
-        issue.files.uploads.push(upload.clone());
-        let identifier = issue.identifier.clone();
-        let generation = target.generation;
-        state.attachment_buffers.push(buffer);
+        state
+            .uploads
+            .add(upload.clone(), issue.clone(), target.opening);
+        if let Some(open) = state.snapshot.issue.as_mut() {
+            open.files.notice = None;
+        }
         state.changed();
-        let shared = Arc::clone(&self.0);
-        sending::run(move || sending::send(&shared, generation, &identifier, &upload));
+        let attempt = sending::Attempt::new(&target.issue, issue);
+        let (shared, generation) = (Arc::clone(&self.0), target.generation);
+        sending::run(move || sending::send(&shared, generation, &attempt, &upload));
         Ok(())
     }
 
@@ -184,70 +212,111 @@ impl Hub {
     /// wait NETT asked for is honoured: nothing is sent before it ends.
     pub fn retry_attachment_upload(&self, id: &str) {
         let mut state = lock(&self.0.state);
+        self.0.follow_uploads(&mut state);
         let generation = state.snapshot.generation;
-        let Some(issue) = state.snapshot.issue.as_mut() else {
+        let Some(retry) = retry_row(&mut state, id) else {
             return;
         };
-        let Some(upload) = issue.files.uploads.iter_mut().find(|u| u.id == id) else {
-            return;
-        };
-        if !upload.retryable() {
-            return;
-        }
-        if upload.retry_delay().is_some() {
-            issue.files.notice = Some("NETT asked to wait before this upload is checked again.");
-            state.changed();
-            return;
-        }
-        upload.state = if upload.checks() {
-            AttachmentState::Checking
-        } else {
-            AttachmentState::Uploading
-        };
-        let upload = upload.clone();
-        let identifier = issue.identifier.clone();
         state.changed();
+        let Retry::Send(send) = retry else {
+            return;
+        };
+        let (attempt, upload) = *send;
         let shared = Arc::clone(&self.0);
-        sending::run(move || sending::send(&shared, generation, &identifier, &upload));
+        sending::run(move || sending::send(&shared, generation, &attempt, &upload));
     }
 
     /// Stops showing an upload that failed, cancelling its reservation when
     /// it was never completed.
     pub fn dismiss_attachment_upload(&self, id: &str) {
         let mut state = lock(&self.0.state);
-        let Some(issue) = state.snapshot.issue.as_mut() else {
+        self.0.follow_uploads(&mut state);
+        let open = state.open_for_uploads();
+        let failed = state
+            .uploads
+            .shown_row(open.as_ref(), id)
+            .is_some_and(|(upload, _)| !upload.in_flight());
+        if !failed {
             return;
-        };
-        let Some(index) = issue.files.uploads.iter().position(|u| {
-            u.id == id
-                && matches!(
-                    u.state,
-                    AttachmentState::Failed(_) | AttachmentState::NotFound
-                )
-        }) else {
-            return;
-        };
-        let upload = issue.files.uploads.remove(index);
-        let cancel = upload.cancel_on(&issue.identifier);
+        }
+        let cancel = state
+            .uploads
+            .remove(id)
+            .and_then(|(upload, issue)| upload.cancel_on(&issue.id));
         state.changed();
         self.0.cancel_reservations(cancel.into_iter().collect());
     }
 }
 
+/// The issue `target` names, if it is still the open one, in the same
+/// opening, with its detail read.
+fn target_issue(state: &State, target: &AttachmentTarget) -> Option<UploadIssue> {
+    let issue = state
+        .snapshot
+        .issue
+        .as_ref()
+        .filter(|issue| issue.identifier == target.issue && issue.opening == target.opening)?;
+    Some(UploadIssue {
+        id: issue.detail.as_ref()?.fields.id.clone(),
+        identifier: issue.identifier.clone(),
+    })
+}
+
+/// What Retry does with an open issue's upload.
+enum Retry {
+    /// NETT asked to wait: the person is told so.
+    Wait,
+    /// The attempt to send.
+    Send(Box<(sending::Attempt, AttachmentUpload)>),
+}
+
+/// Marks the open issue's upload `id` for another attempt, or the issue's
+/// panel with why it must wait. `None` when there is nothing to retry.
+fn retry_row(state: &mut State, id: &str) -> Option<Retry> {
+    let open = state.open_for_uploads();
+    let reference = state.snapshot.issue.as_ref()?.identifier.clone();
+    let (upload, issue) = state.uploads.shown_row(open.as_ref(), id)?;
+    if !upload.retryable() {
+        return None;
+    }
+    if upload.retry_delay().is_some() {
+        if let Some(open) = state.snapshot.issue.as_mut() {
+            open.files.notice = Some("NETT asked to wait before this upload is checked again.");
+        }
+        return Some(Retry::Wait);
+    }
+    upload.state = if upload.checks() {
+        AttachmentState::Checking
+    } else {
+        AttachmentState::Uploading
+    };
+    Some(Retry::Send(Box::new((
+        sending::Attempt::new(&reference, issue.clone()),
+        upload.clone(),
+    ))))
+}
+
 impl Shared {
     /// Cancels the reservations of uploads let go, best effort, on the
     /// upload pool.
-    pub(in crate::hub) fn cancel_reservations(self: &Arc<Self>, cancels: Vec<Cancel>) {
+    pub(in crate::hub) fn cancel_reservations(&self, cancels: Vec<Cancel>) {
         cancels.into_iter().for_each(|(issue, transfer)| {
-            let shared = Arc::clone(self);
-            sending::run(move || shared.client.cancel_issue_attachment(&issue, &transfer));
+            let client = self.client.clone();
+            sending::run(move || client.cancel_issue_attachment(&issue, &transfer));
         });
+    }
+
+    /// Follows the open issue in the upload store, as every use of it does,
+    /// cancelling the reservations of what it lets go.
+    pub(in crate::hub) fn follow_uploads(&self, state: &mut State) {
+        let cancels = state.follow_uploads(Instant::now());
+        self.cancel_reservations(cancels);
     }
 }
 
 #[cfg(test)]
 mod admission_tests {
-    use super::{AttachmentUpload, admit};
+    use super::{AttachmentUpload, admit_here};
     use crate::{hub::AttachmentState, uploads::UploadError};
 
     pub(super) fn upload(size: usize) -> AttachmentUpload {
@@ -266,17 +335,15 @@ mod admission_tests {
     }
 
     #[test]
-    fn uploads_on_one_issue_and_bytes_held_in_all_are_bounded() {
+    fn uploads_waiting_on_one_issue_are_bounded() {
         let mib = 1024 * 1024;
         // Eight uploads waiting on one issue: a ninth is refused.
         let eight: Vec<_> = (0..8).map(|_| upload(16)).collect();
-        assert_eq!(admit(&eight, 128, 16), Err(UploadError::Budget));
-        assert_eq!(admit(&eight[..7], 112, 16), Ok(()));
+        assert_eq!(admit_here(eight.iter(), 16), Err(UploadError::Budget));
+        assert_eq!(admit_here(eight[..7].iter(), 16), Ok(()));
         // At most 32 MiB on one issue, failed uploads included.
         let held = [upload(9 * mib), upload(9 * mib), upload(9 * mib)];
-        assert_eq!(admit(&held, 27 * mib, 6 * mib), Err(UploadError::Budget));
-        assert_eq!(admit(&held, 27 * mib, 5 * mib), Ok(()));
-        // At most 64 MiB held across drafts and uploads.
-        assert_eq!(admit(&[], 60 * mib, 5 * mib), Err(UploadError::Budget));
+        assert_eq!(admit_here(held.iter(), 6 * mib), Err(UploadError::Budget));
+        assert_eq!(admit_here(held.iter(), 5 * mib), Ok(()));
     }
 }
