@@ -163,6 +163,8 @@ EOF
     test "$(grep -c '^build ' "$fixture/cargo.log")" = "$builds_before"
     FAKE_BUILD_ONLY_OVERRIDE=1 expect_packaging_failure \
         'Cargo did not link the pinned ONNX Runtime download' "$linux" "$version"
+    FAKE_BUILD_ONLY_ARCHIVE=1 expect_packaging_failure \
+        'ONNX Runtime static archive checksum mismatch' "$linux" "$version"
     cmp "$archive" "$backup"
     cmp "$archive.sha256" "$backup.sha256"
     # Recognised diagnostics and the source-backed first crate can coexist.

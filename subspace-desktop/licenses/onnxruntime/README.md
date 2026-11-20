@@ -7,3 +7,8 @@ downloads to ONNX Runtime 1.31.0. The [MIT licence](LICENSE) and
 Microsoft's [1.31.0 release wheel](https://pypi.org/project/onnxruntime/1.31.0/#files)
 for CPython 3.12 on Apple silicon (SHA-256
 `aaab9b3af536b06ca27ab5e35e3d429c97457ce76cf298af103f687e8b9975c0`).
+
+The static archive SHA-256 pins in the source tree's `native-notices.json`
+come from `libonnxruntime.a` extracted from the verified `dist.tsv` downloads.
+The macOS target uses the `coreml` distribution. Both Linux targets use the
+`none` distribution.
