@@ -15,7 +15,7 @@
   in `spaces/issues/assets/issues.svg`. The Framework also embeds Lucide icons
   from `gpui-kit-assets` 0.9.1. The [ISC licence](LICENSE-LUCIDE) covers both.
   The Framework's asset loader is ported from Sushao's
-  [gpui-lucide](https://github.com/suxiaoshao/gupi) and distributed under
+  [gpui-lucide](https://github.com/suxiaoshao/gupi/tree/9fb1bf1a298e66425b691d74df6ec4a5cbb9c19e/crates/gpui-lucide) and distributed under
   the [Apache License 2.0](../../../LICENSE) in the repository root.
   In release archives, see `LICENSE` beside `NOTICE`.
 - The chat host's [OpenAI mark](https://github.com/lobehub/lobe-icons/blob/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/openai.svg)
