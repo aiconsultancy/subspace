@@ -1,10 +1,12 @@
+mod header;
+mod scope;
+
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{TestAppContext, VisualTestContext, px, size};
 use serde_json::json;
 use subspace_api_client::Error;
 use subspace_api_client::model::MemberInitiative;
-use subspace_client_irc::{Command, ConnectionStatus, Event};
-use subspace_framework::dashboard::Dashboard as _;
+use subspace_client_irc::{Command, Event};
 
 use super::{inject, mount, settings};
 use crate::fixtures::{channel, network_id};
@@ -22,88 +24,6 @@ fn settle(cx: &mut VisualTestContext) {
         cx.run_until_parked();
         cx.update(|window, cx| window.render_frame(cx));
     }
-}
-
-#[gpui_kit::test]
-fn local_network_actions_live_in_the_channels_header(cx: &mut TestAppContext) {
-    let mut config = settings();
-    config.networks[0].host = "irc.example.test".into();
-    let (board, hub, cx) = mount(cx, config);
-    hub.update(cx, |hub, cx| {
-        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
-            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(catalogue()), cx)
-        })
-    });
-    settle(cx);
-    cx.update(|window, cx| {
-        assert!(
-            board
-                .update(cx, |board, cx| board.render_toolbar(window, cx))
-                .is_none()
-        );
-        assert!(window.try_find("irc-initiative-button").is_none());
-        let heading = window.find("irc-heading").bounds();
-        let controls = window.find("irc-controls").bounds();
-        let dock = window.find("dock-area").bounds();
-        assert!(heading.bottom() <= controls.top());
-        assert!(controls.bottom() <= dock.top());
-        let row = window.within("irc-controls");
-        for id in [
-            "irc-connection",
-            "irc-join",
-            "irc-members-toggle",
-            "irc-more",
-        ] {
-            assert!(row.find(id).visible(), "missing {id}");
-        }
-        assert_eq!(
-            row.find("irc-more").bounds().right(),
-            controls.right() - px(24.)
-        );
-        window.click("irc-connection", cx);
-    });
-    hub.read_with(cx, |hub, _| {
-        assert!(hub.sent().contains(&Command::Connect(network_id())));
-    });
-}
-
-#[gpui_kit::test]
-fn narrow_header_keeps_picker_and_action_overflow_on_the_same_row(cx: &mut TestAppContext) {
-    let (board, hub, cx) = mount(cx, settings());
-    hub.update(cx, |hub, cx| {
-        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
-            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(catalogue()), cx)
-        })
-    });
-    inject(
-        &hub,
-        vec![Event::Status {
-            network: network_id(),
-            status: ConnectionStatus::Connected {
-                nick: "tester".into(),
-            },
-        }],
-        cx,
-    );
-    cx.simulate_resize(size(px(250.), px(520.)));
-    settle(cx);
-    cx.update(|window, cx| {
-        let row = window.within("irc-controls");
-        let picker = row.find("irc-initiative-button").bounds();
-        let more = row.find("overflow-toolbar-button").bounds();
-        assert!(picker.right() < more.left());
-        assert_eq!(picker.center().y, more.center().y);
-        assert!(row.try_find("irc-join").is_none());
-        assert!(row.try_find("irc-more").is_none());
-        window.click("overflow-toolbar-button", cx);
-    });
-    cx.run_until_parked();
-    cx.update(|window, cx| {
-        window.render_frame(cx);
-        // At this width all four units use More. Join is the second native item.
-        window.click(1usize, cx);
-    });
-    board.read_with(cx, |board, _| assert!(board.join.is_some()));
 }
 
 #[gpui_kit::test]
@@ -254,79 +174,5 @@ fn an_unresolved_fleet_keeps_autojoin_off_until_its_lookup_succeeds(cx: &mut Tes
     hub.read_with(cx, |hub, _| assert_eq!(hub.sent().last(), Some(&joined)));
     catalog.read_with(cx, |catalog, _| {
         assert!(!catalog.fleet_retry_pending_for_test())
-    });
-}
-
-#[gpui_kit::test]
-fn another_organisation_takes_the_initiative_autojoin_with_it(cx: &mut TestAppContext) {
-    const ID: &str = "99469809-1f67-4f56-9d66-47a052e0e92b";
-    let (_board, hub, cx) = mount(cx, settings());
-    let catalog = hub.read_with(cx, |hub, _| hub.initiatives.catalog.clone());
-    catalog.update(cx, |catalog, cx| {
-        catalog.change_scope_for_test(Some(1), cx);
-        catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(catalogue()), cx);
-        catalog.pick(ID, cx);
-    });
-    settle(cx);
-    let joined = Command::SetAutojoin {
-        network: network_id(),
-        channels: Some(vec!["#data".into(), "#forecast".into()]),
-    };
-    hub.read_with(cx, |hub, _| assert!(hub.sent().contains(&joined)));
-    // The same person in another organisation: the selection and its
-    // autojoin go, before anything is read for the new organisation.
-    catalog.update(cx, |catalog, cx| catalog.change_scope_for_test(Some(2), cx));
-    settle(cx);
-    hub.read_with(cx, |hub, _| {
-        assert_eq!(
-            hub.sent().last(),
-            Some(&Command::SetAutojoin {
-                network: network_id(),
-                channels: None,
-            })
-        );
-        assert!(!hub.initiatives.selected_for_runtime());
-    });
-    catalog.read_with(cx, |catalog, _| {
-        assert!(catalog.selected().is_none() && !catalog.has_memberships());
-    });
-}
-
-#[gpui_kit::test]
-fn a_read_in_flight_for_the_old_organisation_never_lands_in_the_new_one(cx: &mut TestAppContext) {
-    const ID: &str = "99469809-1f67-4f56-9d66-47a052e0e92b";
-    let (_board, hub, cx) = mount(cx, settings());
-    let catalog = hub.read_with(cx, |hub, _| hub.initiatives.catalog.clone());
-    catalog.update(cx, |catalog, cx| {
-        catalog.change_scope_for_test(Some(1), cx);
-        catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(catalogue()), cx);
-        catalog.pick(ID, cx);
-    });
-    settle(cx);
-    // Organisation A's read leaves; it is still in flight when the switch
-    // to organisation B retires A's catalogue, and its answer is dropped.
-    catalog.update(cx, |catalog, cx| {
-        catalog.refresh_for_test(
-            Some(1),
-            || (Some("fixture-user".into()), Ok(catalogue())),
-            cx,
-        );
-        catalog.change_scope_for_test(Some(2), cx);
-    });
-    settle(cx);
-    hub.read_with(cx, |hub, _| {
-        assert_eq!(
-            hub.sent().last(),
-            Some(&Command::SetAutojoin {
-                network: network_id(),
-                channels: None,
-            })
-        );
-    });
-    catalog.read_with(cx, |catalog, _| {
-        assert!(!catalog.has_memberships() && catalog.selected().is_none());
-    });
-    hub.read_with(cx, |hub, _| {
-        assert!(!hub.initiatives.selected_for_runtime());
     });
 }

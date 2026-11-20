@@ -3,7 +3,7 @@
 //! serve initiative channels, is read afresh with its own capability list.
 //! Its own process, because the backend and the account are chosen once.
 
-use gpui_kit::TestAppContext;
+use gpui_kit::{Entity, TestAppContext};
 use serde_json::{Value, json};
 use subspace_api_client::initiatives::Catalog;
 use subspace_api_client::{Client, nett};
@@ -53,8 +53,13 @@ fn the_catalogue_follows_an_organisation_switch_and_what_b_serves(cx: &mut TestA
     );
     mock.hook("capabilities", &json!({"org": second, "features": []}));
 
+    let catalog = select_platform_in_works(cx, &works);
+    assert_second_organisation_catalogue(cx, &catalog, &second);
+}
+
+fn select_platform_in_works(cx: &mut TestAppContext, works: &str) -> Entity<Catalog> {
     // Organisation A serves initiative channels: its initiatives carry them.
-    assert!(nett::select_organisation(&works));
+    assert!(nett::select_organisation(works));
     let catalog = cx.update(Catalog::shared);
     catalog.update(cx, |catalog, cx| catalog.refresh(cx));
     cx.run_until_parked();
@@ -78,9 +83,17 @@ fn the_catalogue_follows_an_organisation_switch_and_what_b_serves(cx: &mut TestA
         catalog.pick(&id, cx);
     });
 
+    catalog
+}
+
+fn assert_second_organisation_catalogue(
+    cx: &mut TestAppContext,
+    catalog: &Entity<Catalog>,
+    second: &str,
+) {
     // Organisation B does not: nothing of A's catalogue or selection
     // survives, and B is read with its own capability list.
-    assert!(nett::select_organisation(&second));
+    assert!(nett::select_organisation(second));
     catalog.update(cx, |catalog, cx| catalog.refresh(cx));
     cx.run_until_parked();
     assert!(!subspace_api_client::capabilities().initiative_channels);

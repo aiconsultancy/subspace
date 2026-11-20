@@ -133,20 +133,31 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
     let mock = Mock::start(&["chatUploads", "attachments", "issueMoves"], &[]);
     let account = Arc::new(AtomicU64::new(1));
     let token = Arc::new(Mutex::new("nett-fixture-access".to_owned()));
-    subspace_api_client::configure_nett_origin(&format!("{}/api", mock.origin)).unwrap();
-    {
-        let (account, token) = (account.clone(), token.clone());
-        subspace_api_client::use_native_account(
-            move || account.load(Ordering::SeqCst),
-            |_| None,
-            move || Ok(Secret::new(token.lock().unwrap().clone())),
-        );
-    }
+    install_account(&mock, account.clone(), token.clone());
 
+    let works = assert_context_follows_the_account(&mock, &account);
+    assert_planning_projects_are_account_scoped(&mock, &account, &token, &works);
+    assert_prepared_uploads_are_retired(&mock, &account, &token, &works);
+    assert_late_reads_and_grants_are_discarded(&mock, &account, &works);
+    let second = assert_organisation_switch_discards_old_replies(&mock, &works);
+    assert_switching_organisations_clears_wait(&mock, &works, &second);
+    assert_capabilities_are_read_for_each_account(&mock, &account, &works);
+}
+
+fn install_account(mock: &Mock, account: Arc<AtomicU64>, token: Arc<Mutex<String>>) {
+    subspace_api_client::configure_nett_origin(&format!("{}/api", mock.origin)).unwrap();
+    subspace_api_client::use_native_account(
+        move || account.load(Ordering::SeqCst),
+        |_| None,
+        move || Ok(Secret::new(token.lock().unwrap().clone())),
+    );
+}
+
+fn assert_context_follows_the_account(mock: &Mock, account: &AtomicU64) -> String {
     // A context body that arrives after the account changed belongs to no
     // one: it is dropped, and the menu shows nothing from it.
     let response = late_reply(
-        &mock,
+        mock,
         "GET",
         "/api/v1/auth/context",
         || Client::new().unwrap().me(),
@@ -176,7 +187,15 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
     account.store(3, Ordering::SeqCst);
     assert!(nett::snapshot().organisations.is_empty());
     assert!(!nett::select_organisation(&works));
+    works
+}
 
+fn assert_planning_projects_are_account_scoped(
+    mock: &Mock,
+    account: &AtomicU64,
+    token: &Mutex<String>,
+    works: &str,
+) {
     // Two people in one organisation who see different planning projects
     // never share the initiative's project list.
     mock.hook(
@@ -188,7 +207,7 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         &json!({"org": works, "project": "Launch", "user": "grace"}),
     );
     Client::new().unwrap().me().unwrap();
-    assert!(nett::select_organisation(&works));
+    assert!(nett::select_organisation(works));
     let ada = Client::new().unwrap();
     let platform = ada
         .member_initiatives()
@@ -202,19 +221,26 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
     account.store(4, Ordering::SeqCst);
     let me = Client::new().unwrap().me().unwrap();
     assert_eq!(me.display_name, "Grace Fixture");
-    nett::select_organisation(&works);
+    nett::select_organisation(works);
     let grace = Client::new().unwrap();
     assert!(
         identifiers(&grace, &platform).is_empty(),
         "Grace cannot see Launch, so Ada's list is not hers"
     );
+}
 
+fn assert_prepared_uploads_are_retired(
+    mock: &Mock,
+    account: &AtomicU64,
+    token: &Mutex<String>,
+    works: &str,
+) {
     // An upload prepared for one account is not sent for the next: the
     // prepare reply arrives after the account changed.
     *token.lock().unwrap() = "nett-fixture-access".to_owned();
     account.store(5, Ordering::SeqCst);
     Client::new().unwrap().me().unwrap();
-    nett::select_organisation(&works);
+    nett::select_organisation(works);
     let client = Client::new().unwrap();
     let draft = UploadDraft::new(
         "notes.txt".into(),
@@ -223,7 +249,7 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
     )
     .unwrap();
     let response = late_reply(
-        &mock,
+        mock,
         "POST",
         &format!("/api/v1/orgs/{works}/chat/uploads/prepare"),
         move || client.create_chat_upload(&draft),
@@ -238,10 +264,10 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
 
     // Comment media prepared for one account is not sent for the next.
     Client::new().unwrap().me().unwrap();
-    nett::select_organisation(&works);
+    nett::select_organisation(works);
     let client = Client::new().unwrap();
     let response = late_reply(
-        &mock,
+        mock,
         "POST",
         &format!("/api/v1/orgs/{works}/issues/media/prepare"),
         move || comment_upload(&client, 1),
@@ -253,13 +279,15 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         0,
         "the comment upload URL was never used"
     );
+}
 
+fn assert_late_reads_and_grants_are_discarded(mock: &Mock, account: &AtomicU64, works: &str) {
     // A successful issue read is also discarded if the account changes.
     assert!(Client::new().unwrap().me().is_ok());
-    assert!(nett::select_organisation(&works));
+    assert!(nett::select_organisation(works));
     let client = Client::new().unwrap();
     let response = late_reply(
-        &mock,
+        mock,
         "GET",
         &format!("/api/v1/orgs/{works}/issues/OPS-1"),
         move || client.issue("OPS-1"),
@@ -270,7 +298,7 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
     // A file grant that arrives after the account changed is neither kept
     // nor redeemed.
     Client::new().unwrap().me().unwrap();
-    nett::select_organisation(&works);
+    nett::select_organisation(works);
     let client = Client::new().unwrap();
     let log = client
         .attachments("OPS-1", &subspace_api_client::PageRequest::default())
@@ -281,7 +309,7 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         .unwrap();
     let files_before = mock.requests("GET", "/files/*");
     let response = late_reply(
-        &mock,
+        mock,
         "POST",
         &format!("/api/v1/orgs/{works}/files/grants"),
         move || client.fetch_text(&log, 1024),
@@ -293,7 +321,9 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         files_before,
         "the grant was never redeemed"
     );
+}
 
+fn assert_organisation_switch_discards_old_replies(mock: &Mock, works: &str) -> String {
     // Replies whose bodies arrive after the organisation changed belong to
     // no one: a managed media completion, its checking state, a to-do save
     // and a move preview.
@@ -304,11 +334,14 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         .find(|org| org.name == "Second Fixture Org")
         .unwrap()
         .id;
-    discard_old_organisation_replies(&mock, &works, &second);
+    discard_old_organisation_replies(mock, works, &second);
+    second
+}
 
+fn assert_switching_organisations_clears_wait(mock: &Mock, works: &str, second: &str) {
     // A day-long wait NETT asks for ends when the person chooses an
     // organisation.
-    assert!(nett::select_organisation(&works));
+    assert!(nett::select_organisation(works));
     let teams = format!("/api/v1/orgs/{works}/issue-teams");
     mock.hook(
         "config",
@@ -319,21 +352,24 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
     let page = subspace_api_client::PageRequest::default();
     assert!(client.projects(&page).is_err());
     assert!(client.projects(&page).is_err(), "paused, not sent");
-    assert!(nett::select_organisation(&second));
+    assert!(nett::select_organisation(second));
     assert!(
         Client::new().unwrap().projects(&page).is_ok(),
         "sent at once"
     );
+}
 
+fn assert_capabilities_are_read_for_each_account(mock: &Mock, account: &AtomicU64, works: &str) {
     // Another account reads its own capability list, even in the same
     // organisation.
-    assert!(nett::select_organisation(&works));
+    let page = subspace_api_client::PageRequest::default();
+    assert!(nett::select_organisation(works));
     Client::new().unwrap().attachments("OPS-1", &page).unwrap();
     let capabilities = format!("/api/v1/orgs/{works}/desktop/capabilities");
     let read = mock.requests("GET", &capabilities);
     account.store(10, Ordering::SeqCst);
     Client::new().unwrap().me().unwrap();
-    assert!(nett::select_organisation(&works));
+    assert!(nett::select_organisation(works));
     Client::new().unwrap().attachments("OPS-1", &page).unwrap();
     assert_eq!(
         mock.requests("GET", &capabilities),
