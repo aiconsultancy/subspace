@@ -26,6 +26,22 @@ write_channel_metadata() {
         --arg identifier "com.aiconsultancy.subspace${label_suffix:+.$channel}" --arg icon "assets/$icon_stem" --arg svg "assets/$svg_stem.svg" \
         '{binary_name:"subspace",display_name:$name,asset_stem:$stem,channel:$channel,bundle_id:$identifier,version:$version,subspace_version:$version,icon_paths:[($icon + ".icns"),($icon + ".ico"),$svg]}' >"$directory/subspace.json"
 }
+
+check_packaged_licences() {
+    local destination="$1" file
+    for file in LICENSE NOTICE; do
+        cmp "$root/../$file" "$destination/$file"
+    done
+    for file in charts/LICENSE-FLINT-CHART charts/LICENSE-QUICKJS-NG charts/LICENSE-RQUICKJS \
+        icons/LICENSE-FEATHER icons/LICENSE-LOBE-ICONS icons/LICENSE-LUCIDE \
+        markdown/LICENSE themes/gpui-kit/LICENSE-APACHE themes/gpui-kit/PROVENANCE.md; do
+        cmp "$root/licenses/$file" "$destination/licenses/$file"
+    done
+    for file in README.md OCTICONS-LICENSE.txt; do
+        cmp "$root/spaces/actions/assets/$file" "$destination/licenses/icons/octicons/$file"
+    done
+}
+
 write_channel_metadata "$input" stable
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=product-fixture.sh
@@ -59,11 +75,23 @@ for channel in stable nightly alpha beta integration; do
     test -f "$unpacked/$svg_relative" || { echo "Linux archive is missing $svg_relative" >&2; exit 1; }
     cmp "$root/products/subspace/$svg_relative" "$unpacked/$svg_relative"
     test "$(find "$unpacked/assets" -type f | wc -l | tr -d ' ')" = 1
+    if [[ "$channel" = stable ]]; then
+        check_packaged_licences "$unpacked"
+        mkdir "$fixture/unpacked-darwin" "$fixture/unpacked-windows"
+        tar -xzf "$fixture/dist/$binary-$version-aarch64-apple-darwin.tar.gz" -C "$fixture/unpacked-darwin"
+        unzip -q "$fixture/dist/$binary-$version-x86_64-pc-windows-msvc.zip" -d "$fixture/unpacked-windows"
+        check_packaged_licences "$fixture/unpacked-darwin"
+        check_packaged_licences "$fixture/unpacked-windows"
+    fi
     if [[ "$(/usr/bin/uname -s)" = Darwin ]]; then
         bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
         app="$fixture/dist/$name.app"
         test -x "$app/Contents/MacOS/$binary"
         test -f "$fixture/dist/${stem}_${version}_darwin_arm64.zip"
+        if [[ "$channel" = stable ]]; then
+            ditto -x -k "$fixture/dist/${stem}_${version}_darwin_arm64.zip" "$fixture/unpacked-app"
+            check_packaged_licences "$fixture/unpacked-app/$name.app/Contents/Resources"
+        fi
         cmp "$metadata" "$app/Contents/Resources/product.json"
         icon_relative="$(jq -r '.icon_paths[] | select(endswith(".icns"))' "$metadata")"
         icon_name="$(basename "$icon_relative" .icns)"

@@ -57,11 +57,11 @@ mkdir -p "$root/dist"
 stage="$(mktemp -d "$root/dist/.$product-release.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 cp "$build_dir/$binary_name$exe" "$root/README.md" "$stage/"
-cp -R "$root/licenses" "$stage/licenses"
+stage_product_licences "$stage"
 chmod 755 "$stage/$binary_name$exe"
 printf '%s\n' "$product_metadata" >"$stage/product.json"
 name="$binary_name-$version-$target"
-files=("$binary_name$exe" README.md product.json licenses)
+files=("$binary_name$exe" README.md product.json LICENSE NOTICE licenses)
 case "$target" in
     *-linux-*)
         svg_relative="$(jq -er '.icon_paths[] | select(endswith(".svg"))' <<<"$product_metadata")"
