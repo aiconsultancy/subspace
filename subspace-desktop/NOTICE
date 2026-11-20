@@ -11,7 +11,7 @@ relative to this NOTICE, including in Subspace.app/Contents/Resources/.
 - licenses/fonts/ covers the embedded Inter and JetBrains Mono fonts.
 - licenses/icons/ covers embedded icons and includes the Octicons MIT licence.
 - licenses/markdown/ covers the patched Markdown parser.
-- licenses/onnxruntime/ contains the ONNX Runtime licence and third-party notices.
+- licenses/onnxruntime/ contains the ONNX Runtime licence and third-party notices in macOS and Linux archives.
 - licenses/rust-crates/ contains pinned source licences reproduced in THIRD_PARTY_LICENSES.
 - Release archives include the toolchain's Rust standard library licences and copyright notices under licenses/rust-std/.
 - licenses/terminal/ covers Ghostty, portable-pty and the terminal bindings.

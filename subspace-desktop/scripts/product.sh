@@ -96,28 +96,47 @@ load_release_toolchain() {
     done
 }
 
+product_licence_files() {
+    printf '%s\n' ../LICENSE NOTICE \
+        licenses/canvas/mermaid-rs-renderer-MIT.txt \
+        licenses/charts/{LICENSE-FLINT-CHART,LICENSE-QUICKJS-NG,LICENSE-RQUICKJS,README.md} \
+        licenses/icons/{LICENSE-FEATHER,LICENSE-LOBE-ICONS,LICENSE-LUCIDE,README.md} \
+        licenses/markdown/{LICENSE,README.md} licenses/rust-std/README.md \
+        licenses/terminal/{LICENSE-APACHE,LICENSE-GHOSTTY,LICENSE-MIT,LICENSE-PORTABLE-PTY,README.md} \
+        licenses/themes/{LICENSE-MACOS-CLASSIC,README.md,gpui-kit/LICENSE-APACHE,gpui-kit/PROVENANCE.md} \
+        spaces/actions/assets/{README.md,OCTICONS-LICENSE.txt}
+    jq -r '[.[].path | select(startswith("licenses/rust-crates/"))] | unique[]' \
+        "$root/about-notices.json" || return
+    jq -r --arg target "$1" '
+        to_entries[] | select(.value.targets | index($target)) |
+        .key as $component | (.value.notices | keys[]) , "README.md" |
+        "licenses/" + $component + "/" + .
+    ' "$root/native-notices.json"
+}
+
 require_product_licences() {
-    local notice
-    for notice in "$root/../LICENSE" "$root/NOTICE"; do
-        if [[ ! -f "$notice" || ! -r "$notice" ]]; then
-            echo "missing or unreadable product licence input: $notice (expected the Subspace monorepo layout)" >&2
+    local files file
+    files="$(product_licence_files "$1")" || return
+    while IFS= read -r file; do
+        if [[ ! -f "$root/$file" || ! -r "$root/$file" ]]; then
+            echo "missing or unreadable product licence input: $root/$file" >&2
             return 1
         fi
-    done
+    done <<<"$files"
 }
 
 stage_product_licences() {
-    local destination="$1" target="$2" notice
-    local octicons="$destination/licenses/icons/octicons"
-    require_product_licences || return
-    mkdir -p "$octicons" || return
-    for notice in "$root/licenses/"*; do
-        if [[ "${notice##*/}" = webview2 && "$target" != *-windows-* ]]; then continue; fi
-        cp -R "$notice" "$destination/licenses/" || return
-    done
-    cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$octicons/" || return
-    cp "$root/../LICENSE" "$destination/LICENSE" || return
-    cp "$root/NOTICE" "$destination/NOTICE"
+    local destination="$1" files file path
+    files="$(product_licence_files "$2")" || return
+    while IFS= read -r file; do
+        case "$file" in
+            ../LICENSE) path=LICENSE ;;
+            spaces/actions/assets/*) path="licenses/icons/octicons/${file##*/}" ;;
+            *) path="$file" ;;
+        esac
+        mkdir -p "$(dirname "$destination/$path")" || return
+        cp "$root/$file" "$destination/$path" || return
+    done <<<"$files"
 }
 
 release_cargo_args() {
@@ -138,6 +157,10 @@ release_target_supported() {
 scan_rust_licences() {
     local scratch="$1"
     shift
+    if ! command -v cargo-about >/dev/null 2>&1; then
+        echo 'cargo-about is required to check and generate Rust release licences' >&2
+        return 1
+    fi
     # The debug diagnostics identify each crate that fell back to SPDX text.
     # JSON can group a fallback and an identical source-backed file together.
     # Run cargo-about directly: a `cargo` wrapper that resolves tools per

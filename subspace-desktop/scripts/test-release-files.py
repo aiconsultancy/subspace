@@ -2,13 +2,16 @@
 """Exercise release publication failures and stamp refresh in a small Cargo project."""
 
 from contextlib import redirect_stderr
+import hashlib
 import importlib.util
 import io
+import lzma
 import os
 from pathlib import Path
 import signal
 import subprocess
 import sys
+import tarfile
 from tempfile import TemporaryDirectory
 import time
 from types import SimpleNamespace
@@ -80,6 +83,41 @@ class ReleaseFiles(unittest.TestCase):
         self.assertNotEqual(local.returncode, 0)
         self.assertIn("TOML parse error", local.stderr)
         self.assertIn(credential, local.stderr)
+
+    def test_onnx_uses_verified_archive_instead_of_cached_extraction(self):
+        native = self.root / "ort-cache"
+        cache = self.root / "build-cache"
+        native.mkdir()
+        cache.mkdir()
+        original = b"pinned ONNX Runtime library"
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w") as archive:
+            member = tarfile.TarInfo("libonnxruntime.a")
+            member.size = len(original)
+            archive.addfile(member, io.BytesIO(original))
+        filters = [{"id": lzma.FILTER_LZMA2, "dict_size": 1 << 26}]
+        compressed = lzma.compress(buffer.getvalue(), format=lzma.FORMAT_RAW, filters=filters)
+        digest = hashlib.sha256(compressed).hexdigest()
+        extracted = native / digest / "libonnxruntime.a"
+        extracted.parent.mkdir()
+        extracted.write_bytes(b"tampered extracted library")
+        upstream = native / f"{digest}.tar.lzma2"
+        upstream.write_bytes(b"tampered cached archive")
+        with patch.object(release_files, "ort_download_cache", return_value=native), \
+                patch.object(release_files, "urlopen") as download:
+            with TemporaryDirectory(dir=cache) as temporary:
+                private = Path(temporary)
+                with self.assertRaisesRegex(ValueError, "ONNX Runtime archive checksum mismatch"):
+                    release_files.prepare_onnx_archive(cache, private, "fixture", "", digest)
+                self.assertFalse((private / "lib").exists())
+            upstream.write_bytes(compressed)
+            with TemporaryDirectory(dir=cache) as temporary:
+                library = release_files.prepare_onnx_archive(cache, Path(temporary), "fixture", "", digest)
+                self.assertEqual(library.parent, Path(temporary))
+                self.assertEqual((library / "libonnxruntime.a").read_bytes(), original)
+            download.assert_not_called()
+        self.assertEqual(extracted.read_bytes(), b"tampered extracted library")
+        self.assertEqual((cache / upstream.name).read_bytes(), compressed)
 
     @unittest.skipIf(os.name == "nt", "uses Unix signals and advisory locks")
     def test_cargo_group_stops_before_unlock(self):

@@ -29,7 +29,35 @@ setup_product_fixture() {
     ' >"$fixture/about-notices.json"
     mkdir -p "$fixture/native/ort/build/download" "$fixture/native/webview2/x64" \
         "$fixture/git-fork" "$fixture_repo/resolved-framework/host/update"
-    printf 'Fixture ONNX Runtime distribution table\n' >"$fixture/native/ort/build/download/dist.tsv"
+    python3 - "$fixture/native/ort" <<'PY'
+import hashlib
+import io
+import lzma
+from pathlib import Path
+import sys
+import tarfile
+
+root = Path(sys.argv[1])
+library = b"Fixture ONNX Runtime library\n"
+buffer = io.BytesIO()
+with tarfile.open(fileobj=buffer, mode="w") as archive:
+    member = tarfile.TarInfo("libonnxruntime.a")
+    member.size = len(library)
+    archive.addfile(member, io.BytesIO(library))
+filters = [{"id": lzma.FILTER_LZMA2, "dict_size": 1 << 26}]
+compressed = lzma.compress(buffer.getvalue(), format=lzma.FORMAT_RAW, filters=filters)
+archive = root / "distribution.tar.lzma2"
+archive.write_bytes(compressed)
+digest = hashlib.sha256(compressed).hexdigest()
+with (root / "build/download/dist.tsv").open("w") as table:
+    table.write("target\tfeature_set\turl\tsha256_hash\n")
+    for target, variant in (
+        ("aarch64-apple-darwin", "coreml"),
+        ("aarch64-unknown-linux-gnu", "none"),
+        ("x86_64-unknown-linux-gnu", "none"),
+    ):
+        table.write(f"{target}\t{variant}\t{archive.as_uri()}\t{digest}\n")
+PY
     printf 'Fixture WebView2 loader\n' >"$fixture/native/webview2/x64/WebView2LoaderStatic.lib"
     printf 'Fixture Git fork licence\n' >"$fixture/git-fork/LICENSE"
     printf 'Fixture Framework project licence\n' >"$fixture_repo/resolved-framework/LICENSE"
@@ -90,8 +118,13 @@ case "$1" in
         ;;
     run) cat "$FIXTURE/metadata/subspace.json" ;;
     metadata)
-        target_directory="${FAKE_TARGET_DIRECTORY:-$FIXTURE/target}"
-        jq -c --arg target "$target_directory" '.target_directory = $target' "$FIXTURE/metadata/workspace.json"
+        if [[ " $* " == *" --filter-platform "* ]]; then
+            jq -nc --arg source "$registry" --arg manifest "$FIXTURE/native/ort/Cargo.toml" '
+                {packages: [{name: "ort-sys", version: "2.0.0-rc.15", source: $source, manifest_path: $manifest}]}'
+        else
+            target_directory="${FAKE_TARGET_DIRECTORY:-$FIXTURE/target}"
+            jq -c --arg target "$target_directory" '.target_directory = $target' "$FIXTURE/metadata/workspace.json"
+        fi
         ;;
     tree)
         test -z "${SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET:-}"
@@ -223,13 +256,16 @@ BINARY
         fi
         if [[ "$json" = 1 ]]; then
             if [[ "$component" = onnxruntime ]]; then
-                # Model a wrapper injecting an override only on the actual build.
-                cfgs='["pyke"]'; libs='["static=onnxruntime"]'
+                [[ "$ORT_LIB_PATH" = "$CARGO_TARGET_DIR"/onnxruntime-*/lib ]]
+                grep -Fxq 'Fixture ONNX Runtime library' "$ORT_LIB_PATH/libonnxruntime.a"
+                test "$MBX_BUILD_SCRIPT_EXECUTION" = 0
+                # Model a wrapper switching the library only on the actual build.
+                link_path="$ORT_LIB_PATH"
                 if [[ "${FAKE_BUILD_ONLY_OVERRIDE:-0}" = 1 ]]; then
-                    cfgs='[]'; libs='["onnxruntime"]'
+                    link_path=/fixture/other-runtime
                 fi
-                jq -nc --arg id "$registry#ort-sys@2.0.0-rc.15" --argjson cfgs "$cfgs" --argjson libs "$libs" \
-                    '{reason:"build-script-executed",package_id:$id,cfgs:$cfgs,linked_libs:$libs}'
+                jq -nc --arg id "$registry#ort-sys@2.0.0-rc.15" --arg path "native=$link_path" \
+                    '{reason:"build-script-executed",package_id:$id,linked_paths:[$path],linked_libs:["static=onnxruntime"]}'
             fi
             jq -nc --arg package "$package" --arg executable "$directory/$package$exe" \
                 '{reason:"compiler-artifact",target:{name:$package,kind:["bin"]},executable:$executable,fresh:true}'
