@@ -33,15 +33,14 @@ source "$root/scripts/product.sh"
 load_product
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_MINIMUM_VERSION"
 rustup target add "$target" >&2
-build_args=(build --release --locked --target "$target" -p "$binary_name")
-if [[ -n "${SUBSPACE_BUILD_FEATURES:-}" ]]; then
-	build_args+=(--features "$SUBSPACE_BUILD_FEATURES")
-fi
-cargo "${build_args[@]}" >&2
+release_cargo_args "$target"
+cargo build --release --locked -p "$binary_name" "${release_args[@]}" >&2
+unset SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET
 build_dir="$(cd "$target_dir/$target/release" && pwd)"
 
 app="$out_dir/$display_name.app"
 rm -rf "$app"
 create_bundle "$build_dir/$binary_name" "$app" "$bundle_id" "$display_name"
+stage_rust_licences "$app/Contents/Resources" "$target"
 bash "$root/scripts/bundle-mise.sh" "$app" >&2
 echo "$app"

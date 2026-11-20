@@ -3,6 +3,7 @@ rust = { version = "1.99.0", mr_boxington = true, components = "rustfmt,clippy" 
 mr-boxington = "1.19.0"
 "cargo:rustqual" = "1.8.3"
 "github:Boshen/cargo-shear" = "1.14.0"
+"github:EmbarkStudios/cargo-about" = "0.9.3"
 "github:j178/prek" = "0.3.13"
 "conda:imagemagick" = "7.1.2_31"
 
@@ -112,7 +113,11 @@ exit "$status"
 
 [tasks.check]
 description = "Architecture, format check, lint, Rust tests and script fixtures"
-depends = ["architecture", "board-docs", "docs-index", "fmt-check", "lint", "test", "script-test", "web-bridge-test", "weather-space-test", "component-gallery-space-test", "fleet-console-space-test"]
+depends = ["architecture", "board-docs", "docs-index", "fmt-check", "licence-check", "lint", "test", "script-test", "web-bridge-test", "weather-space-test", "component-gallery-space-test", "fleet-console-space-test"]
+
+[tasks.licence-check]
+description = "Check the Rust licence policy for desktop release targets and verify copied notices"
+run = "bash scripts/check-licences.sh"
 
 [tasks.board-docs]
 description = "Check every composed board guide, local links and embedded image sources"

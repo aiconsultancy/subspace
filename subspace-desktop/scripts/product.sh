@@ -4,6 +4,13 @@
 # Oldest macOS release that Subspace supports. Builds export it as
 # MACOSX_DEPLOYMENT_TARGET and the app bundle declares it.
 MACOS_MINIMUM_VERSION=15.0
+# The native archive targets also form the licence policy check's graph.
+RELEASE_TARGETS=(
+    aarch64-apple-darwin
+    x86_64-unknown-linux-gnu
+    aarch64-unknown-linux-gnu
+    x86_64-pc-windows-msvc
+)
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=prerelease-common.sh
 source "$(dirname "${BASH_SOURCE[0]}")/prerelease-common.sh"
@@ -65,8 +72,41 @@ stage_product_licences() {
     mkdir -p "$octicons"
     cp -R "$root/licenses/." "$destination/licenses/"
     cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$octicons/"
-    cp "$root/../"{LICENSE,NOTICE} "$destination/"
+    cp "$root/../LICENSE" "$root/NOTICE" "$destination/"
 }
+
+release_cargo_args() {
+    release_args=(--target "$1")
+    if [[ -n "${SUBSPACE_BUILD_FEATURES:-}" ]]; then
+        release_args+=(--features "$SUBSPACE_BUILD_FEATURES")
+    fi
+}
+
+release_target_supported() {
+    local supported_target
+    for supported_target in "${RELEASE_TARGETS[@]}"; do
+        if [[ "$supported_target" = "$1" ]]; then return 0; fi
+    done
+    return 1
+}
+
+check_rust_licences() {
+    cargo about generate --locked --fail --manifest-path products/subspace/Cargo.toml \
+        --format json "$@"
+}
+
+stage_rust_licences() (
+    local destination="$1" licence_target="$2" scratch
+    local release_args
+    release_cargo_args "$licence_target"
+    scratch="$(mktemp -d)" || return
+    trap 'rm -rf "$scratch"' EXIT
+    cargo tree --locked --color never -p "$product" --edges normal,no-proc-macro \
+        --prefix none --format '{p}' "${release_args[@]}" >"$scratch/linked" || return
+    check_rust_licences "${release_args[@]}" --config about.toml --output-file "$scratch/licences.json" || return
+    jq -er --arg target "$licence_target" --rawfile tree "$scratch/linked" \
+        -f about.jq "$scratch/licences.json" >"$destination/THIRD_PARTY_LICENSES"
+)
 
 create_bundle() {
     local root="${root:?}"

@@ -3,3 +3,6 @@
 # themes in framework/host/app/themes, whose content must not depend on the machine
 # that built the binary.
 * text=auto eol=lf
+
+# Retain the blank line's space from the upstream QuickJS NG licence.
+licenses/charts/LICENSE-QUICKJS-NG whitespace=-blank-at-eol
