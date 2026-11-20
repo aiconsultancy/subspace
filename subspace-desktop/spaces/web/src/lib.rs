@@ -29,7 +29,7 @@ use subspace_framework::dashboard::{
 };
 
 use page::{Page, Profile, Start};
-pub use source::{description, settings_fields};
+pub use source::{configuration, description, settings_fields};
 use state::PageState;
 use toolbar::Navigation;
 
@@ -65,7 +65,7 @@ impl WebBoard {
         Self::watch(cx);
         Self {
             start: source::start(&config),
-            bridge: bridge::Bridge::new(&config),
+            bridge: bridge::Bridge::new(&config, source::recorded(&config.id, cx).as_ref()),
             config,
             focus: cx.focus_handle(),
             page: None,

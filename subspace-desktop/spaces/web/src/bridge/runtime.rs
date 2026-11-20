@@ -46,16 +46,16 @@ pub(crate) fn receive(
     bridge.enter_document(epoch);
     let result = bridge
         .call(&request.operation, config, on, Instant::now())
-        .and_then(|(value, effect)| finish(config, value, effect, shown, cx));
+        .and_then(|allowed| finish(bridge, config, allowed, shown, cx));
     let reply = protocol::reply(&request, result, &bridge.origin);
     page.respond(epoch, &reply, cx)
 }
 
 /// Completes an allowed call with what only the app can do.
 fn finish(
+    bridge: &Bridge,
     config: &WebBoardConfig,
-    value: Value,
-    effect: Effect,
+    (value, effect): (Value, Effect),
     shown: bool,
     cx: &mut Context<WebBoard>,
 ) -> Result<Value, &'static str> {
@@ -72,7 +72,9 @@ fn finish(
         // Only a page the user can see saves secrets: never one behind
         // Settings, whose own Save would then find the file changed.
         Effect::SaveSecret(_) if !shown => Err(secrets::NOT_SHOWN),
-        Effect::SaveSecret(write) => secrets::save(&config.id, &write, cx).map(|()| Value::Null),
+        Effect::SaveSecret(write) => {
+            secrets::save(bridge, &config.id, &write, cx).map(|()| Value::Null)
+        }
     }
 }
 

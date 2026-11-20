@@ -1,6 +1,8 @@
 //! The app's theme as a page sees it: the resolved tones as `#rrggbb`, the
 //! mode, the theme's id and name, and CSS font families. Reading it needs no
-//! permission; it says nothing the page could not see on screen.
+//! permission; it says nothing the page could not see on screen. A user's
+//! own theme is `custom`, named `Custom`: its file name and display name can
+//! hold private data.
 
 use gpui_kit::component::Theme;
 use gpui_kit::{App, Hsla, Rgba};
@@ -13,6 +15,8 @@ const UI_FALLBACK: &str = "system-ui, -apple-system, sans-serif";
 /// Fallbacks after the app's monospaced font.
 const MONO_FALLBACK: &str = "ui-monospace, monospace";
 const MAX_CHANNEL: f32 = 255.;
+/// The id of a user's own theme.
+const CUSTOM: &str = "custom";
 
 /// What the page's theme is made of, read from the app's globals.
 pub(crate) struct ThemeFacts<'a> {
@@ -29,9 +33,9 @@ pub(crate) fn current(cx: &App) -> Value {
     let theme = Theme::global(cx);
     let id = cx
         .try_global::<ThemeId>()
-        .map_or("custom", |id| id.0.as_str());
+        .map_or(CUSTOM, |id| id.0.as_str());
     to_json(&ThemeFacts {
-        id: if id.is_empty() { "custom" } else { id },
+        id: if id.is_empty() { CUSTOM } else { id },
         name: theme.theme_name(),
         dark: theme.is_dark(),
         tokens: Tokens::current(cx),
@@ -41,7 +45,8 @@ pub(crate) fn current(cx: &App) -> Value {
 }
 
 /// The documented `Theme` shape. Translucent tones are flattened onto the
-/// opaque background, so every tone is a plain `#rrggbb`.
+/// opaque background, so every tone is a plain `#rrggbb`. A custom theme's
+/// name is never sent.
 pub(crate) fn to_json(facts: &ThemeFacts<'_>) -> Value {
     let tokens = &facts.tokens;
     let mut under = tokens.bg.to_rgb();
@@ -49,7 +54,7 @@ pub(crate) fn to_json(facts: &ThemeFacts<'_>) -> Value {
     let tone = |color: Hsla| hex(composite(color.to_rgb(), under));
     json!({
         "id": facts.id,
-        "name": facts.name,
+        "name": if facts.id == CUSTOM { "Custom" } else { facts.name },
         "mode": if facts.dark { "dark" } else { "light" },
         "tones": {
             "bg": hex(under), "pane": tone(tokens.pane), "line": tone(tokens.line),
@@ -106,6 +111,14 @@ mod tests {
             ui_font: ".SystemUIFont",
             mono_font: "Mono \"Pro\"",
         }
+    }
+
+    #[test]
+    fn a_custom_theme_is_sent_without_its_name() {
+        let mut custom = facts(Tokens::one_dark());
+        custom.id = "custom";
+        custom.name = "Acme Private Theme";
+        assert_eq!(to_json(&custom)["name"], "Custom");
     }
 
     #[test]

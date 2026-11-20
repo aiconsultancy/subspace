@@ -72,6 +72,18 @@ pub(crate) fn apply_board_selection(
     Ok(())
 }
 
+/// Whether applying `config` would leave at least one board active, as
+/// [`apply_board_selection`] or the next start builds the set. Boards the
+/// config file defines but cannot be shown do not count.
+pub(crate) fn enables_a_board(config: &Config, cx: &App) -> Result<bool, String> {
+    let provider = cx
+        .try_global::<Provider>()
+        .ok_or("No configured board provider is retained.")?;
+    let product = &cx.global::<subspace_dashboard::CurrentProduct>().0.product;
+    let (sets, _) = desktop_sets(product, &provider.available, provider.configured, config)?;
+    Ok(!sets.active.is_empty())
+}
+
 fn selected_sets(config: &Config, cx: &App) -> Result<RegistrationSets, String> {
     let provider = cx
         .try_global::<Provider>()

@@ -4,9 +4,16 @@
 // context and reacts when the fleets change.
 
 import { describeTestError, describeTestSuccess, fleetForm, validateFleetForm } from "./fleet-panel.js";
-import { newFleetId, tokenKey } from "./fleet-store.js";
+import { MAX_LOCAL_FLEETS, newFleetId, packToken, tokenKey } from "./fleet-store.js";
 
 const TEST_TIMEOUT_MS = 10_000;
+const STORE_ERRORS = {
+  newer: "A newer Fleet Console saved this list; update it to change fleets here.",
+  full: `Fleet Console keeps up to ${MAX_LOCAL_FLEETS} fleets added here. Remove one to add another.`,
+  invalid: "Fleet Console could not keep this fleet in its list.",
+  unavailable: "This web view would not keep the fleet list. Check that site data is allowed.",
+};
+const ADDRESS_CHANGED = "The address changed: paste the token for the new address. A saved token is only sent to the address it was saved for.";
 
 /**
  * @param {object} deps
@@ -59,12 +66,24 @@ export function createFleetForm(deps) {
     return result.value;
   }
 
+  /**
+   * The token to use with the typed address: the one just pasted, or, when
+   * editing without changing the address, the one saved for that address.
+   * A saved token never goes to a different address.
+   */
+  function tokenFor(value) {
+    if (value.token) return { token: value.token };
+    const saved = open.mode === "edit" ? entryOf(open.id) : null;
+    if (saved && saved.endpoint !== value.endpoint) return { error: ADDRESS_CHANGED };
+    return saved?.token ? { token: saved.token } : { error: null };
+  }
+
   async function test() {
     const value = check(true);
     if (!value) return;
-    const token = value.token ?? entryOf(open.id)?.token;
+    const { token, error } = tokenFor(value);
     if (!token) {
-      showErrors({ token: "Paste the token to test the connection." });
+      showErrors({ token: error ?? "Paste the token to test the connection." });
       return;
     }
     status("Testing the connection…");
@@ -83,14 +102,23 @@ export function createFleetForm(deps) {
       status(blocker, "error");
       return;
     }
+    const editing = open.mode === "edit";
+    if (!editing && deps.store.load().length >= MAX_LOCAL_FLEETS) {
+      status(`Fleet Console keeps up to ${MAX_LOCAL_FLEETS} fleets added here. Remove one to add another.`, "error");
+      return;
+    }
     const value = check(false);
     if (!value) return;
-    const editing = open.mode === "edit";
+    const previous = editing ? entryOf(open.id) : null;
+    if (editing && !value.token && previous && previous.endpoint !== value.endpoint) {
+      showErrors({ token: ADDRESS_CHANGED });
+      return;
+    }
     const id = editing ? open.id : newFleetId();
     const bridge = deps.bridge();
     if (value.token) {
       try {
-        await bridge.setSecret(tokenKey(id), value.token);
+        await bridge.setSecret(tokenKey(id), packToken(value.endpoint, value.token));
       } catch (error) {
         status(`Subspace could not keep the token: ${error?.message ?? error}`, "error");
         return;
@@ -102,8 +130,9 @@ export function createFleetForm(deps) {
     if (position >= 0) list.splice(position, 0, item);
     else list.push(item);
     if (!deps.store.save(list)) {
-      if (!editing && value.token) bridge.setSecret(tokenKey(id), null).catch(() => {});
-      status(deps.store.status === "newer" ? "A newer Fleet Console saved this list; update it to change fleets here." : "This web view would not keep the fleet list. Check that site data is allowed.", "error");
+      // Put the secret back as it was: no token for a new fleet, the earlier one for an edit.
+      if (value.token) await bridge.setSecret(tokenKey(id), previous?.token ? packToken(previous.endpoint, previous.token) : null).catch(() => {});
+      status(STORE_ERRORS[deps.store.status] ?? STORE_ERRORS.unavailable, "error");
       return;
     }
     open = null;

@@ -25,12 +25,20 @@ test("backoff doubles, is jittered within half of its ceiling, and is capped", (
   assert.equal(backoffDelay(30, () => 1), BACKOFF_CAP_MS);
 });
 
-test("connecting then open is connected and clears the attempt count", () => {
+test("connecting then open is connected; only a healthy stream clears the attempt count", () => {
   const state = run([{ type: "connecting" }, { type: "failed" }, { type: "connecting" }, { type: "open" }]);
   assert.equal(state.status, "connected");
-  assert.equal(state.attempt, 0);
+  assert.equal(state.attempt, 1, "a 200 alone does not reset the backoff");
   assert.equal(state.connectedOnce, true);
   assert.equal(state.retryAt, null);
+  assert.equal(nextConnection(state, { type: "healthy" }, 9000).attempt, 0);
+});
+
+test("a server that answers 200 and closes at once backs off further each time", () => {
+  const cycle = [{ type: "connecting" }, { type: "open" }, { type: "closed" }];
+  const state = run([...cycle, ...cycle, ...cycle, ...cycle], () => 0);
+  assert.equal(state.attempt, 4);
+  assert.ok(state.retryAt - (1000 + 11 * 1000) >= 4000, "the fourth retry waits seconds, not half of one");
 });
 
 test("a network failure before any connection is unreachable, with a retry scheduled", () => {

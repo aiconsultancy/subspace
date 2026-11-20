@@ -1,8 +1,9 @@
 // One runtime per fleet: its reducer state and its connection state. The
 // fleet you are inside streams `GET /api/v1/events` as before; every other
 // fleet gets one `GET /api/v1/fleet` on load and another every 30 seconds
-// while the Fleets tier is visible. Reads never overlap per fleet, and a
-// failed read waits for the next interval rather than hammering a host.
+// while the Fleets tier is visible and the page is not hidden. Reads never
+// overlap per fleet, and a failed read waits for the next interval rather
+// than hammering a host.
 
 import { initialFleetState, reduceFleet } from "./reducer.js";
 import { initialConnection, nextConnection } from "./connection.js";
@@ -12,8 +13,8 @@ export const POLL_MS = 30_000;
 export const POLL_TIMEOUT_MS = 10_000;
 
 /** When `runtime` should next be read, or Infinity. Pure, for the scheduler and tests. */
-export function nextPollAt(runtime, { landscape, interval = POLL_MS }) {
-  if (!runtime.client || runtime.streaming || runtime.inflight) return Infinity;
+export function nextPollAt(runtime, { landscape, interval = POLL_MS, hidden = false }) {
+  if (hidden || !runtime.client || runtime.streaming || runtime.inflight) return Infinity;
   if (runtime.lastReadAt === null) return 0;
   return landscape ? runtime.lastReadAt + interval : Infinity;
 }
@@ -47,6 +48,7 @@ export function createFleetManager({ entries, createClient, createLive, onChange
   let order = [];
   let active = null;
   let landscape = false;
+  let hidden = false;
   let timer = null;
   let stopped = false;
 
@@ -77,7 +79,9 @@ export function createFleetManager({ entries, createClient, createLive, onChange
       const fleet = await runtime.client.fleet(signal);
       if (runtimes.get(id) !== runtime || runtime.streaming) return;
       apply(id, { type: "fleet", data: fleet });
-      setConnection(id, { type: "open" });
+      // A whole read is a healthy result for a polled fleet: it clears the failure count.
+      runtime.connection = nextConnection(nextConnection(runtime.connection, { type: "open" }, now()), { type: "healthy" }, now());
+      onChange?.(id);
     } catch (error) {
       if (runtimes.get(id) !== runtime || runtime.streaming) return;
       runtime.connection = nextConnection(runtime.connection, { type: "failed", status: error?.status, retryAfterMs: error?.retryAfterMs }, now());
@@ -95,7 +99,7 @@ export function createFleetManager({ entries, createClient, createLive, onChange
     timer = null;
     const t = now();
     for (const id of order) {
-      if (nextPollAt(runtimes.get(id), { landscape, interval: pollMs }) <= t) poll(id);
+      if (nextPollAt(runtimes.get(id), { landscape, interval: pollMs, hidden }) <= t) poll(id);
     }
     schedule();
   }
@@ -105,7 +109,7 @@ export function createFleetManager({ entries, createClient, createLive, onChange
     timer = null;
     if (stopped) return;
     let next = Infinity;
-    for (const runtime of runtimes.values()) next = Math.min(next, nextPollAt(runtime, { landscape, interval: pollMs }));
+    for (const runtime of runtimes.values()) next = Math.min(next, nextPollAt(runtime, { landscape, interval: pollMs, hidden }));
     if (next < Infinity) timer = setTimer(check, Math.max(0, next - now()));
   }
 
@@ -186,6 +190,13 @@ export function createFleetManager({ entries, createClient, createLive, onChange
       landscape = visible;
       if (visible) check();
       else schedule();
+    },
+    /** No polling while the page is hidden; showing it again reads what is due. */
+    setHidden(value) {
+      if (hidden === value) return;
+      hidden = value;
+      if (hidden) schedule();
+      else check();
     },
     /** Start: the one read on load for every fleet that is not streamed. */
     start() {

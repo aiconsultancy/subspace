@@ -4,15 +4,23 @@
 // Fleet API needs, so the page reads the stream with fetch and parses it here.
 
 const MAX_LINE = 1 << 20;
+/** The most data one event may gather before its closing blank line. */
+const MAX_EVENT = 4 << 20;
 
 /**
+ * Memory stays bounded whatever the server sends: every line is checked
+ * against `maxLine` (complete or not), and an event's data against
+ * `maxEvent`. Going over either throws, and the caller drops the stream.
+ *
  * @param {(event: {type: string, data: string, id: string}) => void} onEvent
- * @param {{onComment?: (text: string) => void, onRetry?: (ms: number) => void, maxLine?: number}} [options]
+ * @param {{onComment?: (text: string) => void, onRetry?: (ms: number) => void, maxLine?: number, maxEvent?: number}} [options]
  */
 export function createSseParser(onEvent, options = {}) {
   const maxLine = options.maxLine ?? MAX_LINE;
+  const maxEvent = options.maxEvent ?? MAX_EVENT;
   let buffer = "";
   let data = [];
+  let size = 0;
   let type = "";
   let lastId = "";
   let pendingCR = false;
@@ -25,13 +33,21 @@ export function createSseParser(onEvent, options = {}) {
     }
     const event = { type: type || "message", data: data.join("\n"), id: lastId };
     data = [];
+    size = 0;
     type = "";
     onEvent(event);
   }
 
   function field(name, value) {
     if (name === "event") type = value;
-    else if (name === "data") data.push(value);
+    else if (name === "data") {
+      size += value.length + 1;
+      if (size > maxEvent) {
+        end();
+        throw new Error("The event stream sent an event larger than the parser accepts.");
+      }
+      data.push(value);
+    }
     else if (name === "id") {
       if (!value.includes("\0")) lastId = value;
     } else if (name === "retry") {
@@ -75,6 +91,7 @@ export function createSseParser(onEvent, options = {}) {
       if (code !== 10 && code !== 13) continue;
       const whole = buffer + text.slice(start, i);
       buffer = "";
+      if (whole.length > maxLine) tooLong();
       if (code === 13) {
         if (i + 1 >= text.length) pendingCR = true;
         else if (text.charCodeAt(i + 1) === 10) i += 1;
@@ -83,16 +100,19 @@ export function createSseParser(onEvent, options = {}) {
       line(whole);
     }
     buffer += text.slice(start);
-    if (buffer.length > maxLine) {
-      buffer = "";
-      throw new Error("The event stream sent a line longer than the parser accepts.");
-    }
+    if (buffer.length > maxLine) tooLong();
+  }
+
+  function tooLong() {
+    end();
+    throw new Error("The event stream sent a line longer than the parser accepts.");
   }
 
   /** The stream ended: an event without its closing blank line is discarded, as the spec says. */
   function end() {
     buffer = "";
     data = [];
+    size = 0;
     type = "";
   }
 

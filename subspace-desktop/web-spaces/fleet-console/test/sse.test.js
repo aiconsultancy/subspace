@@ -82,3 +82,23 @@ test("refuses an unbounded line", () => {
   const parser = createSseParser(() => {}, { maxLine: 16 });
   assert.throws(() => parser.push("data: 0123456789abcdef0123"), /longer than/);
 });
+
+test("refuses a long line even when it arrives complete with its newline", () => {
+  const parser = createSseParser(() => {}, { maxLine: 16 });
+  assert.throws(() => parser.push("data: 0123456789abcdef0123\n\n"), /longer than/);
+  const crlf = createSseParser(() => {}, { maxLine: 16 });
+  assert.throws(() => crlf.push("data: 0123456789abcdef0123\r\n"), /longer than/);
+});
+
+test("refuses an event that keeps growing without its closing blank line", () => {
+  const events = [];
+  const parser = createSseParser((event) => events.push(event), { maxLine: 64, maxEvent: 100 });
+  assert.throws(() => {
+    for (let i = 0; i < 50; i += 1) parser.push("data: 0123456789\n");
+  }, /event larger than/);
+  assert.equal(events.length, 0);
+  // Within the limit, events of many lines still work, and the count restarts per event.
+  const ok = createSseParser((event) => events.push(event), { maxLine: 64, maxEvent: 100 });
+  for (let round = 0; round < 3; round += 1) ok.push("data: 0123456789\n".repeat(5) + "\n");
+  assert.equal(events.length, 3);
+});

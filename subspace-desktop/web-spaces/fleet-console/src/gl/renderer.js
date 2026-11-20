@@ -36,8 +36,12 @@ export function createGlRenderer(canvas, { onLost, onRestored } = {}) {
     impl = setup(gl, canvas);
   } catch (error) {
     console.warn("Fleet Console: WebGL2 setup failed, using Canvas 2D.", error);
+    // Release whatever was created; the caller draws in 2D on a fresh canvas.
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
     return null;
   }
+  // Removed on dispose, so a replaced renderer ignores its canvas's events.
+  const listening = new AbortController();
   let lost = false;
   let lostTimer = 0;
   let size = { cssW: 1, cssH: 1, dpr: 1 };
@@ -46,27 +50,35 @@ export function createGlRenderer(canvas, { onLost, onRestored } = {}) {
   let timerResult = null;
   let gpuTimer = null;
 
-  canvas.addEventListener("webglcontextlost", (event) => {
-    event.preventDefault();
-    lost = true;
-    clearTimeout(lostTimer);
-    lostTimer = setTimeout(() => {
-      if (lost) onLost?.();
-    }, RESTORE_WAIT_MS);
-  });
-  canvas.addEventListener("webglcontextrestored", () => {
-    try {
-      impl = setup(gl, canvas);
-      impl.configure(size, quality);
-      if (palette) impl.setPalette(palette);
-      if (timerResult) gpuTimer = createGpuTimer(gl, timerResult);
-      lost = false;
+  canvas.addEventListener(
+    "webglcontextlost",
+    (event) => {
+      event.preventDefault();
+      lost = true;
       clearTimeout(lostTimer);
-      onRestored?.();
-    } catch {
-      onLost?.();
-    }
-  });
+      lostTimer = setTimeout(() => {
+        if (lost) onLost?.();
+      }, RESTORE_WAIT_MS);
+    },
+    { signal: listening.signal },
+  );
+  canvas.addEventListener(
+    "webglcontextrestored",
+    () => {
+      try {
+        impl = setup(gl, canvas);
+        impl.configure(size, quality);
+        if (palette) impl.setPalette(palette);
+        if (timerResult) gpuTimer = createGpuTimer(gl, timerResult);
+        lost = false;
+        clearTimeout(lostTimer);
+        onRestored?.();
+      } catch {
+        onLost?.();
+      }
+    },
+    { signal: listening.signal },
+  );
 
   return {
     kind: "webgl2",
@@ -108,8 +120,13 @@ export function createGlRenderer(canvas, { onLost, onRestored } = {}) {
       gpuTimer?.end();
     },
     dispose() {
+      listening.abort();
       clearTimeout(lostTimer);
-      impl.dispose();
+      try {
+        if (!gl.isContextLost()) impl.dispose();
+      } catch {
+        // A context that is already gone has nothing left to delete.
+      }
       gl.getExtension("WEBGL_lose_context")?.loseContext();
     },
   };

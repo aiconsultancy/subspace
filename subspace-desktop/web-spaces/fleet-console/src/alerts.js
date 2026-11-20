@@ -6,6 +6,8 @@
 import { allCrew } from "./model.js";
 
 export const NOTIFY_SPACING_MS = 5200;
+/** Keys that left the fleet and are remembered, so a returning ship still alerts; the oldest go first. */
+export const MAX_VANISHED = 500;
 
 /** What alerts compare: uncertain crew and unavailable ships, by key. */
 export function alertSnapshot(fleet, ships) {
@@ -102,13 +104,49 @@ export function createAlertWatcher(notifier) {
         return [];
       }
       const alerts = diffAlerts(baseline, snapshot);
-      // Keep keys that vanished, so a ship that disappears and returns broken still alerts.
-      baseline = new Map([...baseline, ...snapshot]);
+      // Keep keys that vanished, so a ship that disappears and returns broken still alerts,
+      // but only the most recent MAX_VANISHED of them.
+      const vanished = [...baseline].filter(([key]) => !snapshot.has(key)).slice(-MAX_VANISHED);
+      baseline = new Map([...vanished, ...snapshot]);
       notifier.push(alerts);
       return alerts;
     },
     reset() {
       baseline = null;
+    },
+    get size() {
+      return baseline?.size ?? 0;
+    },
+  };
+}
+
+/**
+ * One watcher per fleet and address, made by `make(fleet)`: a fleet whose
+ * address changed starts a new baseline, and `retain(fleets)` forgets
+ * fleets that are gone.
+ */
+export function createWatcherSet(make) {
+  const watchers = new Map();
+  const keyOf = (fleet) => `${fleet.id}\n${fleet.entry?.endpoint ?? ""}`;
+  return {
+    for(fleet) {
+      const key = keyOf(fleet);
+      let watcher = watchers.get(key);
+      if (!watcher) {
+        watcher = make(fleet);
+        watchers.set(key, watcher);
+      }
+      return watcher;
+    },
+    retain(fleets) {
+      const keep = new Set(fleets.map(keyOf));
+      for (const key of watchers.keys()) if (!keep.has(key)) watchers.delete(key);
+    },
+    clear() {
+      watchers.clear();
+    },
+    get size() {
+      return watchers.size;
     },
   };
 }

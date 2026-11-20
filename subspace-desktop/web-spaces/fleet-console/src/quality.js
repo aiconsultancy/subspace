@@ -48,7 +48,15 @@ export function snapRefresh(interval) {
 }
 export const UP_AFTER_WINDOWS = 5;
 export const COOLDOWN_MS = 8000;
+/** The longest wait before retrying a level that keeps failing. */
+export const MAX_COOLDOWN_MS = 120_000;
+/** A level that fails within this long of being retried doubles the wait. */
+export const FAILED_RETRY_MS = 20_000;
+/** A level that has held this long resets the wait. */
+export const HELD_MS = 60_000;
 export const SETTLE_MS = 500;
+/** Callback batches after a step down that must stay as slow before the display rate is relearned. */
+export const SLOW_BATCHES = 2;
 
 const percentile = (values, p) => {
   const sorted = [...values].sort((a, b) => a - b);
@@ -89,18 +97,31 @@ export function createGovernor({ start = 0, min = 0, max = LEVELS.length - 1, pi
   let settleUntil = 0;
   let refresh = 1000 / 60;
   let cadence = [];
+  let lastMedian = null;
+  let probe = null;
+  let cooldown = COOLDOWN_MS;
+  let lastUp = null;
   let lastVerdict = "unknown";
   const history = [];
 
   function step(direction, now) {
     const next = Math.max(min, Math.min(max, level + direction));
     if (next === level) return false;
+    if (direction > 0) {
+      // Hysteresis: a level that fails soon after it was retried waits longer next time.
+      if (lastUp && lastUp.level === level && now - lastUp.at < FAILED_RETRY_MS) cooldown = Math.min(MAX_COOLDOWN_MS, cooldown * 2);
+      lastDown = now;
+      // Watch whether the lower level speeds frames up; if not, the display is slower than assumed.
+      probe = lastMedian === null ? null : { median: lastMedian, batches: 0 };
+    } else {
+      lastUp = { level: next, at: now };
+      probe = null;
+    }
     level = next;
     settleUntil = now + SETTLE_MS;
     headroomWindows = 0;
     samples = [];
     windowStart = null;
-    if (direction > 0) lastDown = now;
     return true;
   }
 
@@ -111,9 +132,13 @@ export function createGovernor({ start = 0, min = 0, max = LEVELS.length - 1, pi
     get settings() {
       return LEVELS[level];
     },
-    /** The display's frame interval: the best cadence seen, between 240 Hz and 30 Hz. */
+    /** The display's frame interval, between 240 Hz and 30 Hz. */
     get refresh() {
       return refresh;
+    },
+    /** How long a step up waits after a step down; it grows while a level keeps failing. */
+    get cooldown() {
+      return cooldown;
     },
     get verdict() {
       return lastVerdict;
@@ -128,14 +153,36 @@ export function createGovernor({ start = 0, min = 0, max = LEVELS.length - 1, pi
     /**
      * Every animation-frame callback's interval, drawn or not, to learn the
      * display rate: the median of each 60, snapped to a standard rate, since
-     * callbacks jitter. It never drifts up, so a slow GPU cannot redefine slow.
+     * callbacks jitter. A faster rate is taken at once. A slower one is taken
+     * only when stepping quality down did not speed callbacks up for
+     * SLOW_BATCHES batches: then the display (a 30 Hz panel, Low Power Mode)
+     * sets the pace, not our drawing, and judging frames against the faster
+     * rate would make the governor cycle. A slow GPU, which does speed up at
+     * a lower level, cannot redefine slow this way.
      */
     observeCallback(interval) {
       if (!Number.isFinite(interval) || interval <= 0 || interval > 250) return;
       cadence.push(interval);
       if (cadence.length < 60) return;
-      refresh = Math.min(refresh, snapRefresh(percentile(cadence, 0.5)));
+      const median = percentile(cadence, 0.5);
       cadence = [];
+      lastMedian = median;
+      const snapped = snapRefresh(median);
+      if (snapped < refresh) {
+        refresh = snapped;
+        probe = null;
+        return;
+      }
+      if (!probe) return;
+      if (median < probe.median * 0.9) {
+        probe = null;
+        return;
+      }
+      probe.batches += 1;
+      if (probe.batches >= SLOW_BATCHES) {
+        if (snapped > refresh) refresh = snapped;
+        probe = null;
+      }
     },
     /**
      * Record one drawn frame of continuous animation (never an on-demand
@@ -153,10 +200,11 @@ export function createGovernor({ start = 0, min = 0, max = LEVELS.length - 1, pi
       if (history.length > 20) history.shift();
       samples = [];
       windowStart = now;
+      if (lastUp && lastDown < lastUp.at && now - lastUp.at >= HELD_MS) cooldown = COOLDOWN_MS;
       if (lastVerdict === "slow") return step(1, now);
       if (lastVerdict === "headroom") {
         headroomWindows += 1;
-        if (headroomWindows >= UP_AFTER_WINDOWS && now - lastDown >= COOLDOWN_MS) return step(-1, now);
+        if (headroomWindows >= UP_AFTER_WINDOWS && now - lastDown >= cooldown) return step(-1, now);
         return false;
       }
       headroomWindows = 0;

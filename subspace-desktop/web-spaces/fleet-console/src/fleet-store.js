@@ -19,6 +19,35 @@ export function newFleetId(random = Math.random) {
 /** The Subspace secret key holding a local fleet's token. */
 export const tokenKey = (id) => `fleet_${id}`;
 
+/**
+ * A page fleet's secret: its token together with the normalised address it
+ * was saved for, so the token is never sent anywhere else.
+ */
+export function packToken(endpoint, token) {
+  return JSON.stringify({ v: 1, endpoint, token });
+}
+
+/**
+ * The token in a page fleet's secret, only when it was saved for `endpoint`
+ * (both normalised with `normalize`). Returns {token, problem}: problem is
+ * "no-token", "token-address" (saved for another address) or "token-unbound"
+ * (saved without an address, by an earlier Fleet Console).
+ */
+export function unpackToken(value, endpoint, normalize = (url) => ({ ok: true, url })) {
+  if (typeof value !== "string" || !value.trim()) return { token: null, problem: "no-token" };
+  let data = null;
+  try {
+    data = JSON.parse(value);
+  } catch {
+    // A plain token, as saved before tokens carried their address.
+  }
+  if (!data || typeof data !== "object" || data.v !== 1 || typeof data.endpoint !== "string" || typeof data.token !== "string") return { token: null, problem: "token-unbound" };
+  const bound = normalize(data.endpoint);
+  if (!bound.ok || bound.url !== endpoint) return { token: null, problem: "token-address" };
+  const token = data.token.trim();
+  return token ? { token, problem: null } : { token: null, problem: "no-token" };
+}
+
 export function cleanName(name) {
   return String(name ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 60);
 }
@@ -35,8 +64,10 @@ function cleanEntry(entry) {
 /**
  * @param {Storage|null} storage  localStorage, or a fake
  * Returns {load, save, status}. `status` is "ok", "empty", "unavailable"
- * (storage throws), "corrupt" (unreadable data, replaced on the next save) or
- * "newer" (a later version wrote it; never overwritten).
+ * (storage throws), "corrupt" (unreadable data, replaced on the next save),
+ * "newer" (a later version wrote it; never overwritten), or after a refused
+ * save "full" (more than MAX_LOCAL_FLEETS) or "invalid" (an entry it cannot
+ * keep). A save stores the whole list or nothing.
  */
 export function createFleetStore(storage) {
   let status = "empty";
@@ -85,10 +116,18 @@ export function createFleetStore(storage) {
     return fleets;
   }
 
-  /** Save the list; returns true when stored. Refuses to clobber a newer version's data. */
+  /** Save the whole list; returns true when stored. Refuses to clobber a newer version's data, or to drop entries. */
   function save(fleets) {
     if (status === "newer" || !storage) return false;
-    const clean = fleets.map(cleanEntry).filter(Boolean).slice(0, MAX_LOCAL_FLEETS);
+    if (fleets.length > MAX_LOCAL_FLEETS) {
+      status = "full";
+      return false;
+    }
+    const clean = fleets.map(cleanEntry).filter(Boolean);
+    if (clean.length !== fleets.length || new Set(clean.map((entry) => entry.id)).size !== clean.length) {
+      status = "invalid";
+      return false;
+    }
     try {
       storage.setItem(STORE_KEY, JSON.stringify({ version: STORE_VERSION, fleets: clean }));
       status = "ok";

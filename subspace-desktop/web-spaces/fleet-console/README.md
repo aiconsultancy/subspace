@@ -27,15 +27,26 @@ to it), Shift+P shows or hides the frame-time readout.
   **Test connection** reads `GET /api/v1/fleet` before you save. Each fleet's
   token is kept by Subspace with this Space's secrets (as `fleet_<id>`,
   through `subspace.secrets.set`); the list itself (id, name, address, never
-  the token) is kept in the page's local storage. **Edit** changes a fleet,
-  leaving the token blank to keep the saved one, and **Remove** deletes the
-  entry and its token. The first fleet is changed in Settings.
-- Adding fleets needs a Subspace version with `secrets.set` and the
-  **read its saved secrets** permission; otherwise **Add fleet** says why.
+  the token) is kept in the page's local storage. Each token is kept with
+  the address it was saved for and is only ever sent there: **Edit** keeps
+  the saved token when the token field is left blank and the address is
+  unchanged, and asks for the token again when the address changes. A token
+  saved for another address, or by an earlier version without its address,
+  is not used until it is pasted again. **Remove** deletes the entry and its
+  token. The first fleet is changed in Settings.
+- Adding fleets needs a Subspace version with `secrets.set` and two
+  permissions: **read its saved secrets** (to use the tokens) and **save its
+  own secrets** (`save-secrets`, to keep them). Fleet Console checks both
+  before storing anything; without them **Add fleet** says what to allow.
+  The page never writes the Settings **API token**: `secrets.set` is used
+  only for the page's own `fleet_<id>` secrets.
 - **Connections.** The fleet you are inside streams `GET /api/v1/events`. The
   other fleets are read once on load and every 30 seconds while the Fleets
-  tier is open. Each fleet shows its own state: live, reconnecting, signed
-  out, forbidden or unreachable, and the inspector says what to do.
+  tier is open and the window is not hidden. Each fleet shows its own state:
+  live, reconnecting, signed out, forbidden or unreachable, and the
+  inspector says what to do. Requests never follow redirects, a server that
+  does not answer within 15 seconds is retried with backoff, and the backoff
+  resets only after a stream has stayed up for 20 seconds.
 - The tab badge counts across fleets: uncertain crew (where ship detail has
   been read), unavailable ships and fleets that cannot be read. Chat context
   names the fleet when there is more than one.
@@ -61,10 +72,15 @@ without input; warps and dispatches run at the display rate.
 A governor watches frame times. When frames run slow for about a second it
 steps quality down one level: the scene's internal resolution (2x, 1.5x,
 1.25x, 1x; text always stays sharp), then one bloom level, then no bloom,
-then 20 fps ambient motion. With sustained headroom it steps back up, one
-level every five seconds at most. Nothing is saved; reduced motion is
-unaffected. If the web view loses its WebGL context, Fleet Console waits three
-seconds for it to come back before switching to Canvas 2D.
+then 20 fps ambient motion. With sustained headroom it steps back up after
+a cooldown of eight seconds, which doubles (up to two minutes) each time a
+level fails again soon after it was retried. Frames are judged against the
+display's rate, learned from animation-frame callbacks: a faster rate is
+taken at once, and a slower one (a 30 Hz display, Low Power Mode) when
+stepping quality down does not speed frames up. Nothing is saved; reduced
+motion is unaffected. If WebGL2 cannot be set up, or the web view loses its
+context for three seconds, Fleet Console draws with Canvas 2D on a fresh
+canvas.
 
 The frame-time readout shows median and p95 frame time, CPU time, GPU time
 where the engine exposes timer queries (Chromium does, WebKit does not), the
@@ -114,12 +130,25 @@ unreachable, and what to do about it.
 
    | Route | Endpoint to enter | Notes |
    | --- | --- | --- |
-   | Tailscale Serve | `https://<vm>.<tailnet>.ts.net` | `tailscale serve --bg 8484` on the VM serves the loopback listener over HTTPS to your tailnet |
-   | Cloudflare Tunnel with Access | `https://fleet.example.com` | Put an Access policy in front of the hostname; the bearer token is still required |
+   | Tailscale Serve | `https://<vm>.<tailnet>.ts.net` | `tailscale serve --bg 8484` on the VM serves the loopback listener over HTTPS to your tailnet. Recommended |
    | SSH tunnel | `http://localhost:8484` | `ssh -N -L 8484:127.0.0.1:8484 <vm>`; plain HTTP is allowed only to localhost |
+   | Cloudflare Tunnel | `https://fleet.example.com` | Only with the Access set-up described below |
 
    Web Spaces may connect only over HTTPS or to loopback HTTP, so an address
    such as `http://100.101.102.103:8484` cannot be used directly.
+
+   Fleet Console sends the Stargate bearer token and nothing else: no
+   cookies (requests use `credentials: "omit"`), no Cloudflare Access
+   service-token headers, and it does not follow redirects. So a Cloudflare
+   Access policy that needs a browser login or a service token stops every
+   request before it reaches Stargate. A Cloudflare Tunnel works when Access
+   lets the API through on the bearer token alone: leave `/api/v1/*` out of
+   the Access application or give that path a Bypass policy, and, if Access
+   still covers the hostname, turn on its option to pass `OPTIONS` requests
+   to the origin so CORS preflights reach Stargate. That puts the Fleet API
+   on the internet behind its token (through the tunnel Stargate sees the
+   connector's local address, so `allowedNetworks` does not narrow it), which
+   is why Tailscale or an SSH tunnel is the better route.
 
 ## Install the Space
 
@@ -140,14 +169,15 @@ Then open **Settings > Spaces > Fleet Console** and:
 2. Allow it to **read its settings** and **read its saved secrets** (the
    token). Without both it shows the sample fleets, unless you add fleets in
    the page.
-3. Optionally allow **read and open issues** (issue tiles and badges, from
+3. To add more fleets in the page, also allow **save its own secrets**.
+4. Optionally allow **read and open issues** (issue tiles and badges, from
    the board that answers the issues contract), **show a badge on its tab**
    (uncertain crew plus unavailable ships), **share context with chat** (the
    selected crew member's ship, task, phase, branch, pull request and issue
    identifiers; never the address or token) and **show notifications** (when a
    crew task becomes uncertain or a ship becomes unavailable, at most one
    every five seconds and never for what was already true when it opened).
-4. Save. Every permission starts off, and replacing or updating the Space
+5. Save. Every permission starts off, and replacing or updating the Space
    needs them allowed again.
 
 **Motion** set to **Reduced**, or the system's reduce-motion setting,
@@ -213,11 +243,13 @@ through L0, and the package rules.
 | `src/contract.js`, `src/reducer.js`, `src/model.js` | Payload checks, state reducer, derived views |
 | `src/sample.js`, `src/sample-source.js` | Sample fleets and their simulation |
 | `src/fleet-sources.js`, `src/fleet-store.js`, `src/fleet-manager.js` | Fleet sources and their merge, the page's fleet list, one connection per fleet |
+| `src/coalesce.js` | One settings refresh at a time, keeping a Retry asked for meanwhile |
 | `src/fleet-panel.js`, `src/fleet-form.js`, `src/scene/landscape.js` | Fleets panels and the Add / Edit form, the Fleets tier |
 | `src/bridge.js`, `src/issues.js`, `src/alerts.js`, `src/effects.js` | Bridge wrapper, issue references, notifications, chat context |
 | `src/layout.js`, `src/camera.js`, `src/stars.js`, `src/geometry.js` | Tier layouts, navigation and warp camera, star field, point lists |
 | `src/scene/` | Builds each tier as a draw list both renderers read |
 | `src/gl/` | WebGL2 renderer, instance batching, shaders and helpers |
 | `src/canvas2d.js`, `src/overlay.js` | Canvas 2D fallback renderer, text overlay with dirty tracking |
+| `src/renderers.js` | Choosing WebGL2 or Canvas 2D, and switching to Canvas 2D on a fresh canvas when WebGL2 fails |
 | `src/quality.js`, `src/perf.js` | Quality levels and governor, frame statistics, the frame-time readout and its Shift+P toggle |
 | `src/inspector.js`, `src/html.js`, `src/chrome.js`, `src/theme.js` | Inspector panels, escaping, window chrome, theme tones |

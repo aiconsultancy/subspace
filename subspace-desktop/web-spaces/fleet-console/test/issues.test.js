@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createIssueResolver, extractIdentifiers, issueStateOf, RESOLVE_BATCH } from "../src/issues.js";
+import { createIssueResolver, extractIdentifiers, issueStateOf, MAX_WANTED, RESOLVE_BATCH } from "../src/issues.js";
 
 const scope = { teamKeys: ["ABC", "ENG"], linearWorkspace: "acme" };
 const text = (value) => ({ kind: "text", text: value });
@@ -85,6 +85,31 @@ test("the resolver debounces, batches at most 50, and only asks for new identifi
   await timers.runAll();
   assert.equal(calls.length, 6, "refresh re-resolves everything wanted");
   assert.equal(changes, 1, "unchanged answers do not notify");
+});
+
+test("the resolver keeps only the most recently wanted identifiers", async () => {
+  const timers = fakeTimers();
+  const asked = [];
+  const resolver = createIssueResolver({
+    resolve: async (ids) => {
+      asked.push(...ids);
+      return ids.map((identifier) => ({ identifier, state: "pending" }));
+    },
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+  });
+  const ids = Array.from({ length: MAX_WANTED + 100 }, (_, i) => `ABC-${i + 1}`);
+  for (const id of ids) resolver.want([id]);
+  resolver.want(["ABC-1"]);
+  await timers.runAll();
+  assert.equal(resolver.get("ABC-50"), null, "old identifiers are forgotten");
+  assert.equal(resolver.get("ABC-101"), null, "wanting ABC-1 again pushed out the next oldest");
+  assert.equal(resolver.get(ids.at(-1)).state, "pending");
+  assert.equal(resolver.get("ABC-1").state, "pending", "wanting one again keeps it");
+  asked.length = 0;
+  resolver.refresh();
+  await timers.runAll();
+  assert.equal(asked.length, MAX_WANTED, "refresh asks only for what is kept");
 });
 
 test("a failed resolve marks the batch failed instead of throwing", async () => {

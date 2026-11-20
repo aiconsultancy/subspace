@@ -140,3 +140,88 @@ fields, so the page needs to save secrets it creates at run time.
   Settings line and its Clear button.
 
 ![Settings for Fleet Console: the declared token's field, then This app has saved 1 secret with Clear](evidence/settings-saved-secrets.png)
+
+## Follow-up: review fixes
+
+### Intent
+
+A post-merge review found that the `secrets.set` follow-up widened what an
+existing grant allowed and that page-owned secrets could outlive the app
+that saved them. It also found smaller gaps in the theme payload, the save
+path and the shell's close-Space menu.
+
+### Spec
+
+- **Saving has its own permission.** `secrets.set` needs `save-secrets`
+  (**Allow this app to save its own secrets**). `secrets` (**read its saved
+  secrets**) stays read-only, so a grant made before saving existed never
+  starts to write. `secrets.set` refuses every key the manifest declares,
+  secret or not (`This key belongs to one of the app's settings, which only
+  Settings changes. Choose another key.`): the declared secrets are the
+  user's, set in Settings.
+- **Page-owned secrets belong to their app's install source.** They are
+  stored as `<owner>:<key>`, the owner being the first 32 hex digits of a
+  digest of the source recorded in the entry's `managedSource`: a GitHub
+  repository and board folder, a release's repository and asset, a local
+  folder's canonical original, or a website's origin. A ZIP install, or an
+  entry with no recorded source (or one that does not match its `url` or
+  `path`), is strict: the owner is the grant identity (folder and manifest).
+  `secrets.get()` returns only the current owner's, so an update from the
+  same source keeps them and an app from another source starts with none.
+  Settings still counts every undeclared secret in **This app has saved N
+  secrets**, and **Clear** removes them all.
+- **Earlier keys carry over only to the same source.** A page's secrets
+  saved before they had owners (plain keys) are read as the app's own when
+  its source is recorded, and hidden otherwise. Keys an earlier build of
+  this change stored under the folder-and-manifest identity are read by
+  that same folder and manifest. A save replaces the key's older forms.
+  Installing into the Space from the manager binds the plain keys (except
+  those the new app declares) and the previous app's identity keys to the
+  previous source first, so they stay visible only if the new source is the
+  same, or stay hidden when no source was recorded.
+- **The file decides the write.** Before writing, the save reads the Space's
+  entry from the file it is about to change: it must still give the Space
+  this app's folder and install source and allow `save-secrets` for this
+  identity (otherwise `This Space changed in the config file. Review it in
+  Settings, then try again.`), and the 32-secret limit counts that entry's
+  secrets.
+- **Saving keeps the page open.** The registration's configuration leaves
+  out page-owned secrets (`subspace_web_board::configuration`), so the next
+  board-set rebuild, such as closing another Space, reuses the web view.
+  A declared secret changed in Settings still reloads the page, as before.
+- **Saves are limited.** At most 10 `secrets.set` saves in any 10 seconds
+  (`Too many secret saves. Wait a few seconds, then try again.`); refused
+  writes do not count. The write stays on the UI thread: the config file is
+  small, and the limit bounds how often it is rewritten.
+- **A custom theme's name stays private.** `theme()` sends `name: "Custom"`
+  with `id: "custom"`.
+- **Framework: close Space never leaves none.** Closing a Space checks the
+  board set the write would produce, from the same file, and refuses when no
+  Space would stay on (`Couldn't close <Space>: it is the only Space the
+  config file leaves on`), for example after the file turned the others off
+  outside the app.
+- **Framework: menus over a web Space.** A Space tab's right-click menu, and
+  the toolbar's label menu, count as covering the board area while open, so
+  a web Space's native view hides under them instead of drawing over them.
+
+### Delivery
+
+- Desktop tests (`bridge/tests.rs`, `bridge/secrets/tests.rs`,
+  `bridge/theme.rs`, `manifest.rs`, `source.rs`): a `secrets` grant alone
+  cannot save; declared keys are refused with `save-secrets`; another app's
+  secrets are hidden; an update from the same GitHub source keeps them,
+  another repository or board folder does not, a ZIP reinstall stays
+  strict, and folders, releases and websites own theirs by source
+  (`bridge/secrets/owner/tests.rs`); plain and folder-and-manifest keys are
+  read and replaced on save, and installing binds them to the previous
+  source or hides them when none was recorded (`owner/tests.rs`,
+  `manager/model.rs`); a write after the file's install source changed is
+  refused; the 10-in-10-seconds limit; a write to an
+  entry that now names another folder, or whose grant is off, leaves the file
+  unchanged; the limit counts the file's secrets; a saved secret leaves
+  `configuration` unchanged while a declared one changes it; the custom theme
+  name; the new permission's name, label and Settings checkbox.
+- Framework tests (`app/space_menu_tests.rs`): closing the last Space the
+  file leaves on is refused and writes nothing; an open Space menu covers the
+  board and Escape uncovers it.
+- `scripts/package-web-space.py` accepts `save-secrets`.

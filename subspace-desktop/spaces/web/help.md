@@ -201,7 +201,7 @@ allow the action in the board's Subspace settings.
 | `notify({title, body})` | `notifications` | Title up to 100 characters, body up to 500, without control characters |
 | `theme()` | None | The app's theme: id, name, light or dark mode, tones as `#rrggbb` and CSS font families |
 | `secrets.get()` | `secrets` | Saved values of the declared secrets and of the page's own |
-| `secrets.set(key, valueOrNull)` | `secrets` | Saves or deletes one secret of the page's own; at most 32 |
+| `secrets.set(key, valueOrNull)` | `save-secrets` | Saves or deletes one secret of the page's own; at most 32, and 10 saves in 10 seconds |
 | `issues.scope()` | `issues` | The issue scope (profile name, API base, project keys), or `null` |
 | `issues.resolve(identifiers)` | `issues` | One resolution per distinct identifier, at most 50 |
 | `issues.open(identifier)` | `issues` | Opens the issue in the Space that answers issue requests |
@@ -209,10 +209,14 @@ allow the action in the board's Subspace settings.
 - Unknown setting keys and secret fields never appear in `settings.get()`.
   Only `secrets.get()`, with the `secrets` permission, returns saved secrets:
   those the manifest declares as `secret` that have a value, and those the
-  page saved itself with `secrets.set()`, such as a token for each account
-  you add in the page. A page saves secrets only while its Space is shown.
-  A page allowed `secrets` holds them in its own memory, so allow it only
-  for an app you trust.
+  app saved itself with `secrets.set()`, such as a token for each account
+  you add in the page. Saving needs its own permission, `save-secrets`
+  (**save its own secrets**), and never changes a secret the manifest
+  declares: those are yours to set here. A page saves secrets only while its
+  Space is shown, and sees only those its own app saved. An update from the
+  same GitHub repository, release asset or local folder keeps them; an app
+  from another source, or a ZIP reinstall, starts with none. A page allowed `secrets`
+  holds them in its own memory, so allow it only for an app you trust.
 - The page hears two events on `window`. `subspace:theme` carries the new
   theme as its `detail` whenever the theme, mode, a tone or a font changes.
   `subspace:issues-changed` tells a page allowed `issues` to ask again for
@@ -244,7 +248,7 @@ allow the action in the board's Subspace settings.
 `subspace-board.json` sits next to `index.html`. It is at most 256 KiB. `name`
 (up to 60 characters) and `version` (up to 40) are required. `permissions` and
 `settings` are optional. The known permissions are `notifications`, `settings`,
-`badge`, `context`, `secrets` and `issues`. An unknown permission name produces a note in Settings
+`badge`, `context`, `secrets`, `save-secrets` and `issues`. An unknown permission name produces a note in Settings
 and grants nothing. An invalid manifest prevents the app from opening.
 
 ```json
@@ -400,7 +404,7 @@ and Windows, not Linux.
   `<name> <version>, from <folder>` and one **Allow this app to …** checkbox for
   each requested permission: **show notifications**, **read its settings**,
   **show a badge on its tab**, **share context with Copilot chat**, **read
-  its saved secrets** and **read and open issues**.
+  its saved secrets**, **save its own secrets** and **read and open issues**.
   Permissions start off. Select the ones you trust, then **Save**. Setting and
   permission edits apply on Save without a restart. The page reads the current
   values again; settings and secrets have no change event. Cancel leaves the

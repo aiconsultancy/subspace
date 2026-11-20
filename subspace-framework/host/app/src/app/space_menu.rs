@@ -10,6 +10,7 @@ use subspace_dashboard::Toast;
 use subspace_dashboard::anchored::AnchoredContextMenuExt as _;
 use subspace_dashboard::prefs;
 
+use super::cover::cover_while_open;
 use super::{ACTIVE_KEY, SubspaceApp};
 use crate::settings::board_choice::{self, Applied};
 
@@ -19,7 +20,8 @@ pub(super) const SPACE_SETTINGS: &str = "Space settings…";
 pub(super) const LAST_SPACE: &str = "The last open Space can't be closed.";
 
 /// Adds Space `id`'s right-click menu to its tab. `closable` is false for
-/// the last open Space, whose Close item is disabled with the reason.
+/// the last open Space, whose Close item is disabled with the reason. While
+/// open, the menu covers the board area.
 pub(super) fn with_space_menu<E>(
     element: E,
     id: &'static str,
@@ -29,7 +31,10 @@ pub(super) fn with_space_menu<E>(
 where
     E: InteractiveElement + ParentElement + Styled,
 {
-    element.anchored_context_menu(move |menu, _, _| space_menu(menu, id, closable, &app))
+    element.anchored_context_menu(move |menu, window, cx| {
+        cover_while_open(&app, window, cx);
+        space_menu(menu, id, closable, &app)
+    })
 }
 
 fn space_menu(

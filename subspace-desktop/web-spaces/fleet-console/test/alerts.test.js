@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { alertSnapshot, createAlertWatcher, createNotifier, diffAlerts, mergeAlerts, NOTIFY_SPACING_MS } from "../src/alerts.js";
+import { alertSnapshot, createAlertWatcher, createNotifier, createWatcherSet, diffAlerts, mergeAlerts, MAX_VANISHED, NOTIFY_SPACING_MS } from "../src/alerts.js";
 import { badgeText } from "../src/model.js";
 import { loadedState } from "./fixtures.js";
 
@@ -70,4 +70,30 @@ test("notifications respect the five-second limit and merge what queues up", asy
 test("merged notifications stay within the bridge limits", () => {
   const long = mergeAlerts([{ title: "x".repeat(300), body: "y".repeat(900) }]);
   assert.ok(long.title.length <= 100 && long.body.length <= 500);
+});
+
+test("a watcher forgets the oldest vanished keys beyond a limit", () => {
+  const pushed = [];
+  const watcher = createAlertWatcher({ push: (alerts) => pushed.push(...alerts) });
+  const fleetOf = (ids) => ({ ships: ids.map((id) => ({ id, name: id, available: true, crew: { busy: 0, people: 0 } })) });
+  watcher.observe(fleetOf(["s0"]), {});
+  for (let i = 1; i <= MAX_VANISHED + 50; i += 1) watcher.observe(fleetOf([`s${i}`]), {});
+  assert.ok(watcher.size <= MAX_VANISHED + 1, `baseline stays bounded: ${watcher.size}`);
+});
+
+test("watchers are kept per fleet and address, and pruned with the fleets", () => {
+  const made = [];
+  const watchers = createWatcherSet((fleet) => {
+    const watcher = { fleet: fleet.id, endpoint: fleet.entry.endpoint };
+    made.push(watcher);
+    return watcher;
+  });
+  const lab = { id: "lab", entry: { endpoint: "https://lab.example.com" } };
+  assert.equal(watchers.for(lab), watchers.for(lab));
+  const moved = { id: "lab", entry: { endpoint: "https://lab2.example.com" } };
+  assert.notEqual(watchers.for(moved), made[0], "a new address starts a new baseline");
+  watchers.retain([moved]);
+  assert.equal(watchers.size, 1);
+  watchers.retain([]);
+  assert.equal(watchers.size, 0);
 });

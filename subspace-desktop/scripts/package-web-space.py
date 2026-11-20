@@ -27,7 +27,15 @@ MAX_HELP_CHARS = 200
 MAX_FIELDS = 32
 MAX_KEY_CHARS = 40
 MAX_OPTIONS = 50
-PERMISSIONS = ("notifications", "settings", "badge", "context", "secrets", "issues")
+PERMISSIONS = (
+    "notifications",
+    "settings",
+    "badge",
+    "context",
+    "secrets",
+    "save-secrets",
+    "issues",
+)
 FIELD_TYPES = "text, url, number, boolean, select or secret"
 
 MAX_PATH_BYTES = 1024

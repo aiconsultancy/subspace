@@ -6,6 +6,15 @@
 const fn = (value) => typeof value === "function";
 
 /**
+ * Secrets declared in the manifest, which the person sets in Settings. The
+ * page reads them but never writes them: `secrets.set` is only for the
+ * page's own secrets, such as each added fleet's token.
+ */
+export const SETTINGS_SECRETS = new Set(["token"]);
+
+const SAVE_HELP = "Allow this app to save its own secrets in Settings > Spaces > Fleet Console, then try again.";
+
+/**
  * @param {object} [host] the global object (tests pass a fake)
  */
 export async function connectBridge(host = globalThis) {
@@ -48,9 +57,17 @@ export async function connectBridge(host = globalThis) {
     },
     settings: () => (allowed("settings") && fn(api.settings?.get) ? attempt(() => api.settings.get()) : Promise.resolve(null)),
     secrets: () => (allowed("secrets") && fn(api.secrets?.get) ? attempt(() => api.secrets.get()) : Promise.resolve(null)),
-    /** Keep (or, with null, delete) a page-owned secret. Rejects with Subspace's message. */
-    setSecret: (key, value) =>
-      allowed("secrets") && fn(api.secrets?.set) ? api.secrets.set(key, value) : Promise.reject(new Error("This version of Subspace cannot store secrets for the page.")),
+    /**
+     * Keep (or, with null, delete) one of the page's own secrets. Needs the
+     * save-secrets permission (secrets alone only reads) and never touches a
+     * Settings secret. Rejects with the reason, or with Subspace's message.
+     */
+    setSecret(key, value) {
+      if (SETTINGS_SECRETS.has(key)) return Promise.reject(new Error("The API token is set in Settings > Spaces > Fleet Console, not by the page."));
+      if (!fn(api.secrets?.set)) return Promise.reject(new Error("This version of Subspace cannot store secrets for the page."));
+      if (!allowed("save-secrets")) return Promise.reject(new Error(SAVE_HELP));
+      return api.secrets.set(key, value);
+    },
     theme: () => (fn(api.theme) ? attempt(() => api.theme()) : Promise.resolve(null)),
     onTheme(listener) {
       const handler = (event) => listener(event.detail);
