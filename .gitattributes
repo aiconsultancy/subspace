@@ -1,0 +1,7 @@
+# Files that run on Linux fleet VMs keep LF line endings on every checkout,
+# including Windows, where install.ps1 packages them for the VM.
+install.sh text eol=lf
+subspace-installer/** text=auto eol=lf
+subspace-api/** text=auto eol=lf
+subspace-irc/** text=auto eol=lf
+scripts/local-stack/** text=auto eol=lf
