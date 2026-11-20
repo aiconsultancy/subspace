@@ -3,6 +3,9 @@ use crate::issue_writes::IssueSaveError;
 use crate::{Client, model::IssueDetail, transport};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
+mod reconcile;
+pub use reconcile::{Unreconciled, UnreconciledReason};
+
 const MAX_MOVE_ISSUES: usize = 500;
 const TOKEN_HEX_LEN: usize = 64;
 
@@ -111,11 +114,12 @@ pub struct MoveResult {
     /// The previewed issues read back in the destination, with their numbers
     /// there, the root first.
     pub moved: Vec<MoveItem>,
-    /// Previewed sub-issues found elsewhere when read back after a NETT move
-    /// that committed: someone moved them again since. The move itself
-    /// succeeded; these are read again where they are now.
-    #[serde(default)]
-    pub unreconciled: Vec<String>,
+    /// Previewed sub-issues that a NETT move which committed could not
+    /// confirm in the destination when they were read back. The move itself
+    /// succeeded; the Issues Space lists these for the person to check.
+    /// Worked out here, never read from a reply.
+    #[serde(skip)]
+    pub unreconciled: Vec<Unreconciled>,
 }
 
 // qual:allow(coupling, oi) reason: "The bounded HTTP seam owns single-attempt writes, access challenges and validated responses."
@@ -204,75 +208,6 @@ impl Client {
         self.nett_verify_move(preview, Some(issue))
     }
 
-    /// Checks a confirmed or possibly confirmed NETT move without sending it
-    /// again: every previewed issue must now be in the destination team,
-    /// with a newer version than previewed and a number there. A read that
-    /// fails leaves the move unconfirmed, to be checked again; an issue
-    /// that did not move means the plan did not happen.
-    pub fn verify_issue_move(&self, preview: &MovePreview) -> Result<MoveResult, IssueSaveError> {
-        if self.backend != crate::Backend::Nett {
-            return Err(IssueSaveError::Unavailable);
-        }
-        self.nett_verify_move(preview, None)
-    }
-
-    fn nett_verify_move(
-        &self,
-        preview: &MovePreview,
-        root: Option<IssueDetail>,
-    ) -> Result<MoveResult, IssueSaveError> {
-        let first = preview.issues.first().ok_or(IssueSaveError::Invalid)?;
-        let moved_here = |current: &IssueDetail, previewed: &MoveItem| {
-            current.fields.id == previewed.id
-                && current.fields.project_id == preview.destination.id
-                && current.fields.version > i64::from(previewed.version)
-                && preview_number(&current.fields.identifier, &preview.destination.key)
-        };
-        // A check reads the root itself: one still where it was proves the
-        // move never happened, so a fresh preview may follow. A root from a
-        // validated PATCH reply proves the whole subtree moved, so a
-        // sub-issue elsewhere now was moved again since, which is no
-        // conflict with this move.
-        let checking = root.is_none();
-        let root = match root {
-            Some(root) => root,
-            None => self
-                .issue(&first.id)
-                .map_err(|_| IssueSaveError::Unconfirmed)?,
-        };
-        if !moved_here(&root, first) || !preview.root_moved_to(&root.fields.identifier) {
-            return Err(if checking {
-                IssueSaveError::Conflict
-            } else {
-                IssueSaveError::Unconfirmed
-            });
-        }
-        let mut moved = Vec::with_capacity(preview.issues.len());
-        let mut unreconciled = Vec::new();
-        let mut root_item = first.clone();
-        root_item.new_identifier = Some(root.fields.identifier.clone());
-        moved.push(root_item);
-        for previewed in preview.issues.iter().skip(1) {
-            let current = self
-                .issue(&previewed.id)
-                .map_err(|_| IssueSaveError::Unconfirmed)?;
-            if !moved_here(&current, previewed) {
-                if checking {
-                    return Err(IssueSaveError::Conflict);
-                }
-                unreconciled.push(previewed.id.clone());
-                continue;
-            }
-            let mut item = previewed.clone();
-            item.new_identifier = Some(current.fields.identifier);
-            moved.push(item);
-        }
-        Ok(MoveResult {
-            issue: root,
-            moved,
-            unreconciled,
-        })
-    }
     /// Reads a move reply. Previews keep NETT's own field names; an issue
     /// detail is mapped like any other read.
     fn move_response<T: DeserializeOwned>(
@@ -332,7 +267,7 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    use super::MovePreview;
+    use super::{MovePreview, Unreconciled, UnreconciledReason};
     use serde_json::{Value, json};
     use subspace_framework::client_test_support::Mock;
 
@@ -355,9 +290,13 @@ mod tests {
             "archived": false})
     }
 
-    #[test]
-    fn a_committed_move_stays_committed_when_a_sub_issue_moves_again_before_it_is_read() {
-        let mock = Mock::new(|request| {
+    /// Confirms a move of ROOT with its sub-issue CHILD to WEB, which NETT
+    /// commits, then reads CHILD back with `child`'s reply. Returns the
+    /// result and the PATCHes sent.
+    fn committed_move(
+        child: impl Fn() -> (u16, String) + Send + Sync + 'static,
+    ) -> (super::MoveResult, usize) {
+        let mock = Mock::new(move |request| {
             let path = request.path.as_str();
             if path.ends_with("/desktop/capabilities") {
                 (200, r#"{"features":["issueMoves"]}"#.into())
@@ -366,9 +305,7 @@ mod tests {
                 let root = issue(ROOT, "WEB-7", ("team-web", "WEB"), 3);
                 (200, root.to_string())
             } else if path.ends_with(&format!("/issues/{CHILD}")) {
-                // Someone else moved the sub-issue on before it was read.
-                let child = issue(CHILD, "OPS-9", ("team-ops", "OPS"), 4);
-                (200, child.to_string())
+                child()
             } else {
                 (404, "{}".into())
             }
@@ -391,14 +328,55 @@ mod tests {
         let result = client
             .move_issue(&preview)
             .unwrap_or_else(|error| panic!("the move committed, not {error:?}"));
-        assert_eq!(result.issue.fields.identifier, "WEB-7");
-        assert_eq!(result.unreconciled, [CHILD], "the sub-issue is read again");
-        assert_eq!(result.moved.len(), 1);
         let patches = mock
             .requests()
             .iter()
             .filter(|request| request.method == "PATCH")
             .count();
+        (result, patches)
+    }
+
+    #[test]
+    fn a_committed_move_stays_committed_when_a_sub_issue_moves_again_before_it_is_read() {
+        // Someone else moved the sub-issue on before it was read.
+        let (result, patches) = committed_move(|| {
+            (
+                200,
+                issue(CHILD, "OPS-9", ("team-ops", "OPS"), 4).to_string(),
+            )
+        });
+        assert_eq!(result.issue.fields.identifier, "WEB-7");
+        assert_eq!(
+            result.unreconciled,
+            [Unreconciled {
+                id: CHILD.into(),
+                old_identifier: "OPS-3".into(),
+                reason: UnreconciledReason::Elsewhere,
+            }],
+            "the sub-issue is listed to check"
+        );
+        assert_eq!(result.moved.len(), 1);
+        assert_eq!(patches, 1, "the move is never sent again");
+    }
+
+    #[test]
+    fn a_committed_move_keeps_its_proof_when_a_sub_issue_cannot_be_read_back() {
+        // Moved on at once into a team the person cannot read.
+        let (result, patches) = committed_move(|| (404, "{}".into()));
+        assert_eq!(
+            result.issue.fields.identifier, "WEB-7",
+            "the move committed"
+        );
+        assert_eq!(
+            result.unreconciled,
+            [Unreconciled {
+                id: CHILD.into(),
+                old_identifier: "OPS-3".into(),
+                reason: UnreconciledReason::Unread(crate::Error::NotFound),
+            }],
+            "the sub-issue is listed with what its read found"
+        );
+        assert_eq!(result.moved.len(), 1);
         assert_eq!(patches, 1, "the move is never sent again");
     }
 }
