@@ -84,10 +84,15 @@ Every pull request needs clearance from two independent model reviews before
 it merges: Claude Opus 5.5 at high effort and GPT-6.2 Sol at high effort. They
 come on top of the project checks, never instead of them. Review the diff
 before opening the pull request: fetch the target branch from the remote the
-pull request will target, run both reviews on the local branch against it
-(`git fetch "$remote" "$target" && review --local "$remote/$target"`), and deal
-with what they find first, so the pull request opens already reviewed. The
-clearances also gate the merge.
+pull request will target, run both reviews on the local branch against it, and
+deal with what they find first, so the pull request opens already reviewed.
+The clearances also gate the merge. Here `$remote` is the name of that remote
+(for example `origin` or `public`) and `$target` its branch name:
+
+```sh
+git fetch "$remote" "+refs/heads/$target:refs/remotes/$remote/$target" &&
+  review --local "$remote/$target"
+```
 
 Run both reviews with the **trusted** copy of
 [`scripts/review-pr.sh`](scripts/review-pr.sh), the one on the canonical
@@ -180,8 +185,12 @@ that reason under **Reviews**, never a plan to fix it later.
   over to `--pr`: after the pull request opens, keep reviewing locally on the
   same branch, or run a full `--pr` review. Before counting a local review as
   the pull request's clearance, check that the reviewed head is the pull
-  request's head (or has the same tree and merge base) and that the reviewed
-  target is the pull request's base.
+  request's head (or has the same tree), that the reviewed target is the pull
+  request's base, and that the merge base with that base is still the one
+  reviewed.
+- Any reused clearance, from a local or a `--pr` review, needs the merge base
+  between the head and the pull request's base to be unchanged. If the base
+  branch's history was rewritten, run both full reviews again.
 - Run both full reviews again after any rebase or rewritten history, after a
   change that does more than fix findings, and whenever the pull request's
   target branch changes.
