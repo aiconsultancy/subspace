@@ -61,6 +61,10 @@ pub enum Feature {
     Attachments,
     /// Moving an issue to another project with a preview.
     IssueMoves,
+    /// NETT records each move confirmation under its plan token, so an
+    /// identical confirmation after a lost reply replays the recorded
+    /// result instead of being refused.
+    IssueMoveReplay,
     /// Repository mapping, the reverse lookup and deployment statuses. The
     /// desktop does not use NETT's yet.
     Repositories,
@@ -69,11 +73,12 @@ pub enum Feature {
 }
 
 impl Feature {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::InitiativeChannels,
         Self::ChatUploads,
         Self::Attachments,
         Self::IssueMoves,
+        Self::IssueMoveReplay,
         Self::Repositories,
         Self::Updates,
     ];
@@ -85,6 +90,7 @@ impl Feature {
             Self::ChatUploads => "chatUploads",
             Self::Attachments => "attachments",
             Self::IssueMoves => "issueMoves",
+            Self::IssueMoveReplay => "issueMoveReplay",
             Self::Repositories => "repositories",
             Self::Updates => "updates",
         }

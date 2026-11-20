@@ -149,16 +149,22 @@ fn reason(
 
 // qual:allow(coupling, oi) reason: "Move confirmation reads the issues back through the client's NETT reads."
 impl Client {
-    /// Checks a confirmed or possibly confirmed NETT move without sending it
-    /// again. A root read back in the destination, newer than previewed and
-    /// numbered there, with its sub-issues tying that move to this plan,
-    /// means the move committed, any sub-issue not found there listed as
-    /// unreconciled. A root still where it was, or one moved without its
-    /// sub-issues, means the plan did not happen; a root, or sub-issues,
-    /// that cannot be read leave the move unconfirmed, to be checked again.
+    /// Checks a confirmed or possibly confirmed NETT move. When NETT serves
+    /// replayable moves and the confirmation was first sent within the last
+    /// 24 hours, the identical confirmation is sent again and NETT's record
+    /// answers (see `replay`). Otherwise nothing is sent: a root read back
+    /// in the destination, newer than previewed and numbered there, with
+    /// its sub-issues tying that move to this plan, means the move
+    /// committed, any sub-issue not found there listed as unreconciled. A
+    /// root still where it was, or one moved without its sub-issues, means
+    /// the plan did not happen; a root, or sub-issues, that cannot be read
+    /// leave the move unconfirmed, to be checked again.
     pub fn verify_issue_move(&self, preview: &MovePreview) -> Result<MoveResult, IssueSaveError> {
         if self.backend != crate::Backend::Nett {
             return Err(IssueSaveError::Unavailable);
+        }
+        if self.replays(preview) {
+            return self.replay_move(preview);
         }
         self.nett_verify_move(preview, None)
     }
@@ -208,6 +214,7 @@ impl Client {
             issue: root,
             moved: std::iter::once(root_item).chain(sub_issues.moved).collect(),
             unreconciled: sub_issues.unreconciled,
+            commit: None,
         })
     }
 

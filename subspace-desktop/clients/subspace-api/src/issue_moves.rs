@@ -4,7 +4,9 @@ use crate::{Client, model::IssueDetail, transport};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 mod reconcile;
+pub(crate) mod replay;
 pub use reconcile::{Unreconciled, UnreconciledReason};
+pub use replay::{CommittedIssue, MoveCommit};
 
 const MAX_MOVE_ISSUES: usize = 500;
 const TOKEN_HEX_LEN: usize = 64;
@@ -120,6 +122,24 @@ pub struct MoveResult {
     /// Worked out here, never read from a reply.
     #[serde(skip)]
     pub unreconciled: Vec<Unreconciled>,
+    /// NETT's record of the commit, when it serves replayable moves: the
+    /// exact issues this plan moved, with their numbers as committed.
+    /// Worked out here from NETT's `move` object, never read as a field.
+    #[serde(skip)]
+    pub commit: Option<MoveCommit>,
+}
+
+impl MoveResult {
+    /// The root's number as NETT recorded it when this plan committed, if
+    /// NETT recorded the commit. It stays this plan's number even if the
+    /// root has moved again since.
+    pub fn recorded_root(&self) -> Option<&str> {
+        self.commit
+            .as_ref()?
+            .issues
+            .first()
+            .map(|issue| issue.new_identifier.as_str())
+    }
 }
 
 // qual:allow(coupling, oi) reason: "The bounded HTTP seam owns single-attempt writes, access challenges and validated responses."
@@ -164,15 +184,38 @@ impl Client {
     }
     /// NETT confirms the previewed plan with a versioned PATCH of the root
     /// carrying the preview's token and review context; the whole subtree
-    /// moves at once and only then receives its numbers, read back here.
+    /// moves at once and only then receives its numbers. With replayable
+    /// moves the reply records them; otherwise they are read back here.
     fn nett_move_issue(&self, preview: &MovePreview) -> Result<MoveResult, IssueSaveError> {
         if !self.serves(crate::backend::Feature::IssueMoves) {
             return Err(IssueSaveError::Unavailable);
         }
-        let root = preview.issues.first().ok_or(IssueSaveError::Invalid)?;
+        let replays = self.serves(crate::backend::Feature::IssueMoveReplay);
+        if preview.issues.is_empty() {
+            return Err(IssueSaveError::Invalid);
+        }
         if preview.moves_archived_sub_issue() {
             return Err(IssueSaveError::ArchivedSubIssue);
         }
+        replay::note_sent(self, &preview.token);
+        let (issue, commit) = self.send_confirmation(preview, false)?;
+        if replays && let Some(result) = replay::recorded(preview, issue.clone(), commit) {
+            return Ok(result);
+        }
+        self.nett_verify_move(preview, Some(issue))
+    }
+
+    /// Sends NETT's confirmation of `preview`, the same body every time,
+    /// and reads its reply: the root as it is now, and NETT's `move` object
+    /// when it sent one. A `replaying` confirmation's 409 says the plan
+    /// never committed only with NETT's plan-changed code; any other is
+    /// left unconfirmed.
+    fn send_confirmation(
+        &self,
+        preview: &MovePreview,
+        replaying: bool,
+    ) -> Result<(IssueDetail, Option<Value>), IssueSaveError> {
+        let root = preview.issues.first().ok_or(IssueSaveError::Invalid)?;
         let context = preview
             .review_context
             .clone()
@@ -204,8 +247,34 @@ impl Client {
             .build()
             .send(body.to_string().as_bytes())
             .map_err(|_| IssueSaveError::Unconfirmed)?;
-        let issue: IssueDetail = self.move_response(response, true)?;
-        self.nett_verify_move(preview, Some(issue))
+        if transport::is_access_challenge(&response) {
+            return Err(IssueSaveError::SignIn);
+        }
+        match response.status().as_u16() {
+            200 => self.confirmation_reply(response),
+            409 if replaying => Err(replay::refusal(response)),
+            _ => Err(self
+                .move_response::<IssueDetail>(response, true)
+                .err()
+                .unwrap_or(IssueSaveError::Unconfirmed)),
+        }
+    }
+
+    /// A confirmation's 200: the root's detail, mapped like any other read,
+    /// and NETT's `move` object, kept in NETT's own field names.
+    fn confirmation_reply(
+        &self,
+        response: ureq::http::Response<ureq::Body>,
+    ) -> Result<(IssueDetail, Option<Value>), IssueSaveError> {
+        let mut value: Value =
+            transport::read_json(response).map_err(|_| IssueSaveError::Unconfirmed)?;
+        let commit = value.as_object_mut().and_then(|reply| reply.remove("move"));
+        // A reply read after the account or organisation changed belongs to
+        // no one.
+        self.current().map_err(|_| IssueSaveError::Unconfirmed)?;
+        crate::nett::wire::normalise(&mut value);
+        let issue = serde_json::from_value(value).map_err(|_| IssueSaveError::Unconfirmed)?;
+        Ok((issue, commit))
     }
 
     /// Reads a move reply. Previews keep NETT's own field names; an issue

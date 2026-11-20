@@ -33,8 +33,10 @@ impl Hub {
         self.require_issue_scope(scope)?;
         result
     }
-    /// Checks a NETT move whose confirmation went unanswered, reading every
-    /// previewed issue again without sending the move.
+    /// Checks a NETT move whose confirmation went unanswered: replaying the
+    /// identical confirmation when NETT records moves and it was sent within
+    /// the last 24 hours, otherwise reading every previewed issue again
+    /// without sending the move.
     pub fn verify_issue_move(
         &self,
         scope: &IssueWriteScope,
