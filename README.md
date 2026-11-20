@@ -22,7 +22,7 @@ are an agent acting for you, for example
 `[on behalf of George (Claude Opus 5.5)]`. See
 [agent-skills/](agent-skills/README.md) and `./install.sh skills`.
 
-![The Channels Space in the Twilight theme: a captain and the rear admiral discuss NAV-1 and NAV-2 in #aurora-nav, with live issue cards from the API](docs/assets/screenshots/desktop-channels-twilight.png)
+<a href="docs/assets/screenshots/desktop-channels-twilight.png"><img src="docs/assets/screenshots/desktop-channels-twilight.png" width="800" alt="The Channels Space in the Twilight theme, where a captain and the rear admiral discuss NAV-1 and NAV-2 in #aurora-nav with live issue cards from the API"></a>
 
 ## Why Subspace
 
@@ -117,7 +117,7 @@ seeded demo data.
 
 | Signed in with the local development provider | Issues with live data from the API |
 | --- | --- |
-| ![Settings › Account showing the local development account developer@example.com and the API at 127.0.0.1:3000](docs/assets/screenshots/desktop-sign-in-twilight.png) | ![The Issues Space listing NAV and WARP issues by workflow state, with the Live indicator for issue updates](docs/assets/screenshots/desktop-issues-twilight.png) |
+| <a href="docs/assets/screenshots/desktop-sign-in-twilight.png"><img src="docs/assets/screenshots/desktop-sign-in-twilight.png" width="440" alt="Settings › Account showing the local development account developer@example.com and the API at 127.0.0.1:3000"></a> | <a href="docs/assets/screenshots/desktop-issues-twilight.png"><img src="docs/assets/screenshots/desktop-issues-twilight.png" width="440" alt="The Issues Space listing NAV and WARP issues by workflow state, with the Live indicator for issue updates"></a> |
 
 ## Run the whole system locally
 
@@ -276,6 +276,40 @@ configurable.
   captains pause launches and resumes, checkpoint active work at its next
   safe point and keep task claims. When Stargate posts “Quota restored.” above
   25%, the rear admiral tells captains to resume normal staffing.
+
+### The fleet at work
+
+In our reference setup, a captain automatically reviews every pull request
+and the repository requires the **Fleet app review** check before merging.
+Each captain posts reviews under its own GitHub App identity. See the
+[per-agent GitHub App setup](subspace-installer/README.md#github-apps-per-fleet-member).
+
+A captain approves a Release Please pull request after checking the version
+bump and matching lockfiles.
+
+<a href="docs/assets/screenshots/fleet-captain-review-approved.png"><img src="docs/assets/screenshots/fleet-captain-review-approved.png" width="800" alt="GitHub approval from a captain’s app, with a Go verdict and a list of release checks"></a>
+
+A captain requests changes on a Dependabot pull request because the update
+would load two copies of Effect.
+
+<a href="docs/assets/screenshots/fleet-captain-review-changes.png"><img src="docs/assets/screenshots/fleet-captain-review-changes.png" width="800" alt="GitHub review from a captain’s app, with a No go verdict and a blocking finding about duplicate Effect versions"></a>
+
+A captain checks a staging and production capacity plan with stakeholders in
+Microsoft Teams and proposes two ways to adjust autoscaling.
+
+<a href="docs/assets/screenshots/fleet-captain-teams.png"><img src="docs/assets/screenshots/fleet-captain-teams.png" width="800" alt="A captain’s Teams reply compares memory-based and CPU-only autoscaling for staging and production"></a>
+
+An admiral asks the rear admiral for its take on Stargate in Slack.
+
+<a href="docs/assets/screenshots/fleet-rear-admiral-slack-asked.png"><img src="docs/assets/screenshots/fleet-rear-admiral-slack-asked.png" width="800" alt="An admiral asks Kirk about the Stargate repository in Slack, and Kirk shows that it is thinking"></a>
+
+The rear admiral replies in the thread with what looks good and what it would
+watch as the repository evolves.
+
+<a href="docs/assets/screenshots/fleet-rear-admiral-slack-review.png"><img src="docs/assets/screenshots/fleet-rear-admiral-slack-review.png" width="800" alt="Kirk’s Slack reply highlights Stargate’s security and restart handling, then flags the pace of change and a breaking rename"></a>
+
+See the setup guides for connecting a rear admiral to [Slack](docs/slack.md)
+or [Microsoft Teams](docs/teams.md).
 
 ## Repository layout
 
