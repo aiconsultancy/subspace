@@ -7,7 +7,8 @@
 //!
 //! Each constant references only its own SVG, so the linker keeps just the icons
 //! the application uses. No asset source registration is needed. Ported from
-//! gupi's `gpui-lucide` (Apache-2.0, https://github.com/suxiaoshao/gupi).
+//! gupi's `gpui-lucide` (Apache-2.0,
+//! https://github.com/suxiaoshao/gupi/tree/9fb1bf1a298e66425b691d74df6ec4a5cbb9c19e/crates/gpui-lucide).
 use gpui_kit::component::Icon;
 use gpui_kit::{App, Entity, IntoElement, RenderOnce, Window};
 
