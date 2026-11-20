@@ -1,0 +1,369 @@
+[
+  {
+    "crates": ["accesskit v0.24.1", "accesskit_atspi_common v0.19.1", "accesskit_consumer v0.38.0", "accesskit_macos v0.26.3", "accesskit_unix v0.22.1", "accesskit_windows v0.34.0"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/accesskit-MIT",
+    "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+    "upstream": ["https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-MIT", "https://raw.githubusercontent.com/AccessKit/accesskit/c88605b96d04431f9c3c792464a0f2f253480e94/LICENSE-MIT"]
+  },
+  {
+    "crates": ["block2 v0.6.2", "dispatch2 v0.3.1", "objc2 v0.6.5", "objc2-app-kit v0.3.2", "objc2-cloud-kit v0.3.2", "objc2-core-data v0.3.2", "objc2-core-foundation v0.3.2", "objc2-core-graphics v0.3.2", "objc2-core-image v0.3.2", "objc2-core-services v0.3.2", "objc2-core-text v0.3.2", "objc2-core-video v0.3.2", "objc2-encode v4.1.0", "objc2-exception-helper v0.1.1", "objc2-foundation v0.3.2", "objc2-io-kit v0.3.2", "objc2-metal v0.3.2", "objc2-quartz-core v0.3.2", "objc2-security v0.3.2", "objc2-uniform-type-identifiers v0.3.2", "objc2-user-notifications v0.3.2", "objc2-web-kit v0.3.2"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/objc2-NOTICE-7f976f7e",
+    "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+    "replaces": null,
+    "upstream": ["https://raw.githubusercontent.com/madsmtm/objc2/b4167b582b2f75f9a1be75495c41b765344fd03c/LICENSE.md", "https://raw.githubusercontent.com/madsmtm/objc2/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md", "https://raw.githubusercontent.com/madsmtm/objc2/d7d2fa23ceaa5e6096c923b081040e5d81b3b9df/LICENSE.md", "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md", "https://raw.githubusercontent.com/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.md"]
+  },
+  {
+    "crates": ["constant_time_eq v0.6.1", "ryu v1.0.23"],
+    "id": "Apache-2.0",
+    "path": "LICENSE-APACHE",
+    "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+    "crate_file": true
+  },
+  {
+    "crates": ["dpi v0.1.2"],
+    "id": "MIT",
+    "path": "LICENSE-LIBM-MIT",
+    "sha256": "9eff396a99bafd208e7126602420d6864f6066c08b84485a5b032320a9c01997",
+    "crate_file": true
+  },
+  {
+    "crates": ["dunce v1.0.5"],
+    "id": "CC0-1.0",
+    "path": "LICENSE",
+    "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+    "crate_file": true,
+    "replaces": "Apache-2.0"
+  },
+  {
+    "crates": ["flatbuffers v25.12.19"],
+    "id": "Apache-2.0",
+    "path": "licenses/rust-crates/flatbuffers-Apache-2.0",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "upstream": ["https://raw.githubusercontent.com/google/flatbuffers/7e163021e59cca4f8e1e35a7c828b5c6b7915953/LICENSE"]
+  },
+  {
+    "crates": ["gpui-kit v0.9.1", "gpui-kit-assets v0.9.1", "gpui-webview v0.9.1"],
+    "id": "Apache-2.0",
+    "path": "licenses/themes/gpui-kit/LICENSE-APACHE",
+    "sha256": "d1b0449e5478c574ba4f686c2656df7fe77d66821a61f8b6ed3378a58ed9a811",
+    "upstream": ["https://raw.githubusercontent.com/longbridge/gpui-kit/39ab849a93b5f15507b969164d49891db8d5b470/LICENSE-APACHE"]
+  },
+  {
+    "crates": ["granit-parser v1.3.0"],
+    "id": "MIT",
+    "path": ".licenses/ChenYuheng-MIT",
+    "sha256": "70480dc70c2fe1d9bbb64dab9a0abce266332905ffef9cabeae26dd027716ecb",
+    "crate_file": true
+  },
+  {
+    "crates": ["granit-parser v1.3.0"],
+    "id": "MIT",
+    "path": ".licenses/Ethiraric-MIT",
+    "sha256": "90f4ea53f408858ba4886f57b8e3ceac876eefbb59c20f0844f0abbfa59e2749",
+    "crate_file": true
+  },
+  {
+    "crates": ["granit-parser v1.3.0"],
+    "id": "MIT",
+    "path": "LICENSE",
+    "sha256": "1af262e6647807eecaec988ecf2b783fb8fdbdecba396d582c1aab90615f6845",
+    "crate_file": true
+  },
+  {
+    "crates": ["harfrust v0.5.2"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/harfrust-MIT",
+    "sha256": "3a7c3f0b887abb7c638faf022d29257418458614c6724b120ceeffb279f9c7d2",
+    "upstream": ["https://raw.githubusercontent.com/harfbuzz/harfrust/efdae3142ab76a2f1524d72cff9e3dfdc5afd7ca/LICENSE"]
+  },
+  {
+    "crates": ["libghostty-vt v0.2.1", "libghostty-vt-sys v0.2.1"],
+    "id": "MIT",
+    "path": "licenses/terminal/LICENSE-MIT",
+    "sha256": "64afe9aa17b5a1bf58375ea0e1bcfef3503b2ef85c1cfae7e00c3f7555f29137",
+    "source": "git+https://github.com/Uzaaft/libghostty-rs?rev=d2036baeb605d31d09a9e2ba6d0c923e04c34d54#d2036baeb605d31d09a9e2ba6d0c923e04c34d54"
+  },
+  {
+    "crates": ["libm v0.2.16"],
+    "id": "MIT",
+    "path": "LICENSE.txt",
+    "sha256": "3823dda7cf046602f4b4e77ec8e227863dc4736037cc85bb33d9f19febe16bb7",
+    "crate_file": true
+  },
+  {
+    "crates": ["lyon v1.0.19", "lyon_algorithms v1.0.22", "lyon_geom v1.0.20", "lyon_path v1.0.19", "lyon_tessellation v1.0.23"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/lyon-MIT",
+    "sha256": "80f275e90d799911ed3830a7f242a2ef5a4ade2092fe0aa07bfb2d2cf2f2b95e",
+    "upstream": ["https://raw.githubusercontent.com/nical/lyon/56219c95c658d4f39de7b190d98e57d5773ba241/LICENSE-MIT", "https://raw.githubusercontent.com/nical/lyon/db98d26a1a90076a7a894262dcb51117eef643c8/LICENSE-MIT"]
+  },
+  {
+    "crates": ["mac-notification-sys v0.6.15"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/mac-notification-sys-MIT",
+    "sha256": "1299b4d9d15e9d67e4ac0e7d47ae9404887ca3cf0764aadeec7588d5a6e8e0cc",
+    "upstream": ["https://raw.githubusercontent.com/h4llow3En/mac-notification-sys/deb559683962d314a7693478476bf8d052efa84e/LICENSE-MIT"]
+  },
+  {
+    "crates": ["mxc-sdk v1.0.1"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/mxc-sdk-MIT",
+    "sha256": "d9a1b1e30d633d5732ea18e3cba9538d293ebc53e1a9e4e96ab739e0c5c4f1cb",
+    "upstream": ["https://raw.githubusercontent.com/microsoft/mxc/fda29ac63bc306b7f97f3b86b4b63d44f7f40cf2/LICENSE.md"]
+  },
+  {
+    "crates": ["objc-sys v0.3.5", "objc2 v0.5.3", "objc2-app-kit v0.2.2", "objc2-foundation v0.2.2"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/objc2-MIT",
+    "sha256": "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5",
+    "upstream": ["https://raw.githubusercontent.com/madsmtm/objc2/4fc083f1c6d6784577e38b0ee8dbd344481e2fd2/LICENSE.txt", "https://raw.githubusercontent.com/madsmtm/objc2/5237cbf081d04ef75a1f6a207b4018e7c1ae7438/LICENSE.txt", "https://raw.githubusercontent.com/madsmtm/objc2/e282618be4c3a3b9542957e0c8540e9588472ce8/LICENSE.txt"]
+  },
+  {
+    "crates": ["pathfinder_geometry v0.5.1"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/pathfinder_geometry-COPYRIGHT",
+    "sha256": "1a4986a653dae3cc10ac1e0a9e12680899404c78c2109187b70ef3b8bbac2199",
+    "replaces": null,
+    "upstream": ["https://static.crates.io/crates/pathfinder_geometry/pathfinder_geometry-0.5.1.crate"]
+  },
+  {
+    "crates": ["pathfinder_simd v0.5.6"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/pathfinder_simd-COPYRIGHT",
+    "sha256": "b2f3a02db13b6f8ba81c94dc0a23e81198dd5fa881af8f92cd92c22b61ddc91c",
+    "replaces": null,
+    "upstream": ["https://static.crates.io/crates/pathfinder_simd/pathfinder_simd-0.5.6.crate"]
+  },
+  {
+    "crates": ["pathfinder_simd v0.5.6"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/pathfinder_simd-MIT",
+    "sha256": "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720",
+    "upstream": ["https://raw.githubusercontent.com/servo/pathfinder/6c3c0466f451c5bd2007087728cd168798cd64e8/LICENSE-MIT"]
+  },
+  {
+    "crates": ["profiling v1.0.18", "profiling-procmacros v1.0.18"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/profiling-MIT",
+    "sha256": "c8167fdeeed46d3f244d3f85c5bf998ce889343691c32be2c61a8bc4b5c08333",
+    "upstream": ["https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-MIT"]
+  },
+  {
+    "crates": ["rmcp v3.10.0"],
+    "id": "Apache-2.0",
+    "path": "LICENSE",
+    "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a",
+    "crate_file": true
+  },
+  {
+    "crates": ["rquickjs-core v0.14.0"],
+    "id": "MIT",
+    "path": "licenses/charts/LICENSE-RQUICKJS",
+    "sha256": "976ad3d07927343ab99b31510625acba89eac8e0e517c712925620ddeda91b70",
+    "upstream": ["https://raw.githubusercontent.com/DelSkayn/rquickjs/d7ef5eeae702fea24c03643064de454f1c1dd4b0/LICENSE"]
+  },
+  {
+    "crates": ["rust-i18n-macro v4.2.4", "rust-i18n-support v4.2.4"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/rust-i18n-MIT",
+    "sha256": "d6fde6c28ecbccfc7f6d97c0badbb14bbea2cc8f5e81a8c1537204bdfed9a6d5",
+    "upstream": ["https://raw.githubusercontent.com/longbridge/rust-i18n/5f3ea5ba03395f2f2908e3587e01788cfdfd3555/LICENSE"]
+  },
+  {
+    "crates": ["serial2 v0.2.39"],
+    "id": "BSD-2-Clause",
+    "path": "LICENSE-BSD",
+    "sha256": "8db3a8bca21e298fa56df51250b723d4253755966a5c7a92f8027cdd3aaf5972",
+    "crate_file": true,
+    "replaces": "Apache-2.0"
+  },
+  {
+    "crates": ["sha1_smol v1.0.1"],
+    "id": "BSD-3-Clause",
+    "path": "AUTHORS",
+    "sha256": "613ce6df827bdbab4f498700a141548396b6ff26488f263654159ada4b04f78e",
+    "crate_file": true,
+    "replaces": null
+  },
+  {
+    "crates": ["sha1_smol v1.0.1"],
+    "id": "BSD-3-Clause",
+    "path": "LICENSE",
+    "sha256": "282a21b0710441c364025461a447362daf18f5798a7b72ae2f801a2aa536da51",
+    "crate_file": true
+  },
+  {
+    "crates": ["spirv v0.4.0+sdk-1.4.341.0"],
+    "id": "Apache-2.0",
+    "path": "licenses/rust-crates/spirv-Apache-2.0",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "upstream": ["https://raw.githubusercontent.com/gfx-rs/rspirv/8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4/LICENSE"]
+  },
+  {
+    "crates": ["svg_fmt v0.4.5"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/svg_fmt-MIT",
+    "sha256": "7e98bed7f100747aaae7d82ab94fbe6b76fd6b84b09a3aaa413bff8196d0fbb1",
+    "upstream": ["https://raw.githubusercontent.com/nical/rust_debug/93f414cd572b5c2781df93dbdc068ed13443d05a/LICENSE"]
+  },
+  {
+    "crates": ["sync_wrapper v1.0.2"],
+    "id": "Apache-2.0",
+    "path": "LICENSE",
+    "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+    "crate_file": true
+  },
+  {
+    "crates": ["taffy v0.15.1"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/taffy-MIT",
+    "sha256": "f97daf1a0124413dccf399a4e6626b4b74acd05282f80b6d64ac82225650b77a",
+    "upstream": ["https://raw.githubusercontent.com/DioxusLabs/taffy/0064bd54cbe38bf1d8bcd6ec6ab0704d45fb048a/LICENSE"]
+  },
+  {
+    "crates": ["tauri-winrt-notification v0.8.1"],
+    "id": "MIT",
+    "path": "LICENSE_MIT",
+    "sha256": "9dd42ea92cff2ede5cd477cbfcce051b2d0115c0ac7f368ee88cb545055dff1d",
+    "crate_file": true
+  },
+  {
+    "crates": ["tracelogging v1.2.4", "tracelogging_macros v1.2.3"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/tracelogging-MIT",
+    "sha256": "7dc541691bf807a74bf7c1090662712af131571f9be8fb8a6f6c1e6dbfbe2fbb",
+    "upstream": ["https://raw.githubusercontent.com/microsoft/tracelogging/bdd914bd827ff6b9d6d65972d622834fdf04518a/LICENSE", "https://raw.githubusercontent.com/microsoft/tracelogging/4d3c8b02da568d34daf977db7052a819ab4b18ec/LICENSE"]
+  },
+  {
+    "crates": ["tree-sitter-bash v0.23.3"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/tree-sitter-bash-MIT",
+    "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559",
+    "upstream": ["https://raw.githubusercontent.com/tree-sitter/tree-sitter-bash/487734f87fd87118028a65a4599352fa99c9cde8/LICENSE"]
+  },
+  {
+    "crates": ["tree-sitter-css v0.23.2"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/tree-sitter-css-MIT",
+    "sha256": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78",
+    "upstream": ["https://raw.githubusercontent.com/tree-sitter/tree-sitter-css/c0d581e32d183a536731ed6c3a72758b27e20411/LICENSE"]
+  },
+  {
+    "crates": ["tree-sitter-go v0.23.4"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/tree-sitter-go-MIT",
+    "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+    "upstream": ["https://raw.githubusercontent.com/tree-sitter/tree-sitter-go/3c3775faa968158a8b4ac190a7fda867fd5fb748/LICENSE"]
+  },
+  {
+    "crates": ["tree-sitter-html v0.23.2"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/tree-sitter-html-MIT",
+    "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+    "upstream": ["https://raw.githubusercontent.com/tree-sitter/tree-sitter-html/5a5ca8551a179998360b4a4ca2c0f366a35acc03/LICENSE"]
+  },
+  {
+    "crates": ["tree-sitter-javascript v0.23.1"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/tree-sitter-javascript-MIT",
+    "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+    "upstream": ["https://raw.githubusercontent.com/tree-sitter/tree-sitter-javascript/3a837b6f3658ca3618f2022f8707e29739c91364/LICENSE"]
+  },
+  {
+    "crates": ["tree-sitter-json v0.24.8"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/tree-sitter-json-MIT",
+    "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+    "upstream": ["https://raw.githubusercontent.com/tree-sitter/tree-sitter-json/ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24/LICENSE"]
+  },
+  {
+    "crates": ["tree-sitter-md v0.5.4"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/tree-sitter-md-MIT",
+    "sha256": "52ec8a1bf8256511e2a92613e0bb41ffefba3897f16fa958d7bb28c466dd4804",
+    "upstream": ["https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-markdown/41ff24a6c775492c543b09228aeb98d1cd2b3a0f/LICENSE"]
+  },
+  {
+    "crates": ["tree-sitter-python v0.23.6"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/tree-sitter-python-MIT",
+    "sha256": "d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f",
+    "upstream": ["https://raw.githubusercontent.com/tree-sitter/tree-sitter-python/bffb65a8cfe4e46290331dfef0dbf0ef3679de11/LICENSE"]
+  },
+  {
+    "crates": ["tree-sitter-toml-ng v0.7.0"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/tree-sitter-toml-ng-MIT",
+    "sha256": "b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46",
+    "upstream": ["https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-toml/64b56832c2cffe41758f28e05c756a3a98d16f41/LICENSE"]
+  },
+  {
+    "crates": ["tree-sitter-typescript v0.23.2"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/tree-sitter-typescript-MIT",
+    "sha256": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559",
+    "upstream": ["https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/f975a621f4e7f532fe322e13c4f79495e0a7b2e7/LICENSE"]
+  },
+  {
+    "crates": ["usage-argv v7.3.0", "usage-lib v7.3.0"],
+    "id": "MIT",
+    "path": "NOTICE.md",
+    "sha256": "b86007b3c043ec4d8f52979ea3ca6bd91c95f1c5803e0dbc3658cd79eeedf36e",
+    "crate_file": true,
+    "replaces": null
+  },
+  {
+    "crates": ["usage-argv v7.3.0", "usage-lib v7.3.0"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/usage-MIT",
+    "sha256": "f68207e9c8798c1a64d04ad674e042eddb56d679d5294683e0ae57afff3562d6",
+    "upstream": ["https://raw.githubusercontent.com/jdx/usage/facfe1a78b411582e1fd8f2598222685ab92637e/LICENSE"]
+  },
+  {
+    "crates": ["webview2-com v0.38.2", "webview2-com-macros v0.8.1", "webview2-com-sys v0.38.2"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/webview2-rs-MIT",
+    "sha256": "0dcf41516e608bbcb6cdc5229feb7b86fe4a643b85e7df251133c93408fdac73",
+    "upstream": ["https://raw.githubusercontent.com/wravery/webview2-rs/b74dc5e2b394044bea5191052868ce7a106c202c/LICENSE", "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE"]
+  },
+  {
+    "crates": ["windows v0.58.0", "windows v0.61.3", "windows v0.62.2", "windows-collections v0.2.0", "windows-collections v0.3.2", "windows-core v0.58.0", "windows-core v0.61.2", "windows-core v0.62.2", "windows-future v0.2.1", "windows-future v0.3.2", "windows-implement v0.58.0", "windows-implement v0.60.2", "windows-interface v0.58.0", "windows-interface v0.59.3", "windows-link v0.1.3", "windows-link v0.2.1", "windows-numerics v0.2.0", "windows-numerics v0.3.1", "windows-registry v0.6.1", "windows-result v0.2.0", "windows-result v0.3.4", "windows-result v0.4.1", "windows-strings v0.1.0", "windows-strings v0.4.2", "windows-strings v0.5.1", "windows-sys v0.48.0", "windows-sys v0.59.0", "windows-sys v0.61.2", "windows-targets v0.48.5", "windows-targets v0.52.6", "windows-threading v0.1.0", "windows-threading v0.2.1", "windows-version v0.1.7", "windows_x86_64_gnu v0.48.5", "windows_x86_64_gnu v0.52.6", "windows_x86_64_msvc v0.48.5", "windows_x86_64_msvc v0.52.6"],
+    "id": "MIT",
+    "path": "license-mit",
+    "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+    "crate_file": true
+  },
+  {
+    "crates": ["xim-ctext v0.3.0", "xim-parser v0.2.2"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/xim-rs-MIT",
+    "sha256": "efa1224931b98468f5005f77285457f8d2eab0a77a15941aa10abbab1ae9a74e",
+    "upstream": ["https://raw.githubusercontent.com/Riey/xim-rs/65f77e44524ba487285a63aac4080faf2c05b4ed/LICENSE", "https://raw.githubusercontent.com/Riey/xim-rs/7300de35a111de2df1a694bf70454532a8419685/LICENSE"]
+  },
+  {
+    "crates": ["zune-core v0.4.12"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/zune-core-NOTICE",
+    "sha256": "c6dff146a9f31848ac296faa5a08a4253caf2c384c86f906dc99e7fc0a39cc8c",
+    "replaces": null,
+    "upstream": ["https://raw.githubusercontent.com/etemesi254/zune-image/f8fbb123d5ed04441e8324a555bfcda0cb1bd28f/LICENSE.md"]
+  },
+  {
+    "crates": ["zune-inflate v0.2.54"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/zune-inflate-NOTICE",
+    "sha256": "e870d7fd7819a9f0453c62798cb52ae95d148a8c91dc2de1d983f997143c72de",
+    "replaces": null,
+    "upstream": ["https://raw.githubusercontent.com/etemesi254/zune-image/69502ce83fdfecdd0beefd677e2abb3781b29d98/LICENSE.md"]
+  },
+  {
+    "crates": ["zune-jpeg v0.4.21"],
+    "id": "MIT",
+    "path": "licenses/rust-crates/zune-jpeg-NOTICE",
+    "sha256": "c6dff146a9f31848ac296faa5a08a4253caf2c384c86f906dc99e7fc0a39cc8c",
+    "replaces": null,
+    "upstream": ["https://raw.githubusercontent.com/etemesi254/zune-image/fa2c767a01d7d9373911d0bf63e0588553d67e0e/LICENSE.md"]
+  }
+]

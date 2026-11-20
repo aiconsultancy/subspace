@@ -5,8 +5,11 @@ This distribution includes third-party components. Their licences and
 attribution notices are included alongside this file:
 
 - Release archives include THIRD_PARTY_LICENSES for the linked Rust crates.
+- licenses/canvas/ covers the Mermaid renderer.
 - licenses/charts/ covers the bundled chart renderer and JavaScript engine.
 - licenses/icons/ covers embedded icons and includes the Octicons MIT licence.
 - licenses/markdown/ covers the patched Markdown parser.
+- licenses/onnxruntime/ contains the ONNX Runtime licence and third-party notices.
+- licenses/terminal/ covers Ghostty, portable-pty and the terminal bindings.
 - licenses/themes/ covers the GPUI Kit themes and their provenance.
 - licenses/mise/ covers the mise executable when bundled in the macOS app.

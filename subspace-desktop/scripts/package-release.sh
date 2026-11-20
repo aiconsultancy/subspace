@@ -32,7 +32,11 @@ case "$target" in
         ;;
     *-apple-darwin) export MACOSX_DEPLOYMENT_TARGET="$MACOS_MINIMUM_VERSION" ;;
 esac
+mkdir -p "$root/dist"
+stage="$(mktemp -d "$root/dist/.$product-release.XXXXXX")"
+trap 'rm -rf "$stage"' EXIT
 release_cargo_args "$target"
+generate_rust_licences "$stage/THIRD_PARTY_LICENSES" "$target"
 cargo build --release --locked -p "$binary_name" "${release_args[@]}"
 build_dir="$target_dir/$target/release"
 if [[ "$host" = "$target" ]]; then
@@ -50,12 +54,8 @@ if [[ "$host" = "$target" ]]; then
 else
     echo "skipped the metadata version check: $host cannot run $target binaries"
 fi
-mkdir -p "$root/dist"
-stage="$(mktemp -d "$root/dist/.$product-release.XXXXXX")"
-trap 'rm -rf "$stage"' EXIT
 cp "$build_dir/$binary_name$exe" "$root/README.md" "$stage/"
 stage_product_licences "$stage"
-stage_rust_licences "$stage" "$target"
 chmod 755 "$stage/$binary_name$exe"
 printf '%s\n' "$product_metadata" >"$stage/product.json"
 name="$binary_name-$version-$target"

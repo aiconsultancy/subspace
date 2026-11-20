@@ -17,11 +17,28 @@ Lucide and Lobe Icons assets, the GPUI Kit themes, QuickJS NG and the Markdown
 parser. The root NOTICE also records the pinned GPUI Kit version for the
 vendored skills and guides.
 
+Native archives include Microsoft ONNX Runtime 1.31.0's licence and
+third-party notices. The Rust crate report uses the versioned sources in
+`about-notices.json` for licence files missed by cargo-about, highlights
+remaining generic texts and links to each MPL-2.0 crate's source archive.
+An invalid cargo-about clarification or a changed pinned source file
+stops packaging before compiling the release binary.
+
+The fallback audit checked the locked releases across macOS, Linux and
+Windows. The versioned entries identify upstream revisions for omitted
+files and checksums for files read directly from published crates. Where
+the pinned sources provide attribution only, the report retains it
+alongside the generic text. This covers recent objc2 releases, Pathfinder
+Geometry and the Zune crates. The pinned dwrote, mac and SeaHash sources
+have no standalone licence text. The report flags those crates and links
+to dwrote's MPL-2.0 source archive.
+
 `bash scripts/test-prerelease-products.sh` compares the notices against
 their source files and checks the generated Rust report after extracting the
 Linux and macOS tarballs, Windows ZIP and macOS app ZIP. It uses fixture
 binaries and signing commands. `make licence-check` checks the allowed SPDX
-expressions and byte-compares the copied Framework notices. Packaging uses
+expressions and byte-compares the copied notices against the Framework
+checkout Cargo actually selected. Packaging uses
 Cargo's normal dependency tree to limit the report to the selected target and
 features and omit compile-time proc macros.
 Verification also covers the gallery build, its tests, Web Space package

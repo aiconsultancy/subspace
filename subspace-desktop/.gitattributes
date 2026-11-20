@@ -6,3 +6,8 @@
 
 # Retain the blank line's space from the upstream QuickJS NG licence.
 licenses/charts/LICENSE-QUICKJS-NG whitespace=-blank-at-eol
+
+# Preserve the exact upstream licence bytes used by the release checks.
+licenses/onnxruntime/LICENSE -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+licenses/onnxruntime/ThirdPartyNotices.txt -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+licenses/rust-crates/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab

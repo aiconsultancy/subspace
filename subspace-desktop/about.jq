@@ -21,7 +21,32 @@ def key: "\(.name) v\(.version)";
 | "# Third-party Rust crate licences",
   "",
   "This report covers the Subspace binary for \($target). See NOTICE for other bundled components.",
+  "The Rust standard library copyright and licence notices are in the toolchain documentation at share/doc/rust/COPYRIGHT-library.html.",
   "",
+  (
+    .fallbacks | map(select(.crate as $crate | $linked | index($crate))) |
+    if length > 0 then
+      "## Generic SPDX texts",
+      "",
+      "Cargo-about could not find a source-backed licence text for these entries.",
+      "",
+      (.[] | "- \(.crate) (\(.id))"),
+      ""
+    else empty end
+  ),
+  (
+    [.licenses[] | select(.id == "MPL-2.0") | .used_by[].crate] | unique_by(key) |
+    if length > 0 then
+      "## MPL-2.0 source code",
+      "",
+      "The corresponding source is available under the MPL-2.0.",
+      "",
+      (.[] | if .source == "registry+https://github.com/rust-lang/crates.io-index" then
+        "- \(key) <https://static.crates.io/crates/\(.name)/\(.name)-\(.version).crate>"
+      else error("missing MPL-2.0 source URL for " + key) end),
+      ""
+    else empty end
+  ),
   (
     .licenses | group_by(.text) | sort_by(.[0].id)[] |
     "## \(map(.id) | unique | join(", "))",

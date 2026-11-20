@@ -3,9 +3,19 @@ rust = { version = "1.99.0", mr_boxington = true, components = "rustfmt,clippy" 
 mr-boxington = "1.19.0"
 "cargo:rustqual" = "1.8.3"
 "github:Boshen/cargo-shear" = "1.14.0"
-"github:EmbarkStudios/cargo-about" = "0.9.3"
 "github:j178/prek" = "0.3.13"
 "conda:imagemagick" = "7.1.2_31"
+
+[tools."github:EmbarkStudios/cargo-about"]
+version = "0.9.3"
+
+# SHA-256 digests published with the corresponding upstream release archives.
+[tools."github:EmbarkStudios/cargo-about".platforms]
+linux-arm64 = { checksum = "sha256:eb4d9ff6ebd2518152a8308729431a04b3836e71d2bd5ead7aea69f91a71162e" }
+linux-x64 = { checksum = "sha256:3ad1e94ea1e63d69d1961f4fb15ccbbe9575d906111f96d2cb4dce6df48f71b4" }
+macos-arm64 = { checksum = "sha256:45520df8680978a6e7c4023ace0e3f311c73efc208cd68e5a7f4ed4822fa0349" }
+windows-arm64 = { checksum = "sha256:f05a79c38eeffa45098091f6325682ef0801a1078b4e706e024585fa2bfb641b" }
+windows-x64 = { checksum = "sha256:9e2942533ef1c592c4a70bdb384cae1550a3f5fc9ae40379b6662e3d2f16fe02" }
 
 [tasks.build]
 description = "Build every crate"
