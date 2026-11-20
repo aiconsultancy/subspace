@@ -29,6 +29,11 @@ impl Session {
         }
     }
 
+    /// Whether the stream reached `ready`.
+    pub(super) fn went_live(&self) -> bool {
+        self.live_since.is_some()
+    }
+
     pub(super) fn stable(&self) -> bool {
         self.live_since
             .is_some_and(|since| since.elapsed() >= STABLE)

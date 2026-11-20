@@ -49,7 +49,11 @@ pub(crate) enum More {
 pub(crate) enum Failure {
     Edge,
     Forbidden,
-    Unexpected { status: Option<u16> },
+    /// A NETT account with several organisations must choose one.
+    Organisation,
+    Unexpected {
+        status: Option<u16>,
+    },
     Network,
     Offline,
 }
@@ -64,7 +68,10 @@ impl Failure {
     /// States about the account rather than the list hide the tabs and
     /// toolbar, which can't help.
     pub(crate) fn is_account_level(&self) -> bool {
-        matches!(self, Failure::Edge | Failure::Forbidden)
+        matches!(
+            self,
+            Failure::Edge | Failure::Forbidden | Failure::Organisation
+        )
     }
 }
 

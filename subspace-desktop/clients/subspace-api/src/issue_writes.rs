@@ -78,6 +78,10 @@ pub enum IssueSaveError {
     Unconfirmed,
     #[error("The service is busy. Wait before saving again. Your draft is still here.")]
     RateLimited,
+    #[error(
+        "An archived sub-issue can't move with its parent. Restore it, then refresh the preview."
+    )]
+    ArchivedSubIssue,
 }
 
 pub(crate) enum SaveTarget<'a> {

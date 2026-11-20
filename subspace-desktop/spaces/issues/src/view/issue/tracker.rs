@@ -24,7 +24,10 @@ impl Render for Explanation {
         let tokens = Tokens::current(cx);
         v_flex().id("issue-tracker-explanation").test_support().track_focus(&self.focus).popover_style(cx).w_80().gap_2().p_4()
             .child(super::section_title("How tracker status works", &tokens))
-            .child("Subspace API calculates a tracker's state from its sub-issues. Subspace shows the state Subspace API returns.")
+            .child(format!(
+                "{0} calculates a tracker's state from its sub-issues. Subspace shows the state {0} returns.",
+                subspace_api_client::service_name()
+            ))
             .child("Completed sub-issues count towards done. Cancelled and duplicate sub-issues are shown separately.")
             .child(div().text_color(tokens.muted).child("Reload to read the latest status."))
     }

@@ -23,7 +23,10 @@ pub(crate) fn actor_name(actor: &ActivityActor) -> Option<String> {
         .or_else(|| actor.label())
         .filter(|name| !name.is_empty());
     match (actor.kind(), name) {
-        (ActivityActorType::Agent, Some(name)) => Some(format!("{name} (agent)")),
+        (ActivityActorType::Agent, Some(name)) => Some(match actor.person() {
+            Some(person) if person.on_behalf_of.is_some() => person.attribution(),
+            _ => format!("{name} (agent)"),
+        }),
         (ActivityActorType::Agent, None) => Some("Agent".into()),
         (ActivityActorType::Integration, None) => Some("Integration".into()),
         (ActivityActorType::System, None) => Some("System".into()),

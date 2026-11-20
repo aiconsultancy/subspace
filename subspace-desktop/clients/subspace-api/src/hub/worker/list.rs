@@ -10,7 +10,15 @@ use crate::{
 use std::time::Instant;
 
 pub(super) fn load(shared: &Shared, job: &Job, query: &ListQuery) {
+    let sent = Instant::now();
     let result = read_list(shared, job, query);
+    // A NETT token refused before it expires is renewed, and the list read
+    // again, instead of reported.
+    if let Err(error) = result
+        && !crate::hub::renewal::stands(shared, job.generation, sent, error)
+    {
+        return;
+    }
     let mut state = lock(&shared.state);
     if !job.current(&state) {
         return;
@@ -41,20 +49,50 @@ pub(super) fn load(shared: &Shared, job: &Job, query: &ListQuery) {
 /// the list as it is.
 pub(super) fn head(shared: &Shared, job: &Job, query: &ListQuery) {
     let shown = Shown::of(&lock(&shared.state));
+    let sent = Instant::now();
     let result = shared
         .client
         .issue_groups(query)
         .and_then(|fresh| repage(shared, query, fresh, &shown));
     let read = result.is_ok();
+    // NETT: access went, so the rows shown go too, unless a token refused
+    // before it expired was renewed and the list is read again. Subspace
+    // API keeps showing them through a refused re-read, as before.
+    let refused = match result {
+        Err(error @ (Error::SignInNeeded | Error::Forbidden))
+            if shared.client.service() == crate::Backend::Nett =>
+        {
+            crate::hub::renewal::stands(shared, job.generation, sent, error).then_some(error)
+        }
+        _ => None,
+    };
     let mut state = lock(&shared.state);
-    if let Ok(fresh) = result {
-        take_head(job, &mut state, query, fresh, &shown);
+    match (result, refused) {
+        (Ok(fresh), _) => take_head(job, &mut state, query, fresh, &shown),
+        (Err(_), Some(error)) if job.current(&state) => retire_list(&mut state, error),
+        _ => {}
     }
     drop(state);
     if read {
         counts(shared, job, query);
     }
     land_head(shared, job, &mut lock(&shared.state));
+}
+
+/// Clears a list the person can no longer read. Its revision and
+/// installation are retired too, so no count, page or read already out
+/// can bring any of it back.
+fn retire_list(state: &mut crate::hub::State, error: Error) {
+    state.revision = state.revision.wrapping_add(1);
+    state.snapshot.list = None;
+    state.snapshot.list_id = state.snapshot.list_id.wrapping_add(1);
+    state.snapshot.list_loading = false;
+    state.snapshot.page_loading.clear();
+    state.snapshot.page_errors.clear();
+    state.snapshot.hidden_subissues_count = None;
+    state.snapshot.my_issues_count = None;
+    state.snapshot.status = HubStatus::Error(error.into());
+    state.changed();
 }
 
 /// The installation a head read started from, and each group's shown rows.

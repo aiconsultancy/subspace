@@ -74,6 +74,7 @@ fn live_indicator_follows_the_updates_hub_once_signed_in(cx: &mut TestAppContext
         (LiveStatus::Live, "Live"),
         (LiveStatus::Reconnecting, "Reconnecting…"),
         (LiveStatus::Polling, "Polling every 30 s"),
+        (LiveStatus::Off, "Live updates off: reload to refresh"),
     ] {
         board.update(cx, |board, cx| {
             board.live = live;

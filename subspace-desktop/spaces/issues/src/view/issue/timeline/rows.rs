@@ -231,12 +231,13 @@ fn comment_row(
 }
 
 fn comment_byline(comment: &Comment, id: &str, tokens: &Tokens, mut notes: String) -> Div {
+    let attribution = comment.actual_author.attribution();
     let author = comment
         .provenance
         .as_ref()
         .and_then(|provenance| provenance.original_author_display_name.as_deref())
         .filter(|name| !name.is_empty())
-        .unwrap_or(&comment.actual_author.display_name);
+        .unwrap_or(&attribution);
     if comment.edited_at.is_some() {
         if !notes.is_empty() {
             notes.push_str(" · ");

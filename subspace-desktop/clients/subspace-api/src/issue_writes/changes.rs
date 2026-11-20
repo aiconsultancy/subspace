@@ -83,7 +83,17 @@ impl IssueChanges {
         }
     }
 
+    /// Checks the values for a create or an edit. A create needs a summary
+    /// only where the configured backend has summaries.
     pub fn validate(&self, create: bool) -> Result<(), IssueSaveError> {
+        self.validate_for(create, create && crate::capabilities().issue_summaries)
+    }
+
+    pub(crate) fn validate_for(
+        &self,
+        create: bool,
+        summary_required: bool,
+    ) -> Result<(), IssueSaveError> {
         if self.title.as_deref().map_or(create, invalid_title) {
             return Err(IssueSaveError::Title);
         }
@@ -106,7 +116,7 @@ impl IssueChanges {
         if self
             .summary
             .as_deref()
-            .map_or(create, |text| !super::valid_summary(text))
+            .map_or(summary_required, |text| !super::valid_summary(text))
         {
             return Err(IssueSaveError::Summary);
         }

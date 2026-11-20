@@ -144,11 +144,12 @@ fn section_notice(
     state: Option<&ActivityListSnapshot>,
     empty: bool,
 ) -> Option<(Row, Entry)> {
+    let network = crate::scope::network_message();
     let notice = match state {
         None => ("Loading…", Intent::None),
         Some(list) if list.loading() && empty => ("Loading…", Intent::None),
         Some(list) if list.error() == Some(&ReadError::Network) => {
-            (crate::scope::NETWORK_MESSAGE, Intent::Page(section, false))
+            (network.as_str(), Intent::Page(section, false))
         }
         Some(list) if list.error() == Some(&ReadError::SignInNeeded) => {
             (crate::scope::SIGN_IN_MESSAGE, Intent::Page(section, false))

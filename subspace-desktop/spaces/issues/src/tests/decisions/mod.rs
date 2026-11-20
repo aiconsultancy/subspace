@@ -222,7 +222,7 @@ fn a_first_page_error_can_retry_into_empty_without_paging(cx: &mut TestAppContex
     assert_compact_retry(cx, "issue-decisions-retry", "issue-decisions-error");
     assert_eq!(
         label(cx, "issue-decisions-error-hint").as_deref(),
-        Some(crate::scope::READ_ERROR_MESSAGE)
+        Some(crate::scope::read_error_message().as_str())
     );
     assert_eq!(
         label(cx, "issue-decisions-retry").as_deref(),

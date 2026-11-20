@@ -179,7 +179,7 @@ fn metadata(detail: &IssueDetail, tokens: &Tokens) -> Div {
                             };
                             row.child(subspace_framework::dashboard::rich::plain_text(
                                 "issue-opened-by",
-                                &format!("· {verb} {}", person.display_name),
+                                &format!("· {verb} {}", person.attribution()),
                             ))
                         }),
                 )

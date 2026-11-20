@@ -47,6 +47,8 @@ pub(super) enum Task {
     ListHead(ListQuery),
     Reference(crate::resolution_cache::ResolutionRead),
     Discussion(super::comments::DraftKey),
+    /// The open issue's to-do lists and their items.
+    Todos(String),
 }
 
 pub(super) struct Job {
@@ -120,6 +122,7 @@ impl Job {
             | Task::Children(..)
             | Task::Relations(..)
             | Task::PullRequests(..)
+            | Task::Todos(_)
             | Task::Timeline(_)
             | Task::Refresh(_)
             | Task::Recheck(_) => state.issue_current(self.generation, self.issue_revision),
@@ -246,6 +249,7 @@ fn dispatch(shared: &Shared, job: Job) {
         Task::Recheck(identifier) => detail::recheck(shared, &job, identifier),
         Task::ListHead(query) => list::head(shared, &job, query),
         Task::Discussion(key) => super::comments::check(shared, &job, key),
+        Task::Todos(identifier) => super::todos::load(shared, &job, identifier),
         Task::Reference(_) => super::reference::resolve(shared, job),
     }
 }

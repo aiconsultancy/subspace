@@ -10,9 +10,10 @@ use subspace_framework::dashboard::settings::{BoardSettingsEditor, SettingsEdito
 pub(crate) const CONNECTION_NOTE: &str = "Sign in under Settings › Account.";
 
 fn api_address() -> String {
-    subspace_api_client::configured_api_origin()
-        .unwrap_or("No Subspace API configured")
-        .into()
+    subspace_api_client::configured_api_origin().map_or_else(
+        || format!("No {} configured", subspace_api_client::service_name()),
+        str::to_owned,
+    )
 }
 pub(crate) struct IssuesSettings {
     access: Access,
@@ -50,11 +51,16 @@ impl IssuesSettings {
     fn connection_state(&self) -> String {
         match &self.access {
             Access::Ready { display_name } => format!("Signed in as {display_name}"),
-            Access::Starting => {
-                "Connecting… The first load can take up to a minute while Subspace API wakes."
+            Access::Starting => format!(
+                "Connecting… The first load can take up to a minute while {} wakes.",
+                subspace_api_client::service_name()
+            ),
+            Access::Failed(crate::listing::Failure::Edge) => "Sign-in required".into(),
+            Access::Failed(crate::listing::Failure::Organisation) => {
+                crate::scope::NoOrganisation::current()
+                    .settings_line()
                     .into()
             }
-            Access::Failed(crate::listing::Failure::Edge) => "Sign-in required".into(),
             Access::Failed(_) => "Offline".into(),
         }
     }
