@@ -35,7 +35,7 @@ impl Hub {
     pub fn reload_issue(&self) -> Result<(), HubError> {
         let mut state = lock(&self.0.state);
         state.running()?;
-        self.0.resume_nett();
+        self.0.client.resume_nett();
         self.0.refresh_open_issue(&mut state);
         Ok(())
     }

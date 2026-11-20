@@ -80,6 +80,28 @@ impl MovePreview {
             }),
         }
     }
+
+    /// Whether this preview answers a request to move `id`, at `version`,
+    /// to `destination`: a bounded plan with a full token, rooted at that
+    /// issue and version.
+    fn answers(&self, id: &str, destination: &str, version: u32) -> bool {
+        self.issues.len() <= MAX_MOVE_ISSUES
+            && self.token.len() == TOKEN_HEX_LEN
+            && self.issues.first().is_some_and(|root| {
+                (root.id == id || root.old_identifier == id) && root.version == version
+            })
+            && self.destination.id == destination
+    }
+
+    /// Whether the move can be confirmed as previewed: NETT needs the
+    /// review context back, and Subspace API previews every new number.
+    fn confirmable(&self, nett: bool) -> bool {
+        if nett {
+            self.review_context.is_some()
+        } else {
+            self.issues.iter().all(|item| item.new_identifier.is_some())
+        }
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -111,19 +133,7 @@ impl Client {
             json!({"destinationProjectId":destination,"version":version})
         };
         let preview: MovePreview = self.move_request(id, "move-preview", body)?;
-        let root = preview.issues.first();
-        if preview.issues.len() > MAX_MOVE_ISSUES
-            || preview.token.len() != TOKEN_HEX_LEN
-            || !root.is_some_and(|root| root.id == id || root.old_identifier == id)
-            || root.is_some_and(|root| root.version != version)
-            || preview.destination.id != destination
-            || (nett && preview.review_context.is_none())
-            || (!nett
-                && preview
-                    .issues
-                    .iter()
-                    .any(|item| item.new_identifier.is_none()))
-        {
+        if !preview.answers(id, destination, version) || !preview.confirmable(nett) {
             return Err(IssueSaveError::Unavailable);
         }
         Ok(preview)

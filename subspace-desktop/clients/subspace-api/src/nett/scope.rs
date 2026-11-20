@@ -113,13 +113,14 @@ pub fn snapshot() -> Snapshot {
     // Read before locking: noticing an account change clears this state.
     let current = crate::native::account_generation();
     let state = lock();
+    let unknown = Snapshot {
+        organisations: Vec::new(),
+        selected: None,
+        status: Status::Unknown,
+        generation: state.generation,
+    };
     if state.account != current {
-        return Snapshot {
-            organisations: Vec::new(),
-            selected: None,
-            status: Status::Unknown,
-            generation: state.generation,
-        };
+        return unknown;
     }
     Snapshot {
         organisations: state
@@ -130,7 +131,7 @@ pub fn snapshot() -> Snapshot {
             .collect(),
         selected: state.selected.clone(),
         status: state.status.clone(),
-        generation: state.generation,
+        ..unknown
     }
 }
 

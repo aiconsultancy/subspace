@@ -89,6 +89,7 @@ pub struct HubSnapshot {
 
 impl HubSnapshot {
     /// Changes when the Spaces should read their initiatives again.
+    // qual:allow(dry, boilerplate) reason: "Readers preserve the immutable snapshot boundary; mutation belongs to the hub."
     pub fn scope_epoch(&self) -> u64 {
         self.scope_epoch
     }

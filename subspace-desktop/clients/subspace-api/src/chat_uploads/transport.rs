@@ -42,7 +42,7 @@ impl Client {
         self.chat_service()?;
         if self.backend == crate::Backend::Nett {
             // A wait NETT asked for holds: nothing at all is sent before it.
-            self.nett_chat_wait(draft)?;
+            crate::nett::chat_wait(draft)?;
         }
         let user = self.me().map_err(UploadError::from)?.user_id;
         let upload = if self.backend == crate::Backend::Nett {

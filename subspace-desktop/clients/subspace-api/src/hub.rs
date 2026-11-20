@@ -81,17 +81,6 @@ impl Shared {
     fn enqueue(&self, state: &mut State, task: Task, priority: ReadPriority) {
         self.queue.push(Job::new(state, task), priority);
     }
-
-    /// An explicit reload: a pause NETT asked for ends, so what the person
-    /// asked for is sent now, and the organisation's capability list is read
-    /// again, so a feature NETT enabled meanwhile is offered. Subspace API
-    /// has neither.
-    fn resume_nett(&self) {
-        if self.client.service() == crate::Backend::Nett {
-            crate::nett::flow::resume(self.client.flow_account());
-            self.client.nett_reread_served();
-        }
-    }
 }
 
 impl Hub {
@@ -160,7 +149,7 @@ impl Hub {
             .map_err(|_| HubError::InvalidQuery)?;
         let mut state = lock(&self.0.state);
         state.running()?;
-        self.0.resume_nett();
+        self.0.client.resume_nett();
         state.select_project(query.selected_project());
         state.query = Some(query);
         state.revision = state.revision.wrapping_add(1);
