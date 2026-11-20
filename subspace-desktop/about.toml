@@ -1,0 +1,50 @@
+# Prefer MIT in dual-licensed crates so their copyright lines appear in the
+# report. Only one branch of an SPDX OR expression needs to be satisfied.
+# about-notices.json retains versioned source texts missed by the scanner.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "ISC",
+    "0BSD",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "CC0-1.0",
+    "BSL-1.0",
+]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# The AWS-LC files concatenate their licence texts and copyright notices.
+[aws-lc-rs.clarify]
+license = "ISC AND (Apache-2.0 OR ISC)"
+
+[[aws-lc-rs.clarify.files]]
+path = "LICENSE"
+checksum = "b50b376e7d24a0598488b730c3034ffcd0b58dd36c0913a24b9903a3cfd04bf7"
+
+[aws-lc-sys.clarify]
+license = "ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)"
+
+[[aws-lc-sys.clarify.files]]
+path = "LICENSE"
+checksum = "728536b4160e051f86d7c9c388f704866b3d512cd7df97ac3516c65279523c4e"
+
+# Chrono combines its MIT and Apache-2.0 notices in one file.
+[chrono.clarify]
+license = "MIT OR Apache-2.0"
+
+[[chrono.clarify.files]]
+path = "LICENSE.txt"
+checksum = "946c9835d8034d24404f8cfec5f4654cee5dad17e944afc3d06d742cf2882831"
+
+# This file contains separate BSD-3-Clause notices for OpenEXR and exrs.
+[exr.clarify]
+license = "BSD-3-Clause"
+
+[[exr.clarify.files]]
+path = "LICENSE.md"
+checksum = "97e4d3aa7a9e8ac31979c16ca8bb2b628a9cb72c3362185ad2bf4ad77f43551f"

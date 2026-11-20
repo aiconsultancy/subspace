@@ -16,7 +16,14 @@ if [[ -z "$out_dir" ]]; then
 	echo "an output directory is required" >&2
 	exit 2
 fi
-target="${2:-$(rustc -vV | sed -n 's/^host: //p')}"
+root="${SUBSPACE_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+cd "$root"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=scripts/product.sh
+source "$root/scripts/product.sh"
+load_release_toolchain
+require_product_licences
+target="${2:-$("$RUSTC" -vV | sed -n 's/^host: //p')}"
 case "$target" in
 aarch64-apple-darwin) ;;
 *)
@@ -25,23 +32,20 @@ aarch64-apple-darwin) ;;
 	;;
 esac
 
-root="${SUBSPACE_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-cd "$root"
-# shellcheck source-path=SCRIPTDIR/..
-# shellcheck source=scripts/product.sh
-source "$root/scripts/product.sh"
 load_product
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_MINIMUM_VERSION"
 rustup target add "$target" >&2
-build_args=(build --release --locked --target "$target" -p "$binary_name")
-if [[ -n "${SUBSPACE_BUILD_FEATURES:-}" ]]; then
-	build_args+=(--features "$SUBSPACE_BUILD_FEATURES")
-fi
-cargo "${build_args[@]}" >&2
-build_dir="$(cd "$target_dir/$target/release" && pwd)"
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+release_cargo_args "$target"
+generate_rust_licences "$scratch/THIRD_PARTY_LICENSES" "$target"
+python3 scripts/release-files.py build "$target_dir" "$binary_name" "$scratch" "${release_args[@]}"
+unset SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET
 
 app="$out_dir/$display_name.app"
 rm -rf "$app"
-create_bundle "$build_dir/$binary_name" "$app" "$bundle_id" "$display_name"
+create_bundle "$scratch/$binary_name" "$app" "$bundle_id" "$display_name"
+cp "${rust_std_notices[@]}" "$app/Contents/Resources/licenses/rust-std/"
+cp "$scratch/THIRD_PARTY_LICENSES" "$app/Contents/Resources/"
 bash "$root/scripts/bundle-mise.sh" "$app" >&2
 echo "$app"

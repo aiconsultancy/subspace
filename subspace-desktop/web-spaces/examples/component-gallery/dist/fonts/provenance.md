@@ -27,9 +27,9 @@ No glyph was removed. Font names and outlines are unchanged.
   The WOFF2 is 1,046,472 bytes, below the repository's 1,024 KiB file limit.
 - The original font's OFL notice is `JetBrainsMono-OFL.txt`.
 - `NerdFonts-LICENSE` and `NerdFonts-license-audit.md` retain upstream patch
-  licensing and glyph-source attribution. Files in `glyph-licences/` retain
-  the additional notices shipped with those glyph sources at Nerd Fonts 3.5.1.
-  The Nerd Fonts MIT licence covers its patcher source, not every glyph.
+  licensing and glyph-source attribution. The
+  [glyph licence index](glyph-licences/README.md) records the pinned sources
+  and accompanying licence texts for the bundled glyphs.
 
 Reproduction, with the fixture's original TTF and FontTools installed:
 

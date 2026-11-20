@@ -20,14 +20,6 @@ if [[ "$(uname -s)" != Darwin ]]; then
 fi
 identity="$1"
 profile="$2"
-target="${3:-$(rustc -vV | sed -n 's/^host: //p')}"
-case "$target" in
-aarch64-apple-darwin) arch=arm64 ;;
-*)
-	echo "unsupported macOS target: $target" >&2
-	exit 2
-	;;
-esac
 if [[ -z "$identity" || -z "$profile" ]]; then
 	echo "a Developer ID Application signing identity and Keychain profile are required" >&2
 	exit 2
@@ -40,6 +32,15 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
+load_release_toolchain
+target="${3:-$("$RUSTC" -vV | sed -n 's/^host: //p')}"
+case "$target" in
+aarch64-apple-darwin) arch=arm64 ;;
+*)
+	echo "unsupported macOS target: $target" >&2
+	exit 2
+	;;
+esac
 load_product
 
 # shellcheck source-path=SCRIPTDIR/..
@@ -56,9 +57,9 @@ stage="$(mktemp -d "$root/dist/.$product-macos.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
 # Only the build sees the secret; it is compiled into the executable.
 app="$(SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET="$oauth_secret" bash "$root/scripts/build-macos-app.sh" "$stage" "$target")"
-# A build cache that ignored the variable would ship without it.
+# Check the executable before signing.
 if [[ -n "$oauth_secret" ]] && ! LC_ALL=C grep -qF -f <(printf '%s\n' "$oauth_secret") "$app/Contents/MacOS/$binary_name"; then
-	echo 'the built app does not contain the GitHub OAuth client secret; run cargo clean -p subspace-github-auth, then package again' >&2
+	echo 'the built app does not contain the GitHub OAuth client secret; verify the login keychain item or SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET, then package again' >&2
 	exit 1
 fi
 unset oauth_secret

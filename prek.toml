@@ -23,8 +23,8 @@ hooks = [
     { id = "check-json" },
     { id = "check-toml" },
     { id = "check-yaml" },
-    { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"] },
-    { id = "end-of-file-fixer" },
+    { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"], exclude = "^subspace-desktop/licenses/(charts/LICENSE-QUICKJS-NG$|onnxruntime/(LICENSE|ThirdPartyNotices\\.txt)$|rust-crates/|webview2/(LICENSE|NOTICE)\\.txt$)" },
+    { id = "end-of-file-fixer", exclude = "^subspace-desktop/licenses/(onnxruntime/(LICENSE|ThirdPartyNotices\\.txt)$|rust-crates/|webview2/(LICENSE|NOTICE)\\.txt$)" },
 ]
 
 # Release tooling at the root: Release Please's config, the lockfile sync and

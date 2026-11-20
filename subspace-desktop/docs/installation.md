@@ -78,6 +78,10 @@ The archive holds the selected binary, `README.md` and validated `product.json`
 at its root. Windows ZIP archives contain `subspace.exe`; the updater selects
 that exact entry, including the `.exe` extension.
 
+The archives also include `LICENSE`, `NOTICE` and `THIRD_PARTY_LICENSES`,
+with asset notices under `licenses/`. In the macOS app archive these files
+live under `Subspace.app/Contents/Resources/`.
+
 Linux ARM64 receives no new CI builds or release archives. For that platform,
 select an older release that includes its archive with the installer's
 `--version` option. Historical installer support remains unchanged.
@@ -105,6 +109,33 @@ When the host can run the target, the packager also executes the binary's
 headless `__product_metadata` route before replacing an archive. The machine
 version remains plain semver. An incompatible cross-target reports that this
 check was skipped.
+
+Before compiling the release binary, packaging uses pinned cargo-about
+and Python 3 to check the locked Rust graph against `about.toml` and generate
+`THIRD_PARTY_LICENSES` for the target and build features. The report
+includes pinned texts that the scanner misses, identifies any remaining
+generic SPDX texts and gives exact source downloads for MPL-2.0 crates.
+Native ONNX Runtime notices are in `licenses/onnxruntime/`, and the Windows
+archive includes the WebView2 loader notices in `licenses/webview2/`.
+Packaging checks the selected crates and notice digests in
+[`native-notices.json`](../native-notices.json) before compiling. Packaging
+rejects ONNX Runtime linkage overrides and checks that Cargo used the pinned
+crate's static download. The crate verifies the downloaded archive against a
+SHA-256 in its pinned distribution table before linking. Update the pins and
+verify the upstream notices together when either native dependency changes.
+The archive's `NOTICE` indexes the files relative to its own location.
+Ordinary builds share a Cargo cache by target and feature set. The packaging
+helper holds a lock until it has copied the executable for this run's licence
+report. Set `SUBSPACE_RELEASE_LOCK_TIMEOUT` to a non-negative number of seconds
+to change how long the build and publication locks wait. The default is 1800
+seconds (30 minutes).
+Packaging copies the Rust standard library licences and copyright notice
+unchanged from the release compiler's sysroot into `licenses/rust-std/`.
+It stops before compilation if a notice is missing or the compiler version
+differs from the pin in `mise.toml`.
+`make licence-check` checks the policy across release targets with Terminal
+and the default features enabled. It also compares the copied notices when
+Cargo resolves the Framework from a local checkout.
 
 Scripts read names, bundle IDs, icons, themes and version through the headless
 `subspace-product-metadata` utility. It does not initialize GPUI to obtain

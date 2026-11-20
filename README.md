@@ -326,7 +326,7 @@ and coding agents should start with [AGENTS.md](AGENTS.md).
 Subspace is licensed under the [Apache License 2.0](LICENSE).
 See [NOTICE](NOTICE) for attribution and links to third-party notices.
 See also the [desktop third-party licences](subspace-desktop/licenses/),
-the [web component gallery notices](subspace-desktop/web-spaces/examples/component-gallery/public/),
+the [web component gallery notices](subspace-desktop/web-spaces/examples/component-gallery/dist/THIRD_PARTY_NOTICES),
 the [Framework crate notices](subspace-framework/docs/publishing-audit.md#licence-and-notices),
 and the licences for the vendored
 [GPUI Base](subspace-framework/vendor/gpui-base/LICENSE-APACHE) and

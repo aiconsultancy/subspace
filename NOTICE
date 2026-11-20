@@ -4,9 +4,19 @@ Copyright 2026 The Subspace Authors
 Third-party licences and attribution notices are recorded in:
 
 - subspace-desktop/licenses/
-- subspace-desktop/web-spaces/examples/component-gallery/public/
+- subspace-desktop/NOTICE
+- subspace-desktop/web-spaces/examples/component-gallery/dist/THIRD_PARTY_NOTICES
+- subspace-desktop/web-spaces/examples/component-gallery/dist/fonts/
+- subspace-desktop/web-spaces/examples/component-gallery/dist/licences/
 - subspace-framework/docs/publishing-audit.md
 - subspace-framework/vendor/gpui-base/LICENSE-APACHE
 - subspace-framework/vendor/gpui-base/SUBSPACE-PATCH.md
 - subspace-framework/vendor/markdown/license
 - subspace-framework/vendor/markdown/PATCHED.md
+
+The gpui-kit and gpui-kit-design-guides skills and their Coding and Design
+Guides in subspace-desktop/.agents/skills/ and
+subspace-framework/.agents/skills/ come from longbridge/gpui-kit v0.9.1 under
+the Apache License 2.0. The upstream text is included at
+subspace-framework/host/app/themes/gpui-kit/LICENSE-APACHE and
+subspace-framework/vendor/gpui-base/LICENSE-APACHE.

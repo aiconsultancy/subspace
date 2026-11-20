@@ -1,5 +1,6 @@
 //! Generates one `SvgIcon` constant per Lucide SVG in GPUI Kit's catalog.
-//! Ported from gupi's `gpui-lucide` (Apache-2.0, https://github.com/suxiaoshao/gupi).
+//! Ported from gupi's `gpui-lucide` (Apache-2.0,
+//! https://github.com/suxiaoshao/gupi/tree/9fb1bf1a298e66425b691d74df6ec4a5cbb9c19e/crates/gpui-lucide).
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
