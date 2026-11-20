@@ -20,14 +20,6 @@ if [[ "$(uname -s)" != Darwin ]]; then
 fi
 identity="$1"
 profile="$2"
-target="${3:-$(rustc -vV | sed -n 's/^host: //p')}"
-case "$target" in
-aarch64-apple-darwin) arch=arm64 ;;
-*)
-	echo "unsupported macOS target: $target" >&2
-	exit 2
-	;;
-esac
 if [[ -z "$identity" || -z "$profile" ]]; then
 	echo "a Developer ID Application signing identity and Keychain profile are required" >&2
 	exit 2
@@ -40,6 +32,15 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
+load_release_toolchain
+target="${3:-$("$RUSTC" -vV | sed -n 's/^host: //p')}"
+case "$target" in
+aarch64-apple-darwin) arch=arm64 ;;
+*)
+	echo "unsupported macOS target: $target" >&2
+	exit 2
+	;;
+esac
 load_product
 
 # shellcheck source-path=SCRIPTDIR/..

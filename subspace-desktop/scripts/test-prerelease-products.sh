@@ -46,10 +46,21 @@ check_packaged_licences() {
         charts/LICENSE-FLINT-CHART charts/LICENSE-QUICKJS-NG charts/LICENSE-RQUICKJS \
         icons/LICENSE-FEATHER icons/LICENSE-LOBE-ICONS icons/LICENSE-LUCIDE \
         markdown/LICENSE onnxruntime/LICENSE onnxruntime/ThirdPartyNotices.txt \
+        rust-std/README.md \
         terminal/LICENSE-APACHE terminal/LICENSE-GHOSTTY terminal/LICENSE-MIT terminal/LICENSE-PORTABLE-PTY \
         themes/gpui-kit/LICENSE-APACHE themes/gpui-kit/PROVENANCE.md; do
         cmp "$root/licenses/$file" "$destination/licenses/$file"
     done
+    for file in COPYRIGHT-library.html licenses/Apache-2.0.txt licenses/MIT.txt; do
+        cmp "$fixture/fake sysroot/share/doc/rust/$file" "$destination/licenses/rust-std/${file##*/}"
+    done
+    if [[ "$target" = *-windows-* ]]; then
+        for file in LICENSE.txt NOTICE.txt README.md; do
+            cmp "$root/licenses/webview2/$file" "$destination/licenses/webview2/$file"
+        done
+    else
+        test ! -e "$destination/licenses/webview2"
+    fi
     for file in README.md OCTICONS-LICENSE.txt; do
         cmp "$root/spaces/actions/assets/$file" "$destination/licenses/icons/octicons/$file"
     done

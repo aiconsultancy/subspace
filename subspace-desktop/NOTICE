@@ -10,6 +10,9 @@ attribution notices are included alongside this file:
 - licenses/icons/ covers embedded icons and includes the Octicons MIT licence.
 - licenses/markdown/ covers the patched Markdown parser.
 - licenses/onnxruntime/ contains the ONNX Runtime licence and third-party notices.
+- licenses/rust-crates/ contains pinned source licences reproduced in THIRD_PARTY_LICENSES.
+- Release archives include the toolchain's Rust standard library licences and copyright notices under licenses/rust-std/.
 - licenses/terminal/ covers Ghostty, portable-pty and the terminal bindings.
 - licenses/themes/ covers the GPUI Kit themes and their provenance.
+- licenses/webview2/ contains the WebView2 loader licence and SDK notices in the Windows archive.
 - licenses/mise/ covers the mise executable when bundled in the macOS app.

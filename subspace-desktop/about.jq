@@ -18,10 +18,17 @@ def key: "\(.name) v\(.version)";
 | ([.licenses[].used_by[].crate | key] | unique) as $covered
 | if ($linked - $covered | length) > 0 then error("missing licence texts for " + ($linked - $covered | join(", ")))
   else . end
+| ([.licenses[] | select(.source_path == null) |
+    select(any(.fallback_crates[]; . as $crate | $linked | index($crate) != null) | not) |
+    .id as $id | .used_by[].crate | "\(key) (\($id))"
+  ] | unique) as $unexplained
+| if ($unexplained | length) > 0 then
+    error("missing cargo-about fallback diagnostics for " + ($unexplained | join(", ")))
+  else . end
 | "# Third-party Rust crate licences",
   "",
   "This report covers the Subspace binary for \($target). See NOTICE for other bundled components.",
-  "The Rust standard library copyright and licence notices are in the toolchain documentation at share/doc/rust/COPYRIGHT-library.html.",
+  "The Rust standard library copyright and licence notices are in licenses/rust-std/.",
   "",
   (
     .fallbacks | map(select(.crate as $crate | $linked | index($crate))) |

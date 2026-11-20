@@ -88,6 +88,7 @@ fi
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
+load_release_toolchain
 load_product
 if [[ "$integration" = true && "$version" != "$integration_version" ]]; then
     echo 'integration version does not match the planned version; refusing to package or publish' >&2
