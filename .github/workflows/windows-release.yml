@@ -82,10 +82,27 @@ jobs:
             echo "tag=$TAG"
             echo "version=${TAG#subspace-desktop-v}"
           } >>"$GITHUB_OUTPUT"
+      # The full history, so the next step can tell whether the tag is on main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ steps.release.outputs.tag }}
+          fetch-depth: 0
           persist-credentials: false
+      # Anyone who can push a tag could otherwise get any commit signed. Only
+      # a commit that reached main through review is built, before any of the
+      # tag's code runs.
+      - name: Require the tag's commit to be on main
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          test "$commit" = "$(git rev-parse "refs/tags/$TAG^{commit}")"
+          if ! git merge-base --is-ancestor "$commit" refs/remotes/origin/main; then
+            echo "$TAG points at $commit, which is not on main; only commits on main are built and signed" >&2
+            exit 1
+          fi
+          echo "$TAG is $commit, on main."
       - name: Use the Rust toolchain mise.toml names
         run: |
           set -euo pipefail

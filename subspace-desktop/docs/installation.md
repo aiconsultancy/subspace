@@ -562,9 +562,10 @@ When the release workflow creates an app release, it starts
 runs on the Subspace self-hosted ARC scale sets in the platform's Kubernetes
 cluster (runner group `subspace-release`), never on GitHub-hosted runners:
 
-1. **build**, on `subspace-windows`, checks out the tag and runs
+1. **build**, on `subspace-windows`, checks out the tag, refuses it unless its
+   commit is on `main`, and runs
    `scripts/package-release.sh x86_64-pc-windows-msvc <version>` with no
-   secrets. The runner is a Windows Server 2022 container on a node pool that
+   secrets. So only reviewed code is signed, whoever pushed the tag. The runner is a Windows Server 2022 container on a node pool that
    scales from zero to one, so a run may wait a few minutes for the node. A
    GPUI release build for Windows must run on Windows, because the renderer
    compiles its shaders with the Windows SDK's `fxc.exe` in a build script.
@@ -590,9 +591,11 @@ gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=
 gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=subspace-desktop-v0.10.0 -f mode=build-only
 ```
 
-The `windows-signing` environment's deployment rule admits only `main` and
-`subspace-desktop-v*` tags, and holds these environment secrets, so neither
-the identity nor the vault is written in the repository:
+The `windows-signing` environment's deployment rule admits only `main`, where
+this workflow runs. It must not admit tags: a workflow committed on a tag
+could then use the signing identity without this workflow's checks. The
+environment holds these secrets, so neither the identity nor the vault is
+written in the repository:
 
 | Secret | Value |
 | --- | --- |
