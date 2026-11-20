@@ -332,12 +332,19 @@ NETT's file host, which never sees the bearer, a cookie or `x-org-id`.
   only uploads still under way or awaiting a check that can change the
   outcome; those that stored nothing go, and their reservations are
   cancelled under the issue's ID. An upload whose completion may have
-  landed is never let go or cancelled by the store: only a check or the
-  person's Dismiss ends it. What the store lets go is its bytes, which a
-  check does not need: 15 minutes after its issue closed, once more than
-  eight closed issues keep uploads, or when a new file needs the room. This
+  landed is never cancelled by the store: only a check or the person's
+  Dismiss ends it. What the store lets go is its bytes, which a check does
+  not need, and only once no attempt is under way, since an attempt holds
+  them too and one that fails before sending can still be retried: 15
+  minutes after its issue closed, once more than eight closed issues hold
+  bytes, counting only issues that still hold some, or when a new file
+  needs the room. Past 64 closed uploads that only wait for a check, their
+  bytes gone, the oldest are forgotten, still without cancelling. This
   needs no timer and happens at the next use however long the hub sat
-  idle. Such an upload shows again when its issue reopens, to be checked;
+  idle; a use that finds the open issue and the store as the last one
+  left them, with no bytes fallen due, does no work, so a snapshot costs
+  the same however many uploads wait. Such an upload shows again when its
+  issue reopens, to be checked;
   one found not stored then asks for the file to be chosen again. A
   stored file reads the open issue's attachments again. Every upload request, completion and cancellation
   names the issue by its ID, which still names it after a move. A snapshot
