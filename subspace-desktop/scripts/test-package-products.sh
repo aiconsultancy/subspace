@@ -72,7 +72,7 @@ host_archive="$fixture/dist/$binary-$version-$host_target.tar.gz"
 : >"$fixture/binary.log"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-release.sh" "$host_target" "$version"
-grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics" "$fixture/cargo.log"
+grep -Fq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics " "$fixture/cargo.log"
 grep -Eq "^about -L debug generate --locked --fail --manifest-path products/subspace/Cargo.toml .*--target $host_target --features terminal " "$fixture/cargo.log"
 grep -Eq "^tree .*--target $host_target --features terminal$" "$fixture/cargo.log"
 bash "$fixture/scripts/package-release.sh" "$host_target" "$version"
@@ -149,7 +149,7 @@ cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
-grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics" "$fixture/cargo.log"
+grep -Fq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics " "$fixture/cargo.log"
 grep -Eq "^about -L debug generate .*--target $host_target --features terminal " "$fixture/cargo.log"
 app="$fixture/dist/$name.app"
 test -x "$app/Contents/MacOS/$binary"
@@ -184,11 +184,16 @@ grep -Fxq 'security find-generic-password' "$fixture/security.log"
 : >"$fixture/cargo.log"
 FAKE_OAUTH_SECRET=fixture-oauth-secret bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile' >"$fixture/package.out" 2>&1
 grep -Fxq 'oauth secret' "$fixture/cargo.log"
+secret_cache="$(tail -n 1 "$fixture/release-cache.log")"
+[[ "$secret_cache" != "$fixture/target/release-pkg/"* ]]
+test ! -e "$secret_cache"
+grep -Fq fixture-oauth-secret "$app/Contents/MacOS/$binary"
 if grep -Fq fixture-oauth-secret "$fixture/package.out" "$fixture/actions.log"; then echo 'the OAuth secret was printed' >&2; exit 1; fi
 if FAKE_OAUTH_SECRET=fixture-oauth-secret FAKE_DROP_OAUTH_SECRET=1 bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile' 2>"$fixture/package.err"; then
     echo 'an app without the OAuth secret must not be packaged' >&2; exit 1
 fi
-grep -Fq 'does not contain the GitHub OAuth client secret' "$fixture/package.err"
+grep -Fq 'verify the login keychain item or SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET, then package again' "$fixture/package.err"
+test ! -e "$(tail -n 1 "$fixture/release-cache.log")"
 if grep -Fq fixture-oauth-secret "$fixture/package.err"; then echo 'the OAuth secret was printed' >&2; exit 1; fi
 : >"$fixture/actions.log"
 export FAKE_BUILD_FAIL=1
@@ -201,7 +206,7 @@ unset FAKE_BUILD_FAIL
 : >"$fixture/mise.log"
 env -u FEATURES -u SUBSPACE_BUILD_FEATURES -u MISE_ENV HOME="$fixture/home" \
     make -f "$root/Makefile" install-macos
-if ! grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics" "$fixture/cargo.log"; then
+if ! grep -Fq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics " "$fixture/cargo.log"; then
     echo "install-macos must enable Terminal by default" >&2
     exit 1
 fi
@@ -212,7 +217,7 @@ cmp "$metadata" "$installed/Contents/Resources/product.json"
 : >"$fixture/cargo.log"
 HOME="$fixture/home" make -f "$root/Makefile" install-macos \
     FEATURES=terminal,capture TARGET="$host_target"
-grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal,capture --message-format=json-render-diagnostics" "$fixture/cargo.log"
+grep -Fq -- "build --release --locked -p $binary --target $host_target --features terminal,capture --message-format=json-render-diagnostics " "$fixture/cargo.log"
 grep -Eq "^about -L debug generate .*--target $host_target --features terminal,capture " "$fixture/cargo.log"
 : >"$fixture/cargo.log"
 HOME="$fixture/home" make -f "$root/Makefile" install-macos FEATURES=

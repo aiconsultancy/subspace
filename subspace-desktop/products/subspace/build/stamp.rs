@@ -41,6 +41,7 @@ fn commit_directives(env: &BuildEnv) -> Vec<String> {
     };
     vec![
         "cargo:rerun-if-env-changed=SUBSPACE_SOURCE_COMMIT".to_owned(),
+        "cargo:rerun-if-env-changed=SUBSPACE_PACKAGE_BUILD".to_owned(),
         format!("cargo:rustc-env=SUBSPACE_BUILD_COMMIT={commit}"),
         format!("cargo:rustc-env=SUBSPACE_BUILD_DIRTY={dirty}"),
     ]
@@ -338,6 +339,7 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let lines = directives(&env(folder.path(), None, false));
         for expected in [
+            "cargo:rerun-if-env-changed=SUBSPACE_PACKAGE_BUILD",
             "cargo:rustc-env=SUBSPACE_BUILD_COMMIT=unknown",
             "cargo:rustc-env=SUBSPACE_BUILD_DIRTY=false",
             "cargo:rustc-env=SUBSPACE_BUILD_BRANCH=unknown",

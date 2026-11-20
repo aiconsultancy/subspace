@@ -79,6 +79,10 @@ fork_revision=1234567890abcdef1234567890abcdef12345678
 framework="$FIXTURE/../resolved-framework"
 case "$1" in
     -Z)
+        if [[ "${FAKE_CARGO_CONFIG_FAIL:-0}" = 1 ]]; then
+            echo 'error: fixture Cargo could not parse its configuration' >&2
+            exit 25
+        fi
         if [[ -n "${FIXTURE_CARGO_CONFIG:-}" ]]; then
             set -- "$@" --config "$FIXTURE_CARGO_CONFIG"
         fi
@@ -218,8 +222,21 @@ BINARY
             printf '# %s\n' "$SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET" >>"$directory/$package$exe"
         fi
         if [[ "$json" = 1 ]]; then
+            if [[ "$component" = onnxruntime ]]; then
+                # Model a wrapper injecting an override only on the actual build.
+                cfgs='["pyke"]'; libs='["static=onnxruntime"]'
+                if [[ "${FAKE_BUILD_ONLY_OVERRIDE:-0}" = 1 ]]; then
+                    cfgs='[]'; libs='["onnxruntime"]'
+                fi
+                jq -nc --arg id "$registry#ort-sys@2.0.0-rc.15" --argjson cfgs "$cfgs" --argjson libs "$libs" \
+                    '{reason:"build-script-executed",package_id:$id,cfgs:$cfgs,linked_libs:$libs}'
+            fi
             jq -nc --arg package "$package" --arg executable "$directory/$package$exe" \
                 '{reason:"compiler-artifact",target:{name:$package,kind:["bin"]},executable:$executable,fresh:true}'
+        fi
+        if [[ -n "${FIXTURE_DAEMON_PID:-}" ]]; then
+            sleep 60 </dev/null >/dev/null 2>&1 &
+            echo "$!" >"$FIXTURE_DAEMON_PID"
         fi
         if [[ -n "${FIXTURE_BUILD_GATE:-}" ]]; then
             touch "$FIXTURE_BUILD_GATE/built"

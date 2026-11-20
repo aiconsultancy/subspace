@@ -139,6 +139,17 @@ EOF
     FIXTURE_CARGO_CONFIG='env.ORT_CUDA_VERSION="12"' expect_packaging_failure 'linkage overrides: ORT_CUDA_VERSION' "$linux" "$version"
     FIXTURE_CARGO_CONFIG="target.$linux.onnxruntime.rustc-link-lib=['onnxruntime']" \
         expect_packaging_failure "linkage overrides: target.$linux.onnxruntime" "$linux" "$version"
+    FAKE_CARGO_CONFIG_FAIL=1 expect_packaging_failure \
+        'error: fixture Cargo could not parse its configuration' "$linux" "$version"
+    (
+        cd "$fixture"
+        if python3 scripts/release-files.py build "$fixture/target" subspace "$fixture" \
+            --target "$linux" --config 'env.ORT_LIB_LOCATION="/fixture/runtime"' >"$fixture/explicit-config.log" 2>&1; then
+            echo 'an explicit Cargo linkage override must fail before building' >&2
+            exit 1
+        fi
+        grep -Fq 'linkage overrides: ORT_LIB_LOCATION' "$fixture/explicit-config.log"
+    )
     local ort="$fixture/native/ort/build/download/dist.tsv"
     local loader="$fixture/native/webview2/x64/WebView2LoaderStatic.lib"
     cp "$ort" "$ort.saved"
@@ -150,6 +161,8 @@ EOF
     mv "$ort.saved" "$ort"
     mv "$loader.saved" "$loader"
     test "$(grep -c '^build ' "$fixture/cargo.log")" = "$builds_before"
+    FAKE_BUILD_ONLY_OVERRIDE=1 expect_packaging_failure \
+        'Cargo did not link the pinned ONNX Runtime download' "$linux" "$version"
     cmp "$archive" "$backup"
     cmp "$archive.sha256" "$backup.sha256"
     # Recognised diagnostics and the source-backed first crate can coexist.
@@ -170,6 +183,22 @@ with open(sys.argv[1], "rb") as lock:
         sys.exit("expected another process to hold the lock")
 PY
 }
+
+check_daemon_lock() (
+    local version="$1" target=aarch64-apple-darwin pid_file="$fixture/daemon.pid" cache pid
+    trap 'if [[ -s "$pid_file" ]]; then kill "$(cat "$pid_file")" 2>/dev/null || true; fi' EXIT
+    FIXTURE_DAEMON_PID="$pid_file" bash "$fixture/scripts/package-release.sh" "$target" "$version"
+    pid="$(cat "$pid_file")"
+    kill -0 "$pid"
+    cache="$(tail -n 1 "$fixture/release-cache.log")"
+    python3 - "$cache/.package.lock" <<'PY'
+import fcntl
+import sys
+
+with open(sys.argv[1], "rb") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+PY
+)
 
 check_concurrent_archives() {
     local version="$1" binary="$2" gate="$fixture/concurrent" target=aarch64-apple-darwin
@@ -305,6 +334,7 @@ for channel in stable nightly alpha beta integration; do
         check_packaged_licences "$fixture/unpacked-darwin" aarch64-apple-darwin
         check_packaged_licences "$fixture/unpacked-windows" x86_64-pc-windows-msvc
         check_packaging_failures "$version" "$fixture/dist/$binary-$version-x86_64-unknown-linux-gnu.tar.gz"
+        check_daemon_lock "$version"
         check_concurrent_archives "$version" "$binary"
         check_concurrent_publication "$version" "$binary"
     fi
