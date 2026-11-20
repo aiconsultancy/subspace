@@ -40,6 +40,7 @@ impl State {
         self.live_reads = Default::default();
         self.reset_references();
         self.drafts.clear();
+        self.uploads.clear();
     }
 }
 

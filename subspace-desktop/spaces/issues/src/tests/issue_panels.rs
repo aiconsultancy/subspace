@@ -18,22 +18,34 @@ use std::sync::{
 };
 use subspace_framework::dashboard::Dashboard as _;
 
+/// Mounts the board on `fixture` and opens SUB-1, once its page has
+/// settled; see [`settled`].
 fn opened<'a>(
     fixture: &Offline,
     cx: &'a mut TestAppContext,
 ) -> (Entity<Issues>, &'a mut VisualTestContext) {
     let (board, cx) = board_with_hub(fixture, cx);
     board.update(cx, |board, cx| board.open_detail("SUB-1".into(), cx));
-    settle_board(&board, cx, |board| {
-        !board.projects.is_empty()
-            && board
-                .issue_view
-                .snapshot
-                .as_ref()
-                .is_some_and(|s| s.detail().is_some())
-    });
+    settle_board(&board, cx, settled);
     render(cx);
     (board, cx)
+}
+
+/// Whether the open issue's page has settled: its detail is read, and so
+/// are its image and attachment lists, which the board reads only once the
+/// detail is in. Both panels sit above the sub-issue, relation and pull
+/// request panels: the images panel shows a loading row until its list is
+/// read, and the attachments panel appears when its read ends with files or
+/// a failure. Either moves the panels below, so a test that clicks one of
+/// their controls must not start before both reads have ended.
+fn settled(board: &Issues) -> bool {
+    let read = |idle: bool, loading: bool| !idle && !loading;
+    !board.projects.is_empty()
+        && board.issue_view.snapshot.as_ref().is_some_and(|s| {
+            s.detail().is_some()
+                && read(s.images().is_idle(), s.images().is_loading())
+                && read(s.files().is_idle(), s.files().is_loading())
+        })
 }
 
 #[gpui_kit::test]

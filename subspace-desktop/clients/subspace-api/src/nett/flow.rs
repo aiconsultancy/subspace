@@ -33,6 +33,10 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 pub(crate) const MAX_PAUSE: Duration = Duration::from_secs(crate::writing::MAX_RETRY_SECONDS);
 /// The first back-off when a refusal names no wait.
 const FIRST_BACKOFF: Duration = Duration::from_secs(1);
+/// Doublings before the back-off reaches [`MAX_BACKOFF`] (1 s × 2⁵ > 30 s).
+const MAX_DOUBLINGS: u32 = 5;
+/// At most this share of a back-off is taken off at random.
+const MAX_JITTER_SHARE: f64 = 0.5;
 /// Attempts a read makes when NETT is busy.
 pub(crate) const READ_ATTEMPTS: usize = 3;
 
@@ -97,13 +101,31 @@ pub(crate) fn paused_for(account: u64) -> Option<Duration> {
         .filter(|wait| !wait.is_zero())
 }
 
+/// The latest a request may end, set by a caller whose reads share a time
+/// budget. Waiting for a place counts against it, and the request is then
+/// given only what is left.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Deadline(pub(crate) Instant);
+
 /// Waits for a free place and for a short pause to end, then takes the
 /// place. A pause longer than [`MAX_WAIT`] refuses at once with what is
 /// left of it.
+#[cfg(test)]
 pub(crate) fn acquire(account: u64) -> Result<Permit, Duration> {
+    acquire_by(account, None)
+}
+
+/// Waits for a free place and for a short pause to end, but no later than
+/// `deadline`, then takes the place. A pause longer than [`MAX_WAIT`]
+/// refuses at once with what is left of it, and so does the deadline
+/// passing, with no wait left.
+pub(crate) fn acquire_by(account: u64, deadline: Option<Instant>) -> Result<Permit, Duration> {
     let mut guard = flows();
     loop {
         let now = Instant::now();
+        if deadline.is_some_and(|deadline| now >= deadline) {
+            return Err(Duration::ZERO);
+        }
         let state = account_state(&mut guard, account);
         let wait = state
             .paused_until
@@ -111,21 +133,67 @@ pub(crate) fn acquire(account: u64) -> Result<Permit, Duration> {
             .filter(|wait| !wait.is_zero());
         match wait {
             Some(wait) if wait > MAX_WAIT => return Err(wait),
-            Some(wait) => {
-                guard = CHANGED
-                    .wait_timeout(guard, wait)
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .0;
-            }
-            None if state.active >= CONCURRENT => {
-                guard = CHANGED.wait(guard).unwrap_or_else(PoisonError::into_inner);
-            }
-            None => {
+            None if state.active < CONCURRENT => {
                 state.active += 1;
                 return Ok(Permit { account });
             }
+            wait => guard = wait_for_change(guard, wait, deadline.map(|at| at - now)),
         }
     }
+}
+
+/// Waits for the flows to change, for at most the shorter of `wait` and
+/// `left`, or until they change when neither is set.
+fn wait_for_change(
+    guard: MutexGuard<'static, Option<Flows>>,
+    wait: Option<Duration>,
+    left: Option<Duration>,
+) -> MutexGuard<'static, Option<Flows>> {
+    match wait.into_iter().chain(left).min() {
+        Some(timeout) => {
+            CHANGED
+                .wait_timeout(guard, timeout)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0
+        }
+        None => CHANGED.wait(guard).unwrap_or_else(PoisonError::into_inner),
+    }
+}
+
+/// A place among `account`'s requests for `request`, waiting no later than
+/// its [`Deadline`] if it has one, with the request then cut to the time
+/// left. Otherwise the wait to refuse it with; see [`refused`].
+pub(crate) fn admit(
+    account: u64,
+    request: ureq::http::Request<ureq::SendBody>,
+) -> Result<(Permit, ureq::http::Request<ureq::SendBody>), Duration> {
+    let deadline = request
+        .extensions()
+        .get::<Deadline>()
+        .map(|deadline| deadline.0);
+    let permit = acquire_by(account, deadline)?;
+    Ok((permit, within(request, deadline)?))
+}
+
+/// `request`, its timeout cut to what is left before `deadline`.
+fn within(
+    request: ureq::http::Request<ureq::SendBody>,
+    deadline: Option<Instant>,
+) -> Result<ureq::http::Request<ureq::SendBody>, Duration> {
+    use ureq::RequestExt as _;
+    let Some(deadline) = deadline else {
+        return Ok(request);
+    };
+    let left = deadline.saturating_duration_since(Instant::now());
+    request
+        .middleware_config()
+        .map(|config| {
+            config
+                .timeout_global(Some(left))
+                .timeout_recv_body(Some(left))
+                .build()
+        })
+        .ok_or(Duration::ZERO)
 }
 
 /// Records a response: a 429 or 503 pauses the account; anything else ends
@@ -170,9 +238,9 @@ pub(crate) fn pause(refusals: u32, retry_after: Option<u64>, jitter: f64) -> Dur
         return Duration::from_secs(seconds).min(MAX_PAUSE);
     }
     let full = FIRST_BACKOFF
-        .saturating_mul(1u32 << refusals.min(5))
+        .saturating_mul(1u32 << refusals.min(MAX_DOUBLINGS))
         .min(MAX_BACKOFF);
-    full.mul_f64(1.0 - jitter.clamp(0.0, 1.0) / 2.0)
+    full.mul_f64(1.0 - jitter.clamp(0.0, 1.0) * MAX_JITTER_SHARE)
 }
 
 /// A `Retry-After` in whole seconds, as NETT sends it, up to five minutes.
@@ -234,14 +302,16 @@ impl Read for Held {
 }
 
 /// A ureq middleware step for a loopback NETT client: a place among the
-/// account's requests, held until the reply's body is read.
+/// account's requests, held until the reply's body is read. Only debug
+/// builds have loopback clients.
+#[cfg(debug_assertions)]
 pub(crate) fn through(
     account: u64,
     request: ureq::http::Request<ureq::SendBody>,
     next: ureq::middleware::MiddlewareNext,
 ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
-    let permit = match acquire(account) {
-        Ok(permit) => permit,
+    let (permit, request) = match admit(account, request) {
+        Ok(admitted) => admitted,
         Err(wait) => return Ok(refused(wait)),
     };
     next.handle(request)

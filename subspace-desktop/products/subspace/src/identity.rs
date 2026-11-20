@@ -48,16 +48,19 @@ pub(crate) fn nett() -> bool {
 
 /// The run's `SUBSPACE_*` variables. A value that is not Unicode counts as
 /// unset, as `std::env::var` treats it.
-fn variables() -> impl Iterator<Item = (String, String)> {
+pub(crate) fn variables() -> impl Iterator<Item = (String, String)> {
     std::env::vars_os()
         .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
 }
 
-/// Resolves the launch from the stamped settings and the environment, then
-/// installs the build's one backend before Spaces start. A wrong setting
-/// installs nothing, so a NETT build never reaches Subspace API.
-pub(crate) fn configure_backend() -> Result<(), String> {
-    let resolved = launch::resolve(&STAMPED, variables())?;
+/// Resolves the launch from the stamped settings and the run's `variables`
+/// (see [`variables`]), then installs the build's one backend before Spaces
+/// start. A wrong setting installs nothing, so a NETT build never reaches
+/// Subspace API.
+pub(crate) fn configure_backend(
+    variables: impl IntoIterator<Item = (String, String)>,
+) -> Result<(), String> {
+    let resolved = launch::resolve(&STAMPED, variables)?;
     launch::install(&resolved)?;
     let _ = LAUNCH.set(resolved);
     Ok(())
@@ -141,14 +144,9 @@ fn provider(namespace: &str) -> Option<Arc<dyn Provider>> {
 }
 
 fn dev(launch: &Launch) -> Result<Arc<dyn Provider>, Error> {
-    let user = subspace_api_client::DevUser {
-        email: launch.dev_email.clone(),
-        name: launch.dev_name.clone(),
-        organisation: launch.dev_organisation.clone(),
-    };
     Ok(Arc::new(subspace_api_client::DevSignIn::new(
         &launch.api_url,
-        user,
+        launch.dev_user.clone(),
     )?))
 }
 
@@ -245,12 +243,16 @@ fn fingerprint(token: &str) -> u64 {
     hasher.finish()
 }
 
+/// Adjusts the app's descriptor for a NETT build; see [`adjust_for_nett`].
+pub(crate) fn adjust_descriptor(descriptor: &mut subspace_framework::product::ProductDescriptor) {
+    if nett() {
+        adjust_for_nett(descriptor);
+    }
+}
+
 /// A NETT build has no update channel of its own yet, so the public
 /// updater must not replace it, and Issues is its main Space.
-pub(crate) fn adjust_descriptor(descriptor: &mut subspace_framework::product::ProductDescriptor) {
-    if !nett() {
-        return;
-    }
+fn adjust_for_nett(descriptor: &mut subspace_framework::product::ProductDescriptor) {
     descriptor.update = None;
     for board in &mut descriptor.boards {
         if board.id == "issues" {
@@ -268,8 +270,11 @@ fn api_error(error: Error) -> subspace_api_client::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{FORCE_RENEWAL, STAMPED, api_error, nett_credentials, renewed};
-    use crate::launch::resolve;
+    use super::{
+        FORCE_RENEWAL, LAUNCH, STAMPED, adjust_descriptor, adjust_for_nett, api_error,
+        configure_backend, nett_credentials, renewed,
+    };
+    use crate::launch::{API_URL, NETT_API_URL, resolve};
     use std::cell::Cell;
     use subspace_framework::account::Error;
 
@@ -282,6 +287,90 @@ mod tests {
             launch.backend == crate::settings::ApiBackend::Nett,
             super::nett()
         );
+    }
+
+    /// Set for the child process that installs the stamped launch.
+    const INSTALL_CHILD: &str = "SUBSPACE_IDENTITY_TEST_INSTALL";
+
+    #[test]
+    fn the_stamped_build_installs_its_one_backend_and_a_refused_setting_nothing() {
+        // A setting the build refuses installs nothing.
+        let (name, value) = if super::nett() {
+            (API_URL, "http://127.0.0.1:3000")
+        } else {
+            (NETT_API_URL, "https://api.nett.example")
+        };
+        assert!(configure_backend([(name.to_owned(), value.to_owned())]).is_err());
+        assert!(LAUNCH.get().is_none());
+        // Without overrides the stamped launch is installed, as at startup.
+        // Installing sets the process's one backend and origin and, in a
+        // NETT build, turns on organisation memory on disk, so it happens in
+        // a child process with a home of its own, never in this one.
+        let home = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        for name in [
+            "HOME",
+            "USERPROFILE",
+            "XDG_STATE_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CONFIG_HOME",
+            "APPDATA",
+            "LOCALAPPDATA",
+        ] {
+            child.env(name, home.path());
+        }
+        let run = child
+            .args([
+                "--ignored",
+                "--exact",
+                "identity::tests::installs_the_stamped_launch_in_a_child",
+            ])
+            .env(INSTALL_CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            run.status.success() && String::from_utf8_lossy(&run.stdout).contains("1 passed"),
+            "{} {}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(LAUNCH.get().is_none(), "nothing was installed here");
+    }
+
+    #[test]
+    #[ignore = "a child process of the_stamped_build_installs_its_one_backend_and_a_refused_setting_nothing"]
+    fn installs_the_stamped_launch_in_a_child() {
+        if std::env::var_os(INSTALL_CHILD).is_none() {
+            return;
+        }
+        configure_backend(Vec::new()).unwrap();
+        assert_eq!(LAUNCH.get(), Some(&resolve(&STAMPED, Vec::new()).unwrap()));
+        assert_eq!(
+            subspace_api_client::backend() == subspace_api_client::Backend::Nett,
+            super::nett()
+        );
+    }
+
+    #[test]
+    fn a_nett_build_has_no_public_updater_and_enables_issues_by_default() {
+        let subspace = subspace_descriptor::subspace_descriptor();
+        let mut nett = subspace.clone();
+        adjust_for_nett(&mut nett);
+        assert!(nett.update.is_none());
+        assert!(
+            nett.boards
+                .iter()
+                .any(|board| board.id == "issues" && board.default_enabled)
+        );
+        // Every other Space keeps its own default.
+        assert_eq!(nett.boards.len(), subspace.boards.len());
+        for (after, before) in nett.boards.iter().zip(&subspace.boards) {
+            assert!(after.id == "issues" || after == before);
+        }
+        // The stamped build is adjusted exactly when it is a NETT build.
+        let mut stamped = subspace.clone();
+        adjust_descriptor(&mut stamped);
+        assert_eq!(stamped, if super::nett() { nett } else { subspace });
     }
 
     #[test]

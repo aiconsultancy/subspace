@@ -2,13 +2,16 @@
 //! A text or Markdown file opens in the attachment panel beside the page.
 //! Where NETT serves standalone attachments for the organisation, the panel
 //! also adds, saves and removes them.
+mod disk;
+mod uploads;
+
 use crate::Issues;
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Div, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, Styled as _, TestSupportExt as _, div,
+    AnyElement, AppContext as _, Context, Div, InteractiveElement as _, IntoElement,
+    ParentElement as _, Styled as _, TestSupportExt as _, div, prelude::FluentBuilder as _,
 };
-use subspace_api_client::hub::{AttachmentState, AttachmentUpload, IssueSnapshot};
+use subspace_api_client::hub::{FilesSnapshot, IssueSnapshot};
 use subspace_api_client::model::IssueMedia;
 use subspace_framework::dashboard::{
     Tokens,
@@ -52,13 +55,7 @@ pub(crate) fn panel(
 ) -> Option<AnyElement> {
     let files = open.files();
     let standalone = standalone_attachments();
-    // Standalone attachments of every kind, a GIF included, are listed;
-    // otherwise the images panel shows the images.
-    let rows = files
-        .items()
-        .iter()
-        .filter(|media| media.kind == "file" || (standalone && media.is_standalone()))
-        .collect::<Vec<_>>();
+    let rows = listed(files, standalone);
     if rows.is_empty() && !files.is_failed() && !standalone {
         return None;
     }
@@ -77,53 +74,72 @@ pub(crate) fn panel(
         ));
     }
     for upload in files.uploads() {
-        panel = panel.child(upload_row(upload, &tokens, cx));
+        panel = panel.child(uploads::row(upload, &tokens, cx));
     }
-    if let Some(error) = issues.attachment_error.clone() {
-        panel = panel.child(
-            div()
-                .id("attachment-error")
-                .test_support()
-                .text_color(tokens.muted)
-                .child(error),
-        );
-    }
-    if let Some(notice) = files.notice() {
-        panel = panel.child(
-            div()
-                .id("attachment-notice")
-                .test_support()
-                .text_color(tokens.muted)
-                .child(notice),
-        );
-    }
-    if standalone {
-        panel = panel.child(
-            action_button(
-                "attachment-add",
-                Intent::Neutral,
-                Some(IconName::Plus),
-                "Add file",
-            )
-            .on_click(cx.listener(|this, _, _, cx| this.pick_attachment(cx))),
-        );
-    }
-    if files.is_failed() {
-        panel = panel.child("Couldn’t load attachments").child(
-            action_button(
-                "retry-issue-attachments",
-                Intent::Neutral,
-                Some(IconName::RefreshCw),
-                "Retry",
-            )
-            .on_click(cx.listener(|this, _, _, _| {
-                if let Some(hub) = &this.hub {
-                    _ = hub.load_attachments();
-                }
-            })),
-        );
-    }
+    let panel = panel
+        .children(
+            issues
+                .attachment_error
+                .clone()
+                .map(|error| message("attachment-error", error, &tokens)),
+        )
+        .children(
+            files
+                .notice()
+                .map(|notice| message("attachment-notice", notice, &tokens)),
+        )
+        .when(standalone, |panel| panel.child(add_button(cx)))
+        .when(files.is_failed(), |panel| {
+            panel
+                .child("Couldn’t load attachments")
+                .child(retry_button(cx))
+        });
     Some(panel.into_any_element())
+}
+
+/// The files the panel lists: standalone attachments of every kind, a GIF
+/// included, where NETT serves them; otherwise only files, as the images
+/// panel shows the images.
+fn listed(files: &FilesSnapshot, standalone: bool) -> Vec<&IssueMedia> {
+    files
+        .items()
+        .iter()
+        .filter(|media| media.kind == "file" || (standalone && media.is_standalone()))
+        .collect()
+}
+
+/// A line of muted text under the rows: why a file was not added, or what
+/// happened to the last change.
+fn message(id: &'static str, text: impl IntoElement, tokens: &Tokens) -> impl IntoElement {
+    div()
+        .id(id)
+        .test_support()
+        .text_color(tokens.muted)
+        .child(text)
+}
+
+fn add_button(cx: &Context<Issues>) -> impl IntoElement {
+    action_button(
+        "attachment-add",
+        Intent::Neutral,
+        Some(IconName::Plus),
+        "Add file",
+    )
+    .on_click(cx.listener(|this, _, _, cx| this.pick_attachment(cx)))
+}
+
+fn retry_button(cx: &Context<Issues>) -> impl IntoElement {
+    action_button(
+        "retry-issue-attachments",
+        Intent::Neutral,
+        Some(IconName::RefreshCw),
+        "Retry",
+    )
+    .on_click(cx.listener(|this, _, _, _| {
+        if let Some(hub) = &this.hub {
+            _ = hub.load_attachments();
+        }
+    }))
 }
 
 fn label(media: &IssueMedia) -> String {
@@ -189,70 +205,7 @@ fn row(
         .into_any_element()
 }
 
-fn upload_row(upload: &AttachmentUpload, tokens: &Tokens, cx: &mut Context<Issues>) -> Div {
-    let (status, action) = match upload.state() {
-        AttachmentState::Failed(error) => (error.message(), true),
-        AttachmentState::NotFound => ("The upload was not stored. Choose Retry.".into(), true),
-        AttachmentState::Checking => ("Checking…".into(), false),
-        _ => ("Uploading…".into(), false),
-    };
-    // Retry or Check only where it can still change the outcome.
-    let retryable = upload.retryable();
-    let id = upload.id().to_owned();
-    let mut row = h_flex()
-        .min_w_0()
-        .gap_2()
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .child(upload.file_name().to_owned()),
-        )
-        .child(
-            div()
-                .id(format!("attachment-upload-status:{id}"))
-                .test_support()
-                .text_color(tokens.muted)
-                .child(status),
-        );
-    if action {
-        let retry = id.clone();
-        let dismiss = id.clone();
-        let checking = upload.checks();
-        if retryable {
-            row = row.child(
-                action_button(
-                    format!("attachment-upload-retry:{id}"),
-                    Intent::Neutral,
-                    None,
-                    if checking { "Check" } else { "Retry" },
-                )
-                .small()
-                .on_click(cx.listener(move |this, _, _, _| {
-                    if let Some(hub) = &this.hub {
-                        hub.retry_attachment_upload(&retry);
-                    }
-                })),
-            );
-        }
-        row = row.child(
-            action_button(
-                format!("attachment-upload-dismiss:{id}"),
-                Intent::Quiet,
-                None,
-                "Dismiss",
-            )
-            .small()
-            .on_click(cx.listener(move |this, _, _, _| {
-                if let Some(hub) = &this.hub {
-                    hub.dismiss_attachment_upload(&dismiss);
-                }
-            })),
-        );
-    }
-    row
-}
-
+// qual:allow(coupling, oi) reason: "The panel's commands coordinate the board's hub, the open issue's scope and its attachment error line."
 impl Issues {
     /// Chooses a file to add as a standalone attachment, to the issue open
     /// now, in the hub and scope open now.
@@ -278,12 +231,7 @@ impl Issues {
                 return;
             };
             let read = cx
-                .background_spawn(async move {
-                    let mime = subspace_api_client::uploads::file_mime(&path)?;
-                    let name = path.file_name()?.to_string_lossy().into_owned();
-                    let bytes = std::fs::read(&path).ok()?;
-                    Some((name, mime.to_owned(), bytes))
-                })
+                .background_spawn(async move { disk::read_chosen(&path) })
                 .await;
             _ = this.update(cx, |this, cx| {
                 this.attach_picked(&hub, &target, read);
@@ -342,7 +290,10 @@ impl Issues {
         else {
             return;
         };
-        let picker = cx.prompt_for_new_path(std::path::Path::new("."), Some(&media.file_name));
+        let picker = cx.prompt_for_new_path(
+            &disk::save_folder(),
+            Some(&disk::suggested_name(&media.file_name)),
+        );
         cx.spawn(async move |this, cx| {
             let Ok(Ok(Some(path))) = picker.await else {
                 return;

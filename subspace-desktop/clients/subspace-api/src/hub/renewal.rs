@@ -4,8 +4,9 @@
 //! 403, a renewed token refused again or a renewal that fails clears what
 //! is shown. Subspace API keeps its own handling.
 
-use super::{HubStatus, IssueStatus, ReadError, ScopeGeneration, Shared, State, lock};
+use super::{HubStatus, IssueStatus, ReadError, ScopeGeneration, Shared, State, lock, worker::Job};
 use crate::Error;
+use std::sync::MutexGuard;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +60,37 @@ pub(super) fn stands(
         state.renewal = Renewal::Idle;
         true
     }
+}
+
+/// Whether a read that ended with `result`, sent at `sent`, was refused
+/// for good; see [`stands`]. Only a refused sign-in or access can be.
+pub(super) fn refused<T>(
+    shared: &Shared,
+    generation: ScopeGeneration,
+    sent: Instant,
+    result: &Result<T, Error>,
+) -> bool {
+    match result {
+        Err(error @ (Error::SignInNeeded | Error::Forbidden)) => {
+            stands(shared, generation, sent, *error)
+        }
+        _ => false,
+    }
+}
+
+/// The hub's state for a page of the open issue read by `job`, sent at
+/// `sent` and ended with `result`: only while the read is current and an
+/// issue is open, with whether a refusal stands. Called without the hub's
+/// state lock; it may wait for a renewal.
+pub(super) fn read_back<'a, T>(
+    shared: &'a Shared,
+    job: &Job,
+    sent: Instant,
+    result: &Result<T, Error>,
+) -> Option<(MutexGuard<'a, State>, bool)> {
+    let refused = refused(shared, job.generation, sent, result);
+    let state = lock(&shared.state);
+    (job.current(&state) && state.snapshot.issue.is_some()).then_some((state, refused))
 }
 
 /// The update stream renewed the token: the list and the open issue are

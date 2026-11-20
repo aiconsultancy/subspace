@@ -13,11 +13,13 @@ pub mod scope;
 pub(crate) mod transfer;
 pub(crate) mod wire;
 
+pub(crate) use chat::chat_wait;
 pub use lists::{TodoItem, TodoList};
 pub use scope::{Organisation, Snapshot, Status, snapshot};
 
 /// Remembers organisation choices between runs, in a file beside the app's
 /// state. The product calls this once at startup.
+// qual:api — a NETT build calls it at startup, from a launch module its tests also compile.
 pub fn remember_organisations() {
     scope::saved::enable();
 }

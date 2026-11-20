@@ -7,12 +7,17 @@ mod comment;
 mod debug;
 mod decision;
 mod initiative;
+mod media;
+mod person;
 pub use decision::{
     AgentRank, DecisionDetail, DecisionEvidenceKind, DecisionIssue, DecisionIssues,
     DecisionListItem, DecisionMakerType, DecisionMember, DecisionProvenance, DecisionScope,
     DecisionStatus, DecisionSummary,
 };
 pub use initiative::{Fleet, MemberInitiative};
+pub use media::IssueMedia;
+pub(crate) use media::MediaBinding;
+pub use person::{Agent, Person};
 mod pull_request;
 pub use activity::{
     ActivityActor, ActivityActorType, ActivityKind, ActivityPage, ActivityReferences,
@@ -155,54 +160,6 @@ pub struct IssueDetail {
     pub relations: Option<Page<Relation>>,
 }
 
-/// Safe saved-file facts from Subspace API comment media descriptors; no grants or paths.
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct IssueMedia {
-    pub media_id: String,
-    #[serde(default)]
-    pub version: u32,
-    pub kind: String,
-    pub file_name: String,
-    pub content_type: String,
-    pub size_bytes: i64,
-    pub expires_at: Option<String>,
-    #[serde(default)]
-    pub public_file_id: String,
-    #[serde(default)]
-    pub url: String,
-    #[serde(default)]
-    pub sha256: String,
-    /// How the file is read and removed. Set by the client, never read
-    /// from a reply.
-    #[serde(skip)]
-    pub(crate) binding: MediaBinding,
-}
-
-impl IssueMedia {
-    /// Whether this is a NETT standalone attachment, which can be saved and
-    /// removed from the Attachments panel.
-    pub fn is_standalone(&self) -> bool {
-        matches!(self.binding, MediaBinding::Standalone { .. })
-    }
-}
-
-/// Where a media file lives, which decides how its bytes are read and how
-/// it is removed.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) enum MediaBinding {
-    /// Subspace API's media routes.
-    #[default]
-    Subspace,
-    /// NETT managed media in an issue description or comment, read through
-    /// the media's own grant.
-    Managed,
-    /// A NETT standalone attachment on `issue`, read through a file grant
-    /// and removed with its version.
-    Standalone { issue: String },
-}
-
 /// Active members may have canRead or cannotRead status. notMember has no name.
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -236,60 +193,6 @@ pub struct StateSummary {
     pub name: String,
     #[serde(rename = "type")]
     pub kind: String,
-}
-
-#[derive(Clone, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct Person {
-    pub user_id: String,
-    pub display_name: String,
-    pub is_former_member: bool,
-    pub kind: String,
-    pub agent: Option<Agent>,
-    /// For a NETT agent, the person it acted for.
-    #[serde(default)]
-    pub on_behalf_of: Option<Box<Person>>,
-}
-
-impl Person {
-    /// The name as shown where the person is credited: for a NETT agent,
-    /// marked as an agent with the person it acted for; otherwise the name
-    /// alone, as Subspace API's people have always been shown.
-    pub fn attribution(&self) -> String {
-        match &self.on_behalf_of {
-            Some(person) => format!("{} (agent, for {})", self.display_name, person.display_name),
-            None => self.display_name.clone(),
-        }
-    }
-
-    /// The name in a list of facts: a former member marked as such, then a
-    /// NETT agent's attribution.
-    pub fn fact_label(&self) -> String {
-        let name = if self.is_former_member {
-            format!("{} (former member)", self.display_name)
-        } else {
-            self.display_name.clone()
-        };
-        match &self.on_behalf_of {
-            Some(person) => format!("{name} (agent, for {})", person.display_name),
-            None => name,
-        }
-    }
-}
-
-#[derive(Clone, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-#[non_exhaustive]
-pub struct Agent {
-    pub rank: Option<String>,
-    pub ship: Option<String>,
-    /// NETT's fleet for the agent; none for an agent outside a fleet.
-    #[serde(default)]
-    pub fleet_id: Option<String>,
-    /// The model the agent runs, when NETT records it.
-    #[serde(default)]
-    pub model: Option<String>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -397,32 +300,5 @@ impl std::ops::Deref for IssueListItem {
     type Target = IssueFields;
     fn deref(&self) -> &IssueFields {
         &self.fields
-    }
-}
-
-#[cfg(test)]
-mod person_tests {
-    use super::Person;
-
-    #[test]
-    fn subspace_people_and_agents_keep_their_names_and_former_member_mark() {
-        // A Subspace API agent that left the organisation: no agent suffix
-        // where it is credited, and the former-member mark in facts.
-        let agent: Person = serde_json::from_value(serde_json::json!({
-            "userId": "agent-1", "displayName": "Enterprise", "isFormerMember": true,
-            "kind": "agent", "agent": {"rank": "captain", "ship": "Enterprise"}
-        }))
-        .unwrap();
-        assert_eq!(agent.attribution(), "Enterprise");
-        assert_eq!(agent.fact_label(), "Enterprise (former member)");
-        let human: Person = serde_json::from_value(serde_json::json!({
-            "userId": "u1", "displayName": "Ada", "isFormerMember": false,
-            "kind": "human", "agent": null
-        }))
-        .unwrap();
-        assert_eq!(
-            (human.attribution(), human.fact_label()),
-            ("Ada".into(), "Ada".into())
-        );
     }
 }

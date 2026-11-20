@@ -26,6 +26,37 @@ pub(in crate::hub) fn next_attachment_id() -> String {
     next_id().to_string()
 }
 
+/// Whether the draft `target` names admits one more image of `size` bytes
+/// declared as `declaration`: the draft is the one the image was chosen for
+/// and not frozen, and it keeps at most eight images and 32 MiB. An image it
+/// already has is that image's ID.
+fn draft_admits(
+    state: &crate::hub::State,
+    target: (&DraftKey, u64),
+    declaration: &ImageDeclaration,
+    size: usize,
+) -> Result<Option<String>, UploadError> {
+    let draft = state
+        .drafts
+        .get(target.0)
+        .filter(|d| d.lease == target.1 && !d.is_frozen())
+        .ok_or(UploadError::Removed)?;
+    if let Some(image) = draft
+        .images
+        .iter()
+        .find(|image| lock(&image.inner).declaration == *declaration)
+    {
+        return Ok(Some(image.id()));
+    }
+    let used: usize = draft.images.iter().map(Attachment::size_bytes).sum();
+    if draft.images.len() >= crate::uploads::MAX_DRAFT_IMAGES
+        || used.saturating_add(size) > crate::uploads::MAX_DRAFT_BYTES
+    {
+        return Err(UploadError::Budget);
+    }
+    Ok(None)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttachmentState {
     Preparing,
@@ -162,34 +193,16 @@ impl Hub {
         if !state.current(generation) {
             return Err(UploadError::Removed);
         }
-        state
-            .attachment_buffers
-            .retain(|buffer| buffer.strong_count() > 0);
-        let total: usize = state
-            .attachment_buffers
-            .iter()
-            .filter_map(std::sync::Weak::upgrade)
-            .map(|buffer| buffer.len())
-            .sum();
-        let draft = state
-            .drafts
-            .get_mut(target.0)
-            .filter(|d| d.lease == target.1 && !d.is_frozen())
-            .ok_or(UploadError::Removed)?;
-        if let Some(image) = draft
-            .images
-            .iter()
-            .find(|image| lock(&image.inner).declaration == declaration)
-        {
-            return Ok(image.id());
+        self.0.follow_uploads(&mut state);
+        // The draft admits the image, or already has it, before the shared
+        // budget decides, which may let go of uploads kept out of sight.
+        if let Some(existing) = draft_admits(&state, target, &declaration, bytes.len())? {
+            return Ok(existing);
         }
-        let used: usize = draft.images.iter().map(Attachment::size_bytes).sum();
-        if draft.images.len() >= crate::uploads::MAX_DRAFT_IMAGES
-            || used.saturating_add(bytes.len()) > crate::uploads::MAX_DRAFT_BYTES
-            || total.saturating_add(bytes.len()) > crate::uploads::MAX_TOTAL_BYTES
-        {
-            return Err(UploadError::Budget);
-        }
+        let held = state.held_bytes();
+        let cancels = state.uploads.room(held, bytes.len())?;
+        self.0.cancel_reservations(cancels);
+        let draft = state.drafts.get_mut(target.0).ok_or(UploadError::Removed)?;
         let buffer = Arc::downgrade(&bytes);
         let image = Attachment {
             inner: Arc::new(Mutex::new(Row {
@@ -249,3 +262,6 @@ impl Hub {
         worker::start(self.0.clone(), state.snapshot.generation, key, image);
     }
 }
+
+#[cfg(test)]
+mod admission_tests;

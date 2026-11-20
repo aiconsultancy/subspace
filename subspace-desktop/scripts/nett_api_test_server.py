@@ -54,6 +54,11 @@ its own OPS team, so OPS-1 names a different issue in each organisation.
 Ada also has a personal organisation without issue tracking. --single-org
 leaves out both the second and the personal organisation, so the caller has
 exactly one accessible organisation.
+
+Request bodies being received at once share one budget of
+MAX_BODY_INTAKE_BYTES: a body waits for room until its deadline, then is
+refused with 503 and Retry-After, so many concurrent near-limit uploads
+cannot hold unbounded memory.
 """
 
 import argparse
@@ -88,8 +93,12 @@ GRANT_SECONDS = 300
 UPLOAD_SECONDS = 900
 MAX_JSON_BYTES = 1_000_000
 MAX_UPLOAD_BYTES = 25_000_000
+# Request body bytes held at once across connections, from admission until the
+# request is answered: two largest uploads and a few JSON bodies.
+MAX_BODY_INTAKE_BYTES = 2 * MAX_UPLOAD_BYTES + 8 * MAX_JSON_BYTES
 MAX_LOGGED_REQUESTS = 10_000
 STREAM_SECONDS = 180
+STREAM_WRITE_SECONDS = 1
 KEEPALIVE_SECONDS = 15
 MAX_STREAMS_PER_USER = 16
 MAX_STREAMS = 256
@@ -286,6 +295,7 @@ class Subscriber:
         self.token = token
         self.queue = collections.deque()
         self.ready = threading.Condition()
+        self.delivery = threading.Lock()
         self.closed = None
         self.abort = False
 
@@ -304,6 +314,36 @@ class Subscriber:
             self.closed = self.closed or reason
             self.abort = self.abort or abort
             self.ready.notify()
+
+
+class BodyIntake:
+    """The request body bytes the fixture holds at once, across connections.
+    A body is admitted only while it fits, waiting for room until its deadline,
+    and keeps its place until its request is answered, independently of the
+    fixture's state lock."""
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.held = 0
+        self.room = threading.Condition()
+
+    def admit(self, size, deadline):
+        """Reserves size bytes, waiting until deadline. False when no room came."""
+        with self.room:
+            while self.held + size > self.capacity:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self.room.wait(remaining)
+            self.held += size
+            return True
+
+    def release(self, size):
+        if not size:
+            return
+        with self.room:
+            self.held -= size
+            self.room.notify_all()
 
 
 class Drop:
@@ -371,15 +411,12 @@ def page(ctx, rows, scope, default=50, maximum=100):
 
 
 class Query:
-    """Query parameters that remember which names a route read, so unknown
-    names can be refused instead of silently ignored."""
+    """Decodes query parameters and validates their names and values."""
 
     def __init__(self, raw):
         self.values = parse_qs(raw, keep_blank_values=True)
-        self.read = set()
 
     def all(self, name):
-        self.read.add(name)
         return self.values.get(name, [])
 
     def one(self, name, default=None):
@@ -415,8 +452,10 @@ class Query:
             values.add(parsed)
         return values
 
-    def unread(self):
-        return sorted(set(self.values) - self.read)
+    def check_names(self, allowed):
+        unknown = sorted(self.values.keys() - allowed)
+        if unknown:
+            raise Problem(400, f'The fixture does not support the query parameter {unknown[0]}.')
 
 
 class Fixture:
@@ -430,6 +469,7 @@ class Fixture:
         self.orgs, self.teams, self.states, self.labels = {}, {}, {}, {}
         self.projects, self.initiatives, self.milestones, self.cycles = {}, {}, {}, {}
         self.issues, self.comments, self.events, self.pull_requests = {}, {}, {}, {}
+        self.issue_numbers = collections.defaultdict(int)
         self.media, self.files, self.grants = {}, {}, {}
         self.uploads, self.upload_keys = {}, {}
         # Standalone attachments and chat uploads: prepared transfers, then records.
@@ -652,6 +692,7 @@ class Fixture:
     def add_issue(self, org, team, number, title, state_type, created, *, assignee=None, priority=0, labels=(),
                   project=None, milestone=None, cycle=None, estimate=None, due=None, parent=None, kind='issue',
                   creator=ADA, issue_id=None):
+        self.issue_numbers[team['id']] = max(self.issue_numbers[team['id']], number)
         state = self.state_of(team, state_type)
         row = dict(id=issue_id or uid(f"{org['key']}/issue/{team['key']}-{number}"), orgId=org['id'],
                    teamId=team['id'], teamKey=team['key'], number=number, identifier=f"{team['key']}-{number}",
@@ -667,6 +708,10 @@ class Fixture:
         self.events[row['id']] = []
         self.record(row, 'issue.created', created, creator['userId'])
         return row
+
+    def next_issue_number(self, team):
+        self.issue_numbers[team['id']] += 1
+        return self.issue_numbers[team['id']]
 
     def add_comment(self, row, author_id, body, created, parent=None, comment_id=None, media=(), resolved=False):
         comment = dict(id=comment_id or str(uuid.uuid4()), issueId=row['id'], parentCommentId=parent and parent['id'],
@@ -1250,7 +1295,7 @@ def deliver_file(ctx, publicFileId):
 
 
 def transfer_upload(ctx, uploadId):
-    data = ctx.handler.read_body(MAX_UPLOAD_BYTES)
+    data = ctx.handler.body
     refuse_credentials(ctx)
     upload_id = parse_uuid(uploadId) or ''
     upload = ctx.f.uploads.get(upload_id) or ctx.f.transfers.get(upload_id)
@@ -1309,7 +1354,7 @@ def hook_touch(ctx):
 
 
 def hook_requests(ctx):
-    return 200, list(ctx.server.requests)
+    return 200, [dict(request) for request in ctx.server.requests]
 
 
 def hook_updates(ctx):
@@ -1364,7 +1409,8 @@ def hook_config(ctx):
     failNext: a list of {method, path, status, retryAfter?, times}; a matching
     request (exact path, no query) gets that status instead of an answer.
     slowBody: {path, seconds, times}; the answer's status and headers go first
-    and its body after the delay. A path ending in * names every path that
+    and its body after the delay. With waitForRelease, setting slowBody to
+    null releases the body early. A path ending in * names every path that
     starts with the rest. dropPutResponse: the next N file-host PUTs
     store their bytes and close the connection without answering.
     mediaReadyAtOnce: managed media completions finish checking at once and
@@ -1412,15 +1458,18 @@ def hook_config(ctx):
         config['failNext'] = parsed
     if 'slowBody' in payload:
         slow = payload['slowBody']
-        if slow is None:
-            config['slowBody'] = None
-        elif not isinstance(slow, dict) or set(slow) - {'path', 'seconds', 'times'} \
-                or not isinstance(slow.get('path'), str) or not is_number(slow.get('seconds')) \
-                or not 0 < slow['seconds'] <= 10:
-            raise Problem(400, 'slowBody is null or {"path": "/…", "seconds": 0–10, "times": K}.')
-        else:
-            config['slowBody'] = dict(path=slow['path'], seconds=slow['seconds'],
-                                      times=bounded(dict(times=slow.get('times', 1)), 'times', 1, 100))
+        if slow is not None:
+            if not isinstance(slow, dict) or set(slow) - {'path', 'seconds', 'times', 'waitForRelease'} \
+                    or not isinstance(slow.get('path'), str) or not is_number(slow.get('seconds')) \
+                    or not 0 < slow['seconds'] <= 10 or not isinstance(slow.get('waitForRelease', False), bool):
+                raise Problem(400, 'slowBody is null or {"path": "/…", "seconds": 0–10, "times": K, '
+                                   '"waitForRelease": B}.')
+            slow = dict(path=slow['path'], seconds=slow['seconds'],
+                        times=bounded(dict(times=slow.get('times', 1)), 'times', 1, 100),
+                        waitForRelease=slow.get('waitForRelease', False))
+        ctx.server.slow_body_release.set()
+        ctx.server.slow_body_release = threading.Event()
+        config['slowBody'] = slow
     if 'dropPutResponse' in payload:
         config['dropPutResponse'] = bounded(payload, 'dropPutResponse', 0, 100)
     if 'mediaReadyAtOnce' in payload:
@@ -1458,9 +1507,12 @@ def close_streams(ctx, payload, matches):
     leaves them to find out at their next flush. Returns how many closed."""
     if not isinstance(payload.get('closeStreams', True), bool):
         raise Problem(400, 'closeStreams must be a boolean.')
+    closing = [s for s in ctx.server.subscribers if matches(s)]
+    # A write already in flight must finish before the hook acknowledges
+    # revocation, whether or not the hook also wakes the stream.
+    ctx.handler.revoked_streams = closing
     if not payload.get('closeStreams', True):
         return 0
-    closing = [s for s in ctx.server.subscribers if matches(s)]
     for subscriber in closing:
         subscriber.close('lost authority')
     return len(closing)
@@ -1472,8 +1524,8 @@ def hook_revoke_token(ctx):
     token = payload.get('token')
     if not isinstance(token, str) or not token:
         raise Problem(400, 'Name the token to revoke.')
-    ctx.server.revoked_tokens.add(token)
     closed = close_streams(ctx, payload, lambda s: s.token == token)
+    ctx.server.revoked_tokens.add(token)
     return 200, dict(revoked=True, closed=closed)
 
 
@@ -1491,9 +1543,9 @@ def hook_revoke_member(ctx):
     opens answer 403, and their open streams close."""
     payload = hook_object(ctx, '{"org": <orgId>, "user": "ada|grace|linus", "closeStreams": true|false}')
     org, member = hook_member(ctx, payload)
+    closed = close_streams(ctx, payload, lambda s: s.org_id == org['id'] and s.user_id == member['userId'])
     if member['status'] != 'revoked':
         member['revokedFrom'], member['status'] = member['status'], 'revoked'
-    closed = close_streams(ctx, payload, lambda s: s.org_id == org['id'] and s.user_id == member['userId'])
     return 200, dict(status=member['status'], closed=closed)
 
 
@@ -1925,7 +1977,7 @@ def issue_create(ctx, orgId):
         if not drafts:
             raise Problem(400, 'mediaDraftId has no ready media.')
     at = f.now()
-    number = max((r['number'] for r in f.issues.values() if r['teamId'] == team['id']), default=0) + 1
+    number = f.next_issue_number(team)
     row = f.add_issue(org, team, number, changes.pop('title'), 'backlog', at, issue_id=str(uuid.uuid4()))
     apply_changes(f, row, changes, at)
     for media in drafts:
@@ -2335,10 +2387,10 @@ def complete_transfer(ctx, kind, issue, create, read):
     transfer['completions'] += 1
     if transfer['completions'] <= config['checkingPolls']:
         return 202, Accepted(dict(uploadId=transfer['id'], status='checking'), config['retryAfterSeconds'])
-    transfer['status'] = 'completed'
+    record_id = create(transfer)
+    transfer.update(status='completed', recordId=record_id, data=None)
     ctx.f.spent_keys.add((transfer['orgId'], kind, transfer['key']))
-    transfer['recordId'] = create(transfer)
-    return 201, read(transfer['recordId'])
+    return 201, read(record_id)
 
 
 def cancel_transfer(ctx, kind, upload_id, issue=None):
@@ -2590,7 +2642,7 @@ def move_commit(ctx, row, payload):
     at = f.now()
     for r in rows:
         planned = move_row(f, r, destination)
-        number = max((x['number'] for x in f.issues.values() if x['teamId'] == destination['id']), default=0) + 1
+        number = f.next_issue_number(destination)
         old, source = r['identifier'], r['teamKey']
         r.update(teamId=destination['id'], teamKey=destination['key'], number=number,
                  identifier=f"{destination['key']}-{number}", stateId=planned['stateId'], cycleId=None,
@@ -2898,14 +2950,17 @@ class Route:
     organisation), 'issues' (also needs the issue-tracking pack) or 'files'
     (also needs a matching x-org-id header)."""
 
-    def __init__(self, method, template, action, scope=None):
+    def __init__(self, method, template, action, scope=None, *, query=''):
         self.method, self.template, self.action, self.scope = method, template, action, scope
+        self.query = frozenset(query.split())
         parts = [f'(?P<{part[1:-1]}>[^/]+)' if part.startswith('{') else re.escape(part)
                  for part in template.split('/')]
         self.pattern = re.compile('/'.join(parts))
 
 
 ORG = '/api/v1/orgs/{orgId}'
+PAGE_QUERY = 'limit cursor'
+ISSUE_QUERY = 'team state stateType assignee label project milestone cycle creator parent priority q type includeArchived order'
 # Specific templates come before the ones whose placeholders would also match them.
 ROUTES = [
     Route('POST', '/user_management/authorize/device', workos_device),
@@ -2930,35 +2985,38 @@ ROUTES = [
     Route('POST', '/__fixture/teams/archive', hook_archive_team),
     Route('POST', '/__fixture/issues/archive', hook_archive_issue),
     Route('POST', '/__fixture/transfers/expire', hook_expire_transfers),
-    Route('GET', '/api/v1/updates', updates_stream),
+    Route('GET', '/api/v1/updates', updates_stream, query='project'),
     Route('GET', '/api/v1/me', api_me),
     Route('GET', '/api/v1/auth/context', api_auth_context),
     Route('GET', '/api/v1/auth/orgs', api_auth_orgs),
-    Route('GET', ORG + '/issue-teams', teams_list, 'issues'),
-    Route('GET', ORG + '/issue-teams/{teamId}/workflow-states', team_states, 'issues'),
+    Route('GET', ORG + '/issue-teams', teams_list, 'issues', query=f'includeArchived {PAGE_QUERY}'),
+    Route('GET', ORG + '/issue-teams/{teamId}/workflow-states', team_states, 'issues', query=PAGE_QUERY),
     Route('GET', ORG + '/issue-teams/{teamRef}', team_get, 'issues'),
-    Route('GET', ORG + '/issues', issues_list, 'issues'),
+    Route('GET', ORG + '/issues', issues_list, 'issues', query=f'{ISSUE_QUERY} activitySince {PAGE_QUERY}'),
     Route('POST', ORG + '/issues', issue_create, 'issues'),
-    Route('GET', ORG + '/issues/groups', issues_groups, 'issues'),
+    Route('GET', ORG + '/issues/groups', issues_groups, 'issues',
+          query=f'{ISSUE_QUERY} groupBy limitPerGroup {PAGE_QUERY}'),
     Route('POST', ORG + '/issues/media/prepare', media_prepare, 'issues'),
     Route('POST', ORG + '/issues/media/from-upload', media_complete, 'issues'),
     Route('GET', ORG + '/issues/media/uploads/{uploadId}', upload_read, 'issues'),
     Route('PUT', ORG + '/issues/media/{mediaId}/upload', media_cancel, 'issues'),
     Route('GET', ORG + '/issues/media/{mediaId}', media_read, 'issues'),
-    Route('GET', ORG + '/issues/{issueId}/lists', lists_list, 'issues'),
-    Route('GET', ORG + '/issues/{issueId}/lists/{listId}/items', list_items_list, 'issues'),
+    Route('GET', ORG + '/issues/{issueId}/lists', lists_list, 'issues', query=f'includeRemoved {PAGE_QUERY}'),
+    Route('GET', ORG + '/issues/{issueId}/lists/{listId}/items', list_items_list, 'issues',
+          query=f'includeRemoved completed {PAGE_QUERY}'),
     Route('POST', ORG + '/issues/{issueId}/lists/{listId}/items', list_item_create, 'issues'),
     Route('PUT', ORG + '/issues/{issueId}/lists/{listId}/items/{itemId}', list_item_update, 'issues'),
     Route('GET', ORG + '/issues/{issueRef}', issue_get, 'issues'),
     Route('PATCH', ORG + '/issues/{issueRef}', issue_patch, 'issues'),
-    Route('GET', ORG + '/issues/{issueRef}/comments', comments_list, 'issues'),
+    Route('GET', ORG + '/issues/{issueRef}/comments', comments_list, 'issues', query=PAGE_QUERY),
     Route('POST', ORG + '/issues/{issueRef}/comments', comment_create, 'issues'),
-    Route('GET', ORG + '/issues/{issueRef}/comments/{rootId}/replies', comment_replies, 'issues'),
-    Route('GET', ORG + '/issues/{issueRef}/relations', relations_list, 'issues'),
-    Route('GET', ORG + '/issues/{issueRef}/activity', activity_list, 'issues'),
-    Route('GET', ORG + '/issues/{issueRef}/pull-requests', pull_requests_list, 'issues'),
-    Route('GET', ORG + '/issues/{issueRef}/images', images_list, 'issues'),
-    Route('GET', ORG + '/issues/{issueRef}/attachments', attachments_list, 'issues'),
+    Route('GET', ORG + '/issues/{issueRef}/comments/{rootId}/replies', comment_replies, 'issues', query=PAGE_QUERY),
+    Route('GET', ORG + '/issues/{issueRef}/relations', relations_list, 'issues',
+          query=f'kind includeArchived {PAGE_QUERY}'),
+    Route('GET', ORG + '/issues/{issueRef}/activity', activity_list, 'issues', query=PAGE_QUERY),
+    Route('GET', ORG + '/issues/{issueRef}/pull-requests', pull_requests_list, 'issues', query=PAGE_QUERY),
+    Route('GET', ORG + '/issues/{issueRef}/images', images_list, 'issues', query=f'around {PAGE_QUERY}'),
+    Route('GET', ORG + '/issues/{issueRef}/attachments', attachments_list, 'issues', query=PAGE_QUERY),
     Route('POST', ORG + '/issues/{issueRef}/attachments/prepare', attachment_prepare, 'issues'),
     Route('POST', ORG + '/issues/{issueRef}/attachments/from-upload', attachment_complete, 'issues'),
     Route('DELETE', ORG + '/issues/{issueRef}/attachments/pending/{uploadId}', attachment_cancel, 'issues'),
@@ -2971,19 +3029,20 @@ ROUTES = [
     Route('DELETE', ORG + '/chat/uploads/{reference}', chat_delete, 'org'),
     Route('POST', ORG + '/chat/uploads/{reference}/grants', chat_grant, 'org'),
     Route('POST', ORG + '/files/grants', file_grants, 'files'),
-    Route('GET', ORG + '/members', members_list, 'org'),
-    Route('GET', ORG + '/labels', labels_list, 'org'),
-    Route('GET', ORG + '/issue-cycles', cycles_list, 'issues'),
-    Route('GET', ORG + '/projects', projects_list, 'org'),
-    Route('GET', ORG + '/projects/{projectId}/milestones', milestones_list, 'org'),
-    Route('GET', ORG + '/mention-candidates', mention_candidates, 'issues'),
-    Route('GET', ORG + '/initiatives', initiatives_list, 'org'),
+    Route('GET', ORG + '/members', members_list, 'org', query='page pageSize status role search'),
+    Route('GET', ORG + '/labels', labels_list, 'org', query='includeInactive usedFor'),
+    Route('GET', ORG + '/issue-cycles', cycles_list, 'issues', query=f'team state number {PAGE_QUERY}'),
+    Route('GET', ORG + '/projects', projects_list, 'org', query=f'includeArchived status search {PAGE_QUERY}'),
+    Route('GET', ORG + '/projects/{projectId}/milestones', milestones_list, 'org',
+          query=f'milestoneId includeContent {PAGE_QUERY}'),
+    Route('GET', ORG + '/mention-candidates', mention_candidates, 'issues', query='kind contentId q limit'),
+    Route('GET', ORG + '/initiatives', initiatives_list, 'org', query=f'search status includeArchived {PAGE_QUERY}'),
     Route('GET', ORG + '/initiatives/{initiativeId}', initiative_get, 'org'),
-    Route('GET', ORG + '/initiatives/{initiativeId}/projects', initiative_projects, 'org'),
-    Route('GET', ORG + '/decisions', decisions_list, 'org'),
+    Route('GET', ORG + '/initiatives/{initiativeId}/projects', initiative_projects, 'org', query=f'scope {PAGE_QUERY}'),
+    Route('GET', ORG + '/decisions', decisions_list, 'org', query=f'issueId status {PAGE_QUERY}'),
     Route('GET', ORG + '/decisions/{decisionId}', decision_get, 'org'),
     Route('GET', ORG + '/desktop/capabilities', desktop_capabilities, 'org'),
-    Route('GET', ORG + '/me/initiatives', member_initiatives, 'org'),
+    Route('GET', ORG + '/me/initiatives', member_initiatives, 'org', query=PAGE_QUERY),
     Route('GET', ORG + '/fleets/{fleetId}', fleet_get, 'org'),
 ]
 
@@ -3021,6 +3080,7 @@ class FixtureServer(ThreadingHTTPServer):
         self.access_token = access_token
         self.lock = threading.RLock()
         self.requests = []
+        self.slow_body_release = threading.Event()
         self.subscribers = []
         self.served = set(served)
         self.org_served = {}
@@ -3028,6 +3088,7 @@ class FixtureServer(ThreadingHTTPServer):
                            mediaReadyAtOnce=False,
                            dropPutResponse=0, dropNext=[])
         self.started = time.monotonic()
+        self.intake = BodyIntake(MAX_BODY_INTAKE_BYTES)
         self.extra_tokens = {}
         self.revoked_tokens = set()
         self.updates_unavailable = False
@@ -3090,7 +3151,8 @@ class FixtureServer(ThreadingHTTPServer):
             slow['times'] -= 1
             if slow['times'] <= 0:
                 self.config['slowBody'] = None
-            return slow['seconds']
+            release = self.slow_body_release if slow['waitForRelease'] else None
+            return slow['seconds'], release
 
     def served_for(self, org):
         """The capability list for `org`: a hook override, or each --serve
@@ -3130,23 +3192,31 @@ class FixtureServer(ThreadingHTTPServer):
         """Logs the request's shape only: never credentials, bodies, grants or
         device approval codes. It keeps x-org-id, Content-Type and
         Content-Length values."""
-        query = {name: ['REDACTED' if name in ('grant', 'user_code') else value for value in values]
+        team_keys = {team['key'].upper() for team in self.fixture.teams.values()}
+
+        def safe_value(name, value):
+            return (name in ('team', 'project') and value.upper() in team_keys
+                    or name == 'stateType' and value in STATE_TYPES)
+
+        query = {name: values if all(safe_value(name, value) for value in values) else ['REDACTED']
                  for name, values in parse_qs(raw_query, keep_blank_values=True).items()}
         length = headers.get('Content-Length')
-        self.requests.append(dict(method=method, path=path, query=query,
-                                  authorization=headers.get('Authorization') is not None,
-                                  cookie=headers.get('Cookie') is not None, orgHeader=headers.get('x-org-id'),
-                                  contentType=headers.get('Content-Type'),
-                                  contentLength=int(length) if length and length.isdigit() else None,
-                                  at=round(time.monotonic() - self.started, 3)))
+        request = dict(method=method, path=path, query=query,
+                       authorization=headers.get('Authorization') is not None,
+                       cookie=headers.get('Cookie') is not None, orgHeader=headers.get('x-org-id'),
+                       contentType=headers.get('Content-Type'),
+                       contentLength=int(length) if length and re.fullmatch(r'[0-9]{1,10}', length) else None,
+                       at=round(time.monotonic() - self.started, 3))
+        self.requests.append(request)
         del self.requests[:-MAX_LOGGED_REQUESTS]
+        return request
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'NettFixture/1'
-    # A request that stalls part way through its headers or body gives up
-    # after this, so it cannot hold the fixture's lock for long.
+    # Header and write inactivity timeout; request bodies have a total deadline.
     timeout = 10
+    body_timeout = 10
 
     def log_message(self, *_args):
         pass  # Never log headers, bodies or tokens.
@@ -3168,33 +3238,51 @@ class Handler(BaseHTTPRequestHandler):
 
     def answer(self):
         url = urlsplit(self.path)
-        self.request_path = url.path
+        self.request_log = None
+        self.revoked_streams = ()
+        self.body = b''
+        self.admitted = 0
         if self.headers.get('Host') != urlsplit(self.server.origin).netloc:
             # Only the fixture's own numeric origin, so a page that rebinds a
             # name to loopback cannot drive it.
-            self.drain()
             self.respond(421, Problem(421, 'Address the fixture by its numeric loopback origin.'))
             return
+        log_request = not url.path.startswith('/__fixture/')
+        if not log_request and any(origin != self.server.origin for origin in self.headers.get_all('Origin', [])):
+            self.respond(403, Problem(403, 'Fixture controls require a same-origin browser request.'))
+            return
+        failure = None
         with self.server.lock:
-            failure = None
-            if not url.path.startswith('/__fixture/'):
-                self.server.record(self.command, url.path, url.query, self.headers)
+            if log_request:
+                self.request_log = self.server.record(self.command, url.path, url.query, self.headers)
                 failure = self.server.take_failure(self.command, url.path)
-            try:
-                if failure:
-                    self.drain()
-                    retry = [('Retry-After', str(failure['retryAfter']))] if failure['retryAfter'] is not None else []
-                    raise Problem(failure['status'], 'The fixture refuses this request for now.', headers=retry)
+        try:
+            limit = MAX_UPLOAD_BYTES if self.command == 'PUT' and url.path.startswith('/u/') else MAX_JSON_BYTES
+            self.body = self.read_request_body(limit)
+            if failure:
+                retry = [('Retry-After', str(failure['retryAfter']))] if failure['retryAfter'] is not None else []
+                raise Problem(failure['status'], 'The fixture refuses this request for now.', headers=retry)
+            with self.server.lock:
                 status, value = self.dispatch(url.path, Query(url.query))
-                if not url.path.startswith('/__fixture/') and self.server.take_drop(self.command, url.path):
+                if log_request and self.server.take_drop(self.command, url.path):
                     # Served, then the answer is lost.
                     self.server.release(value)
                     status, value = 0, Drop()
-            except Problem as problem:
-                status, value = problem.status, problem
-            except Exception as error:  # Keep serving; report the type only.
-                print(f'NETT fixture error: {type(error).__name__}', file=sys.stderr, flush=True)
-                status, value = 500, Problem(500, 'The fixture could not answer this request.')
+        except Problem as problem:
+            status, value = problem.status, problem
+        except Exception as error:  # Keep serving; report the type only.
+            print(f'NETT fixture error: {type(error).__name__}', file=sys.stderr, flush=True)
+            status, value = 500, Problem(500, 'The fixture could not answer this request.')
+        finally:
+            # The body has been handled: its bytes go with its place in the
+            # intake, so an answer that streams for minutes holds neither.
+            self.body = b''
+            self.server.intake.release(self.admitted)
+            self.admitted = 0
+        # Do not hold the fixture lock while waiting for a subscriber's write.
+        for subscriber in self.revoked_streams:
+            with subscriber.delivery:
+                pass
         self.respond(status, value)
 
     def dispatch(self, path, query):
@@ -3216,13 +3304,9 @@ class Handler(BaseHTTPRequestHandler):
         ctx = Context(self, query)
         if route.scope:
             ctx.org = self.scope_org(route.scope, params['orgId'])
-        status, value = route.action(ctx, **params)
-        unread = query.unread()
-        if api and self.command == 'GET' and unread:
-            # A stream registered for this refused request is let go at once.
-            self.server.release(value)
-            raise Problem(400, f'The fixture does not support the query parameter {unread[0]}.')
-        return status, value
+        if api and self.command == 'GET':
+            query.check_names(route.query)
+        return route.action(ctx, **params)
 
     def bearer(self):
         scheme, _, token = self.headers.get('Authorization', '').partition(' ')
@@ -3253,18 +3337,7 @@ class Handler(BaseHTTPRequestHandler):
             raise Problem(404, 'Issue tracking is not available in this organisation.')
         return org
 
-    def drain(self):
-        """Reads and discards a body the fixture will not use."""
-        try:
-            size = int(self.headers.get('Content-Length', '0'))
-        except ValueError:
-            size = 0
-        if 0 < size <= MAX_UPLOAD_BYTES:
-            self.rfile.read(size)
-        elif size:
-            self.close_connection = True
-
-    def read_body(self, limit):
+    def read_request_body(self, limit):
         try:
             size = int(self.headers.get('Content-Length', '0'))
         except ValueError as error:
@@ -3272,28 +3345,51 @@ class Handler(BaseHTTPRequestHandler):
         if size < 0 or size > limit:
             self.close_connection = True
             raise Problem(413, f'The body must be at most {limit} bytes.')
-        return self.rfile.read(size) if size else b''
+        if not size:
+            return b''
+        deadline = time.monotonic() + self.body_timeout
+        if not self.server.intake.admit(size, deadline):
+            self.close_connection = True
+            raise Problem(503, 'The fixture is receiving too many request bodies at once.',
+                          headers=[('Retry-After', '1')])
+        self.admitted = size
+        body = bytearray()
+        try:
+            while len(body) < size:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError
+                self.connection.settimeout(remaining)
+                # Unlike read(), read1() makes at most one underlying read.
+                chunk = self.rfile.read1(min(size - len(body), 64 * 1024))
+                if not chunk:
+                    raise Problem(400, 'The body ended before Content-Length bytes arrived.')
+                body.extend(chunk)
+            return bytes(body)
+        except (TimeoutError, socket.timeout):
+            self.close_connection = True
+            raise Problem(408, 'The body did not arrive before the deadline.') from None
+        finally:
+            self.connection.settimeout(self.timeout)
 
     def read_json(self):
-        data = self.read_body(MAX_JSON_BYTES)
         content_type = self.headers.get('Content-Type', '').split(';')[0].strip().lower()
         if content_type != 'application/json':
             raise Problem(415, 'Send the body as application/json.')
         try:
-            return json.loads(data)
+            return json.loads(self.body)
         except (ValueError, UnicodeError) as error:
             raise Problem(400, 'The body is not valid JSON.') from error
 
     def read_form(self):
         """A WorkOS-style body, form-urlencoded or JSON, as a dict of strings."""
-        data = self.read_body(MAX_JSON_BYTES)
         content_type = self.headers.get('Content-Type', '').split(';')[0].strip().lower()
         try:
             if content_type == 'application/json':
-                value = json.loads(data)
+                value = json.loads(self.body)
                 return value if isinstance(value, dict) else {}
             if content_type == 'application/x-www-form-urlencoded':
-                return {name: values[0] for name, values in parse_qs(data.decode(), keep_blank_values=True).items()}
+                return {name: values[0] for name, values in parse_qs(self.body.decode(), keep_blank_values=True).items()}
         except (ValueError, UnicodeError):
             pass
         return {}
@@ -3303,47 +3399,54 @@ class Handler(BaseHTTPRequestHandler):
         idle, and closes after the stream lifetime, at the bearer's expiry,
         when the subscriber is closed (overflow, lost authority, an archived
         team) or when the client goes."""
-        self.send_response(200)
-        self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
-        self.send_header('Cache-Control', 'private, no-store, no-transform')
-        self.end_headers()
         self.close_connection = True
         lifetime = self.server.stream_seconds
         if subscriber.expires is not None:
             lifetime = min(lifetime, max(0.0, subscriber.expires - time.time()))
         deadline = time.monotonic() + lifetime
         try:
-            self.wfile.write(b'event: ready\ndata: null\n\n')
-            self.wfile.flush()
+            self.connection.settimeout(STREAM_WRITE_SECONDS)
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'private, no-store, no-transform')
+            self.end_headers()
+            if not self.flush_stream(subscriber, b'event: ready\ndata: null\n\n', deadline):
+                return
             while (remaining := deadline - time.monotonic()) > 0:
                 with subscriber.ready:
                     if not subscriber.queue and not subscriber.closed:
                         subscriber.ready.wait(min(remaining, self.server.keepalive_seconds))
                     events = list(subscriber.queue)
                     subscriber.queue.clear()
-                    closed = subscriber.closed
-                # Overflow, a close, a bearer that expired or was revoked, or
-                # lost membership: close before sending anything queued.
-                if closed or not self.server.authorised(subscriber):
+                frame = b': keepalive\n\n'
+                if events:
+                    encoded = [json.dumps(event, separators=(',', ':')).encode() for event in events]
+                    frame = b''.join(b'event: issueChanged\ndata: ' + data + b'\n\n' for data in encoded)
+                if not self.flush_stream(subscriber, frame, deadline):
                     if subscriber.abort:
                         # Reset the connection rather than end the response.
                         self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
                                                    struct.pack('ii', 1, 0))
                         self.connection.close()
                     break
-                if events:
-                    for event in events:
-                        data = json.dumps(event, separators=(',', ':'))
-                        self.wfile.write(f'event: issueChanged\ndata: {data}\n\n'.encode())
-                elif deadline - time.monotonic() > 0:
-                    self.wfile.write(b': keepalive\n\n')
-                self.wfile.flush()
         except OSError:
             pass  # The client went away.
         finally:
             with self.server.lock:
                 if subscriber in self.server.subscribers:
                     self.server.subscribers.remove(subscriber)
+
+    def flush_stream(self, subscriber, frame, deadline):
+        """Deliver one batch under the same lock revocation waits for."""
+        with subscriber.delivery:
+            if not self.server.authorised(subscriber) or subscriber.closed:
+                return False
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            self.connection.settimeout(min(remaining, STREAM_WRITE_SECONDS))
+            self.connection.sendall(frame)
+            return True
 
     def respond(self, status, value):
         if isinstance(value, Stream):
@@ -3374,10 +3477,15 @@ class Handler(BaseHTTPRequestHandler):
         for name, header in headers:
             self.send_header(name, header)
         self.end_headers()
-        delay = self.server.take_slow(getattr(self, 'request_path', ''))
-        if delay:
+        if self.request_log is not None and (slow := self.server.take_slow(self.request_log['path'])):
             self.wfile.flush()
-            time.sleep(delay)
+            with self.server.lock:
+                self.request_log['slowBodyHeadersStatus'] = status
+            seconds, release = slow
+            if release is None:
+                time.sleep(seconds)
+            else:
+                release.wait(seconds)
         if status != 204:
             self.wfile.write(body)
 

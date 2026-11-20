@@ -81,14 +81,6 @@ impl Shared {
     fn enqueue(&self, state: &mut State, task: Task, priority: ReadPriority) {
         self.queue.push(Job::new(state, task), priority);
     }
-
-    /// An explicit reload: a pause NETT asked for ends, so what the person
-    /// asked for is sent now. Subspace API has no such pause.
-    fn resume_nett(&self) {
-        if self.client.service() == crate::Backend::Nett {
-            crate::nett::flow::resume(self.client.flow_account());
-        }
-    }
 }
 
 impl Hub {
@@ -130,8 +122,12 @@ impl Hub {
         hub
     }
 
+    /// What the hub holds now, with the open issue's uploads. Taking it
+    /// is a use of the upload store, so what was kept too long goes.
     pub fn snapshot(&self) -> HubSnapshot {
-        lock(&self.0.state).snapshot.clone()
+        let mut state = lock(&self.0.state);
+        self.0.follow_uploads(&mut state);
+        state.view()
     }
     /// A hub's data and queued requests belong to its original account.
     pub fn account_changed(&self) -> bool {
@@ -157,7 +153,7 @@ impl Hub {
             .map_err(|_| HubError::InvalidQuery)?;
         let mut state = lock(&self.0.state);
         state.running()?;
-        self.0.resume_nett();
+        self.0.client.resume_nett();
         state.select_project(query.selected_project());
         state.query = Some(query);
         state.revision = state.revision.wrapping_add(1);
@@ -273,6 +269,7 @@ impl Hub {
         state.snapshot.status = HubStatus::Stopped;
         state.snapshot.generation.0 = state.snapshot.generation.0.wrapping_add(1);
         state.drafts.clear();
+        state.uploads.clear();
         state.snapshot.issue = None;
         state.snapshot.activity = None;
         state.snapshot.list = None;

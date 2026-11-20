@@ -1,10 +1,16 @@
 //! Retained project move preview. Numbers are committed only after the exact list is confirmed.
+#[cfg(debug_assertions)]
+mod capture;
 mod picker;
+mod preview;
 pub(crate) mod view;
 use crate::Issues;
 use gpui_kit::{AppContext as _, Context, FocusHandle, Window};
 use subspace_api_client::{
-    hub::IssueWriteScope, issue_moves::MovePreview, issue_writes::IssueSaveError,
+    hub::{Hub, IssueWriteScope},
+    issue_moves::{MovePreview, Unreconciled},
+    issue_writes::IssueSaveError,
+    model::IssueDetail,
 };
 
 pub(crate) struct ProjectMove {
@@ -23,11 +29,57 @@ enum Phase {
     Preview(MovePreview),
     Sending,
     Unconfirmed(MovePreview),
+    /// The move committed as the issue now numbered so, but these
+    /// sub-issues could not be confirmed in the destination: they are
+    /// listed for the person to check.
+    Moved(String, Vec<Unreconciled>),
     Failed(IssueSaveError),
+}
+
+/// What confirming or checking a move found: the root as it is now, and
+/// the sub-issues not confirmed in the destination.
+type MoveOutcome = Result<(IssueDetail, Vec<Unreconciled>), IssueSaveError>;
+
+/// Confirms `preview`, or checks a move that went unanswered without
+/// sending it again. A check that fails for any reason but a conflict
+/// leaves the move to be checked again.
+fn confirm(
+    hub: &Hub,
+    scope: &IssueWriteScope,
+    preview: &MovePreview,
+    id: &str,
+    checking: bool,
+) -> MoveOutcome {
+    let result = if checking && subspace_api_client::backend() == subspace_api_client::Backend::Nett
+    {
+        // Every previewed issue is read again; nothing is resent.
+        hub.verify_issue_move(scope, preview)
+            .map(|result| (result.issue, result.unreconciled))
+    } else if checking {
+        hub.latest_issue(scope, id).map(|issue| (issue, Vec::new()))
+    } else {
+        hub.move_issue(scope, preview).map(|result| {
+            #[cfg(debug_assertions)]
+            let unreconciled = capture::unreconciled(preview, result.unreconciled);
+            #[cfg(not(debug_assertions))]
+            let unreconciled = result.unreconciled;
+            (result.issue, unreconciled)
+        })
+    };
+    result.map_err(|error| match error {
+        IssueSaveError::Conflict => error,
+        _ if checking => IssueSaveError::Unconfirmed,
+        _ => error,
+    })
 }
 impl ProjectMove {
     fn busy(&self) -> bool {
         matches!(self.phase, Phase::Loading | Phase::Sending)
+    }
+    /// Whether the move was sent and may have happened, so no fresh
+    /// preview may follow.
+    fn sent(&self) -> bool {
+        matches!(self.phase, Phase::Unconfirmed(_) | Phase::Moved(..))
     }
 }
 
@@ -82,7 +134,7 @@ impl Issues {
         let Some(destination) = state.destination.clone() else {
             return;
         };
-        if state.busy() || matches!(state.phase, Phase::Unconfirmed(_)) {
+        if state.busy() || state.sent() {
             return;
         }
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -137,43 +189,45 @@ impl Issues {
             let sent = preview.clone();
             let check_scope = scope.clone();
             let result = cx
-                .background_spawn(async move {
-                    if checking
-                        && subspace_api_client::backend() == subspace_api_client::Backend::Nett
-                    {
-                        // Every previewed issue is read again; nothing is resent.
-                        hub.verify_issue_move(&scope, &sent)
-                            .map(|result| result.issue)
-                    } else if checking {
-                        hub.latest_issue(&scope, &id)
-                    } else {
-                        hub.move_issue(&scope, &sent).map(|result| result.issue)
-                    }
-                })
+                .background_spawn(async move { confirm(&hub, &scope, &sent, &id, checking) })
                 .await;
             let _ = this.update_in(cx, |this, window, cx| {
-                let Some(state) = this.current_move(serial, &check_scope) else {
-                    return;
-                };
-                match result {
-                    Ok(issue)
-                        if preview.root_moved_to(&issue.fields.identifier)
-                            && issue.fields.project_id == preview.destination.id =>
-                    {
-                        this.finish_project_move(issue.fields.identifier, window, cx)
-                    }
-                    Ok(_) => state.phase = Phase::Failed(IssueSaveError::Conflict),
-                    Err(IssueSaveError::Conflict) => {
-                        state.phase = Phase::Failed(IssueSaveError::Conflict);
-                    }
-                    Err(_) if checking => state.phase = Phase::Unconfirmed(preview),
-                    Err(IssueSaveError::Unconfirmed) => state.phase = Phase::Unconfirmed(preview),
-                    Err(error) => state.phase = Phase::Failed(error),
+                if this.current_move(serial, &check_scope).is_some() {
+                    this.settle_project_move(&preview, result, window, cx);
                 }
-                cx.notify();
             });
         })
         .detach();
+        cx.notify();
+    }
+    /// Shows what confirming or checking the move found. A move that
+    /// committed opens the moved issue, unless some of its sub-issues could
+    /// not be confirmed in the destination: those are listed first.
+    fn settle_project_move(
+        &mut self,
+        preview: &MovePreview,
+        result: MoveOutcome,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let phase = match result {
+            Ok((issue, unreconciled))
+                if preview.root_moved_to(&issue.fields.identifier)
+                    && issue.fields.project_id == preview.destination.id =>
+            {
+                if unreconciled.is_empty() {
+                    return self.finish_project_move(issue.fields.identifier, window, cx);
+                }
+                self.reload_list(cx);
+                Phase::Moved(issue.fields.identifier, unreconciled)
+            }
+            Ok(_) | Err(IssueSaveError::Conflict) => Phase::Failed(IssueSaveError::Conflict),
+            Err(IssueSaveError::Unconfirmed) => Phase::Unconfirmed(preview.clone()),
+            Err(error) => Phase::Failed(error),
+        };
+        if let Some(state) = &mut self.project_move {
+            state.phase = phase;
+        }
         cx.notify();
     }
     fn finish_project_move(
@@ -211,10 +265,10 @@ impl Issues {
 mod tests {
     use super::{Issues, Phase};
     use crate::tests::{
-        offline::{board_with_hub, offline_with, settle_board},
+        offline::{Offline, board_with_hub, offline_with, settle_board},
         render,
     };
-    use gpui_kit::TestAppContext;
+    use gpui_kit::{Context, Entity, TestAppContext, VisualTestContext, Window};
     use serde_json::json;
     use std::sync::{
         Arc,
@@ -227,24 +281,12 @@ mod tests {
         let returned = Arc::new(AtomicBool::new(false));
         let (calls, held, done) = (count.clone(), release.clone(), returned.clone());
         let fixture = offline_with(move |r| move_route(r, &calls, &held, &done));
-        let (board, cx) = board_with_hub(&fixture, cx);
-        settle_board(&board, cx, |b| b.can_create_issue());
-        board.update(cx, |b, cx| b.open_detail("SUB-2".into(), cx));
-        settle_board(&board, cx, Issues::can_edit_issue);
-        cx.update(|window, cx| {
-            board.update(cx, |b, cx| {
-                b.open_project_move(window, cx);
-                b.project_move.as_mut().unwrap().destination = Some("project-OPS".into());
-                b.load_move_preview(cx);
-            })
-        });
+        let (board, cx) = previewing_a_move_to_ops(&fixture, cx);
         settle_board(&board, cx, |_| count.load(Ordering::SeqCst) == 1);
         cx.update(|window, cx| {
             board.update(cx, |b, cx| {
                 b.close_project_move(window, cx);
-                b.open_project_move(window, cx);
-                b.project_move.as_mut().unwrap().destination = Some("project-OPS".into());
-                b.load_move_preview(cx);
+                ask_for_a_move_to_ops(b, window, cx);
             })
         });
         settle_board(
@@ -295,17 +337,7 @@ mod tests {
                      "stateName":"Done","cycleCleared":false,"milestoneCleared":false,"estimateCleared":false,
                      "parentDetached":false,"archived":true}]}).to_string()))
         });
-        let (board, cx) = board_with_hub(&fixture, cx);
-        settle_board(&board, cx, |b| b.can_create_issue());
-        board.update(cx, |b, cx| b.open_detail("SUB-2".into(), cx));
-        settle_board(&board, cx, Issues::can_edit_issue);
-        cx.update(|window, cx| {
-            board.update(cx, |b, cx| {
-                b.open_project_move(window, cx);
-                b.project_move.as_mut().unwrap().destination = Some("project-OPS".into());
-                b.load_move_preview(cx);
-            })
-        });
+        let (board, cx) = previewing_a_move_to_ops(&fixture, cx);
         settle_board(
             &board,
             cx,
@@ -331,6 +363,84 @@ mod tests {
             Some(true),
             "Move stays available in the default build"
         );
+    }
+    /// A NETT move can commit while some of its sub-issues cannot be read
+    /// back in the destination: they are listed, with what was found, and
+    /// the moved issue opens only when the person asks.
+    #[gpui_kit::test]
+    fn a_move_with_sub_issues_it_could_not_confirm_lists_them_first(cx: &mut TestAppContext) {
+        use subspace_api_client::issue_moves::{Unreconciled, UnreconciledReason};
+        let fixture = offline_with(|r| {
+            move_route(
+                r,
+                &AtomicUsize::new(1),
+                &AtomicBool::new(true),
+                &AtomicBool::new(false),
+            )
+        });
+        let (board, cx) = previewing_a_move_to_ops(&fixture, cx);
+        let preview = |b: &Issues| match &b.project_move.as_ref().unwrap().phase {
+            Phase::Preview(preview) => Some(preview.clone()),
+            _ => None,
+        };
+        settle_board(&board, cx, |b| preview(b).is_some());
+        let preview = board.read_with(cx, |b, _| preview(b)).unwrap();
+        let mut moved = crate::tests::offline::row("2", "Fixture");
+        moved["identifier"] = json!("OPS-8");
+        moved["projectId"] = json!("project-OPS");
+        moved["projectKey"] = json!("OPS");
+        moved["description"] = json!("");
+        moved["todos"] = json!([]);
+        let moved = serde_json::from_value(moved).unwrap();
+        let unreconciled = vec![
+            Unreconciled::new("3", "SUB-3", UnreconciledReason::Elsewhere),
+            Unreconciled::new(
+                "4",
+                "SUB-4",
+                UnreconciledReason::Unread(subspace_api_client::Error::NotFound),
+            ),
+        ];
+        cx.update(|window, cx| {
+            board.update(cx, |b, cx| {
+                b.menu = None;
+                b.review_project_move(window, cx);
+                b.settle_project_move(&preview, Ok((moved, unreconciled)), window, cx);
+            })
+        });
+        render(cx);
+        assert!(crate::tests::has(cx, "issue-move-unreconciled"));
+        assert!(crate::tests::has(cx, "issue-move-open"));
+        // The move happened: no fresh preview replaces the list.
+        board.update(cx, |b, cx| b.load_move_preview(cx));
+        assert!(board.read_with(cx, |b, _| matches!(
+            &b.project_move.as_ref().unwrap().phase,
+            Phase::Moved(identifier, items) if identifier == "OPS-8" && items.len() == 2
+        )));
+        cx.update(|window, cx| {
+            board.update(cx, |b, cx| {
+                b.finish_project_move("OPS-8".into(), window, cx)
+            })
+        });
+        assert!(board.read_with(cx, |b, _| b.project_move.is_none()));
+    }
+    /// Mounts the board on `fixture`, opens SUB-2 and asks for a preview of
+    /// its move to OPS.
+    fn previewing_a_move_to_ops<'a>(
+        fixture: &Offline,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<Issues>, &'a mut VisualTestContext) {
+        let (board, cx) = board_with_hub(fixture, cx);
+        settle_board(&board, cx, |b| b.can_create_issue());
+        board.update(cx, |b, cx| b.open_detail("SUB-2".into(), cx));
+        settle_board(&board, cx, Issues::can_edit_issue);
+        cx.update(|window, cx| board.update(cx, |b, cx| ask_for_a_move_to_ops(b, window, cx)));
+        (board, cx)
+    }
+    /// Starts a move of the open issue to OPS and asks for its preview.
+    fn ask_for_a_move_to_ops(board: &mut Issues, window: &mut Window, cx: &mut Context<Issues>) {
+        board.open_project_move(window, cx);
+        board.project_move.as_mut().unwrap().destination = Some("project-OPS".into());
+        board.load_move_preview(cx);
     }
     fn move_route(
         r: &subspace_framework::client_test_support::Request,

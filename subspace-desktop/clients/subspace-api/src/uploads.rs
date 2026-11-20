@@ -4,8 +4,10 @@ mod validation;
 pub use crate::media::MAX_IMAGE_BYTES;
 use sha2::{Digest as _, Sha256};
 pub(crate) use validation::document;
-pub use validation::file_mime;
+pub use validation::{file_mime, max_bytes, without_format_characters};
 pub const MAX_IMAGE_EDGE: u32 = 4096;
+/// Hexadecimal digits in a SHA-256 digest.
+const SHA256_HEX_LEN: usize = 64;
 pub const MAX_IMAGE_PIXELS: u64 = 16_777_216;
 pub const MAX_FILE_BYTES: usize = 10_000_000;
 pub const MAX_DRAFT_IMAGES: usize = 8;
@@ -45,6 +47,28 @@ impl ImageDeclaration {
         validation::normalize_name(&media.file_name).as_ref() == Ok(&self.file_name)
             && self.size_bytes as i64 == media.size_bytes
             && self.sha256.eq_ignore_ascii_case(&media.sha256)
+    }
+    /// Whether a record giving these fields, any of which may be missing,
+    /// shows another file than this one: a well-formed name, size or
+    /// SHA-256 it gives that differs. A field it leaves out, or gives
+    /// malformed, such as an empty name, a size below one byte or a digest
+    /// that is not 64 hexadecimal digits, shows nothing either way.
+    pub(crate) fn contradicted_by(
+        &self,
+        name: Option<&str>,
+        size: Option<i64>,
+        sha256: Option<&str>,
+    ) -> bool {
+        let name = name
+            .and_then(|name| validation::normalize_name(name).ok())
+            .filter(|name| !name.is_empty());
+        let size = size.filter(|size| *size > 0);
+        let sha256 = sha256.filter(|digest| {
+            digest.len() == SHA256_HEX_LEN && digest.bytes().all(|b| b.is_ascii_hexdigit())
+        });
+        name.is_some_and(|name| name != self.file_name)
+            || size.is_some_and(|size| size != self.size_bytes as i64)
+            || sha256.is_some_and(|sha256| !self.sha256.eq_ignore_ascii_case(sha256))
     }
     pub(crate) fn unchanged(&self, bytes: &[u8]) -> bool {
         self.size_bytes == bytes.len()

@@ -74,7 +74,7 @@ fn retire(job: &Job, state: &mut State, identifier: &str, error: crate::Error) {
     issue.decisions = Default::default();
     issue.decision = Default::default();
     issue.images = Default::default();
-    issue.files.clear_keeping_uploads();
+    issue.files.clear();
     issue.status = if error == crate::Error::NotFound {
         IssueStatus::Unavailable
     } else {

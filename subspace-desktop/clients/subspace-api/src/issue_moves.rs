@@ -3,6 +3,9 @@ use crate::issue_writes::IssueSaveError;
 use crate::{Client, model::IssueDetail, transport};
 use serde::{Deserialize, de::DeserializeOwned};
 use serde_json::{Value, json};
+mod reconcile;
+pub use reconcile::{Unreconciled, UnreconciledReason};
+
 const MAX_MOVE_ISSUES: usize = 500;
 const TOKEN_HEX_LEN: usize = 64;
 
@@ -80,13 +83,43 @@ impl MovePreview {
             }),
         }
     }
+
+    /// Whether this preview answers a request to move `id`, at `version`,
+    /// to `destination`: a bounded plan with a full token, rooted at that
+    /// issue and version.
+    fn answers(&self, id: &str, destination: &str, version: u32) -> bool {
+        self.issues.len() <= MAX_MOVE_ISSUES
+            && self.token.len() == TOKEN_HEX_LEN
+            && self.issues.first().is_some_and(|root| {
+                (root.id == id || root.old_identifier == id) && root.version == version
+            })
+            && self.destination.id == destination
+    }
+
+    /// Whether the move can be confirmed as previewed: NETT needs the
+    /// review context back, and Subspace API previews every new number.
+    fn confirmable(&self, nett: bool) -> bool {
+        if nett {
+            self.review_context.is_some()
+        } else {
+            self.issues.iter().all(|item| item.new_identifier.is_some())
+        }
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
 pub struct MoveResult {
     pub issue: IssueDetail,
+    /// The previewed issues read back in the destination, with their numbers
+    /// there, the root first.
     pub moved: Vec<MoveItem>,
+    /// Previewed sub-issues that a NETT move which committed could not
+    /// confirm in the destination when they were read back. The move itself
+    /// succeeded; the Issues Space lists these for the person to check.
+    /// Worked out here, never read from a reply.
+    #[serde(skip)]
+    pub unreconciled: Vec<Unreconciled>,
 }
 
 // qual:allow(coupling, oi) reason: "The bounded HTTP seam owns single-attempt writes, access challenges and validated responses."
@@ -104,19 +137,7 @@ impl Client {
             json!({"destinationProjectId":destination,"version":version})
         };
         let preview: MovePreview = self.move_request(id, "move-preview", body)?;
-        let root = preview.issues.first();
-        if preview.issues.len() > MAX_MOVE_ISSUES
-            || preview.token.len() != TOKEN_HEX_LEN
-            || !root.is_some_and(|root| root.id == id || root.old_identifier == id)
-            || root.is_some_and(|root| root.version != version)
-            || preview.destination.id != destination
-            || (nett && preview.review_context.is_none())
-            || (!nett
-                && preview
-                    .issues
-                    .iter()
-                    .any(|item| item.new_identifier.is_none()))
-        {
+        if !preview.answers(id, destination, version) || !preview.confirmable(nett) {
             return Err(IssueSaveError::Unavailable);
         }
         Ok(preview)
@@ -187,63 +208,6 @@ impl Client {
         self.nett_verify_move(preview, Some(issue))
     }
 
-    /// Checks a confirmed or possibly confirmed NETT move without sending it
-    /// again: every previewed issue must now be in the destination team,
-    /// with a newer version than previewed and a number there. A read that
-    /// fails leaves the move unconfirmed, to be checked again; an issue
-    /// that did not move means the plan did not happen.
-    pub fn verify_issue_move(&self, preview: &MovePreview) -> Result<MoveResult, IssueSaveError> {
-        if self.backend != crate::Backend::Nett {
-            return Err(IssueSaveError::Unavailable);
-        }
-        self.nett_verify_move(preview, None)
-    }
-
-    fn nett_verify_move(
-        &self,
-        preview: &MovePreview,
-        root: Option<IssueDetail>,
-    ) -> Result<MoveResult, IssueSaveError> {
-        let first = preview.issues.first().ok_or(IssueSaveError::Invalid)?;
-        let moved_here = |current: &IssueDetail, previewed: &MoveItem| {
-            current.fields.id == previewed.id
-                && current.fields.project_id == preview.destination.id
-                && current.fields.version > i64::from(previewed.version)
-                && preview_number(&current.fields.identifier, &preview.destination.key)
-        };
-        // A check reads the root itself: one still where it was proves the
-        // move never happened, so a fresh preview may follow.
-        let checking = root.is_none();
-        let root = match root {
-            Some(root) => root,
-            None => self
-                .issue(&first.id)
-                .map_err(|_| IssueSaveError::Unconfirmed)?,
-        };
-        if !moved_here(&root, first) || !preview.root_moved_to(&root.fields.identifier) {
-            return Err(if checking {
-                IssueSaveError::Conflict
-            } else {
-                IssueSaveError::Unconfirmed
-            });
-        }
-        let mut moved = Vec::with_capacity(preview.issues.len());
-        let mut root_item = first.clone();
-        root_item.new_identifier = Some(root.fields.identifier.clone());
-        moved.push(root_item);
-        for previewed in preview.issues.iter().skip(1) {
-            let current = self
-                .issue(&previewed.id)
-                .map_err(|_| IssueSaveError::Unconfirmed)?;
-            if !moved_here(&current, previewed) {
-                return Err(IssueSaveError::Conflict);
-            }
-            let mut item = previewed.clone();
-            item.new_identifier = Some(current.fields.identifier);
-            moved.push(item);
-        }
-        Ok(MoveResult { issue: root, moved })
-    }
     /// Reads a move reply. Previews keep NETT's own field names; an issue
     /// detail is mapped like any other read.
     fn move_response<T: DeserializeOwned>(

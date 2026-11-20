@@ -2,6 +2,7 @@
 //! scrolls, including during loads and errors.
 
 mod decision_panel;
+mod description;
 mod header;
 mod header_progress;
 mod more;
@@ -32,9 +33,7 @@ use subspace_api_client::hub::{IssueSnapshot, IssueStatus, ReadError};
 use subspace_api_client::model::IssueDetail;
 use subspace_framework::dashboard::Tokens;
 use subspace_framework::dashboard::feedback::{self, Words};
-use subspace_framework::dashboard::rich::rich_text_prepared;
 use subspace_framework::dashboard::row_menu::MenuChat;
-use subspace_framework::lucide::IconName;
 
 pub(crate) use panel::section_heading;
 
@@ -233,7 +232,7 @@ fn columns(
                 .when(subspace_api_client::capabilities().issue_summaries, |col| {
                     col.child(summary::section(issues, detail, tokens, cx))
                 })
-                .child(description(issues, detail, tokens, cx))
+                .child(description::render(issues, detail, tokens, cx))
                 .children(crate::media::view::panel(issues, open, cx))
                 .children(crate::media::files::panel(issues, open, cx))
                 .children(subissues::render(detail, open, tokens, cx))
@@ -260,57 +259,6 @@ fn columns(
 /// Measure the page, not the adjacent viewer.
 fn stacked(issues: &Issues, tokens: &Tokens) -> bool {
     issues.width - panel::side_width(issues, tokens) < TWO_COLUMNS_MIN_WIDTH
-}
-
-fn description(
-    issues: &Issues,
-    detail: &IssueDetail,
-    tokens: &Tokens,
-    cx: &mut Context<Issues>,
-) -> Div {
-    div().min_w_0().child(
-        panel::section("Description", IconName::FileText, false, tokens)
-            .when(issues.can_edit_issue(), |section| {
-                section.title(
-                    gpui_kit::component::h_flex()
-                        .justify_between()
-                        .child(section_heading("Description", IconName::FileText, tokens))
-                        .child(
-                            subspace_framework::dashboard::action::icon_button(
-                                "issue-description-edit",
-                                subspace_framework::dashboard::action::Intent::Quiet,
-                                IconName::Pencil,
-                                "Edit description…",
-                            )
-                            .compact()
-                            .on_click(cx.listener(
-                                |this, _, window, cx| {
-                                    this.edit_issue_field(
-                                        crate::editing::EditTarget::Description,
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            )),
-                        ),
-                )
-            })
-            .child(match &issues.issue_view.description {
-                Some(text) => crate::media::view::markdown(
-                    rich_text_prepared(
-                        format!("issue-description:{}", detail.fields.id),
-                        text.clone(),
-                        |url, _, _| {
-                            subspace_framework::dashboard::links::safe_url(url).is_none()
-                                || url.starts_with("subspace-search:")
-                        },
-                    ),
-                    issues,
-                )
-                .into_any_element(),
-                None => panel::empty("No description", tokens).into_any_element(),
-            }),
-    )
 }
 
 fn section_title(label: impl Into<gpui_kit::SharedString>, tokens: &Tokens) -> Div {
