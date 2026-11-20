@@ -14,6 +14,11 @@ use subspace_api_client::hub::{Hub, HubStatus, LiveStatus};
 use subspace_api_client::{Client, ListQuery, ListTab, nett};
 use subspace_framework::core::Secret;
 
+/// Fixture traffic stays on loopback: no proxy from the environment sees it.
+fn direct() -> ureq::Agent {
+    ureq::Agent::config_builder().proxy(None).build().into()
+}
+
 struct Mock {
     child: Child,
     origin: String,
@@ -31,6 +36,8 @@ impl Mock {
         .arg(&script)
         .args(["--port", "0", "--serve", "updates"])
         .env_clear()
+        // Windows Python needs SYSTEMROOT to open a socket.
+        .envs(std::env::var_os("SYSTEMROOT").map(|root| ("SYSTEMROOT", root)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -50,7 +57,8 @@ impl Mock {
 
     /// Update streams opened so far.
     fn streams(&self) -> usize {
-        let mut response = ureq::get(&format!("{}/__fixture/requests", self.origin))
+        let mut response = direct()
+            .get(&format!("{}/__fixture/requests", self.origin))
             .call()
             .unwrap();
         let log: Vec<Value> =
@@ -61,7 +69,8 @@ impl Mock {
     }
 
     fn hook(&self, path: &str, body: &Value) {
-        ureq::post(&format!("{}/__fixture/{path}", self.origin))
+        direct()
+            .post(&format!("{}/__fixture/{path}", self.origin))
             .header("Content-Type", "application/json")
             .send(body.to_string())
             .unwrap();

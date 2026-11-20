@@ -3,6 +3,8 @@
 //! process environment also holds the Subspace API debug variables a stray
 //! shell would. Every construction path the Issues and Channels Spaces use
 //! must then reach only NETT; a Subspace API sentinel records any request.
+//! The scenario runs in a child process whose environment is set before it
+//! starts, so nothing changes the environment while threads read it.
 
 #[allow(dead_code)]
 #[path = "../build/settings.rs"]
@@ -57,21 +59,43 @@ fn nett_build() -> launch::Stamped {
     }
 }
 
-#[gpui_kit::test]
-fn a_nett_build_reaches_only_nett(cx: &mut TestAppContext) {
+#[test]
+fn a_nett_build_reaches_only_nett() {
     let subspace = Mock::new(|_| (200, "{}".to_owned()));
     // Installing remembers organisation choices beside the app's state, so
     // the state directory is a temporary one, never the person's.
     let home = tempfile::tempdir().unwrap();
     let token = home.path().join("stray-token");
     std::fs::write(&token, "stray-fixture-token\n").unwrap();
-    // SAFETY: set before any other thread in this test process reads them.
-    unsafe {
-        std::env::set_var("HOME", home.path());
-        std::env::set_var("XDG_STATE_HOME", home.path());
-        std::env::set_var("SUBSPACE_API_URL", format!("{}/api", subspace.base_url()));
-        std::env::set_var("SUBSPACE_API_ACCESS_JWT_FILE", &token);
-    }
+    let run = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "launched_with_stray_subspace_settings",
+        ])
+        .env("HOME", home.path())
+        .env("XDG_STATE_HOME", home.path())
+        .env("SUBSPACE_API_URL", format!("{}/api", subspace.base_url()))
+        .env("SUBSPACE_API_ACCESS_JWT_FILE", &token)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success() && String::from_utf8_lossy(&run.stdout).contains("1 passed"),
+        "{} {}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert!(
+        subspace.requests().is_empty(),
+        "a NETT build sent {} request(s) to Subspace API",
+        subspace.requests().len()
+    );
+}
+
+#[gpui_kit::test]
+#[ignore = "a child process of a_nett_build_reaches_only_nett, with its environment"]
+fn launched_with_stray_subspace_settings(cx: &mut TestAppContext) {
+    let subspace_api = std::env::var("SUBSPACE_API_URL").unwrap();
     let nett_mock = Mock::new(|request| nett(&request.path));
     let nett_url = format!("{}/api", nett_mock.base_url());
 
@@ -96,7 +120,7 @@ fn a_nett_build_reaches_only_nett(cx: &mut TestAppContext) {
     subspace_api_client::use_native_account(|| 1, |_| None, || Ok(Secret::new("nett-token")));
     assert_eq!(subspace_api_client::backend(), Backend::Nett);
     assert!(
-        subspace_api_client::configure_api_origin(&format!("{}/api", subspace.base_url())).is_err(),
+        subspace_api_client::configure_api_origin(&subspace_api).is_err(),
         "the Subspace API origin can never be configured in a NETT build"
     );
     let capabilities = subspace_api_client::capabilities();
@@ -151,11 +175,6 @@ fn a_nett_build_reaches_only_nett(cx: &mut TestAppContext) {
         assert!(catalog.memberships().is_empty());
     });
 
-    assert!(
-        subspace.requests().is_empty(),
-        "a NETT build sent {} request(s) to Subspace API",
-        subspace.requests().len()
-    );
     let nett_requests = nett_mock.requests();
     assert!(nett_requests.iter().all(|request| {
         request

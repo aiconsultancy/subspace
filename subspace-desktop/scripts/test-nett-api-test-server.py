@@ -17,6 +17,7 @@ import importlib.util
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import threading
@@ -26,7 +27,10 @@ import uuid
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
+
+# Fixture traffic stays on loopback: no proxy from the environment sees it.
+DIRECT = build_opener(ProxyHandler({}))
 
 SERVER_PATH = Path(__file__).resolve().with_name('nett_api_test_server.py')
 SPEC = importlib.util.spec_from_file_location('nett_fixture', SERVER_PATH)
@@ -81,7 +85,7 @@ def call(origin, method, path, body=None, token=TOKEN, headers=None, form=None, 
         data = json.dumps(body).encode()
         headers.setdefault('Content-Type', 'application/json')
     try:
-        response = urlopen(Request(origin + path, data=data, headers=headers, method=method), timeout=5)
+        response = DIRECT.open(Request(origin + path, data=data, headers=headers, method=method), timeout=5)
     except HTTPError as error:
         response = error
     with response:
@@ -213,6 +217,8 @@ class DeviceFlowTests(FixtureCase):
         self.assertEqual(self.poll(device['device_code'])[1]['error'], 'slow_down')
         status, page, headers = self.call('GET', '/device?user_code=' + device['user_code'], token=None)
         self.assertEqual(status, 200)
+        logged = self.call('GET', '/__fixture/requests', token=None)[1][-1]
+        self.assertEqual(logged['query'], dict(user_code=['REDACTED']), 'the approval code is not logged')
         self.assertTrue(headers['Content-Type'].startswith('text/html'))
         self.assertIn(device['user_code'].encode(), page)
         status, value, _ = self.call('POST', '/device/approve', dict(user_code=device['user_code']), token=None)
@@ -769,7 +775,8 @@ class AttachmentTests(FileCase):
         self.assertIsNone(listed['nextCursor'])
         log, chart = listed['items']
         self.assertEqual(set(log), {'mediaId', 'version', 'kind', 'fileName', 'contentType', 'sizeBytes', 'sha256',
-                                    'publicFileId', 'expiresAt'})
+                                    'publicFileId', 'expiresAt', 'uploadId'})
+        self.assertIsNone(log['uploadId'], 'a seeded file was never uploaded')
         self.assertEqual((log['kind'], chart['kind'], log['expiresAt'], log['version']), ('file', 'image', None, 1))
         first = self.get('/issues/OPS-1/attachments?limit=1')
         self.assertEqual([a['fileName'] for a in first['items']], ['restore-log.txt'])
@@ -825,6 +832,7 @@ class AttachmentTests(FileCase):
         self.assertEqual((created['fileName'], created['kind'], created['sizeBytes'], created['version']),
                          ('notes.md', 'file', len(data), 1))
         self.assertEqual(created['sha256'], body['sha256'])
+        self.assertEqual(created['uploadId'], upload['uploadId'], 'the record names its transfer')
         self.assertEqual(self.ok('POST', '/issues/OPS-1/attachments/from-upload', complete), created, 'a replay')
         self.assertEqual(self.get('/issues/OPS-1/attachments')['items'][-1], created)
         self.org_problem(409, 'POST', '/issues/OPS-1/attachments/prepare', body)  # A spent key.
@@ -913,6 +921,26 @@ class ChatUploadTests(FileCase):
             self.org_problem(404, 'POST', f'/chat/uploads/{reference}/grants')
         self.org_problem(404, 'GET', f"/chat/uploads/{chat['reference']}", org=SECOND)
 
+    def test_the_same_draft_in_two_organisations_is_two_uploads(self):
+        key = str(uuid.uuid4())
+        mine, theirs = b'%PDF-1.4 works', b'%PDF-1.4 second org'
+        uploads = {}
+        for org, data in ((WORKS, mine), (SECOND, theirs)):
+            upload = self.ok('POST', '/chat/uploads/prepare', self.declaration(data, 'brief.pdf', 'application/pdf',
+                                                                               key), org=org)
+            self.assertEqual(self.put(upload, data)[0], 204)
+            uploads[org] = upload
+        works = self.ok('POST', '/chat/uploads/from-upload', dict(uploadId=uploads[WORKS]['uploadId']), status=201)
+        grant = self.ok('POST', f"/chat/uploads/{works['reference']}/grants")
+        self.ok('POST', '/chat/uploads/from-upload', dict(uploadId=uploads[SECOND]['uploadId']), status=201,
+                org=SECOND)
+        # The second organisation's completion leaves the first's file alone.
+        self.assert_download(grant, mine, 'application/pdf')
+        self.assertEqual(self.ok('POST', '/chat/uploads/from-upload', dict(uploadId=uploads[WORKS]['uploadId'])),
+                         works, 'a replay is still its own')
+        second = self.ok('POST', f"/chat/uploads/{works['reference']}/grants", org=SECOND)
+        self.assert_download(second, theirs, 'application/pdf')
+
     def test_accepted_types_cancellation_deletion_and_expiry(self):
         for content_type in ('application/zip', 'text/plain', 'image/webp',
                              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'):
@@ -934,7 +962,7 @@ class ChatUploadTests(FileCase):
         self.org_problem(409, 'POST', '/chat/uploads/prepare', self.declaration(b'%PDF-1.4 fixture', 'brief.pdf',
                                                                                 'application/pdf', key))
         _, _, old = self.upload_chat()
-        self.server.fixture.chat_uploads[old['id']]['expiresAt'] = NETT.stamp(NETT.utc_now())
+        self.server.fixture.chat_uploads[(WORKS, old['id'])]['expiresAt'] = NETT.stamp(NETT.utc_now())
         self.org_problem(404, 'GET', f"/chat/uploads/{old['reference']}")
 
     def test_a_token_denied_grants_reads_metadata_but_gets_no_grant(self):
@@ -1692,6 +1720,26 @@ class FailureHookTests(FileCase):
         refused = self.org_problem(409, 'POST', '/issues/OPS-1/attachments/prepare', declaration)
         self.assertIn('different or finished', refused['detail'])
 
+    def test_only_the_numeric_origin_is_answered_and_a_stalled_body_lets_go(self):
+        connection = http.client.HTTPConnection(urlsplit(self.server.origin).netloc, timeout=5)
+        self.addCleanup(connection.close)
+        connection.putrequest('GET', '/__fixture/requests', skip_host=True)
+        connection.putheader('Host', f'localhost:{self.server.server_port}')
+        connection.endheaders()
+        self.assertEqual(connection.getresponse().status, 421)
+        # A body that never arrives in full gives up and frees the fixture.
+        self.addCleanup(setattr, NETT.Handler, 'timeout', NETT.Handler.timeout)
+        NETT.Handler.timeout = 1
+        stalled = socket.create_connection(('127.0.0.1', self.server.server_port))
+        self.addCleanup(stalled.close)
+        netloc = urlsplit(self.server.origin).netloc
+        stalled.sendall(f'POST /__fixture/config HTTP/1.1\r\nHost: {netloc}\r\n'
+                        'Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{'.encode())
+        time.sleep(0.2)
+        started = time.monotonic()
+        self.assertEqual(self.call('GET', '/__fixture/requests', token=None)[0], 200)
+        self.assertLess(time.monotonic() - started, 3)
+
     def test_the_request_log_says_when_each_request_arrived(self):
         hook(self, 'requests/clear', {})
         self.call('GET', '/api/v1/auth/context')
@@ -1699,6 +1747,22 @@ class FailureHookTests(FileCase):
         self.call('GET', '/api/v1/auth/context')
         first, second = self.server.requests[-2:]
         self.assertGreaterEqual(second['at'] - first['at'], 0.19)
+
+
+class StreamReleaseTests(StreamCase):
+    options = dict(served=('updates',))
+
+    def test_a_refused_stream_request_frees_its_place(self):
+        netloc = urlsplit(self.server.origin).netloc
+        for _ in range(NETT.MAX_STREAMS_PER_USER + 1):
+            connection = http.client.HTTPConnection(netloc, timeout=5)
+            self.addCleanup(connection.close)
+            connection.request('GET', '/api/v1/updates?project=OPS&unsupported=1',
+                               headers={'Authorization': f'Bearer {TOKEN}', 'x-org-id': WORKS})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 400)
+            response.read()
+        self.assertEqual(self.open_stream().status, 200, 'refused requests hold no stream')
 
 
 class StreamRefusalTests(StreamCase):

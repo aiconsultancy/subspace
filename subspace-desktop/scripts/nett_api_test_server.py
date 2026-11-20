@@ -516,6 +516,7 @@ class Fixture:
             second_ops = self.add_team(second, 'OPS', 'Operations', 'linear', False, self.ago(days=200))
             self.add_issue(second, second_ops, 1, 'Plan the second office move', 'unstarted', self.ago(days=4),
                            assignee=ADA, priority=3)
+            self.add_initiative(second, 'Office', 'The second office move.', None)
             self.add_org('personal', 'Ada Fixture', 'personal', [], [(ADA, 'owner', 'active')], personal=True)
         # Ada is not a member, so every route treats it as unknown.
         self.add_org('outside', 'Outside Fixture Org', 'business', ['issue-tracking'], [(GRACE, 'owner', 'active')])
@@ -613,12 +614,14 @@ class Fixture:
         self.initiatives[initiative['id']] = initiative
         return initiative
 
-    def add_attachment(self, row, file_name, content_type, data, media_id, created):
+    def add_attachment(self, row, file_name, content_type, data, media_id, created, upload_id=None):
+        """A standalone attachment; `upload_id` names the transfer it was completed
+        from, and stays None for a file that was never uploaded."""
         public = 'pf_' + hashlib.sha256(('attachment/' + media_id).encode()).hexdigest()[:24]
         record = dict(mediaId=media_id, orgId=row['orgId'], issueId=row['id'], version=1,
                       kind='image' if content_type.startswith('image/') else 'file', fileName=file_name,
                       contentType=content_type, sizeBytes=len(data), sha256=hashlib.sha256(data).hexdigest(),
-                      publicFileId=public, expiresAt=None, createdAt=created)
+                      publicFileId=public, expiresAt=None, createdAt=created, uploadId=upload_id)
         self.attachments[media_id] = record
         self.files[public] = dict(data=data, contentType=content_type, orgId=row['orgId'], disposition='attachment',
                                   issueId=row['id'])
@@ -1073,7 +1076,7 @@ class Fixture:
 
     def attachment_dto(self, record):
         return {key: record[key] for key in ('mediaId', 'version', 'kind', 'fileName', 'contentType', 'sizeBytes',
-                                             'sha256', 'publicFileId', 'expiresAt')}
+                                             'sha256', 'publicFileId', 'expiresAt', 'uploadId')}
 
     def chat_dto(self, record):
         return {key: record[key] for key in ('id', 'reference', 'fileName', 'contentType', 'sizeBytes', 'sha256',
@@ -2386,7 +2389,7 @@ def attachment_complete(ctx, orgId, issueRef):
 
     def create(transfer):
         record = f.add_attachment(row, transfer['fileName'], transfer['contentType'], transfer['data'],
-                                  str(uuid.uuid4()), f.now())
+                                  str(uuid.uuid4()), f.now(), upload_id=transfer['id'])
         f.touch(row, record['createdAt'], f.caller, 'attachment.added', dict(mediaId=record['mediaId']))
         return record['mediaId']
 
@@ -2436,7 +2439,7 @@ def chat_or_404(ctx, reference):
 def chat_prepare(ctx, orgId):
     require(ctx, 'chatUploads')
     key, payload = declaration(ctx, 'PrepareChatUploadRequest')
-    if key in ctx.f.chat_uploads:
+    if (ctx.org['id'], key) in ctx.f.chat_uploads:
         raise Problem(409, 'requestKey was already used for a completed upload.')
     return prepare_transfer(ctx, 'chat', key, payload)
 
@@ -2451,12 +2454,14 @@ def chat_complete(ctx, orgId):
                       fileName=transfer['fileName'], contentType=transfer['contentType'],
                       sizeBytes=transfer['sizeBytes'], sha256=transfer['sha256'], uploadedByUserId=f.caller,
                       createdAt=f.now(), expiresAt=stamp(created + timedelta(days=CHAT_UPLOAD_DAYS)), version=1,
-                      deleted=False, publicFileId='pf_' + hashlib.sha256(('chat/' + transfer['key']).encode())
-                      .hexdigest()[:24])
-        f.chat_uploads[record['id']] = record
+                      deleted=False, publicFileId='pf_' + hashlib.sha256(
+                          f"chat/{transfer['orgId']}/{transfer['key']}".encode()).hexdigest()[:24])
+        # Kept per organisation: the same draft UUID in another organisation
+        # is another upload, with its own file.
+        f.chat_uploads[(record['orgId'], record['id'])] = record
         f.files[record['publicFileId']] = dict(data=transfer['data'], contentType=record['contentType'],
                                                orgId=record['orgId'], disposition='attachment')
-        return record['id']
+        return (record['orgId'], record['id'])
 
     def read(chat_id):
         record = f.chat_uploads.get(chat_id)
@@ -3116,10 +3121,16 @@ class FixtureServer(ThreadingHTTPServer):
             if subscriber.org_id == row['orgId'] and keys & subscriber.keys:
                 subscriber.push(event)
 
+    def release(self, value):
+        """Lets go of a stream that will never be answered, freeing its place."""
+        if isinstance(value, Stream) and value.subscriber in self.subscribers:
+            self.subscribers.remove(value.subscriber)
+
     def record(self, method, path, raw_query, headers):
-        """Logs the request's shape only: never credentials, bodies or grants.
-        It keeps x-org-id, Content-Type and Content-Length values."""
-        query = {name: ['REDACTED' if name == 'grant' else value for value in values]
+        """Logs the request's shape only: never credentials, bodies, grants or
+        device approval codes. It keeps x-org-id, Content-Type and
+        Content-Length values."""
+        query = {name: ['REDACTED' if name in ('grant', 'user_code') else value for value in values]
                  for name, values in parse_qs(raw_query, keep_blank_values=True).items()}
         length = headers.get('Content-Length')
         self.requests.append(dict(method=method, path=path, query=query,
@@ -3133,6 +3144,9 @@ class FixtureServer(ThreadingHTTPServer):
 
 class Handler(BaseHTTPRequestHandler):
     server_version = 'NettFixture/1'
+    # A request that stalls part way through its headers or body gives up
+    # after this, so it cannot hold the fixture's lock for long.
+    timeout = 10
 
     def log_message(self, *_args):
         pass  # Never log headers, bodies or tokens.
@@ -3155,6 +3169,12 @@ class Handler(BaseHTTPRequestHandler):
     def answer(self):
         url = urlsplit(self.path)
         self.request_path = url.path
+        if self.headers.get('Host') != urlsplit(self.server.origin).netloc:
+            # Only the fixture's own numeric origin, so a page that rebinds a
+            # name to loopback cannot drive it.
+            self.drain()
+            self.respond(421, Problem(421, 'Address the fixture by its numeric loopback origin.'))
+            return
         with self.server.lock:
             failure = None
             if not url.path.startswith('/__fixture/'):
@@ -3168,6 +3188,7 @@ class Handler(BaseHTTPRequestHandler):
                 status, value = self.dispatch(url.path, Query(url.query))
                 if not url.path.startswith('/__fixture/') and self.server.take_drop(self.command, url.path):
                     # Served, then the answer is lost.
+                    self.server.release(value)
                     status, value = 0, Drop()
             except Problem as problem:
                 status, value = problem.status, problem
@@ -3198,6 +3219,8 @@ class Handler(BaseHTTPRequestHandler):
         status, value = route.action(ctx, **params)
         unread = query.unread()
         if api and self.command == 'GET' and unread:
+            # A stream registered for this refused request is let go at once.
+            self.server.release(value)
             raise Problem(400, f'The fixture does not support the query parameter {unread[0]}.')
         return status, value
 

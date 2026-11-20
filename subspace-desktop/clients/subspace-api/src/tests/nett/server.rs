@@ -5,6 +5,11 @@ use std::io::{BufRead as _, BufReader};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
+/// Fixture traffic stays on loopback: no proxy from the environment sees it.
+fn direct() -> ureq::Agent {
+    ureq::Agent::config_builder().proxy(None).build().into()
+}
+
 pub(in crate::tests) struct NettMock {
     child: Child,
     origin: String,
@@ -36,6 +41,8 @@ impl NettMock {
         .args(features.iter().flat_map(|feature| ["--serve", feature]))
         .args(extra)
         .env_clear()
+        // Windows Python needs SYSTEMROOT to open a socket.
+        .envs(std::env::var_os("SYSTEMROOT").map(|root| ("SYSTEMROOT", root)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -66,13 +73,14 @@ impl NettMock {
     }
 
     pub(super) fn requests(&self) -> Vec<Value> {
-        let mut response = ureq::get(&self.hook("requests")).call().unwrap();
+        let mut response = direct().get(&self.hook("requests")).call().unwrap();
         let text = response.body_mut().read_to_string().unwrap();
         serde_json::from_str(&text).unwrap()
     }
 
     pub(super) fn clear_requests(&self) {
-        ureq::post(&self.hook("requests/clear"))
+        direct()
+            .post(&self.hook("requests/clear"))
             .send_empty()
             .unwrap();
     }
@@ -83,7 +91,8 @@ impl NettMock {
     }
 
     fn post(&self, path: &str, body: &Value) {
-        ureq::post(&self.hook(path))
+        direct()
+            .post(&self.hook(path))
             .header("Content-Type", "application/json")
             .send(body.to_string())
             .unwrap();
@@ -184,7 +193,8 @@ impl NettMock {
 
     /// A change made elsewhere: the issue's activity time moves on.
     pub(super) fn touch(&self, org: &str, issue: &str) {
-        ureq::post(&self.hook("touch"))
+        direct()
+            .post(&self.hook("touch"))
             .header("Content-Type", "application/json")
             .send(serde_json::json!({"org": org, "issue": issue}).to_string())
             .unwrap();
