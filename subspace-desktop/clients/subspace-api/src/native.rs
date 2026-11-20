@@ -24,6 +24,7 @@ static ACCOUNT: OnceLock<Account> = OnceLock::new();
 /// server's origin, optionally followed by `/api` (`http://127.0.0.1:3000` and
 /// `http://127.0.0.1:3000/api` are the same API). HTTPS is required except on
 /// a loopback address, where a local development API listens.
+// qual:api — the product installs it at startup, from a launch module its tests also compile.
 pub fn configure_api_origin(value: &str) -> Result<(), Error> {
     let base = api_base(value)?;
     crate::backend::claim(crate::Backend::Subspace)?;
@@ -33,6 +34,7 @@ pub fn configure_api_origin(value: &str) -> Result<(), Error> {
 /// Installs a NETT build's API base URL once, before Spaces start, and makes
 /// NETT the process's only backend: the Subspace API origin can then never
 /// be configured. The same URL rules apply.
+// qual:api — a NETT build installs it at startup, from a launch module its tests also compile.
 pub fn configure_nett_origin(value: &str) -> Result<(), Error> {
     let base = api_base(value)?;
     crate::backend::claim(crate::Backend::Nett)?;
@@ -164,6 +166,11 @@ pub(crate) fn account_generation() -> Option<u64> {
 /// The last account generation seen; `u64::MAX` before the first.
 static SEEN: AtomicU64 = AtomicU64::new(u64::MAX);
 
+/// A NETT lease keeps the account's generation in its high half and the
+/// selected organisation's generation in its low half.
+const ORGANISATION_BITS: u32 = 32;
+const ORGANISATION_MASK: u64 = u32::MAX as u64;
+
 /// Private state kept per account goes when the account changes: cached
 /// file grants, NETT organisations and their caches.
 fn account_changed() {
@@ -182,8 +189,8 @@ pub(crate) fn generation() -> Option<u64> {
     Some(match crate::backend::backend() {
         crate::Backend::Subspace => account,
         crate::Backend::Nett => account
-            .wrapping_shl(32)
-            .wrapping_add(crate::nett::scope::generation() & 0xffff_ffff),
+            .wrapping_shl(ORGANISATION_BITS)
+            .wrapping_add(crate::nett::scope::generation() & ORGANISATION_MASK),
     })
 }
 
@@ -349,27 +356,7 @@ mod tests {
         // What was kept for account 1 goes when the account changes: its
         // cached grants and its NETT organisations, which are not shown to
         // or selectable by the next account.
-        crate::nett::media::remember_for_test(FIXTURE_ORIGIN, 1);
-        let org = "00000000-0000-0000-0000-0000000000a1";
-        let organisations: Vec<crate::nett::Organisation> = serde_json::from_value(
-            serde_json::json!([{"id": org.to_uppercase(), "name": "Fixture Works"}]),
-        )
-        .unwrap();
-        crate::nett::scope::observe(Some(1), "user-1", organisations, None);
-        assert_eq!(crate::nett::snapshot().organisations.len(), 1);
-        assert!(crate::nett::scope::select(org));
-        assert_eq!(
-            crate::nett::snapshot().selected.as_deref(),
-            Some(org.to_uppercase().as_str()),
-            "the organisation's own spelling is kept"
-        );
-        // A reply read under another account is ignored.
-        assert!(!crate::nett::scope::observe(
-            Some(7),
-            "user-7",
-            Vec::new(),
-            None
-        ));
+        keep_private_state_for_account_one();
         // A NETT request waiting for a place while the account changes is
         // checked when it gets one, and never sent for the old account.
         let held: Vec<_> = (0..crate::nett::flow::CONCURRENT)
@@ -392,11 +379,44 @@ mod tests {
             Ok(401),
             "refused before sending, not sent to the old account's host"
         );
-        assert!(bearer(&stream, lease).unwrap().is_none());
+        assert_account_one_state_gone(&stream, lease);
+    }
+
+    const FIXTURE_ORG: &str = "00000000-0000-0000-0000-0000000000a1";
+
+    /// Keeps what account 1 may see: a cached grant and its NETT
+    /// organisations, one of them selected.
+    fn keep_private_state_for_account_one() {
+        crate::nett::media::remember_for_test(FIXTURE_ORIGIN, 1).unwrap();
+        let organisations: Vec<crate::nett::Organisation> = serde_json::from_value(
+            serde_json::json!([{"id": FIXTURE_ORG.to_uppercase(), "name": "Fixture Works"}]),
+        )
+        .unwrap();
+        crate::nett::scope::observe(Some(1), "user-1", organisations, None);
+        assert_eq!(crate::nett::snapshot().organisations.len(), 1);
+        assert!(crate::nett::scope::select(FIXTURE_ORG));
+        assert_eq!(
+            crate::nett::snapshot().selected.as_deref(),
+            Some(FIXTURE_ORG.to_uppercase().as_str()),
+            "the organisation's own spelling is kept"
+        );
+        // A reply read under another account is ignored.
+        assert!(!crate::nett::scope::observe(
+            Some(7),
+            "user-7",
+            Vec::new(),
+            None
+        ));
+    }
+
+    /// Nothing kept for account 1 serves the account after it: no bearer,
+    /// grant or organisation, and requests under its lease are refused.
+    fn assert_account_one_state_gone(stream: &ureq::http::Uri, lease: Option<u64>) {
+        assert!(bearer(stream, lease).unwrap().is_none());
         assert_eq!(crate::nett::media::cached_for_test(FIXTURE_ORIGIN), 0);
         let after = crate::nett::snapshot();
         assert!(after.organisations.is_empty() && after.selected.is_none());
-        assert!(!crate::nett::scope::select(org));
+        assert!(!crate::nett::scope::select(FIXTURE_ORG));
         let result = agent(lease)
             .get(format!("{FIXTURE_ORIGIN}/v1/me"))
             .call()

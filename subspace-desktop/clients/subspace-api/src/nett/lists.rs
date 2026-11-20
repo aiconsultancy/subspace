@@ -4,6 +4,7 @@
 
 use serde::Deserialize;
 use serde_json::{Value, json};
+use ureq::http::StatusCode;
 
 use crate::issue_writes::IssueSaveError;
 use crate::{Client, Error, transport};
@@ -89,7 +90,9 @@ impl Client {
             .build()
             .send(body.to_string().as_bytes())
             .map_err(|_| IssueSaveError::Unconfirmed)?;
-        if transport::is_access_challenge(&response) || response.status().as_u16() == 401 {
+        if transport::is_access_challenge(&response)
+            || response.status() == StatusCode::UNAUTHORIZED
+        {
             return Err(IssueSaveError::SignIn);
         }
         match response.status().as_u16() {
