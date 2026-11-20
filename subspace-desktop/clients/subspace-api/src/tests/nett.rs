@@ -315,6 +315,8 @@ fn the_hub_follows_changes_made_elsewhere_over_the_update_stream() {
     let mock = NettMock::serving(&["updates"]);
     let org = organisation(&mock, "Fixture Works");
     let client = Client::nett_loopback(&mock.api(), Some(&org), Some(Secret::new(TOKEN))).unwrap();
+    // Give the initial list an activity timestamp from before the stream opens.
+    mock.touch(&org, "OPS-1");
     let hub = Hub::from_client(client, "NETT");
     hub.activate(ListQuery::new(ListTab::All).project(Some("OPS")))
         .unwrap();
@@ -325,9 +327,12 @@ fn the_hub_follows_changes_made_elsewhere_over_the_update_stream() {
             std::thread::sleep(Duration::from_millis(20));
         }
     };
-    wait("the first list and a live stream", &|| {
+    wait("the first list, its counts and a live stream", &|| {
         let snapshot = hub.snapshot();
-        snapshot.list().is_some() && snapshot.live() == LiveStatus::Live
+        snapshot.list().is_some()
+            && snapshot.hidden_subissues_count().is_some()
+            && snapshot.my_issues_count().is_some()
+            && snapshot.live() == LiveStatus::Live
     });
     let streams: Vec<_> = mock
         .requests()
@@ -342,16 +347,32 @@ fn the_hub_follows_changes_made_elsewhere_over_the_update_stream() {
                 && request["orgHeader"] == serde_json::Value::String(org.clone())
                 && request["query"]["project"] == serde_json::json!(["OPS"]))
     );
-    mock.clear_requests();
-    mock.touch(&org, "OPS-1");
-    wait("a re-read of the list head after the hint", &|| {
-        mock.requests().iter().any(|request| {
-            request["path"]
-                .as_str()
-                .is_some_and(|path| path.ends_with("/issues/groups"))
+    let expected = touch_activity(&mock, &org, "OPS-1");
+    wait("the touched issue's new activity in the list", &|| {
+        hub.snapshot().list().is_some_and(|list| {
+            list.groups
+                .iter()
+                .flat_map(|group| &group.items)
+                .any(|row| {
+                    row.fields.identifier == "OPS-1" && row.fields.last_activity_at == expected
+                })
         })
     });
     hub.stop();
+}
+
+fn touch_activity(mock: &NettMock, org: &str, issue: &str) -> String {
+    let agent: ureq::Agent = ureq::Agent::config_builder().proxy(None).build().into();
+    let api = mock.api();
+    let origin = api.strip_suffix("/api").unwrap();
+    let mut response = agent
+        .post(format!("{origin}/__fixture/touch"))
+        .header("Content-Type", "application/json")
+        .send(serde_json::json!({"org": org, "issue": issue}).to_string())
+        .unwrap();
+    let reply: serde_json::Value =
+        serde_json::from_str(&response.body_mut().read_to_string().unwrap()).unwrap();
+    reply["lastActivityAt"].as_str().unwrap().to_owned()
 }
 
 #[test]

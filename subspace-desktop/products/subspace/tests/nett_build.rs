@@ -1,10 +1,8 @@
-//! A NETT build reaches only NETT. The product resolves and installs its
-//! launch as `main` does, from a NETT build's stamped settings, while the
-//! process environment also holds the Subspace API debug variables a stray
-//! shell would. Every construction path the Issues and Channels Spaces use
-//! must then reach only NETT; a Subspace API sentinel records any request.
-//! The scenario runs in a child process whose environment is set before it
-//! starts, so nothing changes the environment while threads read it.
+//! A NETT build reaches only NETT. The product resolves and installs a
+//! launch from stamped NETT settings in one child process. Another child
+//! exercises the Issues and Channels construction paths with account
+//! persistence off. Both inherit the Subspace API debug settings a
+//! stray shell would have, with a sentinel to record any requests.
 
 #[allow(dead_code)]
 #[path = "../build/settings.rs"]
@@ -26,6 +24,7 @@ use subspace_framework::core::Secret;
 
 const ORG: &str = "00000000-0000-0000-0000-0000000000a1";
 const CLIENT: &str = "client_00000000000000000000000000";
+const CHILD: &str = "NETT_BUILD_TEST_CHILD";
 
 fn nett(path: &str) -> (u16, String) {
     let path = path.split('?').next().unwrap_or_default();
@@ -62,29 +61,35 @@ fn nett_build() -> launch::Stamped {
 #[test]
 fn a_nett_build_reaches_only_nett() {
     let subspace = Mock::new(|_| (200, "{}".to_owned()));
-    // Installing remembers organisation choices beside the app's state, so
-    // the state directory is a temporary one, never the person's.
-    let home = tempfile::tempdir().unwrap();
-    let token = home.path().join("stray-token");
+    let fixture = tempfile::tempdir().unwrap();
+    let token = fixture.path().join("stray-token");
     std::fs::write(&token, "stray-fixture-token\n").unwrap();
-    let run = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--ignored",
-            "--exact",
-            "launched_with_stray_subspace_settings",
-        ])
-        .env("HOME", home.path())
-        .env("XDG_STATE_HOME", home.path())
-        .env("SUBSPACE_API_URL", format!("{}/api", subspace.base_url()))
-        .env("SUBSPACE_API_ACCESS_JWT_FILE", &token)
-        .output()
-        .unwrap();
-    assert!(
-        run.status.success() && String::from_utf8_lossy(&run.stdout).contains("1 passed"),
-        "{} {}",
-        String::from_utf8_lossy(&run.stdout),
-        String::from_utf8_lossy(&run.stderr)
-    );
+    let subspace_url = format!("{}/api", subspace.base_url());
+    for phase in ["install", "exercise"] {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().starts_with("SUBSPACE_") {
+                child.env_remove(name);
+            }
+        }
+        let run = child
+            .args([
+                "--ignored",
+                "--exact",
+                "launched_with_stray_subspace_settings",
+            ])
+            .env(CHILD, phase)
+            .env("SUBSPACE_API_URL", &subspace_url)
+            .env("SUBSPACE_API_ACCESS_JWT_FILE", &token)
+            .output()
+            .unwrap();
+        assert!(
+            run.status.success() && String::from_utf8_lossy(&run.stdout).contains("1 passed"),
+            "{phase}: {} {}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
     assert!(
         subspace.requests().is_empty(),
         "a NETT build sent {} request(s) to Subspace API",
@@ -95,6 +100,9 @@ fn a_nett_build_reaches_only_nett() {
 #[gpui_kit::test]
 #[ignore = "a child process of a_nett_build_reaches_only_nett, with its environment"]
 fn launched_with_stray_subspace_settings(cx: &mut TestAppContext) {
+    let Ok(phase) = std::env::var(CHILD) else {
+        return;
+    };
     let subspace_api = std::env::var("SUBSPACE_API_URL").unwrap();
     let nett_mock = Mock::new(|request| nett(&request.path));
     let nett_url = format!("{}/api", nett_mock.base_url());
@@ -116,7 +124,17 @@ fn launched_with_stray_subspace_settings(cx: &mut TestAppContext) {
     )
     .unwrap();
     assert_eq!(resolved.api_url, "");
-    launch::install(&resolved).unwrap();
+    assert_eq!(resolved.nett_api_url, nett_url);
+    if phase == "install" {
+        launch::install(&resolved).unwrap();
+        assert_eq!(subspace_api_client::backend(), Backend::Nett);
+        subspace_api_client::configure_nett_origin(&nett_url).unwrap();
+        return;
+    }
+    assert_eq!(phase, "exercise");
+    // The installer enables on-disk organisation choices. Use the same
+    // resolved origin here and keep the account journey in memory on every OS.
+    subspace_api_client::configure_nett_origin(&resolved.nett_api_url).unwrap();
     subspace_api_client::use_native_account(|| 1, |_| None, || Ok(Secret::new("nett-token")));
     assert_eq!(subspace_api_client::backend(), Backend::Nett);
     assert!(
