@@ -187,10 +187,13 @@ enum Stored {
 }
 
 /// Finds the record completed from transfer `upload_id`. A record naming
-/// another transfer, or none because it was never uploaded, is someone
-/// else's file however identical it is. A record naming this transfer is
-/// this upload's even when it cannot be read or differs from the file sent,
-/// so it never counts as absence: sending again could store the file twice.
+/// another transfer is someone else's file however identical it is. One
+/// that names none, its `uploadId` missing or `null` because NETT cannot
+/// prove the transfer that created it, is never a match either, but an
+/// identical one may still be this upload's, so it never counts as absence.
+/// A record naming this transfer is this upload's even when it cannot be
+/// read or differs from the file sent, so it never counts as absence
+/// either: sending again could store the file twice.
 fn stored_among<'a>(
     items: impl IntoIterator<Item = &'a Value>,
     upload_id: &str,
@@ -210,9 +213,9 @@ fn stored_among<'a>(
                     Stored::Unknown
                 };
             }
-            Some(Value::String(_) | Value::Null) => {}
-            None if identical() => found = Stored::Unknown,
-            None => {}
+            Some(Value::String(_)) => {}
+            None | Some(Value::Null) if identical() => found = Stored::Unknown,
+            None | Some(Value::Null) => {}
             // A transfer named in a shape NETT does not use.
             Some(_) => found = Stored::Unknown,
         }
@@ -876,15 +879,96 @@ mod tests {
             stored_among([&unnamed], "upload-mine", &declaration),
             Stored::Unknown
         );
-        // One that was never uploaded, such as a seeded file, is not it.
+        // One whose transfer NETT cannot prove is never a match, and an
+        // identical one never shows that this upload is absent.
+        let unproven = record(serde_json::Value::Null);
         assert_eq!(
-            stored_among(
-                [&record(serde_json::Value::Null)],
-                "upload-mine",
-                &declaration
-            ),
+            stored_among([&unproven], "upload-mine", &declaration),
+            Stored::Unknown
+        );
+        assert_eq!(
+            stored_among([&unproven, &mine], "upload-mine", &declaration),
+            Stored::Found(mine.clone())
+        );
+        // Another file without a transfer is not this upload either way.
+        let mut other = unproven.clone();
+        other["sha256"] = serde_json::json!("0".repeat(64));
+        assert_eq!(
+            stored_among([&other], "upload-mine", &declaration),
             Stored::Absent
         );
+    }
+
+    /// A NETT loopback client whose completion of `upload-unproven` is
+    /// refused with 409, so the upload is looked for among `items`, the
+    /// issue's whole attachment list.
+    fn recovering(
+        items: serde_json::Value,
+    ) -> (subspace_framework::client_test_support::Mock, crate::Client) {
+        let list = serde_json::json!({"items": items, "nextCursor": null}).to_string();
+        let mock = subspace_framework::client_test_support::Mock::new(move |request| {
+            if request.path.ends_with("/desktop/capabilities") {
+                (200, r#"{"features":["attachments"]}"#.into())
+            } else if request.path.ends_with("/attachments/from-upload") {
+                (409, "{}".into())
+            } else if request.path.contains("/attachments") {
+                (200, list.clone())
+            } else {
+                (404, "{}".into())
+            }
+        });
+        let client = crate::Client::nett_loopback(
+            &format!("{}/api", mock.base_url()),
+            Some("00000000-0000-4000-8000-0000000000d2"),
+            Some(subspace_framework::core::Secret::new(
+                "nett-unproven-upload",
+            )),
+        )
+        .unwrap()
+        .without_live();
+        (mock, client)
+    }
+
+    #[test]
+    fn an_upload_id_that_is_null_or_missing_never_shows_the_upload_absent() {
+        let bytes = b"Stored without a provable transfer.\n";
+        let declaration =
+            crate::uploads::ImageDeclaration::new("unproven.txt", "text/plain", bytes).unwrap();
+        let record = |upload: Option<serde_json::Value>, sha256: &str| {
+            let mut record = serde_json::json!({
+                "mediaId": "m", "version": 1, "kind": "file", "fileName": "unproven.txt",
+                "contentType": "text/plain", "sizeBytes": bytes.len(),
+                "sha256": sha256, "publicFileId": "pf", "expiresAt": null,
+            });
+            if let Some(upload) = upload {
+                record["uploadId"] = upload;
+            }
+            record
+        };
+        // A whole list whose identical file names no transfer leaves the
+        // upload to be checked again, never sent again.
+        for upload in [Some(serde_json::Value::Null), None] {
+            let (_mock, client) = recovering(serde_json::json!([record(
+                upload.clone(),
+                &declaration.sha256
+            )]));
+            assert!(
+                matches!(
+                    client.nett_complete_attachment("OPS-1", "upload-unproven", &declaration),
+                    Err(crate::uploads::UploadError::Checking)
+                ),
+                "uploadId {upload:?} is unknown, not absent"
+            );
+        }
+        // Only another file in the whole list shows the upload was not stored.
+        let (_mock, client) = recovering(serde_json::json!([record(
+            Some(serde_json::Value::Null),
+            &"0".repeat(64)
+        )]));
+        assert!(matches!(
+            client.nett_complete_attachment("OPS-1", "upload-unproven", &declaration),
+            Ok(None)
+        ));
     }
 
     #[test]
