@@ -2,24 +2,14 @@
 # Two-model pull request review: Claude Opus 5.5 and GPT-6.2 Sol, both at high
 # effort, as AGENTS.md "Pull request review clearance" requires.
 #
-# Run the trusted copy from the canonical repository's main branch, fetched with
-# no Git configuration that could rewrite the URL, stopping on any failure (see
-# AGENTS.md):
-#   review() (
-#     d=$(mktemp -d) &&
-#     tg() { env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_GLOBAL=/dev/null \
-#       GIT_CONFIG_NOSYSTEM=1 git "$@"; } &&
-#     tg init -q --bare --template= "$d/r.git" &&
-#     tg -C "$d/r.git" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
-#       fetch -q https://github.com/aiconsultancy/subspace.git main &&
-#     tg -C "$d/r.git" show FETCH_HEAD:scripts/review-pr.sh > "$d/review-pr.sh" &&
-#     test -s "$d/review-pr.sh" && bash "$d/review-pr.sh" "$@"
-#   )
-#   review --pr <number>
+# Run the trusted copy from the canonical repository's main branch, never the
+# copy in the change under review. The launcher is in AGENTS.md "Pull request
+# review clearance": copy it from main's AGENTS.md, never from a branch under
+# review. It is the only copy to keep up to date.
 #
 # Usage:
 #   review-pr.sh --pr <number> [--repo owner/name]
-#   review-pr.sh --local <base-ref>        review this clone's HEAD before pushing
+#   review-pr.sh --local <base-ref>        review this clone's HEAD before opening
 # Options:
 #   --since <cleared-head>  review only commits added on top of a head that this
 #                           clone holds a clear receipt for
@@ -49,7 +39,7 @@ while [ $# -gt 0 ]; do
         --brief) extra="${2:?}"; shift 2 ;;
         --keep) keep=1; shift ;;
         --bootstrap) bootstrap=1; shift ;;
-        -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
 done
