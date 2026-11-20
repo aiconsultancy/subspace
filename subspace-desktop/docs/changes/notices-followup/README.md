@@ -23,9 +23,25 @@ features. Follow-up fixtures cover surviving Cargo descendants, timed lock
 contention, build-stamp refresh, OAuth artefact cleanup, Cargo configuration
 errors, build-only ONNX overrides and rollback after a failed checksum rename.
 
-The release helper redacts credentials in Cargo configuration diagnostics and
-checks the static ONNX archive in Cargo's reported link path against a
-target-specific SHA-256. The build lock stays held while the helper stops the
-Cargo process group or Windows job and copies the executable. Operators can
-set `SUBSPACE_RELEASE_LOCK_TIMEOUT` to allow for cold builds. Publication
-fixtures cover interruption, rollback failure and retained recovery copies.
+The release helper suppresses Cargo configuration diagnostics and gives a
+command to reproduce them locally. Preflight rejects ONNX linkage overrides
+from the environment and Cargo configuration, and Cargo's build output must
+confirm the pinned static download. The notices still pin ort-sys
+`2.0.0-rc.15`, ONNX Runtime `1.31.0` and the bytes of the distribution table.
+In that crate, `build/download/dist.tsv` pins each download's SHA-256.
+`build/main.rs` lines 149–161 compare the downloaded archive with that pin
+before publishing the extracted files to the digest-keyed cache and
+emitting static link instructions at lines 182–183. The crate's verification
+is the archive integrity check, so packaging no longer hashes an extracted
+file after linking.
+
+The build lock stays held while the helper stops the Cargo process group or
+Windows job and copies the executable. A detached compiler-cache daemon such
+as sccache writes to its own cache. The build's outputs are copied under the
+lock after the build group exits, so no extra process tracking is needed for
+those daemons. Operators can set `SUBSPACE_RELEASE_LOCK_TIMEOUT` to allow
+for cold builds.
+
+Publication rolls back on SIGTERM and SIGHUP where available. The fixtures
+cover both signals, rollback failure and retained recovery copies. The
+release helper and its fixtures run on Python 3.9.

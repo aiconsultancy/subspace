@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -21,14 +22,6 @@ from uuid import uuid4
 
 OAUTH_SECRET = "SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET"
 LOCK_TIMEOUT = "SUBSPACE_RELEASE_LOCK_TIMEOUT"
-URL_USERINFO = re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^\s/?#'\"<>]+@", re.IGNORECASE)
-CREDENTIAL_VALUE = re.compile(
-    r"""(?<![\w-])((?P<quote>['"]?)[\w-]*(?:token|password|passphrase|secret|(?:api|private)[-_]?key)"""
-    r"""[\w-]*(?P=quote)[ \t]*[:=][ \t]*)[^\r\n]*""",
-    re.IGNORECASE,
-)
-CARGO_SOURCE_LINE = re.compile(r"^([ \t]*\d+ \| )([^\r\n]+)", re.MULTILINE)
-TOML_ASSIGNMENT = re.compile(r"""\s*(?:[\w.-]+|'[^']+'|"[^"]+")\s*=""")
 # ort-sys 2.0.0-rc.15 reads these in build/ and src/internal/dirs.rs.
 ORT_OVERRIDES = {
     "ORT_LIB_PATH", "ORT_LIB_LOCATION", "ORT_LIB_PROFILE", "ORT_VCPKG_TARGET",
@@ -82,34 +75,31 @@ def exclusive_lock(path):
         yield
 
 
-def redact_cargo_error(diagnostic, env):
-    if secret := env.get(OAUTH_SECRET):
-        diagnostic = diagnostic.replace(secret, "[redacted]")
-    diagnostic = URL_USERINFO.sub(r"\1", diagnostic)
-    diagnostic = CREDENTIAL_VALUE.sub(r"\1[redacted]", diagnostic)
-
-    def redact_continuation(match):
-        # Cargo can quote a continuation line of a malformed multiline value
-        # without showing its key. Keep the line number and parser diagnostic.
-        if TOML_ASSIGNMENT.match(match[2]) and not any(triple in match[2] for triple in ('"""', "'''")):
-            return match[0]
-        return match[1] + "[source omitted]"
-
-    return CARGO_SOURCE_LINE.sub(redact_continuation, diagnostic)
-
-
-def cargo_config(options, root, env):
+def cargo_config(config_flags, build_flags, root, env):
     # Bootstrap is needed only for Cargo's read-only inspection command.
     # Target and feature selection do not change Cargo's config discovery.
-    result = subprocess.run(
-        ["cargo", "-Z", "unstable-options", "config", "get", "--format=json", *options],
-        cwd=root, env={**env, "RUSTC_BOOTSTRAP": "1"},
-        capture_output=True, text=True, encoding="utf-8",
-    )
-    if result.returncode:
-        diagnostic = redact_cargo_error(result.stderr.strip(), env)
-        raise ValueError(f"could not inspect the resolved Cargo config:\n{diagnostic}")
-    return json.loads(result.stdout)
+    command = ["cargo", "-Z", "unstable-options", "config", "get", "--format=json"]
+    try:
+        result = subprocess.run(
+            [*command, *config_flags, *build_flags],
+            cwd=root, env={**env, "RUSTC_BOOTSTRAP": "1"},
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True,
+        )
+        return json.loads(result.stdout)
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        pass
+    # An explicit inline override can itself contain a credential. Reference
+    # the caller's original value through a shell variable in that case.
+    overrides = [
+        f'--config "${{RELEASE_CARGO_CONFIG_{index}:?set to original --config argument}}"'
+        if "=" in value else f"--config {shlex.quote(value)}"
+        for index, value in enumerate(config_flags[1::2], 1)
+    ]
+    target_dir = shlex.quote(env["CARGO_TARGET_DIR"])
+    arguments = " ".join([shlex.join(command), *overrides, shlex.join(build_flags)])
+    raise ValueError("could not inspect the resolved Cargo config. Run locally to see Cargo's output:\n"
+                     f"cd {shlex.quote(root.as_posix())} && "
+                     f"CARGO_TARGET_DIR={target_dir} RUSTC_BOOTSTRAP=1 {arguments}")
 
 
 def config_env(config, name):
@@ -136,27 +126,7 @@ def verify_onnx_config(config, env, target):
                          "linkage overrides: " + ", ".join(sorted(overrides)))
 
 
-def verify_onnx_archive(script, target, expected):
-    # The pinned build script reports the extracted distribution directory
-    # as a native search path, including when Cargo reuses a fresh build.
-    archives = set()
-    for link_path in script.get("linked_paths", []):
-        kind, _, directory = link_path.partition("=")
-        if kind == "native":
-            archive = Path(directory) / "libonnxruntime.a"
-            if archive.is_file():
-                archives.add(archive.resolve())
-    if len(archives) != 1:
-        raise ValueError(f"expected one libonnxruntime.a in Cargo's ONNX Runtime link paths for {target}")
-    archive = archives.pop()
-    with archive.open("rb") as library:
-        actual = hashlib.file_digest(library, "sha256").hexdigest()
-    if actual != expected:
-        raise ValueError(f"ONNX Runtime static archive checksum mismatch for {target}: {archive}\n"
-                         f"expected SHA-256 {expected}, got {actual}")
-
-
-def cargo_executable(messages, binary, target, onnx):
+def cargo_executable(messages, binary, onnx):
     executables = set()
     onnx_scripts = []
     for line in messages:
@@ -184,7 +154,6 @@ def cargo_executable(messages, binary, target, onnx):
                 or "pyke" not in onnx_scripts[0]["cfgs"]
                 or "static=onnxruntime" not in onnx_scripts[0]["linked_libs"]):
             raise ValueError("Cargo did not link the pinned ONNX Runtime download")
-        verify_onnx_archive(onnx_scripts[0], target, onnx["static_archives"][target])
     return executables.pop()
 
 
@@ -333,14 +302,14 @@ def build(args):
     if args.features:
         command.extend(["--features", args.features])
     command.append("--message-format=json-render-diagnostics")
-    options = [flag for value in args.config for flag in ("--config", value)]
-    options.extend([
+    config_flags = [flag for value in args.config for flag in ("--config", value)]
+    build_flags = [
         "--config", f'env.SUBSPACE_PACKAGE_BUILD.value="{uuid4()}"',
         "--config", "env.SUBSPACE_PACKAGE_BUILD.force=true",
-    ])
+    ]
     env = {**os.environ, "CARGO_TARGET_DIR": str(cache)}
     with ExitStack() as cleanup:
-        config = cargo_config(options, root, env)
+        config = cargo_config(config_flags, build_flags, root, env)
         if env.get(OAUTH_SECRET) or config_env(config, OAUTH_SECRET):
             # Rustc dep-info, fingerprints and executable copies can all
             # contain the secret. Keep both Cargo directories private.
@@ -348,16 +317,16 @@ def build(args):
             cache = Path(private)
             env["CARGO_TARGET_DIR"] = private
             for key in ("target-dir", "build-dir"):
-                options.extend(["--config", f"build.{key}={json.dumps(cache.as_posix(), ensure_ascii=False)}"])
-            config = cargo_config(options, root, env)
+                build_flags.extend(["--config", f"build.{key}={json.dumps(cache.as_posix(), ensure_ascii=False)}"])
+            config = cargo_config(config_flags, build_flags, root, env)
         if onnx:
             verify_onnx_config(config, env, args.target)
         cleanup.enter_context(exclusive_lock(cache / ".package.lock"))
         messages = cleanup.enter_context(TemporaryFile(mode="w+", encoding="utf-8"))
         # The supervisor owns the lock. Cargo and its descendants never inherit it.
-        run_cargo([*command, *options], root, env, messages)
+        run_cargo([*command, *config_flags, *build_flags], root, env, messages)
         messages.seek(0)
-        executable = cargo_executable(messages, args.binary, args.target, onnx)
+        executable = cargo_executable(messages, args.binary, onnx)
         suffix = ".exe" if "-windows-" in args.target else ""
         shutil.copy2(executable, args.stage / (args.binary + suffix))
 
@@ -374,7 +343,27 @@ def publish(args):
             while chunk := archive.read(1024 * 1024):
                 digest.update(chunk)
         staged_checksum.write_bytes(f"{digest.hexdigest()}  {final.name}\n".encode())
-        replace_pair(args.archive, staged_checksum, final, checksum, locks)
+        with publication_signals():
+            replace_pair(args.archive, staged_checksum, final, checksum, locks)
+
+
+@contextmanager
+def publication_signals():
+    interrupted = False
+
+    def interrupt(signum, _frame):
+        nonlocal interrupted
+        if not interrupted:
+            interrupted = True
+            raise InterruptedError(f"release publication interrupted by {signal.Signals(signum).name}")
+
+    # Keep the handler through rollback so repeated cancellation cannot interrupt it.
+    with ExitStack() as handlers:
+        for name in ("SIGTERM", "SIGHUP"):
+            if (signum := getattr(signal, name, None)) is not None:
+                previous = signal.signal(signum, interrupt)
+                handlers.callback(signal.signal, signum, previous)
+        yield
 
 
 def backup_file(source, destination):
@@ -399,7 +388,7 @@ def replace_pair(archive, staged_checksum, final, checksum, locks):
         checksum.unlink(missing_ok=True)
         archive.replace(final)
         staged_checksum.replace(checksum)
-    except BaseException as original:
+    except BaseException:
         if publishing:
             try:
                 checksum.unlink(missing_ok=True)
@@ -414,13 +403,13 @@ def replace_pair(archive, staged_checksum, final, checksum, locks):
                         destination.unlink(missing_ok=True)
                 publishing = False
             except BaseException as restore_error:
-                original.add_note(f"could not restore the release files: {restore_error!r}\n"
-                                  f"recovery files: {backup}")
+                print(f"could not restore the release files: {restore_error!r}\n"
+                      f"recovery files: {backup}", file=sys.stderr)
         if not publishing:
             try:
                 shutil.rmtree(backup, ignore_errors=True)
             except BaseException as cleanup_error:
-                original.add_note(f"could not remove release backups at {backup}: {cleanup_error!r}")
+                print(f"could not remove release backups at {backup}: {cleanup_error!r}", file=sys.stderr)
         raise
     shutil.rmtree(backup, ignore_errors=True)
 
@@ -447,7 +436,7 @@ def main():
     except subprocess.CalledProcessError as exc:
         sys.exit(exc.returncode)
     except (OSError, ValueError) as exc:
-        sys.exit("\n".join([str(exc), *getattr(exc, "__notes__", [])]))
+        sys.exit(str(exc))
 
 
 if __name__ == "__main__":

@@ -118,11 +118,12 @@ generic SPDX texts and gives exact source downloads for MPL-2.0 crates.
 Native ONNX Runtime notices are in `licenses/onnxruntime/`, and the Windows
 archive includes the WebView2 loader notices in `licenses/webview2/`.
 Packaging checks the selected crates and notice digests in
-[`native-notices.json`](../native-notices.json) before compiling. After compiling,
-it checks the SHA-256 of `libonnxruntime.a` from the link path Cargo reported
-before copying the executable and native notices. Update the pins and verify
-the upstream notices together when either native dependency changes. The
-archive's `NOTICE` indexes the files relative to its own location.
+[`native-notices.json`](../native-notices.json) before compiling. Packaging
+rejects ONNX Runtime linkage overrides and checks that Cargo used the pinned
+crate's static download. The crate verifies the downloaded archive against a
+SHA-256 in its pinned distribution table before linking. Update the pins and
+verify the upstream notices together when either native dependency changes.
+The archive's `NOTICE` indexes the files relative to its own location.
 Ordinary builds share a Cargo cache by target and feature set. The packaging
 helper holds a lock until it has copied the executable for this run's licence
 report. Set `SUBSPACE_RELEASE_LOCK_TIMEOUT` to a non-negative number of seconds

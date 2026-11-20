@@ -7,11 +7,6 @@
     "artifacts": {
       "build/download/dist.tsv": "c97e3c8c098d9c704eb7e98bc568254bedd487fad9a61a7acb088d63e5de9675"
     },
-    "static_archives": {
-      "aarch64-apple-darwin": "8a9d7b9ce57feaa0456df9b5c158c4c0ff948925edb58f523126a3bf27136641",
-      "aarch64-unknown-linux-gnu": "bb55d2e48a6075e5541104c233ffb770a5b4c919ee89b6b7f4fe72dd27aecc97",
-      "x86_64-unknown-linux-gnu": "184360cecb39400bc59f98269ed179f4925bf75dd11be084604f4070edbf1493"
-    },
     "notices": {
       "LICENSE": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
       "ThirdPartyNotices.txt": "143764b952fdb1a7c69ce653bfba74a7744d6a8a573bfb73e235fba356c83de3"

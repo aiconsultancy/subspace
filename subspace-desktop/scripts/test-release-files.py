@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Exercise release publication failures and stamp refresh in a small Cargo project."""
 
+from contextlib import redirect_stderr
 import importlib.util
+import io
 import os
 from pathlib import Path
 import signal
@@ -23,7 +25,9 @@ SPEC.loader.exec_module(release_files)
 
 class ReleaseFiles(unittest.TestCase):
     def setUp(self):
-        self.root = Path(self.enterContext(TemporaryDirectory()))
+        temporary = TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
 
     def test_lock_times_out(self):
         lock = self.root / ".package.lock"
@@ -47,29 +51,35 @@ class ReleaseFiles(unittest.TestCase):
                         with release_files.exclusive_lock(lock):
                             self.fail("acquired a held lock")
 
-    def test_cargo_config_errors_redact_credentials(self):
-        config = self.root / ".cargo/config.toml"
-        config.parent.mkdir()
+    def test_cargo_config_errors_suppress_credentials(self):
+        workspace = self.root / "fixture workspace"
+        workspace.mkdir()
+        (workspace / "native-notices.json").write_text('{"onnxruntime":{"targets":[]}}')
+        config = workspace / "broken config.toml"
+        credential = "fixture-deploy-auth-value"
+        config.write_text(f'[env]\nDEPLOY_AUTH = "{credential}" trailing\n')
+        inline_override = 'env.BUILD_AUTH="fixture-build-auth-value"'
         env = {**os.environ, "CARGO_HOME": str(self.root / "cargo-home")}
-        for line, visible, hidden in (
-            ('token = "fixture-registry-value" trailing', 'token = [redacted]', 'fixture-registry-value'),
-            ("'BUILD_PASSWORD' = { value = 'fixture-password-value'", "'BUILD_PASSWORD' = [redacted]",
-             "fixture-password-value"),
-            ('BUILD_CLIENT_SECRET = "fixture-secret-value', "BUILD_CLIENT_SECRET = [redacted]",
-             "fixture-secret-value"),
-            ('index = "https://fixture-user:fixture-pass@example.com/index" trailing',
-             "https://example.com/index", "fixture-user:fixture-pass"),
-            ('token = """\nfixture-multiline-piece""" trailing', "[source omitted]", "fixture-multiline-piece"),
-        ):
-            with self.subTest(visible=visible):
-                config.write_text("[env]\n" + line + "\n")
-                with self.assertRaises(ValueError) as raised:
-                    release_files.cargo_config([], self.root, env)
-                diagnostic = str(raised.exception)
-                self.assertIn("TOML parse error", diagnostic)
-                self.assertIn("config.toml", diagnostic)
-                self.assertIn(visible, diagnostic)
-                self.assertNotIn(hidden, diagnostic)
+        failed = subprocess.run(
+            [sys.executable, str(HELPER), "build", "target", "fixture", "stage",
+             "--target", "fixture-target", "--config", config.name, "--config", inline_override],
+            cwd=workspace, env=env, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(failed.returncode, 1)
+        self.assertEqual(failed.stdout, "")
+        message, reproduction = failed.stderr.splitlines()
+        self.assertIn("could not inspect the resolved Cargo config", message)
+        self.assertIn("cargo -Z unstable-options config get --format=json", reproduction)
+        self.assertNotIn(credential, failed.stderr)
+        self.assertNotIn("fixture-build-auth-value", failed.stderr)
+        local = subprocess.run(
+            ["bash", "-c", reproduction], cwd=self.root,
+            env={**env, "RELEASE_CARGO_CONFIG_2": inline_override},
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertNotEqual(local.returncode, 0)
+        self.assertIn("TOML parse error", local.stderr)
+        self.assertIn(credential, local.stderr)
 
     @unittest.skipIf(os.name == "nt", "uses Unix signals and advisory locks")
     def test_cargo_group_stops_before_unlock(self):
@@ -200,6 +210,52 @@ with helper["exclusive_lock"](Path(".package.lock")), open("messages", "w") as m
                 self.assertEqual(checksum.read_bytes(), b"previous checksum")
                 self.assertFalse(list(locks.glob("previous-*")))
 
+    @unittest.skipIf(os.name == "nt", "uses Unix signals")
+    def test_termination_during_publication_restores_both_files(self):
+        publisher = f"""
+import os, runpy, signal, sys
+from pathlib import Path
+
+helper = runpy.run_path({str(HELPER)!r})
+replace = Path.replace
+
+def terminate_after_archive(path, destination):
+    result = replace(path, destination)
+    if path == Path(sys.argv[2]):
+        os.kill(os.getpid(), signum)
+    return result
+
+signum = getattr(signal, sys.argv.pop(1))
+previous = signal.getsignal(signum)
+Path.replace = terminate_after_archive
+try:
+    helper["main"]()
+finally:
+    assert signal.getsignal(signum) == previous
+"""
+        for name in ("SIGTERM", "SIGHUP"):
+            if not hasattr(signal, name):
+                continue
+            with self.subTest(signal=name):
+                dist = self.root / name
+                stage = dist / "stage"
+                stage.mkdir(parents=True)
+                archive = stage / "app.zip"
+                final = dist / archive.name
+                checksum = dist / "app.zip.sha256"
+                final.write_bytes(b"previous archive")
+                checksum.write_bytes(b"previous checksum")
+                result = subprocess.run(
+                    [sys.executable, "-c", publisher, name, "publish", str(archive), str(dist),
+                     sys.executable, "-c", "from pathlib import Path; Path('app.zip').write_bytes(b'new')"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(f"release publication interrupted by {name}", result.stderr)
+                self.assertEqual(final.read_bytes(), b"previous archive")
+                self.assertEqual(checksum.read_bytes(), b"previous checksum")
+                self.assertFalse(list((dist / ".locks").glob("previous-*")))
+
     def test_failed_restore_keeps_recovery_copies_and_original_exception(self):
         stage, locks = self.root / "stage", self.root / ".locks"
         stage.mkdir()
@@ -220,12 +276,13 @@ with helper["exclusive_lock"](Path(".package.lock")), open("messages", "w") as m
                 raise PermissionError("fixture rollback contention")
             return replace(path, destination)
 
-        with patch.object(Path, "replace", fail_checksum):
+        stderr = io.StringIO()
+        with patch.object(Path, "replace", fail_checksum), redirect_stderr(stderr):
             with self.assertRaises(KeyboardInterrupt) as raised:
                 release_files.replace_pair(archive, staged_checksum, final, checksum, locks)
         self.assertIs(raised.exception, original)
         backup, = locks.glob("previous-*")
-        self.assertIn(f"recovery files: {backup}", original.__notes__[0])
+        self.assertIn(f"recovery files: {backup}", stderr.getvalue())
         self.assertEqual((backup / final.name).read_bytes(), b"previous archive")
         self.assertEqual((backup / checksum.name).read_bytes(), b"previous checksum")
 
@@ -247,12 +304,13 @@ with helper["exclusive_lock"](Path(".package.lock")), open("messages", "w") as m
                 raise original
             return replace(path, destination)
 
-        with patch.object(Path, "replace", fail_checksum), \
+        stderr = io.StringIO()
+        with patch.object(Path, "replace", fail_checksum), redirect_stderr(stderr), \
                 patch.object(release_files.shutil, "rmtree", side_effect=OSError("fixture cleanup failure")):
             with self.assertRaises(KeyboardInterrupt) as raised:
                 release_files.replace_pair(archive, staged_checksum, final, checksum, locks)
         self.assertIs(raised.exception, original)
-        self.assertIn("fixture cleanup failure", original.__notes__[0])
+        self.assertIn("fixture cleanup failure", stderr.getvalue())
         self.assertEqual(final.read_bytes(), b"previous archive")
         self.assertEqual(checksum.read_bytes(), b"previous checksum")
 

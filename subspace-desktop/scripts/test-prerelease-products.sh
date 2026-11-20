@@ -140,7 +140,12 @@ EOF
     FIXTURE_CARGO_CONFIG="target.$linux.onnxruntime.rustc-link-lib=['onnxruntime']" \
         expect_packaging_failure "linkage overrides: target.$linux.onnxruntime" "$linux" "$version"
     FAKE_CARGO_CONFIG_FAIL=1 expect_packaging_failure \
-        'error: fixture Cargo could not parse its configuration' "$linux" "$version"
+        'could not inspect the resolved Cargo config' "$linux" "$version"
+    grep -Fq 'cargo -Z unstable-options config get --format=json' "$fixture/packaging-failure.log"
+    if grep -Fq 'error: fixture Cargo could not parse its configuration' "$fixture/packaging-failure.log"; then
+        echo 'Cargo config diagnostics reached the packaging log' >&2
+        exit 1
+    fi
     (
         cd "$fixture"
         if python3 scripts/release-files.py build "$fixture/target" subspace "$fixture" \
@@ -163,8 +168,6 @@ EOF
     test "$(grep -c '^build ' "$fixture/cargo.log")" = "$builds_before"
     FAKE_BUILD_ONLY_OVERRIDE=1 expect_packaging_failure \
         'Cargo did not link the pinned ONNX Runtime download' "$linux" "$version"
-    FAKE_BUILD_ONLY_ARCHIVE=1 expect_packaging_failure \
-        'ONNX Runtime static archive checksum mismatch' "$linux" "$version"
     cmp "$archive" "$backup"
     cmp "$archive.sha256" "$backup.sha256"
     # Recognised diagnostics and the source-backed first crate can coexist.
