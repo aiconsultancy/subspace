@@ -35,6 +35,8 @@ fn start_mock() -> Mock {
         "--single-org",
     ])
     .env_clear()
+    // Windows Python needs SYSTEMROOT to open a socket.
+    .envs(std::env::var_os("SYSTEMROOT").map(|root| ("SYSTEMROOT", root)))
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
     .stderr(Stdio::null())

@@ -1139,12 +1139,12 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
         &mock,
         &format!("issues/{issue_id}/lists/{}/items/{}", item.list_id, item.id),
     );
-    mock.config(&json!({"slowBody": {"path": put, "seconds": 1.5, "times": 2}}));
+    mock.config(&json!({"slowBody": {"path": put, "seconds": 2.0, "times": 1}}));
     // Save A is stored, but its answer is slow; the issue is opened again
-    // and save B starts on the same item before A's answer lands.
-    let started = std::time::Instant::now();
+    // and save B starts on the same item before A's answer lands. B's own
+    // answer is slower still, so it is pending whenever A's lands.
     hub.set_todo_done(&item.id, true).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    wait_for("A sent", &|| mock.count("PUT", &item.id) == 1);
     hub.close_issue();
     open(&hub);
     wait_for("A stored", &|| {
@@ -1156,23 +1156,27 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
         })
     });
     let reads = mock.count("GET", "/items");
+    mock.config(&json!({"slowBody": {"path": put, "seconds": 6.0, "times": 1}}));
     hub.set_todo_done(&item.id, false).unwrap();
-    let a_lands = std::time::Duration::from_millis(1800);
-    std::thread::sleep(a_lands.saturating_sub(started.elapsed()));
+    // A's late answer reads the lists again: once it has, B must still be
+    // pending, not re-enabled by A's answer.
+    wait_for("A's answer, reconciled", &|| {
+        mock.count("GET", "/items") > reads
+    });
     assert!(
         hub.snapshot()
             .issue()
             .is_some_and(|issue| issue.todo_saving(&item.id)),
         "B is still pending after A's answer"
     );
-    wait_for("B saved and A reconciled", &|| {
+    wait_for("B saved", &|| {
         hub.snapshot().issue().is_some_and(|issue| {
             !issue.todo_saving(&item.id)
                 && issue.todos().unwrap()[0]
                     .items
                     .iter()
                     .any(|row| row.id == item.id && !row.completed)
-        }) && mock.count("GET", "/items") > reads
+        })
     });
     hub.stop();
 }
@@ -1210,5 +1214,74 @@ fn a_day_long_wait_does_not_leave_issues_dead_and_reload_sends_again() {
     wait_for("the list again", &|| {
         hub.snapshot().status() == &HubStatus::Ready && mock.count("GET", "/issues/groups") > reads
     });
+    hub.stop();
+}
+
+#[test]
+fn an_identical_file_from_another_upload_is_not_taken_for_this_one() {
+    let mock = NettMock::serving(&["attachments"]);
+    let hub = attachments_hub(&mock, "nett-fixture-attach-twin");
+    let bytes = b"The same file, twice.\n".to_vec();
+    hub.add_attachment("twin.txt", "text/plain", bytes.clone())
+        .unwrap();
+    wait_stored(&hub, "twin.txt");
+    // An identical second upload fails before anything is stored, and its
+    // reservation lapses: the first file is someone else's upload.
+    let complete = org_path(&mock, "issues/OPS-1/attachments/from-upload");
+    mock.fail_next("POST", &complete, 500, None, 1);
+    hub.add_attachment("twin.txt", "text/plain", bytes).unwrap();
+    let id = failed_upload(&hub, &|u| u.checks());
+    mock.post_hook("transfers/expire", &json!({}));
+    hub.retry_attachment_upload(&id);
+    wait_for("the proven absence", &|| {
+        upload_files(&hub)
+            .uploads()
+            .iter()
+            .any(|u| matches!(u.state(), crate::hub::AttachmentState::NotFound) && !u.checks())
+    });
+    let twins = upload_files(&hub)
+        .items()
+        .iter()
+        .filter(|m| m.file_name == "twin.txt")
+        .count();
+    assert_eq!(twins, 1, "only the first upload was stored");
+    hub.stop();
+}
+
+#[test]
+fn a_ninth_upload_waiting_on_an_issue_is_refused_until_one_goes() {
+    let mock = NettMock::serving(&["attachments"]);
+    let hub = attachments_hub(&mock, "nett-fixture-attach-budget");
+    // Every reservation fails for now: the uploads wait, keeping their bytes.
+    let prepare = org_path(&mock, "issues/OPS-1/attachments/prepare");
+    mock.fail_next("POST", &prepare, 500, None, 9);
+    for n in 0..8 {
+        hub.add_attachment(
+            &format!("held-{n}.txt"),
+            "text/plain",
+            format!("Held {n}\n").into_bytes(),
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        hub.add_attachment("ninth.txt", "text/plain", b"Ninth\n".to_vec())
+            .err(),
+        Some(UploadError::Budget)
+    );
+    wait_for("eight failed uploads", &|| {
+        upload_files(&hub)
+            .uploads()
+            .iter()
+            .filter(|u| matches!(u.state(), crate::hub::AttachmentState::Failed(_)))
+            .count()
+            == 8
+    });
+    let first = upload_files(&hub).uploads()[0].id().to_owned();
+    hub.dismiss_attachment_upload(&first);
+    assert!(
+        hub.add_attachment("ninth.txt", "text/plain", b"Ninth\n".to_vec())
+            .is_ok(),
+        "dismissing one makes room"
+    );
     hub.stop();
 }

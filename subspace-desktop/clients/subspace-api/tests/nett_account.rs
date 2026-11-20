@@ -14,6 +14,11 @@ use subspace_api_client::chat_uploads::{UploadDraft, UploadError};
 use subspace_api_client::{Client, ListQuery, ListTab, nett};
 use subspace_framework::core::Secret;
 
+/// Fixture traffic stays on loopback: no proxy from the environment sees it.
+fn direct() -> ureq::Agent {
+    ureq::Agent::config_builder().proxy(None).build().into()
+}
+
 struct Mock {
     child: Child,
     origin: String,
@@ -32,6 +37,8 @@ impl Mock {
         .args(["--port", "0"])
         .args(features.iter().flat_map(|feature| ["--serve", feature]))
         .env_clear()
+        // Windows Python needs SYSTEMROOT to open a socket.
+        .envs(std::env::var_os("SYSTEMROOT").map(|root| ("SYSTEMROOT", root)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -50,7 +57,8 @@ impl Mock {
     }
 
     fn hook(&self, path: &str, body: &Value) -> Value {
-        let mut response = ureq::post(&format!("{}/__fixture/{path}", self.origin))
+        let mut response = direct()
+            .post(&format!("{}/__fixture/{path}", self.origin))
             .header("Content-Type", "application/json")
             .send(body.to_string())
             .unwrap();
@@ -58,7 +66,8 @@ impl Mock {
     }
 
     fn requests(&self, method: &str, prefix: &str) -> usize {
-        let mut response = ureq::get(&format!("{}/__fixture/requests", self.origin))
+        let mut response = direct()
+            .get(&format!("{}/__fixture/requests", self.origin))
             .call()
             .unwrap();
         let log: Vec<Value> =
@@ -76,6 +85,17 @@ impl Drop for Mock {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// Waits until NETT has answered a request to `path` beyond the first
+/// `before`, while its slow body is still on the way.
+fn arrived(mock: &Mock, method: &str, path: &str, before: usize) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while mock.requests(method, path) == before {
+        assert!(std::time::Instant::now() < deadline, "no request to {path}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::thread::sleep(Duration::from_millis(100));
 }
 
 /// A fixed UUID's text, numbered `n`.
@@ -118,8 +138,9 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         "config",
         &json!({"slowBody": {"path": "/api/v1/auth/context", "seconds": 1.0, "times": 1}}),
     );
+    let before = mock.requests("GET", "/api/v1/auth/context");
     let reading = std::thread::spawn(|| Client::new().unwrap().me());
-    std::thread::sleep(Duration::from_millis(300));
+    arrived(&mock, "GET", "/api/v1/auth/context", before);
     account.store(2, Ordering::SeqCst);
     assert!(reading.join().unwrap().is_err());
     let menu = nett::snapshot();
@@ -196,8 +217,17 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         b"Prepared for the previous account.\n".to_vec(),
     )
     .unwrap();
+    let before = mock.requests(
+        "POST",
+        &format!("/api/v1/orgs/{works}/chat/uploads/prepare"),
+    );
     let uploading = std::thread::spawn(move || client.create_chat_upload(&draft));
-    std::thread::sleep(Duration::from_millis(300));
+    arrived(
+        &mock,
+        "POST",
+        &format!("/api/v1/orgs/{works}/chat/uploads/prepare"),
+        before,
+    );
     account.store(6, Ordering::SeqCst);
     assert_eq!(uploading.join().unwrap().err(), Some(UploadError::Access));
     assert_eq!(
@@ -221,10 +251,19 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
             .unwrap();
     let draft = uuid_text(1);
     let key = uuid_text(2);
+    let before = mock.requests(
+        "POST",
+        &format!("/api/v1/orgs/{works}/issues/media/prepare"),
+    );
     let uploading = std::thread::spawn(move || {
         client.upload_comment_media("OPS-1", (&draft, &key), &declaration, &bytes)
     });
-    std::thread::sleep(Duration::from_millis(300));
+    arrived(
+        &mock,
+        "POST",
+        &format!("/api/v1/orgs/{works}/issues/media/prepare"),
+        before,
+    );
     account.store(9, Ordering::SeqCst);
     assert!(uploading.join().unwrap().is_err());
     assert_eq!(
@@ -243,8 +282,14 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
         &json!({"slowBody": {"path": format!("/api/v1/orgs/{works}/issues/OPS-1"),
                              "seconds": 1.0, "times": 1}}),
     );
+    let before = mock.requests("GET", &format!("/api/v1/orgs/{works}/issues/OPS-1"));
     let reading = std::thread::spawn(move || client.issue("OPS-1"));
-    std::thread::sleep(Duration::from_millis(300));
+    arrived(
+        &mock,
+        "GET",
+        &format!("/api/v1/orgs/{works}/issues/OPS-1"),
+        before,
+    );
     account.store(7, Ordering::SeqCst);
     assert!(
         reading.join().unwrap().is_err(),
@@ -269,8 +314,14 @@ fn organisations_caches_and_uploads_belong_to_the_account_that_read_them() {
                              "seconds": 1.0, "times": 1}}),
     );
     let files_before = mock.requests("GET", "/files/");
+    let before = mock.requests("POST", &format!("/api/v1/orgs/{works}/files/grants"));
     let fetching = std::thread::spawn(move || client.fetch_text(&log, 1024));
-    std::thread::sleep(Duration::from_millis(300));
+    arrived(
+        &mock,
+        "POST",
+        &format!("/api/v1/orgs/{works}/files/grants"),
+        before,
+    );
     account.store(8, Ordering::SeqCst);
     assert!(
         fetching.join().unwrap().is_err(),
