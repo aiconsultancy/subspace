@@ -17,6 +17,7 @@ use subspace_framework::core::config::web_boards::{WebBoard, WebBoardSource};
 use subspace_framework::dashboard::settings::FieldKind;
 
 use crate::app::{app_origin, same_origin};
+use crate::install::ManagedSource;
 use crate::manifest::{self, Manifest, Permission};
 use issues::IssueCall;
 use protocol::{Context, Message, Operation};
@@ -33,10 +34,13 @@ pub(crate) struct Bridge {
     manifest: Manifest,
     root: PathBuf,
     identity: String,
+    /// Whose the page's own secrets are: the app's install source.
+    owner: secrets::Owner,
     pub origin: String,
     pub badge: Option<String>,
     pub context: Option<Context>,
     last_notification: Option<Instant>,
+    secret_saves: secrets::Saves,
     document_epoch: Option<u64>,
     /// The broker's name for this board, the configured ID.
     pub board: &'static str,
@@ -57,19 +61,24 @@ pub(crate) enum Effect {
 }
 
 impl Bridge {
-    pub(crate) fn new(board: &WebBoard) -> Option<Self> {
+    /// The bridge of folder app `board`, with `managed` its recorded install
+    /// source, if any.
+    pub(crate) fn new(board: &WebBoard, managed: Option<&ManagedSource>) -> Option<Self> {
         let WebBoardSource::Folder(root) = &board.source else {
             return None;
         };
         let manifest = manifest::read(root).ok()??;
+        let identity = manifest.identity(root);
         Some(Self {
-            identity: manifest.identity(root),
+            owner: secrets::Owner::new(&identity, &board.source, managed),
+            identity,
             manifest,
             root: root.clone(),
             origin: app_origin(&board.id),
             badge: None,
             context: None,
             last_notification: None,
+            secret_saves: secrets::Saves::default(),
             document_epoch: None,
             board: issues::board_id(&board.id),
             pushed_theme: None,
@@ -115,7 +124,8 @@ impl Bridge {
             Operation::Badge(_) => Permission::Badge,
             Operation::Context(_) => Permission::Context,
             Operation::Notify(_) => Permission::Notifications,
-            Operation::Secrets | Operation::SecretsSet(_) => Permission::Secrets,
+            Operation::Secrets => Permission::Secrets,
+            Operation::SecretsSet(_) => Permission::SaveSecrets,
             Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
                 Permission::Issues
             }
@@ -174,7 +184,7 @@ impl Bridge {
             }
             Operation::Notify(message) => return self.notification(message, notifications_on, now),
             Operation::Secrets | Operation::SecretsSet(_) => {
-                return secrets::call(&self.manifest, config, operation);
+                return self.secrets(operation, config, now);
             }
             Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
                 return Ok((Value::Null, Effect::Issues(IssueCall::parse(operation)?)));
@@ -182,6 +192,22 @@ impl Bridge {
             Operation::Info | Operation::Theme => {}
         }
         Ok((Value::Null, Effect::None))
+    }
+
+    /// `secrets.get`, or a checked and counted `secrets.set`.
+    fn secrets(
+        &mut self,
+        operation: &Operation,
+        config: &WebBoard,
+        now: Instant,
+    ) -> Result<(Value, Effect), &'static str> {
+        let Operation::SecretsSet(write) = operation else {
+            let value = secrets::readable(&self.manifest, &self.owner, config);
+            return Ok((value, Effect::None));
+        };
+        secrets::check(&self.manifest, &self.owner, config, write)?;
+        self.secret_saves.allow(now)?;
+        Ok((Value::Null, Effect::SaveSecret(write.clone())))
     }
 
     fn notification(

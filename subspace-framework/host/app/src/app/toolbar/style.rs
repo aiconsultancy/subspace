@@ -1,3 +1,4 @@
+use super::super::cover::cover_while_open;
 use super::super::{SubspaceApp, save_prefs};
 use super::{BUSY_BAR_HEIGHT, BUSY_BAR_OFFSET};
 use crate::toolbar_labels::ToolbarControl;
@@ -42,7 +43,8 @@ pub(super) fn sized_button(
     }
 }
 
-/// Right-click toggles only this control's label preference.
+/// Right-click toggles only this control's label preference. The menu covers
+/// the board area while open.
 pub(super) fn with_label_menu(
     button: IconButton,
     control: ToolbarControl,
@@ -50,7 +52,8 @@ pub(super) fn with_label_menu(
 ) -> impl IntoElement {
     let shown = control.shows_label(cx);
     let app = cx.weak_entity();
-    button.anchored_context_menu(move |menu, _, _| {
+    button.anchored_context_menu(move |menu, window, cx| {
+        cover_while_open(&app, window, cx);
         let app = app.clone();
         menu.item(
             PopupMenuItem::new("Show label")

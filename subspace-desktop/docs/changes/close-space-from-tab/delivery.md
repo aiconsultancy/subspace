@@ -56,6 +56,14 @@ The existing `app::configured::hot_tests` (Settings applies board choices
 without a restart) still pass with Save's apply step moved into
 `settings::board_choice`.
 
+Review fixes:
+
+- `app::space_menu_tests::closing_never_leaves_no_space_on_after_an_outside_edit`:
+  with the file edited to turn Beta and Gamma off while their tabs show,
+  closing Alpha is refused, writes nothing and keeps the tabs.
+- `app::space_menu_tests::an_open_space_menu_covers_the_board`: an open
+  Space menu marks the board covered, and Escape uncovers it.
+
 ## Checks
 
 - `make check` in `subspace-framework` and `subspace-desktop`.

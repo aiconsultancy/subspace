@@ -106,7 +106,8 @@ and applies the same choice as turning off the Space's **Enabled** switch and
 choosing **Save**: the tab goes at once and the config file's `boards` entry
 matches what Settings writes. Closing the current Space opens the tab before
 it, or the next tab when it was first. The last open Space can't be closed;
-its menu says so. A notice says where to reopen it: open Settings, choose the
+its menu says so. Nor can the last Space the config file leaves on, if the
+file was edited outside the app. A notice says where to reopen it: open Settings, choose the
 Space, turn on **Enabled** and choose **Save**. **Space settings…** in the
 same menu opens that Space's Settings page.
 

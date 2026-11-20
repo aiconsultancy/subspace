@@ -44,8 +44,27 @@ pub fn settings_fields(board: &WebBoard) -> Option<BoardFields> {
     })
 }
 
-/// The manifest's fields, notes and grants. An app that may save its own
-/// secrets also gets their count and Clear.
+/// Board `id`'s recorded install source, from the config file.
+pub(crate) fn recorded(id: &str, cx: &gpui_kit::App) -> Option<crate::install::ManagedSource> {
+    let services = cx.try_global::<subspace_framework::dashboard::Services>()?;
+    let file =
+        subspace_framework::core::settings::SettingsFile::open(&services.config_file).ok()?;
+    crate::bridge::secrets::owner::recorded(&file.web_board(id)?)
+}
+
+/// What decides whether `board`'s page opens again when the config file
+/// changes: the whole entry but the secrets its page saved itself, which
+/// the page already has and reads back without a reload.
+pub fn configuration(board: &WebBoard) -> WebBoard {
+    let mut board = board.clone();
+    board
+        .secrets
+        .retain(|key, _| !crate::bridge::secrets::is_app_secret(key));
+    board
+}
+
+/// The manifest's fields, notes and grants. An app that may read or save
+/// its own secrets also gets their count and Clear.
 fn manifest_fields(section: Vec<String>, manifest: &Manifest, root: &Path) -> BoardFields {
     let permissions = manifest
         .permissions
@@ -63,7 +82,9 @@ fn manifest_fields(section: Vec<String>, manifest: &Manifest, root: &Path) -> Bo
         manifest_notes(manifest, root),
         permissions,
     );
-    if manifest.permissions.contains(&Permission::Secrets) {
+    if manifest.permissions.contains(&Permission::Secrets)
+        || manifest.permissions.contains(&Permission::SaveSecrets)
+    {
         fields.with_app_secrets()
     } else {
         fields
@@ -217,15 +238,24 @@ mod tests {
         assert!(fields.notes[1].contains("show notifications"));
         assert!(fields.notes[2].contains("camera"));
         assert!(!fields.app_secrets);
-        let with_secrets = serde_json::json!({
-            "name": "Notes", "version": "1.2.0", "permissions": ["secrets"]
-        });
-        std::fs::write(
-            root.path().join("subspace-board.json"),
-            with_secrets.to_string(),
-        )
-        .unwrap();
-        assert!(settings_fields(&app).unwrap().app_secrets);
+        for permission in ["secrets", "save-secrets"] {
+            let with_secrets = serde_json::json!({
+                "name": "Notes", "version": "1.2.0", "permissions": [permission]
+            });
+            std::fs::write(
+                root.path().join("subspace-board.json"),
+                with_secrets.to_string(),
+            )
+            .unwrap();
+            let fields = settings_fields(&app).unwrap();
+            assert!(fields.app_secrets, "{permission}");
+            let label = &fields.permissions[0].label;
+            assert_eq!(
+                label == "Allow this app to save its own secrets",
+                permission == "save-secrets",
+                "{label}"
+            );
+        }
         std::fs::write(root.path().join("subspace-board.json"), "[]").unwrap();
         let broken = settings_fields(&app).unwrap();
         assert!(broken.fields.is_empty());

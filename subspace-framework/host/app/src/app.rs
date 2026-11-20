@@ -160,9 +160,9 @@ pub struct SubspaceApp {
     settings: Option<Entity<Settings>>,
     #[cfg(feature = "report-issue")]
     report_issue: Option<Entity<subspace_report_issue::ReportIssue>>,
-    /// Whether a shell overlay covers the board area, as last told to the
-    /// dashboards (`Dashboard::covered`).
-    board_covered: bool,
+    /// What covers the board area, as last told to the dashboards
+    /// (`Dashboard::covered`).
+    cover: cover::BoardCover,
     chat: Entity<ChatPanel>,
     chat_open: bool,
     /// The product's docked terminal, when it has one.
@@ -282,7 +282,7 @@ impl SubspaceApp {
             settings: None,
             #[cfg(feature = "report-issue")]
             report_issue: None,
-            board_covered: false,
+            cover: cover::BoardCover::default(),
             chat,
             chat_open,
             terminal: terminal_dock::TerminalDock::create(window, cx),

@@ -1,5 +1,6 @@
 // The Fleet API v1 client: bearer-token reads and the event stream request.
-// The only module that calls fetch.
+// The only module that calls fetch. Requests never follow redirects, so the
+// token only goes to the address it was given for.
 
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
@@ -50,7 +51,7 @@ export function createApiClient({ endpoint, token, fetch: fetchImpl }) {
   const url = (path) => `${endpoint}/api/v1${path}`;
 
   async function getJson(path, signal) {
-    const response = await fetchImpl(url(path), { headers: { ...headers, Accept: "application/json" }, signal, cache: "no-store", credentials: "omit" });
+    const response = await fetchImpl(url(path), { headers: { ...headers, Accept: "application/json" }, signal, cache: "no-store", credentials: "omit", redirect: "error" });
     if (!response.ok) throw new HttpError(response.status, retryAfter(response));
     return response.json();
   }
@@ -66,8 +67,13 @@ export function createApiClient({ endpoint, token, fetch: fetchImpl }) {
         signal,
         cache: "no-store",
         credentials: "omit",
+        // A redirect would carry the bearer token to another address: refuse it.
+        redirect: "error",
       });
       if (!response.ok) throw new HttpError(response.status, retryAfter(response));
+      // A proxy's sign-in page or error page can answer 200: that is not the stream.
+      const type = response.headers?.get?.("content-type");
+      if (type && !/^\s*text\/event-stream/i.test(type)) throw new Error(`Expected an event stream, got ${type.split(";")[0]}.`);
       if (!response.body) throw new Error("The event stream has no body.");
       return response;
     },

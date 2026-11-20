@@ -139,7 +139,7 @@ The rules are in `spaces/web/src/manifest.rs` and
 | --- | --- | --- |
 | `name` | Yes | Text of 1 to 60 characters after trimming |
 | `version` | Yes | Text of 1 to 40 characters after trimming; free-form, shown to users |
-| `permissions` | No | A list of text: `notifications`, `settings`, `badge`, `context`, `secrets`, `issues` |
+| `permissions` | No | A list of text: `notifications`, `settings`, `badge`, `context`, `secrets`, `save-secrets`, `issues` |
 | `settings` | No | A list of at most 32 setting objects |
 
 Unknown permission names produce a warning (`Unknown permission "camera"
@@ -183,7 +183,8 @@ Manifest errors name the problem, prefixed with the file name, for example:
 After installing, open **Settings > Spaces > [Space name]**. Each requested
 permission has an **Allow this app to …** checkbox: **show notifications**,
 **read its settings**, **show a badge on its tab**, **share context with
-Copilot chat**, **read its saved secrets** and **read and open issues**.
+Copilot chat**, **read its saved secrets**, **save its own secrets** and
+**read and open issues**.
 Every permission starts off. Select the ones you trust and
 save. Notification delivery also needs an enabled notification channel for
 the Space in **Notifications** settings.
@@ -220,7 +221,7 @@ await window.subspace.setContext(null);
 | `notify({title, body})` | `notifications` | Title up to 100 characters, body up to 500, without control characters |
 | `theme()` | None | The app's theme: tones, mode, id, name and fonts ([Follow the app's theme](#follow-the-apps-theme)) |
 | `secrets.get()` | `secrets` | Saved values of the declared secrets and of the page's own ([Read and save the app's secrets](#read-and-save-the-apps-secrets)) |
-| `secrets.set(key, valueOrNull)` | `secrets` | Saves or deletes one secret; at most 32 beyond the declared ones, each up to 4096 characters |
+| `secrets.set(key, valueOrNull)` | `save-secrets` | Saves or deletes one of the page's own secrets; at most 32, each up to 4096 characters, 10 saves in 10 seconds |
 | `issues.scope()` | `issues` | The scope issue identifiers are recognised in, or `null` ([Show issues](#show-issues)) |
 | `issues.resolve(identifiers)` | `issues` | One resolution per distinct identifier, at most 50 distinct, each up to 32 characters |
 | `issues.open(identifier)` | `issues` | Opens the issue in the Space that answers issue requests |
@@ -237,9 +238,11 @@ Errors from the bridge (`spaces/web/src/bridge.rs` and
 | `Notifications are off. Choose a notification channel in Subspace Settings.` | No notification channel |
 | `Too many notifications. Wait five seconds.` | More than one notification in five seconds |
 | `Use a secret key of 1 to 40 letters, digits, _ or -, starting with a letter.` | `secrets.set` with a malformed key |
-| `This key is one of the app's settings, not a secret. Choose another key.` | `secrets.set` with a key the manifest declares as a non-secret setting |
+| `This key belongs to one of the app's settings, which only Settings changes. Choose another key.` | `secrets.set` with a key the manifest declares, secret or not |
 | `Use a secret of 1 to 4096 characters, without control characters, or null to delete it.` | `secrets.set` with an empty, long or malformed value |
 | `This app has saved 32 secrets, the most it may. Delete one before saving another.` | A 33rd secret of the page's own |
+| `Too many secret saves. Wait a few seconds, then try again.` | More than 10 `secrets.set` calls in 10 seconds |
+| `This Space changed in the config file. Review it in Settings, then try again.` | The config file now gives the Space another app folder or install source, or no longer allows `save-secrets` |
 | `Open this Space to save a secret.` | `secrets.set` while another Space is shown or something covers this one, such as Settings |
 | `Subspace could not save the secret. Check the config file in Settings, then try again.` | The config file could not be read or written, or the Space is no longer in it |
 | `secrets.set expects a key and a string value, or null to delete it.` | `secrets.set` with a non-string key or value (a `TypeError`, before any request) |
@@ -258,8 +261,8 @@ Native settings save values under `webBoards.<id>.settings` and secrets
 under `secrets` in the private config file. Saved secrets never populate
 inputs. Leave a secret input blank to keep it; replace or clear it
 explicitly. Only `secrets.get()`, with the `secrets` permission, returns
-them to the page, and `secrets.set()` lets the page save its own beside
-them. They are not OS-keychain entries or encrypted app storage.
+them to the page, and `secrets.set()`, with `save-secrets`, lets the page
+save its own beside them. They are not OS-keychain entries or encrypted app storage.
 
 Setting and permission edits apply on **Save** without restarting. The page
 can read the current values again. Settings and secrets have no change
@@ -287,7 +290,7 @@ function apply(theme) {
 ```typescript
 type Theme = {
   id: string;            // the bundled theme file, e.g. "one-dark", "cupertino"; "custom" for a user's theme
-  name: string;          // the variant's display name, e.g. "Subspace One Dark", "Cupertino Dark"
+  name: string;          // the variant's display name, e.g. "Subspace One Dark", "Cupertino Dark"; "Custom" for a user's theme
   mode: "light" | "dark";
   tones: {               // "#rrggbb"
     bg: string; pane: string; line: string; hair: string; select: string;
@@ -323,36 +326,60 @@ await window.subspace.secrets.set("fleet-staging", tokenTheUserPasted);
 await window.subspace.secrets.set("fleet-staging", null); // delete it
 ```
 
-Both need the `secrets` permission.
+Reading needs the `secrets` permission (**read its saved secrets**). Saving
+needs `save-secrets` (**save its own secrets**), a separate grant: a page
+allowed only to read cannot save, replace or delete anything. A page that
+saves and reads back its own secrets asks for both.
 
 `secrets.get()` returns an object of the app's secrets, keyed by key: each
 setting the manifest declares with `"type": "secret"` that has a saved
-value, and every secret the page saved itself. A secret with no saved value,
+value, and every secret this app saved itself. A secret with no saved value,
 or an empty one, is absent. A key the manifest declares as a non-secret
 setting is never returned. Nothing else in the private config is reachable:
-other web Spaces' secrets and service tokens stay out.
+other web Spaces' secrets, service tokens, and secrets another app saved in
+this Space stay out.
 
-`secrets.set(key, value)` saves one secret, and `value` `null` deletes it.
-It resolves once the secret is in the config file, and the next
-`secrets.get()` returns it.
+`secrets.set(key, value)` saves one of the page's own secrets, and `value`
+`null` deletes it. It resolves once the secret is in the config file, and
+the next `secrets.get()` returns it. The Space stays open: saving a secret
+does not reload the page.
 
 - `key` is 1 to 40 ASCII letters, digits, `_` or `-`, starting with a letter.
-  A key the manifest declares as a secret writes that declared secret, the
-  same one the user can replace in Settings. A key it declares as a
-  non-secret setting is refused.
+  A key the manifest declares, secret or not, is refused: declared secrets
+  are the user's to set in Settings, and the page never replaces or deletes
+  them.
 - `value` is 1 to 4096 characters without control characters.
-- The page may keep at most 32 secrets of its own, beyond the declared ones.
-  Replacing or deleting one of them is always allowed.
+- The page may keep at most 32 secrets of its own. Replacing or deleting one
+  of them is always allowed.
+- At most 10 saves in any 10 seconds.
 - The Space must be the one shown, with nothing over it, so a page saves only
   while the user can see it, and never behind Settings, whose own Save would
   then find the file changed under it.
+- The config file must still give the Space this app folder, the same
+  install source and the `save-secrets` grant when the secret is written. A
+  Space pointed at another app, or whose grant was turned off, while the
+  page was open is not written.
 
 The page's secrets are saved with the Space's other secrets, under
 `webBoards.<id>.secrets` in the private config file, and are removed with
-the Space. Replacing or updating the Space keeps them; its grants start off
-again. Settings never shows them: the Space's page says **This app has saved
-N secrets**, and **Clear** removes them all on Save (the declared secrets have
-their own fields).
+the Space. Each belongs to the app that saved it, named by where the Space
+installed it from, and a page sees only the secrets its own app saved:
+
+| Installed from | The page's secrets belong to | An update keeps them |
+| --- | --- | --- |
+| A GitHub repository | The repository and board folder | Yes, from the same repository and folder |
+| A GitHub release | The repository and asset name | Yes, for the same asset |
+| A local folder | The folder it was copied from | Yes, when imported again from that folder |
+| A ZIP file, or a `path` written into the config file | The app folder and its manifest, as grants are | No: a reinstall or a changed manifest starts with none |
+
+Installing an app from another source in the Space starts it with none of
+its own, and the earlier app's stay hidden. Secrets saved by an earlier
+Subspace, before they had owners, belong to the source the Space was
+installed from; when Subspace did not record one, they stay hidden. Grants
+start off again after any update. Settings never shows the values: the
+Space's page says **This app has saved N secrets**, counting hidden ones
+too, and **Clear** removes them all on Save (the declared secrets have their
+own fields).
 
 A page granted `secrets` holds its secrets in its own JavaScript memory, so
 anything the page loads can read them. Keep the page's scripts in its own

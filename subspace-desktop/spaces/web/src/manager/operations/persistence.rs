@@ -1,7 +1,7 @@
 use gpui_kit::{Context, Window};
 use subspace_framework::core::settings::SettingsFile;
 
-use super::super::model::{install_entry, named_entry};
+use super::super::model::{bind_page_secrets, install_entry, named_entry};
 use super::{Manager, config_path};
 
 impl Manager {
@@ -13,14 +13,13 @@ impl Manager {
         if !self.epoch.accepts(pending.ticket) {
             return;
         }
-        let previous = pending.file.web_board(&pending.id).unwrap_or_default();
+        let mut previous = pending.file.web_board(&pending.id).unwrap_or_default();
+        let source = pending.prepared.source();
+        bind_page_secrets(&mut previous, &source);
         let result = serde_json::to_value(pending.prepared.metadata())
             .map_err(|error| error.to_string())
             .and_then(|metadata| {
-                let entry = named_entry(
-                    install_entry(previous, &pending.prepared.source(), metadata),
-                    &pending.title,
-                );
+                let entry = named_entry(install_entry(previous, &source, metadata), &pending.title);
                 pending
                     .file
                     .update_web_board(&pending.id, Some(entry))

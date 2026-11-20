@@ -8,7 +8,7 @@
 // tokenKey, token|null, problem|null}. A null name means "use the name
 // Stargate reports".
 
-import { tokenKey } from "./fleet-store.js";
+import { tokenKey, unpackToken } from "./fleet-store.js";
 
 export const DEFAULT_FLEET_ID = "default";
 
@@ -26,14 +26,19 @@ export function settingsFleet({ allowed, settings, secrets, capabilities, normal
   return { entry: { id: DEFAULT_FLEET_ID, name: null, endpoint: endpoint.url, origin: "settings", tokenKey: "token", token, problem: null }, problem: null };
 }
 
-/** Fleets added in the page, with their tokens when Subspace gives them. */
+/**
+ * Fleets added in the page, with their tokens when Subspace gives them. A
+ * token is used only for the address it was saved for: one kept for another
+ * address, or saved without its address, leaves the fleet without a token
+ * until it is pasted again.
+ */
 export function localFleets({ list, secrets, allowed, normalizeEndpoint }) {
   return list.flatMap((item) => {
     const endpoint = normalizeEndpoint(item.endpoint);
     if (!endpoint.ok) return [];
     const key = tokenKey(item.id);
-    const token = allowed.secrets && typeof secrets?.[key] === "string" ? secrets[key].trim() : "";
-    return [{ id: item.id, name: item.name, endpoint: endpoint.url, origin: "local", tokenKey: key, token: token || null, problem: token ? null : "no-token" }];
+    const { token, problem } = allowed.secrets ? unpackToken(secrets?.[key], endpoint.url, normalizeEndpoint) : { token: null, problem: "no-token" };
+    return [{ id: item.id, name: item.name, endpoint: endpoint.url, origin: "local", tokenKey: key, token, problem }];
   });
 }
 
@@ -73,7 +78,7 @@ export function resolveFleets({ present, allowed, capabilities, settings, secret
   if (!present) return { mode: "sample", reason: "no-bridge", motion: null, perfReadout: false, fleets: [], canStore: false };
   const motion = allowed.settings ? (settings?.motion === "Reduced" ? "Reduced" : "Full") : null;
   const perfReadout = allowed.settings && settings?.perfReadout === "On";
-  const canStore = Boolean(capabilities.secretsSet && allowed.secrets);
+  const canStore = Boolean(capabilities.secretsSet && allowed.secrets && allowed.saveSecrets);
   const fromSettings = settingsFleet({ allowed, settings, secrets, capabilities, normalizeEndpoint });
   const fleets = mergeFleets({
     settings: fromSettings.entry,

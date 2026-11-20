@@ -51,6 +51,18 @@ be rebuilt, the choice is still saved and the notice says "Restart the app to
 close Actions." A failed write shows "Couldn't close Actions: <reason>" and
 changes nothing.
 
+The write is also refused when it would leave no Space on. The check uses
+the board set the file would give, read from the same file the write
+changes, so a file edited outside the app (turning the other Spaces off
+while their tabs still show) cannot slip past the last-tab guard: "Couldn't
+close Alpha: it is the only Space the config file leaves on."
+
+## Over a web Space
+
+While the menu is open it counts as covering the board area, as Settings
+and the palette do, so a web Space's native view hides instead of drawing
+over the menu. The toolbar's **Show label** menu does the same.
+
 ## Reopening
 
 Reopening is unchanged: open Settings, choose the Space, turn on **Enabled**

@@ -13,7 +13,7 @@ and from `scripts/package-web-space.py`, which prints the same texts after
 | `subspace-board.json: expected name to be text of 1 to 60 characters.` | Add or shorten `name`. `version` has the same rule with 40. |
 | `subspace-board.json: invalid JSON (…).` | Fix the JSON; no comments, trailing commas or byte-order mark. |
 | `subspace-board.json: settings[N]: …` | Fix setting N as the message says; rules in the reference's [Declare an app](../../../../docs/web-spaces-reference.md#declare-an-app). |
-| `Unknown permission "…" ignored.` (warning) | Use only `notifications`, `settings`, `badge`, `context`, `secrets`, `issues`. |
+| `Unknown permission "…" ignored.` (warning) | Use only `notifications`, `settings`, `badge`, `context`, `secrets`, `save-secrets`, `issues`. |
 | `subspace-board.json is larger than 256 KiB.` | Move data out of the manifest. |
 | `The package contains an unsafe or unsupported filename. Use portable ASCII names without .git or device names.` | Rename non-ASCII names, names ending in `.` or space, `CON`/`NUL`/`COM1`…; remove `.git`. |
 | `The package has duplicate or platform-colliding paths.` | Rename files that differ only by case. |
@@ -53,7 +53,9 @@ and from `scripts/package-web-space.py`, which prints the same texts after
 | `Too many notifications. Wait five seconds.` | Send at most one notification per five seconds. |
 | `Resolve at most 50 distinct issue identifiers.` | Split `issues.resolve` calls into batches of 50. |
 | `This app has saved 32 secrets, the most it may. Delete one before saving another.` | Delete secrets the page no longer uses with `secrets.set(key, null)`. |
-| `This key is one of the app's settings, not a secret. Choose another key.` | Use a key the manifest does not declare as a non-secret setting. |
+| `This key belongs to one of the app's settings, which only Settings changes. Choose another key.` | Use a key the manifest does not declare. A declared `secret` field is the user's to set in Settings. |
+| `Too many secret saves. Wait a few seconds, then try again.` | Save at most 10 secrets in 10 seconds; save once when the user confirms, not on every keystroke. |
+| `This Space changed in the config file. Review it in Settings, then try again.` | The Space now points at another folder or install source, or `save-secrets` was turned off. Reopen the Space after reviewing it. |
 | `Open this Space to save a secret.` | Call `secrets.set` in answer to the user, while the Space is shown. |
 | `Use issue identifiers of at most 32 characters, without control characters.` | Pass identifiers such as `ABC-827` as strings. |
 | `No Space that answers issue requests recognises this issue identifier.` | Check `issues.scope()`: no Space answers, the user is signed out, or the identifier's project key is not in `teamKeys`. |

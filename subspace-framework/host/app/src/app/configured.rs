@@ -61,7 +61,7 @@ impl SubspaceApp {
         self.board_registrations = registrations;
         self.board_subscriptions = Self::dashboard_subscriptions(&self.dashboards, window, cx);
         for board in &self.dashboards {
-            board.covered(self.board_covered, window, cx);
+            board.covered(self.cover.covered, window, cx);
         }
     }
 

@@ -24,6 +24,9 @@ pub(crate) enum Permission {
     Badge,
     Context,
     Secrets,
+    /// Writing the page's own secrets, apart from reading: a grant to read
+    /// never lets a page save, replace or delete one.
+    SaveSecrets,
     Issues,
 }
 
@@ -35,6 +38,7 @@ impl Permission {
             "badge" => Self::Badge,
             "context" => Self::Context,
             "secrets" => Self::Secrets,
+            "save-secrets" => Self::SaveSecrets,
             "issues" => Self::Issues,
             _ => return None,
         })
@@ -56,6 +60,7 @@ impl Permission {
             Self::Badge => ("badge", "show a badge on its tab"),
             Self::Context => ("context", "share context with Copilot chat"),
             Self::Secrets => ("secrets", "read its saved secrets"),
+            Self::SaveSecrets => ("save-secrets", "save its own secrets"),
             Self::Issues => ("issues", "read and open issues"),
         }
     }
@@ -220,16 +225,20 @@ mod tests {
     }
 
     #[test]
-    fn secrets_and_issues_are_separate_permissions_with_their_own_labels() {
+    fn secrets_saving_and_issues_are_separate_permissions_with_their_own_labels() {
         let text = json!({
             "name": "Fleet", "version": "1",
-            "permissions": ["issues", "secrets", "Secrets", "issue"]
+            "permissions": ["issues", "save-secrets", "secrets", "Secrets", "issue"]
         })
         .to_string();
         let manifest = parse(&text).unwrap();
         assert_eq!(
             manifest.permissions.iter().copied().collect::<Vec<_>>(),
-            [Permission::Secrets, Permission::Issues]
+            [
+                Permission::Secrets,
+                Permission::SaveSecrets,
+                Permission::Issues
+            ]
         );
         assert_eq!(
             manifest.warnings,
@@ -240,6 +249,8 @@ mod tests {
         );
         assert_eq!(Permission::Secrets.name(), "secrets");
         assert_eq!(Permission::Secrets.label(), "read its saved secrets");
+        assert_eq!(Permission::SaveSecrets.name(), "save-secrets");
+        assert_eq!(Permission::SaveSecrets.label(), "save its own secrets");
         assert_eq!(Permission::Issues.name(), "issues");
         assert_eq!(Permission::Issues.label(), "read and open issues");
     }

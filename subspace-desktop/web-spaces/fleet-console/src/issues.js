@@ -57,9 +57,14 @@ export function extractIdentifiers(sources, scope) {
   return found;
 }
 
+/** The most identifiers kept; the least recently wanted are forgotten first. */
+export const MAX_WANTED = 500;
+
 /**
  * Resolves identifiers through `resolve(ids)` (the bridge), at most 50 per
- * call, coalescing requests made within `debounceMs`.
+ * call, coalescing requests made within `debounceMs`. It keeps answers for
+ * the MAX_WANTED most recently wanted identifiers, so a long session does
+ * not grow without bound.
  */
 export function createIssueResolver({ resolve, onChange, debounceMs = 250, setTimer = setTimeout, clearTimer = clearTimeout }) {
   const results = new Map();
@@ -109,8 +114,15 @@ export function createIssueResolver({ resolve, onChange, debounceMs = 250, setTi
     /** Ask for identifiers; only ones not yet answered are resolved. */
     want(ids) {
       for (const id of ids) {
+        wanted.delete(id);
         wanted.add(id);
         if (!results.has(id)) queued.add(id);
+      }
+      for (const id of wanted) {
+        if (wanted.size <= MAX_WANTED) break;
+        wanted.delete(id);
+        results.delete(id);
+        queued.delete(id);
       }
       if (queued.size) schedule();
     },

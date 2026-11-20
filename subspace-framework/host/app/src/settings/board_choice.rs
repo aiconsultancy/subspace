@@ -3,6 +3,7 @@
 //! and Save follow and applied the way Save applies it, so both paths write
 //! the same config and show the same tabs.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use gpui_kit::{App, Window};
@@ -20,8 +21,13 @@ pub(crate) enum Applied {
     AfterRestart,
 }
 
+/// Why turning a Space off is refused when the config file, perhaps edited
+/// outside the app, has every other Space off.
+pub(crate) const LAST_ENABLED: &str = "it is the only Space the config file leaves on";
+
 /// Saves Space `id`'s Enabled choice to the config file, changing nothing
-/// else, then shows or hides the Space as Save does.
+/// else, then shows or hides the Space as Save does. Turning off the last
+/// Space the file leaves on is refused.
 pub(crate) fn save_board_enabled(
     id: &str,
     enabled: bool,
@@ -29,27 +35,35 @@ pub(crate) fn save_board_enabled(
     cx: &mut App,
 ) -> Result<Applied, String> {
     let default_enabled = board_default(id, cx);
-    write_board_enabled(
-        &crate::product::gui_config_file(cx),
-        id,
-        enabled,
-        default_enabled,
-    )?;
+    let file = crate::product::gui_config_file(cx);
+    let mut settings = SettingsFile::open(&file).map_err(|error| error.to_string())?;
+    let boards = switched_board_values(&settings.values().boards, id, enabled, default_enabled);
+    if !enabled && !leaves_a_board_on(&file, &boards, cx)? {
+        return Err(LAST_ENABLED.to_owned());
+    }
+    settings
+        .save_board_choices(&boards)
+        .map_err(|error| error.to_string())?;
     mirror_saved_boards(cx);
     Ok(applied(apply_saved_boards(window, cx)))
 }
 
-fn write_board_enabled(
+/// Whether board choices `boards` leave a Space on, with the boards the
+/// config file defines, as applying them would. The file is read after it
+/// was opened for the write, which is refused if it changed in between, so
+/// the check and the write see the same file.
+fn leaves_a_board_on(
     file: &std::path::Path,
-    id: &str,
-    enabled: bool,
-    default_enabled: bool,
-) -> Result<(), String> {
-    let mut settings = SettingsFile::open(file).map_err(|error| error.to_string())?;
-    let boards = switched_board_values(&settings.values().boards, id, enabled, default_enabled);
-    settings
-        .save_board_choices(&boards)
-        .map_err(|error| error.to_string())
+    boards: &BTreeMap<String, bool>,
+    cx: &App,
+) -> Result<bool, String> {
+    let Some(services) = cx.try_global::<Services>() else {
+        return Ok(true);
+    };
+    let mut config = (*services.config).clone();
+    super::load_saved_boards(&mut config, file);
+    config.boards = boards.clone();
+    crate::registry::enables_a_board(&config, cx)
 }
 
 /// The product default of Space `id`, as Settings resolves it.

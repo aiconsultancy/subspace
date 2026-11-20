@@ -4,7 +4,7 @@
 
 import { normalizeEndpoint } from "./api.js";
 import { cleanName } from "./fleet-store.js";
-import { describeConnection } from "./connection.js";
+import { describeConnection, tokenProblem } from "./connection.js";
 import { fleetStatus } from "./scene/landscape.js";
 import { esc } from "./html.js";
 
@@ -13,6 +13,9 @@ const SETTINGS_PATH = "Settings › Spaces › Fleet Console";
 const ORIGIN = { settings: "Settings", local: "Added here", api: "Subspace", sample: "Sample" };
 
 /** Validate the form. `existing` lists the other fleets' normalized addresses. */
+/** Kept with its address in one Subspace secret of at most 4096 characters. */
+const MAX_TOKEN = 1024;
+
 export function validateFleetForm({ name, endpoint, token }, { editing = false, existing = [] } = {}) {
   const errors = {};
   const cleanedName = cleanName(name);
@@ -29,7 +32,7 @@ export function validateFleetForm({ name, endpoint, token }, { editing = false, 
   } else if (existing.includes(address.url)) errors.endpoint = "This address is already one of your fleets.";
   const secret = String(token ?? "").trim();
   if (!secret && !editing) errors.token = "Paste the token from stargate api token.";
-  else if (secret.length > 4096 || /[\u0000-\u001f\u007f]/.test(secret)) errors.token = "That does not look like a Stargate token.";
+  else if (secret.length > MAX_TOKEN || /[\u0000-\u001f\u007f]/.test(secret)) errors.token = "That does not look like a Stargate token.";
   const ok = Object.keys(errors).length === 0;
   return { ok, errors, value: ok ? { name: cleanedName, endpoint: address.url, token: secret || null } : null };
 }
@@ -38,7 +41,7 @@ export function validateFleetForm({ name, endpoint, token }, { editing = false, 
 export function describeTestError(error) {
   const status = error?.status;
   if (status === 401) return "Stargate refused the token (401). Check it, or create a new one with stargate api token.";
-  if (status === 403) return "Stargate refused this network (403). Reach it over your private network: Tailscale, a Cloudflare Tunnel with Access, or an SSH tunnel.";
+  if (status === 403) return "Stargate refused this network (403). Reach it over your private network: Tailscale, a Cloudflare Tunnel, or an SSH tunnel.";
   if (status === 404) return "No Fleet API at this address (404). Check the address and that Stargate's api block is enabled.";
   if (Number.isInteger(status)) return `Stargate answered ${status}. Check the fleet VM and Stargate's logs.`;
   if (error?.name === "TimeoutError" || error?.name === "AbortError") return "Stargate did not answer within ten seconds.";
@@ -55,7 +58,8 @@ export function describeTestSuccess(fleet) {
 export function addBlocker({ present, capabilities, allowed }) {
   if (!present) return "Adding fleets needs Subspace: this page is not running inside it. Install Fleet Console as a web Space to add your own fleets.";
   if (!capabilities.secretsSet) return "This version of Subspace cannot store tokens for more fleets yet. Update Subspace to add fleets here; the fleet in Settings keeps working.";
-  if (!allowed.secrets) return `Allow this app to read its saved secrets in ${SETTINGS_PATH}, then try again: each fleet's token is kept there.`;
+  const missing = [!allowed.secrets && "read its saved secrets", !allowed.saveSecrets && "save its own secrets"].filter(Boolean);
+  if (missing.length) return `Allow this app to ${missing.join(" and to ")} in ${SETTINGS_PATH}, then try again: Subspace keeps each fleet's token with this app's secrets.`;
   return null;
 }
 
@@ -98,7 +102,7 @@ export function fleetSection({ fleet, total, sample, confirming, now }) {
   const origin = ORIGIN[fleet.entry.origin] ?? fleet.entry.origin;
   const problem =
     fleet.connection.reason === "no-token"
-      ? `<p class="prog warn-text">No token is saved for this fleet. Edit it and paste the token again.</p>`
+      ? `<p class="prog warn-text"><b>${esc(tokenProblem(fleet.entry.problem).title)}.</b> ${esc(tokenProblem(fleet.entry.problem).body)}</p>`
       : description.banner && !sample
         ? `<p class="prog${status.bad ? " warn-text" : ""}"><b>${esc(description.banner.title)}.</b> ${esc(description.banner.body)}</p>`
         : "";
@@ -138,8 +142,8 @@ export function fleetForm({ mode, entry, blocker }) {
     `<div class="field-row"><label for="fleet-${id}">${label}</label>${input}<p class="field-hint" id="fleet-${id}-hint">${hint}</p><p class="field-error" id="fleet-${id}-error" hidden></p></div>`;
   return `${head}<form class="fleet-form" id="fleet-form" novalidate>
     ${field("name", "Name", `<input id="fleet-name" name="name" type="text" maxlength="60" autocomplete="off" spellcheck="false" value="${esc(editing ? entry.name : "")}" aria-describedby="fleet-name-hint fleet-name-error">`, "What you call this fleet, such as Production or Lab.")}
-    ${field("endpoint", "Stargate API address", `<input id="fleet-endpoint" name="endpoint" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://fleet.example.com" value="${esc(editing ? entry.endpoint : "")}" aria-describedby="fleet-endpoint-hint fleet-endpoint-error">`, "HTTPS on your private network (Tailscale, Cloudflare Access), or http://localhost:&lt;port&gt; through an SSH tunnel.")}
-    ${field("token", "API token", `<input id="fleet-token" name="token" type="password" autocomplete="off" spellcheck="false" ${editing ? 'placeholder="Saved. Leave blank to keep it."' : ""} aria-describedby="fleet-token-hint fleet-token-error">`, editing ? "Paste a new token only to replace the saved one." : "From stargate api token on the fleet VM. Subspace keeps it with this Space's secrets.")}
+    ${field("endpoint", "Stargate API address", `<input id="fleet-endpoint" name="endpoint" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://fleet.example.com" value="${esc(editing ? entry.endpoint : "")}" aria-describedby="fleet-endpoint-hint fleet-endpoint-error">`, "HTTPS on your private network (Tailscale Serve, a Cloudflare Tunnel), or http://localhost:&lt;port&gt; through an SSH tunnel.")}
+    ${field("token", "API token", `<input id="fleet-token" name="token" type="password" autocomplete="off" spellcheck="false" ${editing && entry.token ? 'placeholder="Saved. Leave blank to keep it."' : ""} aria-describedby="fleet-token-hint fleet-token-error">`, editing ? (entry.token ? "Paste a new token to replace the saved one. A new address needs its token again." : "Paste the token for this address.") : "From stargate api token on the fleet VM. Subspace keeps it with this Space's secrets.")}
     <p class="form-status" id="fleet-status" role="status"></p>
     <div class="actions"><button class="btn" type="button" data-fleet-test>Test connection</button><button class="btn primary" type="submit">${editing ? "Save" : "Add fleet"}</button><button class="btn" type="button" data-fleet-cancel>Cancel</button></div>
   </form>`;
