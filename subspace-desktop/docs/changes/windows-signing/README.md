@@ -41,10 +41,20 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
     back. The app cannot start in a Windows Server container, so the job sets
     `SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1` to skip that.
   - It signs on `subspace-signing` in the `windows-signing` environment, using
-    GitHub OIDC. The environment's deployment rule allows only `main`.
-  - It verifies the signature with `Get-AuthenticodeSignature` on Windows.
-  - It attaches the archive and its `.sha256` to the draft release. The owner
-    waits for it before `make release-macos` publishes the release.
+    GitHub OIDC. The environment's deployment rule allows only `main`. The
+    sign job takes the tag from the workflow's input, checks again that it
+    is on `main` and names the archive itself, because the build's scripts
+    could rewrite the build job's outputs. The script refuses an archive with
+    links, unsafe paths or duplicate entries, so a tampered archive can't
+    copy the signer's credentials into the release.
+  - It verifies the signature with `Get-AuthenticodeSignature` on Windows,
+    with read access only.
+  - Back on the signing runner, it checks the tag still points at the built
+    commit and attaches the archive and its `.sha256` to the draft release.
+    The owner waits for it before `make release-macos` publishes the release.
+  - A compromised build dependency in a reviewed commit could still swap
+    `subspace.exe` before it is signed. Only commits on `main` and the
+    reviewed `Cargo.lock` limit that.
 - The Azure identity, the vault name and the runner configuration live outside
   this repository: the identity's IDs and the vault name are in the
   environment's secrets.
@@ -58,7 +68,9 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
   - a wrong endpoint and a missing secret;
   - archive rewriting with a valid checksum;
   - a jsign failure leaving the archive untouched;
-  - an archive with nothing to sign.
+  - an archive with nothing to sign;
+  - an archive with a symbolic link, an unsafe path or a duplicate entry;
+  - masking the Key Vault values in GitHub Actions.
 
   It passes under macOS's bash 3.2 and under bash 5.
 - `actionlint` passes on the workflows.

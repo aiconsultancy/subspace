@@ -139,11 +139,15 @@ jobs:
           TAG: ${{ steps.release.outputs['subspace-desktop--tag_name'] }}
         run: |
           {
-            echo "Created the draft release $TAG. Publish it from the owner's Mac:"
-            echo "check out $TAG in subspace-desktop/ and run \`make release-macos\`."
+            echo "Created the draft release $TAG. When windows-release has attached the"
+            echo "Windows archive to it, publish it from the owner's Mac: check out $TAG"
+            echo "in subspace-desktop/ and run \`make release-macos\`."
           } >>"$GITHUB_STEP_SUMMARY"
       - name: Build, sign and attach the app's Windows archive
         if: steps.release.outputs['subspace-desktop--release_created'] == 'true'
+        # A failed start must not stop the steps after it; start the workflow
+        # by hand instead (see subspace-desktop/docs/installation.md).
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs['subspace-desktop--tag_name'] }}
