@@ -5,6 +5,10 @@
 
 use serde_json::{Map, Value, json};
 
+mod decision;
+
+pub(crate) use decision::decision;
+
 use super::scope::Organisation;
 use crate::model::Me;
 
@@ -289,107 +293,6 @@ pub(crate) fn pull_request(item: &Value) -> Value {
         "githubUpdatedAt": text("lastObservedAt"),
         "lastObservedAt": text("lastObservedAt"),
     })
-}
-
-/// A NETT decision as the desktop's decision row. NETT records human
-/// deciders, a planning project and an initiative; it has no tags, agent
-/// makers or evidence, which stay empty.
-pub(crate) fn decision(item: &Value) -> Value {
-    let text = |key: &str| item.get(key).and_then(Value::as_str).unwrap_or_default();
-    let decider = item
-        .get("deciders")
-        .and_then(Value::as_array)
-        .and_then(|deciders| deciders.first())
-        .cloned()
-        .unwrap_or_default();
-    let decider_id = decider.get("userId").and_then(Value::as_str);
-    let issues = item.get("issues").cloned().unwrap_or_default();
-    let issue_items: Vec<Value> = issues
-        .get("items")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|issue| {
-            json!({
-                "id": issue.get("id").and_then(Value::as_str).unwrap_or_default(),
-                "identifier": issue.get("identifier").and_then(Value::as_str).unwrap_or_default(),
-                "title": issue.get("title").and_then(Value::as_str).unwrap_or_default(),
-            })
-        })
-        .collect();
-    let count = issues
-        .get("count")
-        .and_then(Value::as_i64)
-        .unwrap_or(issue_items.len() as i64);
-    let summary_id = |key: &str| {
-        item.get(key)
-            .and_then(|summary| summary.get("id"))
-            .cloned()
-            .unwrap_or(Value::Null)
-    };
-    let recorded_by = item
-        .get("createdByUserId")
-        .and_then(Value::as_str)
-        .or(decider_id)
-        .unwrap_or_default();
-    let mut row = json!({
-        "id": text("id"),
-        "title": text("title"),
-        "status": text("status"),
-        "decidedOn": text("decidedOn"),
-        "projectId": text("projectId"),
-        "projectKey": "",
-        "project": item.get("project").cloned().unwrap_or(Value::Null),
-        "supersedesId": summary_id("supersedes"),
-        "supersededById": summary_id("supersededBy"),
-        "supersedes": item.get("supersedes").cloned().unwrap_or(Value::Null),
-        "supersededBy": item.get("supersededBy").cloned().unwrap_or(Value::Null),
-        "issues": {"items": issue_items, "count": count},
-        "tags": [],
-        "madeByType": "human",
-        "madeByUserId": decider_id,
-        "recordedByUserId": recorded_by,
-        "version": item.get("version").cloned().unwrap_or(Value::Null),
-        "revisionNumber": item.get("revisionNumber").cloned().unwrap_or(json!(1)),
-        "createdAt": text("createdAt"),
-        "updatedAt": text("updatedAt"),
-    });
-    if item.get("decision").is_some() {
-        // Who recorded the decision, which may not be who made it: named
-        // from the deciders when the recorder is one of them.
-        let recorder = item
-            .get("deciders")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .find(|person| person.get("userId").and_then(Value::as_str) == Some(recorded_by))
-            .cloned()
-            .unwrap_or_default();
-        let detail = json!({
-            "decision": text("decision"),
-            "context": text("context"),
-            "why": text("why"),
-            "implications": text("implications"),
-            "alternatives": "",
-            "acceptedAt": item.get("acceptedAt").cloned().unwrap_or(Value::Null),
-            "acceptedByUserId": item.get("acceptedByUserId").cloned().unwrap_or(Value::Null),
-            "provenance": {"madeByType": "human", "madeByUserId": decider_id},
-            "recordedBy": {
-                "userId": recorded_by,
-                "displayName": recorder
-                    .get("displayName")
-                    .or_else(|| item.get("createdByName"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default(),
-                "available": recorder.get("available").and_then(Value::as_bool).unwrap_or(true),
-                "kind": "human",
-            },
-        });
-        if let (Some(row), Value::Object(detail)) = (row.as_object_mut(), detail) {
-            row.extend(detail);
-        }
-    }
-    row
 }
 
 /// A NETT image occurrence as the desktop's image metadata. Bytes come
