@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
@@ -53,7 +55,7 @@ test('the six native references retain their full DPR2 viewport', () => {
   }
 });
 
-test('bundled fonts ship with upstream licences, not an invented patch licence', () => {
+test('bundled fonts ship with their upstream licences', () => {
   for (const name of ['Inter-Regular.ttf', 'JetBrainsMonoNerdFont-Regular.woff2']) {
     assert.ok(statSync(join(dist, 'fonts', name)).size > 100_000);
     assert.ok(statSync(join(dist, 'fonts', name)).size <= 1024 * 1024);
@@ -64,6 +66,27 @@ test('bundled fonts ship with upstream licences, not an invented patch licence',
   assert.match(read('fonts/NerdFonts-LICENSE'), /MIT License/);
   assert.match(read('fonts/NerdFonts-license-audit.md'), /Font Awesome/);
   assert.match(read('fonts/provenance.md'), /3\.5\.1/);
+  for (const name of [
+    'README.md',
+    'codicons-LICENSE.txt',
+    'devicon-LICENSE',
+    'devicons-vorillaz-LICENSE',
+    'font-awesome-LICENSE.txt',
+    'font-awesome-extension-LICENCE',
+    'font-logos-LICENSE',
+    'hack-LICENSE.md',
+    'materialdesign-LICENSE',
+    'octicons-LICENSE',
+    'pomicons-LICENSE',
+    'powerline-extra-LICENSE',
+    'powerline-symbols-LICENSE.txt',
+    'power-symbols-iec-LICENSE.txt',
+    'seti-ui-LICENSE.md',
+    'weather-icons-OFL.txt',
+  ]) {
+    const file = `fonts/glyph-licences/${name}`;
+    assert.equal(read(file), readFileSync(join(root, 'public', file), 'utf8'), file);
+  }
 });
 
 test('bundled dependencies ship the licence texts from their locked versions', () => {
@@ -80,11 +103,32 @@ test('bundled dependencies ship the licence texts from their locked versions', (
     scheduler: 'LICENSE',
     'tailwind-merge': 'LICENSE.md',
     tailwindcss: 'LICENSE',
+    vite: 'LICENSE.md',
   };
   for (const [name, file] of Object.entries(licences)) {
     const packagePath = join('node_modules', name);
     const { version, license } = lock.packages[`node_modules/${name}`];
-    const text = readFileSync(join(root, packagePath, file), 'utf8').trim();
-    assert.ok(notices.includes(`## ${name} - ${version} (${license})\n\n${text}\n`), name);
+    const licence = readFileSync(join(root, packagePath, file), 'utf8');
+    const text = name === 'vite'
+      ? licence.split('\n# Licenses of bundled dependencies\n')[0].split('\n').slice(3).join('\n').trim()
+      : licence.trim();
+    const heading = `## ${name} - ${version} (${license})`;
+    assert.equal(notices.split('\n').filter((line) => line === heading).length, 1, name);
+    assert.ok(notices.includes(`${heading}\n\n${text}\n`), name);
   }
+});
+
+test('rerunning the notice script preserves the generated notices', (t) => {
+  const fixture = mkdtempSync(join(tmpdir(), 'gallery-notices-'));
+  t.after(() => rmSync(fixture, { recursive: true, force: true }));
+  mkdirSync(join(fixture, 'dist'));
+  mkdirSync(join(fixture, 'scripts'));
+  symlinkSync(join(root, 'node_modules'), join(fixture, 'node_modules'), 'junction');
+  const script = 'scripts/append-css-notices.mjs';
+  copyFileSync(join(root, script), join(fixture, script));
+  const file = join(fixture, 'dist', 'THIRD_PARTY_NOTICES');
+  copyFileSync(join(dist, 'THIRD_PARTY_NOTICES'), file);
+
+  execFileSync(process.execPath, [join(fixture, script)]);
+  assert.equal(readFileSync(file, 'utf8'), read('THIRD_PARTY_NOTICES'));
 });
