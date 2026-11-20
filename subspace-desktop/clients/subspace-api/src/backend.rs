@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use crate::Error;
 
@@ -101,37 +102,88 @@ impl Feature {
 /// differ from one person to the next in the same organisation.
 type Scope = (String, String, u64);
 
-/// The features NETT says it serves, per API origin, organisation and
-/// account, read once per organisation and account in a run. Another
-/// account never sees what was read for the previous one.
-static SERVED: Mutex<BTreeMap<Scope, u8>> = Mutex::new(BTreeMap::new());
+/// How long a capability list read from NETT is used before it is read
+/// again: NETT can enable a feature for an organisation while the app runs.
+pub(crate) const SERVED_FOR: Duration = Duration::from_secs(5 * 60);
+/// How long a list that could not be read again keeps answering before the
+/// next try.
+const SERVED_RETRY: Duration = Duration::from_secs(30);
 
-fn served_table() -> std::sync::MutexGuard<'static, BTreeMap<Scope, u8>> {
+/// One organisation and account's capability list, and when to read it
+/// again. A list due to be read again still answers until it is.
+#[derive(Clone, Copy)]
+struct Served {
+    bits: u8,
+    next: Instant,
+}
+
+/// The features NETT says it serves, per API origin, organisation and
+/// account. Another account never sees what was read for the previous one.
+static SERVED: Mutex<BTreeMap<Scope, Served>> = Mutex::new(BTreeMap::new());
+
+fn served_table() -> std::sync::MutexGuard<'static, BTreeMap<Scope, Served>> {
     SERVED
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Records what NETT serves for one organisation and account.
-pub(crate) fn record_served(origin: &str, org: &str, account: u64, features: &[Feature]) {
+fn scope(origin: &str, org: &str, account: u64) -> Scope {
+    (origin.to_owned(), org.to_owned(), account)
+}
+
+/// Records what NETT serves for one organisation and account, used until
+/// [`SERVED_FOR`] has passed. Returns whether it differs from the list
+/// known before, if there was one.
+pub(crate) fn record_served(origin: &str, org: &str, account: u64, features: &[Feature]) -> bool {
     let bits = features
         .iter()
         .fold(0, |bits, feature| bits | feature.bit());
-    served_table().insert((origin.to_owned(), org.to_owned(), account), bits);
+    let next = Instant::now() + SERVED_FOR;
+    served_table()
+        .insert(scope(origin, org, account), Served { bits, next })
+        .is_some_and(|before| before.bits != bits)
 }
 
-/// Whether the capability list for this organisation and account has been
-/// read.
+/// Whether the capability list for this organisation and account was read
+/// and is not yet due to be read again.
+pub(crate) fn served_current(origin: &str, org: &str, account: u64) -> bool {
+    served_current_at(origin, org, account, Instant::now())
+}
+
+pub(crate) fn served_current_at(origin: &str, org: &str, account: u64, now: Instant) -> bool {
+    served_table()
+        .get(&scope(origin, org, account))
+        .is_some_and(|served| now < served.next)
+}
+
+/// Whether a capability list was ever read for this organisation and
+/// account, however old it is.
 pub(crate) fn served_known(origin: &str, org: &str, account: u64) -> bool {
-    served_table().contains_key(&(origin.to_owned(), org.to_owned(), account))
+    served_table().contains_key(&scope(origin, org, account))
+}
+
+/// Asks for the capability list to be read again the next time a feature
+/// is checked, as an explicit reload does. Until then it still answers.
+pub(crate) fn reread_served(origin: &str, org: &str, account: u64) {
+    if let Some(served) = served_table().get_mut(&scope(origin, org, account)) {
+        served.next = Instant::now();
+    }
+}
+
+/// A list that could not be read again keeps answering for a while, so a
+/// failing read is not repeated for every feature check.
+pub(crate) fn served_unreadable(origin: &str, org: &str, account: u64) {
+    if let Some(served) = served_table().get_mut(&scope(origin, org, account)) {
+        served.next = Instant::now() + SERVED_RETRY;
+    }
 }
 
 /// Whether NETT serves `feature` for this organisation and account.
 pub(crate) fn nett_serves(origin: &str, org: Option<&str>, account: u64, feature: Feature) -> bool {
     org.is_some_and(|org| {
         served_table()
-            .get(&(origin.to_owned(), org.to_owned(), account))
-            .is_some_and(|bits| bits & feature.bit() != 0)
+            .get(&scope(origin, org, account))
+            .is_some_and(|served| served.bits & feature.bit() != 0)
     })
 }
 

@@ -83,10 +83,13 @@ impl Shared {
     }
 
     /// An explicit reload: a pause NETT asked for ends, so what the person
-    /// asked for is sent now. Subspace API has no such pause.
+    /// asked for is sent now, and the organisation's capability list is read
+    /// again, so a feature NETT enabled meanwhile is offered. Subspace API
+    /// has neither.
     fn resume_nett(&self) {
         if self.client.service() == crate::Backend::Nett {
             crate::nett::flow::resume(self.client.flow_account());
+            self.client.nett_reread_served();
         }
     }
 }

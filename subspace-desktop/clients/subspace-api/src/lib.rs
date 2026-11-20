@@ -163,8 +163,9 @@ impl Client {
         self.base.as_str().trim_end_matches('/')
     }
     /// Whether this client's backend serves `feature` for its organisation.
-    /// NETT's capability list is read the first time it is needed; if it
-    /// cannot be read, the feature counts as not served.
+    /// NETT's capability list is read the first time it is needed and again
+    /// once it is due; if it was never read and cannot be, the feature
+    /// counts as not served.
     pub(crate) fn serves(&self, feature: backend::Feature) -> bool {
         match self.backend {
             Backend::Subspace => true,
