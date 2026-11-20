@@ -1,4 +1,5 @@
 //! Native credentials stay inside the API transport and are scoped to one origin.
+use gpui_kit::App;
 use std::sync::OnceLock;
 use subspace_framework::core::Secret;
 use ureq::http::{HeaderValue, Request, Response, StatusCode, Uri, header::AUTHORIZATION};
@@ -12,6 +13,7 @@ static ORIGIN: OnceLock<Url> = OnceLock::new();
 
 struct Account {
     generation: Box<dyn Fn() -> u64 + Send + Sync>,
+    ready_generation: fn(&App) -> Option<u64>,
     token: Box<dyn Fn() -> Result<Secret, Error> + Send + Sync>,
 }
 
@@ -70,18 +72,29 @@ pub fn configured_api_origin() -> Option<&'static str> {
 }
 
 /// Installs the trusted desktop account callbacks before the API-backed Spaces start.
+/// The readiness callback reads local state and must not acquire a token.
 pub fn use_native_account(
     generation: impl Fn() -> u64 + Send + Sync + 'static,
+    ready_generation: fn(&App) -> Option<u64>,
     token: impl Fn() -> Result<Secret, Error> + Send + Sync + 'static,
 ) {
     let _ = ACCOUNT.set(Account {
         generation: Box::new(generation),
+        ready_generation,
         token: Box::new(token),
     });
 }
 
 pub(crate) fn generation() -> Option<u64> {
     ACCOUNT.get().map(|account| (account.generation)())
+}
+
+/// Whether the product has a usable session for this client's account generation.
+pub(crate) fn ready(cx: &App, lease: Option<u64>) -> bool {
+    ACCOUNT.get().is_some_and(|account| {
+        (account.ready_generation)(cx)
+            .is_some_and(|ready| lease == Some(ready) && (account.generation)() == ready)
+    })
 }
 
 pub(crate) fn agent(lease: Option<u64>) -> ureq::Agent {
@@ -162,7 +175,7 @@ mod tests {
     };
 
     use super::{
-        agent, bearer, configure_api_origin, configured_api_origin, generation, private_api,
+        agent, bearer, configure_api_origin, configured_api_origin, generation, private_api, ready,
         use_native_account,
     };
     use subspace_framework::core::Secret;
@@ -170,17 +183,22 @@ mod tests {
 
     const FIXTURE_ORIGIN: &str = "https://api.fixture.example.test/api";
 
-    #[test]
-    fn registering_the_native_account_binds_requests_to_its_generation() {
+    #[gpui_kit::test]
+    fn registering_the_native_account_binds_requests_to_its_generation(
+        cx: &mut gpui_kit::TestAppContext,
+    ) {
         let version = Arc::new(AtomicU64::new(1));
         let source = version.clone();
         configure_api_origin(FIXTURE_ORIGIN).unwrap();
         use_native_account(
             move || source.load(Ordering::Relaxed),
+            |_| Some(1),
             || Ok(Secret::new("fixture-sse-token")),
         );
         let lease = generation();
         assert_eq!(lease, Some(1));
+        cx.update(|app| assert!(ready(app, lease)));
+        cx.update(|app| assert!(!ready(app, None)));
         let stream = format!("{FIXTURE_ORIGIN}/v1/updates?project=SUB")
             .parse()
             .unwrap();
@@ -189,6 +207,7 @@ mod tests {
         assert_eq!(header.to_str().unwrap(), "Bearer fixture-sse-token");
         version.store(2, Ordering::Relaxed);
         assert_eq!(generation(), Some(2));
+        cx.update(|app| assert!(!ready(app, lease)));
         assert!(bearer(&stream, lease).unwrap().is_none());
         let result = agent(lease)
             .get(format!("{FIXTURE_ORIGIN}/v1/me"))

@@ -170,6 +170,7 @@ impl HubSnapshot {
 
 pub(super) struct State {
     pub snapshot: HubSnapshot,
+    pub initial_access_retry: bool,
     pub api_origin: String,
     pub query: Option<ListQuery>,
     pub revision: u64,
@@ -213,6 +214,7 @@ impl State {
                 activity: None,
                 live: super::LiveStatus::Connecting,
             },
+            initial_access_retry: true,
             api_origin: origin.into(),
             query: None,
             revision: 0,
