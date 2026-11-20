@@ -180,7 +180,6 @@ pub(crate) fn live_line(access: &Access, live: LiveStatus) -> Option<&'static st
     if !matches!(access, Access::Ready { .. }) {
         return None;
     }
-    // qual:allow(dry, repeated_matches) reason: "LiveStatus has this one word mapping; rustqual groups it with ViewTab and PrState only because their four-arm matches share one shape. The match stays exhaustive so a new status cannot go unlabelled."
     Some(match live {
         LiveStatus::Connecting => "Connecting…",
         LiveStatus::Live => "Live",
