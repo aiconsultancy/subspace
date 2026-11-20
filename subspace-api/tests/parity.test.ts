@@ -750,6 +750,13 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       decision: "Example decision",
       madeByUserId: members.get("admin"),
     });
+    await call(400, "/decisions", "captain", "POST", {
+      projectId: project.id,
+      title: "Incomplete crew relay",
+      decidedOn: "2026-11-20",
+      decision: "Example decision",
+      madeByAgentRank: "crew",
+    });
     const cache = await log("admin", {
       title: "Adopt the example cache",
       status: "accepted",

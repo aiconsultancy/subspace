@@ -663,16 +663,9 @@ function resolveMaker(db: Db, member: Member, input: typeof NewDecision.Type) {
       return yield* Effect.fail(
         problem(400, "Do not supply madeByUserId for an agent decision; the server resolves it."),
       );
-    const rank = input.madeByAgentRank ?? member.agentRank;
-    const name = input.madeByAgentName ?? member.displayName;
-    const model = input.madeByAgentModel ?? member.agentModel;
-    const relay = rank === "crew" && (input.madeByAgentRank === "crew" || member.relayedCrew);
-    if (
-      !model ||
-      (input.madeByType &&
-        (!input.madeByAgentName || !input.madeByAgentModel || !input.madeByAgentRank))
-    )
-      return yield* Effect.fail(problem(400, "Supply the agent maker's name, rank and model."));
+    const relayed = member.relayedCrew;
+    const rank = input.madeByAgentRank ?? (relayed ? "crew" : member.agentRank);
+    const relay = rank === "crew" && (input.madeByAgentRank === "crew" || relayed != null);
     if (relay && member.agentRank !== "captain" && member.agentRank !== "rearAdmiral")
       return yield* Effect.fail(
         problem(
@@ -680,6 +673,16 @@ function resolveMaker(db: Db, member: Member, input: typeof NewDecision.Type) {
           "Decision provenance rule 3 (crew): only a registered captain or rear admiral may record a crew decision. Ask a registered agent to relay it.",
         ),
       );
+    const name = input.madeByAgentName ?? (relay ? relayed?.name : member.displayName);
+    const model = input.madeByAgentModel ?? (relay ? relayed?.model : member.agentModel);
+    if (
+      !name ||
+      !model ||
+      (input.madeByType &&
+        !relay &&
+        (!input.madeByAgentName || !input.madeByAgentModel || !input.madeByAgentRank))
+    )
+      return yield* Effect.fail(problem(400, "Supply the agent maker's name, rank and model."));
     if (
       !relay &&
       (rank !== member.agentRank || name.toLowerCase() !== member.displayName.toLowerCase())
