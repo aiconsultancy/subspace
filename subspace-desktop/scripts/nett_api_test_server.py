@@ -32,7 +32,10 @@ It serves:
   list, prepare, PUT, complete, cancel and versioned delete, downloaded
   through POST /files/grants), chatUploads (prepare, PUT, complete, read by
   reference, grant and versioned delete), issueMoves (team move preview and
-  the PATCH that confirms it with movePreviewToken) and updates (the issue
+  the PATCH that confirms it with movePreviewToken), issueMoveReplay (each
+  confirmation's commit record, kept for 7 days under the organisation and
+  token, so an identical confirmation after a lost reply replays the
+  recorded `move` result instead of answering 409) and updates (the issue
   update stream, GET /api/v1/updates?project=KEY with exactly one x-org-id:
   a `ready` event with null data, `issueChanged` events, a keep-alive
   comment every 15 s, and a close after 3 minutes, at the bearer's expiry, on
@@ -43,7 +46,7 @@ It serves:
 - unauthenticated test hooks under /__fixture/: touch, requests,
   requests/clear, updates, updates/close, capabilities, config (completion
   checks, stream refusals, failNext, slowBody, dropPutResponse, dropNext,
-  mediaReadyAtOnce),
+  mediaReadyAtOnce, dropMoveReply, slowMoveCommit), moves/age,
   tokens,
   tokens/revoke, members/revoke, members/restore, projects/hide,
   teams/archive, issues/archive and transfers/expire.
@@ -106,6 +109,10 @@ STREAM_QUEUE = 64
 MAX_STREAM_PROJECTS = 64
 CHAT_UPLOAD_DAYS = 30
 MOVE_PLAN_SECONDS = 600
+# How long a move's commit record is kept, and the problem code NETT answers
+# when a confirmation's plan no longer matches and nothing committed.
+MOVE_COMMIT_DAYS = 7
+PLAN_CHANGED = 'IssueMove.PlanChanged'
 # The largest wait a client can be told: any whole number of seconds it can
 # hold, up to the largest unsigned 64-bit value.
 MAX_RETRY_AFTER = 2**64 - 1
@@ -127,9 +134,9 @@ NETT_GAPS = {('GET', '/api/v1/updates'), ('GET', '/api/v1/orgs/{orgId}/desktop/c
 # The coming desktop features the fixture implements, and what an organisation
 # needs before NETT would advertise each: a business organisation, or the
 # issue-tracking pack.
-DESKTOP_FEATURES = ('initiativeChannels', 'attachments', 'chatUploads', 'issueMoves', 'updates')
+DESKTOP_FEATURES = ('initiativeChannels', 'attachments', 'chatUploads', 'issueMoves', 'issueMoveReplay', 'updates')
 FEATURE_NEEDS = dict(initiativeChannels='business', chatUploads='business', attachments='issues',
-                     issueMoves='issues', updates='issues')
+                     issueMoves='issues', issueMoveReplay='issues', updates='issues')
 FILE_TYPES = ('text/markdown', 'text/plain', 'image/png', 'image/jpeg', 'image/gif', 'image/webp', 'application/zip',
               'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
               'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -480,6 +487,8 @@ class Fixture:
         self.caller = CALLER
         self.hidden_projects = set()
         self.move_plans = {}
+        # Move commit records by (organisation ID, token), written with the move.
+        self.move_commits = {}
         self.decisions, self.lists, self.list_items = {}, {}, {}
         self.on_change = None
         self.seed(single_org)
@@ -1111,6 +1120,12 @@ class Fixture:
             comment['mediaIds'].append(media['id'])
             media.update(attached=True, commentId=comment['id'])
 
+    def purge_move_commits(self):
+        """Forgets move commit records older than MOVE_COMMIT_DAYS."""
+        cutoff = utc_now() - timedelta(days=MOVE_COMMIT_DAYS)
+        for key in [k for k, r in self.move_commits.items() if parse_stamp(r['committedAt']) < cutoff]:
+            del self.move_commits[key]
+
     def move_team(self, team):
         return dict(id=team['id'], key=team['key'], name=team['name'], archived=bool(team.get('archivedAt')))
 
@@ -1414,12 +1429,18 @@ def hook_config(ctx):
     starts with the rest. dropPutResponse: the next N file-host PUTs
     store their bytes and close the connection without answering.
     mediaReadyAtOnce: managed media completions finish checking at once and
-    answer 200 with the ready state."""
+    answer 200 with the ready state. dropMoveReply: the next N move
+    confirmations that commit (never a replay) close the connection without
+    answering, as when the reply is lost after the commit. slowMoveCommit:
+    each first commit holds its plan's lock this many seconds (0 to 10, 0 for
+    none) before checking and writing, so a replay can arrive while it is in
+    flight."""
     payload = hook_object(ctx, '{"checkingPolls": N, "retryAfterSeconds": S, "streamRefusal": {...}, '
                                '"failNext": [...], "slowBody": {...}, "dropPutResponse": N, '
-                               '"mediaReadyAtOnce": B}')
+                               '"mediaReadyAtOnce": B, "dropMoveReply": N, "slowMoveCommit": S}')
     unknown = sorted(set(payload) - {'checkingPolls', 'retryAfterSeconds', 'streamRefusal', 'failNext', 'slowBody',
-                                     'dropPutResponse', 'dropNext', 'mediaReadyAtOnce'})
+                                     'dropPutResponse', 'dropNext', 'mediaReadyAtOnce', 'dropMoveReply',
+                                     'slowMoveCommit'})
     if unknown:
         raise Problem(400, f'The fixture has no setting {unknown[0]}.')
     config = ctx.server.config
@@ -1472,6 +1493,12 @@ def hook_config(ctx):
         config['slowBody'] = slow
     if 'dropPutResponse' in payload:
         config['dropPutResponse'] = bounded(payload, 'dropPutResponse', 0, 100)
+    if 'dropMoveReply' in payload:
+        config['dropMoveReply'] = bounded(payload, 'dropMoveReply', 0, 100)
+    if 'slowMoveCommit' in payload:
+        if not is_number(payload['slowMoveCommit']) or not 0 <= payload['slowMoveCommit'] <= 10:
+            raise Problem(400, 'slowMoveCommit must be a number of seconds between 0 and 10.')
+        config['slowMoveCommit'] = payload['slowMoveCommit']
     if 'mediaReadyAtOnce' in payload:
         if not isinstance(payload['mediaReadyAtOnce'], bool):
             raise Problem(400, 'mediaReadyAtOnce is true or false.')
@@ -1597,6 +1624,17 @@ def hook_archive_issue(ctx):
         row.update(archivedAt=at, archivedById=GRACE['userId'], updatedAt=at, version=row['version'] + 1)
         ctx.f.touch(row, at, GRACE['userId'], 'issue.changed', dict(changed=['archived']))
     return 200, dict(id=row['id'], identifier=row['identifier'], version=row['version'], archivedAt=row['archivedAt'])
+
+
+def hook_age_move_commits(ctx):
+    """Makes every move commit record this many hours older, as if it was
+    committed that long ago; those past MOVE_COMMIT_DAYS are purged."""
+    payload = hook_object(ctx, '{"hours": H}')
+    hours = bounded(payload, 'hours', 0, 24 * 365)
+    for record in ctx.f.move_commits.values():
+        record['committedAt'] = stamp(parse_stamp(record['committedAt']) - timedelta(hours=hours))
+    ctx.f.purge_move_commits()
+    return 200, dict(records=len(ctx.f.move_commits))
 
 
 def hook_expire_transfers(ctx):
@@ -2613,33 +2651,65 @@ def move_preview(ctx, orgId, issueRef):
                      issues=[move_row(f, r, destination) for r in rows], reviewContext=context)
 
 
+def move_result(record, replayed):
+    """The `move` object of a confirmation's answer: the issues this commit moved, as committed."""
+    return dict(token=record['token'], committedAt=record['committedAt'], replayed=replayed,
+                actorType=record['actorType'], issues=[dict(row) for row in record['issues']])
+
+
 def move_commit(ctx, row, payload):
-    """PATCH with movePreviewToken: moves the whole previewed subtree at once, or 409."""
-    f = ctx.f
+    """PATCH with movePreviewToken: moves the whole previewed subtree at once, or 409. With issueMoveReplay,
+    an identical confirmation of a plan that committed replays its commit record, taken under the plan's
+    lock before any version or plan check, so a replay that arrives mid-commit waits and is never a 409."""
+    f, server = ctx.f, ctx.server
     closed_body(payload, {'teamId', 'version', 'reviewContext', 'movePreviewToken'}, set(), 'UpdateIssueRequest')
     token = payload['movePreviewToken']
     if not isinstance(token, str) or not re.fullmatch(r'[0-9a-f]{64}', token):
         raise Problem(400, 'movePreviewToken must be 64 lower-case hexadecimal characters.')
-    if not is_integer(payload.get('version')) or not isinstance(payload.get('reviewContext'), dict) \
-            or parse_uuid(payload.get('teamId')) is None:
-        raise Problem(400, 'A move confirmation needs teamId, version, reviewContext and movePreviewToken.')
+    replays = server.serves(ctx.org, 'issueMoveReplay')
+    key = (ctx.org['id'], token)
+    with server.plan_lock(key):
+        f.purge_move_commits()
+        record = f.move_commits.get(key)
+        if replays and record is not None and record['rootId'] == row['id']:
+            # Nothing changes, so no activity or stream event.
+            return 200, f.detail(row) | dict(move=move_result(record, True))
+        if not is_integer(payload.get('version')) or not isinstance(payload.get('reviewContext'), dict) \
+                or parse_uuid(payload.get('teamId')) is None:
+            raise Problem(400, 'A move confirmation needs teamId, version, reviewContext and movePreviewToken.')
+        if server.config['slowMoveCommit']:
+            server.wait_unlocked(server.config['slowMoveCommit'])
+        record = commit_plan(ctx, row, payload, token)
+        f.move_commits[key] = record
+        if server.config['dropMoveReply'] > 0:
+            server.config['dropMoveReply'] -= 1
+            return 0, Drop()
+    if replays:
+        return 200, f.detail(row) | dict(move=move_result(record, False))
+    return 200, f.detail(row)
+
+
+def commit_plan(ctx, row, payload, token):
+    """Checks the plan still matches and moves it, returning its commit record. Callers hold its lock."""
+    f = ctx.f
     plan = f.move_plans.get(token)
-    changed = 'The move plan has changed. Preview the move again.'
+    changed = 'This move has changed since it was previewed. Preview it again.'
     if plan is None or plan['used'] or plan['orgId'] != ctx.org['id'] or plan['rootId'] != row['id'] \
-            or utc_now() >= plan['expires'] or parse_uuid(payload['teamId']) != plan['destinationId']:
-        raise Problem(409, changed, currentVersion=row['version'])
-    if payload['version'] != row['version']:
-        raise Problem(409, 'The issue has changed. Read it again and retry.', currentVersion=row['version'])
+            or utc_now() >= plan['expires'] or parse_uuid(payload['teamId']) != plan['destinationId'] \
+            or payload['version'] != row['version']:
+        # The token is the plan with its versions, so a stale root is a changed plan.
+        raise Problem(409, changed, currentVersion=row['version'], code=PLAN_CHANGED)
     destination = f.teams[plan['destinationId']]
     rows = move_rows(f, row, destination)
     if payload['reviewContext'] != plan['context'] or [(r['id'], r['version']) for r in rows] != plan['rows'] \
             or destination.get('archivedAt'):
-        raise Problem(409, changed, currentVersion=row['version'])
+        raise Problem(409, changed, currentVersion=row['version'], code=PLAN_CHANGED)
     if any(r['archivedAt'] for r in rows):
         raise Problem(409, 'An archived sub-issue cannot move. Restore it, then preview the move again.',
                       currentVersion=row['version'])
     plan['used'] = True
     at = f.now()
+    moved = []
     for r in rows:
         planned = move_row(f, r, destination)
         number = f.next_issue_number(destination)
@@ -2649,7 +2719,9 @@ def move_commit(ctx, row, payload):
                  estimate=planned['estimateAfter'], version=r['version'] + 1, updatedAt=at)
         f.touch(r, at, f.caller, 'issue.moved', dict(fromIdentifier=old, toIdentifier=r['identifier']),
                 hint=dict(also=source))
-    return 200, f.detail(row)
+        moved.append(dict(id=r['id'], oldIdentifier=old, newIdentifier=r['identifier'], version=r['version']))
+    return dict(token=token, orgId=ctx.org['id'], rootId=row['id'], actorId=f.caller, actorType='human',
+                committedAt=at, issues=moved)
 
 
 # Pickers
@@ -2985,6 +3057,7 @@ ROUTES = [
     Route('POST', '/__fixture/teams/archive', hook_archive_team),
     Route('POST', '/__fixture/issues/archive', hook_archive_issue),
     Route('POST', '/__fixture/transfers/expire', hook_expire_transfers),
+    Route('POST', '/__fixture/moves/age', hook_age_move_commits),
     Route('GET', '/api/v1/updates', updates_stream, query='project'),
     Route('GET', '/api/v1/me', api_me),
     Route('GET', '/api/v1/auth/context', api_auth_context),
@@ -3086,7 +3159,10 @@ class FixtureServer(ThreadingHTTPServer):
         self.org_served = {}
         self.config = dict(checkingPolls=0, retryAfterSeconds=0, streamRefusal=None, failNext=[], slowBody=None,
                            mediaReadyAtOnce=False,
-                           dropPutResponse=0, dropNext=[])
+                           dropPutResponse=0, dropNext=[], dropMoveReply=0, slowMoveCommit=0)
+        # One lock per move plan, held from before a confirmation looks for
+        # its commit record until it has answered.
+        self.plan_locks = {}
         self.started = time.monotonic()
         self.intake = BodyIntake(MAX_BODY_INTAKE_BYTES)
         self.extra_tokens = {}
@@ -3140,6 +3216,35 @@ class FixtureServer(ThreadingHTTPServer):
                     self.config['dropNext'].remove(drop)
                 return True
         return False
+
+    def plan_lock(self, key):
+        """Holds one move plan's lock, as NETT's commit does. A request that
+        must wait for it lets go of the server lock meanwhile, so the commit
+        holding it can finish. Callers hold the server lock."""
+        plan = self.plan_locks.setdefault(key, threading.Lock())
+        server = self
+
+        class Held:
+            def __enter__(self):
+                if not plan.acquire(blocking=False):
+                    server.lock.release()
+                    try:
+                        plan.acquire()
+                    finally:
+                        server.lock.acquire()
+
+            def __exit__(self, *_):
+                plan.release()
+        return Held()
+
+    def wait_unlocked(self, seconds):
+        """Waits without the server lock, as a slow commit's transaction
+        lets other requests run. Callers hold the server lock."""
+        self.lock.release()
+        try:
+            time.sleep(seconds)
+        finally:
+            self.lock.acquire()
 
     def take_slow(self, path):
         """The delay before this answer's body, consumed, or None."""

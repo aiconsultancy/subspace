@@ -137,7 +137,7 @@ class FixtureCase(unittest.TestCase):
         code, value, headers = self.call(method, path, body, **options)
         self.assertEqual(code, status, value)
         self.assertEqual(headers['Content-Type'], 'application/problem+json')
-        self.assertEqual(set(value) - {'currentVersion'}, {'type', 'title', 'status', 'detail'})
+        self.assertEqual(set(value) - {'currentVersion', 'code'}, {'type', 'title', 'status', 'detail'})
         self.assertEqual(value['status'], status)
         return value
 
@@ -1513,7 +1513,8 @@ class MoveTests(StreamCase):
                        reviewContext=preview['reviewContext'], movePreviewToken=preview['token'])
         self.ok('PATCH', '/issues/OPS-4', dict(version=1, priority=1))
         changed = self.org_problem(409, 'PATCH', '/issues/OPS-2', confirm)
-        self.assertIn('Preview the move again', changed['detail'])
+        self.assertIn('Preview it again', changed['detail'])
+        self.assertEqual(changed['code'], 'IssueMove.PlanChanged')
         status, value, _ = self.call('POST', '/__fixture/issues/archive', dict(org=WORKS, issue='OPS-4'), token=None)
         self.assertEqual((status, value['identifier']), (200, 'OPS-4'))
         preview = self.preview()
@@ -1530,6 +1531,117 @@ class MoveTests(StreamCase):
         updated = self.ok('PATCH', '/issues/OPS-1', dict(version=1, priority=1))
         self.assertEqual((updated['priority'], updated['teamKey']), (1, 'OPS'))
         self.org_problem(400, 'PATCH', '/issues/OPS-1', dict(version=2, teamId=WEB))
+
+
+class MoveReplayTests(StreamCase):
+    options = dict(served=('issueMoves', 'issueMoveReplay', 'updates'), stream_seconds=5, keepalive_seconds=0.3)
+
+    def confirmation(self, ref='OPS-2', team=WEB):
+        issue = self.issue(ref)
+        preview = self.ok('POST', f'/issues/{ref}/move-preview', dict(destinationTeamId=team, version=issue['version']))
+        return preview, dict(teamId=team, version=preview['reviewContext']['issueVersion'],
+                             reviewContext=preview['reviewContext'], movePreviewToken=preview['token'])
+
+    def configure(self, **settings):
+        status, value, _ = self.call('POST', '/__fixture/config', settings, token=None)
+        self.assertEqual(status, 200, value)
+
+    def test_the_capability_is_served_only_when_enabled(self):
+        self.assertIn('issueMoveReplay', self.get('/desktop/capabilities')['features'])
+        self.call('POST', '/__fixture/capabilities', dict(org=WORKS, features=['issueMoves']), token=None)
+        preview, confirm = self.confirmation()
+        moved = self.ok('PATCH', '/issues/OPS-2', confirm)
+        self.assertNotIn('move', moved, 'no move object without the capability')
+        self.org_problem(409, 'PATCH', f"/issues/{moved['id']}", confirm)
+
+    def test_a_first_commit_returns_the_move_and_an_identical_confirmation_replays_it(self):
+        preview, confirm = self.confirmation()
+        stream = self.open_stream(keys=('WEB',))
+        self.ready(stream)
+        moved = self.ok('PATCH', '/issues/OPS-2', confirm)
+        move = moved['move']
+        self.assertEqual(set(move), {'token', 'committedAt', 'replayed', 'actorType', 'issues'})
+        self.assertEqual((move['token'], move['replayed'], move['actorType']), (preview['token'], False, 'human'))
+        self.assertEqual([row['id'] for row in move['issues']], [row['id'] for row in preview['issues']])
+        self.assertEqual([row['oldIdentifier'] for row in move['issues']],
+                         [row['oldIdentifier'] for row in preview['issues']])
+        self.assertEqual([row['newIdentifier'] for row in move['issues']], ['WEB-4', 'WEB-5', 'WEB-6'])
+        self.assertEqual(move['issues'][0]['version'], moved['version'])
+        self.records(stream, lambda found: sum(name == 'issueChanged' for name, _ in found) >= 3)
+        activity = len(self.get(f"/issues/{moved['id']}/activity")['items'])
+        # The pre-move version is stale; the replay does not look at it.
+        replayed = self.ok('PATCH', f"/issues/{moved['id']}", confirm)
+        self.assertEqual(replayed['move'], dict(move, replayed=True))
+        self.assertEqual(replayed['identifier'], 'WEB-4')
+        self.assertEqual(len(self.get(f"/issues/{moved['id']}/activity")['items']), activity, 'no new activity')
+        # The stream is idle until its next keep-alive: no event for a replay.
+        after = self.records(stream, lambda found: any(name == ':' for name, _ in found))
+        self.assertEqual([name for name, _ in after if name != ':'], [], 'no event for a replay')
+
+    def test_a_replay_after_a_sub_issue_moved_again_returns_the_rows_as_committed(self):
+        _, confirm = self.confirmation()
+        move = self.ok('PATCH', '/issues/OPS-2', confirm)['move']
+        _, onward = self.confirmation('WEB-5', OPS)
+        self.ok('PATCH', '/issues/WEB-5', onward)
+        self.ok('PATCH', '/issues/WEB-6', dict(version=self.issue('WEB-6')['version'], priority=2))
+        replayed = self.ok('PATCH', f"/issues/{move['issues'][0]['id']}", confirm)['move']
+        self.assertEqual(replayed['issues'], move['issues'])
+
+    def test_without_a_record_a_changed_plan_is_409_and_an_unchanged_one_commits(self):
+        _, confirm = self.confirmation()
+        self.ok('PATCH', '/issues/OPS-4', dict(version=1, priority=1))
+        changed = self.org_problem(409, 'PATCH', '/issues/OPS-2', confirm)
+        self.assertEqual(changed['code'], 'IssueMove.PlanChanged')
+        self.assertEqual(self.issue('OPS-2')['teamKey'], 'OPS', 'nothing moved')
+        _, confirm = self.confirmation()
+        self.assertFalse(self.ok('PATCH', '/issues/OPS-2', confirm)['move']['replayed'])
+
+    def test_a_lost_reply_commits_and_the_retry_replays(self):
+        _, confirm = self.confirmation()
+        self.configure(dropMoveReply=1)
+        with self.assertRaises((http.client.RemoteDisconnected, ConnectionError, OSError)):
+            self.org('PATCH', '/issues/OPS-2', confirm)
+        root = self.issue('WEB-4')
+        self.assertEqual(root['teamKey'], 'WEB', 'the move committed before the reply was lost')
+        replayed = self.ok('PATCH', f"/issues/{root['id']}", confirm)['move']
+        self.assertTrue(replayed['replayed'])
+        self.assertEqual(replayed['issues'][0]['newIdentifier'], 'WEB-4')
+
+    def test_a_replay_during_a_slow_commit_waits_for_it(self):
+        _, confirm = self.confirmation()
+        root = self.issue('OPS-2')['id']
+        self.configure(slowMoveCommit=0.6)
+        with ThreadPoolExecutor(2) as pool:
+            first = pool.submit(self.org, 'PATCH', f'/issues/{root}', confirm)
+            time.sleep(0.2)
+            # Other requests carry on meanwhile.
+            self.assertEqual(self.issue('OPS-1')['identifier'], 'OPS-1')
+            replay = pool.submit(self.org, 'PATCH', f'/issues/{root}', confirm)
+            (code, original, _), (replay_code, replayed, _) = first.result(5), replay.result(5)
+        self.assertEqual((code, replay_code), (200, 200), (original, replayed))
+        self.assertFalse(original['move']['replayed'])
+        self.assertTrue(replayed['move']['replayed'])
+        self.assertEqual(replayed['move']['issues'], original['move']['issues'])
+
+    def test_records_are_scoped_to_the_organisation_and_purged_after_seven_days(self):
+        _, confirm = self.confirmation()
+        root = self.ok('PATCH', '/issues/OPS-2', confirm)['id']
+        # Another organisation never sees the record.
+        other = self.issue('OPS-1', org=SECOND)
+        self.org_problem(409, 'PATCH', f"/issues/{other['id']}",
+                         dict(confirm, teamId=NETT.uid('second/team/OPS')), org=SECOND)
+        status, value, _ = self.call('POST', '/__fixture/moves/age', dict(hours=6 * 24), token=None)
+        self.assertEqual((status, value), (200, dict(records=1)))
+        self.assertTrue(self.ok('PATCH', f'/issues/{root}', confirm)['move']['replayed'])
+        status, value, _ = self.call('POST', '/__fixture/moves/age', dict(hours=25), token=None)
+        self.assertEqual((status, value), (200, dict(records=0)))
+        changed = self.org_problem(409, 'PATCH', f'/issues/{root}', confirm)
+        self.assertEqual(changed['code'], 'IssueMove.PlanChanged')
+
+    def test_the_move_settings_are_bounded(self):
+        for settings in (dict(dropMoveReply=-1), dict(slowMoveCommit=11), dict(slowMoveCommit='1')):
+            status, _, _ = self.call('POST', '/__fixture/config', settings, token=None)
+            self.assertEqual(status, 400, settings)
 
 
 class CapabilityTests(FixtureCase):
@@ -1557,7 +1669,8 @@ class CapabilityTests(FixtureCase):
 
     def test_the_command_line_offers_only_implemented_features(self):
         self.assertEqual(NETT.DESKTOP_FEATURES,
-                         ('initiativeChannels', 'attachments', 'chatUploads', 'issueMoves', 'updates'))
+                         ('initiativeChannels', 'attachments', 'chatUploads', 'issueMoves', 'issueMoveReplay',
+                          'updates'))
         result = subprocess.run([sys.executable, '-I', str(SERVER_PATH), '--port', '0', '--serve', 'repositories'],
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 2)
@@ -1568,7 +1681,8 @@ class ServedCapabilityTests(FixtureCase):
 
     def test_every_eligible_organisation_serves_the_chosen_features(self):
         self.assertEqual(self.get('/desktop/capabilities'),
-                         dict(features=['attachments', 'chatUploads', 'initiativeChannels', 'issueMoves', 'updates']))
+                         dict(features=['attachments', 'chatUploads', 'initiativeChannels', 'issueMoveReplay',
+                                        'issueMoves', 'updates']))
         self.assertEqual(self.get('/desktop/capabilities', org=PERSONAL), dict(features=[]),
                          'a personal organisation without issue tracking is eligible for none')
 
@@ -1582,7 +1696,7 @@ class ServedCapabilityTests(FixtureCase):
         self.org_problem(404, 'GET', '/me/initiatives', org=SECOND)
         self.assertEqual(len(self.get('/me/initiatives')['items']), 4, 'other organisations keep the default')
         self.call('POST', '/__fixture/capabilities', dict(org=SECOND, features=None), token=None)
-        self.assertEqual(len(self.get('/desktop/capabilities', org=SECOND)['features']), 5)
+        self.assertEqual(len(self.get('/desktop/capabilities', org=SECOND)['features']), 6)
         for body in (dict(org=SECOND, features='updates'), dict(org=SECOND, features=['a', 'a']),
                      dict(org=SECOND, features=[''])):
             self.problem(400, 'POST', '/__fixture/capabilities', body, token=None)
