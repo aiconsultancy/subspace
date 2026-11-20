@@ -120,6 +120,10 @@ impl Hub {
         self.initiatives.sync_selection(cx);
         self.initiatives._subscription =
             Some(cx.observe(&self.initiatives.catalog, |hub, _, cx| {
+                // Any change is applied, so a selection that went with its
+                // scope also takes its autojoin with it. Without initiative
+                // channels (a NETT organisation that does not serve them),
+                // nothing new switches network or autojoins.
                 if let Some(focus) = hub.initiatives.sync_selection(cx) {
                     hub.apply_initiative(focus);
                 }
@@ -156,6 +160,7 @@ impl Hub {
             .initiatives
             .selection
             .as_ref()
+            .filter(|_| subspace_api_client::capabilities().initiative_channels)
             .zip(self.configured_initiative_network());
         let intent =
             selection.map(|(initiative, network)| (network, channel_names(&initiative.channels)));

@@ -34,6 +34,16 @@ fn add(
     notice: Option<&'static str>,
     cx: &mut Context<Conversation>,
 ) {
+    // Where the organisation does not serve chat uploads, a paste stays
+    // plain text.
+    if !subspace_api_client::capabilities().chat_uploads {
+        super::error(
+            this,
+            "Your organisation doesn't share files in Channels.",
+            cx,
+        );
+        return;
+    }
     if !this.tray.idle() {
         super::error(this, "Wait for the attachments to send first.", cx);
         return;

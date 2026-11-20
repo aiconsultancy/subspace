@@ -256,3 +256,77 @@ fn an_unresolved_fleet_keeps_autojoin_off_until_its_lookup_succeeds(cx: &mut Tes
         assert!(!catalog.fleet_retry_pending_for_test())
     });
 }
+
+#[gpui_kit::test]
+fn another_organisation_takes_the_initiative_autojoin_with_it(cx: &mut TestAppContext) {
+    const ID: &str = "99469809-1f67-4f56-9d66-47a052e0e92b";
+    let (_board, hub, cx) = mount(cx, settings());
+    let catalog = hub.read_with(cx, |hub, _| hub.initiatives.catalog.clone());
+    catalog.update(cx, |catalog, cx| {
+        catalog.change_scope_for_test(Some(1), cx);
+        catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(catalogue()), cx);
+        catalog.pick(ID, cx);
+    });
+    settle(cx);
+    let joined = Command::SetAutojoin {
+        network: network_id(),
+        channels: Some(vec!["#data".into(), "#forecast".into()]),
+    };
+    hub.read_with(cx, |hub, _| assert!(hub.sent().contains(&joined)));
+    // The same person in another organisation: the selection and its
+    // autojoin go, before anything is read for the new organisation.
+    catalog.update(cx, |catalog, cx| catalog.change_scope_for_test(Some(2), cx));
+    settle(cx);
+    hub.read_with(cx, |hub, _| {
+        assert_eq!(
+            hub.sent().last(),
+            Some(&Command::SetAutojoin {
+                network: network_id(),
+                channels: None,
+            })
+        );
+        assert!(!hub.initiatives.selected_for_runtime());
+    });
+    catalog.read_with(cx, |catalog, _| {
+        assert!(catalog.selected().is_none() && !catalog.has_memberships());
+    });
+}
+
+#[gpui_kit::test]
+fn a_read_in_flight_for_the_old_organisation_never_lands_in_the_new_one(cx: &mut TestAppContext) {
+    const ID: &str = "99469809-1f67-4f56-9d66-47a052e0e92b";
+    let (_board, hub, cx) = mount(cx, settings());
+    let catalog = hub.read_with(cx, |hub, _| hub.initiatives.catalog.clone());
+    catalog.update(cx, |catalog, cx| {
+        catalog.change_scope_for_test(Some(1), cx);
+        catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(catalogue()), cx);
+        catalog.pick(ID, cx);
+    });
+    settle(cx);
+    // Organisation A's read leaves; it is still in flight when the switch
+    // to organisation B retires A's catalogue, and its answer is dropped.
+    catalog.update(cx, |catalog, cx| {
+        catalog.refresh_for_test(
+            Some(1),
+            || (Some("fixture-user".into()), Ok(catalogue())),
+            cx,
+        );
+        catalog.change_scope_for_test(Some(2), cx);
+    });
+    settle(cx);
+    hub.read_with(cx, |hub, _| {
+        assert_eq!(
+            hub.sent().last(),
+            Some(&Command::SetAutojoin {
+                network: network_id(),
+                channels: None,
+            })
+        );
+    });
+    catalog.read_with(cx, |catalog, _| {
+        assert!(!catalog.has_memberships() && catalog.selected().is_none());
+    });
+    hub.read_with(cx, |hub, _| {
+        assert!(!hub.initiatives.selected_for_runtime());
+    });
+}
