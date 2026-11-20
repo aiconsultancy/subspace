@@ -87,12 +87,12 @@ substitute another copy:
 ```sh
 review() (
   d=$(mktemp -d) &&
-  g() { env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_GLOBAL=/dev/null \
+  tg() { env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_GLOBAL=/dev/null \
     GIT_CONFIG_NOSYSTEM=1 git "$@"; } &&
-  g init -q --bare --template= "$d/r.git" &&
-  g -C "$d/r.git" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
+  tg init -q --bare --template= "$d/r.git" &&
+  tg -C "$d/r.git" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
     fetch -q https://github.com/aiconsultancy/subspace.git main &&
-  g -C "$d/r.git" show FETCH_HEAD:scripts/review-pr.sh > "$d/review-pr.sh" &&
+  tg -C "$d/r.git" show FETCH_HEAD:scripts/review-pr.sh > "$d/review-pr.sh" &&
   test -s "$d/review-pr.sh" && bash "$d/review-pr.sh" "$@"
 )
 review --pr <number>                          # the pushed head
