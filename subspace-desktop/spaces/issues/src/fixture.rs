@@ -5,6 +5,9 @@ use subspace_framework::core::Secret;
 /// Client::new reads the same debug override, including the private
 /// SUBSPACE_API_ACCESS_JWT_FILE assertion, and validates the loopback origin.
 pub(crate) fn from_env() -> Option<(Hub, String)> {
+    if subspace_api_client::backend() != subspace_api_client::Backend::Subspace {
+        return None;
+    }
     let api = std::env::var("SUBSPACE_API_URL").ok();
     let origin = fixture_from_env(true, api.as_deref())?;
     let client = Client::new().ok()?;

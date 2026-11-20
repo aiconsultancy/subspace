@@ -21,6 +21,10 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 pub(super) fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
+/// A fresh ID for an attachment row, shared with the Attachments panel.
+pub(in crate::hub) fn next_attachment_id() -> String {
+    next_id().to_string()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttachmentState {
@@ -39,6 +43,10 @@ pub struct Attachment {
 }
 struct Row {
     id: String,
+    /// The comment draft's NETT media draft.
+    media_draft: String,
+    /// The NETT reservation's request key, once an upload has started.
+    request_key: Option<String>,
     declaration: ImageDeclaration,
     bytes: Arc<[u8]>,
     state: AttachmentState,
@@ -186,6 +194,8 @@ impl Hub {
         let image = Attachment {
             inner: Arc::new(Mutex::new(Row {
                 id: next_id().to_string(),
+                media_draft: draft.media_draft.clone(),
+                request_key: None,
                 declaration,
                 bytes,
                 state: AttachmentState::Preparing,

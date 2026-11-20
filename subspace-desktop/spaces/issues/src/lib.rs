@@ -19,6 +19,7 @@ pub mod markdown;
 mod media;
 mod model;
 mod navigation;
+mod organisation;
 mod palette;
 mod pickers;
 mod project_move;
@@ -110,6 +111,10 @@ pub struct Issues {
     /// The selected line while the board is hidden and holds no rows,
     /// selected again when the hub's snapshot rebuilds them.
     hidden_selection: Option<SharedString>,
+    /// The hub's scope epoch last seen: a change reads initiatives again.
+    scope_epoch: u64,
+    /// Why the last attachment could not be added or saved.
+    attachment_error: Option<String>,
     /// How changes made elsewhere reach the board.
     live: subspace_api_client::hub::LiveStatus,
     /// The hub's name for the profile, such as *Subspace API fixture*.

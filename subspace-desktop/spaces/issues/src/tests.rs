@@ -227,6 +227,7 @@ pub(crate) fn choice(tab: Tab, search: &str, sub_issues: SubIssues) -> Request {
         search: search.into(),
         sub_issues,
         filters: Default::default(),
+        initiative: None,
     })
 }
 

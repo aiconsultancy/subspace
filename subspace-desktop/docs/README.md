@@ -168,6 +168,10 @@ shared quick-start fragments live in `subspace/includes/`.
 - [Subspace API, accounts and fleets](changes/subspace-api-accounts/README.md):
   the Issues client, provider-neutral sign-in, initiative and fleet switching
   in Channels, and what came across from a downstream fork.
+- [NETT backend design](changes/nett-backend/design.md): a second desktop
+  build with NETT as its tracker, device-flow sign-in, its own organisation
+  scope, NETT's update stream and features gated on what NETT serves.
+  NETT-side prerequisites are tracked in the Indra repository.
 If you want to know why something was built the way it was, read its change
 record. [Change records](changes/README.md) explains the convention.
 

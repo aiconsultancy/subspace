@@ -30,6 +30,7 @@ impl Hub {
     pub fn reload_issue(&self) -> Result<(), HubError> {
         let mut state = lock(&self.0.state);
         state.running()?;
+        self.0.resume_nett();
         self.0.refresh_open_issue(&mut state);
         Ok(())
     }
@@ -134,10 +135,13 @@ impl Shared {
         issue.relations_failed = false;
         issue.pull_requests.loading = false;
         issue.pull_requests.error = None;
+        issue.todos.loading = false;
         issue.decisions.pause();
         issue.timeline.loading = false;
         issue.images = Default::default();
-        issue.files = Default::default();
+        // Uploads in progress are kept through a refresh of the same
+        // opening: their transfers may already hold stored bytes.
+        issue.files.clear_keeping_uploads();
         let identifier = issue.identifier.clone();
         state.issue_revision = state.issue_revision.wrapping_add(1);
         state.changed();

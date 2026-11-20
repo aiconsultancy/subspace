@@ -92,11 +92,11 @@ pub(crate) fn evidence(kind: DecisionEvidenceKind) -> &'static str {
     }
 }
 
-pub(crate) fn failure(error: &ReadError, fallback: &'static str) -> &'static str {
+pub(crate) fn failure(error: &ReadError, fallback: &'static str) -> String {
     match error {
-        ReadError::Network => scope::NETWORK_MESSAGE,
-        ReadError::SignInNeeded => scope::SIGN_IN_MESSAGE,
-        _ => fallback,
+        ReadError::Network => scope::network_message(),
+        ReadError::SignInNeeded => scope::SIGN_IN_MESSAGE.to_owned(),
+        _ => fallback.to_owned(),
     }
 }
 
@@ -104,14 +104,27 @@ pub(crate) fn offline(tokens: &Tokens, id: &'static str) -> Div {
     notice(tokens, id, "Offline").child(feedback::empty_line(
         tokens,
         format!("{id}-hint"),
-        scope::NETWORK_MESSAGE,
+        scope::network_message(),
     ))
 }
 
-pub(crate) fn notice(tokens: &Tokens, id: &'static str, message: &'static str) -> Div {
-    div().child(div().id(id).aria_label(message).test_support().child(
-        subspace_framework::dashboard::feedback::empty_line(tokens, format!("{id}-text"), message),
-    ))
+pub(crate) fn notice(
+    tokens: &Tokens,
+    id: &'static str,
+    message: impl Into<gpui_kit::SharedString>,
+) -> Div {
+    let message = message.into();
+    div().child(
+        div()
+            .id(id)
+            .aria_label(message.clone())
+            .test_support()
+            .child(subspace_framework::dashboard::feedback::empty_line(
+                tokens,
+                format!("{id}-text"),
+                message,
+            )),
+    )
 }
 
 pub(crate) fn retry(

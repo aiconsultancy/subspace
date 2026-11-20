@@ -17,12 +17,25 @@ impl Client {
         if !declaration.unchanged(bytes) {
             return Err(UploadError::InvalidImage);
         }
+        if self.backend == crate::Backend::Nett {
+            let key = uuid::Uuid::new_v4().to_string();
+            return self
+                .nett_upload_attachment(issue, &key, declaration, bytes)
+                .result;
+        }
+        if !self.backend_supports_uploads() {
+            return Err(UploadError::Refused {
+                status: 501,
+                retry_after: 0,
+            });
+        }
         let route = if declaration.is_image() {
             "images"
         } else {
             "attachments"
         };
-        let url = transport::endpoint(&self.base, &["issues", issue, route], &[])
+        let url = self
+            .endpoint(&["issues", issue, route], &[])
             .map_err(|_| UploadError::Removed)?;
         let (boundary, body) = multipart(declaration, bytes);
         let response = self.media_write(
@@ -48,7 +61,83 @@ impl Client {
             .ok_or(UploadError::Checking)
     }
 
+    fn backend_supports_uploads(&self) -> bool {
+        self.serves(crate::backend::Feature::Attachments)
+    }
+
+    /// A standalone attachment on the issue. On NETT `request_key` names the
+    /// reservation, and the attempt says which transfer it reserved and
+    /// whether its bytes may have been stored.
+    pub fn upload_issue_attachment(
+        &self,
+        issue: &str,
+        request_key: &str,
+        declaration: &ImageDeclaration,
+        bytes: &[u8],
+    ) -> super::AttachmentAttempt {
+        if !declaration.unchanged(bytes) {
+            return super::AttachmentAttempt {
+                result: Err(UploadError::InvalidImage),
+                ..super::AttachmentAttempt::default()
+            };
+        }
+        if self.backend == crate::Backend::Nett {
+            return self.nett_upload_attachment(issue, request_key, declaration, bytes);
+        }
+        super::AttachmentAttempt {
+            result: self.upload_attachment(issue, declaration, bytes),
+            ..super::AttachmentAttempt::default()
+        }
+    }
+
+    /// Completes a standalone transfer whose bytes may have been stored.
+    /// `None` means it was refused for good and nothing was stored.
+    pub fn complete_issue_attachment(
+        &self,
+        issue: &str,
+        transfer: &str,
+        declaration: &ImageDeclaration,
+    ) -> Result<Option<IssueMedia>, UploadError> {
+        if self.backend != crate::Backend::Nett {
+            return Err(UploadError::Checking);
+        }
+        self.nett_complete_attachment(issue, transfer, declaration)
+    }
+
+    /// Cancels a standalone reservation that was not completed; best effort.
+    pub fn cancel_issue_attachment(&self, issue: &str, transfer: &str) {
+        if self.backend == crate::Backend::Nett {
+            self.nett_cancel_attachment(issue, transfer);
+        }
+    }
+
+    /// An image or file for a comment draft. NETT keeps it as managed media
+    /// for the draft `draft`, which the comment claims when it is posted;
+    /// Subspace API stores it as an issue attachment. `request_key` lets a
+    /// check find this upload again.
+    pub fn upload_comment_media(
+        &self,
+        issue: &str,
+        (draft, request_key): (&str, &str),
+        declaration: &ImageDeclaration,
+        bytes: &[u8],
+    ) -> Result<IssueMedia, UploadError> {
+        if !declaration.unchanged(bytes) {
+            return Err(UploadError::InvalidImage);
+        }
+        if self.backend == crate::Backend::Nett {
+            return self.nett_upload_comment_media(issue, draft, request_key, declaration, bytes);
+        }
+        self.upload_attachment(issue, declaration, bytes)
+    }
+
     pub fn delete_media(&self, media: &IssueMedia) -> Result<(), UploadError> {
+        if self.backend == crate::Backend::Nett {
+            return self.nett_delete_media(media);
+        }
+        if !self.backend_supports_uploads() {
+            return Err(UploadError::Cleanup);
+        }
         let (method, path) = if media.kind == "image" {
             (
                 "POST",
@@ -60,7 +149,9 @@ impl Client {
                 vec!["issues", "attachments", media.media_id.as_str()],
             )
         };
-        let url = transport::endpoint(&self.base, &path, &[]).map_err(|_| UploadError::Removed)?;
+        let url = self
+            .endpoint(&path, &[])
+            .map_err(|_| UploadError::Removed)?;
         let response = self.media_write(method, &url, "application/json", b"{}")?;
         transport::read_json::<bool>(response)
             .map(|_| ())

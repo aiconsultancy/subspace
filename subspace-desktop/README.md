@@ -115,6 +115,37 @@ Example build config for a hosted API with WorkOS:
 }
 ```
 
+### A NETT build
+
+Set `api_backend` to `nett` to build the app against NETT instead of Subspace
+API. NETT is then the only tracker: Issues uses NETT's issue teams inside a
+NETT organisation. Features NETT adds release by release, such as initiative
+channels, chat uploads, standalone attachments, issue moves and live
+updates, turn on when NETT lists them for the selected organisation, and
+stay hidden until then. The build needs `nett_api_url` (run-time
+`SUBSPACE_NETT_API_URL`), `identity_provider: "workos"` and the NETT
+environment's `workos_client_id`. It signs in with WorkOS device
+authorisation: the browser shows a code, and **Settings > Account** shows the
+same code to check. A NETT build refuses `api_url`, `workos_redirect_port`
+and the `dev_` and `entra_` settings, and will not start while any of
+`SUBSPACE_API_URL`, `SUBSPACE_API_ACCESS_JWT_FILE`,
+`SUBSPACE_WORKOS_REDIRECT_PORT`, `SUBSPACE_DEV_*` or `SUBSPACE_ENTRA_*` is
+set. A Subspace build likewise refuses `SUBSPACE_NETT_API_URL`. Keep the file
+outside the repository:
+
+```json
+{
+  "api_backend": "nett",
+  "nett_api_url": "https://api.nett.example",
+  "identity_provider": "workos",
+  "workos_client_id": "client_00000000000000000000000000"
+}
+```
+
+`scripts/nett-api-test-server.sh` runs a loopback NETT mock for local work.
+See the [NETT backend design](docs/changes/nett-backend/design.md) for what a
+NETT build gates on NETT's capability list and what it leaves out.
+
 Channels uses the IRC connections in **Settings > Channels**. An initiative's
 channels go to the connection on its fleet's IRC server; initiatives without a
 fleet use `SUBSPACE_IRC_ENDPOINT` (`irc://host:port` or `ircs://host:port`),

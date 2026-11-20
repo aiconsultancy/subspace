@@ -17,6 +17,7 @@ subspace-issues-board = { path = "../../spaces/issues" }
 subspace-web-board = { path = "../../spaces/web" }
 subspace-descriptor.workspace = true
 subspace-terminal-panel = { path = "../../terminal/panel", optional = true }
+url.workspace = true
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 subspace-board-lab-board = { path = "../../spaces/board-lab" }
@@ -42,13 +43,14 @@ subspace-descriptor.workspace = true
 embed-resource = "3"
 serde.workspace = true
 serde_json.workspace = true
+url.workspace = true
 uuid.workspace = true
 
-# The build script's config reader, `build/branding.rs`, is included with
-# `#[path]` by `build.rs` and by the app's tests, which cargo-shear does not
-# follow.
+# The build script's config reader, `build/branding.rs`, and the shared
+# setting rules, `build/settings.rs`, are included with `#[path]` by
+# `build.rs` and by the app, which cargo-shear does not follow.
 [package.metadata.cargo-shear]
-ignored = ["serde", "serde_json", "uuid"]
+ignored = ["serde", "serde_json", "url", "uuid"]
 
 [lints]
 workspace = true

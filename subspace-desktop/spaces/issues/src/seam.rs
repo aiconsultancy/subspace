@@ -52,6 +52,15 @@ impl Issues {
             self.forget(cx);
             return;
         }
+        // A NETT hub restarts for another organisation with the same user,
+        // so its initiatives are read again here rather than on a new identity.
+        if self
+            .hub
+            .as_ref()
+            .is_some_and(|hub| hub.service() == subspace_api_client::Backend::Nett)
+        {
+            crate::initiative::refresh(self, cx);
+        }
         self.read_visible(cx);
     }
 
@@ -163,6 +172,13 @@ impl Issues {
                 self.initiatives
                     .update(cx, |catalog, cx| catalog.observe_identity(identity, cx));
             }
+            if snapshot.scope_epoch() != self.scope_epoch {
+                // The update stream closed and NETT's capability list was
+                // read again; authority may have changed with it.
+                self.scope_epoch = snapshot.scope_epoch();
+                self.initiatives
+                    .update(cx, |catalog, cx| catalog.refresh(cx));
+            }
             self.follow_editor(&snapshot, cx);
             self.follow_issue(&snapshot, cx);
             self.follow_media(&snapshot, cx);
@@ -183,8 +199,12 @@ impl Issues {
             self.show_status(view.status, cx);
             return;
         }
-        let previous_list =
-            view.groups.is_some() && view.list_project.as_deref() != Some(self.project.key());
+        // The hub names no team for All teams, as the list query does.
+        let listed = match &self.project {
+            crate::model::ProjectScope::Project(key) => Some(key.as_str()),
+            crate::model::ProjectScope::AllProjects => None,
+        };
+        let previous_list = view.groups.is_some() && view.list_project.as_deref() != listed;
         if self.initiative_id.is_some() && (self.project != previous || previous_list) {
             return;
         }
@@ -322,6 +342,8 @@ impl Issues {
             Request::MoreSubissues => hub.load_more_subissues(),
             Request::MoreRelations => hub.load_more_relations(),
             Request::MorePullRequests => hub.load_more_pull_requests(),
+            Request::SetTodo { item, done } => hub.set_todo_done(&item, done),
+            Request::RetryTodos => hub.reload_todos(),
             Request::OpenTimeline(goal) => hub.activate_timeline(goal),
             Request::MoreTimeline(goal) => hub.load_more_timeline(goal),
             Request::RetryTimeline(goal) => hub.retry_timeline(goal),

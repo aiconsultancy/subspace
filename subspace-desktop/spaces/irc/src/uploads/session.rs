@@ -53,6 +53,7 @@ impl Session {
         self.checked = Some(Instant::now());
     }
     pub(crate) fn connect(&mut self) {
+        // The client refuses chat uploads where the organisation does not serve them.
         self.client = Client::new().ok().map(Arc::new);
     }
     pub(crate) fn scope(&self) -> Option<Scope> {

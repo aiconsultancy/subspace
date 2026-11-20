@@ -33,4 +33,16 @@ impl Hub {
         self.require_issue_scope(scope)?;
         result
     }
+    /// Checks a NETT move whose confirmation went unanswered, reading every
+    /// previewed issue again without sending the move.
+    pub fn verify_issue_move(
+        &self,
+        scope: &IssueWriteScope,
+        preview: &MovePreview,
+    ) -> Result<MoveResult, IssueSaveError> {
+        self.require_issue_scope(scope)?;
+        let result = self.0.client.verify_issue_move(preview);
+        self.require_issue_scope(scope)?;
+        result
+    }
 }

@@ -32,6 +32,8 @@ pub enum Error {
     InvalidResponse,
     #[error("The requested selector, origin or page is invalid.")]
     InvalidRequest,
+    #[error("Choose an organisation from the Organisation menu in Issues.")]
+    OrganisationNeeded,
 }
 
 pub(crate) fn endpoint(
@@ -67,12 +69,29 @@ pub(crate) fn validate_segments<'a>(segments: impl Iterator<Item = &'a str>) -> 
 
 #[cfg(any(debug_assertions, feature = "test-support"))]
 pub(crate) fn agent_for(base: &Url) -> ureq::Agent {
+    agent_with_flow(base, None)
+}
+
+/// The loopback agent, and for a NETT client also NETT's flow control for
+/// `account`.
+#[cfg(any(debug_assertions, feature = "test-support"))]
+pub(crate) fn agent_with_flow(base: &Url, flow: Option<u64>) -> ureq::Agent {
     #[cfg(debug_assertions)]
     if crate::fixture::loopback_url(base.as_str()).is_ok() {
         // A separate pool prevents a loopback assertion reaching an environment proxy.
         return ureq::Agent::config_builder()
             .proxy(None)
             .http_status_as_error(false)
+            .middleware(
+                move |mut request: ureq::http::Request<ureq::SendBody>,
+                      next: ureq::middleware::MiddlewareNext| {
+                    crate::nett::add_organisation_header(&mut request);
+                    match flow {
+                        Some(account) => crate::nett::flow::through(account, request, next),
+                        None => next.handle(request),
+                    }
+                },
+            )
             .tls_config(
                 subspace_framework::core::http::agent()
                     .config()
@@ -82,7 +101,7 @@ pub(crate) fn agent_for(base: &Url) -> ureq::Agent {
             .build()
             .into();
     }
-    let _ = base;
+    let _ = (base, flow);
     subspace_framework::core::http::agent().clone()
 }
 

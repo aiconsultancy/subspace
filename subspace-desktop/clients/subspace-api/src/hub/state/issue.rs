@@ -14,6 +14,9 @@ pub enum IssueStatus {
 /// Memory-only open issue, independent of the list and IRC projection.
 #[derive(Clone)]
 pub struct IssueSnapshot {
+    /// Which opening of the issue this is: a refresh keeps it, closing and
+    /// opening the issue again starts another.
+    pub(in crate::hub) opening: u64,
     pub(in crate::hub) identifier: String,
     pub(in crate::hub) profile_id: String,
     pub(in crate::hub) status: IssueStatus,
@@ -29,6 +32,7 @@ pub struct IssueSnapshot {
     /// continuation applies only to the epoch it was asked for.
     pub(in crate::hub) epochs: Epochs,
     pub(in crate::hub) pull_requests: crate::hub::pull_requests::PullRequests,
+    pub(in crate::hub) todos: crate::hub::todos::Todos,
     pub(in crate::hub) decisions: crate::hub::decisions::IssueDecisions,
     pub(in crate::hub) decision: crate::hub::decision::Slot,
     pub(in crate::hub) timeline: TimelineSnapshot,
@@ -48,6 +52,24 @@ impl IssueSnapshot {
     }
     pub fn pull_requests_unavailable(&self) -> bool {
         self.pull_requests.unavailable
+    }
+    /// The issue's to-do lists, once read. NETT only.
+    pub fn todos(&self) -> Option<&[crate::hub::TodoListView]> {
+        self.todos.lists.as_deref()
+    }
+    pub fn todos_loading(&self) -> bool {
+        self.todos.loading
+    }
+    pub fn todos_failed(&self) -> bool {
+        self.todos.failed
+    }
+    /// What happened to the last to-do change, when it needs saying.
+    pub fn todo_notice(&self) -> Option<&'static str> {
+        self.todos.notice
+    }
+    /// Whether a change to this item is being saved.
+    pub fn todo_saving(&self, item: &str) -> bool {
+        self.todos.saving.contains_key(item)
     }
     // qual:allow(dry, boilerplate) reason: "Readers preserve the immutable snapshot boundary."
     pub fn images(&self) -> &crate::hub::ImagesSnapshot {
@@ -72,7 +94,9 @@ impl IssueSnapshot {
     }
 
     pub(in crate::hub) fn new(identifier: &str, profile_id: &str, status: IssueStatus) -> Self {
+        static OPENINGS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self {
+            opening: OPENINGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             identifier: identifier.into(),
             profile_id: profile_id.into(),
             status,
@@ -86,6 +110,7 @@ impl IssueSnapshot {
             relations_failed: false,
             epochs: Epochs::default(),
             pull_requests: Default::default(),
+            todos: Default::default(),
             decisions: Default::default(),
             decision: Default::default(),
             timeline: TimelineSnapshot::default(),

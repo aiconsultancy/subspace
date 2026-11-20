@@ -251,9 +251,12 @@ The Framework ships two providers, both public clients with no secret,
 using the system browser, PKCE and a loopback redirect:
 `entra_auth::SessionManager` (Microsoft Entra; tenant, client, authority and
 API scopes from `entra_auth::Config`) and `workos_auth::SessionManager`
-(WorkOS AuthKit; client ID and API origin from `workos_auth::Config`). An app
-can implement `Provider` for anything else, such as a local development
-issuer. Nothing in the Framework names a tenant, client or API.
+(WorkOS AuthKit; client ID and API origin from `workos_auth::Config`). The
+WorkOS provider can use device authorisation instead
+(`Config::with_device_authorization`): the browser shows a code the person
+confirms, Settings › Account shows the same code, and no loopback redirect is
+needed. An app can implement `Provider` for anything else, such as a local
+development issuer. Nothing in the Framework names a tenant, client or API.
 
 More: the [documentation index](docs/README.md), starting with
 [What the Framework gives a board](docs/board-integration.md),

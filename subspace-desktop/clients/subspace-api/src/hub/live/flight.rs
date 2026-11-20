@@ -32,6 +32,11 @@ impl Flight {
         true
     }
 
+    /// Whether a read is out, or one more is owed after it.
+    pub(in crate::hub) fn pending(&self) -> bool {
+        self.busy.is_some() || self.again
+    }
+
     /// The read out no longer covers what is shown: one more is owed.
     pub(in crate::hub) fn owe(&mut self) {
         self.again = true;

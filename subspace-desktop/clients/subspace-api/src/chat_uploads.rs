@@ -27,7 +27,13 @@ pub struct Upload {
     pub uploaded_by_user_id: String,
     pub created_at: String,
     pub expires_at: String,
+    /// Subspace API's content link. NETT gives none: its files are read
+    /// through grants.
+    #[serde(default)]
     pub url: String,
+    /// NETT's version, needed to delete the upload.
+    #[serde(default)]
+    pub version: u32,
 }
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]

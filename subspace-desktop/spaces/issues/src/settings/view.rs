@@ -13,7 +13,7 @@ impl Render for IssuesSettings {
             .id("issues-settings")
             .test_support()
             .gap_2()
-            .child(fields::heading("Subspace API", cx))
+            .child(fields::heading(subspace_api_client::service_name(), cx))
             .child(fields::note_with(
                 &tokens,
                 self.address.clone(),

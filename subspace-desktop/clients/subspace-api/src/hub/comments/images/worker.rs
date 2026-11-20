@@ -46,7 +46,14 @@ fn run(
         }
         return Ok(());
     }
-    let before = scan(&shared.client, &key.issue).map_err(|_| UploadError::Network)?;
+    // NETT finds an uncertain upload again by its request key; Subspace API
+    // by what is new on the issue since this upload began.
+    let nett = shared.client.service() == crate::Backend::Nett;
+    let before = if nett {
+        Vec::new()
+    } else {
+        scan(&shared.client, &key.issue).map_err(|_| UploadError::Network)?
+    };
     if !lock(&shared.state).current(generation) {
         return Err(UploadError::Removed);
     }
@@ -55,6 +62,9 @@ fn run(
         row.existing = Some(before.into_iter().map(|media| media.media_id).collect());
         if row.removed {
             return Ok(());
+        }
+        if nett {
+            row.request_key = Some(uuid::Uuid::new_v4().to_string());
         }
         row.state = AttachmentState::Uploading;
     }
@@ -67,13 +77,21 @@ fn run(
 }
 
 fn send(shared: &Shared, key: &DraftKey, image: &Attachment) -> Result<(), UploadError> {
-    let (declaration, bytes) = {
+    let (declaration, bytes, draft, request_key) = {
         let row = lock(&image.inner);
-        (row.declaration.clone(), row.bytes.clone())
+        (
+            row.declaration.clone(),
+            row.bytes.clone(),
+            row.media_draft.clone(),
+            row.request_key.clone().unwrap_or_default(),
+        )
     };
-    let result = shared
-        .client
-        .upload_attachment(&key.issue, &declaration, &bytes);
+    let result = shared.client.upload_comment_media(
+        &key.issue,
+        (&draft, &request_key),
+        &declaration,
+        &bytes,
+    );
     {
         let mut row = lock(&image.inner);
         match result {

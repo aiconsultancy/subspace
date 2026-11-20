@@ -73,6 +73,9 @@ fn scope(board: &Irc, cx: &App) -> String {
 }
 
 fn initiative_hint(board: &Irc, cx: &App) -> Option<String> {
+    if !subspace_api_client::capabilities().initiative_channels {
+        return None;
+    }
     let hub = board.hub.as_ref()?.read(cx);
     let catalog = hub.initiatives.catalog.read(cx);
     if catalog.has_memberships()
@@ -87,6 +90,12 @@ fn initiative_hint(board: &Irc, cx: &App) -> Option<String> {
 /// connection, including while the selected one's server has none, so
 /// another initiative can be chosen.
 fn catalog<'a>(board: &'a Irc, cx: &'a App) -> Option<&'a Catalog> {
+    // Where the organisation does not serve initiative channels and fleets,
+    // Channels uses its configured connections and offers no initiative
+    // choice.
+    if !subspace_api_client::capabilities().initiative_channels {
+        return None;
+    }
     let hub = board.hub.as_ref()?.read(cx);
     let catalog = hub.initiatives.catalog.read(cx);
     (catalog.has_memberships() && hub.serves_any_initiative(catalog.memberships()))

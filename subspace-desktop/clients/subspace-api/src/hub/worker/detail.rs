@@ -8,7 +8,15 @@ use crate::{Error, IssueQuery, PageRequest, hub::IssueStatus};
 use std::time::Instant;
 
 pub(super) fn load(shared: &Shared, job: &Job, identifier: &str) {
+    let sent = Instant::now();
     let result = shared.client.issue(identifier);
+    // A NETT token refused before it expires is renewed, and the issue
+    // read again, instead of reported.
+    if let Err(error) = result
+        && !crate::hub::renewal::stands(shared, job.generation, sent, error)
+    {
+        return;
+    }
     if let Ok(detail) = &result {
         _ = super::connection::ensure_states(shared, job, &detail.fields.project_key);
     }
@@ -36,6 +44,7 @@ fn publish(
                     issue.updated_at = None;
                     issue.timeline.reset();
                     issue.pull_requests = Default::default();
+                    issue.todos = Default::default();
                     issue.decisions = Default::default();
                     issue.decision = Default::default();
                 }
@@ -67,6 +76,7 @@ fn publish(
             crate::hub::ReadPriority::Visible,
         );
         milestone::queue(shared, &mut state);
+        crate::hub::todos::queue(shared, &mut state);
         crate::hub::decisions::resume(shared, &mut state);
         crate::hub::decision::resume_pending(shared, &mut state);
     }

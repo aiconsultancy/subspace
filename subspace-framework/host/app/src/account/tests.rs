@@ -91,6 +91,7 @@ fn signed_in(
         retry: Retry::Restore,
         cancel: None,
         url: None,
+        code: None,
         run: 0,
     });
     cx.update(|cx| cx.set_global(Shared(entity.clone())));
