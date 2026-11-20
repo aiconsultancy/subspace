@@ -61,9 +61,8 @@ pub(crate) struct Launch {
     pub entra_client_id: String,
     pub entra_authority: String,
     pub entra_api_scope: String,
-    pub dev_email: String,
-    pub dev_name: String,
-    pub dev_organisation: String,
+    /// Who the local dev issuer signs in.
+    pub dev_user: subspace_api_client::DevUser,
 }
 
 /// Resolves the launch from the stamped settings and the run's variables,
@@ -97,30 +96,15 @@ pub(crate) fn resolve(
         entra_client_id: value(ENTRA_CLIENT_ID, stamped.entra_client_id),
         entra_authority: value(ENTRA_AUTHORITY, stamped.entra_authority),
         entra_api_scope: value(ENTRA_API_SCOPE, stamped.entra_api_scope),
-        dev_email: value(DEV_EMAIL, stamped.dev_email),
-        dev_name: value(DEV_NAME, stamped.dev_name),
-        dev_organisation: value(DEV_ORGANISATION, stamped.dev_organisation),
+        dev_user: subspace_api_client::DevUser {
+            email: value(DEV_EMAIL, stamped.dev_email),
+            name: value(DEV_NAME, stamped.dev_name),
+            organisation: value(DEV_ORGANISATION, stamped.dev_organisation),
+        },
     };
     match backend {
         ApiBackend::Subspace => {
-            if variables
-                .get(NETT_API_URL)
-                .is_some_and(|url| !url.trim().is_empty())
-            {
-                return Err(format!(
-                    "This Subspace API build does not use NETT settings. Unset {NETT_API_URL} and start again."
-                ));
-            }
-            if !launch.api_url.is_empty() && !valid_api_url(&launch.api_url) {
-                return Err(subspace_url_error());
-            }
-            // The build refuses an invalid WorkOS client, and so does a run
-            // that overrides it: a bad ID fails here, not at sign-in.
-            if launch.provider == "workos" && !valid_workos_client_id(&launch.workos_client_id) {
-                return Err(format!(
-                    "The workos provider requires a WorkOS client ID (workos_client_id or {WORKOS_CLIENT_ID}), such as client_01ABC."
-                ));
-            }
+            check_subspace(&launch, &variables)?;
             launch.nett_api_url.clear();
         }
         ApiBackend::Nett => {
@@ -129,6 +113,30 @@ pub(crate) fn resolve(
         }
     }
     Ok(launch)
+}
+
+/// A Subspace API build's rules: no NETT API URL, a valid Subspace API URL
+/// when one is set, and a valid client ID when it signs in with WorkOS.
+fn check_subspace(launch: &Launch, variables: &BTreeMap<String, String>) -> Result<(), String> {
+    if variables
+        .get(NETT_API_URL)
+        .is_some_and(|url| !url.trim().is_empty())
+    {
+        return Err(format!(
+            "This Subspace API build does not use NETT settings. Unset {NETT_API_URL} and start again."
+        ));
+    }
+    if !launch.api_url.is_empty() && !valid_api_url(&launch.api_url) {
+        return Err(subspace_url_error());
+    }
+    // The build refuses an invalid WorkOS client, and so does a run that
+    // overrides it: a bad ID fails here, not at sign-in.
+    if launch.provider == "workos" && !valid_workos_client_id(&launch.workos_client_id) {
+        return Err(format!(
+            "The workos provider requires a WorkOS client ID (workos_client_id or {WORKOS_CLIENT_ID}), such as client_01ABC."
+        ));
+    }
+    Ok(())
 }
 
 /// A NETT build's rules: no Subspace-only variable, the WorkOS provider or

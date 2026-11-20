@@ -29,7 +29,7 @@ const SETTINGS_EXTENSIONS: &[subspace_framework::shell::SettingsExtension] =
     .with_github_credentials()];
 
 fn main() -> ExitCode {
-    if let Err(message) = identity::configure_backend() {
+    if let Err(message) = identity::configure_backend(identity::variables()) {
         eprintln!("{message}");
         return ExitCode::FAILURE;
     }
