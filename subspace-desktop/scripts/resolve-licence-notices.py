@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 
@@ -16,6 +17,31 @@ FALLBACK = re.compile(
     r"falling back to canonical text"
 )
 CRATES_IO = "registry+https://github.com/rust-lang/crates.io-index"
+# ort-sys 2.0.0-rc.15 reads these in build/ and src/internal/dirs.rs.
+ORT_OVERRIDES = {
+    "ORT_LIB_PATH", "ORT_LIB_LOCATION", "ORT_LIB_PROFILE", "ORT_VCPKG_TARGET",
+    "ORT_IOS_XCFWK_PATH", "ORT_IOS_XCFWK_LOCATION", "ORT_EXT_IOS_XCFWK_PATH",
+    "ORT_EXT_IOS_XCFWK_LOCATION", "ORT_PREFER_DYNAMIC_LINK", "ORT_SKIP_DOWNLOAD",
+    "ORT_OFFLINE", "ORT_CXX_STDLIB", "CXXSTDLIB", "ORT_CUDA_VERSION", "CUDA_HOME",
+    "NV_CUDA_CUDART_VERSION", "ORT_CACHE_DIR", "DOCS_RS",
+}
+# cargo-about 0.9.3 uses these exact spdx 0.13.6 texts as fallbacks. A
+# source-backed first entry can hide the fallback in a merged text group.
+CANONICAL_SPDX = {
+    "0BSD": "e3f18c71e10d673590eb9856c1d79dd3b4b0d65404efb5e8584dbede7edd608b",
+    "Apache-2.0": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
+    "BSD-2-Clause": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df",
+    "BSD-3-Clause": "5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d",
+    "BSL-1.0": "84c6ef3ea9e3254a54d0acf5d3e0c61ae011b8fef7dd6940591cf060e6380a8f",
+    "CC0-1.0": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+    "ISC": "521c6f0ed8e64736684f89843d16a4df6b4b7449acbcfc6ca6630a3037ca8c53",
+    "MIT": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5",
+    "MIT-0": "59746d6285ffa44bfc7ecada352aa5d6a20dc8eab418a60ce091cc739012c135",
+    "MPL-2.0": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172",
+    "Unicode-3.0": "f7db81051789b729fea528a63ec4c938fdcb93d9d61d97dc8cc2e9df6d47f2a1",
+    "Unicode-DFS-2016": "1a33fc12a3abb0b3eb14db70e36ef1d0af51c93b1cc1f80f022c3bd406e9b874",
+    "Zlib": "bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d",
+}
 
 
 def crate_name(package):
@@ -67,19 +93,18 @@ def linked_packages(tree, packages):
 def has_own_text(licence, package):
     # cargo-about merges byte-identical texts and only records the first
     # source path, which may be null even when another crate supplies a file.
-    directory = Path(package["manifest_path"]).parent
-    if licence["source_path"] and Path(licence["source_path"]).parent == directory:
-        return True
+    directory = Path(package["manifest_path"]).parent.resolve()
     contents = licence["text"].encode("utf-8")
-    for file in directory.glob("*"):
-        if (
-            file.name.upper().startswith(("LICENSE", "LICENCE", "COPYING"))
-            and file.is_file()
-            and file.stat().st_size == len(contents)
-            and file.read_bytes() == contents
-        ):
-            return True
-    return False
+    files = [file for file in directory.glob("*")
+             if file.name.upper().startswith(("LICENSE", "LICENCE", "COPYING"))]
+    if licence["source_path"]:
+        source = Path(licence["source_path"]).resolve()
+        if source.is_relative_to(directory):
+            files.append(source)
+    if package.get("license_file"):
+        files.append(directory / package["license_file"])
+    return any(file.is_file() and file.stat().st_size == len(contents)
+               and file.read_bytes() == contents for file in files)
 
 
 def fallback_packages(report, diagnostics):
@@ -105,6 +130,42 @@ def fallback_packages(report, diagnostics):
     return fallbacks
 
 
+def verify_onnx_config(root, target):
+    # Use Cargo's merged view, including ancestor and Cargo-home files and
+    # any --config used by the Cargo invocation. The pinned stable Cargo
+    # exposes config get with bootstrap, scoped to this inspection only.
+    result = subprocess.run(
+        ["cargo", "-Z", "unstable-options", "config", "get", "--format=json"],
+        cwd=root, env={**os.environ, "RUSTC_BOOTSTRAP": "1"},
+        capture_output=True, text=True, encoding="utf-8",
+    )
+    if result.returncode:
+        raise ValueError("could not inspect the resolved Cargo config for ONNX Runtime")
+    config = json.loads(result.stdout)
+    configured_env = config.get("env", {})
+    env_keys = os.environ.keys() | configured_env.keys()
+    overrides = ORT_OVERRIDES.intersection(env_keys)
+    # ort-sys uses this to redirect its download cache on Linux hosts.
+    if sys.platform == "linux" and "XDG_CACHE_HOME" in env_keys:
+        overrides.add("XDG_CACHE_HOME")
+    # Offline Cargo itself is harmless unless ort-sys reads a true value
+    # from the build-script environment and skips the pinned download.
+    offline_key = "CARGO_NET_OFFLINE"
+    offline = configured_env.get(offline_key, "")
+    if isinstance(offline, dict):
+        offline = offline.get("value")
+    if not isinstance(offline, str):
+        raise ValueError(f"invalid {offline_key} in Cargo's [env] configuration")
+    if any(value.lower() in {"true", "1"} for value in (os.environ.get(offline_key, ""), offline)):
+        overrides.add(offline_key)
+    # Cargo can also replace a links crate's build script entirely.
+    if "onnxruntime" in config.get("target", {}).get(target, {}):
+        overrides.add(f"target.{target}.onnxruntime")
+    if overrides:
+        raise ValueError("ONNX Runtime release notices require the pinned download without "
+                         "linkage overrides: " + ", ".join(sorted(overrides)))
+
+
 def verify_native_notices(root, target, linked):
     pins = json.loads((root / "native-notices.json").read_text(encoding="utf-8"))
     for component, pin in pins.items():
@@ -118,13 +179,8 @@ def verify_native_notices(root, target, linked):
                 f"{component} {pin['version']} notices require {pin['crate']} "
                 f"v{pin['crate_version']} from crates.io for {target}"
             )
-        if component == "onnxruntime" and any(
-            variable in os.environ for variable in ("ORT_LIB_PATH", "ORT_LIB_LOCATION")
-        ):
-            raise ValueError(
-                "ONNX Runtime release notices require the pinned download "
-                "without ORT_LIB_PATH or ORT_LIB_LOCATION"
-            )
+        if component == "onnxruntime":
+            verify_onnx_config(root, target)
         directory = Path(matches[0]["manifest_path"]).parent
         for filename, checksum in pin["artifacts"].items():
             try:
@@ -197,7 +253,8 @@ def resolve_notices(report, diagnostics, root, tree=None, target=None):
     linked_ids = set(report.get("linked", []))
     for licence in report["licenses"]:
         spdx = licence["id"]
-        has_fallback = licence["source_path"] is None or any(
+        canonical = hashlib.sha256(licence["text"].encode("utf-8")).hexdigest() == CANONICAL_SPDX.get(spdx)
+        has_fallback = canonical or licence["source_path"] is None or any(
             (item["crate"]["id"], spdx) in fallbacks for item in licence["used_by"]
         )
         licence["used_by"] = [
