@@ -160,6 +160,7 @@ individual agent Apps for Git and GitHub actions.
 
 Authenticated members can read `GET /api/v1/fleets` and look up a fleet by
 slug or ID. Creating or editing a fleet requires a human organisation administrator.
+Creating an initiative also requires a human organisation administrator.
 Human members can create ships under `/api/v1/fleets/{fleetId}/ships` and rename them
 with `PATCH /api/v1/ships/{shipId}`. The fleet reports its agents in rank and
 name order, and its ships in name order. The deprecated leadership fields
@@ -237,7 +238,8 @@ List items and detail responses return `recordedBy` and `madeBy` with
 `userId`, `displayName`, `available` and `kind`. The recorder is the
 authenticated member who recorded the decision. The maker is the attributed
 human or registered agent. `madeBy` is null when the maker has no registered
-account, such as relayed crew. A deactivated member stays named with
+account, such as relayed crew. Only captains and rear admirals may send
+explicit crew provenance. A deactivated member stays named with
 `available` set to false. Revision snapshots retain the attribution saved
 with that revision.
 
