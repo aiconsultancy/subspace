@@ -96,16 +96,28 @@ load_release_toolchain() {
     done
 }
 
+require_product_licences() {
+    local notice
+    for notice in "$root/../LICENSE" "$root/NOTICE"; do
+        if [[ ! -f "$notice" || ! -r "$notice" ]]; then
+            echo "missing or unreadable product licence input: $notice (expected the Subspace monorepo layout)" >&2
+            return 1
+        fi
+    done
+}
+
 stage_product_licences() {
     local destination="$1" target="$2" notice
     local octicons="$destination/licenses/icons/octicons"
-    mkdir -p "$octicons"
+    require_product_licences || return
+    mkdir -p "$octicons" || return
     for notice in "$root/licenses/"*; do
         if [[ "${notice##*/}" = webview2 && "$target" != *-windows-* ]]; then continue; fi
-        cp -R "$notice" "$destination/licenses/"
+        cp -R "$notice" "$destination/licenses/" || return
     done
-    cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$octicons/"
-    cp "$root/../LICENSE" "$root/NOTICE" "$destination/"
+    cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$octicons/" || return
+    cp "$root/../LICENSE" "$destination/LICENSE" || return
+    cp "$root/NOTICE" "$destination/NOTICE"
 }
 
 release_cargo_args() {
@@ -113,6 +125,11 @@ release_cargo_args() {
     if [[ -n "${SUBSPACE_BUILD_FEATURES:-}" ]]; then
         release_args+=(--features "$SUBSPACE_BUILD_FEATURES")
     fi
+}
+
+new_release_build_dir() {
+    mkdir -p "$target_dir" || return
+    mktemp -d "$target_dir/.subspace-release.XXXXXX"
 }
 
 release_target_supported() {
@@ -123,10 +140,9 @@ release_target_supported() {
     return 1
 }
 
-check_rust_licences() (
-    local scratch
-    scratch="$(mktemp -d)" || return
-    trap 'rm -rf "$scratch"' EXIT
+scan_rust_licences() {
+    local scratch="$1"
+    shift
     # The debug diagnostics identify each crate that fell back to SPDX text.
     # JSON can group a fallback and an identical source-backed file together.
     # Run cargo-about directly: a `cargo` wrapper that resolves tools per
@@ -137,11 +153,17 @@ check_rust_licences() (
         return 1
     }
     grep -E 'WARN|ERROR' "$scratch/about.log" >&2 || true
+}
+
+check_rust_licences() (
+    scratch="$(mktemp -d)" || return
+    trap 'rm -rf "$scratch"' EXIT
+    scan_rust_licences "$scratch" "$@" || return
     python3 scripts/resolve-licence-notices.py "$scratch/licences.json" "$scratch/about.log"
 )
 
 generate_rust_licences() (
-    local output="$1" licence_target="$2" scratch
+    local output="$1" licence_target="$2"
     local release_args
     unset SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET
     release_cargo_args "$licence_target"
@@ -149,9 +171,10 @@ generate_rust_licences() (
     trap 'rm -rf "$scratch"' EXIT
     cargo tree --locked --color never -p "$product" --edges normal,no-proc-macro \
         --prefix none --format '{p}' "${release_args[@]}" >"$scratch/linked" || return
-    check_rust_licences "${release_args[@]}" --config about.toml >"$scratch/licences.json" || return
-    jq -er --arg target "$licence_target" --rawfile tree "$scratch/linked" \
-        -f about.jq "$scratch/licences.json" >"$output"
+    scan_rust_licences "$scratch" "${release_args[@]}" --config about.toml || return
+    python3 scripts/resolve-licence-notices.py "$scratch/licences.json" "$scratch/about.log" \
+        --tree "$scratch/linked" --target "$licence_target" >"$scratch/resolved.json" || return
+    jq -er --arg target "$licence_target" -f about.jq "$scratch/resolved.json" >"$output"
 )
 
 create_bundle() {
@@ -164,12 +187,12 @@ create_bundle() {
     icon_name="$(basename "$icon" .icns)"
     test -x "$binary" || { echo "missing product executable: $binary" >&2; return 1; }
     test -f "$icon" || { echo "missing product icon: $icon" >&2; return 1; }
+    stage_product_licences "$app/Contents/Resources" aarch64-apple-darwin || return
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "$binary" "$app/Contents/MacOS/$binary_name"
     chmod 755 "$app/Contents/MacOS/$binary_name"
     cp "$icon" "$app/Contents/Resources/$icon_name.icns"
     printf '%s\n' "$product_metadata" >"$app/Contents/Resources/product.json"
-    stage_product_licences "$app/Contents/Resources" aarch64-apple-darwin
     cat >"$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

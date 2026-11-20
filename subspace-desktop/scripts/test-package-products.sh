@@ -115,7 +115,7 @@ if FAKE_FALLBACK_LOG_CHANGED=1 bash "$fixture/scripts/package-release.sh" "$host
     echo 'expected unrecognised fallback diagnostics to stop packaging' >&2
     exit 1
 fi
-grep -Fq 'missing cargo-about fallback diagnostics for fixture-generic v1.0.0 (MIT)' "$fixture/fallback.log"
+grep -Fq 'missing cargo-about fallback diagnostics for fixture-generic v1.0.0 (MIT,' "$fixture/fallback.log"
 if FAKE_CLARIFICATION_FAIL=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version" >"$fixture/clarification.log" 2>&1; then
     echo 'expected a failed clarification checksum to stop packaging' >&2
     exit 1
@@ -153,6 +153,9 @@ grep -Fxq -- "build --release --locked -p $binary --target $host_target --featur
 grep -Eq "^about -L debug generate .*--target $host_target --features terminal " "$fixture/cargo.log"
 app="$fixture/dist/$name.app"
 test -x "$app/Contents/MacOS/$binary"
+grep -Fxq '# features: terminal' "$app/Contents/MacOS/$binary"
+grep -Fxq -- '- fixture-terminal v1.0.0' "$app/Contents/Resources/THIRD_PARTY_LICENSES"
+test ! -e "$fixture/target/$host_target/release/$binary"
 test "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" = "$identifier"
 test "$(plutil -extract CFBundleDisplayName raw -o - "$app/Contents/Info.plist")" = "$name"
 test "$(plutil -extract LSMinimumSystemVersion raw -o - "$app/Contents/Info.plist")" = 15.0

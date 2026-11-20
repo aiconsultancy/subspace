@@ -31,13 +31,20 @@ check_packaged_licences() {
     local destination="$1" target="$2" file
     cmp "$root/../LICENSE" "$destination/LICENSE"
     cmp "$root/NOTICE" "$destination/NOTICE"
+    # The repository index and the distributable NOTICE have different paths.
+    if cmp -s "$root/../NOTICE" "$destination/NOTICE"; then
+        echo 'native archive contains the source-tree NOTICE' >&2
+        return 1
+    fi
     grep -Fq "Subspace binary for $target" "$destination/THIRD_PARTY_LICENSES"
     grep -Fxq -- '- fixture-linked v1.0.0' "$destination/THIRD_PARTY_LICENSES"
     grep -Fxq 'Fixture linked licence' "$destination/THIRD_PARTY_LICENSES"
+    grep -Fxq 'Fixture Git fork licence' "$destination/THIRD_PARTY_LICENSES"
+    grep -Fxq 'Fixture Framework project licence' "$destination/THIRD_PARTY_LICENSES"
     grep -Fxq -- '- fixture-generic v1.0.0 (MIT)' "$destination/THIRD_PARTY_LICENSES"
     grep -Fxq -- '- fixture-mpl v3.1.4 <https://static.crates.io/crates/fixture-mpl/fixture-mpl-3.1.4.crate>' "$destination/THIRD_PARTY_LICENSES"
-    if grep -Fxq -- '- fixture-linked v1.0.0 (MIT)' "$destination/THIRD_PARTY_LICENSES"; then
-        echo 'the source-backed notice was reported as a generic text' >&2; exit 1
+    if grep -Eq -- 'fixture-linked v1.0.0 \(MIT\)|subspace-update v1.0.0 \(Apache-2.0\)' "$destination/THIRD_PARTY_LICENSES"; then
+        echo 'a source-backed notice was reported as a generic text' >&2; exit 1
     fi
     if grep -Eq 'fixture-macro|Fixture build-only licence' "$destination/THIRD_PARTY_LICENSES"; then
         echo 'the runtime report includes a compile-time proc macro' >&2; exit 1
@@ -64,6 +71,83 @@ check_packaged_licences() {
     for file in README.md OCTICONS-LICENSE.txt; do
         cmp "$root/spaces/actions/assets/$file" "$destination/licenses/icons/octicons/$file"
     done
+}
+
+expect_packaging_failure() {
+    local diagnostic="$1" target="$2" version="$3" log="$fixture/packaging-failure.log"
+    if bash "$fixture/scripts/package-release.sh" "$target" "$version" >"$log" 2>&1; then
+        echo "expected packaging failure matching $diagnostic" >&2
+        return 1
+    fi
+    grep -F -- "$diagnostic" "$log" || { cat "$log" >&2; return 1; }
+}
+
+check_packaging_failures() {
+    local version="$1" archive="$2" backup="$fixture/prior-archive"
+    local linux=x86_64-unknown-linux-gnu windows=x86_64-pc-windows-msvc notice
+    cp "$archive" "$backup"
+    cp "$archive.sha256" "$backup.sha256"
+    local builds_before
+    builds_before="$(grep -c '^build ' "$fixture/cargo.log")"
+
+    for notice in "$fixture/../LICENSE" "$fixture/NOTICE"; do
+        mv "$notice" "$notice.saved"
+        expect_packaging_failure "missing or unreadable product licence input: $notice" "$linux" "$version"
+        mv "$notice.saved" "$notice"
+    done
+    FAKE_PARTIAL_FALLBACK=1 expect_packaging_failure \
+        'missing cargo-about fallback diagnostics for fixture-generic v1.0.0 (MIT,' "$linux" "$version"
+    FAKE_MISSING_FORK=1 expect_packaging_failure \
+        'missing licence records for fixture-linked v1.0.0 (https://example.com/fixture/fork#12345678)' "$linux" "$version"
+    FAKE_NATIVE_VERSION=9.9.9 expect_packaging_failure 'onnxruntime 1.31.0 notices require ort-sys' "$linux" "$version"
+    FAKE_NATIVE_VERSION=9.9.9 expect_packaging_failure 'webview2 1.0.3650.58 notices require webview2-com-sys' "$windows" "$version"
+    ORT_LIB_PATH=/fixture/runtime expect_packaging_failure 'ONNX Runtime release notices require the pinned download' "$linux" "$version"
+    local ort="$fixture/native/ort/build/download/dist.tsv"
+    local loader="$fixture/native/webview2/x64/WebView2LoaderStatic.lib"
+    cp "$ort" "$ort.saved"
+    cp "$loader" "$loader.saved"
+    printf 'distribution drift\n' >"$ort"
+    printf 'loader drift\n' >"$loader"
+    expect_packaging_failure 'onnxruntime 1.31.0 artefact mismatch: licence checksum mismatch' "$linux" "$version"
+    expect_packaging_failure 'webview2 1.0.3650.58 artefact mismatch: licence checksum mismatch' "$windows" "$version"
+    mv "$ort.saved" "$ort"
+    mv "$loader.saved" "$loader"
+    test "$(grep -c '^build ' "$fixture/cargo.log")" = "$builds_before"
+    cmp "$archive" "$backup"
+    cmp "$archive.sha256" "$backup.sha256"
+}
+
+check_concurrent_archives() {
+    local version="$1" binary="$2" gate="$fixture/concurrent" target=aarch64-apple-darwin
+    local first waited archive="$fixture/dist/$binary-$version-$target.tar.gz"
+    mkdir -p "$gate/with-terminal" "$gate/without-terminal"
+    FIXTURE_BUILD_GATE="$gate" SUBSPACE_BUILD_FEATURES=terminal \
+        bash "$fixture/scripts/package-release.sh" "$target" "$version" >"$gate/with.log" 2>&1 &
+    first=$!
+    for ((waited = 0; waited < 300; waited++)); do
+        [[ ! -f "$gate/built" ]] || break
+        kill -0 "$first" 2>/dev/null || break
+        sleep 0.1
+    done
+    if [[ -f "$gate/built" ]] &&
+       SUBSPACE_BUILD_FEATURES='' bash "$fixture/scripts/package-release.sh" "$target" "$version" &&
+       tar -xzf "$archive" -C "$gate/without-terminal"; then
+        touch "$gate/resume"
+        wait "$first" || { cat "$gate/with.log" >&2; return 1; }
+    else
+        touch "$gate/resume"
+        wait "$first" || true
+        cat "$gate/with.log" >&2
+        return 1
+    fi
+    tar -xzf "$archive" -C "$gate/with-terminal"
+    grep -Fxq '# features: terminal' "$gate/with-terminal/$binary"
+    grep -Fxq -- '- fixture-terminal v1.0.0' "$gate/with-terminal/THIRD_PARTY_LICENSES"
+    grep -Fxq '# features: ' "$gate/without-terminal/$binary"
+    if grep -Fq 'fixture-terminal' "$gate/without-terminal/THIRD_PARTY_LICENSES"; then
+        echo 'archive without Terminal contains Terminal dependency licences' >&2
+        return 1
+    fi
 }
 
 write_channel_metadata "$input" stable
@@ -109,6 +193,8 @@ for channel in stable nightly alpha beta integration; do
         unzip -q "$fixture/dist/$binary-$version-x86_64-pc-windows-msvc.zip" -d "$fixture/unpacked-windows"
         check_packaged_licences "$fixture/unpacked-darwin" aarch64-apple-darwin
         check_packaged_licences "$fixture/unpacked-windows" x86_64-pc-windows-msvc
+        check_packaging_failures "$version" "$fixture/dist/$binary-$version-x86_64-unknown-linux-gnu.tar.gz"
+        check_concurrent_archives "$version" "$binary"
     fi
     if [[ "$(/usr/bin/uname -s)" = Darwin ]]; then
         bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
