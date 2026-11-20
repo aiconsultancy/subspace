@@ -4,6 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 python3 -I "$root/scripts/test-subspace-api-test-server.py"
+python3 -I "$root/scripts/test-nett-api-test-server.py"
 python3 "$root/scripts/test-github-test-server.py"
 python3 "$root/scripts/test-package-web-space.py"
 bash "$root/scripts/test-gallery-browser-session.sh"

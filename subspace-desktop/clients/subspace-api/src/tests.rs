@@ -17,6 +17,7 @@ mod issue_moves;
 mod issue_writes;
 mod live;
 mod media;
+mod nett;
 mod paging;
 mod privacy;
 pub(crate) mod pull_requests;
