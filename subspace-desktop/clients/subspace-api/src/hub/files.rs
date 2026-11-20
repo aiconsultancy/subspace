@@ -5,7 +5,9 @@ mod removal;
 mod uploads;
 
 pub(super) use bytes::{FileRead, bytes};
-pub(super) use uploads::Parking;
+#[cfg(test)]
+pub(super) use uploads::UploadIssue;
+pub(super) use uploads::UploadStore;
 pub use uploads::{AttachmentTarget, AttachmentUpload};
 
 use super::{
@@ -25,7 +27,8 @@ pub struct FilesSnapshot {
     failed: bool,
     cursors: std::collections::HashSet<String>,
     rescan: super::rescan::Rescan,
-    /// Standalone attachments being added from the Attachments panel.
+    /// Standalone attachments being added from the Attachments panel, in a
+    /// snapshot handed out; see [`FilesSnapshot::show_uploads`].
     uploads: Vec<AttachmentUpload>,
     /// Attachments being removed, by media ID.
     removing: std::collections::HashSet<String>,
@@ -35,23 +38,27 @@ pub struct FilesSnapshot {
 
 impl FilesSnapshot {
     /// Reads the list again from its first page, keeping what is shown
-    /// until a complete scan says what is gone, and any upload in progress.
+    /// until a complete scan says what is gone. Uploads live in the hub's
+    /// upload store, not here.
     pub(in crate::hub) fn reload(&mut self) {
         *self = Self {
             items: std::mem::take(&mut self.items),
-            uploads: std::mem::take(&mut self.uploads),
             removing: std::mem::take(&mut self.removing),
             notice: self.notice.take(),
             ..Self::default()
         };
         self.rescan.begin();
     }
-    /// Forgets the list and its read state, keeping uploads in progress.
-    pub(in crate::hub) fn clear_keeping_uploads(&mut self) {
-        *self = Self {
-            uploads: std::mem::take(&mut self.uploads),
-            ..Self::default()
-        };
+    /// Forgets the list and its read state. Uploads in progress stay in the
+    /// hub's upload store.
+    pub(in crate::hub) fn clear(&mut self) {
+        *self = Self::default();
+    }
+    /// Shows `uploads`, the open issue's from the upload store, in a
+    /// snapshot handed out.
+    // qual:allow(dry, boilerplate) reason: "Only the hub composes a handed-out snapshot's uploads from its store."
+    pub(in crate::hub) fn show_uploads(&mut self, uploads: Vec<AttachmentUpload>) {
+        self.uploads = uploads;
     }
     /// Standalone attachments being added.
     // qual:allow(dry, boilerplate) reason: "Readers preserve the immutable snapshot boundary."

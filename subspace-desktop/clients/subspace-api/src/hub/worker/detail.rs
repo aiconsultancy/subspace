@@ -64,7 +64,7 @@ fn publish(
     {
         // Uploads kept for this issue when it closed show again now that
         // its ID is known, however it was opened.
-        state.unpark_for_detail();
+        shared.follow_uploads(&mut state);
         shared.enqueue(
             &mut state,
             super::Task::PullRequests(
