@@ -7,13 +7,14 @@
 import { landscapeLayout } from "../layout.js";
 import { shipCounts, shipState, toneOf } from "../model.js";
 import { da, drawFrame } from "./common.js";
+import { tokenProblem } from "../connection.js";
 
 const BAD = new Set(["signed-out", "forbidden", "unreachable"]);
 
 /** What a fleet node shows: its tone, status line and whether it failed. */
 export function fleetStatus(fleet) {
   const status = fleet.connection.status;
-  if (fleet.connection.reason === "no-token") return { tone: "red", bad: true, text: "No token saved" };
+  if (fleet.connection.reason === "no-token") return { tone: "red", bad: true, text: tokenProblem(fleet.entry?.problem).short };
   if (BAD.has(status)) return { tone: "red", bad: true, text: { "signed-out": "Signed out · token refused", forbidden: "Forbidden network", unreachable: "Unreachable" }[status] };
   const data = fleet.state.fleet;
   if (!data) return { tone: "muted", bad: false, text: status === "reconnecting" ? "Reconnecting" : "Connecting…" };

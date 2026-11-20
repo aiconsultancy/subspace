@@ -1,13 +1,13 @@
 {
   "name": "Fleet Console",
   "version": "1.0.0",
-  "permissions": ["settings", "secrets", "issues", "badge", "context", "notifications"],
+  "permissions": ["settings", "secrets", "save-secrets", "issues", "badge", "context", "notifications"],
   "settings": [
     {
       "key": "endpoint",
       "label": "Stargate API address",
       "type": "url",
-      "help": "HTTPS address of the fleet's Stargate API on a private network (Tailscale, Cloudflare Access), or http://localhost:<port> through an SSH tunnel."
+      "help": "HTTPS address of the fleet's Stargate API on a private network (Tailscale Serve, a Cloudflare Tunnel), or http://localhost:<port> through an SSH tunnel."
     },
     {
       "key": "token",

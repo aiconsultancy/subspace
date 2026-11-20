@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createFleetStore, MAX_LOCAL_FLEETS, newFleetId, STORE_KEY, STORE_VERSION, tokenKey } from "../src/fleet-store.js";
+import { createFleetStore, MAX_LOCAL_FLEETS, newFleetId, packToken, STORE_KEY, STORE_VERSION, tokenKey } from "../src/fleet-store.js";
 import { apiFleets, DEFAULT_FLEET_ID, fleetName, localFleets, mergeFleets, resolveFleets, settingsFleet } from "../src/fleet-sources.js";
 import { normalizeEndpoint } from "../src/api.js";
 import { addBlocker, sampleNote, describeTestError, describeTestSuccess, fleetForm, fleetSection, landscapePanel, validateFleetForm } from "../src/fleet-panel.js";
@@ -82,6 +82,20 @@ test("invalid and duplicate entries are dropped, and the list is capped", () => 
   assert.ok(!loaded.some((entry) => entry.name === "Duplicate" || entry.name === "Bad"));
 });
 
+test("saving more fleets than the store keeps, or an entry it cannot keep, writes nothing and says so", () => {
+  const storage = memoryStorage();
+  const store = createFleetStore(storage);
+  const many = Array.from({ length: MAX_LOCAL_FLEETS }, (_, i) => ({ id: `fz${String(i).padStart(8, "0")}`, name: `F${i}`, endpoint: `https://f${i}.example.com` }));
+  assert.equal(store.save(many), true);
+  const before = storage.getItem(STORE_KEY);
+  assert.equal(store.save([...many, { id: "fextra0001", name: "Extra", endpoint: "https://extra.example.com" }]), false, "no silent truncation");
+  assert.equal(store.status, "full");
+  assert.equal(storage.getItem(STORE_KEY), before, "the stored list is unchanged");
+  assert.equal(store.save([{ id: "bad id", name: "Bad", endpoint: "https://bad.example.com" }]), false, "no silent drop");
+  assert.equal(store.status, "invalid");
+  assert.equal(storage.getItem(STORE_KEY), before);
+});
+
 test("fleet ids make valid Subspace secret keys", () => {
   let seed = 0;
   const id = newFleetId(() => ((seed += 0.137) % 1));
@@ -91,7 +105,7 @@ test("fleet ids make valid Subspace secret keys", () => {
 
 // ---------- sources ----------
 
-const allowedAll = { settings: true, secrets: true };
+const allowedAll = { settings: true, secrets: true, saveSecrets: true };
 const caps = { secrets: true, secretsSet: true };
 
 test("the Settings fleet needs settings, an address, the secrets permission and a token", () => {
@@ -105,13 +119,13 @@ test("the Settings fleet needs settings, an address, the secrets permission and 
   assert.equal(settingsFleet({ ...base, secrets: {} }).problem, "no-token");
 });
 
-test("page fleets take their tokens from fleet_<id> secrets", () => {
+test("page fleets take their tokens from fleet_<id> secrets, bound to their addresses", () => {
   const list = [
     { id: "fone000001", name: "One", endpoint: "https://one.example.com" },
     { id: "ftwo000002", name: "Two", endpoint: "https://two.example.com" },
     { id: "fbad000003", name: "Bad", endpoint: "http://10.0.0.5" },
   ];
-  const fleets = localFleets({ list, secrets: { [tokenKey("fone000001")]: "secret-1" }, allowed: allowedAll, normalizeEndpoint });
+  const fleets = localFleets({ list, secrets: { [tokenKey("fone000001")]: packToken("https://one.example.com", "secret-1") }, allowed: allowedAll, normalizeEndpoint });
   assert.deepEqual(fleets.map((fleet) => [fleet.id, fleet.token, fleet.problem]), [["fone000001", "secret-1", null], ["ftwo000002", null, "no-token"]]);
   assert.equal(localFleets({ list, secrets: { [tokenKey("fone000001")]: "x" }, allowed: { secrets: false }, normalizeEndpoint })[0].token, null);
 });
@@ -130,13 +144,14 @@ test("resolving: sample without a usable fleet, live with any fleet that has a t
   assert.equal(resolveFleets({ ...base, present: false }).reason, "no-bridge");
   const none = resolveFleets(base);
   assert.deepEqual([none.mode, none.reason, none.canStore], ["sample", "no-endpoint", true]);
-  const pageOnly = resolveFleets({ ...base, list: [{ id: "fpage00001", name: "Page", endpoint: "https://p.example.com" }], secrets: { [tokenKey("fpage00001")]: "t" } });
+  const pageOnly = resolveFleets({ ...base, list: [{ id: "fpage00001", name: "Page", endpoint: "https://p.example.com" }], secrets: { [tokenKey("fpage00001")]: packToken("https://p.example.com", "t") } });
   assert.equal(pageOnly.mode, "live", "a page fleet alone is enough");
   assert.equal(pageOnly.defaultProblem, "no-endpoint");
   const both = resolveFleets({ ...base, settings: { endpoint: "https://s.example.com", motion: "Reduced" }, secrets: { token: "t" }, list: [{ id: "fpage00001", name: "Page", endpoint: "https://p.example.com" }] });
   assert.deepEqual(both.fleets.map((fleet) => [fleet.origin, Boolean(fleet.token)]), [["settings", true], ["local", false]]);
   assert.equal(both.motion, "Reduced");
   assert.equal(resolveFleets({ ...base, capabilities: { secrets: true, secretsSet: false } }).canStore, false);
+  assert.equal(resolveFleets({ ...base, allowed: { ...allowedAll, saveSecrets: false } }).canStore, false, "storing needs save-secrets");
 });
 
 test("resolving reads the frame-time readout setting in either mode", () => {
@@ -181,8 +196,12 @@ test("test-connection words and the reasons adding is blocked", () => {
   assert.equal(describeTestSuccess(sampleFleet().fleet), "Connected to “colonial-fleet”: 5 ships, Stargate 0.18.2.");
   assert.match(addBlocker({ present: false, capabilities: {}, allowed: {} }), /inside Subspace|running inside/);
   assert.match(addBlocker({ present: true, capabilities: { secretsSet: false }, allowed: {} }), /cannot store tokens/);
-  assert.match(addBlocker({ present: true, capabilities: { secretsSet: true }, allowed: { secrets: false } }), /saved secrets/);
-  assert.equal(addBlocker({ present: true, capabilities: { secretsSet: true }, allowed: { secrets: true } }), null);
+  assert.match(addBlocker({ present: true, capabilities: { secretsSet: true }, allowed: { secrets: false, saveSecrets: true } }), /read its saved secrets/);
+  assert.match(addBlocker({ present: true, capabilities: { secretsSet: true }, allowed: { secrets: true, saveSecrets: false } }), /save its own secrets/);
+  const neither = addBlocker({ present: true, capabilities: { secretsSet: true }, allowed: { secrets: false, saveSecrets: false } });
+  assert.match(neither, /read its saved secrets/);
+  assert.match(neither, /save its own secrets/);
+  assert.equal(addBlocker({ present: true, capabilities: { secretsSet: true }, allowed: { secrets: true, saveSecrets: true } }), null);
 });
 
 test("the form never shows a saved token, and escapes names", () => {
@@ -298,6 +317,37 @@ test("each fleet keeps its own connection state and error", async () => {
   assert.equal(h.manager.get("d").connection.reason, "no-token");
   assert.equal(h.manager.get("c").connection.retryAt, null, "no countdown while the Fleets tier is hidden");
   assert.ok(!h.reads.includes("d"), "a fleet without a token is never read");
+});
+
+test("a successful poll clears the failure count, so later blips still read as reconnecting", async () => {
+  const failing = new Set(["b"]);
+  const h = harness({ entries: [entry("a"), entry("b")], failing });
+  h.manager.activate("a");
+  h.manager.setLandscape(true);
+  h.manager.start();
+  await h.settle();
+  await h.advance(POLL_MS + 10);
+  assert.equal(h.manager.get("b").connection.attempt, 2);
+  failing.delete("b");
+  await h.advance(POLL_MS + 10);
+  assert.equal(h.manager.get("b").connection.status, "connected");
+  assert.equal(h.manager.get("b").connection.attempt, 0);
+});
+
+test("polling pauses while the page is hidden and catches up when it shows again", async () => {
+  const h = harness({ entries: [entry("a"), entry("b")] });
+  h.manager.activate("a");
+  h.manager.setLandscape(true);
+  h.manager.start();
+  await h.settle();
+  assert.equal(h.reads.length, 1);
+  h.manager.setHidden(true);
+  await h.advance(POLL_MS * 3);
+  assert.equal(h.reads.length, 1, "no reads while hidden");
+  h.manager.setHidden(false);
+  await h.settle();
+  assert.equal(h.reads.length, 2, "one read on showing again");
+  assert.equal(nextPollAt({ client: {}, streaming: false, inflight: false, lastReadAt: null }, { landscape: true, hidden: true }), Infinity);
 });
 
 test("switching fleets moves the stream; the previous fleet goes back to polling", async () => {

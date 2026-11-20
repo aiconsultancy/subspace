@@ -63,6 +63,30 @@ pub(super) fn named_entry(mut entry: Map<String, Value>, title: &str) -> Map<Str
     entry
 }
 
+/// Binds the page secrets in `entry` that have no source owner yet to the
+/// app it shows now, before it takes `next`: see
+/// [`crate::bridge::secrets::owner::bind_unowned`]. Reads the manifests of
+/// both apps; a website has none.
+pub(super) fn bind_page_secrets(
+    entry: &mut Map<String, Value>,
+    next: &subspace_framework::core::config::web_boards::WebBoardSource,
+) {
+    use subspace_framework::core::config::web_boards::WebBoardSource;
+    let manifest = |path: &std::path::Path| crate::manifest::read(path).ok().flatten();
+    let declared: Vec<String> = match next {
+        WebBoardSource::Folder(path) => manifest(path)
+            .map(|next| next.settings.into_iter().map(|field| field.key).collect())
+            .unwrap_or_default(),
+        WebBoardSource::Url(_) => Vec::new(),
+    };
+    let identity = entry
+        .get("path")
+        .and_then(Value::as_str)
+        .map(std::path::Path::new)
+        .and_then(|path| Some(manifest(path)?.identity(path)));
+    crate::bridge::secrets::owner::bind_unowned(entry, &declared, identity.as_deref());
+}
+
 pub(super) fn install_entry(
     mut entry: Map<String, Value>,
     source: &subspace_framework::core::config::web_boards::WebBoardSource,
@@ -158,6 +182,45 @@ mod tests {
         assert_eq!(next["secrets"], entry["secrets"]);
         assert_eq!(next["permissions"], entry["permissions"]);
         assert_eq!(next["future"], 42);
+    }
+
+    #[test]
+    fn an_update_binds_page_secrets_to_its_source_and_keeps_new_declared_keys() {
+        use crate::bridge::secrets::Owner;
+        use crate::install::{ManagedSource, RepositoryRef};
+        let root = tempfile::tempdir().unwrap();
+        let app = |name: &str, settings: serde_json::Value| {
+            let folder = root.path().join(name);
+            std::fs::create_dir(&folder).unwrap();
+            let manifest = json!({"name": "Fleet", "version": name, "settings": settings});
+            std::fs::write(folder.join("subspace-board.json"), manifest.to_string()).unwrap();
+            let read = crate::manifest::read(&folder).unwrap().unwrap();
+            (read.identity(&folder), folder)
+        };
+        let (old_identity, old) = app("1", json!([]));
+        let token = json!([{"key": "token", "label": "Token", "type": "secret"}]);
+        let (new_identity, new) = app("2", token);
+        let installed = |commit: &str| ManagedSource::Repository {
+            repository: "org/fleet".into(),
+            reference: RepositoryRef::DefaultBranch,
+            board_path: "dist".into(),
+            commit: commit.into(),
+            content: commit.into(),
+        };
+        let mut entry = json!({"path": old, "secrets": {"fleet-a": "ownerless", "token": "t",
+            (format!("{}:fleet-b", &old_identity[..32])): "folder and manifest"},
+            "managedSource": serde_json::to_value(installed("c1")).unwrap()})
+        .as_object()
+        .unwrap()
+        .clone();
+        let next = WebBoardSource::Folder(new.clone());
+        super::bind_page_secrets(&mut entry, &next);
+        let owner = Owner::new(&new_identity, &next, Some(&installed("c2")));
+        let secrets = entry["secrets"].as_object().unwrap();
+        assert_eq!(secrets["token"], "t", "the new app declares it");
+        assert_eq!(secrets[&owner.stored_key("fleet-a")], "ownerless");
+        assert_eq!(secrets[&owner.stored_key("fleet-b")], "folder and manifest");
+        assert_eq!(secrets.len(), 3);
     }
 
     #[test]

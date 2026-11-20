@@ -150,7 +150,7 @@ fn web_boards(config: &subspace_framework::core::config::Config) -> Vec<BoardReg
             );
             let settings = board.clone();
             registration
-                .with_configuration(board.clone())
+                .with_configuration(subspace_web_board::configuration(board))
                 .with_field_source(move || subspace_web_board::settings_fields(&settings))
         })
         .collect()

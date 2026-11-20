@@ -20,6 +20,8 @@ use super::{ACTIVE_KEY, SubspaceApp};
 use crate::settings::Settings;
 use crate::{BoardRegistration, registry};
 
+mod guards;
+
 const IDS: [&str; 3] = ["alpha", "beta", "gamma"];
 const TITLES: [&str; 3] = ["Alpha", "Beta", "Gamma"];
 

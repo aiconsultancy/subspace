@@ -24,7 +24,12 @@ export function initialConnection() {
  * forbidden (403), unreachable (network, 404, repeated failures).
  *
  * Events: {type:"sample", reason}, {type:"connecting"}, {type:"open"},
- * {type:"failed", status?, retryAfterMs?}, {type:"closed"}, {type:"retry"}, {type:"stop"}.
+ * {type:"healthy"}, {type:"failed", status?, retryAfterMs?}, {type:"closed"},
+ * {type:"retry"}, {type:"stop"}.
+ *
+ * `open` (a 200 with an event stream) keeps the attempt count; only
+ * `healthy`, sent once a stream has stayed up a while, clears it. A server
+ * that answers and closes at once therefore backs off like any failure.
  */
 export function nextConnection(state, event, now, random = Math.random) {
   switch (event.type) {
@@ -33,7 +38,9 @@ export function nextConnection(state, event, now, random = Math.random) {
     case "connecting":
       return { ...state, status: "connecting", retryAt: null, since: state.status === "connecting" ? state.since : now };
     case "open":
-      return { ...state, status: "connected", attempt: 0, connectedOnce: true, retryAt: null, httpStatus: null, reason: null, since: now };
+      return { ...state, status: "connected", connectedOnce: true, retryAt: null, httpStatus: null, reason: null, since: now };
+    case "healthy":
+      return state.status === "connected" ? { ...state, attempt: 0 } : state;
     case "failed":
       return failed(state, event, now, random);
     case "closed":
@@ -74,6 +81,16 @@ function failed(state, event, now, random) {
   };
 }
 
+/**
+ * Why a page fleet has no token to use, from its entry's `problem`: a short
+ * status and what to do. A token saved for another address is never sent.
+ */
+export function tokenProblem(problem) {
+  if (problem === "token-address") return { short: "Token for another address", title: "Its token was saved for another address", body: "Edit the fleet and paste the token for this address." };
+  if (problem === "token-unbound") return { short: "Paste the token again", title: "Its token needs pasting again", body: "Fleet Console now keeps each token with its address. Edit the fleet and paste its token once more." };
+  return { short: "No token saved", title: "No token saved", body: "Edit the fleet in the inspector and paste its token again." };
+}
+
 /** True while the window should keep showing that the data may be old. */
 export function isStale(state) {
   return ["reconnecting", "unreachable", "signed-out", "forbidden", "connecting"].includes(state.status);
@@ -96,7 +113,7 @@ const SAMPLE_REASONS = {
   },
   "bad-endpoint": {
     title: "Sample fleet: this address cannot be reached from a web Space",
-    body: "Use an HTTPS address (Tailscale Serve, a Cloudflare Tunnel with Access) or http://localhost:<port> through an SSH tunnel. Plain HTTP works only to localhost.",
+    body: "Use an HTTPS address (Tailscale Serve, or a Cloudflare Tunnel as the README describes) or http://localhost:<port> through an SSH tunnel. Plain HTTP works only to localhost.",
   },
   "no-secrets": {
     title: "Sample fleet: the token is not allowed",
@@ -155,7 +172,7 @@ export function describeConnection(state, { endpoint = "", now = 0 } = {}) {
         tone: "red",
         banner: {
           title: "Stargate refused this network (403)",
-          body: "The Fleet API answers only the private networks in its api.allowedNetworks. Reach it over Tailscale, a Cloudflare Tunnel with Access, or an SSH tunnel to localhost, then choose Retry.",
+          body: "The Fleet API answers only the private networks in its api.allowedNetworks. Reach it over Tailscale, a Cloudflare Tunnel, or an SSH tunnel to localhost, then choose Retry.",
           retry: true,
         },
       };

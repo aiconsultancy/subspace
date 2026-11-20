@@ -112,7 +112,9 @@ impl SubspaceApp {
         // Help is a workspace tool, not an overlay covering the board; a
         // maximized terminal does cover it.
         let terminal = self.terminal_maximized().then(|| div().into_any_element());
-        self.sync_board_cover([&jig, &shortcuts, &terminal, &palette, &quit], window, cx);
+        let menu = self.cover.menu.is_some().then(|| div().into_any_element());
+        let overlays = [&jig, &shortcuts, &terminal, &palette, &quit, &menu];
+        self.sync_board_cover(overlays, window, cx);
         jig.into_iter()
             .chain(palette)
             .chain(quit)

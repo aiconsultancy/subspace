@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { connectBridge, resolveConfig } from "../src/bridge.js";
+import { connectBridge, resolveConfig, SETTINGS_SECRETS } from "../src/bridge.js";
 import { normalizeEndpoint } from "../src/api.js";
 
 function fakeHost({ permissions = [], settings = {}, secrets = {}, withSecrets = true, withIssues = true, withTheme = true } = {}) {
@@ -118,4 +118,32 @@ test("a bridge whose first info() fails allows nothing", async () => {
     throw new Error("Subspace request timed out.");
   };
   assert.equal((await connectBridge(host)).has("settings"), false);
+});
+
+test("writing a secret needs save-secrets; secrets alone is read-only", async () => {
+  const writes = [];
+  const withSet = (permissions) => {
+    const host = fakeHost({ permissions });
+    host.subspace.secrets.set = async (key, value) => writes.push([key, value]);
+    return host;
+  };
+  const readOnly = await connectBridge(withSet(["settings", "secrets"]));
+  await assert.rejects(readOnly.setSecret("fleet_fabc000001", "v"), /save its own secrets/);
+  assert.deepEqual(writes, [], "secrets.set is not called without save-secrets");
+  const granted = await connectBridge(withSet(["settings", "secrets", "save-secrets"]));
+  await granted.setSecret("fleet_fabc000001", "v");
+  await granted.setSecret("fleet_fabc000001", null);
+  assert.deepEqual(writes, [["fleet_fabc000001", "v"], ["fleet_fabc000001", null]]);
+  const old = await connectBridge(fakeHost({ permissions: ["secrets", "save-secrets"] }));
+  await assert.rejects(old.setSecret("fleet_fabc000001", "v"), /cannot store secrets/);
+});
+
+test("the Settings token is never written through secrets.set", async () => {
+  const writes = [];
+  const host = fakeHost({ permissions: ["settings", "secrets", "save-secrets"] });
+  host.subspace.secrets.set = async (key, value) => writes.push([key, value]);
+  const bridge = await connectBridge(host);
+  assert.ok(SETTINGS_SECRETS.has("token"));
+  for (const value of ["replacement", null]) await assert.rejects(bridge.setSecret("token", value), /Settings/);
+  assert.deepEqual(writes, []);
 });

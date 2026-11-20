@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createApiClient, HttpError, normalizeEndpoint } from "../src/api.js";
-import { createLiveSource, WATCHDOG_MS } from "../src/live.js";
+import { CONNECT_TIMEOUT_MS, createLiveSource, HEALTHY_MS, WATCHDOG_MS } from "../src/live.js";
 import { sampleFleet } from "./fixtures.js";
 
 test("endpoints: HTTPS anywhere, plain HTTP only to loopback, no credentials", () => {
@@ -60,6 +60,7 @@ test("the client sends the bearer token, asks for no caching, and raises HttpErr
   await assert.rejects(client.events(undefined, "41"), HttpError);
   assert.equal(calls[2].init.headers["Last-Event-ID"], "41");
   assert.equal(calls[2].init.headers.Accept, "text/event-stream");
+  for (const call of calls) assert.equal(call.init.redirect, "error", "a redirect never carries the token elsewhere");
 });
 
 function harness(fetchImpl) {
@@ -190,4 +191,121 @@ test("detail reads emit ship-detail and crew-detail, and swallow failures", asyn
   assert.equal(await h.source.readCrew("galactica", "starbuck"), true);
   assert.equal(await h.source.readShip("missing"), false);
   assert.deepEqual(h.events.map((event) => event.type), ["ship-detail", "crew-detail"]);
+});
+
+test("live source: a stream the parser rejects is cancelled and retried", async () => {
+  const { fleet } = sampleFleet();
+  let cancelled = 0;
+  const encoder = new TextEncoder();
+  const h = harness(async (url) => {
+    if (url.endsWith("/fleet")) return response(200, fleet);
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(`data: ${"x".repeat(2 * 1024 * 1024)}\n`));
+      },
+      cancel() {
+        cancelled += 1;
+      },
+    });
+    return response(200, body);
+  });
+  h.source.start();
+  await settle();
+  await settle();
+  assert.equal(cancelled, 1, "the response body is cancelled");
+  assert.ok(["reconnecting", "unreachable"].includes(h.states.at(-1).status));
+  assert.ok(h.timers.size >= 1, "a retry is scheduled");
+  h.source.stop();
+});
+
+test("live source: the backoff resets only after the stream has stayed up a while", async () => {
+  const { fleet } = sampleFleet();
+  let opens = 0;
+  let body = null;
+  const h = harness(async (url, init) => {
+    if (url.endsWith("/fleet")) return response(200, fleet);
+    opens += 1;
+    if (opens <= 3) return response(200, stream([frame("heartbeat", { at: opens })]), { "content-type": "text/event-stream" });
+    body = stream([], { hold: true });
+    init.signal?.addEventListener("abort", () => body.end?.());
+    return response(200, body, { "content-type": "text/event-stream" });
+  });
+  h.source.start();
+  await settle();
+  for (let i = 0; i < 3; i += 1) {
+    h.advance(60_000);
+    await settle();
+  }
+  assert.equal(opens, 4);
+  assert.equal(h.states.at(-1).status, "connected");
+  assert.equal(h.states.at(-1).attempt, 3, "three quick closes in a row keep counting");
+  h.advance(HEALTHY_MS);
+  await settle();
+  assert.equal(h.source.connection.attempt, 0, "a stream that stays up resets it");
+  h.source.stop();
+});
+
+test("live source: a 200 that is not an event stream counts as a failure", async () => {
+  const { fleet } = sampleFleet();
+  const h = harness(async (url) => (url.endsWith("/fleet") ? response(200, fleet) : response(200, stream(["<html>sign in</html>"]), { "content-type": "text/html; charset=utf-8" })));
+  h.source.start();
+  await settle();
+  assert.ok(!h.states.some((state) => state.status === "connected"), "never shown as live");
+  assert.equal(h.states.at(-1).status, "unreachable");
+  h.source.stop();
+});
+
+test("live source: a server that accepts but never answers times out and is retried", async () => {
+  const h = harness(
+    (url, init) =>
+      new Promise((resolve, reject) => {
+        init.signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+      }),
+  );
+  h.source.start();
+  await settle();
+  assert.equal(h.states.at(-1).status, "connecting");
+  h.advance(CONNECT_TIMEOUT_MS);
+  await settle();
+  assert.equal(h.states.at(-1).status, "unreachable");
+  assert.ok(h.timers.size >= 1, "a retry is scheduled");
+  h.source.stop();
+});
+
+test("live source: a slow detail read never overwrites a newer stream event for that ship", async () => {
+  const { fleet, ships } = sampleFleet();
+  let body;
+  let answerDetail;
+  const h = harness(async (url, init) => {
+    if (url.endsWith("/fleet")) return response(200, fleet);
+    if (url.endsWith("/ships/galactica")) return new Promise((resolve) => (answerDetail = () => resolve(response(200, { ...ships.galactica, captain: { ...ships.galactica.captain, phase: "old" } }))));
+    if (url.includes("/crew/")) return new Promise((resolve) => (answerDetail = () => resolve(response(200, { ship: "galactica", member: ships.galactica.crewMembers[0] }))));
+    body = stream([], { hold: true });
+    init.signal?.addEventListener("abort", () => body.end?.());
+    return response(200, body, { "content-type": "text/event-stream" });
+  });
+  h.source.start();
+  await settle();
+  const pending = h.source.readShip("galactica");
+  await settle();
+  body.push(frame("ship", ships.galactica));
+  await settle();
+  answerDetail();
+  assert.equal(await pending, true, "the ship is fresh either way");
+  assert.deepEqual(h.events.map((event) => event.type), ["fleet", "ship"], "the older detail is dropped");
+
+  const crew = h.source.readCrew("galactica", "starbuck");
+  await settle();
+  body.push(frame("ship", ships.galactica));
+  await settle();
+  answerDetail();
+  await crew;
+  assert.deepEqual(h.events.map((event) => event.type), ["fleet", "ship", "ship"]);
+
+  const quiet = h.source.readShip("galactica");
+  await settle();
+  answerDetail();
+  await quiet;
+  assert.equal(h.events.at(-1).type, "ship-detail", "with no newer event, the detail is applied");
+  h.source.stop();
 });

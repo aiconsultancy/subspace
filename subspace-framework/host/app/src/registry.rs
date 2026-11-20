@@ -22,7 +22,7 @@ pub use configured::ConfiguredBoards;
 pub(crate) use configured::apply_board_selection;
 pub use configured::reload_configured_boards;
 pub(crate) use configured::retain_provider;
-pub(crate) use configured::{apply_running_config, desktop_sets};
+pub(crate) use configured::{apply_running_config, desktop_sets, enables_a_board};
 
 /// Creates a board's view. Compiled-in boards use `DashboardHandle::new`;
 /// a configured board captures its own settings.

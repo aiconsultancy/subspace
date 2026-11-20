@@ -11,14 +11,16 @@ use super::{
     Bridge, Effect,
     issues::IssueCall,
     protocol::{Message, Operation},
-    secrets::SecretWrite,
 };
 use crate::manifest::Permission;
+
+mod secrets;
 
 fn fixture() -> (tempfile::TempDir, WebBoard, Bridge) {
     let root = tempfile::tempdir().unwrap();
     let manifest = json!({"name": "Notes", "version": "1",
-        "permissions": ["settings", "notifications", "badge", "context", "secrets", "issues"],
+        "permissions": ["settings", "notifications", "badge", "context", "secrets", "save-secrets",
+            "issues"],
         "settings": [{"key": "limit", "label": "Limit", "type": "number", "default": 10},
             {"key": "token", "label": "Token", "type": "secret"},
             {"key": "unset", "label": "Unset", "type": "secret"},
@@ -43,7 +45,7 @@ fn fixture() -> (tempfile::TempDir, WebBoard, Bridge) {
         ]),
         permissions: BTreeMap::new(),
     };
-    let bridge = Bridge::new(&config).unwrap();
+    let bridge = Bridge::new(&config, None).unwrap();
     (root, config, bridge)
 }
 
@@ -72,7 +74,7 @@ fn permissions_require_user_grants_for_this_manifest_and_folder() {
         r#"{"name":"Notes","version":"2","permissions":["settings"]}"#,
     )
     .unwrap();
-    let changed = Bridge::new(&config).unwrap();
+    let changed = Bridge::new(&config, None).unwrap();
     assert!(!changed.allows(Permission::Settings, &config));
     assert!(
         bridge
@@ -168,59 +170,6 @@ fn badge_and_context_do_not_survive_a_new_document() {
     bridge.enter_document(2);
     assert!(bridge.badge.is_none());
     assert!(bridge.context.is_none());
-}
-
-#[test]
-fn secrets_are_the_declared_ones_with_a_value_and_the_pages_own() {
-    let (_root, mut config, mut bridge) = fixture();
-    let now = Instant::now();
-    assert!(
-        bridge
-            .call(&Operation::Secrets, &config, false, now)
-            .is_err()
-    );
-    grant(&mut config, &bridge, Permission::Settings);
-    assert!(
-        bridge
-            .call(&Operation::Secrets, &config, false, now)
-            .is_err()
-    );
-    grant(&mut config, &bridge, Permission::Secrets);
-    config
-        .secrets
-        .insert("limit".into(), Secret::new("declared-as-a-number"));
-    let (value, _) = bridge
-        .call(&Operation::Secrets, &config, false, now)
-        .unwrap();
-    // "limit" is a declared setting, "blank" is empty, "unset" has no value;
-    // "undeclared" is a secret the page saved itself.
-    assert_eq!(value, json!({"token": "secret", "undeclared": "other"}));
-}
-
-#[test]
-fn secrets_set_needs_the_secrets_grant_and_is_checked_before_saving() {
-    let (_root, mut config, mut bridge) = fixture();
-    let now = Instant::now();
-    let set = |key: &str, value: Option<&str>| {
-        Operation::SecretsSet(SecretWrite {
-            key: key.into(),
-            value: value.map(str::to_owned),
-        })
-    };
-    assert!(
-        bridge
-            .call(&set("fleet-a", Some("t")), &config, false, now)
-            .is_err()
-    );
-    grant(&mut config, &bridge, Permission::Secrets);
-    assert!(matches!(
-        bridge.call(&set("fleet-a", Some("t")), &config, false, now),
-        Ok((_, Effect::SaveSecret(write))) if write.key == "fleet-a"
-    ));
-    assert!(matches!(
-        bridge.call(&set("limit", Some("t")), &config, false, now),
-        Err(error) if error.contains("settings")
-    ));
 }
 
 #[test]

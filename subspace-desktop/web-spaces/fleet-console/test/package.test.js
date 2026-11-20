@@ -23,7 +23,7 @@ test("the manifest declares the settings and permissions Fleet Console uses", ()
   const manifest = JSON.parse(read("subspace-board.json"));
   assert.ok(manifest.name.length > 0 && manifest.name.length <= 60);
   assert.ok(manifest.version.length > 0 && manifest.version.length <= 40);
-  assert.deepEqual(manifest.permissions, ["settings", "secrets", "issues", "badge", "context", "notifications"]);
+  assert.deepEqual(manifest.permissions, ["settings", "secrets", "save-secrets", "issues", "badge", "context", "notifications"]);
   const byKey = Object.fromEntries(manifest.settings.map((setting) => [setting.key, setting]));
   assert.equal(byKey.endpoint.type, "url");
   assert.equal(byKey.token.type, "secret");
@@ -39,6 +39,16 @@ test("the manifest declares the settings and permissions Fleet Console uses", ()
     assert.ok(setting.label.length <= 60 && (setting.help ?? "").length <= 200, setting.key);
   }
   assert.ok(statSync(join(root, "subspace-board.json")).size <= 256 * 1024);
+});
+
+test("the README's network routes match how requests are sent", () => {
+  const api = read("src/api.js");
+  const readme = read("README.md");
+  assert.equal((api.match(/credentials: "omit"/g) ?? []).length, 2, "requests send no cookies");
+  assert.equal((api.match(/redirect: "error"/g) ?? []).length, 2, "requests follow no redirects");
+  assert.match(readme, /credentials: "omit"/, "the README says so");
+  assert.doesNotMatch(readme, /Cloudflare Tunnel with Access \|/, "no route that needs an Access login");
+  assert.doesNotMatch(read("subspace-board.json"), /Cloudflare Access/);
 });
 
 test("index.html loads only local files that exist", () => {

@@ -104,3 +104,54 @@ test("impossible intervals are ignored and reset forgets a partial window", () =
   assert.equal(governor.level, 0, "half a window after reset is not enough");
   assert.ok(governor.history.length === 0);
 });
+
+/**
+ * Drive the governor as main.js does: one animation-frame callback every
+ * `cadence(level, warping)` ms, warps of `warpMs` every `everyMs` drawn on
+ * every callback and judged against the learned refresh, and ambient frames
+ * drawn at the ambient rate otherwise. Returns when the level changed.
+ */
+function simulate(governor, { seconds, cadence, warpMs = 1500, everyMs = 10_000, work = 2 }) {
+  let now = 0;
+  let lastDraw = 0;
+  const changes = [];
+  while (now < seconds * 1000) {
+    const warping = now % everyMs < warpMs;
+    const interval = cadence(governor.level, warping);
+    now += interval;
+    governor.observeCallback(interval);
+    const target = warping ? governor.refresh : 1000 / ambientFps(governor.level, true);
+    if (!warping && now - lastDraw < target - 4) continue;
+    const drawn = now - lastDraw;
+    lastDraw = now;
+    if (governor.sample({ interval: drawn, target, work }, now)) changes.push({ at: now, level: governor.level });
+  }
+  return changes;
+}
+
+test("on a display that really runs at 30 Hz, the governor learns it and settles at full quality", () => {
+  const governor = createGovernor();
+  const changes = simulate(governor, { seconds: 180, cadence: () => 1000 / 30 });
+  assert.ok(Math.abs(governor.refresh - 1000 / 30) < 0.01, `learned ${governor.refresh}`);
+  assert.equal(governor.level, 0);
+  assert.ok(changes.length <= 6, `settles instead of cycling: ${changes.length} changes`);
+  assert.deepEqual(changes.filter((change) => change.at > 90_000), [], "no changes in the last 90 s");
+});
+
+test("when lowering quality speeds frames up, the governor keeps the display rate and the lower level", () => {
+  const governor = createGovernor();
+  // GPU-bound at full quality: frames take 30 ms at level 0, 22 ms at level 1.
+  simulate(governor, { seconds: 120, cadence: (level) => (level === 0 ? 30 : level === 1 ? 22 : 1000 / 60) });
+  assert.ok(Math.abs(governor.refresh - 1000 / 60) < 0.01, `kept 60 Hz: ${governor.refresh}`);
+  assert.ok(governor.level >= 1);
+});
+
+test("a level that keeps failing soon after it is retried waits longer each time", () => {
+  const governor = createGovernor();
+  // Full quality is fine at rest but too slow while warping, every 10 s.
+  const changes = simulate(governor, { seconds: 600, cadence: (level, warping) => (warping && level === 0 ? 26 : 1000 / 60) });
+  const ups = changes.filter((change, i) => i > 0 && change.level < changes[i - 1].level).length + (changes[0]?.level === 0 ? 1 : 0);
+  assert.ok(ups <= 8, `retries back off: ${ups} step-ups in 10 minutes`);
+  const late = changes.filter((change) => change.at > 300_000).length;
+  assert.ok(late <= 4, `rarely in the second five minutes: ${late}`);
+});

@@ -1,38 +1,51 @@
-//! The app's secrets under the `secrets` permission: the ones its manifest
-//! declares, which the user can also set in Settings, and the ones the page
-//! saves itself with `secrets.set`, such as a token per account it adds.
-//! Both live in the Space's `secrets` in the private config file and go
-//! with the Space when it is removed.
+//! The app's secrets. Under `secrets` the page reads the ones its manifest
+//! declares, which only the user sets in Settings, and the ones it saved
+//! itself. Under `save-secrets` it saves its own with `secrets.set`, such as
+//! a token per account it adds, and never a declared one. All live in the
+//! Space's `secrets` in the private config file and go with the Space when
+//! it is removed. A page's own are stored under their owner, the app's
+//! install source ([`owner`]), so an update from the same source keeps them
+//! and another app given the Space never reads them.
 
+use std::collections::{BTreeMap, VecDeque};
+use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui_kit::App;
 use serde::Deserialize;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use subspace_framework::core::Secret;
-use subspace_framework::core::config::Config;
-use subspace_framework::core::config::web_boards::WebBoard;
+use subspace_framework::core::config::{self, Config, web_boards::WebBoard};
 use subspace_framework::core::settings::SettingsFile;
 use subspace_framework::dashboard::Services;
 use subspace_framework::dashboard::settings::FieldKind;
 
-use super::Effect;
-use super::protocol::Operation;
-use crate::manifest::{Manifest, valid_key};
+use super::Bridge;
+use crate::manifest::{Manifest, Permission, valid_key};
+pub(crate) use owner::Owner;
 
-/// The most secrets a page may save beyond the ones its manifest declares.
+pub(crate) mod owner;
+
+/// The most secrets a page may save of its own.
 pub(crate) const MAX_APP_SECRETS: usize = 32;
 const MAX_SECRET_CHARS: usize = 4096;
+/// A page saves at most this many secrets in any [`SAVE_WINDOW`]: each save
+/// rewrites the config file.
+const MAX_SAVES: usize = 10;
+const SAVE_WINDOW: Duration = Duration::from_secs(10);
 
 pub(crate) const BAD_KEY: &str =
     "Use a secret key of 1 to 40 letters, digits, _ or -, starting with a letter.";
-pub(crate) const SETTING_KEY: &str =
-    "This key is one of the app's settings, not a secret. Choose another key.";
+pub(crate) const DECLARED_KEY: &str = "This key belongs to one of the app's settings, which only Settings changes. Choose another key.";
 pub(crate) const BAD_VALUE: &str =
     "Use a secret of 1 to 4096 characters, without control characters, or null to delete it.";
 pub(crate) const TOO_MANY: &str =
     "This app has saved 32 secrets, the most it may. Delete one before saving another.";
+pub(crate) const TOO_FAST: &str = "Too many secret saves. Wait a few seconds, then try again.";
 pub(crate) const NOT_SHOWN: &str = "Open this Space to save a secret.";
+pub(crate) const CHANGED: &str =
+    "This Space changed in the config file. Review it in Settings, then try again.";
 const NOT_SAVED: &str =
     "Subspace could not save the secret. Check the config file in Settings, then try again.";
 
@@ -44,34 +57,67 @@ pub(crate) struct SecretWrite {
     pub value: Option<String>,
 }
 
-/// The declared secrets with a saved value, and every secret the page saved.
-pub(crate) fn readable(manifest: &Manifest, config: &WebBoard) -> Value {
-    let values = config
+/// Whether stored `key` is a secret some app's page saved itself, rather
+/// than one the user set.
+pub(crate) fn is_app_secret(key: &str) -> bool {
+    owner::is_owned(key)
+}
+
+/// The secrets `owner`'s app saved itself, by page key. Of a key stored in
+/// several forms the owner's own wins, then the older ones.
+fn own<'c>(
+    manifest: &Manifest,
+    owner: &Owner,
+    config: &'c WebBoard,
+) -> BTreeMap<&'c str, &'c Secret> {
+    let mut found: BTreeMap<&str, (u8, &Secret)> = BTreeMap::new();
+    let claimed = config.secrets.iter().filter_map(|(stored, secret)| {
+        let (key, age) = owner.claims(stored)?;
+        // An ownerless key the manifest declares is a declared secret.
+        (age < 2 || declared(manifest, key).is_none()).then_some((key, age, secret))
+    });
+    for (key, age, secret) in claimed {
+        if found.get(key).is_none_or(|(held, _)| age < *held) {
+            found.insert(key, (age, secret));
+        }
+    }
+    found
+        .into_iter()
+        .map(|(key, (_, secret))| (key, secret))
+        .collect()
+}
+
+/// The declared secrets with a saved value, and every secret `owner`'s app
+/// saved itself. A declared key wins over an own one.
+pub(crate) fn readable(manifest: &Manifest, owner: &Owner, config: &WebBoard) -> Value {
+    let declared = config
         .secrets
         .iter()
-        .filter(|(key, _)| match declared(manifest, key) {
-            Some(kind) => matches!(kind, FieldKind::Secret),
-            None => true,
-        })
+        .filter(|(key, _)| matches!(declared(manifest, key), Some(FieldKind::Secret)))
+        .map(|(key, secret)| (key.as_str(), secret));
+    let values = own(manifest, owner, config)
+        .into_iter()
+        .chain(declared)
         .filter_map(|(key, secret)| {
             let secret = secret.expose();
-            (!secret.is_empty()).then(|| (key.clone(), Value::from(secret)))
+            (!secret.is_empty()).then(|| (key.to_owned(), Value::from(secret)))
         })
         .collect();
     Value::Object(values)
 }
 
-/// Why `write` may not be saved, if it may not.
+/// Why `write` may not be saved for `owner`'s app, if it may not.
 pub(crate) fn check(
     manifest: &Manifest,
+    owner: &Owner,
     config: &WebBoard,
     write: &SecretWrite,
 ) -> Result<(), &'static str> {
     if !valid_key(&write.key) {
         return Err(BAD_KEY);
     }
-    if declared(manifest, &write.key).is_some_and(|kind| !matches!(kind, FieldKind::Secret)) {
-        return Err(SETTING_KEY);
+    if declared(manifest, &write.key).is_some() {
+        return Err(DECLARED_KEY);
     }
     let Some(value) = &write.value else {
         return Ok(());
@@ -82,21 +128,17 @@ pub(crate) fn check(
     {
         return Err(BAD_VALUE);
     }
-    let new_app_secret =
-        declared(manifest, &write.key).is_none() && !config.secrets.contains_key(&write.key);
-    if new_app_secret && app_secret_count(manifest, config) >= MAX_APP_SECRETS {
+    let own = own(manifest, owner, config);
+    if !own.contains_key(write.key.as_str()) && own.len() >= MAX_APP_SECRETS {
         return Err(TOO_MANY);
     }
     Ok(())
 }
 
-/// How many saved secrets the manifest does not declare.
-pub(crate) fn app_secret_count(manifest: &Manifest, config: &WebBoard) -> usize {
-    config
-        .secrets
-        .keys()
-        .filter(|key| declared(manifest, key).is_none())
-        .count()
+/// How many secrets `owner`'s app saved itself.
+#[cfg(test)]
+pub(crate) fn app_secret_count(manifest: &Manifest, owner: &Owner, config: &WebBoard) -> usize {
+    own(manifest, owner, config).len()
 }
 
 fn declared<'m>(manifest: &'m Manifest, key: &str) -> Option<&'m FieldKind> {
@@ -107,215 +149,113 @@ fn declared<'m>(manifest: &'m Manifest, key: &str) -> Option<&'m FieldKind> {
         .map(|field| &field.kind)
 }
 
+/// The times of a page's recent saves, to hold it to [`MAX_SAVES`].
+#[derive(Default)]
+pub(crate) struct Saves(VecDeque<Instant>);
+
+impl Saves {
+    /// Counts a save at `now`, or refuses it past the limit.
+    pub(crate) fn allow(&mut self, now: Instant) -> Result<(), &'static str> {
+        while self
+            .0
+            .front()
+            .is_some_and(|saved| now.saturating_duration_since(*saved) >= SAVE_WINDOW)
+        {
+            self.0.pop_front();
+        }
+        if self.0.len() >= MAX_SAVES {
+            return Err(TOO_FAST);
+        }
+        self.0.push_back(now);
+        Ok(())
+    }
+}
+
 /// Writes `write` to board `id`'s entry in the config file, then to the
-/// configuration the app runs with, so the page reads it back at once
-/// without reloading any Space.
-pub(crate) fn save(id: &str, write: &SecretWrite, cx: &mut App) -> Result<(), &'static str> {
+/// configuration the app runs with, so the page reads it back at once. The
+/// entry in the file decides: it must still give `id` this app's folder,
+/// install source and `save-secrets` grant, and its own secrets count
+/// toward the limit. The write replaces the key's older stored forms.
+pub(crate) fn save(
+    bridge: &Bridge,
+    id: &str,
+    write: &SecretWrite,
+    cx: &mut App,
+) -> Result<(), &'static str> {
     let path = cx
         .try_global::<Services>()
         .map(|services| services.config_file.clone())
         .ok_or(NOT_SAVED)?;
     let mut file = SettingsFile::open(&path).map_err(|_| NOT_SAVED)?;
     let entry = file.web_board(id).ok_or(NOT_SAVED)?;
-    file.update_web_board(id, Some(written(entry, write)))
+    let saved = persisted(id, &entry, &path).ok_or(NOT_SAVED)?;
+    let owner = Owner::new(
+        &bridge.identity,
+        &saved.source,
+        owner::recorded(&entry).as_ref(),
+    );
+    if !bridge.allows(Permission::SaveSecrets, &saved) || owner != bridge.owner {
+        return Err(CHANGED);
+    }
+    check(&bridge.manifest, &owner, &saved, write)?;
+    let forms = owner.forms(&write.key);
+    let value = write.value.as_deref();
+    file.update_web_board(id, Some(written(entry, &forms, value)))
         .map_err(|_| NOT_SAVED)?;
-    apply(id, write, cx);
+    apply(id, &forms, value, cx);
     Ok(())
 }
 
-/// The raw entry with `write` applied to its `secrets`, every other field
-/// kept as it was.
-pub(crate) fn written(mut entry: Map<String, Value>, write: &SecretWrite) -> Map<String, Value> {
+/// Board `id` as the opened file defines it. The write that follows is
+/// refused if the file changes after it was opened, so both agree.
+fn persisted(id: &str, entry: &Map<String, Value>, path: &Path) -> Option<WebBoard> {
+    let text = json!({ "webBoards": { id: entry } }).to_string();
+    config::parse(&text, path).0.web_boards.into_iter().next()
+}
+
+/// The raw entry with every stored form of one secret, `forms`, removed,
+/// then `value` stored under the first, every other field kept as it was.
+pub(crate) fn written(
+    mut entry: Map<String, Value>,
+    forms: &[String],
+    value: Option<&str>,
+) -> Map<String, Value> {
     let mut secrets = match entry.remove("secrets") {
         Some(Value::Object(secrets)) => secrets,
         _ => Map::new(),
     };
-    match &write.value {
-        Some(value) => secrets.insert(write.key.clone(), Value::from(value.as_str())),
-        None => secrets.remove(&write.key),
-    };
+    for form in forms {
+        secrets.remove(form);
+    }
+    if let (Some(key), Some(value)) = (forms.first(), value) {
+        secrets.insert(key.clone(), Value::from(value));
+    }
     if !secrets.is_empty() {
         entry.insert("secrets".to_owned(), Value::Object(secrets));
     }
     entry
 }
 
-fn apply(id: &str, write: &SecretWrite, cx: &mut App) {
+fn apply(id: &str, forms: &[String], value: Option<&str>, cx: &mut App) {
     let services = cx.global_mut::<Services>();
-    services.config = Arc::new(with_secret(&services.config, id, write));
+    services.config = Arc::new(with_secret(&services.config, id, forms, value));
 }
 
-/// The running configuration with `write` applied to board `id`.
-fn with_secret(config: &Config, id: &str, write: &SecretWrite) -> Config {
+/// The running configuration with board `id`'s secret written as
+/// [`written`] writes it to the file.
+fn with_secret(config: &Config, id: &str, forms: &[String], value: Option<&str>) -> Config {
     let mut config = config.clone();
-    let secret = write.value.clone().map(Secret::new);
+    let secret = value.map(Secret::new);
     if let Some(board) = config.web_boards.iter_mut().find(|board| board.id == id) {
-        match secret {
-            Some(secret) => board.secrets.insert(write.key.clone(), secret),
-            None => board.secrets.remove(&write.key),
-        };
+        for form in forms {
+            board.secrets.remove(form);
+        }
+        if let (Some(key), Some(secret)) = (forms.first(), secret) {
+            board.secrets.insert(key.clone(), secret);
+        }
     }
     config
 }
 
-/// `secrets.get` and a checked `secrets.set`, for an allowed page.
-pub(crate) fn call(
-    manifest: &Manifest,
-    config: &WebBoard,
-    operation: &Operation,
-) -> Result<(Value, Effect), &'static str> {
-    match operation {
-        Operation::SecretsSet(write) => {
-            check(manifest, config, write)?;
-            Ok((Value::Null, Effect::SaveSecret(write.clone())))
-        }
-        _ => Ok((readable(manifest, config), Effect::None)),
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-
-    use serde_json::json;
-    use subspace_framework::core::Secret;
-    use subspace_framework::core::config::web_boards::{WebBoard, WebBoardSource};
-
-    use super::{
-        BAD_KEY, BAD_VALUE, MAX_APP_SECRETS, SETTING_KEY, SecretWrite, TOO_MANY, app_secret_count,
-        check, readable, written,
-    };
-    use crate::manifest::parse;
-
-    fn manifest() -> crate::manifest::Manifest {
-        parse(
-            &json!({"name": "Fleet", "version": "1", "permissions": ["secrets"],
-                "settings": [{"key": "token", "label": "Token", "type": "secret"},
-                    {"key": "endpoint", "label": "Endpoint", "type": "url"}]})
-            .to_string(),
-        )
-        .unwrap()
-    }
-
-    fn board(secrets: &[(&str, &str)]) -> WebBoard {
-        WebBoard {
-            id: "fleet".into(),
-            title: "Fleet".into(),
-            source: WebBoardSource::Url("https://fleet.example".into()),
-            settings: BTreeMap::new(),
-            secrets: secrets
-                .iter()
-                .map(|(key, value)| ((*key).to_owned(), Secret::new(*value)))
-                .collect(),
-            permissions: BTreeMap::new(),
-        }
-    }
-
-    fn write(key: &str, value: Option<&str>) -> SecretWrite {
-        SecretWrite {
-            key: key.into(),
-            value: value.map(str::to_owned),
-        }
-    }
-
-    #[test]
-    fn the_page_reads_declared_and_its_own_secrets_but_no_setting_keys() {
-        let board = board(&[
-            ("token", "declared"),
-            ("fleet-a", "own"),
-            ("endpoint", "legacy"),
-            ("empty", ""),
-        ]);
-        assert_eq!(
-            readable(&manifest(), &board),
-            json!({"fleet-a": "own", "token": "declared"})
-        );
-        assert_eq!(app_secret_count(&manifest(), &board), 2);
-    }
-
-    #[test]
-    fn keys_and_values_are_checked_and_setting_keys_refused() {
-        let (manifest, board) = (manifest(), board(&[]));
-        let check = |write: SecretWrite| check(&manifest, &board, &write);
-        assert_eq!(check(write("fleet-a", Some("t"))), Ok(()));
-        assert_eq!(check(write("token", Some("t"))), Ok(()));
-        assert_eq!(check(write("fleet-a", None)), Ok(()));
-        assert_eq!(check(write("1fleet", Some("t"))), Err(BAD_KEY));
-        assert_eq!(check(write(&"a".repeat(41), Some("t"))), Err(BAD_KEY));
-        assert_eq!(check(write("endpoint", Some("t"))), Err(SETTING_KEY));
-        assert_eq!(check(write("endpoint", None)), Err(SETTING_KEY));
-        assert_eq!(check(write("fleet-a", Some(""))), Err(BAD_VALUE));
-        assert_eq!(check(write("fleet-a", Some("a\nb"))), Err(BAD_VALUE));
-        assert_eq!(
-            check(write("fleet-a", Some(&"x".repeat(4097)))),
-            Err(BAD_VALUE)
-        );
-        assert_eq!(check(write("fleet-a", Some(&"界".repeat(4096)))), Ok(()));
-    }
-
-    #[test]
-    fn at_most_32_own_secrets_and_the_declared_ones_do_not_count() {
-        let keys: Vec<String> = (0..MAX_APP_SECRETS).map(|n| format!("fleet-{n}")).collect();
-        let mut pairs: Vec<(&str, &str)> = keys.iter().map(|key| (key.as_str(), "t")).collect();
-        pairs.push(("token", "declared"));
-        let (manifest, board) = (manifest(), board(&pairs));
-        assert_eq!(app_secret_count(&manifest, &board), MAX_APP_SECRETS);
-        let check = |write: SecretWrite| check(&manifest, &board, &write);
-        assert_eq!(check(write("fleet-new", Some("t"))), Err(TOO_MANY));
-        assert_eq!(check(write("fleet-0", Some("replaced"))), Ok(()));
-        assert_eq!(check(write("fleet-0", None)), Ok(()));
-        assert_eq!(check(write("token", Some("t"))), Ok(()));
-    }
-
-    #[gpui_kit::test]
-    fn a_saved_secret_reaches_the_file_and_the_running_config(cx: &mut gpui_kit::TestAppContext) {
-        use std::sync::Arc;
-        use subspace_framework::core::{config, credentials::Credentials};
-        use subspace_framework::dashboard::Services;
-
-        let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("config.json");
-        let text = json!({"webBoards": {"fleet": {"url": "https://fleet.example",
-            "secrets": {"token": "t"}}}, "futureSetting": 42});
-        std::fs::write(&path, text.to_string()).unwrap();
-        cx.update(|cx| {
-            let config = config::load(&path).0;
-            cx.set_global(Services {
-                credentials: Arc::new(Credentials::from_system(&config)),
-                config: Arc::new(config),
-                tools: Default::default(),
-                search: None,
-                config_file: path.clone(),
-            });
-            assert_eq!(
-                super::save("fleet", &write("fleet-a", Some("new")), cx),
-                Ok(())
-            );
-            let running = &cx.global::<Services>().config.web_boards[0];
-            assert_eq!(running.secrets["fleet-a"].expose(), "new");
-            assert_eq!(super::save("fleet", &write("token", None), cx), Ok(()));
-            assert!(super::save("missing", &write("fleet-a", Some("t")), cx).is_err());
-        });
-        let saved: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(
-            saved["webBoards"]["fleet"]["secrets"],
-            json!({"fleet-a": "new"})
-        );
-        assert_eq!(saved["futureSetting"], 42);
-    }
-
-    #[test]
-    fn a_write_changes_only_the_secret_and_keeps_the_entry() {
-        let entry = json!({"path": "/apps/fleet", "settings": {"endpoint": "https://a.example"},
-            "secrets": {"token": "t"}, "permissions": {"x.secrets": true}});
-        let entry = entry.as_object().unwrap().clone();
-        let added = written(entry.clone(), &write("fleet-a", Some("new")));
-        assert_eq!(added["secrets"], json!({"token": "t", "fleet-a": "new"}));
-        assert_eq!(added["settings"], entry["settings"]);
-        assert_eq!(added["permissions"], entry["permissions"]);
-        let removed = written(entry, &write("token", None));
-        assert!(!removed.contains_key("secrets"));
-        assert_eq!(removed["path"], "/apps/fleet");
-    }
-}
+mod tests;

@@ -8,19 +8,21 @@ import { createApiClient, normalizeEndpoint } from "./api.js";
 import { createLiveSource } from "./live.js";
 import { createSampleSource } from "./sample-source.js";
 import { initialFleetState, livePackets } from "./reducer.js";
-import { describeConnection, initialConnection } from "./connection.js";
+import { describeConnection, initialConnection, tokenProblem } from "./connection.js";
 import { chain, createNavigator, fleetTier, LANDSCAPE, parentOf, sameSelection } from "./camera.js";
 import { composeFrame } from "./scene/index.js";
 import { fleetStatus } from "./scene/landscape.js";
 import { createStars, stepStars } from "./stars.js";
 import { createGlRenderer } from "./gl/renderer.js";
 import { createCanvasRenderer } from "./canvas2d.js";
+import { canvasFallback, createSceneRenderer } from "./renderers.js";
 import { createOverlay } from "./overlay.js";
 import { readPalette, themeToCssVars } from "./theme.js";
 import { REFRESH_MS } from "./issues.js";
 import { createIssueBinding } from "./issue-binding.js";
 import { allCrew, lookup } from "./model.js";
-import { createAlertWatcher, createNotifier } from "./alerts.js";
+import { createAlertWatcher, createNotifier, createWatcherSet } from "./alerts.js";
+import { coalesce } from "./coalesce.js";
 import { crewContext, describeLandscape, describeTier } from "./effects.js";
 import { createChrome } from "./chrome.js";
 import { crewPanel, fleetPanel, shipPanel, tooltip } from "./inspector.js";
@@ -119,17 +121,27 @@ darkQuery.addEventListener?.("change", () => refreshPalette());
 
 // ---------- renderers ----------
 
-let sceneCanvas = chrome.el.scene;
-let renderer = (preview.renderer !== "2d" && createGlRenderer(sceneCanvas, { onLost: fallbackToCanvas, onRestored: () => requestRender() })) || createCanvasRenderer(sceneCanvas);
+/** A fresh canvas in place of `canvas`, which a WebGL2 context has claimed. */
+function replaceCanvas(canvas) {
+  const replacement = canvas.cloneNode(false);
+  canvas.replaceWith(replacement);
+  return replacement;
+}
+
+let { renderer, canvas: sceneCanvas } = createSceneRenderer({
+  canvas: chrome.el.scene,
+  preferGl: preview.renderer !== "2d",
+  createGl: (canvas) => createGlRenderer(canvas, { onLost: fallbackToCanvas, onRestored: () => requestRender() }),
+  createCanvas: createCanvasRenderer,
+  replaceCanvas,
+});
 const overlay = createOverlay(labels);
 let stars = createStars(renderer.kind === "webgl2" ? 380 : 260);
 root.dataset.renderer = renderer.kind;
 
 function fallbackToCanvas() {
-  const replacement = sceneCanvas.cloneNode(false);
-  sceneCanvas.replaceWith(replacement);
-  sceneCanvas = replacement;
-  renderer = createCanvasRenderer(sceneCanvas);
+  if (renderer.kind !== "webgl2") return;
+  ({ renderer, canvas: sceneCanvas } = canvasFallback({ renderer, canvas: sceneCanvas, createCanvas: createCanvasRenderer, replaceCanvas }));
   stars = createStars(260);
   root.dataset.renderer = renderer.kind;
   renderer.setQuality(governor.settings);
@@ -243,7 +255,8 @@ function connectionDisplay() {
   }
   const fleet = activeFleet();
   if (fleet?.connection.reason === "no-token") {
-    return { label: "No token", tone: "red", banner: { title: `No token saved for ${fleet.name}`, body: "Edit the fleet in the inspector and paste its token again.", retry: false } };
+    const problem = tokenProblem(fleet.entry.problem);
+    return { label: "No token", tone: "red", banner: { title: `${fleet.name}: ${problem.title.charAt(0).toLowerCase()}${problem.title.slice(1)}`, body: problem.body, retry: false } };
   }
   return describeConnection(app.connection, { endpoint: activeEndpoint(), now: Date.now() });
 }
@@ -323,19 +336,12 @@ function totalBadge() {
 }
 
 const notifier = createNotifier({ send: (message) => app.bridge.notify(message) });
-const watchers = new Map();
-
-/** One alert watcher per fleet, naming the fleet when there are several. */
-function watcherFor(fleet) {
-  let watcher = watchers.get(fleet.id);
-  if (!watcher) {
-    watcher = createAlertWatcher({
-      push: (alerts) => notifier.push(landscape() ? alerts.map((alert) => ({ ...alert, title: `${fleetName(app.manager.get(fleet.id)?.entry, app.manager.get(fleet.id)?.state.fleet)}: ${alert.title}` })) : alerts),
-    });
-    watchers.set(fleet.id, watcher);
-  }
-  return watcher;
-}
+/** One alert watcher per fleet and address, naming the fleet when there are several. */
+const watchers = createWatcherSet((fleet) =>
+  createAlertWatcher({
+    push: (alerts) => notifier.push(landscape() ? alerts.map((alert) => ({ ...alert, title: `${fleetName(app.manager.get(fleet.id)?.entry, app.manager.get(fleet.id)?.state.fleet)}: ${alert.title}` })) : alerts),
+  }),
+);
 
 function fleetComplete(state) {
   const fleet = state.fleet;
@@ -369,7 +375,7 @@ function stateFor(id) {
     unavailableSince: fleet.state.unavailableSince,
     name: fleetName(fleet.entry, fleet.state.fleet),
     active: fleet.id === app.manager.active,
-    emptyMessage: fleet.connection.reason === "no-token" ? "No token saved for this fleet" : description.banner ? description.banner.title : "Connecting to Stargate…",
+    emptyMessage: fleet.connection.reason === "no-token" ? tokenProblem(fleet.entry.problem).title : description.banner ? description.banner.title : "Connecting to Stargate…",
     emptyDetail: `Stargate API · ${fleet.entry.endpoint}`,
   };
 }
@@ -447,6 +453,7 @@ function frame() {
 }
 
 document.addEventListener("visibilitychange", () => {
+  app.manager?.setHidden?.(document.hidden);
   if (document.hidden) {
     cancelAnimationFrame(rafId);
     rafId = 0;
@@ -707,10 +714,12 @@ function applyData() {
   updateCanvasLabel();
   requestRender();
   if (app.sample) return;
-  for (const fleet of app.manager?.list() ?? []) {
+  const fleets = app.manager?.list() ?? [];
+  watchers.retain(fleets);
+  for (const fleet of fleets) {
     if (!fleet.state.fleet) continue;
     if (fleet.streaming && !fleetComplete(fleet.state)) continue;
-    watcherFor(fleet).observe(fleet.state.fleet, fleet.state.ships);
+    watchers.for(fleet).observe(fleet.state.fleet, fleet.state.ships);
   }
   setBadge(totalBadge());
   shareContext();
@@ -747,23 +756,21 @@ function openIssue(id) {
 
 // ---------- configuration ----------
 
-let configuring = null;
+const configure = coalesce((retry) => applyConfig(retry));
 
-/** Re-read settings, secrets and the fleet list; switch or update the fleets. Calls made while one runs share it. */
+/**
+ * Re-read settings, secrets and the fleet list; switch or update the fleets.
+ * Calls made while one runs share it, and a Retry among them runs once more.
+ */
 function reconfigure(retry = false) {
   if (!app.bridge) return Promise.resolve();
-  if (!configuring) {
-    configuring = applyConfig(retry).finally(() => {
-      configuring = null;
-    });
-  }
-  return configuring;
+  return configure(retry);
 }
 
 async function readConfig() {
   const bridge = app.bridge;
   if (bridge.present) await bridge.refresh();
-  const allowed = { settings: bridge.has("settings"), secrets: bridge.has("secrets") };
+  const allowed = { settings: bridge.has("settings"), secrets: bridge.has("secrets"), saveSecrets: bridge.has("save-secrets") };
   const capabilities = bridge.capabilities();
   const settings = allowed.settings ? ((await bridge.settings()) ?? {}) : {};
   const secrets = allowed.secrets ? ((await bridge.secrets()) ?? {}) : {};
@@ -794,6 +801,7 @@ async function startManager(mode, fleets) {
   const first = app.manager.list().find((fleet) => fleet.entry.token || app.sample)?.id ?? app.manager.list()[0]?.id ?? null;
   if (first) app.manager.activate(first);
   syncActive();
+  app.manager.setHidden?.(document.hidden);
   app.manager.start();
   nav.jump(landscape() ? LANDSCAPE : fleetTier(first), clock());
   onSelection();
