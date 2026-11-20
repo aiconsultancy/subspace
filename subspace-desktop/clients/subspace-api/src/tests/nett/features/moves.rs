@@ -141,13 +141,18 @@ fn a_move_that_never_reached_nett_can_be_previewed_again() {
 }
 
 fn move_inputs(client: &Client) -> (String, String, u32) {
+    move_inputs_for(client, "OPS-2")
+}
+
+/// The WEB team's ID, and `issue`'s ID and version, to move it there.
+pub(super) fn move_inputs_for(client: &Client, issue: &str) -> (String, String, u32) {
     let destination = client
         .all_projects()
         .unwrap()
         .into_iter()
         .find(|team| team.key == "WEB")
         .unwrap();
-    let root = client.issue("OPS-2").unwrap();
+    let root = client.issue(issue).unwrap();
     let version = u32::try_from(root.fields.version).unwrap();
     (destination.id, root.fields.id, version)
 }
