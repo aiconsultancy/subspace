@@ -6,11 +6,11 @@ use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 use subspace_framework::client_test_support::Mock;
 
-const ROOT: &str = "00000000-0000-4000-8000-0000000000e1";
-const CHILD: &str = "00000000-0000-4000-8000-0000000000e2";
+pub(super) const ROOT: &str = "00000000-0000-4000-8000-0000000000e1";
+pub(super) const CHILD: &str = "00000000-0000-4000-8000-0000000000e2";
 const SECOND: &str = "00000000-0000-4000-8000-0000000000e3";
 
-fn issue(id: &str, identifier: &str, (team, key): (&str, &str), version: i64) -> Value {
+pub(super) fn issue(id: &str, identifier: &str, (team, key): (&str, &str), version: i64) -> Value {
     let mut issue = crate::tests::detail(id);
     issue["identifier"] = json!(identifier);
     issue["projectId"] = json!(team);
@@ -56,18 +56,22 @@ fn committing(
     )
     .unwrap()
     .without_live();
+    (mock, client, plan(children))
+}
+
+/// The previewed plan: ROOT, then each of `children`, from OPS to WEB.
+pub(super) fn plan(children: &[(&str, &str)]) -> MovePreview {
     let issues: Vec<Value> = std::iter::once(item(ROOT, "OPS-2"))
         .chain(children.iter().map(|(id, old)| item(id, old)))
         .collect();
-    let preview = serde_json::from_value(json!({
+    serde_json::from_value(json!({
         "token": "a".repeat(64),
         "source": {"id": "team-ops", "key": "OPS", "name": "Operations"},
         "destination": {"id": "team-web", "key": "WEB", "name": "Web"},
         "issues": issues,
         "reviewContext": {"snapshot": 1},
     }))
-    .unwrap();
-    (mock, client, preview)
+    .unwrap()
 }
 
 /// Confirms the move with CHILD read back as `child` answers.
@@ -80,14 +84,14 @@ fn committed_move(child: impl Fn() -> (u16, String) + Send + Sync + 'static) -> 
     result
 }
 
-fn patches(mock: &Mock) -> usize {
+pub(super) fn patches(mock: &Mock) -> usize {
     mock.requests()
         .iter()
         .filter(|request| request.method == "PATCH")
         .count()
 }
 
-fn unreconciled(reason: UnreconciledReason) -> [Unreconciled; 1] {
+pub(super) fn unreconciled(reason: UnreconciledReason) -> [Unreconciled; 1] {
     [Unreconciled::new(CHILD, "OPS-3", reason)]
 }
 

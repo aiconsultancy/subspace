@@ -102,13 +102,14 @@ fn a_move_whose_sub_issue_cannot_be_read_back_stays_committed_and_checks_without
             .is_some_and(|id| id.starts_with("WEB-"))
     }));
     assert_eq!(mock.count("PATCH", ""), 1, "the move was sent once");
-    // An issue the plan named that is not in the destination fails the check.
+    // Once the root reads back moved, the move committed: an issue the plan
+    // named that is not in the destination is listed, never a conflict.
     let mut other = preview.clone();
-    other.issues[1].id = client.issue("OPS-1").unwrap().fields.id;
-    assert_eq!(
-        client.verify_issue_move(&other).err(),
-        Some(IssueSaveError::Conflict)
-    );
+    let stray = client.issue("OPS-1").unwrap().fields.id;
+    other.issues[1].id = stray.clone();
+    let checked = client.verify_issue_move(&other).unwrap();
+    assert_eq!(checked.unreconciled.len(), 1);
+    assert_eq!(checked.unreconciled[0].id, stray);
 }
 
 #[test]
