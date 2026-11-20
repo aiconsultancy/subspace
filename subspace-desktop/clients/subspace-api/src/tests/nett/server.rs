@@ -1,9 +1,8 @@
 //! Starts the loopback NETT mock for one test and stops it afterwards.
 
+use super::process::{NettProcess, await_origin, python};
 use serde_json::Value;
-use std::io::{BufRead as _, BufReader};
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::time::Duration;
 
 /// Fixture traffic stays on loopback: no proxy from the environment sees it.
 fn direct() -> ureq::Agent {
@@ -11,8 +10,7 @@ fn direct() -> ureq::Agent {
 }
 
 pub(in crate::tests) struct NettMock {
-    child: Child,
-    origin: String,
+    process: NettProcess,
 }
 
 impl NettMock {
@@ -29,47 +27,21 @@ impl NettMock {
 
     /// The mock serving `features`, with further command-line options.
     pub(super) fn with_args(features: &[&str], extra: &[&str]) -> Self {
-        let script =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/nett_api_test_server.py");
-        let child = Command::new(
-            subspace_framework::core::path::find_tool("python3")
-                .expect("python3 runs the NETT mock"),
-        )
-        .arg("-I")
-        .arg(&script)
-        .args(["--port", "0", "--auto-approve"])
-        .args(features.iter().flat_map(|feature| ["--serve", feature]))
-        .args(extra)
-        .env_clear()
-        // Windows Python needs SYSTEMROOT to open a socket.
-        .envs(std::env::var_os("SYSTEMROOT").map(|root| ("SYSTEMROOT", root)))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn();
-        let mut child = child.expect("python3 runs the NETT mock");
-        let mut line = String::new();
-        if let Some(stdout) = child.stdout.take() {
-            let _ = BufReader::new(stdout).read_line(&mut line);
+        let args = ["--auto-approve"]
+            .into_iter()
+            .chain(extra.iter().copied())
+            .collect::<Vec<_>>();
+        Self {
+            process: NettProcess::start(features, &args),
         }
-        let origin = line
-            .trim()
-            .strip_prefix("NETT fixture listening on ")
-            .map(str::to_owned);
-        let Some(origin) = origin else {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("the NETT mock did not start: {line:?}");
-        };
-        Self { child, origin }
     }
 
     pub(super) fn api(&self) -> String {
-        format!("{}/api", self.origin)
+        format!("{}/api", self.process.origin)
     }
 
     fn hook(&self, path: &str) -> String {
-        format!("{}/__fixture/{path}", self.origin)
+        format!("{}/__fixture/{path}", self.process.origin)
     }
 
     pub(super) fn requests(&self) -> Vec<Value> {
@@ -201,9 +173,22 @@ impl NettMock {
     }
 }
 
-impl Drop for NettMock {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+#[test]
+fn a_mock_with_a_missing_or_unexpected_banner_is_reaped() {
+    for (script, timeout, error) in [
+        (
+            "import time; time.sleep(15)",
+            Duration::from_millis(200),
+            "fixture startup timed out",
+        ),
+        (
+            "import time; print('unexpected', flush=True); time.sleep(15)",
+            Duration::from_secs(5),
+            "unexpected fixture banner",
+        ),
+    ] {
+        let mut child = python().args(["-c", script]).spawn().unwrap();
+        assert_eq!(await_origin(&mut child, timeout), Err(error));
+        assert!(child.try_wait().unwrap().is_some(), "the child was reaped");
     }
 }

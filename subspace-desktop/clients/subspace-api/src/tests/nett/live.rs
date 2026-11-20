@@ -64,17 +64,14 @@ fn a_busy_stream_waits_at_least_the_servers_retry_after() {
     mock.config(&json!({"streamRefusal": {"status": 429, "retryAfter": 2, "times": 1}}));
     let org = organisation(&mock, "Fixture Works");
     let hub = hub(&mock, &org);
-    wait("the refused stream", Duration::from_secs(10), &|| {
-        streams(&mock) >= 1
-    });
-    let refused = Instant::now();
     wait("the second attempt", Duration::from_secs(10), &|| {
         streams(&mock) >= 2
     });
+    let stream = arrivals(&mock, "GET", STREAM);
     assert!(
-        refused.elapsed() >= Duration::from_millis(1800),
-        "reconnected after {:?}",
-        refused.elapsed()
+        stream[1] - stream[0] >= 1.9,
+        "tried again after {:.2} s",
+        stream[1] - stream[0]
     );
     wait("a live stream", Duration::from_secs(10), &|| {
         hub.snapshot().live() == LiveStatus::Live

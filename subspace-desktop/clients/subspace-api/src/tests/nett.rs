@@ -4,6 +4,7 @@
 
 mod features;
 mod live;
+mod process;
 mod server;
 
 use crate::issue_writes::{IssueChanges, IssueProperty, IssueSave, IssueSaveError};
