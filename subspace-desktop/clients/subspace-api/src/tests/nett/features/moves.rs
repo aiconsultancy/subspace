@@ -71,7 +71,7 @@ fn a_move_with_an_archived_sub_issue_is_refused_before_it_is_sent() {
 }
 
 #[test]
-fn a_move_whose_sub_issue_cannot_be_read_back_is_checked_without_moving_again() {
+fn a_move_whose_sub_issue_cannot_be_read_back_stays_committed_and_checks_without_moving_again() {
     let mock = NettMock::serving(&["issueMoves"]);
     let client = own_client(&mock, "nett-fixture-move-check");
     let (preview, ..) = preview_move(&client);
@@ -83,10 +83,17 @@ fn a_move_whose_sub_issue_cannot_be_read_back_is_checked_without_moving_again() 
         Some(0),
         3,
     );
-    assert_eq!(
-        client.move_issue(&preview).err(),
-        Some(IssueSaveError::Unconfirmed)
-    );
+    // The validated PATCH reply proves the move committed: the sub-issue
+    // that could not be read is listed to check, not the move doubted.
+    let result = client.move_issue(&preview).unwrap();
+    assert!(result.issue.fields.identifier.starts_with("WEB-"));
+    assert_eq!(result.unreconciled.len(), 1);
+    assert_eq!(result.unreconciled[0].id, child);
+    assert!(matches!(
+        result.unreconciled[0].reason,
+        crate::issue_moves::UnreconciledReason::Unread(_)
+    ));
+    assert!(result.moved.iter().all(|item| item.id != child));
     let checked = client.verify_issue_move(&preview).unwrap();
     assert!(checked.moved.iter().all(|item| {
         item.new_identifier
