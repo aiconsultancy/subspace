@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
+use ureq::http::StatusCode;
 use url::Url;
 
 use super::transfer::{self, Declaration, Expected, TransferError};
@@ -83,9 +84,13 @@ pub(crate) fn cached_for_test(origin: &str) -> usize {
     })
 }
 
+/// How long a grant cached by a test lasts.
+#[cfg(test)]
+const TEST_GRANT_MINUTES: i64 = 5;
+
 /// Caches a grant for `origin`, for tests of its lifetime.
 #[cfg(test)]
-pub(crate) fn remember_for_test(origin: &str, account: u64) {
+pub(crate) fn remember_for_test(origin: &str, account: u64) -> Result<(), url::ParseError> {
     remember(
         GrantKey {
             origin: origin.into(),
@@ -94,9 +99,10 @@ pub(crate) fn remember_for_test(origin: &str, account: u64) {
             standalone: true,
             id: "file".into(),
         },
-        Url::parse("https://files.fixture.example.test/f?grant=g").unwrap(),
-        Utc::now() + chrono::Duration::minutes(5),
+        Url::parse("https://files.fixture.example.test/f?grant=g")?,
+        Utc::now() + chrono::Duration::minutes(TEST_GRANT_MINUTES),
     );
+    Ok(())
 }
 
 fn forget(key: &GrantKey) {
@@ -120,9 +126,17 @@ pub(crate) fn read_error(error: TransferError) -> Error {
         TransferError::Forbidden => Error::Forbidden,
         TransferError::Missing => Error::NotFound,
         TransferError::Invalid => Error::InvalidRequest,
-        TransferError::Busy(_) => Error::UnexpectedStatus(429),
-        TransferError::Conflict => Error::UnexpectedStatus(409),
+        TransferError::Busy(_) => Error::UnexpectedStatus(StatusCode::TOO_MANY_REQUESTS.as_u16()),
+        TransferError::Conflict => Error::UnexpectedStatus(StatusCode::CONFLICT.as_u16()),
         TransferError::Unclear | TransferError::Network => Error::Network,
+    }
+}
+
+/// An upload refused with `status`, with the server's wait in whole seconds.
+fn refused(status: StatusCode, retry_after: u64) -> UploadError {
+    UploadError::Refused {
+        status: status.as_u16(),
+        retry_after,
     }
 }
 
@@ -130,20 +144,11 @@ pub(crate) fn read_error(error: TransferError) -> Error {
 fn before_bytes(error: TransferError) -> UploadError {
     match error {
         TransferError::SignIn => UploadError::SignInNeeded,
-        TransferError::Forbidden => UploadError::Refused {
-            status: 403,
-            retry_after: 0,
-        },
+        TransferError::Forbidden => refused(StatusCode::FORBIDDEN, 0),
         TransferError::Missing => UploadError::Removed,
-        TransferError::Conflict => UploadError::Refused {
-            status: 409,
-            retry_after: 0,
-        },
+        TransferError::Conflict => refused(StatusCode::CONFLICT, 0),
         TransferError::Invalid => UploadError::InvalidImage,
-        TransferError::Busy(seconds) => UploadError::Refused {
-            status: 429,
-            retry_after: seconds,
-        },
+        TransferError::Busy(seconds) => refused(StatusCode::TOO_MANY_REQUESTS, seconds),
         TransferError::Unclear | TransferError::Network => UploadError::Network,
     }
 }
@@ -158,10 +163,7 @@ fn after_bytes(error: TransferError) -> UploadError {
             retry_after: seconds,
         },
         TransferError::Invalid => UploadError::InvalidImage,
-        TransferError::Forbidden => UploadError::Refused {
-            status: 403,
-            retry_after: 0,
-        },
+        TransferError::Forbidden => refused(StatusCode::FORBIDDEN, 0),
         _ => UploadError::Checking,
     }
 }
@@ -216,6 +218,24 @@ fn stored_among<'a>(
         }
     }
     found
+}
+
+/// The standalone attachment `record` stored on `issue`, if it is the file
+/// declared; anything else leaves the upload to be checked.
+fn standalone(
+    issue: &str,
+    record: Value,
+    declaration: &ImageDeclaration,
+) -> Result<IssueMedia, UploadError> {
+    let mut media: IssueMedia =
+        serde_json::from_value(record).map_err(|_| UploadError::Checking)?;
+    media.binding = MediaBinding::Standalone {
+        issue: issue.to_owned(),
+    };
+    declaration
+        .matches(&media)
+        .then_some(media)
+        .ok_or(UploadError::Checking)
 }
 
 /// The next page of an attachment list, if the reply names one. `Err` when
@@ -442,10 +462,7 @@ impl Client {
             .nett_serves(crate::backend::Feature::Attachments)
             .unwrap_or(false)
         {
-            return Err(UploadError::Refused {
-                status: 501,
-                retry_after: 0,
-            });
+            return Err(refused(StatusCode::NOT_IMPLEMENTED, 0));
         }
         let upload = self.attachment_reservation(issue, request_key, declaration, bytes)?;
         let upload_id = upload
@@ -462,7 +479,7 @@ impl Client {
             Err(error) => return Err(before_bytes(error)),
         }
         match self.complete_attachment(issue, &upload_id) {
-            Ok(record) => self.standalone(issue, record, declaration),
+            Ok(record) => standalone(issue, record, declaration),
             Err(error) => Err(after_bytes(error)),
         }
     }
@@ -483,7 +500,7 @@ impl Client {
         declaration: &ImageDeclaration,
     ) -> Result<Option<IssueMedia>, UploadError> {
         match self.complete_attachment(issue, upload_id) {
-            Ok(record) => self.standalone(issue, record, declaration).map(Some),
+            Ok(record) => standalone(issue, record, declaration).map(Some),
             Err(TransferError::Conflict | TransferError::Missing) => {
                 self.stored_attachment(issue, upload_id, declaration)
             }
@@ -524,7 +541,7 @@ impl Client {
                 .ok_or(UploadError::Checking)?;
             match stored_among(items, upload_id, declaration) {
                 Stored::Found(record) => {
-                    return self.standalone(issue, record, declaration).map(Some);
+                    return standalone(issue, record, declaration).map(Some);
                 }
                 Stored::Unknown => unknown = true,
                 Stored::Absent => {}
@@ -583,23 +600,6 @@ impl Client {
         )
     }
 
-    fn standalone(
-        &self,
-        issue: &str,
-        record: Value,
-        declaration: &ImageDeclaration,
-    ) -> Result<IssueMedia, UploadError> {
-        let mut media: IssueMedia =
-            serde_json::from_value(record).map_err(|_| UploadError::Checking)?;
-        media.binding = MediaBinding::Standalone {
-            issue: issue.to_owned(),
-        };
-        declaration
-            .matches(&media)
-            .then_some(media)
-            .ok_or(UploadError::Checking)
-    }
-
     /// Removes a NETT media file the way its binding requires.
     pub(crate) fn nett_delete_media(&self, media: &IssueMedia) -> Result<(), UploadError> {
         let result = match &media.binding {
@@ -622,14 +622,10 @@ impl Client {
             Ok(_) | Err(TransferError::Missing) => Ok(()),
             Err(TransferError::SignIn) => Err(UploadError::SignInNeeded),
             // The attachment changed since it was listed: read it again.
-            Err(TransferError::Conflict) => Err(UploadError::Refused {
-                status: 409,
-                retry_after: 0,
-            }),
-            Err(TransferError::Busy(seconds)) => Err(UploadError::Refused {
-                status: 429,
-                retry_after: seconds,
-            }),
+            Err(TransferError::Conflict) => Err(refused(StatusCode::CONFLICT, 0)),
+            Err(TransferError::Busy(seconds)) => {
+                Err(refused(StatusCode::TOO_MANY_REQUESTS, seconds))
+            }
             Err(_) => Err(UploadError::Cleanup),
         }
     }
@@ -726,8 +722,8 @@ impl Client {
             crate::transport::READ_TIMEOUT,
         )
         .map_err(|_| TransferError::Unclear)?;
-        match response.status().as_u16() {
-            200..=202 => {
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED | StatusCode::ACCEPTED => {
                 let state =
                     crate::transport::read_json(response).map_err(|_| TransferError::Unclear)?;
                 // Read after the account or organisation changed: not used.
@@ -735,7 +731,7 @@ impl Client {
                 Ok(state)
             }
             status => Err(TransferError::from_status(
-                status,
+                status.as_u16(),
                 super::flow::retry_after(&response).unwrap_or(1),
             )),
         }

@@ -33,6 +33,10 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 pub(crate) const MAX_PAUSE: Duration = Duration::from_secs(crate::writing::MAX_RETRY_SECONDS);
 /// The first back-off when a refusal names no wait.
 const FIRST_BACKOFF: Duration = Duration::from_secs(1);
+/// Doublings before the back-off reaches [`MAX_BACKOFF`] (1 s × 2⁵ > 30 s).
+const MAX_DOUBLINGS: u32 = 5;
+/// At most this share of a back-off is taken off at random.
+const MAX_JITTER_SHARE: f64 = 0.5;
 /// Attempts a read makes when NETT is busy.
 pub(crate) const READ_ATTEMPTS: usize = 3;
 
@@ -170,9 +174,9 @@ pub(crate) fn pause(refusals: u32, retry_after: Option<u64>, jitter: f64) -> Dur
         return Duration::from_secs(seconds).min(MAX_PAUSE);
     }
     let full = FIRST_BACKOFF
-        .saturating_mul(1u32 << refusals.min(5))
+        .saturating_mul(1u32 << refusals.min(MAX_DOUBLINGS))
         .min(MAX_BACKOFF);
-    full.mul_f64(1.0 - jitter.clamp(0.0, 1.0) / 2.0)
+    full.mul_f64(1.0 - jitter.clamp(0.0, 1.0) * MAX_JITTER_SHARE)
 }
 
 /// A `Retry-After` in whole seconds, as NETT sends it, up to five minutes.
