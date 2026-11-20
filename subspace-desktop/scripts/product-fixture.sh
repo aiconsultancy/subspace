@@ -33,16 +33,11 @@ setup_product_fixture() {
     printf 'Fixture WebView2 loader\n' >"$fixture/native/webview2/x64/WebView2LoaderStatic.lib"
     printf 'Fixture Git fork licence\n' >"$fixture/git-fork/LICENSE"
     printf 'Fixture Framework project licence\n' >"$fixture_repo/resolved-framework/LICENSE"
-    mkdir -p "$fixture/native/ort/lib" "$fixture/native/ort/substitute"
-    printf 'Fixture ONNX Runtime static archive\n' >"$fixture/native/ort/lib/libonnxruntime.a"
-    printf 'Fixture substituted static archive\n' >"$fixture/native/ort/substitute/libonnxruntime.a"
-    local ort_pin ort_lib_pin webview_pin
+    local ort_pin webview_pin
     ort_pin="$(shasum -a 256 "$fixture/native/ort/build/download/dist.tsv" | cut -d ' ' -f1)"
-    ort_lib_pin="$(shasum -a 256 "$fixture/native/ort/lib/libonnxruntime.a" | cut -d ' ' -f1)"
     webview_pin="$(shasum -a 256 "$fixture/native/webview2/x64/WebView2LoaderStatic.lib" | cut -d ' ' -f1)"
-    jq --arg ort "$ort_pin" --arg ort_lib "$ort_lib_pin" --arg webview "$webview_pin" '
+    jq --arg ort "$ort_pin" --arg webview "$webview_pin" '
       .onnxruntime.artifacts["build/download/dist.tsv"] = $ort |
-      .onnxruntime.static_archives[] = $ort_lib |
       .webview2.artifacts["x64/WebView2LoaderStatic.lib"] = $webview
     ' "$fixture/native-notices.json" >"$fixture/native-notices.tmp"
     mv "$fixture/native-notices.tmp" "$fixture/native-notices.json"
@@ -233,13 +228,8 @@ BINARY
                 if [[ "${FAKE_BUILD_ONLY_OVERRIDE:-0}" = 1 ]]; then
                     cfgs='[]'; libs='["onnxruntime"]'
                 fi
-                link_path="$FIXTURE/native/ort/lib"
-                if [[ "${FAKE_BUILD_ONLY_ARCHIVE:-0}" = 1 ]]; then
-                    link_path="$FIXTURE/native/ort/substitute"
-                fi
                 jq -nc --arg id "$registry#ort-sys@2.0.0-rc.15" --argjson cfgs "$cfgs" --argjson libs "$libs" \
-                    --arg path "native=$link_path" \
-                    '{reason:"build-script-executed",package_id:$id,cfgs:$cfgs,linked_libs:$libs,linked_paths:[$path]}'
+                    '{reason:"build-script-executed",package_id:$id,cfgs:$cfgs,linked_libs:$libs}'
             fi
             jq -nc --arg package "$package" --arg executable "$directory/$package$exe" \
                 '{reason:"compiler-artifact",target:{name:$package,kind:["bin"]},executable:$executable,fresh:true}'
