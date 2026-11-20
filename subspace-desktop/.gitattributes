@@ -11,3 +11,4 @@ licenses/charts/LICENSE-QUICKJS-NG whitespace=-blank-at-eol
 licenses/onnxruntime/LICENSE -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 licenses/onnxruntime/ThirdPartyNotices.txt -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 licenses/rust-crates/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+licenses/webview2/*.txt -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab

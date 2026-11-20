@@ -16,7 +16,8 @@
   from `gpui-kit-assets` 0.9.1. The [ISC licence](LICENSE-LUCIDE) covers both.
   The Framework's asset loader is ported from Sushao's
   [gpui-lucide](https://github.com/suxiaoshao/gupi) and distributed under
-  the [Apache License 2.0](../../LICENSE) staged at the archive root.
+  the [Apache License 2.0](../../../LICENSE) in the repository root.
+  In release archives, see `LICENSE` beside `NOTICE`.
 - The chat host's [OpenAI mark](https://github.com/lobehub/lobe-icons/blob/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/openai.svg)
   comes from Lobe Icons under the [MIT licence](LICENSE-LOBE-ICONS).
   Its Claude, OpenCode and Gemini marks come from

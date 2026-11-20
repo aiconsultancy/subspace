@@ -18,11 +18,17 @@ parser. The root NOTICE also records the pinned GPUI Kit version for the
 vendored skills and guides.
 
 Native archives include Microsoft ONNX Runtime 1.31.0's licence and
-third-party notices. The Rust crate report uses the versioned sources in
-`about-notices.json` for licence files missed by cargo-about, highlights
-remaining generic texts and links to each MPL-2.0 crate's source archive.
-An invalid cargo-about clarification or a changed pinned source file
-stops packaging before compiling the release binary.
+third-party notices. Packaging copies the Rust standard library licences
+and copyright notice from the release compiler's sysroot and checks the
+files and pinned compiler version before compiling. The Windows ZIP also
+includes the licence and notice from the WebView2 SDK 1.0.3650.58 NuGet
+archive. The Rust crate report uses
+the versioned sources in `about-notices.json` for licence files missed by
+cargo-about, highlights remaining generic texts and links to each MPL-2.0
+crate's source archive.
+An invalid cargo-about clarification, a changed pinned source file or a
+linked generic text without a matching fallback diagnostic stops packaging
+before compiling the release binary.
 
 The fallback audit checked the locked releases across macOS, Linux and
 Windows. The versioned entries identify upstream revisions for omitted
@@ -35,12 +41,14 @@ pinned source has an MPL header. The linked release graphs carry the
 MPL-2.0 source link for option-ext.
 
 `bash scripts/test-prerelease-products.sh` compares the notices against
-their source files and checks the generated Rust report after extracting the
-Linux and macOS tarballs, Windows ZIP and macOS app ZIP. It uses fixture
-binaries and signing commands. `make licence-check` checks the allowed SPDX
-expressions and byte-compares the copied notices against the Framework
-checkout Cargo actually selected. Packaging uses
-Cargo's normal dependency tree to limit the report to the selected target and
-features and omit compile-time proc macros.
+their source files, including a fixture sysroot, and checks the generated
+Rust report after extracting the Linux and macOS tarballs, Windows ZIP and
+macOS app ZIP. It uses fixture binaries and signing commands.
+`bash scripts/test-package-products.sh` checks that a missing sysroot
+notice or a compiler version mismatch stops packaging before Cargo runs.
+`make licence-check` checks the allowed SPDX expressions and byte-compares
+the copied notices against the Framework checkout Cargo actually selected.
+Packaging uses Cargo's normal dependency tree to limit the report to the
+selected target and features and omit compile-time proc macros.
 Verification also covers the gallery build, its tests, Web Space package
 validation, the desktop documentation checks and the public repository guard.

@@ -115,7 +115,12 @@ and Python 3 to check the locked Rust graph against `about.toml` and generate
 `THIRD_PARTY_LICENSES` for the target and build features. The report
 includes pinned texts that the scanner misses, identifies any remaining
 generic SPDX texts and gives exact source downloads for MPL-2.0 crates.
-Native ONNX Runtime notices are in `licenses/onnxruntime/`.
+Native ONNX Runtime notices are in `licenses/onnxruntime/`, and the Windows
+archive includes the WebView2 loader notices in `licenses/webview2/`.
+Packaging copies the Rust standard library licences and copyright notice
+unchanged from the release compiler's sysroot into `licenses/rust-std/`.
+It stops before compilation if a notice is missing or the compiler version
+differs from the pin in `mise.toml`.
 `make licence-check` checks the policy across release targets with Terminal
 and the default features enabled. It also compares the copied notices when
 Cargo resolves the Framework from a local checkout.

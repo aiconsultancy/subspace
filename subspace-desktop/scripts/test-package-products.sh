@@ -87,6 +87,21 @@ fi
 unset FAKE_BINARY_VERSION
 cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
+cp "$fixture/cargo.log" "$fixture/before-toolchain-check.log"
+rust_copyright="$fixture/fake sysroot/share/doc/rust/COPYRIGHT-library.html"
+mv "$rust_copyright" "$rust_copyright.bak"
+if bash "$fixture/scripts/package-release.sh" "$host_target" "$version" >"$fixture/rust-notice.log" 2>&1; then
+    echo 'expected a missing Rust standard library notice to stop packaging' >&2
+    exit 1
+fi
+grep -Fq "missing or unreadable Rust standard library notice: $rust_copyright" "$fixture/rust-notice.log"
+mv "$rust_copyright.bak" "$rust_copyright"
+if FAKE_RUST_VERSION=1.77.0-nightly bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile' >"$fixture/rust-version.log" 2>&1; then
+    echo 'expected a Rust version mismatch to stop packaging' >&2
+    exit 1
+fi
+grep -Fq 'packaging requires Rust 1.77.0 from mise.toml; rustc reports rustc 1.77.0-nightly' "$fixture/rust-version.log"
+cmp "$fixture/before-toolchain-check.log" "$fixture/cargo.log"
 builds_before="$(grep -c '^build ' "$fixture/cargo.log")"
 if FAKE_LICENCE_FAIL=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version"; then
     echo 'expected failed licence policy to stop packaging' >&2
@@ -96,6 +111,11 @@ if FAKE_MISSING_LICENCE=1 bash "$fixture/scripts/package-release.sh" "$host_targ
     echo 'expected incomplete licence report to stop packaging' >&2
     exit 1
 fi
+if FAKE_FALLBACK_LOG_CHANGED=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version" >"$fixture/fallback.log" 2>&1; then
+    echo 'expected unrecognised fallback diagnostics to stop packaging' >&2
+    exit 1
+fi
+grep -Fq 'missing cargo-about fallback diagnostics for fixture-generic v1.0.0 (MIT)' "$fixture/fallback.log"
 if FAKE_CLARIFICATION_FAIL=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version" >"$fixture/clarification.log" 2>&1; then
     echo 'expected a failed clarification checksum to stop packaging' >&2
     exit 1

@@ -120,6 +120,8 @@ forwards the app's targets here.
   `include_str!` or `#[path]` here reads the Framework's folder. Docs may link
   to Framework pages with relative links, which the doc checks treat as
   external.
+  The read-only comparison in `scripts/check-licences.sh` against the
+  Framework copy that Cargo resolves is an allowed exception.
 - Layout and dependency direction (products → Spaces → `subspace-framework`):
   - `spaces/<id>/` holds the Spaces, named `subspace-<id>-board`, with
     Space-owned support crates under `spaces/<id>/crates/`. A Space depends on
