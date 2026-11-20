@@ -8,7 +8,7 @@ use subspace_framework::client_test_support::Mock;
 
 pub(super) const ROOT: &str = "00000000-0000-4000-8000-0000000000e1";
 pub(super) const CHILD: &str = "00000000-0000-4000-8000-0000000000e2";
-const SECOND: &str = "00000000-0000-4000-8000-0000000000e3";
+pub(super) const SECOND: &str = "00000000-0000-4000-8000-0000000000e3";
 
 pub(super) fn issue(id: &str, identifier: &str, (team, key): (&str, &str), version: i64) -> Value {
     let mut issue = crate::tests::detail(id);

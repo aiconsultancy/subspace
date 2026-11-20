@@ -516,11 +516,19 @@ With `issueMoves`, Issues can move an issue to another team.
   the root moved, the move is unconfirmed and **Check issue** repeats
   only this check, never the move. A root still where it was means the
   plan did not happen, and the editor offers a fresh preview; a root that
-  cannot be read leaves the move to be checked again. Once NETT's reply,
-  or a check's own read, shows the root in the destination, the move
-  committed, and a check finishes there however large the move: a
-  sub-issue read back somewhere else was moved again since, and one that
-  cannot be read may have been, so neither undoes the move's success. The
+  cannot be read leaves the move to be checked again. NETT's reply is this
+  plan's own, so a reply showing the root in the destination proves the
+  move committed. A check's read of the root there could be a teammate's
+  own move of it, so the plan's sub-issues must tie it to this plan:
+  because NETT moves the whole subtree at once, at least one must read
+  back moved with the root and none may still be in the source team. A
+  sub-issue still there, or none moved once every one was read, means the
+  plan did not happen, a conflict; with none moved and some not read, the
+  move is left to be checked again. A plan without sub-issues is the root
+  alone. A large move's check reads sub-issues only while time is left,
+  and one read back moved is enough to tie it. Once the move is proven,
+  a sub-issue read back somewhere else was moved again since, and one
+  that cannot be read may have been, so neither undoes its success. The
   editor lists each such sub-issue, in a list that scrolls however long it
   is so Open stays in view, with what reading it found before it opens
   the moved issue: moved again since, only for one newer than
