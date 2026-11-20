@@ -40,9 +40,9 @@ Subspace changes where the agents live and how the team talks to them:
   talk to each other as well as to you.
 - **The rear admiral talks to stakeholders.** Each fleet's rear admiral is its
   link to the people the work is for. Stargate, the fleet orchestrator,
-  supports Slack and Microsoft Teams. Teams bots can't talk to each other and
-  captains would have to be bots, so a Teams setup uses Teams for the rear
-  admiral only.
+  supports Slack and Microsoft Teams. Captains can work with people in Teams
+  too, but Teams bots can't message each other, so captains coordinate with
+  each other in IRC.
 - **Nobody relays screenshots by hand.** Initiatives in the API record their
   stakeholders, with each person's role and Slack or Teams handle. The rear
   admiral reaches out to them directly: it sends screenshots, asks whether
@@ -288,16 +288,16 @@ Select an image to see it full size.
 
 <table>
 <tr>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-approved.png"><img src="docs/assets/screenshots/fleet-captain-review-approved.png" width="420" alt="GitHub approval from a captain’s app, with a Go verdict and a list of release checks"></a><br>A captain approves a Release Please pull request after checking the version bump and matching lockfiles.</td>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-changes.png"><img src="docs/assets/screenshots/fleet-captain-review-changes.png" width="420" alt="GitHub review from a captain’s app, with a No go verdict and a blocking finding about duplicate Effect versions"></a><br>A captain requests changes on a Dependabot pull request that would load two copies of Effect.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-approved.png"><img src="docs/assets/screenshots/fleet-captain-review-approved.png" width="400" alt="GitHub approval from a captain’s app, with a Go verdict and a list of release checks"></a><br>A captain approves a Release Please pull request after checking the version bump and matching lockfiles.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-changes.png"><img src="docs/assets/screenshots/fleet-captain-review-changes.png" width="400" alt="GitHub review from a captain’s app, with a No go verdict and a blocking finding about duplicate Effect versions"></a><br>A captain requests changes on a dependency update that would load two copies of Effect.</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-tested.png"><img src="docs/assets/screenshots/fleet-captain-review-tested.png" width="420" alt="GitHub approval from another captain’s app, after running the crate tests and Clippy on the exact commit"></a><br>Another captain runs the crate tests and Clippy on the exact commit before it approves.</td>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-teams.png"><img src="docs/assets/screenshots/fleet-captain-teams.png" width="420" alt="A captain’s Teams reply compares memory-based and CPU-only autoscaling for staging and production"></a><br>A captain checks a staging and production capacity plan with stakeholders in Microsoft Teams.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-tested.png"><img src="docs/assets/screenshots/fleet-captain-review-tested.png" width="400" alt="GitHub approval from another captain’s app, after running the crate tests and Clippy on the exact commit"></a><br>Another captain runs the crate tests and Clippy on the exact commit before it approves.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-teams.png"><img src="docs/assets/screenshots/fleet-captain-teams.png" width="400" alt="A captain’s Teams reply compares memory-based and CPU-only autoscaling for staging and production"></a><br>A captain works through a staging and production capacity plan in Microsoft Teams.</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-rear-admiral-slack-asked.png"><img src="docs/assets/screenshots/fleet-rear-admiral-slack-asked.png" width="420" alt="An admiral asks Kirk about the Stargate repository in Slack, and Kirk shows that it is thinking"></a><br>An admiral asks the rear admiral for its take on Stargate in Slack.</td>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-rear-admiral-slack-review.png"><img src="docs/assets/screenshots/fleet-rear-admiral-slack-review.png" width="420" alt="Kirk’s Slack reply highlights Stargate’s security and restart handling, then flags the pace of change and a breaking rename"></a><br>The rear admiral replies in the thread with what looks good and what it would watch.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-rear-admiral-slack-asked.png"><img src="docs/assets/screenshots/fleet-rear-admiral-slack-asked.png" width="400" alt="An admiral asks Kirk about the Stargate repository in Slack, and Kirk shows that it is thinking"></a><br>An admiral asks the rear admiral for its take on Stargate in Slack.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-rear-admiral-slack-review.png"><img src="docs/assets/screenshots/fleet-rear-admiral-slack-review.png" width="400" alt="Kirk’s Slack reply highlights Stargate’s security and restart handling, then flags the pace of change and a breaking rename"></a><br>The rear admiral replies in the thread with what looks good and what it would watch.</td>
 </tr>
 </table>
 
