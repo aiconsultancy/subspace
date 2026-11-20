@@ -101,6 +101,8 @@ while not pathlib.Path("child-ready").exists():
     time.sleep(0.02)
 if sys.argv[1] == "error":
     sys.exit(23)
+if sys.argv[1] == "success":
+    sys.exit(0)
 child.wait()
 """)
         supervisor = f"""
@@ -116,7 +118,7 @@ with helper["exclusive_lock"](Path(".package.lock")), open("messages", "w") as m
     except subprocess.CalledProcessError as exc:
         sys.exit(exc.returncode)
 """
-        for mode, expected in (("error", 23), ("SIGINT", 42), ("SIGTERM", 42)):
+        for mode, expected in (("success", 0), ("error", 23), ("SIGINT", 42), ("SIGTERM", 42)):
             with self.subTest(mode=mode):
                 cwd = self.root / mode
                 cwd.mkdir()
@@ -127,18 +129,28 @@ with helper["exclusive_lock"](Path(".package.lock")), open("messages", "w") as m
                         while not ready.exists():
                             self.assertLess(time.monotonic(), deadline, "Cargo child never started")
                             time.sleep(0.02)
-                        if mode != "error":
+                        if mode not in {"success", "error"}:
                             process.send_signal(getattr(signal, mode))
                         self.assertEqual(process.wait(timeout=10), expected)
                         with patch.dict(os.environ, {release_files.LOCK_TIMEOUT: "0"}), \
-                                release_files.exclusive_lock(cwd / ".package.lock"), \
-                                release_files.exclusive_lock(cwd / "child.lock"):
+                                release_files.exclusive_lock(cwd / ".package.lock"):
+                            if mode == "success":
+                                with self.assertRaises(TimeoutError):
+                                    with release_files.exclusive_lock(cwd / "child.lock"):
+                                        self.fail("successful Cargo build stopped its child")
+                            else:
+                                with release_files.exclusive_lock(cwd / "child.lock"):
+                                    pass
                             self.assertFalse((cwd / "cached-executable").exists())
                     finally:
                         # Release a surviving child even when the fixture fails.
                         (cwd / "overwrite").touch()
                         if process.poll() is None:
                             process.terminate()
+                        elif mode == "success":
+                            with patch.dict(os.environ, {release_files.LOCK_TIMEOUT: "10"}), \
+                                    release_files.exclusive_lock(cwd / "child.lock"):
+                                pass
 
     def test_failed_checksum_rename_restores_previous_pair(self):
         dist = self.root / "dist"

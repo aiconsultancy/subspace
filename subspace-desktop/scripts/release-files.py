@@ -10,9 +10,11 @@ import math
 import os
 from pathlib import Path
 import re
+import select
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 from tempfile import TemporaryDirectory, TemporaryFile, mkdtemp
@@ -173,17 +175,11 @@ def stop_posix_group(process):
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    process.wait()
-    while True:
-        try:
-            os.killpg(process.pid, 0)
-        except ProcessLookupError:
-            return
-        # A Linux container's init may leave orphaned zombies in the
-        # process table indefinitely. They can no longer write to the cache.
-        if sys.platform == "linux" and not linux_group_has_live_members(process.pid):
-            return
+    # A Linux container's init may leave orphaned zombies indefinitely.
+    # Check for live writers while the leader still holds the group ID.
+    while sys.platform == "linux" and linux_group_has_live_members(process.pid):
         time.sleep(0.1)
+    process.wait()
 
 
 @contextmanager
@@ -249,16 +245,45 @@ def cargo_process(command, root, env, messages):
                 attach(process)
                 process.stdin.write(b"1")
                 process.stdin.close()
-                yield process
+                yield process.wait
         finally:
             process.stdin.close()
             process.wait()
     else:
-        process = subprocess.Popen(command, cwd=root, env=env, stdout=messages, start_new_session=True)
-        try:
-            yield process
-        finally:
-            stop_posix_group(process)
+        # The session leader holds its PID until the parent sees Cargo's
+        # result and either closes the pipe or signals the whole group.
+        launcher = ("import socket, subprocess, sys\n"
+                    "try:\n"
+                    "    status = subprocess.call(sys.argv[2:])\n"
+                    "except OSError as error:\n"
+                    "    print(error, file=sys.stderr)\n"
+                    "    status = 1\n"
+                    "with socket.socket(fileno=int(sys.argv[1])) as control:\n"
+                    "    control.sendall(f'{status}\\n'.encode())\n"
+                    "    control.recv(1)\n")
+        control, child = socket.socketpair()
+        with control, child, control.makefile("rb") as result:
+            fd = child.fileno()
+            with subprocess.Popen([sys.executable, "-c", launcher, str(fd), *command],
+                                  cwd=root, env=env, pass_fds=(fd,), start_new_session=True,
+                                  stdout=messages) as process:
+                child.close()
+                status = None
+
+                def wait_for_cargo(timeout):
+                    nonlocal status
+                    if not select.select([control], [], [], timeout)[0]:
+                        raise subprocess.TimeoutExpired(command, timeout)
+                    status = int(result.readline() or b"1")
+                    return status
+
+                try:
+                    yield wait_for_cargo
+                finally:
+                    if status == 0:
+                        control.shutdown(socket.SHUT_WR)
+                    else:
+                        stop_posix_group(process)
 
 
 def run_cargo(command, root, env, messages):
@@ -269,16 +294,16 @@ def run_cargo(command, root, env, messages):
         interrupted = signum
 
     # Defer asynchronous exceptions during launch and teardown. Leave the
-    # cache lock held until Cargo and every member of its group have stopped.
+    # cache lock held until Cargo has finished or its interrupted group stops.
     with ExitStack() as handlers:
         for name in ("SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"):
             if (signum := getattr(signal, name, None)) is not None:
                 previous = signal.signal(signum, record_interrupt)
                 handlers.callback(signal.signal, signum, previous)
-        with cargo_process(command, root, env, messages) as process:
+        with cargo_process(command, root, env, messages) as wait_for_cargo:
             while interrupted is None:
                 try:
-                    status = process.wait(timeout=0.1)
+                    status = wait_for_cargo(timeout=0.1)
                     break
                 except subprocess.TimeoutExpired:
                     continue
