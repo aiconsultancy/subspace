@@ -84,8 +84,9 @@ fn moved_into(preview: &MovePreview, current: &IssueDetail, previewed: &MoveItem
 }
 
 /// What a read of `previewed` that did not show it moved says: `None` when
-/// time ran out before it was read. Only a newer version in a third team
-/// shows it moved again; a stale or unchanged one shows nothing.
+/// time ran out before it was read. Only that issue, newer than previewed
+/// and in a third team, shows it moved again; a stale or unchanged one, or
+/// a reply about another issue, shows nothing.
 fn reason(
     preview: &MovePreview,
     previewed: &MoveItem,
@@ -95,7 +96,8 @@ fn reason(
         None => UnreconciledReason::NotChecked,
         Some(Err(error)) => UnreconciledReason::Unread(error),
         Some(Ok(current))
-            if current.fields.version > i64::from(previewed.version)
+            if current.fields.id == previewed.id
+                && current.fields.version > i64::from(previewed.version)
                 && current.fields.project_id != preview.source.id
                 && current.fields.project_id != preview.destination.id =>
         {
@@ -221,12 +223,14 @@ impl Client {
     }
 
     /// A fresh read of the issue `id` that ends by `deadline`, or `None`
-    /// when too little time is left for one.
+    /// when too little time is left for one, or the time ran out before it
+    /// got its turn or its reply.
     fn read_within(&self, id: &str, deadline: Instant) -> Option<Result<IssueDetail, Error>> {
-        let left = deadline
+        deadline
             .checked_duration_since(Instant::now())
             .filter(|left| *left >= MIN_READ)?;
-        Some(self.nett_issue_within(id, left.min(crate::transport::READ_TIMEOUT)))
+        let read = self.nett_issue_within(id, deadline);
+        (read.is_ok() || Instant::now() < deadline).then_some(read)
     }
 }
 

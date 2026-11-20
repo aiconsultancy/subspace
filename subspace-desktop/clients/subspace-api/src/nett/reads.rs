@@ -100,18 +100,19 @@ impl Client {
         Ok(value)
     }
 
-    /// The issue `reference`, read afresh within `timeout`: never a read
-    /// already in flight, which could predate a change just made, and tried
-    /// once. A reply read after the account or organisation changed belongs
-    /// to no one.
+    /// The issue `reference`, read afresh by `deadline`, waiting for a place
+    /// among the account's requests included: never a read already in
+    /// flight, which could predate a change just made, and tried once. A
+    /// reply read after the account or organisation changed belongs to no
+    /// one.
     pub(crate) fn nett_issue_within(
         &self,
         reference: &str,
-        timeout: std::time::Duration,
+        deadline: std::time::Instant,
     ) -> Result<crate::model::IssueDetail, Error> {
         let url = self.endpoint(&["issues", reference], &[])?;
         let mut value: Value =
-            transport::get_within(&self.agent, &url, self.access_jwt.as_ref(), timeout)?;
+            transport::get_within(&self.agent, &url, self.access_jwt.as_ref(), deadline)?;
         self.current()?;
         #[cfg(test)]
         crate::native::test_lease::read_accepted();
