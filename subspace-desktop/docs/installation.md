@@ -265,11 +265,11 @@ draft GitHub release with the changelog's entry as its notes. It also starts
 the [windows-release workflow](#the-windows-release-workflow), which attaches
 the signed Windows archive to the draft and can take a couple of hours.
 `make release-macos` publishes the release without checking for that archive,
-so wait until the latest `windows-release` run has succeeded. Then, on the
-owner's Mac:
+so wait until the draft lists `subspace-<version>-x86_64-pc-windows-msvc.zip`
+and its `.sha256`. Then, on the owner's Mac:
 
 ```bash
-gh run list -R aiconsultancy/subspace --workflow windows-release.yml --limit 1
+gh release view subspace-desktop-v<version> -R aiconsultancy/subspace --json assets --jq '.assets[].name'
 git fetch --tags origin
 git switch --detach subspace-desktop-v<version>
 make release-macos
@@ -525,8 +525,9 @@ full `Developer ID Application: <team> (<team ID>)` name.
 key in its HSMs, issues a short-lived certificate for the account's
 certificate profile and signs a digest that the client sends. The client is
 [jsign](https://github.com/ebourg/jsign), which runs on macOS, Linux and
-Windows, so signing needs no Windows machine and no network path other than
-HTTPS to the Artifact Signing endpoint.
+Windows, so signing needs no Windows machine. It needs HTTPS to the
+Artifact Signing endpoint and to the Key Vault, and HTTP to Microsoft's
+timestamp server.
 
 `make sign-windows FILES="<file> ..."` (`scripts/sign-windows.sh`) signs a
 `.exe`, `.dll`, `.msi` or `.msix` in place. Given a release `.zip`, it signs
@@ -578,20 +579,29 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
    GPUI release build for Windows must run on Windows, because the renderer
    compiles its shaders with the Windows SDK's `fxc.exe` in a build script.
 2. **sign**, on `subspace-signing`, a Linux runner in the trusted deployment
-   subnet, runs in the `windows-signing` environment. It signs in to Azure
-   with GitHub OIDC as the signing identity, installs Temurin and the pinned
-   jsign JAR (checked against its SHA-256 digest) and runs `make sign-windows`
-   on the archive. It reads the three secrets above through the platform Key
-   Vault's private endpoint.
-3. **publish**, back on `subspace-windows`, checks the archive's `.sha256` and
-   that Windows reports the signature `Valid` with a timestamp, then attaches
-   the archive and its `.sha256` file to the release. Publish the release
-   only after this, as [Publish a macOS release](#publish-a-macos-release)
-   says.
+   subnet, runs in the `windows-signing` environment. The build's scripts
+   could have tampered with anything the build job produced, so this job
+   takes the tag from the workflow's input, checks again that its commit is
+   on `main` and names the archive itself. It installs a pinned Temurin
+   build and the pinned jsign JAR (checked against its SHA-256 digest), signs
+   in to Azure with GitHub OIDC as the signing identity and runs
+   `scripts/sign-windows.sh` on the archive, which refuses links, unsafe
+   paths and duplicate entries. It reads the three secrets above through the
+   platform Key Vault's private endpoint, and masks their values in the log.
+3. **verify**, on `subspace-windows` with read access only, checks the
+   archive's `.sha256` and that Windows reports the signature `Valid` with a
+   timestamp.
+4. **attach**, back on `subspace-signing`, checks that the tag still points
+   at the commit that was built, then attaches the archive and its `.sha256`
+   file to the release. Publish the release only after this, as
+   [Publish a macOS release](#publish-a-macos-release) says.
 
 The build job never holds the OIDC permission, so build scripts cannot request
-a token for the signing identity. The runner group admits only this workflow
-on `main`. To build an older release, or to try the build or the signing
+a token for the signing identity. They can still change what the build
+produces, including `subspace.exe` itself, and the sign job signs that
+binary: only commits on `main`, built with `--locked` against the reviewed
+`Cargo.lock`, limit which build scripts run. The runner group admits only this
+workflow on `main`. To build an older release, or to try the build or the signing
 without attaching anything:
 
 ```bash

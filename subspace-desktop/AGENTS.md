@@ -419,8 +419,10 @@ compare them yourself before asking for review.
 - Creating the app release also starts `.github/workflows/windows-release.yml`,
   which attaches `subspace-<version>-x86_64-pc-windows-msvc.zip` with an
   Authenticode-signed `subspace.exe` and its `.sha256` file. Its sign job
-  uses the `windows-signing` environment's Azure identity and Key Vault;
-  `make sign-windows` (jsign) does the signing anywhere. Keep the signing
+  uses the `windows-signing` environment's Azure identity and Key Vault, and
+  trusts nothing from the build job but the archive's bytes;
+  `scripts/sign-windows.sh` (jsign, `make sign-windows` locally) does the
+  signing anywhere. Keep the signing
   account, certificate profile and identity out of the repository; they live
   in that environment's secrets and the Key Vault. See
   [Sign Windows releases](docs/installation.md#sign-windows-releases).
