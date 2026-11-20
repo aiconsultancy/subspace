@@ -21,11 +21,12 @@
 # - publish: back on `subspace-windows`, Windows' own verifier checks the
 #   signature, then the archive is attached.
 #
-# The release workflow starts it on main when it creates an app release, so
-# the archive is on the draft before `make release-macos` publishes it. The
+# The release workflow starts it on main when it creates an app release; wait
+# for it to attach the archive to the draft before `make release-macos`
+# publishes the release. It builds only a tag whose commit is on main. The
 # runner group admits only this file on main. To build an older release, or
 # to try the build or the signing without attaching anything:
-#   gh workflow run windows-release.yml --ref main -f tag=subspace-desktop-v0.9.0 -f mode=sign-only
+#   gh workflow run windows-release.yml --ref main -f tag=subspace-desktop-v<version> -f mode=sign-only
 name: windows-release
 
 on:

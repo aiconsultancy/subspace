@@ -40,7 +40,8 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
   - It signs on `subspace-signing` in the `windows-signing` environment, using
     GitHub OIDC. The environment's deployment rule allows only `main`.
   - It verifies the signature with `Get-AuthenticodeSignature` on Windows.
-  - It attaches the archive and its `.sha256`, normally to the draft release.
+  - It attaches the archive and its `.sha256` to the draft release. The owner
+    waits for it before `make release-macos` publishes the release.
 - The Azure identity, the vault name and the runner configuration live outside
   this repository: the identity's IDs and the vault name are in the
   environment's secrets.

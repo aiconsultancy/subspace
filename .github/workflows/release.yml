@@ -42,7 +42,7 @@ jobs:
       contents: write # Tags, releases, release branches and the integration branch.
       pull-requests: write # Open, update, label and merge the release pull requests.
       issues: write # Create the autorelease labels.
-      actions: write # Start publish-framework.yml on a new Framework tag.
+      actions: write # Start publish-framework.yml on a new Framework tag, and windows-release.yml on a new app release.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the Rust toolchain the Framework names
