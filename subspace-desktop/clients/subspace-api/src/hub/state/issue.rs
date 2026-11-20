@@ -94,9 +94,8 @@ impl IssueSnapshot {
     }
 
     pub(in crate::hub) fn new(identifier: &str, profile_id: &str, status: IssueStatus) -> Self {
-        static OPENINGS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self {
-            opening: OPENINGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            opening: next_opening(),
             identifier: identifier.into(),
             profile_id: profile_id.into(),
             status,
@@ -108,12 +107,12 @@ impl IssueSnapshot {
             children_failed: false,
             relations_loading: false,
             relations_failed: false,
-            epochs: Epochs::default(),
+            epochs: Default::default(),
             pull_requests: Default::default(),
             todos: Default::default(),
             decisions: Default::default(),
             decision: Default::default(),
-            timeline: TimelineSnapshot::default(),
+            timeline: Default::default(),
             images: Default::default(),
             files: Default::default(),
         }
@@ -156,6 +155,12 @@ impl IssueSnapshot {
     pub fn children_failed(&self) -> bool {
         self.children_failed
     }
+}
+
+/// A number for each opening of an issue, unique for the run.
+fn next_opening() -> u64 {
+    static OPENINGS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    OPENINGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Installation counters for the detail's paged sub-issues and relations.

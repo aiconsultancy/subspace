@@ -201,6 +201,17 @@ impl Client {
         }
     }
 
+    /// An explicit reload: a pause NETT asked for ends, so what the person
+    /// asked for is sent now, and the organisation's capability list is read
+    /// again, so a feature NETT enabled meanwhile is offered. Subspace API
+    /// has neither.
+    pub(crate) fn resume_nett(&self) {
+        if self.backend == crate::Backend::Nett {
+            crate::nett::flow::resume(self.flow_account());
+            self.nett_reread_served();
+        }
+    }
+
     /// Asks for the organisation's capability list to be read again the
     /// next time a feature is checked, as an explicit reload does.
     pub(crate) fn nett_reread_served(&self) {
