@@ -29,9 +29,10 @@ Windows. The versioned entries identify upstream revisions for omitted
 files and checksums for files read directly from published crates. Where
 the pinned sources provide attribution only, the report retains it
 alongside the generic text. This covers recent objc2 releases, Pathfinder
-Geometry and the Zune crates. The pinned dwrote, mac and SeaHash sources
-have no standalone licence text. The report flags those crates and links
-to dwrote's MPL-2.0 source archive.
+Geometry and the Zune crates. The pinned mac and SeaHash sources have
+no standalone licence text. The policy graph also contains dwrote, whose
+pinned source has an MPL header. The linked release graphs carry the
+MPL-2.0 source link for option-ext.
 
 `bash scripts/test-prerelease-products.sh` compares the notices against
 their source files and checks the generated Rust report after extracting the
