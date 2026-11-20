@@ -5,7 +5,10 @@ adds the Tailwind CSS and Vite preload helper licences from the same
 lockfile-pinned installation. The package tests compare the shipped texts
 and version headings against the installed files and lockfile, check that
 rerunning the notice script preserves its output, and verify the copied
-Nerd Font glyph notices.
+Nerd Font glyph notices. The pinned Codicons 0.0.45 licence credits
+Jason Long's Git logo under CC BY 3.0. The Font Awesome 6.5.1 notice
+identifies SIL OFL 1.1 for the bundled font glyphs and credits Fonticons
+with the 2023 copyright.
 
 Native releases stage the project licence and notice, the desktop licence
 tree and the existing Actions Octicons attribution. The desktop tree includes

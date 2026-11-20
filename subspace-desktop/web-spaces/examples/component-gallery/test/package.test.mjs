@@ -87,6 +87,14 @@ test('bundled fonts ship with their upstream licences', () => {
     const file = `fonts/glyph-licences/${name}`;
     assert.equal(read(file), readFileSync(join(root, 'public', file), 'utf8'), file);
   }
+  const index = read('fonts/glyph-licences/README.md');
+  assert.match(index, /Git logo by Jason Long under CC BY 3\.0/);
+  assert.match(index, /SIL OFL 1\.1\]\(font-awesome-LICENSE\.txt\), © 2023 Fonticons, Inc\./);
+  const codicons = read('fonts/glyph-licences/codicons-LICENSE.txt');
+  assert.match(codicons, /Git Logo by \[Jason Long\].*https:\/\/creativecommons\.org\/licenses\/by\/3\.0\//);
+  const fontAwesome = read('fonts/glyph-licences/font-awesome-LICENSE.txt');
+  assert.match(fontAwesome, /# Fonts: SIL OFL 1\.1 License/);
+  assert.match(fontAwesome, /Copyright \(c\) 2023 Fonticons, Inc\./);
 });
 
 test('bundled dependencies ship the licence texts from their locked versions', () => {
