@@ -95,6 +95,8 @@ impl Client {
         // A body read after the account or organisation changed belongs to
         // no one, however the read was shared.
         self.current()?;
+        #[cfg(test)]
+        crate::native::test_lease::read_accepted();
         Ok(value)
     }
 
@@ -177,10 +179,15 @@ impl Client {
     /// Reads the organisation's capability list again, replacing what was
     /// known: after the update stream closed or was refused, the
     /// organisation may serve less, or more, than before.
+    ///
+    /// The list is kept for the account the read was made for. If another
+    /// account signed in while it was read, it belongs to no one and is
+    /// dropped, even when both accounts share the organisation.
     pub(crate) fn nett_refresh_served(&self) -> Result<(), Error> {
         let Some(org) = self.org.as_deref() else {
             return Ok(());
         };
+        let account = self.flow_account();
         let names = match self.nett_value(&["desktop", "capabilities"], &[]) {
             Ok(list) => list
                 .get("features")
@@ -193,10 +200,13 @@ impl Client {
             Err(Error::NotFound | Error::Forbidden) => Vec::new(),
             Err(error) => return Err(error),
         };
+        if self.flow_account() != account {
+            return Err(Error::SignInNeeded);
+        }
         crate::backend::record_served(
             self.base.as_str(),
             org,
-            self.flow_account(),
+            account,
             &crate::backend::parse_features(&names),
         );
         Ok(())
@@ -396,5 +406,58 @@ impl Client {
             .into_iter()
             .filter(|label| label.state == "active")
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::backend::served_known;
+    use crate::native::test_lease;
+    use crate::{Client, Error};
+    use subspace_framework::client_test_support::Mock;
+    use subspace_framework::core::Secret;
+
+    const ORG: &str = "00000000-0000-4000-8000-0000000000c1";
+
+    fn client(mock: &Mock, token: &str) -> Client {
+        Client::nett_loopback(
+            &format!("{}/api", mock.base_url()),
+            Some(ORG),
+            Some(Secret::new(token)),
+        )
+        .unwrap()
+        .without_live()
+    }
+
+    #[test]
+    fn a_capability_list_read_as_another_account_signs_in_is_kept_for_no_one() {
+        let mock = Mock::new(|request| {
+            if request.path.ends_with("/desktop/capabilities") {
+                (200, r#"{"features":["attachments","updates"]}"#.into())
+            } else {
+                (404, "{}".into())
+            }
+        });
+        let mut client = client(&mock, "nett-capabilities-switch");
+        // Bound to account 1's lease, as a native client is.
+        test_lease::set(Some(1));
+        test_lease::set_account(Some(1));
+        client.native_lease = Some(crate::NativeLease(Some(1)));
+        // Account 2, in the same organisation, signs in right after the
+        // list's reply was accepted, before it is kept.
+        test_lease::AFTER_READ.with(|next| next.set(Some(2)));
+        let result = client.nett_refresh_served();
+        test_lease::set(None);
+        test_lease::set_account(None);
+        let origin = client.base.as_str();
+        assert_eq!(result, Err(Error::SignInNeeded));
+        assert!(
+            !served_known(origin, ORG, 2),
+            "account 2 never inherits account 1's features"
+        );
+        assert!(
+            !served_known(origin, ORG, 1),
+            "and the stale read is dropped"
+        );
     }
 }
