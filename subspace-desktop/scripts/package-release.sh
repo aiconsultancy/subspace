@@ -2,6 +2,9 @@
 # Build the Subspace release archive.
 # When this machine can run the target, verify the built binary reports the
 # product metadata version before replacing an archive.
+# SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1 skips running it, for a build host that
+# cannot start the app, such as a Windows Server container without the
+# desktop libraries the app loads.
 # Usage: scripts/package-release.sh [RUST_TARGET [VERSION]]
 set -euo pipefail
 
@@ -43,7 +46,9 @@ generate_rust_licences "$stage/THIRD_PARTY_LICENSES" "$target"
 python3 scripts/release-files.py build "$target_dir" "$binary_name" "$stage" "${release_args[@]}"
 stage_product_licences "$stage" "$target"
 cp "${rust_std_notices[@]}" "$stage/licenses/rust-std/"
-if [[ "$host" = "$target" ]]; then
+if [[ "$host" = "$target" && "${SUBSPACE_PACKAGE_SKIP_RUN_CHECK:-}" = 1 ]]; then
+    echo "skipped the metadata version check: SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1"
+elif [[ "$host" = "$target" ]]; then
     reported_metadata="$("$stage/$binary_name$exe" __product_metadata | tr -d '\r')"
     reported="$(jq -er .version <<<"$reported_metadata")"
     if [[ "$reported" != "$version" ]]; then

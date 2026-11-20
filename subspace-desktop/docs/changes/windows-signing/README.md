@@ -37,6 +37,9 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
   `sign-only` or `build-only`.
   - It builds on `subspace-windows` with no secrets, and only a tag whose
     commit is on `main`, so pushing a tag cannot get unreviewed code signed.
+  - `package-release.sh` normally runs the built app to read its version
+    back. The app cannot start in a Windows Server container, so the job sets
+    `SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1` to skip that.
   - It signs on `subspace-signing` in the `windows-signing` environment, using
     GitHub OIDC. The environment's deployment rule allows only `main`.
   - It verifies the signature with `Get-AuthenticodeSignature` on Windows.
@@ -59,6 +62,11 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
 
   It passes under macOS's bash 3.2 and under bash 5.
 - `actionlint` passes on the workflows.
+- A trial build of the runner image compiled the release. The built app then
+  failed to start in Windows Server 2022 containers: a missing DLL in Server
+  Core, a missing entry point in the full Server image. Containers lack parts
+  of the desktop, so this doesn't settle which Windows versions the app runs
+  on. That needs a test on a real Windows 10 and Windows 11 desktop.
 - Not yet verified end to end. The certificate profile cannot exist until the
   organisation's identity validation completes in the Azure portal. The first
   `build-only` run on the Windows runner will show whether the build compiles

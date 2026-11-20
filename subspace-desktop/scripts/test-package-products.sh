@@ -147,6 +147,14 @@ fi
 unset FAKE_BUILD_FAIL
 cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
+# A build host that cannot start the app skips running it, but still packages.
+: >"$fixture/binary.log"
+export FAKE_BINARY_VERSION=9.9.9
+SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version" >"$fixture/skip-run.log"
+unset FAKE_BINARY_VERSION
+grep -Fxq 'skipped the metadata version check: SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1' "$fixture/skip-run.log"
+test ! -s "$fixture/binary.log"
+test -f "$host_archive"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
 grep -Fq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics " "$fixture/cargo.log"

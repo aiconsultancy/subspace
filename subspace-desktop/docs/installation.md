@@ -570,7 +570,10 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
 1. **build**, on `subspace-windows`, checks out the tag, refuses it unless its
    commit is on `main`, and runs
    `scripts/package-release.sh x86_64-pc-windows-msvc <version>` with no
-   secrets. So only reviewed code is signed, whoever pushed the tag. The runner is a Windows Server 2022 container on a node pool that
+   secrets. So only reviewed code is signed, whoever pushed the tag. The app
+   cannot start in a Windows Server container, so the job sets
+   `SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1` and the script does not run the app to
+   read its version back. The runner is a Windows Server 2022 container on a node pool that
    scales from zero to one, so a run may wait a few minutes for the node. A
    GPUI release build for Windows must run on Windows, because the renderer
    compiles its shaders with the Windows SDK's `fxc.exe` in a build script.
