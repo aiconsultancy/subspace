@@ -167,7 +167,13 @@ async fn run_nett(weak: &Weak<Shared>, client: &crate::Client, http: &reqwest::C
                     return;
                 }
                 let epoch = scope_epoch(weak);
-                wait_for_scope_or_epoch_change(weak, &scope, epoch).await;
+                // NETT may enable the stream while the app runs: once the
+                // list is due to be read again, after its lifetime or an
+                // explicit reload, it is read, and the stream opened if the
+                // organisation now serves it.
+                if wait_for_scope_epoch_or_capabilities(weak, &scope, epoch, client).await {
+                    recheck_capabilities(weak, client);
+                }
                 continue;
             }
             // The list could not be read: try again later, not "never".
@@ -298,6 +304,45 @@ fn scope_epoch(weak: &Weak<Shared>) -> u64 {
 async fn wait_for_scope_or_epoch_change(weak: &Weak<Shared>, scope: &StreamScope, epoch: u64) {
     while self::scope(weak).as_ref() == Some(scope) && scope_epoch(weak) == epoch {
         tokio::time::sleep(SLICE).await;
+    }
+}
+
+/// Until the followed scope changes, the capability list is read again, or
+/// the list is due to be read again. True in the last case.
+async fn wait_for_scope_epoch_or_capabilities(
+    weak: &Weak<Shared>,
+    scope: &StreamScope,
+    epoch: u64,
+    client: &crate::Client,
+) -> bool {
+    // Without an organisation there is no list to read.
+    let organisation = client.organisation().is_some();
+    while self::scope(weak).as_ref() == Some(scope) && scope_epoch(weak) == epoch {
+        if organisation && !client.nett_served_current() {
+            return true;
+        }
+        tokio::time::sleep(SLICE).await;
+    }
+    false
+}
+
+/// Reads the organisation's capability list again, as it is due, and tells
+/// the Spaces to read their initiatives again only if it changed.
+fn recheck_capabilities(weak: &Weak<Shared>, client: &crate::Client) {
+    let changed = match client.nett_refresh_served() {
+        Ok(changed) => changed,
+        Err(_) => {
+            client.nett_served_unreadable();
+            false
+        }
+    };
+    let Some(shared) = weak.upgrade().filter(|_| changed) else {
+        return;
+    };
+    let mut state = lock(&shared.state);
+    if state.is_running() {
+        state.snapshot.scope_epoch = state.snapshot.scope_epoch.wrapping_add(1);
+        state.changed();
     }
 }
 
