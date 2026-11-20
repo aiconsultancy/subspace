@@ -230,7 +230,7 @@ fn agent_with(lease: Option<u64>, nett: bool) -> ureq::Agent {
 }
 
 fn authenticate(
-    mut request: Request<SendBody>,
+    request: Request<SendBody>,
     next: MiddlewareNext,
     lease: Option<u64>,
     nett: bool,
@@ -238,13 +238,13 @@ fn authenticate(
     // NETT: take a place among the account's requests first, so the lease
     // and bearer below are checked after any wait, just before sending.
     let account = account_generation().unwrap_or_default();
-    let permit = if nett {
-        match crate::nett::flow::acquire(account) {
-            Ok(permit) => Some(permit),
+    let (permit, mut request) = if nett {
+        match crate::nett::flow::admit(account, request) {
+            Ok((permit, request)) => (Some(permit), request),
             Err(wait) => return Ok(crate::nett::flow::refused(wait)),
         }
     } else {
-        None
+        (None, request)
     };
     let Some(value) = bearer(request.uri(), lease).map_err(|err| ureq::Error::Other(err.into()))?
     else {

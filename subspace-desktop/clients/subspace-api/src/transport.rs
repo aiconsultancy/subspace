@@ -110,23 +110,41 @@ pub(crate) fn get<T: DeserializeOwned>(
     url: &Url,
     jwt: Option<&Secret>,
 ) -> Result<T, Error> {
-    get_within(agent, url, jwt, READ_TIMEOUT)
+    prepare(url);
+    send_get(agent, url, jwt, READ_TIMEOUT, None)
 }
 
-/// [`get`], ending within `timeout`.
+/// [`get`], ending by `deadline`: waiting for pacing and, for NETT, for a
+/// place among the account's requests counts against it, and the request
+/// gets only what is left.
 pub(crate) fn get_within<T: DeserializeOwned>(
     agent: &ureq::Agent,
     url: &Url,
     jwt: Option<&Secret>,
-    timeout: Duration,
+    deadline: std::time::Instant,
 ) -> Result<T, Error> {
     prepare(url);
+    let left = deadline.saturating_duration_since(std::time::Instant::now());
+    send_get(agent, url, jwt, left, Some(deadline))
+}
+
+/// One GET within `timeout`, carrying `deadline` to the agent's admission.
+fn send_get<T: DeserializeOwned>(
+    agent: &ureq::Agent,
+    url: &Url,
+    jwt: Option<&Secret>,
+    timeout: Duration,
+    deadline: Option<std::time::Instant>,
+) -> Result<T, Error> {
     let mut request = agent
         .get(url.as_str())
         .header("User-Agent", USER_AGENT)
         .header("Accept", "application/json");
     if let Some(jwt) = jwt {
         request = request.header("Authorization", format!("Bearer {}", jwt.expose()));
+    }
+    if let Some(deadline) = deadline {
+        request = request.extension(crate::nett::flow::Deadline(deadline));
     }
     let response = request
         .config()

@@ -191,10 +191,71 @@ fn reading_a_committed_move_back_takes_at_most_its_budget() {
     assert_eq!(
         result.unreconciled,
         [
-            Unreconciled::new(CHILD, "OPS-3", UnreconciledReason::Unread(Error::Network)),
+            Unreconciled::new(CHILD, "OPS-3", UnreconciledReason::NotChecked),
             Unreconciled::new(SECOND, "OPS-4", UnreconciledReason::NotChecked),
         ],
         "the read cut short and the one never read are both listed"
     );
     assert_eq!(patches(&mock), 0, "a read back sends no move");
+}
+
+#[test]
+fn waiting_for_a_place_among_the_accounts_requests_counts_against_the_budget() {
+    let (mock, client, preview) = committing(&[(CHILD, "OPS-3"), (SECOND, "OPS-4")], || {
+        (
+            200,
+            issue(CHILD, "WEB-8", ("team-web", "WEB"), 3).to_string(),
+        )
+    });
+    // Every place among the account's requests is taken, by reads that
+    // end only well after the budget.
+    let account = client.flow_account();
+    let taken: Vec<_> = (0..crate::nett::flow::CONCURRENT)
+        .map(|_| crate::nett::flow::acquire(account).unwrap())
+        .collect();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(3));
+        drop(taken);
+    });
+    let root = serde_json::from_value(issue(ROOT, "WEB-7", ("team-web", "WEB"), 3)).unwrap();
+    let started = Instant::now();
+    let result = client
+        .nett_verify_move_within(&preview, Some(root), Duration::from_millis(300))
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_millis(1200),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert!(
+        result
+            .unreconciled
+            .iter()
+            .all(|item| item.reason == UnreconciledReason::NotChecked),
+        "{:?}",
+        result.unreconciled
+    );
+    let reads = mock
+        .requests()
+        .iter()
+        .filter(|request| request.path.contains("/issues/"))
+        .count();
+    assert_eq!(reads, 0, "no read went out after its time");
+    release.join().unwrap();
+}
+
+#[test]
+fn a_reply_about_another_issue_never_shows_a_sub_issue_moved_again() {
+    // A reply that names another issue, newer and in a third team.
+    let child = || {
+        (
+            200,
+            issue(SECOND, "DOC-9", ("team-docs", "DOC"), 4).to_string(),
+        )
+    };
+    let result = committed_move(child);
+    assert_eq!(
+        result.unreconciled,
+        unreconciled(UnreconciledReason::NotConfirmed)
+    );
 }
