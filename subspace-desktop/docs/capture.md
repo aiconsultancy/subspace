@@ -74,6 +74,18 @@ listed while its detail returns 404. Use `forbidden` for 403 or
 `unavailable` for 503 on decision reads. The default is `normal`. These
 modes use the same local fixture and leave other issue reads available.
 
+## Move fixture
+
+Moving **SUB-1** to **OPS** moves it with its sub-issues **SUB-2** and
+**SUB-3**. Subspace API confirms every move it commits, so the fixture never
+gives what a NETT move can: a committed move with sub-issues it could not
+confirm in the destination. Set `CAPTURE_MOVE_UNCONFIRMED=1` to report a
+committed move's sub-issues that way, so the move panel lists them before
+the moved issue opens. The move itself happens on the fixture; the reasons
+are invented: the first sub-issue was moved again since and the others
+could not be read back. Only a debug capture build against the loopback
+fixture reads the setting.
+
 ## File-drop evidence
 
 Use `drop:<x>,<y>,<fixture-path>` in `STEPS` to dispatch a native file-enter/submit pair at a window position. Supply only a synthetic fixture file; it is read by the isolated capture build and uploaded only to the loopback fixture API. This supports file previews without using the system clipboard or foreground pointer.
