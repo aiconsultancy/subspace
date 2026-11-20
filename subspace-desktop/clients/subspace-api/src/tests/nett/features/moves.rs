@@ -76,12 +76,13 @@ fn a_move_whose_sub_issue_cannot_be_read_back_stays_committed_and_checks_without
     let client = own_client(&mock, "nett-fixture-move-check");
     let (preview, ..) = preview_move(&client);
     let child = preview.issues[1].id.clone();
+    // A read back is tried once, within the check's time.
     mock.fail_next(
         "GET",
         &org_path(&mock, &format!("issues/{child}")),
         503,
         Some(0),
-        3,
+        1,
     );
     // The validated PATCH reply proves the move committed: the sub-issue
     // that could not be read is listed to check, not the move doubted.

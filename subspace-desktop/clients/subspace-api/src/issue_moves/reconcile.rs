@@ -2,9 +2,20 @@
 //! team, with a newer version and a number there. After a validated PATCH,
 //! which proves the move committed, a sub-issue found elsewhere or that
 //! cannot be read is reported unreconciled rather than doubting the move.
+//! The reads share one time budget, so a move that committed never waits
+//! behind a request timeout per sub-issue, and each is a fresh read, never
+//! one already in flight that could predate the move. A read that finds
+//! the account or organisation changed ends the check: what it found
+//! belongs to no one.
 use super::{MoveItem, MovePreview, MoveResult, preview_number};
 use crate::issue_writes::IssueSaveError;
-use crate::{Client, model::IssueDetail};
+use crate::{Client, Error, model::IssueDetail};
+use std::time::{Duration, Instant};
+
+/// How long reading a move back may take in all.
+const RECONCILE_FOR: Duration = Duration::from_secs(20);
+/// The least time worth starting a read with.
+const MIN_READ: Duration = Duration::from_millis(100);
 
 /// A previewed sub-issue that a committed NETT move could not confirm in
 /// the destination.
@@ -23,10 +34,16 @@ pub struct Unreconciled {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum UnreconciledReason {
-    /// It is outside the destination now: someone moved it again since.
+    /// It is in a third team, newer than previewed: someone moved it again
+    /// since.
     Elsewhere,
+    /// It was read, but not as moved: still where it was, or not yet newer
+    /// than previewed. Nothing shows it moved again.
+    NotConfirmed,
     /// It could not be read back, for this reason.
     Unread(crate::Error),
+    /// The time for reading the move back ran out before it was read.
+    NotChecked,
 }
 
 impl Unreconciled {
@@ -66,6 +83,38 @@ fn moved_into(preview: &MovePreview, current: &IssueDetail, previewed: &MoveItem
         && preview_number(&current.fields.identifier, &preview.destination.key)
 }
 
+/// What a read of `previewed` that did not show it moved says: `None` when
+/// time ran out before it was read. Only a newer version in a third team
+/// shows it moved again; a stale or unchanged one shows nothing.
+fn reason(
+    preview: &MovePreview,
+    previewed: &MoveItem,
+    read: Option<Result<IssueDetail, Error>>,
+) -> UnreconciledReason {
+    match read {
+        None => UnreconciledReason::NotChecked,
+        Some(Err(error)) => UnreconciledReason::Unread(error),
+        Some(Ok(current))
+            if current.fields.version > i64::from(previewed.version)
+                && current.fields.project_id != preview.source.id
+                && current.fields.project_id != preview.destination.id =>
+        {
+            UnreconciledReason::Elsewhere
+        }
+        Some(Ok(_)) => UnreconciledReason::NotConfirmed,
+    }
+}
+
+/// What a check makes of a read that did not show an issue moved: one read
+/// elsewhere means the plan did not happen; one not read leaves the move to
+/// be checked again.
+fn check_failure(read: &Option<Result<IssueDetail, Error>>) -> IssueSaveError {
+    match read {
+        Some(Ok(_)) => IssueSaveError::Conflict,
+        _ => IssueSaveError::Unconfirmed,
+    }
+}
+
 // qual:allow(coupling, oi) reason: "Move confirmation reads the issues back through the client's NETT reads."
 impl Client {
     /// Checks a confirmed or possibly confirmed NETT move without sending it
@@ -85,16 +134,26 @@ impl Client {
         preview: &MovePreview,
         root: Option<IssueDetail>,
     ) -> Result<MoveResult, IssueSaveError> {
+        self.nett_verify_move_within(preview, root, RECONCILE_FOR)
+    }
+
+    /// [`Client::nett_verify_move`], reading everything back within
+    /// `budget`.
+    fn nett_verify_move_within(
+        &self,
+        preview: &MovePreview,
+        root: Option<IssueDetail>,
+        budget: Duration,
+    ) -> Result<MoveResult, IssueSaveError> {
         let first = preview.issues.first().ok_or(IssueSaveError::Invalid)?;
+        let deadline = Instant::now() + budget;
         // A check reads the root itself: one still where it was proves the
         // move never happened, so a fresh preview may follow. A root from a
         // validated PATCH reply proves the whole subtree moved.
         let checking = root.is_none();
         let root = match root {
             Some(root) => root,
-            None => self
-                .issue(&first.id)
-                .map_err(|_| IssueSaveError::Unconfirmed)?,
+            None => self.read_root(first, deadline)?,
         };
         if !moved_into(preview, &root, first) || !preview.root_moved_to(&root.fields.identifier) {
             return Err(if checking {
@@ -108,7 +167,7 @@ impl Client {
         let mut moved = vec![root_item];
         let mut unreconciled = Vec::new();
         for previewed in preview.issues.iter().skip(1) {
-            match self.read_back(preview, previewed, checking)? {
+            match self.read_back(preview, previewed, (checking, deadline))? {
                 ReadBack::Moved(item) => moved.push(item),
                 ReadBack::Unreconciled(item) => unreconciled.push(item),
             }
@@ -120,33 +179,56 @@ impl Client {
         })
     }
 
-    /// Reads a previewed sub-issue back. A check needs each one in the
-    /// destination: one elsewhere means the plan did not happen, and one
-    /// that cannot be read leaves the move to be checked again. After a
-    /// validated PATCH, which proves the move committed, neither undoes it:
-    /// the sub-issue is reported unreconciled, with what reading it found.
+    /// A check's read of the root, before `deadline`, in this account and
+    /// organisation.
+    fn read_root(
+        &self,
+        first: &MoveItem,
+        deadline: Instant,
+    ) -> Result<IssueDetail, IssueSaveError> {
+        let read = self.read_within(&first.id, deadline);
+        self.current().map_err(|_| IssueSaveError::SignIn)?;
+        read.and_then(Result::ok).ok_or(IssueSaveError::Unconfirmed)
+    }
+
+    /// Reads a previewed sub-issue back before `deadline`. A check needs
+    /// each one in the destination: one elsewhere means the plan did not
+    /// happen, and one not read leaves the move to be checked again. After
+    /// a validated PATCH, which proves the move committed, neither undoes
+    /// it: the sub-issue is reported unreconciled, with what reading it
+    /// found. A read that finds the account or organisation changed ends
+    /// the check.
     fn read_back(
         &self,
         preview: &MovePreview,
         previewed: &MoveItem,
-        checking: bool,
+        (checking, deadline): (bool, Instant),
     ) -> Result<ReadBack, IssueSaveError> {
-        match self.issue(&previewed.id) {
-            Ok(current) if moved_into(preview, &current, previewed) => {
+        let read = self.read_within(&previewed.id, deadline);
+        self.current().map_err(|_| IssueSaveError::SignIn)?;
+        match read {
+            Some(Ok(current)) if moved_into(preview, &current, previewed) => {
                 let mut item = previewed.clone();
                 item.new_identifier = Some(current.fields.identifier);
                 Ok(ReadBack::Moved(item))
             }
-            Ok(_) if checking => Err(IssueSaveError::Conflict),
-            Err(_) if checking => Err(IssueSaveError::Unconfirmed),
-            Ok(_) => Ok(ReadBack::Unreconciled(Unreconciled::of(
+            read if checking => Err(check_failure(&read)),
+            read => Ok(ReadBack::Unreconciled(Unreconciled::of(
                 previewed,
-                UnreconciledReason::Elsewhere,
-            ))),
-            Err(error) => Ok(ReadBack::Unreconciled(Unreconciled::of(
-                previewed,
-                UnreconciledReason::Unread(error),
+                reason(preview, previewed, read),
             ))),
         }
     }
+
+    /// A fresh read of the issue `id` that ends by `deadline`, or `None`
+    /// when too little time is left for one.
+    fn read_within(&self, id: &str, deadline: Instant) -> Option<Result<IssueDetail, Error>> {
+        let left = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|left| *left >= MIN_READ)?;
+        Some(self.nett_issue_within(id, left.min(crate::transport::READ_TIMEOUT)))
+    }
 }
+
+#[cfg(test)]
+mod reconcile_tests;

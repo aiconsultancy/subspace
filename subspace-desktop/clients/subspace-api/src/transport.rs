@@ -110,6 +110,16 @@ pub(crate) fn get<T: DeserializeOwned>(
     url: &Url,
     jwt: Option<&Secret>,
 ) -> Result<T, Error> {
+    get_within(agent, url, jwt, READ_TIMEOUT)
+}
+
+/// [`get`], ending within `timeout`.
+pub(crate) fn get_within<T: DeserializeOwned>(
+    agent: &ureq::Agent,
+    url: &Url,
+    jwt: Option<&Secret>,
+    timeout: Duration,
+) -> Result<T, Error> {
     prepare(url);
     let mut request = agent
         .get(url.as_str())
@@ -120,8 +130,8 @@ pub(crate) fn get<T: DeserializeOwned>(
     }
     let response = request
         .config()
-        .timeout_global(Some(READ_TIMEOUT))
-        .timeout_recv_body(Some(READ_TIMEOUT))
+        .timeout_global(Some(timeout))
+        .timeout_recv_body(Some(timeout))
         .max_redirects(0)
         .max_redirects_will_error(false)
         .build()
