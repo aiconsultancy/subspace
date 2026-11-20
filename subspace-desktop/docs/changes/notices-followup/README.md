@@ -24,23 +24,26 @@ contention, build-stamp refresh, OAuth artefact cleanup, Cargo configuration
 errors, build-only ONNX overrides and rollback after a failed checksum rename.
 
 The release helper suppresses Cargo configuration diagnostics and gives a
-command to reproduce them locally. Preflight rejects ONNX linkage overrides
-from the environment and Cargo configuration, and Cargo's build output must
-confirm the pinned static download. The notices still pin ort-sys
-`2.0.0-rc.15`, ONNX Runtime `1.31.0` and the bytes of the distribution table.
-In that crate, `build/download/dist.tsv` pins each download's SHA-256.
-`build/main.rs` lines 149–161 compare the downloaded archive with that pin
-before publishing the extracted files to the digest-keyed cache and
-emitting static link instructions at lines 182–183. The crate's verification
-is the archive integrity check, so packaging no longer hashes an extracted
-file after linking.
+command to reproduce them locally. Preflight rejects caller-supplied ONNX
+linkage overrides from the environment and Cargo configuration. Packaging
+verifies the archive against the pinned ort-sys `2.0.0-rc.15` distribution
+table, extracts it into a fresh private directory under the build lock and
+checks that Cargo links from that directory. The fixtures reject tampered
+archives and check that a tampered extracted cache entry cannot affect the
+private copy. The shipped ONNX Runtime notice records the exact Eigen source.
 
-The build lock stays held while the helper stops the Cargo process group or
-Windows job and copies the executable. A detached compiler-cache daemon such
-as sccache writes to its own cache. The build's outputs are copied under the
-lock after the build group exits, so no extra process tracking is needed for
-those daemons. Operators can set `SUBSPACE_RELEASE_LOCK_TIMEOUT` to allow
-for cold builds.
+On POSIX, the helper retains the group leader until it sees Cargo's result.
+It signals a failed or interrupted build group before reaping its leader.
+Compiler-cache daemons can survive a successful build. Operators can set
+`SUBSPACE_RELEASE_LOCK_TIMEOUT` to allow for cold builds.
+
+Both packagers require the asset notices before building. Staging follows
+the native notice target list, so the Windows archive carries WebView2
+notices and the macOS and Linux archives carry ONNX Runtime notices. The
+licence check compares the copy of the Markdown notice with the parser
+that Cargo resolves. Its fixtures cover a drifted desktop patch, the Intel
+macOS skip when cargo-about is unavailable and packaging's fatal error when
+the tool is missing.
 
 Publication rolls back on SIGTERM and SIGHUP where available. The fixtures
 cover both signals, rollback failure and retained recovery copies. The
