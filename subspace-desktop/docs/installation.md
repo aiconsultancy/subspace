@@ -78,6 +78,10 @@ The archive holds the selected binary, `README.md` and validated `product.json`
 at its root. Windows ZIP archives contain `subspace.exe`; the updater selects
 that exact entry, including the `.exe` extension.
 
+The archives also include `LICENSE`, `NOTICE` and `THIRD_PARTY_LICENSES`,
+with asset notices under `licenses/`. In the macOS app archive these files
+live under `Subspace.app/Contents/Resources/`.
+
 Linux ARM64 receives no new CI builds or release archives. For that platform,
 select an older release that includes its archive with the installer's
 `--version` option. Historical installer support remains unchanged.
@@ -105,6 +109,13 @@ When the host can run the target, the packager also executes the binary's
 headless `__product_metadata` route before replacing an archive. The machine
 version remains plain semver. An incompatible cross-target reports that this
 check was skipped.
+
+Packaging uses the pinned cargo-about to check the locked Rust dependency
+graph against `about.toml` and generate `THIRD_PARTY_LICENSES` for the
+archive's target and build features. Cargo-about supplies the standard SPDX
+text when it cannot find a crate's licence text. `make licence-check` checks
+the policy across the release targets with Terminal and the default features
+enabled, and verifies the desktop copies of the Framework's notices.
 
 Scripts read names, bundle IDs, icons, themes and version through the headless
 `subspace-product-metadata` utility. It does not initialize GPUI to obtain

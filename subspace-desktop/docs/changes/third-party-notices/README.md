@@ -11,13 +11,18 @@ identifies SIL OFL 1.1 for the bundled font glyphs and credits Fonticons
 with the 2023 copyright.
 
 Native releases stage the project licence and notice, the desktop licence
-tree and the existing Actions Octicons attribution. The desktop tree includes
-the texts for the embedded Feather, Lucide and Lobe Icons assets, the GPUI Kit
-themes, QuickJS NG and the Markdown parser. The root NOTICE also records the
-pinned GPUI Kit version for the vendored skills and guides.
+tree, the combined Rust crate report and the existing Actions Octicons
+attribution. The desktop tree includes the texts for the embedded Feather,
+Lucide and Lobe Icons assets, the GPUI Kit themes, QuickJS NG and the Markdown
+parser. The root NOTICE also records the pinned GPUI Kit version for the
+vendored skills and guides.
 
 `bash scripts/test-prerelease-products.sh` compares the notices against
-their source files after extracting the Linux and macOS tarballs, Windows
-ZIP and macOS app ZIP. It uses fixture binaries and signing commands.
+their source files and checks the generated Rust report after extracting the
+Linux and macOS tarballs, Windows ZIP and macOS app ZIP. It uses fixture
+binaries and signing commands. `make licence-check` checks the allowed SPDX
+expressions and byte-compares the copied Framework notices. Packaging uses
+Cargo's normal dependency tree to limit the report to the selected target and
+features and omit compile-time proc macros.
 Verification also covers the gallery build, its tests, Web Space package
 validation, the desktop documentation checks and the public repository guard.

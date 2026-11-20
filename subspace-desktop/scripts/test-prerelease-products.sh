@@ -28,10 +28,15 @@ write_channel_metadata() {
 }
 
 check_packaged_licences() {
-    local destination="$1" file
-    for file in LICENSE NOTICE; do
-        cmp "$root/../$file" "$destination/$file"
-    done
+    local destination="$1" target="$2" file
+    cmp "$root/../LICENSE" "$destination/LICENSE"
+    cmp "$root/NOTICE" "$destination/NOTICE"
+    grep -Fq "Subspace binary for $target" "$destination/THIRD_PARTY_LICENSES"
+    grep -Fxq -- '- fixture-linked v1.0.0' "$destination/THIRD_PARTY_LICENSES"
+    grep -Fxq 'Fixture linked licence' "$destination/THIRD_PARTY_LICENSES"
+    if grep -Eq 'fixture-macro|Fixture build-only licence' "$destination/THIRD_PARTY_LICENSES"; then
+        echo 'the runtime report includes a compile-time proc macro' >&2; exit 1
+    fi
     for file in charts/LICENSE-FLINT-CHART charts/LICENSE-QUICKJS-NG charts/LICENSE-RQUICKJS \
         icons/LICENSE-FEATHER icons/LICENSE-LOBE-ICONS icons/LICENSE-LUCIDE \
         markdown/LICENSE themes/gpui-kit/LICENSE-APACHE themes/gpui-kit/PROVENANCE.md; do
@@ -65,7 +70,7 @@ for channel in stable nightly alpha beta integration; do
     fi
     test "$(grep -c '^build ' "$fixture/cargo.log" || true)" = "$builds_before"
     mv "$fixture/workspace-current.json" "$fixture/metadata/workspace.json"
-    for target in x86_64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc; do
+    for target in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc; do
         bash "$fixture/scripts/package-release.sh" "$target" "$version"
     done
     svg_relative="$(jq -r '.icon_paths[] | select(endswith(".svg"))' "$metadata")"
@@ -76,12 +81,15 @@ for channel in stable nightly alpha beta integration; do
     cmp "$root/products/subspace/$svg_relative" "$unpacked/$svg_relative"
     test "$(find "$unpacked/assets" -type f | wc -l | tr -d ' ')" = 1
     if [[ "$channel" = stable ]]; then
-        check_packaged_licences "$unpacked"
+        check_packaged_licences "$unpacked" x86_64-unknown-linux-gnu
+        mkdir "$fixture/unpacked-arm64-linux"
+        tar -xzf "$fixture/dist/$binary-$version-aarch64-unknown-linux-gnu.tar.gz" -C "$fixture/unpacked-arm64-linux"
+        check_packaged_licences "$fixture/unpacked-arm64-linux" aarch64-unknown-linux-gnu
         mkdir "$fixture/unpacked-darwin" "$fixture/unpacked-windows"
         tar -xzf "$fixture/dist/$binary-$version-aarch64-apple-darwin.tar.gz" -C "$fixture/unpacked-darwin"
         unzip -q "$fixture/dist/$binary-$version-x86_64-pc-windows-msvc.zip" -d "$fixture/unpacked-windows"
-        check_packaged_licences "$fixture/unpacked-darwin"
-        check_packaged_licences "$fixture/unpacked-windows"
+        check_packaged_licences "$fixture/unpacked-darwin" aarch64-apple-darwin
+        check_packaged_licences "$fixture/unpacked-windows" x86_64-pc-windows-msvc
     fi
     if [[ "$(/usr/bin/uname -s)" = Darwin ]]; then
         bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
@@ -90,7 +98,7 @@ for channel in stable nightly alpha beta integration; do
         test -f "$fixture/dist/${stem}_${version}_darwin_arm64.zip"
         if [[ "$channel" = stable ]]; then
             ditto -x -k "$fixture/dist/${stem}_${version}_darwin_arm64.zip" "$fixture/unpacked-app"
-            check_packaged_licences "$fixture/unpacked-app/$name.app/Contents/Resources"
+            check_packaged_licences "$fixture/unpacked-app/$name.app/Contents/Resources" aarch64-apple-darwin
         fi
         cmp "$metadata" "$app/Contents/Resources/product.json"
         icon_relative="$(jq -r '.icon_paths[] | select(endswith(".icns"))' "$metadata")"

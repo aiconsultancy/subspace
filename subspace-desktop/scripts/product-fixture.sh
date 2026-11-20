@@ -9,8 +9,8 @@ setup_product_fixture() {
     fixture="$fixture_repo/subspace-desktop"
     mkdir -p "$fixture/scripts" "$fixture/bin" "$fixture/metadata" "$fixture/spaces/actions/assets"
     cp "$root/scripts/"{product.sh,prerelease-common.sh,run-app.sh,package-release.sh,package-macos.sh,package-macos-ci.sh,build-macos-app.sh,install-macos.sh,github-oauth-secret.sh} "$fixture/scripts/"
-    cp "$root/README.md" "$fixture/README.md"
-    cp "$root/../"{LICENSE,NOTICE} "$fixture_repo/"
+    cp "$root/"{README.md,NOTICE,about.jq,about.toml} "$fixture/"
+    cp "$root/../LICENSE" "$fixture_repo/"
     cp -R "$root/licenses" "$fixture/licenses"
     cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$fixture/spaces/actions/assets/"
     if [[ -n "${1:-}" ]]; then
@@ -36,6 +36,30 @@ case "$1" in
     metadata)
         target_directory="${FAKE_TARGET_DIRECTORY:-$FIXTURE/target}"
         jq -c --arg target "$target_directory" '.target_directory = $target' "$FIXTURE/metadata/workspace.json"
+        ;;
+    tree)
+        test -z "${SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET:-}"
+        printf 'subspace v%s\n' "$(jq -r .version "$FIXTURE/metadata/subspace.json")"
+        echo 'fixture-linked v1.0.0'
+        if [[ "${FAKE_MISSING_LICENCE:-0}" = 1 ]]; then echo 'fixture-unreported v1.0.0'; fi
+        ;;
+    about)
+        test -z "${SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET:-}"
+        if [[ "${FAKE_LICENCE_FAIL:-0}" = 1 ]]; then exit 29; fi
+        while [[ "$1" != --output-file ]]; do shift; done
+        version="$(jq -r .version "$FIXTURE/metadata/subspace.json")"
+        jq -n --arg version "$version" '
+          {name: "subspace", version: $version} as $product |
+          {name: "fixture-linked", version: "1.0.0"} as $linked |
+          {name: "fixture-macro", version: "2.0.0"} as $macro |
+          {
+            crates: ([$product, $linked, $macro] | map({package: .})),
+            licenses: [
+              {id: "Apache-2.0", text: "Fixture project licence", used_by: [{crate: $product}]},
+              {id: "MIT", text: "Fixture linked licence", used_by: [{crate: $linked}]},
+              {id: "ISC", text: "Fixture build-only licence", used_by: [{crate: $macro}]}
+            ]
+          }' >"$2"
         ;;
     build)
         if [ "${FAKE_BUILD_FAIL:-0}" = 1 ]; then exit 23; fi
