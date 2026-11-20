@@ -1,15 +1,20 @@
 # Third-party notices
 
-The installable web component gallery needs notices for the code it bundles.
-Vite collects the JavaScript licences and the build adds the Tailwind CSS
-licence from the same lockfile-pinned installation. The package test compares
-the shipped licence texts and version headings against the installed files
-and the lockfile.
+Vite collects licences from the gallery's JavaScript chunks. The build
+adds the Tailwind CSS and Vite preload helper licences from the same
+lockfile-pinned installation. The package tests compare the shipped texts
+and version headings against the installed files and lockfile, check that
+rerunning the notice script preserves its output, and verify the copied
+Nerd Font glyph notices.
 
-The desktop ships the MIT texts for the Primer Octicons used in Copilot
-Agents and Actions and for the Feather outline used in Channels. The root
-NOTICE points to the Apache 2.0 text already in the tree for the GPUI Kit
-skills and guides.
+Native releases stage the project licence and notice, the desktop licence
+tree and the existing Actions Octicons attribution. The desktop tree includes
+the texts for the embedded Feather, Lucide and Lobe Icons assets, the GPUI Kit
+themes, QuickJS NG and the Markdown parser. The root NOTICE also records the
+pinned GPUI Kit version for the vendored skills and guides.
 
-Verification covers the gallery build, its tests, Web Space package validation,
-the desktop documentation checks and the public repository guard.
+`bash scripts/test-prerelease-products.sh` compares the notices against
+their source files after extracting the Linux and macOS tarballs, Windows
+ZIP and macOS app ZIP. It uses fixture binaries and signing commands.
+Verification also covers the gallery build, its tests, Web Space package
+validation, the desktop documentation checks and the public repository guard.

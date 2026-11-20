@@ -541,12 +541,14 @@ GPUI Kit's matching asset pin remains deliberate.
 ## Asset notices
 
 `licenses/` holds the notices the app ships, including those of the
-Framework's third-party code (Flint charts, themes, the Mermaid renderer) and
-the terminal's. The Framework keeps its own copies with its crates.
+Framework's third-party code (Flint charts, QuickJS NG, the Markdown parser,
+themes and the Mermaid renderer) and the terminal's. The Framework keeps its
+own copies with its crates. Native releases also carry the project `LICENSE`
+and `NOTICE`.
 
 Each Space's `assets/` directory holds its service marks. The GitHub mark
-comes from Simple Icons (CC0). The Copilot Agents, Actions and Channels icons
-have [licences and attribution](licenses/icons/README.md).
+comes from Simple Icons (CC0). The Copilot Agents, Actions, Channels and Issues
+icons have [licences and attribution](licenses/icons/README.md).
 
 On Linux, GPUI needs these packages (Ubuntu names):
 `gcc g++ clang libfontconfig-dev libwayland-dev libxkbcommon-x11-dev
