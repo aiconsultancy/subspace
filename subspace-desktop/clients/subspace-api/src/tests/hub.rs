@@ -110,6 +110,52 @@ fn connection_retry_is_reload_and_does_not_use_an_auth_route() {
 }
 
 #[test]
+fn startup_access_recovers_when_the_account_is_ready() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    let restored = Arc::new(AtomicBool::new(false));
+    let account = restored.clone();
+    let mock = Mock::new(move |request| {
+        if account.load(Ordering::SeqCst) {
+            common(request)
+        } else {
+            (401, String::new())
+        }
+    });
+    let hub = Hub::from_client(client(&mock), crate::PROFILE_NAME);
+    let blocked = HubStatus::Error(crate::hub::ReadError::SignInNeeded);
+    wait(&hub, |snapshot| snapshot.status() == &blocked);
+    hub.retry_initial_access(|| false);
+    assert_eq!(hub.snapshot().status(), &blocked);
+
+    restored.store(true, Ordering::SeqCst);
+    hub.retry_initial_access(|| true);
+
+    let connected = wait(&hub, |snapshot| snapshot.status() == &HubStatus::Ready);
+    assert_eq!(connected.me().unwrap().display_name, "Ada Fixture");
+    assert_eq!(connected.projects()[0].key, "SUB");
+    hub.stop();
+}
+
+#[test]
+fn persistent_access_refusal_does_not_repeat_automatic_reconnects() {
+    let mock = Mock::new(|_| (401, String::new()));
+    let hub = Hub::from_client(client(&mock), crate::PROFILE_NAME);
+    let blocked = HubStatus::Error(crate::hub::ReadError::SignInNeeded);
+    wait(&hub, |snapshot| snapshot.status() == &blocked);
+    hub.retry_initial_access(|| true);
+    wait(&hub, |snapshot| snapshot.status() == &blocked);
+
+    hub.retry_initial_access(|| panic!("the automatic retry was already used"));
+
+    assert_eq!(mock.requests().len(), 2);
+    hub.stop();
+}
+
+#[test]
 fn reference_resolution_deduplicates_and_uses_the_builtin_profile() {
     let mock = Mock::new(common);
     let hub = Hub::from_client(client(&mock), crate::PROFILE_NAME);
