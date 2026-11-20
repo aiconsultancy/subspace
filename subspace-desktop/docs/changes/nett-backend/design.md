@@ -127,8 +127,11 @@ Build settings live in `products/subspace/build-config.json` or the file
   the equivalent build fields, and refuses `nett_api_url` in a Subspace
   build, so the active endpoint is never ambiguous.
 - **Credentials and state.** The WorkOS keychain namespace includes the
-  product, the client ID and the WorkOS origin. The saved organisation is
-  keyed by NETT API origin and user. Run builds for different NETT
+  product, the NETT API origin, the client ID and the WorkOS origin. A
+  sign-in kept for one NETT API is therefore never restored, and its bearer
+  never sent, when a launch points the build at another, such as a loopback
+  fixture: that origin asks for its own sign-in first. The saved
+  organisation is keyed by NETT API origin and user. Run builds for different NETT
   environments with different data directories if they run at once.
 - **Distribution.** Variant bundle identifiers and asset stems, and turning
   off the updater for NETT builds, are deferred until NETT builds go to
@@ -247,7 +250,7 @@ sending anything while it is not served.
 | Inline images and comment files | `GET /issues/{ref}/images`, bytes from `GET /issues/media/{id}` | managed media: `GET /issues/{ref}/images`, a grant from `GET /issues/media/{mediaId}`, uploads through `POST /issues/media/prepare` |
 | Attachments | `GET /issues/{ref}/attachments` | with `attachments`, `GET /issues/{ref}/attachments` and its prepare, completion and delete routes, grants from `POST /files/grants`; without it the description's file media |
 | To-dos | detail `todos` | `GET /issues/{id}/lists`, `…/lists/{listId}/items`, `PUT …/items/{itemId}` with the item version |
-| Decisions | `GET /decisions?issue=`, `GET /decisions/{id}` | `GET /decisions?issueId=&status=all`, `GET /decisions/{id}` |
+| Decisions | `GET /decisions?issue=`, `GET /decisions/{id}` | `GET /decisions?issueId=&status=all`, `GET /decisions/{id}`; made by the first decider, recorded by `createdByUserId` |
 | Live updates | SSE `GET /updates?project=` | with `updates`, `GET /api/v1/updates?project=` with `x-org-id` |
 | Moves | `POST /issues/{ref}/move-preview`, `POST /issues/{ref}/move` | with `issueMoves`, `POST /issues/{ref}/move-preview` then `PATCH /issues/{ref}` with the preview token |
 | Chat uploads and `/resolve` | `POST /chat/uploads`, `POST /chat/uploads/resolve`, `…/content` | with `chatUploads`, prepare, completion, `GET /chat/uploads/{reference}` and `POST /chat/uploads/{reference}/grants` |
@@ -290,14 +293,20 @@ NETT's file host, which never sees the bearer, a cookie or `x-org-id`.
   The bytes are never sent twice. A completion refused with 409 or 404
   proves nothing by itself, because NETT also answers so when the issue
   changed or was archived after the upload was stored. The panel then reads
-  the issue's attachments: a file with the same name, size and SHA-256 was
-  stored. Only a complete read without it means nothing was stored, and the
-  next try reserves afresh under a new key. Any other outcome stays
-  unknown, to be checked again. A completion NETT rejects (400) or forbids
+  the issue's attachments, each of which names the `uploadId` it was
+  completed from (null for a file that was never uploaded): the record from
+  this transfer was stored. A complete read without it means nothing was
+  stored, and the next try reserves afresh under a new key; an identical
+  file from another transfer is someone else's. A record that names no
+  transfer leaves the outcome unknown, to be checked again, as does any
+  read that fails. A completion NETT rejects (400) or forbids
   (403) is final, and only Dismiss is offered. A reservation that lapsed
   before its bytes were sent is refused with 409; the next try reserves
   again under a new key. Uploads in progress are kept when the issue is
-  refreshed. Dismissing an upload that never completed cancels its
+  refreshed. Uploads run two at a time on a small pool, and the panel takes
+  at most eight uploads and 32 MiB waiting on an issue, and 64 MiB across
+  comment drafts and uploads, since a failed upload keeps its bytes for
+  Retry. Dismissing an upload that never completed cancels its
   reservation with `DELETE …/attachments/pending/{uploadId}`. A file is
   added to the issue, opening, organisation and account it was chosen in,
   or not at all: closing and opening the same issue again counts as a
@@ -347,8 +356,9 @@ server's time and no request blocks for minutes. An explicit reload, of the
 list or of the issue, or choosing an organisation, ends a pause at once,
 because the person asked for the requests. Reads are tried again only
 after a pause they waited out. Upload completion waits as asked for up to a
-minute; a longer wait, up to five minutes, is kept with the transfer, and a
-check asked for before it ends is refused without being sent. Every reply that arrives
+minute, giving up its request place while it waits; a longer wait, up to
+five minutes, is kept with the transfer, and a check asked for before it
+ends is refused without being sent. Every reply that arrives
 after the account or organisation changed, a read, a write, a managed
 media completion or state, a to-do save, a move preview or a grant, is
 dropped rather than returned or kept. The
@@ -442,9 +452,9 @@ With `issueMoves`, Issues can move an issue to another team.
   newer version than previewed. If one cannot be read, the move is
   unconfirmed and **Check issue** repeats only this check, never the move.
   A root still where it was, or any issue that did not move, means the plan
-  did not happen, and the editor offers a fresh preview. A NETT 503 asks
-  for a wait like a 429; the default build keeps treating a 503 as
-  unconfirmed.
+  did not happen, and the editor offers a fresh preview. A 503 on the move
+  itself may hide a move that committed, so it too is unconfirmed, to be
+  checked; a 503 on a preview asks for a wait like a 429.
 - A 409 means the plan changed, and the editor asks for a fresh preview.
   NETT refuses a move that would take an archived sub-issue with it, and a
   NETT build's editor shows that refusal plainly. The default build keeps
@@ -493,7 +503,10 @@ existing stream client.
   also refreshes the capability list and the initiative catalogue, since it
   may follow a change in what the person can see.
 - **Refusals.** A 401 renews the token once and reconnects; a second 401
-  stops the stream until the account or organisation changes. The stream
+  stops the stream until the account or organisation changes. A renewal
+  counts only when the provider now holds a different token: a refresh that
+  failed leaves the refused one, which is not tried again as if it were
+  fresh. One account's renewal never stands for another's. The stream
   and the hub's reads share that renewal: a read refused with 401 renews
   the token once, and once it is renewed, by either, the list and the open
   issue are read again with it. A 401 a renewal answers never clears what
