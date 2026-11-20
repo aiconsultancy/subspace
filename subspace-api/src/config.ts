@@ -24,6 +24,18 @@ export function required(env: NodeJS.ProcessEnv, name: string) {
   return value;
 }
 
+/** A WorkOS client ID as the dashboard shows it. The desktop's
+ * `SUBSPACE_WORKOS_CLIENT_ID` and `workos_client_id` use the same rule. */
+export const WORKOS_CLIENT_ID_PATTERN = /^client_[A-Za-z0-9]{1,121}$/;
+
+function workosClientId(env: NodeJS.ProcessEnv) {
+  const value = required(env, "WORKOS_CLIENT_ID");
+  if (!WORKOS_CLIENT_ID_PATTERN.test(value)) {
+    throw new Error("WORKOS_CLIENT_ID must be client_ followed by letters and digits");
+  }
+  return value;
+}
+
 function requiredUuid(env: NodeJS.ProcessEnv, name: string) {
   const value = required(env, name).toLowerCase();
   if (!isUuid(value)) throw new Error(`${name} must be a UUID`);
@@ -85,7 +97,7 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
       : null,
     workos: providers.has("workos")
       ? {
-          clientId: required(env, "WORKOS_CLIENT_ID"),
+          clientId: workosClientId(env),
           issuer: env.WORKOS_ISSUER?.trim() || "https://api.workos.com/",
           audience: env.WORKOS_AUDIENCE?.trim() || undefined,
           jwksUrl: env.WORKOS_JWKS_URL?.trim() || undefined,

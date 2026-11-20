@@ -41,6 +41,7 @@ pub(crate) fn init(registration: Option<AccountRegistration>, cx: &mut App) {
         retry: Retry::Restore,
         cancel: None,
         url: None,
+        code: None,
         run: 0,
     });
     cx.set_global(Shared(entity.clone()));

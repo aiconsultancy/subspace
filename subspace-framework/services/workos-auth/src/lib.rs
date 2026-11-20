@@ -1,6 +1,8 @@
 //! A native WorkOS AuthKit public client. The system browser completes the
-//! User Management authorisation-code flow with PKCE and a loopback redirect;
-//! the app holds no client secret. The rotating refresh token is kept in the
+//! User Management authorisation-code flow with PKCE and a loopback redirect,
+//! or, with [`Config::with_device_authorization`], the device authorisation
+//! flow, where the person confirms a code and the app polls for the result.
+//! The app holds no client secret. The rotating refresh token is kept in the
 //! OS keychain and the access token, a JWT the app's API verifies, only in
 //! memory. The client ID and API origin come from the app's configuration.
 

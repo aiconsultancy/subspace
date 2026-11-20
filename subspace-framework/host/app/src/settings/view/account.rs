@@ -39,7 +39,11 @@ fn render(tokens: &Tokens, cx: &mut Context<Settings>) -> Div {
             .child(identity.name.clone())
             .child(note(tokens, identity.username.clone()));
     }
-    if let Some(message) = status_text(status, account.account.is_some(), &provider.name) {
+    let code = account
+        .code
+        .as_deref()
+        .filter(|_| status == Status::Waiting);
+    if let Some(message) = status_text(status, account.account.is_some(), &provider.name, code) {
         body = body.child(note(tokens, message));
     }
     let actions = if matches!(status, Status::Starting | Status::Waiting) {
@@ -69,9 +73,17 @@ fn account_label(organization: &str, provider: &str) -> String {
     }
 }
 
-fn status_text(status: Status, signed_in: bool, provider: &str) -> Option<String> {
+fn status_text(
+    status: Status,
+    signed_in: bool,
+    provider: &str,
+    code: Option<&str>,
+) -> Option<String> {
     match status {
         Status::Starting => Some(format!("Opening {provider} sign-in…")),
+        Status::Waiting if code.is_some() => code.map(|code| {
+            format!("Check that your browser shows the code {code}, then confirm it there.")
+        }),
         Status::Waiting if signed_in => Some("Complete sign-in in your browser. Your current account stays connected until this finishes.".into()),
         Status::Waiting => Some("Complete sign-in in your browser.".into()),
         Status::Refreshing => Some(format!("Reconnecting to your {provider} account…")),

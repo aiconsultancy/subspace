@@ -1,4 +1,5 @@
 use crate::Config;
+use crate::config::Flow;
 use crate::http::{Live, Transport};
 use reply::{granted, remaining};
 use serde::Deserialize;
@@ -15,14 +16,18 @@ use subspace_core::Secret;
 const CALLBACK: &str = "/callback";
 const AUTHORIZE: &str = "/user_management/authorize";
 const AUTHENTICATE: &str = "/user_management/authenticate";
+const AUTHORIZE_DEVICE: &str = "/user_management/authorize/device";
 const EXPIRY_SKEW: Duration = Duration::from_secs(60);
 /// Used when an access token carries no readable expiry.
 const FALLBACK_LIFETIME: Duration = Duration::from_secs(300);
 
-struct Pending {
-    loopback: Loopback,
-    pkce: Pkce,
-    state: String,
+enum Pending {
+    Browser {
+        loopback: Loopback,
+        pkce: Pkce,
+        state: String,
+    },
+    Device(device::Device),
 }
 
 #[derive(Clone)]
@@ -51,6 +56,7 @@ pub struct SessionManager {
     config: Config,
     store: Arc<dyn CredentialStore>,
     transport: Arc<dyn Transport>,
+    clock: Arc<dyn device::Clock>,
     cache: Mutex<Cache>,
     generation: AtomicU64,
     pending: PendingSlot<Pending>,
@@ -68,6 +74,7 @@ impl SessionManager {
             config,
             store,
             transport: Arc::new(Live),
+            clock: Arc::new(device::SystemClock),
             cache: Mutex::default(),
             generation: AtomicU64::default(),
             pending: PendingSlot::default(),
@@ -102,6 +109,9 @@ impl SessionManager {
     }
 
     fn refresh(&self, session: &Session) -> Result<(Session, Access), Error> {
+        if self.config.flow == Flow::Device {
+            return self.refresh_device(session);
+        }
         let mut body = serde_json::json!({
             "client_id": self.config.client_id,
             "grant_type": "refresh_token",
@@ -113,6 +123,24 @@ impl SessionManager {
         let reply = self
             .transport
             .authenticate(&self.config.endpoint(AUTHENTICATE), body)?;
+        granted(reply, Some(&session.account))
+    }
+
+    /// Device clients renew with the form-encoded refresh grant: the grant
+    /// type, client ID and refresh token, plus the organisation when the
+    /// sign-in pinned one.
+    fn refresh_device(&self, session: &Session) -> Result<(Session, Access), Error> {
+        let mut form = vec![
+            ("grant_type", "refresh_token"),
+            ("client_id", self.config.client_id.as_str()),
+            ("refresh_token", session.refresh.expose()),
+        ];
+        if !session.account.tenant.is_empty() {
+            form.push(("organization_id", session.account.tenant.as_str()));
+        }
+        let reply = self
+            .transport
+            .refresh_form(&self.config.endpoint(AUTHENTICATE), &form)?;
         granted(reply, Some(&session.account))
     }
 
@@ -169,6 +197,22 @@ impl SessionManager {
         }
     }
 
+    /// Ask WorkOS for a device code; the shell opens the verification page
+    /// and shows the user code.
+    fn start_device(&self) -> Result<Started, Error> {
+        let issued = self.clock.now();
+        let start = self.transport.authorize_device(
+            &self.config.endpoint(AUTHORIZE_DEVICE),
+            &self.config.client_id,
+        )?;
+        let (prompt, device) = device::validate(start, issued, self.config.loopback())?;
+        self.pending.start_with_code(
+            Some(prompt.url),
+            Some(prompt.user_code),
+            Pending::Device(device),
+        )
+    }
+
     fn load(&self, cache: &mut Cache) -> Result<bool, Error> {
         if cache.session.is_some() {
             return Ok(true);
@@ -200,13 +244,16 @@ impl subspace_account::Provider for SessionManager {
     }
 
     fn start(&self) -> Result<Started, Error> {
+        if self.config.flow == Flow::Device {
+            return self.start_device();
+        }
         let loopback = Loopback::bind("127.0.0.1", self.config.redirect_port, CALLBACK)?;
         let pkce = Pkce::new();
         let state = random_value();
         let url = self.authorize_url(&loopback.redirect_uri(), &pkce, &state)?;
         self.pending.start(
             Some(url),
-            Pending {
+            Pending::Browser {
                 loopback,
                 pkce,
                 state,
@@ -215,12 +262,30 @@ impl subspace_account::Provider for SessionManager {
     }
 
     fn finish(&self, started: Started, cancel: &Cancel, generation: u64) -> Result<Account, Error> {
-        let pending = self.pending.take(&started)?;
-        let reply = pending.loopback.wait(cancel, &pending.state)?;
-        reply.complete(cancel, |code| {
-            let granted = self.redeem(&code, &pending.pkce)?;
-            self.accept(granted, cancel, generation)
-        })
+        match self.pending.take(&started)? {
+            Pending::Browser {
+                loopback,
+                pkce,
+                state,
+            } => {
+                let reply = loopback.wait(cancel, &state)?;
+                reply.complete(cancel, |code| {
+                    let granted = self.redeem(&code, &pkce)?;
+                    self.accept(granted, cancel, generation)
+                })
+            }
+            Pending::Device(device) => {
+                let reply = device::poll(
+                    self.transport.as_ref(),
+                    self.clock.as_ref(),
+                    &self.config.endpoint(AUTHENTICATE),
+                    &self.config.client_id,
+                    &device,
+                    cancel,
+                )?;
+                self.accept(granted(reply, None)?, cancel, generation)
+            }
+        }
     }
 
     fn restore(&self) -> Result<Option<Account>, Error> {
@@ -301,6 +366,7 @@ fn decode(value: &Secret) -> Result<Session, Error> {
     })
 }
 
+mod device;
 mod reply;
 #[cfg(test)]
 mod tests;

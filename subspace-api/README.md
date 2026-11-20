@@ -71,7 +71,8 @@ bun run auth:member workos org_example user_example --name "Example Operator" --
 ```
 
 For WorkOS, use the organisation ID in `org_id` and the user ID in `sub`.
-Verification uses the configured client's session JWKS, the exact issuer and
+`WORKOS_CLIENT_ID` must be `client_` followed by letters and digits, the same
+rule the desktop applies to `SUBSPACE_WORKOS_CLIENT_ID`. Verification uses the configured client's session JWKS, the exact issuer and
 a five-second clock tolerance. Set `WORKOS_ISSUER` for a custom auth domain and
 `WORKOS_AUDIENCE` if the deployment configures a token audience. An
 optional `WORKOS_API_KEY` lets this provisioning command fetch a missing profile

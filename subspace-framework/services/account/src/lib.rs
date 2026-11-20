@@ -104,10 +104,13 @@ impl Cancel {
 }
 
 /// An interactive sign-in in progress. `url`, when present, is the prompt the
-/// shell opens in the system browser; codes, verifiers and tokens stay inside
-/// the provider, under `ticket`.
+/// shell opens in the system browser. `code`, when present, is a short
+/// user code the person confirms on that page, as in device authorisation;
+/// it is not a secret. Device codes, verifiers and tokens stay inside the
+/// provider, under `ticket`.
 pub struct Started {
     pub url: Option<String>,
+    pub code: Option<String>,
     ticket: Ticket,
 }
 
@@ -121,6 +124,7 @@ impl Started {
     pub fn headless() -> Self {
         Self {
             url: None,
+            code: None,
             ticket: Ticket {
                 id: 0,
                 release: None,
@@ -160,6 +164,20 @@ impl<T> PendingSlot<T> {
     where
         T: Send + 'static,
     {
+        self.start_with_code(url, None, pending)
+    }
+
+    /// As [`PendingSlot::start`], with a user code for the shell to show
+    /// beside the browser prompt.
+    pub fn start_with_code(
+        &self,
+        url: Option<String>,
+        code: Option<String>,
+        pending: T,
+    ) -> Result<Started, Error>
+    where
+        T: Send + 'static,
+    {
         let ticket = NEXT_TICKET.fetch_add(1, Ordering::Relaxed);
         *self.slot.lock().map_err(|_| Error::Service)? = Some((ticket, pending));
         let slot = Arc::downgrade(&self.slot);
@@ -173,6 +191,7 @@ impl<T> PendingSlot<T> {
         };
         Ok(Started {
             url,
+            code,
             ticket: Ticket {
                 id: ticket,
                 release: Some(Box::new(release)),
@@ -275,6 +294,12 @@ mod tests {
         assert_eq!(slot.take(&second), Ok(2));
         assert_eq!(slot.take(&second), Err(Error::Cancelled));
         assert!(slot.take(&Started::headless()).is_err());
+        let coded = slot
+            .start_with_code(None, Some("ABCD-EFGH".into()), 4_u32)
+            .unwrap();
+        assert_eq!(coded.code.as_deref(), Some("ABCD-EFGH"));
+        assert_eq!(slot.take(&coded), Ok(4));
+        assert_eq!(Started::headless().code, None);
     }
 
     #[test]
