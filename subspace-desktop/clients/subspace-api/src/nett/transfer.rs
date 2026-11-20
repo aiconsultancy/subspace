@@ -258,54 +258,66 @@ pub(crate) fn write(
         .endpoint(path, query)
         .map_err(|_| TransferError::Unclear)?;
     transport::prepare(&url);
+    let response = send_write(client, method, &url, body).map_err(|_| TransferError::Unclear)?;
+    write_reply(client, response)
+}
+
+/// Sends one write with `method`. Routes without a body take no JSON:
+/// nothing is sent, not even a type.
+fn send_write(
+    client: &Client,
+    method: &str,
+    url: &Url,
+    body: Option<&Value>,
+) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
     let bearer = client
         .access_jwt
         .as_ref()
         .map(|jwt| format!("Bearer {}", jwt.expose()));
-    // Routes without a body take no JSON: nothing is sent, not even a type.
-    let response = if method == "DELETE" {
-        let mut request = client
-            .agent
-            .delete(url.as_str())
-            .header("User-Agent", transport::USER_AGENT)
-            .header("Accept", "application/json");
-        if let Some(bearer) = &bearer {
-            request = request.header("Authorization", bearer);
-        }
-        request
-            .config()
-            .timeout_global(Some(transport::READ_TIMEOUT))
-            .max_redirects(0)
-            .max_redirects_will_error(false)
-            .build()
-            .call()
-    } else {
-        let request = match method {
-            "PUT" => client.agent.put(url.as_str()),
-            "PATCH" => client.agent.patch(url.as_str()),
-            _ => client.agent.post(url.as_str()),
-        };
-        let mut request = request
-            .header("User-Agent", transport::USER_AGENT)
-            .header("Accept", "application/json");
-        if let Some(bearer) = &bearer {
-            request = request.header("Authorization", bearer);
-        }
-        if body.is_some() {
-            request = request.header("Content-Type", "application/json");
-        }
-        let request = request
-            .config()
-            .timeout_global(Some(transport::READ_TIMEOUT))
-            .max_redirects(0)
-            .max_redirects_will_error(false)
-            .build();
-        match body {
-            Some(body) => request.send(body.to_string().as_bytes()),
-            None => request.send_empty(),
-        }
+    if method == "DELETE" {
+        return api_request(client.agent.delete(url.as_str()), bearer.as_deref()).call();
     }
-    .map_err(|_| TransferError::Unclear)?;
+    let request = match method {
+        "PUT" => client.agent.put(url.as_str()),
+        "PATCH" => client.agent.patch(url.as_str()),
+        _ => client.agent.post(url.as_str()),
+    };
+    let request = api_request(request, bearer.as_deref());
+    match body {
+        Some(body) => request
+            .header("Content-Type", "application/json")
+            .send(body.to_string().as_bytes()),
+        None => request.send_empty(),
+    }
+}
+
+/// An API request's headers and limits: JSON accepted, the bearer when
+/// there is one, and no redirect followed.
+fn api_request<B>(
+    request: ureq::RequestBuilder<B>,
+    bearer: Option<&str>,
+) -> ureq::RequestBuilder<B> {
+    let request = request
+        .header("User-Agent", transport::USER_AGENT)
+        .header("Accept", "application/json");
+    let request = match bearer {
+        Some(bearer) => request.header("Authorization", bearer),
+        None => request,
+    };
+    request
+        .config()
+        .timeout_global(Some(transport::READ_TIMEOUT))
+        .max_redirects(0)
+        .max_redirects_will_error(false)
+        .build()
+}
+
+/// A write's reply, read as JSON, with its status mapped onto
+/// [`TransferError`].
+fn write_reply(
+    client: &Client,
+    response: ureq::http::Response<ureq::Body>,
+) -> Result<Option<Value>, TransferError> {
     if transport::is_access_challenge(&response) {
         return Err(TransferError::SignIn);
     }
@@ -354,17 +366,7 @@ pub(crate) fn fetch(url: &Url, expected: &Expected<'_>) -> Result<Vec<u8>, Error
         .call()
         .map_err(|_| Error::Network)?;
     let mut response = transport::check_response(response)?;
-    let length = transport::header(&response, "content-length")
-        .parse::<u64>()
-        .ok();
-    let nosniff =
-        transport::header(&response, "x-content-type-options").eq_ignore_ascii_case("nosniff");
-    let needs_nosniff = expected.strict || crate::media::readable_text(expected.content_type);
-    if transport::header(&response, "content-type") != expected.content_type
-        || (needs_nosniff && !nosniff)
-        || (expected.strict && length != Some(expected.size))
-        || length.is_some_and(|length| length != expected.size)
-    {
+    if !acceptable(&response, expected) {
         return Err(Error::InvalidResponse);
     }
     let bytes = response
@@ -377,6 +379,22 @@ pub(crate) fn fetch(url: &Url, expected: &Expected<'_>) -> Result<Vec<u8>, Error
         return Err(Error::InvalidResponse);
     }
     Ok(bytes)
+}
+
+/// Whether a grant read's headers carry what [`Expected`] asks for: the
+/// exact stored type, `nosniff` where it is needed, and the descriptor's
+/// length wherever a length is sent or required.
+fn acceptable(response: &ureq::http::Response<ureq::Body>, expected: &Expected<'_>) -> bool {
+    let length = transport::header(response, "content-length")
+        .parse::<u64>()
+        .ok();
+    let nosniff =
+        transport::header(response, "x-content-type-options").eq_ignore_ascii_case("nosniff");
+    let needs_nosniff = expected.strict || crate::media::readable_text(expected.content_type);
+    transport::header(response, "content-type") == expected.content_type
+        && (nosniff || !needs_nosniff)
+        && (!expected.strict || length == Some(expected.size))
+        && length.is_none_or(|length| length == expected.size)
 }
 
 #[cfg(test)]
