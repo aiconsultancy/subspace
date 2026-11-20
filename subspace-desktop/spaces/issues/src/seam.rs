@@ -199,8 +199,12 @@ impl Issues {
             self.show_status(view.status, cx);
             return;
         }
-        let previous_list =
-            view.groups.is_some() && view.list_project.as_deref() != Some(self.project.key());
+        // The hub names no team for All teams, as the list query does.
+        let listed = match &self.project {
+            crate::model::ProjectScope::Project(key) => Some(key.as_str()),
+            crate::model::ProjectScope::AllProjects => None,
+        };
+        let previous_list = view.groups.is_some() && view.list_project.as_deref() != listed;
         if self.initiative_id.is_some() && (self.project != previous || previous_list) {
             return;
         }

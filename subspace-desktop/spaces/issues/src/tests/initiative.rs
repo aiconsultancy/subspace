@@ -143,3 +143,36 @@ fn project_keys(board: &crate::Issues) -> Vec<String> {
         .map(|(scope, _)| scope.key().to_owned())
         .collect()
 }
+
+#[gpui_kit::test]
+fn a_nett_initiative_under_all_teams_shows_its_rows(cx: &mut TestAppContext) {
+    // NETT keeps the list to an initiative by filter, with any team or All
+    // teams chosen. The hub names no team for All teams.
+    crate::initiative::initiatives_by_filter_for_test(Some(true));
+    let (board, _shared, cx) = setup(cx);
+    board.update(cx, |board, cx| {
+        board.set_project(ProjectScope::AllProjects, cx);
+        board.initiative_id = Some("ops".into());
+        board.listing.content = None;
+        let view = crate::sync::HubView {
+            profile_name: "Fixture".into(),
+            access: connected(),
+            projects: board.projects.clone(),
+            groups: Some(Vec::new()),
+            list_project: None,
+            read_at: None,
+            list: None,
+            request_revision: 0,
+            status: crate::listing::Status::Idle,
+            hidden_subissues_count: None,
+            my_issues_count: None,
+            live: subspace_api_client::hub::LiveStatus::Off,
+        };
+        board.apply_view(view, cx);
+        assert!(
+            board.listing.content.is_some(),
+            "the initiative's rows are shown, not taken for an earlier choice"
+        );
+    });
+    crate::initiative::initiatives_by_filter_for_test(None);
+}
