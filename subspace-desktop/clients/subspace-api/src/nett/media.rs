@@ -1038,6 +1038,52 @@ mod tests {
     }
 
     #[test]
+    fn a_malformed_field_is_no_proof_of_another_file() {
+        let bytes = b"Stored, with a damaged record.\n";
+        let declaration =
+            crate::uploads::ImageDeclaration::new("damaged.txt", "text/plain", bytes).unwrap();
+        let complete = serde_json::json!({
+            "mediaId": "m", "version": 1, "kind": "file", "fileName": "damaged.txt",
+            "contentType": "text/plain", "sizeBytes": bytes.len(),
+            "sha256": declaration.sha256, "publicFileId": "pf", "expiresAt": null,
+            "uploadId": null,
+        });
+        // Completion committed but its reply was lost, and the record gives
+        // a field NETT never sends so: it cannot show another file.
+        for (field, value) in [
+            ("sha256", serde_json::json!("")),
+            ("sha256", serde_json::json!("z".repeat(64))),
+            ("sha256", serde_json::json!("0".repeat(63))),
+            ("sizeBytes", serde_json::json!(0)),
+            ("sizeBytes", serde_json::json!(-1)),
+            ("fileName", serde_json::json!("")),
+        ] {
+            let mut record = complete.clone();
+            record[field] = value.clone();
+            assert_eq!(
+                stored_among([&record], "upload-mine", &declaration),
+                Stored::Unknown,
+                "{field} {value} is no proof"
+            );
+        }
+        // A well-formed digest of another file still is.
+        let mut other = complete.clone();
+        other["sha256"] = serde_json::json!("0".repeat(64));
+        assert_eq!(
+            stored_among([&other], "upload-mine", &declaration),
+            Stored::Absent
+        );
+        // Recovery across the whole list leaves the upload to be checked.
+        let mut empty = complete;
+        empty["sha256"] = serde_json::json!("");
+        let (_mock, client) = recovering(serde_json::json!([empty]));
+        assert!(matches!(
+            client.nett_complete_attachment("OPS-1", "upload-unproven", &declaration),
+            Err(crate::uploads::UploadError::Checking)
+        ));
+    }
+
+    #[test]
     fn a_record_naming_the_transfer_that_cannot_be_read_is_never_absence() {
         let bytes = b"Stored, but described badly.\n";
         let declaration =
