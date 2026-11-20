@@ -28,13 +28,19 @@ pub fn file_mime(path: &Path) -> Option<&'static str> {
     }
 }
 
-pub(super) fn validate(name: &str, mime: &str, bytes: &[u8]) -> Result<(), UploadError> {
-    let image = crate::media::supported_image(mime);
-    let limit = if image {
+/// The largest file of type `mime` an upload accepts: images up to
+/// [`MAX_IMAGE_BYTES`], other files up to [`MAX_FILE_BYTES`].
+pub fn max_bytes(mime: &str) -> usize {
+    if crate::media::supported_image(mime) {
         MAX_IMAGE_BYTES
     } else {
         MAX_FILE_BYTES
-    };
+    }
+}
+
+pub(super) fn validate(name: &str, mime: &str, bytes: &[u8]) -> Result<(), UploadError> {
+    let image = crate::media::supported_image(mime);
+    let limit = max_bytes(mime);
     if name.is_empty()
         || name.encode_utf16().count() > MAX_NAME_UNITS
         || name.chars().any(char::is_control)
