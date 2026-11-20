@@ -200,7 +200,7 @@ pub(super) struct State {
     /// Standalone uploads of issues that were closed while they were in
     /// progress or awaiting a check, by issue, shown again when the issue
     /// reopens. Their transfers may hold stored bytes.
-    pub parked_uploads: HashMap<String, Vec<super::AttachmentUpload>>,
+    pub parked_uploads: super::files::Parking,
     pub live_reads: super::live::LiveReads,
     pub project_refresh: super::live::ProjectRefresh,
     /// The renewal of a token NETT refused, shared by reads and the stream.
@@ -248,7 +248,7 @@ impl State {
             reference_count: 0,
             drafts: HashMap::new(),
             attachment_buffers: Vec::new(),
-            parked_uploads: HashMap::new(),
+            parked_uploads: super::files::Parking::default(),
             live_reads: super::live::LiveReads::default(),
             project_refresh: super::live::ProjectRefresh::default(),
             renewal: super::renewal::Renewal::default(),

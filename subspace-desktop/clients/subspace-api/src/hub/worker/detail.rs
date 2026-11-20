@@ -62,6 +62,9 @@ fn publish(
         .as_ref()
         .is_some_and(|issue| issue.status == IssueStatus::Loaded)
     {
+        // Uploads kept for this issue when it closed show again now that
+        // its ID is known, however it was opened.
+        state.unpark_for_detail();
         shared.enqueue(
             &mut state,
             super::Task::PullRequests(

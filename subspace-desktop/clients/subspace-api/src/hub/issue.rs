@@ -14,7 +14,8 @@ impl Hub {
         } else {
             IssueStatus::Unavailable
         };
-        state.park_open_uploads();
+        let cancels = state.park_open_uploads(std::time::Instant::now());
+        self.0.cancel_reservations(cancels);
         let mut issue = IssueSnapshot::new(identifier, profile_id, status);
         if profile_id == crate::PROFILE_ID {
             state.unpark_uploads(&mut issue);
@@ -40,12 +41,15 @@ impl Hub {
         Ok(())
     }
     /// Closes the open issue. Its standalone uploads still in progress or
-    /// awaiting a check are kept, and shown again when it reopens, so a
-    /// transfer whose bytes may be stored can still be checked or cancelled.
+    /// awaiting a check are kept for a while, and shown again when it
+    /// reopens, so a transfer whose bytes may be stored can still be checked
+    /// or cancelled. Those that failed with nothing to check are let go and
+    /// their reservations cancelled.
     pub fn close_issue(&self) {
         let mut state = lock(&self.0.state);
         state.issue_revision = state.issue_revision.wrapping_add(1);
-        state.park_open_uploads();
+        let cancels = state.park_open_uploads(std::time::Instant::now());
+        self.0.cancel_reservations(cancels);
         state.snapshot.issue = None;
         state.changed();
     }

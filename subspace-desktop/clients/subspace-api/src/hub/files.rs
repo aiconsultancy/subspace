@@ -5,6 +5,7 @@ mod removal;
 mod uploads;
 
 pub(super) use bytes::{FileRead, bytes};
+pub(super) use uploads::Parking;
 pub use uploads::{AttachmentTarget, AttachmentUpload};
 
 use super::{
