@@ -238,7 +238,9 @@ impl Read for Held {
 }
 
 /// A ureq middleware step for a loopback NETT client: a place among the
-/// account's requests, held until the reply's body is read.
+/// account's requests, held until the reply's body is read. Only debug
+/// builds have loopback clients.
+#[cfg(debug_assertions)]
 pub(crate) fn through(
     account: u64,
     request: ureq::http::Request<ureq::SendBody>,
