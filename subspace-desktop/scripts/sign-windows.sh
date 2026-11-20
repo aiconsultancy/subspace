@@ -4,8 +4,10 @@
 #
 # A .exe, .dll, .msi or .msix file is signed in place. A .zip release archive
 # has every .exe and .dll entry signed, is rewritten with the same entries in
-# the same order, and gets a fresh .sha256 file beside it. All files go to one
-# jsign call, which saves Artifact Signing quota.
+# the same order, and gets a fresh .sha256 file beside it. An archive may come
+# from a build that is not trusted, so it must hold only plain relative paths,
+# each once, and only regular files and folders. All files go to one jsign
+# call, which sets up the access token once.
 #
 # The signing account comes from the environment, and anything missing from
 # the Key Vault named by SUBSPACE_SIGNING_KEY_VAULT (see
@@ -51,6 +53,8 @@ for entry in SUBSPACE_WINDOWS_SIGNING_ENDPOINT:Subspace--WindowsSigningEndpoint 
 		--query value --output tsv)" || [[ -z "$value" ]]; then
 		fail "could not read $secret from Key Vault for $name. Run az login, and check that you have Key Vault Secrets User on the secret"
 	fi
+	# Keep the resource names out of a public repository's run logs.
+	if [[ "${GITHUB_ACTIONS:-}" = true ]]; then echo "::add-mask::$value"; fi
 	printf -v "$name" '%s' "$value"
 done
 unset value
@@ -104,7 +108,20 @@ for path in "$@"; do
 		archives+=("$path")
 		mkdir "$stage/$index"
 		unzip -Z1 "$path" >"$stage/$index.entries"
+		# A symbolic link restored here and followed when the archive is rebuilt
+		# would copy files from this machine, such as Azure's token cache, into
+		# the signed archive. Refuse links, unsafe paths and duplicate entries.
+		while IFS= read -r member; do
+			case "$member" in
+			'' | /* | *\\* | *:* | .. | ../* | */.. | */../*) fail "unsafe entry in $path: $member" ;;
+			esac
+		done <"$stage/$index.entries"
+		[[ -z "$(sort "$stage/$index.entries" | uniq -d)" ]] || fail "duplicate entries in $path"
+		listing="$(unzip -Z "$path")"
+		if grep -q '^l' <<<"$listing"; then fail "symbolic link in $path"; fi
 		unzip -q "$path" -d "$stage/$index/tree"
+		[[ -z "$(find "$stage/$index/tree" ! -type f ! -type d -print)" ]] ||
+			fail "symbolic link or special file in $path"
 		found=0
 		while IFS= read -r member; do
 			case "$member" in
@@ -129,7 +146,7 @@ for index in "${!archives[@]}"; do
 	rebuilt="$stage/$index.zip"
 	# The same entries in the same order: the updater selects subspace.exe by
 	# its exact name at the archive root.
-	(cd "$stage/$index/tree" && zip -qX "$rebuilt" -@ <"$stage/$index.entries")
+	(cd "$stage/$index/tree" && zip -qXy "$rebuilt" -@ <"$stage/$index.entries")
 	unzip -Z1 "$rebuilt" | cmp -s - "$stage/$index.entries" || fail "the signed archive's entries differ from $archive"
 	mv -f "$rebuilt" "$directory/$base"
 	(cd "$directory" && checksum "$base" >"$base.sha256")

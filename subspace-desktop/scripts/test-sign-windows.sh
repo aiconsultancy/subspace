@@ -121,4 +121,38 @@ test "$(cksum <"$archive")" = "$original"
 (cd "$fixture/work" && rm -f empty.zip && zip -qX empty.zip README.md)
 expect_failure 'no .exe or .dll to sign' sign "$fixture/work/empty.zip"
 
+# A symbolic link in an archive is refused before anything is signed, so a
+# tampered build can't copy files from the signing machine into the archive.
+printf 'secret' >"$fixture/token-cache"
+(cd "$fixture/work" && rm -f link.zip README.md && printf 'exe' >subspace.exe &&
+	ln -s "$fixture/token-cache" README.md && zip -qXy link.zip subspace.exe README.md && rm README.md)
+rm -f "$FIXTURE_STATE/jsign.args"
+expect_failure 'symbolic link in' sign "$fixture/work/link.zip"
+test ! -e "$FIXTURE_STATE/jsign.args"
+if unzip -p "$fixture/work/link.zip" README.md 2>/dev/null | grep -q secret; then
+	echo 'the archive picked up the linked file' >&2
+	exit 1
+fi
+
+# Unsafe paths and duplicate entries are refused.
+python3 - "$fixture/work" <<'PY'
+import sys, zipfile
+work = sys.argv[1]
+with zipfile.ZipFile(f"{work}/escape.zip", "w") as z:
+    z.writestr("subspace.exe", "exe")
+    z.writestr("../outside.txt", "x")
+with zipfile.ZipFile(f"{work}/twice.zip", "w") as z:
+    z.writestr("subspace.exe", "exe")
+    import warnings; warnings.simplefilter("ignore")
+    z.writestr("subspace.exe", "other")
+PY
+expect_failure 'unsafe entry in' sign "$fixture/work/escape.zip"
+expect_failure 'duplicate entries in' sign "$fixture/work/twice.zip"
+
+# In GitHub Actions, the values read from Key Vault are masked in the log.
+printf 'exe' >"$fixture/app.exe"
+GITHUB_ACTIONS=true sign "$fixture/app.exe" >"$fixture/out"
+grep -Fxq '::add-mask::fixture-account' "$fixture/out"
+grep -Fxq '::add-mask::fixture-profile' "$fixture/out"
+
 echo 'sign-windows fixtures passed'
