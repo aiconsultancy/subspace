@@ -261,10 +261,15 @@ fixtures without real signing or notarization.
 A stable release starts as a draft. Merging the app's Release Please pull
 request (see [Releases](ways-of-working.md#releases)) makes the release
 workflow tag the merge commit `subspace-desktop-v<version>` and create a
-draft GitHub release with the changelog's entry as its notes. Then, on the
+draft GitHub release with the changelog's entry as its notes. It also starts
+the [windows-release workflow](#the-windows-release-workflow), which attaches
+the signed Windows archive to the draft and can take a couple of hours.
+`make release-macos` publishes the release without checking for that archive,
+so wait until the latest `windows-release` run has succeeded. Then, on the
 owner's Mac:
 
 ```bash
+gh run list -R aiconsultancy/subspace --workflow windows-release.yml --limit 1
 git fetch --tags origin
 git switch --detach subspace-desktop-v<version>
 make release-macos
@@ -577,8 +582,9 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
    Vault's private endpoint.
 3. **publish**, back on `subspace-windows`, checks the archive's `.sha256` and
    that Windows reports the signature `Valid` with a timestamp, then attaches
-   the archive and its `.sha256` file to the release. This is normally still
-   the draft, before `make release-macos` publishes it.
+   the archive and its `.sha256` file to the release. Publish the release
+   only after this, as [Publish a macOS release](#publish-a-macos-release)
+   says.
 
 The build job never holds the OIDC permission, so build scripts cannot request
 a token for the signing identity. The runner group admits only this workflow
