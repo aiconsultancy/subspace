@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -135,8 +135,16 @@ test('rerunning the notice script preserves the generated notices', (t) => {
   const script = 'scripts/append-css-notices.mjs';
   copyFileSync(join(root, script), join(fixture, script));
   const file = join(fixture, 'dist', 'THIRD_PARTY_NOTICES');
-  copyFileSync(join(dist, 'THIRD_PARTY_NOTICES'), file);
+  const complete = read('THIRD_PARTY_NOTICES');
+  const appended = complete.indexOf('\n## tailwindcss - ');
+  assert.ok(appended > 0, 'expected appended Tailwind CSS notice');
+  const viteOnly = complete.slice(0, appended);
+  assert.doesNotMatch(viteOnly, /^## vite - /m);
+  writeFileSync(file, viteOnly);
 
   execFileSync(process.execPath, [join(fixture, script)]);
-  assert.equal(readFileSync(file, 'utf8'), read('THIRD_PARTY_NOTICES'));
+  const generated = readFileSync(file);
+  assert.deepEqual(generated, Buffer.from(complete));
+  execFileSync(process.execPath, [join(fixture, script)]);
+  assert.deepEqual(readFileSync(file), generated);
 });
