@@ -302,8 +302,10 @@ NETT's file host, which never sees the bearer, a cookie or `x-org-id`.
   this transfer was stored. A complete read without it means nothing was
   stored, and the next try reserves afresh under a new key; an identical
   file from another transfer is someone else's. A record that names no
-  transfer leaves the outcome unknown, to be checked again, as does any
-  read that fails. So does a record that names this transfer but cannot be
+  transfer leaves the outcome unknown, to be checked again, unless the
+  name, size or SHA-256 it gives shows another file; an incomplete record,
+  missing its type or digest, proves nothing. So does any read that
+  fails. So does a record that names this transfer but cannot be
   read or differs from the file sent, and a reply that does not carry the
   list or show where it ends: only a complete read proves the upload
   absent. A completion NETT rejects (400) or forbids
@@ -313,10 +315,17 @@ NETT's file host, which never sees the bearer, a cookie or `x-org-id`.
   refreshed, and when it closes: they are shown again, with whatever
   happened to them meanwhile, when it reopens in the same Issues hub,
   account and organisation, so a transfer whose bytes may be stored can
-  still be checked or cancelled. Uploads run two at a time on a small
-  pool, and the panel takes at most eight uploads and 32 MiB waiting on
-  an issue, and 64 MiB across comment drafts and uploads, since a failed
-  upload keeps its bytes for Retry. Dismissing an upload that never
+  still be checked or cancelled. They are kept under the issue's ID, so
+  the issue finds them however it opens again, by its ID or under a new
+  key after a move. A closed issue keeps only uploads still under way or
+  awaiting a check that can change the outcome, for 15 minutes, and at
+  most eight closed issues keep any; an upload let go, for any of these
+  reasons, has its reservation cancelled and its bytes released. Uploads
+  run two at a time on a small pool, and the panel takes at most eight
+  uploads and 32 MiB waiting on an issue, and 64 MiB across comment drafts
+  and uploads, since a failed upload keeps its bytes for Retry. A file
+  that would not fit in that budget first lets go of failed uploads kept
+  for closed issues, which have no row to dismiss. Dismissing an upload that never
   completed cancels its reservation with `DELETE …/attachments/pending/{uploadId}`. A file is
   added to the issue, opening, organisation and account it was chosen in,
   or not at all: closing and opening the same issue again counts as a
@@ -328,7 +337,9 @@ NETT's file host, which never sees the bearer, a cookie or `x-org-id`.
   409 means it changed since it was listed, and the list is read again.
   Saving reads the file's grant. The save dialog opens in the Downloads
   folder and offers the attachment's name without path separators, control
-  characters or leading dots, since the name comes from the service.
+  characters, Unicode format or bidirectional characters, leading dots, or
+  the characters and device names Windows refuses, since the name comes
+  from the service.
 - **Downloads.** Managed media get their grant from
   `GET /issues/media/{mediaId}`. Standalone attachments get theirs from
   `POST /files/grants` with the descriptor's `publicFileId`. Either grant
@@ -372,7 +383,8 @@ because the person asked for the requests. Reads are tried again only
 after a pause they waited out. Upload completion waits as asked for up to a
 minute in all, giving up its request place while it waits; a longer wait, up to
 five minutes, is kept with the transfer, and a check asked for before it
-ends is refused without being sent. Every reply that arrives
+ends is refused without being sent, not even a read of the capability
+list. Every reply that arrives
 after the account or organisation changed, a read, a write, a managed
 media completion or state, a to-do save, a move preview or a grant, is
 dropped rather than returned or kept. The
@@ -395,7 +407,11 @@ signed in is dropped. It is read again whenever the update stream closes
 or is refused, after an explicit reload of the list or the issue, and
 once it is five minutes old, since NETT can enable a feature while the
 app runs. With the stream off, the hub reads the list again as soon as it
-is due and opens the stream if it is now served. Until a new list
+is due and opens the stream if it is now served. Each list that differs
+from the last is a new revision, whichever read found it, so a read
+elsewhere, such as an explicit reload's first team read, that finds
+updates enabled also turns the stream on and has the Spaces read their
+initiatives again. Until a new list
 arrives, the previous one still answers; one that cannot be read again is
 tried again after 30 seconds. The desktop
 uses five names and ignores every other name,
@@ -470,13 +486,16 @@ With `issueMoves`, Issues can move an issue to another team.
   reviewContext, movePreviewToken}`. NETT moves the whole previewed subtree
   at once and returns the issue. The client then checks every previewed
   issue: each must now be in the destination team, numbered there, at a
-  newer version than previewed. If one cannot be read, the move is
-  unconfirmed and **Check issue** repeats only this check, never the move.
+  newer version than previewed. If the reply is lost or does not show
+  the root moved, the move is unconfirmed and **Check issue** repeats
+  only this check, never the move, and a check needs every issue read.
   A root still where it was, or any issue that did not move, means the plan
   did not happen, and the editor offers a fresh preview. Once NETT's reply
   shows the root in the destination, though, the move committed: a
-  sub-issue read back somewhere else was moved again since, and is
-  reported as such without undoing the move's success. A 503 on the move
+  sub-issue read back somewhere else was moved again since, and one that
+  cannot be read may have been, so neither undoes the move's success. The
+  editor lists each such sub-issue with what reading it found before it
+  opens the moved issue. A 503 on the move
   itself may hide a move that committed, so it too is unconfirmed, to be
   checked; a 503 on a preview asks for a wait like a 429.
 - A 409 means the plan changed, and the editor asks for a fresh preview.
