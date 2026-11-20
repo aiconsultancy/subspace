@@ -397,7 +397,8 @@ impl Render for Conversation {
             .child(transcript)
             .child(div().flex_shrink_0().child(self.draft.render(
                 &self.tray,
-                !matches!(self.buffer.target, Target::Server),
+                !matches!(self.buffer.target, Target::Server)
+                    && subspace_api_client::capabilities().chat_uploads,
                 cx,
             )))
             .into_any_element();

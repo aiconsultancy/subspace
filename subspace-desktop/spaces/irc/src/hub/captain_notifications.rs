@@ -61,6 +61,10 @@ fn connected(hub: &Hub, scope: &Scope) -> bool {
 }
 
 pub(super) fn tick(hub: &mut Hub, cx: &mut Context<Hub>) {
+    // The notices route by an agent assignee's ship, which NETT builds lack.
+    if !subspace_api_client::capabilities().captain_notices {
+        return;
+    }
     if hub
         .captain_notifications
         .last_check
