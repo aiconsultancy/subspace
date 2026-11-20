@@ -136,3 +136,27 @@ fn a_chat_check_before_the_servers_wait_sends_no_completion() {
     assert!(client.check_chat_upload(&draft).is_err());
     assert_eq!(mock.requests().len(), before, "nothing was sent");
 }
+
+#[test]
+fn a_chat_check_during_the_servers_wait_reads_no_capability_list_either() {
+    let mock = NettMock::serving(&["chatUploads"]);
+    let client = own_client(&mock, "nett-fixture-chat-wait-list");
+    mock.config(&json!({"checkingPolls": 1, "retryAfterSeconds": 90}));
+    let draft = draft("Checked while the list is due.\n");
+    assert_eq!(
+        client.create_chat_upload(&draft).err(),
+        Some(ChatError::Unconfirmed)
+    );
+    // An Issues reload marks the shared capability list due meanwhile.
+    client.nett_reread_served();
+    let before = mock.requests().len();
+    assert_eq!(
+        client.check_chat_upload(&draft).err(),
+        Some(ChatError::Unavailable)
+    );
+    assert_eq!(
+        mock.requests().len(),
+        before,
+        "nothing was sent, not even the capability read the reload asked for"
+    );
+}
