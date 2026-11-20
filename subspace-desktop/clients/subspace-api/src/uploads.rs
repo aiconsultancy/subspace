@@ -4,7 +4,7 @@ mod validation;
 pub use crate::media::MAX_IMAGE_BYTES;
 use sha2::{Digest as _, Sha256};
 pub(crate) use validation::document;
-pub use validation::{file_mime, max_bytes};
+pub use validation::{file_mime, max_bytes, without_format_characters};
 pub const MAX_IMAGE_EDGE: u32 = 4096;
 pub const MAX_IMAGE_PIXELS: u64 = 16_777_216;
 pub const MAX_FILE_BYTES: usize = 10_000_000;

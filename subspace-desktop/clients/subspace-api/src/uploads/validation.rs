@@ -6,10 +6,18 @@ static FORMAT_CHARACTERS: LazyLock<Option<regex::Regex>> =
     LazyLock::new(|| regex::Regex::new(r"\p{Cf}").ok());
 
 pub(super) fn normalize_name(name: &str) -> Result<String, UploadError> {
-    let format = FORMAT_CHARACTERS
+    without_format_characters(name)
+        .map(|name| name.trim().to_owned())
+        .ok_or(UploadError::InvalidImage)
+}
+
+/// `name` without Unicode format characters, the bidirectional controls
+/// among them, which can make a name read as something it is not. `None`
+/// when they cannot be told apart.
+pub fn without_format_characters(name: &str) -> Option<String> {
+    FORMAT_CHARACTERS
         .as_ref()
-        .ok_or(UploadError::InvalidImage)?;
-    Ok(format.replace_all(name, "").trim().to_owned())
+        .map(|format| format.replace_all(name, "").into_owned())
 }
 
 pub fn file_mime(path: &Path) -> Option<&'static str> {
