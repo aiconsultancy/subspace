@@ -3,8 +3,9 @@
 # effort, as AGENTS.md "Pull request review clearance" requires.
 #
 # Run the trusted copy from the canonical repository's main branch, never the
-# copy in the change under review. AGENTS.md "Pull request review clearance"
-# has the launcher; it is the only copy to keep up to date.
+# copy in the change under review. The launcher is in AGENTS.md "Pull request
+# review clearance": copy it from main's AGENTS.md, never from a branch under
+# review. It is the only copy to keep up to date.
 #
 # Usage:
 #   review-pr.sh --pr <number> [--repo owner/name]
@@ -38,7 +39,7 @@ while [ $# -gt 0 ]; do
         --brief) extra="${2:?}"; shift 2 ;;
         --keep) keep=1; shift ;;
         --bootstrap) bootstrap=1; shift ;;
-        -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
 done

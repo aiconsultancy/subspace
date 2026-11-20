@@ -90,9 +90,11 @@ The clearances also gate the merge.
 
 Run both reviews with the **trusted** copy of
 [`scripts/review-pr.sh`](scripts/review-pr.sh), the one on the canonical
-repository's `main`, never the copy in the change under review. Fetch it into
-a private scratch repository with no Git configuration, so no URL rewrite can
-substitute another copy:
+repository's `main`, never the copy in the change under review. Take the
+launcher below from `main`'s copy of this file as well (`git show
+<remote>/main:AGENTS.md`), never from a branch under review, which could change
+it. It fetches the script into a private scratch repository with no Git
+configuration, so no URL rewrite can substitute another copy:
 
 ```sh
 review() (
@@ -105,8 +107,8 @@ review() (
   tg -C "$d/r.git" show FETCH_HEAD:scripts/review-pr.sh > "$d/review-pr.sh" &&
   test -s "$d/review-pr.sh" && bash "$d/review-pr.sh" "$@"
 )
-git fetch "$remote" "+refs/heads/$target:refs/remotes/$remote/$target"
-review --local "$remote/$target"                    # this clone's HEAD, before opening
+git fetch "$remote" "+refs/heads/$target:refs/remotes/$remote/$target" &&
+  review --local "$remote/$target"                  # this clone's HEAD, before opening
 review --local "$remote/$target" --since "$cleared" # commits added after a local review
 review --pr "$pr"                                   # the pushed head
 review --pr "$pr" --since "$cleared"                # commits added after a --pr review
@@ -184,10 +186,10 @@ that reason under **Reviews**, never a plan to fix it later.
   over to `--pr`: after the pull request opens, keep reviewing locally on the
   same branch, or run a full `--pr` review. Before counting a local review as
   the pull request's clearance, check against GitHub's view of the pull
-  request (`gh pr view "$pr" --json headRefOid,baseRefName`, with the base
-  freshly fetched) that the reviewed head is the pull request's head, that the
-  reviewed target is its base, and that the merge base is still the one
-  reviewed.
+  request (`gh pr view "$pr" --json headRefOid,baseRefName,baseRefOid`) that
+  the reviewed head is the pull request's head, that the reviewed target is
+  its base branch, and that `git merge-base <headRefOid> <baseRefOid>` is the
+  merge base that was reviewed.
 - Any reused clearance, from a local or a `--pr` review, needs the merge base
   between the head and the pull request's base to be unchanged. If the base
   branch's history was rewritten, run both full reviews again.
@@ -197,10 +199,12 @@ that reason under **Reviews**, never a plan to fix it later.
 - Re-signing or rewording commits needs no new review when both the tree and
   the merge base with the target are unchanged. Check `git diff --quiet <old>
   <new>` and that `git merge-base <target> <old>` equals `git merge-base
-  <target> <new>`, and record both commits. The new commits were never scanned,
-  so scan them before publishing: `gitleaks git --log-opts="-m <merge
-  base>..<new>"`. Any other head that differs from the reviewed one needs a
-  review of its own.
+  <target> <new>`, and record both commits. The new commits, messages
+  included, were never scanned, so scan them before publishing with the same
+  strict settings the script uses: `git log -p -m "<merge base>..<new>" |
+  gitleaks stdin --no-banner --redact --ignore-gitleaks-allow --config
+  <file containing "[extend] useDefault = true">`. Any other head that differs
+  from the reviewed one needs a review of its own.
 
 **Recording and merging.**
 - Record every review under **Reviews** in the pull request: the range and
@@ -211,10 +215,11 @@ that reason under **Reviews**, never a plan to fix it later.
   runners (`prek.toml`, `mise.toml`, `Makefile`) or the script itself, a person
   reads those changes as well.
 - Tick both review checkboxes only when both reviews of the final head are
-  clear. Merge with `gh pr merge --match-head-commit <final head>`. `main`
-  refuses force pushes, so its merge base cannot move under a cleared head; for
-  a pull request into another branch, check the merge base again just before
-  merging.
+  clear. Just before merging, check again that the merge base between the
+  pull request's head and its base (`gh pr view --json headRefOid,baseRefOid`)
+  is the one reviewed: it can move even without a force push, for example when
+  the base gains a commit the head already contains. If it moved, review again.
+  Then merge with `gh pr merge --match-head-commit <final head>`.
 
 **Exceptions.**
 - **Release Please.** Its pull requests and the release workflow's automated
