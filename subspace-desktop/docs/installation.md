@@ -117,12 +117,17 @@ includes pinned texts that the scanner misses, identifies any remaining
 generic SPDX texts and gives exact source downloads for MPL-2.0 crates.
 Native ONNX Runtime notices are in `licenses/onnxruntime/`, and the Windows
 archive includes the WebView2 loader notices in `licenses/webview2/`.
-Packaging checks the selected crates and the digests in
-[`native-notices.json`](../native-notices.json) before compiling. Update the
-pins and verify the upstream notices together when either native dependency
-changes. The archive's `NOTICE` indexes the files relative to its own location.
-Each invocation builds in its own Cargo target directory, so the executable
-and licence report use the same target and feature set.
+Packaging checks the selected crates and notice digests in
+[`native-notices.json`](../native-notices.json) before compiling. After compiling,
+it checks the SHA-256 of `libonnxruntime.a` from the link path Cargo reported
+before copying the executable and native notices. Update the pins and verify
+the upstream notices together when either native dependency changes. The
+archive's `NOTICE` indexes the files relative to its own location.
+Ordinary builds share a Cargo cache by target and feature set. The packaging
+helper holds a lock until it has copied the executable for this run's licence
+report. Set `SUBSPACE_RELEASE_LOCK_TIMEOUT` to a non-negative number of seconds
+to change how long the build and publication locks wait. The default is 1800
+seconds (30 minutes).
 Packaging copies the Rust standard library licences and copyright notice
 unchanged from the release compiler's sysroot into `licenses/rust-std/`.
 It stops before compilation if a notice is missing or the compiler version

@@ -22,3 +22,10 @@ Framework licence substitution and overlapping builds with different
 features. Follow-up fixtures cover surviving Cargo descendants, timed lock
 contention, build-stamp refresh, OAuth artefact cleanup, Cargo configuration
 errors, build-only ONNX overrides and rollback after a failed checksum rename.
+
+The release helper redacts credentials in Cargo configuration diagnostics and
+checks the static ONNX archive in Cargo's reported link path against a
+target-specific SHA-256. The build lock stays held while the helper stops the
+Cargo process group or Windows job and copies the executable. Operators can
+set `SUBSPACE_RELEASE_LOCK_TIMEOUT` to allow for cold builds. Publication
+fixtures cover interruption, rollback failure and retained recovery copies.

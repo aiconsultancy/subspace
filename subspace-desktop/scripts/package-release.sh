@@ -36,12 +36,13 @@ esac
 mkdir -p "$root/dist"
 stage="$(mktemp -d "$root/dist/.$product-release.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
-stage_product_licences "$stage" "$target"
-cp "${rust_std_notices[@]}" "$stage/licenses/rust-std/"
+require_product_licences
 release_cargo_args "$target"
 generate_rust_licences "$stage/THIRD_PARTY_LICENSES" "$target"
 # Stage Cargo's executable with this run's report before releasing the cache lock.
 python3 scripts/release-files.py build "$target_dir" "$binary_name" "$stage" "${release_args[@]}"
+stage_product_licences "$stage" "$target"
+cp "${rust_std_notices[@]}" "$stage/licenses/rust-std/"
 if [[ "$host" = "$target" ]]; then
     reported_metadata="$("$stage/$binary_name$exe" __product_metadata | tr -d '\r')"
     reported="$(jq -er .version <<<"$reported_metadata")"
