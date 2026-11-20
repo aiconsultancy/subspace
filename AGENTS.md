@@ -86,13 +86,7 @@ come on top of the project checks, never instead of them. Review the diff
 before opening the pull request: fetch the target branch from the remote the
 pull request will target, run both reviews on the local branch against it, and
 deal with what they find first, so the pull request opens already reviewed.
-The clearances also gate the merge. Here `$remote` is the name of that remote
-(for example `origin` or `public`) and `$target` its branch name:
-
-```sh
-git fetch "$remote" "+refs/heads/$target:refs/remotes/$remote/$target" &&
-  review --local "$remote/$target"
-```
+The clearances also gate the merge.
 
 Run both reviews with the **trusted** copy of
 [`scripts/review-pr.sh`](scripts/review-pr.sh), the one on the canonical
@@ -111,16 +105,21 @@ review() (
   tg -C "$d/r.git" show FETCH_HEAD:scripts/review-pr.sh > "$d/review-pr.sh" &&
   test -s "$d/review-pr.sh" && bash "$d/review-pr.sh" "$@"
 )
+git fetch "$remote" "+refs/heads/$target:refs/remotes/$remote/$target"
 review --local "$remote/$target"                    # this clone's HEAD, before opening
 review --local "$remote/$target" --since "$cleared" # commits added after a local review
 review --pr "$pr"                                   # the pushed head
 review --pr "$pr" --since "$cleared"                # commits added after a --pr review
 ```
 
-Each step must succeed before the next runs, so a failed fetch never runs a
-stale or empty launcher. The launcher passes only `PATH` and `HOME` to Git, so
-a `gh` signed in through `GH_TOKEN` alone, a proxy, or a custom CA bundle needs
-those variables added to `tg`.
+Here `$remote` is the name of the remote the pull request targets (for example
+`origin` or `public`), `$target` its branch, `$pr` the pull request number and
+`$cleared` the last cleared head. Each step of the launcher must succeed before
+the next runs, so a failed fetch never runs a stale or empty launcher. The
+launcher passes only `PATH` and `HOME` to Git, so a `gh` signed in through
+`GH_TOKEN` alone, a proxy, or a custom CA bundle needs those variables added to
+`tg`. A proxy or CA bundle can then see or alter the fetch, so use only ones
+you control.
 
 It needs `git`, `gh`, `codex`, `claude`, `python3` and `gitleaks`, and runs
 from Claude Code and from Codex alike. It:
@@ -184,9 +183,10 @@ that reason under **Reviews**, never a plan to fix it later.
   (or local branch), target and merge base. A local receipt does not carry
   over to `--pr`: after the pull request opens, keep reviewing locally on the
   same branch, or run a full `--pr` review. Before counting a local review as
-  the pull request's clearance, check that the reviewed head is the pull
-  request's head (or has the same tree), that the reviewed target is the pull
-  request's base, and that the merge base with that base is still the one
+  the pull request's clearance, check against GitHub's view of the pull
+  request (`gh pr view "$pr" --json headRefOid,baseRefName`, with the base
+  freshly fetched) that the reviewed head is the pull request's head, that the
+  reviewed target is its base, and that the merge base is still the one
   reviewed.
 - Any reused clearance, from a local or a `--pr` review, needs the merge base
   between the head and the pull request's base to be unchanged. If the base
@@ -197,7 +197,10 @@ that reason under **Reviews**, never a plan to fix it later.
 - Re-signing or rewording commits needs no new review when both the tree and
   the merge base with the target are unchanged. Check `git diff --quiet <old>
   <new>` and that `git merge-base <target> <old>` equals `git merge-base
-  <target> <new>`, and record both commits.
+  <target> <new>`, and record both commits. The new commits were never scanned,
+  so scan them before publishing: `gitleaks git --log-opts="-m <merge
+  base>..<new>"`. Any other head that differs from the reviewed one needs a
+  review of its own.
 
 **Recording and merging.**
 - Record every review under **Reviews** in the pull request: the range and
@@ -208,7 +211,10 @@ that reason under **Reviews**, never a plan to fix it later.
   runners (`prek.toml`, `mise.toml`, `Makefile`) or the script itself, a person
   reads those changes as well.
 - Tick both review checkboxes only when both reviews of the final head are
-  clear. Merge with `gh pr merge --match-head-commit <final head>`.
+  clear. Merge with `gh pr merge --match-head-commit <final head>`. `main`
+  refuses force pushes, so its merge base cannot move under a cleared head; for
+  a pull request into another branch, check the merge base again just before
+  merging.
 
 **Exceptions.**
 - **Release Please.** Its pull requests and the release workflow's automated
