@@ -16,7 +16,13 @@ if [[ -z "$out_dir" ]]; then
 	echo "an output directory is required" >&2
 	exit 2
 fi
-target="${2:-$(rustc -vV | sed -n 's/^host: //p')}"
+root="${SUBSPACE_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+cd "$root"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=scripts/product.sh
+source "$root/scripts/product.sh"
+load_release_toolchain
+target="${2:-$("$RUSTC" -vV | sed -n 's/^host: //p')}"
 case "$target" in
 aarch64-apple-darwin) ;;
 *)
@@ -25,11 +31,6 @@ aarch64-apple-darwin) ;;
 	;;
 esac
 
-root="${SUBSPACE_PACKAGE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-cd "$root"
-# shellcheck source-path=SCRIPTDIR/..
-# shellcheck source=scripts/product.sh
-source "$root/scripts/product.sh"
 load_product
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_MINIMUM_VERSION"
 rustup target add "$target" >&2
@@ -44,6 +45,7 @@ build_dir="$(cd "$target_dir/$target/release" && pwd)"
 app="$out_dir/$display_name.app"
 rm -rf "$app"
 create_bundle "$build_dir/$binary_name" "$app" "$bundle_id" "$display_name"
+cp "${rust_std_notices[@]}" "$app/Contents/Resources/licenses/rust-std/"
 cp "$report_dir/THIRD_PARTY_LICENSES" "$app/Contents/Resources/"
 bash "$root/scripts/bundle-mise.sh" "$app" >&2
 echo "$app"

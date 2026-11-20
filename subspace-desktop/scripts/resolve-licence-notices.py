@@ -52,7 +52,9 @@ def resolve_notices(report, diagnostics, root):
             replaces = notice.get("replaces", spdx)
             if replaces is not None and (key, replaces) not in fallbacks:
                 continue
-            supplemental.append({"id": spdx, "text": text, "used_by": [{"crate": package}]})
+            supplemental.append({
+                "id": spdx, "text": text, "source_path": str(path), "used_by": [{"crate": package}]
+            })
             if replaces is not None:
                 replacements.add((key, replaces))
 
@@ -65,13 +67,23 @@ def resolve_notices(report, diagnostics, root):
             and package["name"].split("-")[0] == "subspace"
             and root in Path(package["manifest_path"]).resolve().parents
         ):
-            text = (root.parent / "LICENSE").read_text(encoding="utf-8")
-            supplemental.append({"id": spdx, "text": text, "used_by": [{"crate": package}]})
+            path = root.parent / "LICENSE"
+            supplemental.append({
+                "id": spdx, "text": path.read_text(encoding="utf-8"),
+                "source_path": str(path), "used_by": [{"crate": package}]
+            })
             replacements.add((key, spdx))
 
     # A generated text may be shared with a byte-identical source-backed file.
     # Only remove the affected crate from that text's use list.
     for licence in report["licenses"]:
+        if licence.get("source_path") is None:
+            # Retain the original diagnostic matches even when a pinned notice
+            # replaces a fallback in a text shared with other crates.
+            licence["fallback_crates"] = sorted({
+                key for item in licence["used_by"]
+                if (key := crate_key(item["crate"]), licence["id"]) in fallbacks
+            })
         licence["used_by"] = [
             item for item in licence["used_by"]
             if (crate_key(item["crate"]), licence["id"]) not in replacements

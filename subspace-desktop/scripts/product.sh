@@ -66,11 +66,44 @@ load_product() {
     target_dir="$(resolve_target_dir "${CARGO_TARGET_DIR:-$(jq -er '.target_directory' <<<"$metadata")}")"
 }
 
+load_release_toolchain() {
+    local expected compiler_version sysroot notice
+    # The Rust tool entry in mise.toml is an inline table with a version pin.
+    expected="$(sed -nE 's/^rust[[:space:]]*=[[:space:]]*\{[[:space:]]*version[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$root/mise.toml")"
+    if [[ ! "$expected" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "could not read the pinned Rust version from $root/mise.toml" >&2
+        return 1
+    fi
+    # Use the checked compiler for Cargo's metadata helper and release build.
+    export RUSTC="${RUSTC:-${CARGO_BUILD_RUSTC:-rustc}}"
+    compiler_version="$("$RUSTC" --version)" || return
+    if [[ "$compiler_version" != "rustc $expected "* ]]; then
+        echo "packaging requires Rust $expected from mise.toml; $RUSTC reports $compiler_version" >&2
+        return 1
+    fi
+    sysroot="$("$RUSTC" --print sysroot)" || return
+    sysroot="$(resolve_target_dir "$sysroot")" || return
+    rust_std_notices=(
+        "$sysroot/share/doc/rust/COPYRIGHT-library.html"
+        "$sysroot/share/doc/rust/licenses/Apache-2.0.txt"
+        "$sysroot/share/doc/rust/licenses/MIT.txt"
+    )
+    for notice in "${rust_std_notices[@]}"; do
+        if [[ ! -f "$notice" || ! -r "$notice" ]]; then
+            echo "missing or unreadable Rust standard library notice: $notice" >&2
+            return 1
+        fi
+    done
+}
+
 stage_product_licences() {
-    local destination="$1"
+    local destination="$1" target="$2" notice
     local octicons="$destination/licenses/icons/octicons"
     mkdir -p "$octicons"
-    cp -R "$root/licenses/." "$destination/licenses/"
+    for notice in "$root/licenses/"*; do
+        if [[ "${notice##*/}" = webview2 && "$target" != *-windows-* ]]; then continue; fi
+        cp -R "$notice" "$destination/licenses/"
+    done
     cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$octicons/"
     cp "$root/../LICENSE" "$root/NOTICE" "$destination/"
 }
@@ -134,7 +167,7 @@ create_bundle() {
     chmod 755 "$app/Contents/MacOS/$binary_name"
     cp "$icon" "$app/Contents/Resources/$icon_name.icns"
     printf '%s\n' "$product_metadata" >"$app/Contents/Resources/product.json"
-    stage_product_licences "$app/Contents/Resources"
+    stage_product_licences "$app/Contents/Resources" aarch64-apple-darwin
     cat >"$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

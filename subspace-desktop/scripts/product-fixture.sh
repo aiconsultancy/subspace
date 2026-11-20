@@ -14,6 +14,12 @@ setup_product_fixture() {
     cp "$root/../LICENSE" "$fixture_repo/"
     cp -R "$root/licenses" "$fixture/licenses"
     cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$fixture/spaces/actions/assets/"
+    printf '[tools]\nrust = { version = "1.77.0", mr_boxington = true }\n' >"$fixture/mise.toml"
+    local rust_docs="$fixture/fake sysroot/share/doc/rust"
+    mkdir -p "$rust_docs/licenses"
+    printf '<p>Fixture standard library copyright</p>\n' >"$rust_docs/COPYRIGHT-library.html"
+    printf 'Fixture Apache licence\n' >"$rust_docs/licenses/Apache-2.0.txt"
+    printf 'Fixture MIT licence\n' >"$rust_docs/licenses/MIT.txt"
     echo 'Fixture linked licence' >"$fixture/linked-licence.txt"
     checksum="$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$fixture/linked-licence.txt")"
     jq -n --arg checksum "$checksum" '
@@ -56,9 +62,13 @@ case "$1" in
         if [[ "${FAKE_CLARIFICATION_FAIL:-0}" = 1 ]]; then
             echo '[WARN] failed to validate all files specified in clarification for crate fixture-linked 1.0.0: checksum mismatch' >&2
         fi
-        for name in fixture-linked fixture-generic; do
-            echo "[DEBUG] unable to find text for license 'MIT' for crate '$name 1.0.0', falling back to canonical text" >&2
-        done
+        if [[ "${FAKE_FALLBACK_LOG_CHANGED:-0}" = 1 ]]; then
+            echo '[DEBUG] using canonical MIT text for fixture-linked and fixture-generic' >&2
+        else
+            for name in fixture-linked fixture-generic; do
+                echo "[DEBUG] unable to find text for license 'MIT' for crate '$name 1.0.0', falling back to canonical text" >&2
+            done
+        fi
         while [[ "$1" != --output-file ]]; do shift; done
         version="$(jq -r .version "$FIXTURE/metadata/subspace.json")"
         jq -n --arg version "$version" '
@@ -71,11 +81,14 @@ case "$1" in
           {
             crates: ([$product, $linked, $generic, $mpl, $macro] | map({package: .})),
             licenses: [
-              {id: "Apache-2.0", text: "Fixture project licence", used_by: [{crate: $product}]},
+              {id: "Apache-2.0", text: "Fixture project licence", source_path: "LICENSE",
+               used_by: [{crate: $product}]},
               {id: "MIT", text: "Fixture generic licence", source_path: null,
                used_by: [{crate: $linked}, {crate: $generic}]},
-              {id: "MPL-2.0", text: "Fixture MPL licence", used_by: [{crate: $mpl}]},
-              {id: "ISC", text: "Fixture build-only licence", used_by: [{crate: $macro}]}
+              {id: "MPL-2.0", text: "Fixture MPL licence", source_path: "LICENSE",
+               used_by: [{crate: $mpl}]},
+              {id: "ISC", text: "Fixture build-only licence", source_path: null,
+               used_by: [{crate: $macro}]}
             ]
           }' >"$2"
         ;;
@@ -145,7 +158,12 @@ printf '%s\n' "${FAKE_LAUNCHD_MANAGER:-Aqua}"
 EOF
     cat >"$fixture/bin/rustc" <<'EOF'
 #!/usr/bin/env bash
-printf 'host: %s\n' "${FAKE_RUST_HOST:-aarch64-apple-darwin}"
+case "$*" in
+    -vV) printf 'host: %s\n' "${FAKE_RUST_HOST:-aarch64-apple-darwin}" ;;
+    --version) printf 'rustc %s (fixture)\n' "${FAKE_RUST_VERSION:-1.77.0}" ;;
+    '--print sysroot') printf '%s\n' "$FIXTURE/fake sysroot" ;;
+    *) echo "unexpected rustc operation: $*" >&2; exit 25 ;;
+esac
 EOF
     cat >"$fixture/bin/rustup" <<'EOF'
 #!/usr/bin/env bash
@@ -201,5 +219,5 @@ EOF
     export FIXTURE="$fixture"
     export SUBSPACE_RUN_APP_ROOT="$fixture" SUBSPACE_PACKAGE_ROOT="$fixture"
     export PATH="$fixture/bin:$PATH"
-    unset CARGO_TARGET_DIR
+    unset CARGO_TARGET_DIR RUSTC CARGO_BUILD_RUSTC
 }

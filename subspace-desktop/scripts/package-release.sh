@@ -10,7 +10,8 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
-host="$(rustc -vV | sed -n 's/^host: //p')"
+load_release_toolchain
+host="$("$RUSTC" -vV | sed -n 's/^host: //p')"
 target="${1:-$host}"
 expected_version="${2:-}"
 if ! release_target_supported "$target"; then
@@ -35,6 +36,8 @@ esac
 mkdir -p "$root/dist"
 stage="$(mktemp -d "$root/dist/.$product-release.XXXXXX")"
 trap 'rm -rf "$stage"' EXIT
+stage_product_licences "$stage" "$target"
+cp "${rust_std_notices[@]}" "$stage/licenses/rust-std/"
 release_cargo_args "$target"
 generate_rust_licences "$stage/THIRD_PARTY_LICENSES" "$target"
 cargo build --release --locked -p "$binary_name" "${release_args[@]}"
@@ -55,7 +58,6 @@ else
     echo "skipped the metadata version check: $host cannot run $target binaries"
 fi
 cp "$build_dir/$binary_name$exe" "$root/README.md" "$stage/"
-stage_product_licences "$stage"
 chmod 755 "$stage/$binary_name$exe"
 printf '%s\n' "$product_metadata" >"$stage/product.json"
 name="$binary_name-$version-$target"

@@ -12,6 +12,7 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
+load_release_toolchain
 load_product
 dest="$HOME/Applications"
 
