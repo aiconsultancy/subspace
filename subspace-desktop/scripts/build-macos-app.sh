@@ -33,7 +33,10 @@ source "$root/scripts/product.sh"
 load_product
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_MINIMUM_VERSION"
 rustup target add "$target" >&2
+report_dir="$(mktemp -d)"
+trap 'rm -rf "$report_dir"' EXIT
 release_cargo_args "$target"
+generate_rust_licences "$report_dir/THIRD_PARTY_LICENSES" "$target"
 cargo build --release --locked -p "$binary_name" "${release_args[@]}" >&2
 unset SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET
 build_dir="$(cd "$target_dir/$target/release" && pwd)"
@@ -41,6 +44,6 @@ build_dir="$(cd "$target_dir/$target/release" && pwd)"
 app="$out_dir/$display_name.app"
 rm -rf "$app"
 create_bundle "$build_dir/$binary_name" "$app" "$bundle_id" "$display_name"
-stage_rust_licences "$app/Contents/Resources" "$target"
+cp "$report_dir/THIRD_PARTY_LICENSES" "$app/Contents/Resources/"
 bash "$root/scripts/bundle-mise.sh" "$app" >&2
 echo "$app"

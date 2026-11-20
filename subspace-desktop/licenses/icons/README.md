@@ -14,9 +14,9 @@
 - Issues embeds the [Lucide Circle Dot icon](https://github.com/lucide-icons/lucide/blob/1.75.0/icons/circle-dot.svg)
   in `spaces/issues/assets/issues.svg`. The Framework also embeds Lucide icons
   from `gpui-kit-assets` 0.9.1. The [ISC licence](LICENSE-LUCIDE) covers both.
-  The Framework's asset loader is ported from
-  [gpui-lucide](https://github.com/suxiaoshao/gupi) under the
-  [Apache License 2.0](../themes/gpui-kit/LICENSE-APACHE).
+  The Framework's asset loader is ported from Sushao's
+  [gpui-lucide](https://github.com/suxiaoshao/gupi) and distributed under
+  the [Apache License 2.0](../../LICENSE) staged at the archive root.
 - The chat host's [OpenAI mark](https://github.com/lobehub/lobe-icons/blob/55746b0b082258211121c70bd26e6878fd3bd292/packages/static-svg/icons/openai.svg)
   comes from Lobe Icons under the [MIT licence](LICENSE-LOBE-ICONS).
   Its Claude, OpenCode and Gemini marks come from

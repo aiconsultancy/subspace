@@ -1,5 +1,6 @@
 # Prefer MIT in dual-licensed crates so their copyright lines appear in the
 # report. Only one branch of an SPDX OR expression needs to be satisfied.
+# about-notices.json retains versioned source texts missed by the scanner.
 accepted = [
     "MIT",
     "Apache-2.0",

@@ -4,15 +4,22 @@
 
 setup_product_fixture() {
     local root="${root:?}"
+    local checksum
     fixture_repo="$(mktemp -d "${TMPDIR:-/tmp}/subspace-products.XXXXXX")"
     trap 'rm -rf "${fixture_repo:?}"' EXIT
     fixture="$fixture_repo/subspace-desktop"
     mkdir -p "$fixture/scripts" "$fixture/bin" "$fixture/metadata" "$fixture/spaces/actions/assets"
-    cp "$root/scripts/"{product.sh,prerelease-common.sh,run-app.sh,package-release.sh,package-macos.sh,package-macos-ci.sh,build-macos-app.sh,install-macos.sh,github-oauth-secret.sh} "$fixture/scripts/"
+    cp "$root/scripts/"{product.sh,prerelease-common.sh,run-app.sh,package-release.sh,package-macos.sh,package-macos-ci.sh,build-macos-app.sh,install-macos.sh,github-oauth-secret.sh,resolve-licence-notices.py} "$fixture/scripts/"
     cp "$root/"{README.md,NOTICE,about.jq,about.toml} "$fixture/"
     cp "$root/../LICENSE" "$fixture_repo/"
     cp -R "$root/licenses" "$fixture/licenses"
     cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$fixture/spaces/actions/assets/"
+    echo 'Fixture linked licence' >"$fixture/linked-licence.txt"
+    checksum="$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$fixture/linked-licence.txt")"
+    jq -n --arg checksum "$checksum" '
+      [{crates: ["fixture-linked v1.0.0"], id: "MIT",
+        path: "linked-licence.txt", sha256: $checksum}]
+    ' >"$fixture/about-notices.json"
     if [[ -n "${1:-}" ]]; then
         workspace_metadata="$(cat "$1/workspace.json")"
     else
@@ -40,23 +47,34 @@ case "$1" in
     tree)
         test -z "${SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET:-}"
         printf 'subspace v%s\n' "$(jq -r .version "$FIXTURE/metadata/subspace.json")"
-        echo 'fixture-linked v1.0.0'
+        printf '%s\n' 'fixture-linked v1.0.0' 'fixture-generic v1.0.0' 'fixture-mpl v3.1.4'
         if [[ "${FAKE_MISSING_LICENCE:-0}" = 1 ]]; then echo 'fixture-unreported v1.0.0'; fi
         ;;
     about)
         test -z "${SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET:-}"
         if [[ "${FAKE_LICENCE_FAIL:-0}" = 1 ]]; then exit 29; fi
+        if [[ "${FAKE_CLARIFICATION_FAIL:-0}" = 1 ]]; then
+            echo '[WARN] failed to validate all files specified in clarification for crate fixture-linked 1.0.0: checksum mismatch' >&2
+        fi
+        for name in fixture-linked fixture-generic; do
+            echo "[DEBUG] unable to find text for license 'MIT' for crate '$name 1.0.0', falling back to canonical text" >&2
+        done
         while [[ "$1" != --output-file ]]; do shift; done
         version="$(jq -r .version "$FIXTURE/metadata/subspace.json")"
         jq -n --arg version "$version" '
           {name: "subspace", version: $version} as $product |
-          {name: "fixture-linked", version: "1.0.0"} as $linked |
+          "registry+https://github.com/rust-lang/crates.io-index" as $registry |
+          {name: "fixture-linked", version: "1.0.0", source: $registry} as $linked |
+          {name: "fixture-generic", version: "1.0.0", source: $registry} as $generic |
+          {name: "fixture-mpl", version: "3.1.4", source: $registry} as $mpl |
           {name: "fixture-macro", version: "2.0.0"} as $macro |
           {
-            crates: ([$product, $linked, $macro] | map({package: .})),
+            crates: ([$product, $linked, $generic, $mpl, $macro] | map({package: .})),
             licenses: [
               {id: "Apache-2.0", text: "Fixture project licence", used_by: [{crate: $product}]},
-              {id: "MIT", text: "Fixture linked licence", used_by: [{crate: $linked}]},
+              {id: "MIT", text: "Fixture generic licence", source_path: null,
+               used_by: [{crate: $linked}, {crate: $generic}]},
+              {id: "MPL-2.0", text: "Fixture MPL licence", used_by: [{crate: $mpl}]},
               {id: "ISC", text: "Fixture build-only licence", used_by: [{crate: $macro}]}
             ]
           }' >"$2"

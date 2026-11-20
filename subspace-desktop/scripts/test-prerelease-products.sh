@@ -34,12 +34,20 @@ check_packaged_licences() {
     grep -Fq "Subspace binary for $target" "$destination/THIRD_PARTY_LICENSES"
     grep -Fxq -- '- fixture-linked v1.0.0' "$destination/THIRD_PARTY_LICENSES"
     grep -Fxq 'Fixture linked licence' "$destination/THIRD_PARTY_LICENSES"
+    grep -Fxq -- '- fixture-generic v1.0.0 (MIT)' "$destination/THIRD_PARTY_LICENSES"
+    grep -Fxq -- '- fixture-mpl v3.1.4 <https://static.crates.io/crates/fixture-mpl/fixture-mpl-3.1.4.crate>' "$destination/THIRD_PARTY_LICENSES"
+    if grep -Fxq -- '- fixture-linked v1.0.0 (MIT)' "$destination/THIRD_PARTY_LICENSES"; then
+        echo 'the source-backed notice was reported as a generic text' >&2; exit 1
+    fi
     if grep -Eq 'fixture-macro|Fixture build-only licence' "$destination/THIRD_PARTY_LICENSES"; then
         echo 'the runtime report includes a compile-time proc macro' >&2; exit 1
     fi
-    for file in charts/LICENSE-FLINT-CHART charts/LICENSE-QUICKJS-NG charts/LICENSE-RQUICKJS \
+    for file in canvas/mermaid-rs-renderer-MIT.txt \
+        charts/LICENSE-FLINT-CHART charts/LICENSE-QUICKJS-NG charts/LICENSE-RQUICKJS \
         icons/LICENSE-FEATHER icons/LICENSE-LOBE-ICONS icons/LICENSE-LUCIDE \
-        markdown/LICENSE themes/gpui-kit/LICENSE-APACHE themes/gpui-kit/PROVENANCE.md; do
+        markdown/LICENSE onnxruntime/LICENSE onnxruntime/ThirdPartyNotices.txt \
+        terminal/LICENSE-APACHE terminal/LICENSE-GHOSTTY terminal/LICENSE-MIT terminal/LICENSE-PORTABLE-PTY \
+        themes/gpui-kit/LICENSE-APACHE themes/gpui-kit/PROVENANCE.md; do
         cmp "$root/licenses/$file" "$destination/licenses/$file"
     done
     for file in README.md OCTICONS-LICENSE.txt; do

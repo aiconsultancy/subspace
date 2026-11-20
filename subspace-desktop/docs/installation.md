@@ -110,12 +110,15 @@ headless `__product_metadata` route before replacing an archive. The machine
 version remains plain semver. An incompatible cross-target reports that this
 check was skipped.
 
-Packaging uses the pinned cargo-about to check the locked Rust dependency
-graph against `about.toml` and generate `THIRD_PARTY_LICENSES` for the
-archive's target and build features. Cargo-about supplies the standard SPDX
-text when it cannot find a crate's licence text. `make licence-check` checks
-the policy across the release targets with Terminal and the default features
-enabled, and verifies the desktop copies of the Framework's notices.
+Before compiling the release binary, packaging uses pinned cargo-about
+and Python 3 to check the locked Rust graph against `about.toml` and generate
+`THIRD_PARTY_LICENSES` for the target and build features. The report
+includes pinned texts that the scanner misses, identifies any remaining
+generic SPDX texts and gives exact source downloads for MPL-2.0 crates.
+Native ONNX Runtime notices are in `licenses/onnxruntime/`.
+`make licence-check` checks the policy across release targets with Terminal
+and the default features enabled. It also compares the copied notices when
+Cargo resolves the Framework from a local checkout.
 
 Scripts read names, bundle IDs, icons, themes and version through the headless
 `subspace-product-metadata` utility. It does not initialize GPUI to obtain
