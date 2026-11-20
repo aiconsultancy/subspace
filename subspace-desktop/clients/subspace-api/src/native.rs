@@ -150,6 +150,10 @@ fn recently_renewed(
 /// The signed-in account's generation alone. Reading it notices an account
 /// change and drops what was kept for the previous account.
 pub(crate) fn account_generation() -> Option<u64> {
+    #[cfg(test)]
+    if let Some(account) = test_lease::account() {
+        return Some(account);
+    }
     let generation = ACCOUNT.get().map(|account| (account.generation)())?;
     if SEEN.swap(generation, Ordering::SeqCst) != generation {
         account_changed();
@@ -452,9 +456,14 @@ pub(crate) mod test_lease {
 
     thread_local! {
         static LEASE: Cell<Option<u64>> = const { Cell::new(None) };
+        /// The signed-in account, for a test that changes it.
+        static ACCOUNT: Cell<Option<u64>> = const { Cell::new(None) };
         /// The lease to move to once the next reply has been read and
         /// accepted.
         pub(crate) static AFTER_REPLY: Cell<Option<u64>> = const { Cell::new(None) };
+        /// The lease and account to move to once the next organisation read
+        /// has been accepted, as when another account signs in just then.
+        pub(crate) static AFTER_READ: Cell<Option<u64>> = const { Cell::new(None) };
     }
 
     pub(crate) fn set(lease: Option<u64>) {
@@ -465,9 +474,24 @@ pub(crate) mod test_lease {
         LEASE.with(Cell::get)
     }
 
+    pub(crate) fn set_account(account: Option<u64>) {
+        ACCOUNT.with(|current| current.set(account));
+    }
+
+    pub(crate) fn account() -> Option<u64> {
+        ACCOUNT.with(Cell::get)
+    }
+
     pub(crate) fn reply_accepted() {
         if let Some(lease) = AFTER_REPLY.with(Cell::take) {
             set(Some(lease));
+        }
+    }
+
+    pub(crate) fn read_accepted() {
+        if let Some(next) = AFTER_READ.with(Cell::take) {
+            set(Some(next));
+            set_account(Some(next));
         }
     }
 }
