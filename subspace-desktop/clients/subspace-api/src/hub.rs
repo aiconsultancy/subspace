@@ -276,6 +276,7 @@ impl Hub {
         state.snapshot.status = HubStatus::Stopped;
         state.snapshot.generation.0 = state.snapshot.generation.0.wrapping_add(1);
         state.drafts.clear();
+        state.parked_uploads.clear();
         state.snapshot.issue = None;
         state.snapshot.activity = None;
         state.snapshot.list = None;
