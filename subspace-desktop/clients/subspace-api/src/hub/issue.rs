@@ -14,7 +14,12 @@ impl Hub {
         } else {
             IssueStatus::Unavailable
         };
-        state.snapshot.issue = Some(IssueSnapshot::new(identifier, profile_id, status));
+        state.park_open_uploads();
+        let mut issue = IssueSnapshot::new(identifier, profile_id, status);
+        if profile_id == crate::PROFILE_ID {
+            state.unpark_uploads(&mut issue);
+        }
+        state.snapshot.issue = Some(issue);
         state.changed();
         if profile_id == crate::PROFILE_ID && state.snapshot.me.is_some() {
             self.0.enqueue(
@@ -34,9 +39,13 @@ impl Hub {
         self.0.refresh_open_issue(&mut state);
         Ok(())
     }
+    /// Closes the open issue. Its standalone uploads still in progress or
+    /// awaiting a check are kept, and shown again when it reopens, so a
+    /// transfer whose bytes may be stored can still be checked or cancelled.
     pub fn close_issue(&self) {
         let mut state = lock(&self.0.state);
         state.issue_revision = state.issue_revision.wrapping_add(1);
+        state.park_open_uploads();
         state.snapshot.issue = None;
         state.changed();
     }
