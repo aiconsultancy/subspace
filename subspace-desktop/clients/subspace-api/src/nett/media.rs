@@ -177,10 +177,11 @@ fn sleep(delay: Duration) {
 enum Stored {
     /// The record completed from the upload's transfer.
     Found(Value),
-    /// A record that may be this upload's: one with the same name, size and
-    /// SHA-256 that names no transfer, which may be an identical older
-    /// file, or one naming this transfer, or a malformed one, that cannot
-    /// be read as this upload's.
+    /// A record that may be this upload's: one that names no transfer and
+    /// whose fields do not show another file, which may be an identical
+    /// older file or this upload's described incompletely, or one naming
+    /// this transfer, or a malformed one, that cannot be read as this
+    /// upload's.
     Unknown,
     /// No record on the page can be this upload's.
     Absent,
@@ -189,11 +190,12 @@ enum Stored {
 /// Finds the record completed from transfer `upload_id`. A record naming
 /// another transfer is someone else's file however identical it is. One
 /// that names none, its `uploadId` missing or `null` because NETT cannot
-/// prove the transfer that created it, is never a match either, but an
-/// identical one may still be this upload's, so it never counts as absence.
-/// A record naming this transfer is this upload's even when it cannot be
-/// read or differs from the file sent, so it never counts as absence
-/// either: sending again could store the file twice.
+/// prove the transfer that created it, is never a match either, but it may
+/// still be this upload's, so it counts as absence only when its own
+/// fields show another file: an incomplete record, missing its type or
+/// digest, is no proof. A record naming this transfer is this upload's even
+/// when it cannot be read or differs from the file sent, so it never counts
+/// as absence either: sending again could store the file twice.
 fn stored_among<'a>(
     items: impl IntoIterator<Item = &'a Value>,
     upload_id: &str,
@@ -214,13 +216,26 @@ fn stored_among<'a>(
                 };
             }
             Some(Value::String(_)) => {}
-            None | Some(Value::Null) if identical() => found = Stored::Unknown,
+            None | Some(Value::Null) if !another_file(item, declaration) => {
+                found = Stored::Unknown;
+            }
             None | Some(Value::Null) => {}
             // A transfer named in a shape NETT does not use.
             Some(_) => found = Stored::Unknown,
         }
     }
     found
+}
+
+/// Whether `record`'s own fields show it is another file than
+/// `declaration`: a name, size or SHA-256 it gives that differs. Fields it
+/// leaves out, or gives in another shape, show nothing either way.
+fn another_file(record: &Value, declaration: &ImageDeclaration) -> bool {
+    declaration.contradicted_by(
+        record.get("fileName").and_then(Value::as_str),
+        record.get("sizeBytes").and_then(Value::as_i64),
+        record.get("sha256").and_then(Value::as_str),
+    )
 }
 
 /// The standalone attachment `record` stored on `issue`, if it is the file
@@ -968,6 +983,57 @@ mod tests {
         assert!(matches!(
             client.nett_complete_attachment("OPS-1", "upload-unproven", &declaration),
             Ok(None)
+        ));
+    }
+
+    #[test]
+    fn an_incomplete_record_naming_no_transfer_is_never_absence() {
+        let bytes = b"Stored, but described in part.\n";
+        let declaration =
+            crate::uploads::ImageDeclaration::new("part.txt", "text/plain", bytes).unwrap();
+        let complete = serde_json::json!({
+            "mediaId": "m", "version": 1, "kind": "file", "fileName": "part.txt",
+            "contentType": "text/plain", "sizeBytes": bytes.len(),
+            "sha256": declaration.sha256, "publicFileId": "pf", "expiresAt": null,
+            "uploadId": null,
+        });
+        // Completion committed but its reply was lost, and the record lacks
+        // its type, or its digest, or is not even an object: nothing shows
+        // it is another file, so Retry checks rather than storing it twice.
+        for missing in ["contentType", "sha256", "mediaId"] {
+            let mut record = complete.clone();
+            record.as_object_mut().unwrap().remove(missing);
+            assert_eq!(
+                stored_among([&record], "upload-mine", &declaration),
+                Stored::Unknown,
+                "a record without {missing} is no proof"
+            );
+        }
+        assert_eq!(
+            stored_among([&serde_json::json!("m")], "upload-mine", &declaration),
+            Stored::Unknown
+        );
+        // What it does give can still show another file.
+        let mut other = complete.clone();
+        other.as_object_mut().unwrap().remove("contentType");
+        other["sizeBytes"] = serde_json::json!(bytes.len() + 1);
+        assert_eq!(
+            stored_among([&other], "upload-mine", &declaration),
+            Stored::Absent
+        );
+        other["sizeBytes"] = serde_json::json!(bytes.len());
+        other["fileName"] = serde_json::json!("other.txt");
+        assert_eq!(
+            stored_among([&other], "upload-mine", &declaration),
+            Stored::Absent
+        );
+        // Recovery across the whole list leaves the upload to be checked.
+        let mut partial = complete;
+        partial.as_object_mut().unwrap().remove("contentType");
+        let (_mock, client) = recovering(serde_json::json!([partial]));
+        assert!(matches!(
+            client.nett_complete_attachment("OPS-1", "upload-unproven", &declaration),
+            Err(crate::uploads::UploadError::Checking)
         ));
     }
 

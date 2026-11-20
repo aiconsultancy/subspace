@@ -46,6 +46,20 @@ impl ImageDeclaration {
             && self.size_bytes as i64 == media.size_bytes
             && self.sha256.eq_ignore_ascii_case(&media.sha256)
     }
+    /// Whether a record giving these fields, any of which may be missing,
+    /// shows another file than this one: a name, size or SHA-256 it gives
+    /// that differs. A field it leaves out shows nothing either way.
+    pub(crate) fn contradicted_by(
+        &self,
+        name: Option<&str>,
+        size: Option<i64>,
+        sha256: Option<&str>,
+    ) -> bool {
+        name.is_some_and(|name| {
+            validation::normalize_name(name).is_ok_and(|name| name != self.file_name)
+        }) || size.is_some_and(|size| size != self.size_bytes as i64)
+            || sha256.is_some_and(|sha256| !self.sha256.eq_ignore_ascii_case(sha256))
+    }
     pub(crate) fn unchanged(&self, bytes: &[u8]) -> bool {
         self.size_bytes == bytes.len()
             && self.sha256
