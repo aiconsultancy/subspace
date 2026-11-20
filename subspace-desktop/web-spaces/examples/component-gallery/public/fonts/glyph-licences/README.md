@@ -4,16 +4,16 @@ The bundled font's character map was checked against the
 [Nerd Fonts v3.5.1 glyph map](https://github.com/ryanoasis/nerd-fonts/blob/v3.5.1/glyphnames.json)
 and [patcher](https://github.com/ryanoasis/nerd-fonts/blob/v3.5.1/font-patcher).
 The [pinned glyph inventory](https://github.com/ryanoasis/nerd-fonts/blob/v3.5.1/src/glyphs/README.md)
-records the upstream versions. Eight licence files below come from that
+records the upstream versions. Six licence files below come from that
 tag's `src/glyphs/` directory. The other notices come from the cited sources.
 
 | Glyph set | Version or source | Licence file |
 | --- | --- | --- |
-| Codicons | 0.0.45 | [CC BY 4.0](codicons-LICENSE.txt) |
+| Codicons | [0.0.45](https://github.com/microsoft/vscode-codicons/blob/v0.0.45/LICENSE) | [CC BY 4.0; Git logo by Jason Long under CC BY 3.0](codicons-LICENSE.txt) |
 | Devicon | [2.17.0](https://github.com/devicons/devicon/blob/v2.17.0/LICENSE) | [MIT](devicon-LICENSE) |
 | Legacy Devicons | [Pre-fork glyphs by Theodore Vorillas](https://github.com/vorillaz/devicons/blob/ba75593fdf8d66496676a90cbf127d721f73e961/README.md), called 1.8.1 by Nerd Fonts | [MIT](devicons-vorillaz-LICENSE) |
 | Extra glyphs | Hack [3.003, commit 3114f1256](https://github.com/source-foundry/Hack/blob/3114f1256/LICENSE.md), recorded in `extraglyphs.sfd` | [Hack licence and embedded notices](hack-LICENSE.md) |
-| Font Awesome | 6.5.1 | [CC BY 4.0](font-awesome-LICENSE.txt) |
+| Font Awesome | [6.5.1](https://github.com/FortAwesome/Font-Awesome/blob/6.5.1/LICENSE.txt) | [SIL OFL 1.1](font-awesome-LICENSE.txt), © 2023 Fonticons, Inc. |
 | Font Awesome Extension | 0.0.3 | [MIT](font-awesome-extension-LICENCE) |
 | Font Logos | [1.4.0 release](https://github.com/lukas-w/font-logos/releases/tag/v1.4.0) | [Unlicense](font-logos-LICENSE) |
 | Material Design Icons | 6 October 2022 | [Apache 2.0](materialdesign-LICENSE) |
