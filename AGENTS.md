@@ -83,10 +83,11 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
 Every pull request needs clearance from two independent model reviews before
 it merges: Claude Opus 5.5 at high effort and GPT-6.2 Sol at high effort. They
 come on top of the project checks, never instead of them. Review the diff
-before opening the pull request: fetch the target branch, run both reviews on
-the local branch against it (`git fetch origin && review --local
-origin/<target>`), and deal with what they find first, so the pull request
-opens already reviewed. The clearances also gate the merge.
+before opening the pull request: fetch the target branch from the remote the
+pull request will target, run both reviews on the local branch against it
+(`git fetch "$remote" "$target" && review --local "$remote/$target"`), and deal
+with what they find first, so the pull request opens already reviewed. The
+clearances also gate the merge.
 
 Run both reviews with the **trusted** copy of
 [`scripts/review-pr.sh`](scripts/review-pr.sh), the one on the canonical
@@ -105,10 +106,10 @@ review() (
   tg -C "$d/r.git" show FETCH_HEAD:scripts/review-pr.sh > "$d/review-pr.sh" &&
   test -s "$d/review-pr.sh" && bash "$d/review-pr.sh" "$@"
 )
-review --local origin/<target>                   # this clone's HEAD, before opening
-review --local origin/<target> --since <cleared> # commits added after a local review
-review --pr <number>                             # the pushed head
-review --pr <number> --since <cleared>           # commits added after a --pr review
+review --local "$remote/$target"                    # this clone's HEAD, before opening
+review --local "$remote/$target" --since "$cleared" # commits added after a local review
+review --pr "$pr"                                   # the pushed head
+review --pr "$pr" --since "$cleared"                # commits added after a --pr review
 ```
 
 Each step must succeed before the next runs, so a failed fetch never runs a
@@ -177,7 +178,10 @@ that reason under **Reviews**, never a plan to fix it later.
   refuses unless this clone holds a clear receipt for that head, pull request
   (or local branch), target and merge base. A local receipt does not carry
   over to `--pr`: after the pull request opens, keep reviewing locally on the
-  same branch, or run a full `--pr` review.
+  same branch, or run a full `--pr` review. Before counting a local review as
+  the pull request's clearance, check that the reviewed head is the pull
+  request's head (or has the same tree and merge base) and that the reviewed
+  target is the pull request's base.
 - Run both full reviews again after any rebase or rewritten history, after a
   change that does more than fix findings, and whenever the pull request's
   target branch changes.
