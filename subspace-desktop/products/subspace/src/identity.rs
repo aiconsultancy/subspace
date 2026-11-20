@@ -289,6 +289,9 @@ mod tests {
         );
     }
 
+    /// Set for the child process that installs the stamped launch.
+    const INSTALL_CHILD: &str = "SUBSPACE_IDENTITY_TEST_INSTALL";
+
     #[test]
     fn the_stamped_build_installs_its_one_backend_and_a_refused_setting_nothing() {
         // A setting the build refuses installs nothing.
@@ -300,6 +303,46 @@ mod tests {
         assert!(configure_backend([(name.to_owned(), value.to_owned())]).is_err());
         assert!(LAUNCH.get().is_none());
         // Without overrides the stamped launch is installed, as at startup.
+        // Installing sets the process's one backend and origin and, in a
+        // NETT build, turns on organisation memory on disk, so it happens in
+        // a child process with a home of its own, never in this one.
+        let home = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        for name in [
+            "HOME",
+            "USERPROFILE",
+            "XDG_STATE_HOME",
+            "XDG_DATA_HOME",
+            "XDG_CONFIG_HOME",
+            "APPDATA",
+            "LOCALAPPDATA",
+        ] {
+            child.env(name, home.path());
+        }
+        let run = child
+            .args([
+                "--ignored",
+                "--exact",
+                "identity::tests::installs_the_stamped_launch_in_a_child",
+            ])
+            .env(INSTALL_CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            run.status.success() && String::from_utf8_lossy(&run.stdout).contains("1 passed"),
+            "{} {}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(LAUNCH.get().is_none(), "nothing was installed here");
+    }
+
+    #[test]
+    #[ignore = "a child process of the_stamped_build_installs_its_one_backend_and_a_refused_setting_nothing"]
+    fn installs_the_stamped_launch_in_a_child() {
+        if std::env::var_os(INSTALL_CHILD).is_none() {
+            return;
+        }
         configure_backend(Vec::new()).unwrap();
         assert_eq!(LAUNCH.get(), Some(&resolve(&STAMPED, Vec::new()).unwrap()));
         assert_eq!(

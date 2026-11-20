@@ -2,7 +2,8 @@
 //! launch from stamped NETT settings in one child process. Another child
 //! exercises the Issues and Channels construction paths with account
 //! persistence off. Both inherit the Subspace API debug settings a
-//! stray shell would have, with a sentinel to record any requests.
+//! stray shell would have, with a sentinel to record any requests, and
+//! both keep their state under a temporary home, never the person's.
 
 #[allow(dead_code)]
 #[path = "../build/settings.rs"]
@@ -25,6 +26,19 @@ use subspace_framework::core::Secret;
 const ORG: &str = "00000000-0000-0000-0000-0000000000a1";
 const CLIENT: &str = "client_00000000000000000000000000";
 const CHILD: &str = "NETT_BUILD_TEST_CHILD";
+/// The temporary home a child keeps its state under.
+const HOME: &str = "NETT_BUILD_TEST_HOME";
+/// Where each platform keeps a person's state, configuration and data.
+const STATE_VARIABLES: [&str; 8] = [
+    "HOME",
+    "USERPROFILE",
+    "XDG_STATE_HOME",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "APPDATA",
+    "LOCALAPPDATA",
+];
 
 fn nett(path: &str) -> (u16, String) {
     let path = path.split('?').next().unwrap_or_default();
@@ -72,6 +86,14 @@ fn a_nett_build_reaches_only_nett() {
                 child.env_remove(name);
             }
         }
+        // Installing turns on organisation memory beside the app's state:
+        // every place a platform keeps state is a temporary one.
+        let home = fixture.path().join(phase);
+        std::fs::create_dir(&home).unwrap();
+        for name in STATE_VARIABLES {
+            child.env(name, &home);
+        }
+        child.env(HOME, &home);
         let run = child
             .args([
                 "--ignored",
@@ -107,6 +129,7 @@ fn launched_with_stray_subspace_settings(cx: &mut TestAppContext) {
     let nett_mock = Mock::new(|request| nett(&request.path));
     let nett_url = format!("{}/api", nett_mock.base_url());
 
+    assert_state_isolated();
     let resolved = resolve_nett_launch(&nett_url);
     if phase == "install" {
         launch::install(&resolved).unwrap();
@@ -119,6 +142,23 @@ fn launched_with_stray_subspace_settings(cx: &mut TestAppContext) {
     assert_issues_read_nett();
     assert_catalogue_reads_nett(cx);
     assert_nett_requests_are_scoped(&nett_mock);
+}
+
+/// The app's state, organisation memory included, resolves under the
+/// child's temporary home. Windows reads its state folder from the
+/// account's known folders, which no variable moves; there the children
+/// still select no organisation, so nothing is written.
+fn assert_state_isolated() {
+    let home = std::env::var_os(HOME).expect("the child's temporary home");
+    if cfg!(windows) {
+        return;
+    }
+    let state = subspace_framework::core::state::path().expect("a state directory");
+    assert!(
+        state.starts_with(&home),
+        "state resolves under the temporary home, not {}",
+        state.display()
+    );
 }
 
 fn resolve_nett_launch(nett_url: &str) -> launch::Launch {
