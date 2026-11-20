@@ -94,6 +94,11 @@ it. The repository's pull request template
   change's key images or link the pull requests that carry them. Without
   them a pull request is not ready to merge. `gh pr create --body` skips the
   template, so copy its sections into the body.
+- [ ] Before merging: `scripts/review-pr.sh` reported both Claude Opus 5.5
+  (high) and GPT-6.2 Sol (high) clear for the final head. Both review
+  checkboxes are ticked and both reviews are recorded under **Reviews**. See
+  [Pull request review clearance](../../AGENTS.md#pull-request-review-clearance)
+  for how to run it and for the Release Please and integration exceptions.
 - [ ] UI follows the [component rules](../../subspace-framework/docs/ui-components.md#rules): a GPUI Kit
   component first, then a shared component built from GPUI Kit components,
   custom drawing last with its reason in the catalogue. Every new or changed
