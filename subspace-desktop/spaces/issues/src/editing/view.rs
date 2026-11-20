@@ -178,10 +178,15 @@ fn form(board: &Issues, editor: &IssueEditor, tokens: &Tokens, cx: &mut Context<
                 .id("issue-edit-title")
                 .disabled(locked),
         ))
-        .child(fields::form_field(
-            "Summary",
-            summary::input(editor, InputRole::Configuration, locked, cx),
-        ))
+        .when(
+            subspace_api_client::capabilities().issue_summaries,
+            |form| {
+                form.child(fields::form_field(
+                    "Summary",
+                    summary::input(editor, InputRole::Configuration, locked, cx),
+                ))
+            },
+        )
         .child(fields::form_field(
             "Description",
             fields::textarea(&editor.description, "Markdown description")

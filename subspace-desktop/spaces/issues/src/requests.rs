@@ -21,6 +21,7 @@ impl crate::Issues {
             search: self.query.clone(),
             sub_issues: self.sub_issues,
             filters: self.filters.clone(),
+            initiative: crate::initiative::list_initiative(self),
         }
     }
 }
@@ -37,6 +38,8 @@ pub(crate) struct ListChoice {
     pub(crate) search: String,
     pub(crate) sub_issues: SubIssues,
     pub(crate) filters: crate::filters::Filters,
+    /// A NETT initiative the list keeps to; Subspace API scopes by project.
+    pub(crate) initiative: Option<String>,
 }
 
 impl ListChoice {
@@ -49,6 +52,7 @@ impl ListChoice {
         self.filters.apply(
             ListQuery::new(self.tab.spec().list)
                 .project(project)
+                .initiative(self.initiative.as_deref())
                 .search(self.search.clone())
                 .show_subissues(self.sub_issues == SubIssues::Flat),
         )
@@ -87,6 +91,12 @@ pub(crate) enum Request {
     MoreSubissues,
     MoreRelations,
     MorePullRequests,
+    /// Check or uncheck a to-do on the open issue.
+    SetTodo {
+        item: String,
+        done: bool,
+    },
+    RetryTodos,
     OpenTimeline(usize),
     MoreTimeline(usize),
     RetryTimeline(usize),

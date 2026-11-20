@@ -45,6 +45,7 @@ impl ImageMetadata {
             sha256: self.sha256,
             public_file_id: String::new(),
             expires_at: None,
+            binding: crate::model::MediaBinding::Subspace,
         }
     }
 }
@@ -76,6 +77,9 @@ impl Client {
         issue: &str,
         page: &PageRequest,
     ) -> Result<Page<ImageMetadata>, Error> {
+        if self.backend == crate::Backend::Nett {
+            return self.nett_images(issue, page);
+        }
         self.get(
             &["issues", issue, "images"],
             &page.parameters(MAX_MEDIA_PAGE)?,
@@ -83,6 +87,9 @@ impl Client {
     }
 
     pub fn attachments(&self, issue: &str, page: &PageRequest) -> Result<Page<IssueMedia>, Error> {
+        if self.backend == crate::Backend::Nett {
+            return self.nett_attachments(issue, page);
+        }
         self.get(
             &["issues", issue, "attachments"],
             &page.parameters(MAX_MEDIA_PAGE)?,
@@ -93,6 +100,9 @@ impl Client {
         if !supported_image(&media.content_type) {
             return Err(Error::InvalidRequest);
         }
+        if self.backend == crate::Backend::Nett {
+            return self.nett_media_bytes(media, limit.min(MAX_IMAGE_BYTES));
+        }
         self.fetch_media("media", media, limit.min(MAX_IMAGE_BYTES))
     }
 
@@ -102,7 +112,19 @@ impl Client {
         if !readable_text(&media.content_type) {
             return Err(Error::InvalidRequest);
         }
+        if self.backend == crate::Backend::Nett {
+            return self.nett_media_bytes(media, limit.min(MAX_TEXT_BYTES));
+        }
         self.fetch_media("attachments", media, limit.min(MAX_TEXT_BYTES))
+    }
+
+    /// A standalone attachment's bytes of any type, for saving: NETT's file
+    /// grant, read with the exact type, length and `nosniff`.
+    pub fn fetch_file(&self, media: &IssueMedia, limit: usize) -> Result<Vec<u8>, Error> {
+        if !media.is_standalone() {
+            return Err(Error::InvalidRequest);
+        }
+        self.nett_media_bytes(media, limit.min(crate::chat_uploads::MAX_BYTES))
     }
 
     /// Exact stored type, `nosniff`, a bounded body and the declared length.

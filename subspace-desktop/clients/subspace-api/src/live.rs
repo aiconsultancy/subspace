@@ -15,16 +15,19 @@ use rustls_platform_verifier::BuilderVerifierExt as _;
 use std::{collections::BTreeSet, sync::Arc, time::Duration};
 
 const MEDIA_TYPE: &str = "text/event-stream";
-const MAX_PROJECTS: usize = 64;
+pub(crate) const MAX_PROJECTS: usize = 64;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(40);
 
 /// Failures carry no URLs, credentials or response text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum LiveError {
-    #[error("Subspace API has no issue update stream or a project is unavailable.")]
+    #[error(
+        "{} has no issue update stream or a project is unavailable.",
+        crate::backend::service_name()
+    )]
     Unavailable,
-    #[error("Subspace API refused the issue update stream.")]
+    #[error("{} refused the issue update stream.", crate::backend::service_name())]
     Refused,
     #[error("The issue update stream could not be reached.")]
     Network,
@@ -32,6 +35,19 @@ pub(crate) enum LiveError {
     Protocol,
     #[error("The issue update stream closed.")]
     Closed,
+    /// NETT: 429 or 503, with the server's wait in whole seconds when it
+    /// gave one.
+    #[error(
+        "{} is busy; the issue update stream will try again.",
+        crate::backend::service_name()
+    )]
+    Busy(Option<u64>),
+    /// NETT: 401, the bearer was refused.
+    #[error("The issue update stream needs a fresh sign-in.")]
+    Unauthorized,
+    /// NETT: 403, the person no longer has access to what was followed.
+    #[error("The issue update stream was refused access.")]
+    Forbidden,
 }
 
 pub(crate) fn http_client() -> Result<reqwest::Client, LiveError> {
@@ -68,6 +84,12 @@ pub(crate) async fn connect(
         transport::endpoint(&client.base, &["updates"], &query).map_err(|_| LiveError::Refused)?;
     pacing::wait_async(&url).await;
     let mut request = http.get(url.clone()).header(ACCEPT, MEDIA_TYPE);
+    if client.backend == crate::Backend::Nett {
+        // NETT serves the same stream; project keys are its team keys, which
+        // are unique only inside the organisation the header names.
+        let org = client.org.as_deref().ok_or(LiveError::Refused)?;
+        request = request.header("x-org-id", org);
+    }
     if let Some(NativeLease(generation)) = client.native_lease {
         request = request.header(AUTHORIZATION, private_bearer(url, generation).await?);
     } else if let Some(jwt) = &client.access_jwt {
@@ -81,7 +103,7 @@ pub(crate) async fn connect(
     if client.account_changed() {
         return Err(LiveError::Refused);
     }
-    check_response(&response)?;
+    check_response(&response, client.backend == crate::Backend::Nett)?;
     Ok(EventStream {
         response,
         records: Records::default(),
@@ -100,15 +122,27 @@ async fn private_bearer(url: url::Url, lease: Option<u64>) -> Result<HeaderValue
         .ok_or(LiveError::Refused)
 }
 
-fn check_response(response: &reqwest::Response) -> Result<(), LiveError> {
+/// Subspace API's refusals keep their meaning; NETT's also say why, so the
+/// hub can wait as asked, renew the bearer or check access again.
+fn check_response(response: &reqwest::Response, nett: bool) -> Result<(), LiveError> {
     match response.status() {
         StatusCode::OK => {}
         StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED => {
             return Err(LiveError::Unavailable);
         }
+        StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE if nett => {
+            let wait = response
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse::<u64>().ok());
+            return Err(LiveError::Busy(wait));
+        }
         StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
             return Err(LiveError::Network);
         }
+        StatusCode::UNAUTHORIZED if nett => return Err(LiveError::Unauthorized),
+        StatusCode::FORBIDDEN if nett => return Err(LiveError::Forbidden),
         _ => return Err(LiveError::Refused),
     }
     let mime = response
@@ -140,5 +174,22 @@ impl EventStream {
             self.records.push(&chunk)?;
         }
         self.records.ready.pop_front().ok_or(LiveError::Protocol)
+    }
+}
+
+#[cfg(test)]
+mod wording_tests {
+    use super::LiveError;
+
+    #[test]
+    fn the_default_build_names_subspace_api_as_before() {
+        assert_eq!(
+            LiveError::Unavailable.to_string(),
+            "Subspace API has no issue update stream or a project is unavailable."
+        );
+        assert_eq!(
+            LiveError::Refused.to_string(),
+            "Subspace API refused the issue update stream."
+        );
     }
 }

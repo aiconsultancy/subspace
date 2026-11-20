@@ -63,6 +63,9 @@ struct EstimateProject {
 // qual:allow(coupling, oi) reason: "The catalogue boundary pages service records and projects them to immutable picker values."
 impl Client {
     pub fn issue_choices(&self, source: &ChoiceSource) -> Result<Vec<IssueChoice>, IssueSaveError> {
+        if self.backend == crate::Backend::Nett {
+            return self.nett_choices(source);
+        }
         match source {
             ChoiceSource::States(project) => {
                 let rows: Vec<WorkflowState> = all_pages(|p| self.workflow_states(project, p))?;
@@ -108,6 +111,37 @@ impl Client {
                 Ok(estimate_choices(row.estimate_scale.as_deref()))
             }
         }
+    }
+}
+
+// qual:allow(coupling, oi) reason: "NETT keeps people, labels and estimates in other collections; this maps them to the same picker values."
+impl Client {
+    fn nett_choices(&self, source: &ChoiceSource) -> Result<Vec<IssueChoice>, IssueSaveError> {
+        let named = |rows: Vec<(String, String)>| {
+            rows.into_iter()
+                .map(|(id, name)| IssueChoice::new(id, name))
+                .collect()
+        };
+        Ok(match source {
+            ChoiceSource::Assignees => named(self.nett_members()?),
+            ChoiceSource::Labels => self
+                .nett_labels()?
+                .into_iter()
+                .map(|label| IssueChoice::new(label.id, label.name))
+                .collect(),
+            ChoiceSource::Estimates(team) => {
+                estimate_choices(self.nett_estimate_scale(team)?.as_deref())
+            }
+            // NETT milestones belong to planning projects, not teams.
+            ChoiceSource::Milestones(_) => Vec::new(),
+            ChoiceSource::States(team) => {
+                let rows: Vec<WorkflowState> = self.nett_workflow_states(team)?.items;
+                rows.into_iter()
+                    .map(|s| IssueChoice::new(s.id, s.name))
+                    .collect()
+            }
+            ChoiceSource::Cycles(team) => self.cycle_choices(team)?,
+        })
     }
 }
 

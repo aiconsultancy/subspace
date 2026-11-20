@@ -9,6 +9,8 @@ pub(crate) const MAX_RETRY_SECONDS: u64 = 300;
 pub struct CommentIntent {
     body: String,
     parent: Option<String>,
+    /// The NETT media draft whose uploads this comment claims.
+    media_draft: Option<String>,
 }
 
 impl std::fmt::Debug for CommentIntent {
@@ -30,7 +32,14 @@ impl CommentIntent {
         Ok(Self {
             body,
             parent: parent.map(str::to_owned),
+            media_draft: None,
         })
+    }
+    /// Claims the media uploaded for this comment's draft. Only NETT reads
+    /// it; Subspace API attachments are referenced from the body alone.
+    pub fn with_media_draft(mut self, draft: &str) -> Self {
+        self.media_draft = Some(draft.to_owned());
+        self
     }
     pub fn body(&self) -> &str {
         &self.body
@@ -89,9 +98,16 @@ impl Client {
         reference: &str,
         intent: &CommentIntent,
     ) -> Result<CommentPost, WriteError> {
-        let url = transport::endpoint(&self.base, &["issues", reference, "comments"], &[])
+        let url = self
+            .endpoint(&["issues", reference, "comments"], &[])
             .map_err(|_| WriteError::NotSent)?;
-        let body = serde_json::json!({"body": intent.body(), "parentCommentId": intent.parent()});
+        let mut body =
+            serde_json::json!({"body": intent.body(), "parentCommentId": intent.parent()});
+        if self.backend == crate::Backend::Nett
+            && let Some(draft) = &intent.media_draft
+        {
+            body["mediaDraftId"] = serde_json::json!(draft);
+        }
         self.send_comment(&url, &body)
     }
 
@@ -121,11 +137,14 @@ impl Client {
                 status: None,
                 retry_after: 0,
             })?;
-        comment_response(response)
+        comment_response(self, response)
     }
 }
 
-fn comment_response(response: ureq::http::Response<ureq::Body>) -> Result<CommentPost, WriteError> {
+fn comment_response(
+    client: &Client,
+    response: ureq::http::Response<ureq::Body>,
+) -> Result<CommentPost, WriteError> {
     let status = response.status();
     let retry_after = transport::header(&response, "retry-after")
         .parse::<u64>()
@@ -135,7 +154,8 @@ fn comment_response(response: ureq::http::Response<ureq::Body>) -> Result<Commen
         return Err(WriteError::SignInNeeded);
     }
     if status == StatusCode::CREATED {
-        return transport::read_json(response)
+        return client
+            .read(response)
             .map(|row| CommentPost::Created(Box::new(row)))
             .map_err(|_: Error| WriteError::Unclear {
                 status: Some(status.as_u16()),

@@ -56,6 +56,27 @@ impl ImageDeclaration {
     }
 }
 
+/// One standalone attachment upload: its outcome, the transfer it reserved
+/// and whether its bytes may have been stored. Once they may have been, a
+/// failure is resolved by completing that transfer, not by sending again.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct AttachmentAttempt {
+    pub result: Result<crate::model::IssueMedia, UploadError>,
+    pub transfer: Option<String>,
+    pub bytes_sent: bool,
+}
+
+impl Default for AttachmentAttempt {
+    fn default() -> Self {
+        Self {
+            result: Err(UploadError::Network),
+            transfer: None,
+            bytes_sent: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum UploadError {
     #[error("Choose a supported image (up to 10 MiB and 4,096 px per side) or file (up to 10 MB).")]

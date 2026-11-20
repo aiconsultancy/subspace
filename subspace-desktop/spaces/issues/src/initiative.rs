@@ -36,7 +36,10 @@ fn dismiss_scope_menu(board: &Issues, window: gpui_kit::AnyWindowHandle, cx: &mu
     let Some(menu) = board.menu.as_ref() else {
         return;
     };
-    if !matches!(menu.read(cx).label().as_str(), "Initiative" | "Project") {
+    if !matches!(
+        menu.read(cx).label().as_str(),
+        "Initiative" | "Project" | "Team"
+    ) {
         return;
     }
     let menu_id = menu.entity_id();
@@ -59,7 +62,6 @@ fn dismiss_scope_menu(board: &Issues, window: gpui_kit::AnyWindowHandle, cx: &mu
     });
 }
 
-#[cfg(not(test))]
 pub(crate) fn refresh(issues: &Issues, cx: &mut Context<Issues>) {
     issues.initiatives.update(cx, Catalog::refresh);
 }
@@ -94,22 +96,42 @@ pub(crate) fn saved_project(cx: &App) -> Option<ProjectScope> {
         .map(|key| ProjectScope::from_key(&key))
 }
 
+/// NETT initiatives hold planning projects, not issue teams: the list keeps
+/// to the initiative's projects through its own filter, and any team stays
+/// selectable.
+fn initiative_by_filter() -> bool {
+    subspace_api_client::backend() == subspace_api_client::Backend::Nett
+}
+
+/// The initiative a NETT list read keeps to.
+pub(crate) fn list_initiative(issues: &Issues) -> Option<String> {
+    initiative_by_filter()
+        .then(|| issues.initiative_id.clone())
+        .flatten()
+}
+
 pub(crate) fn scoped_project(issues: &Issues, current: Option<ProjectScope>) -> ProjectScope {
     match &issues.initiative_id {
-        Some(id) => initiative_project(&issues.projects, id, current),
-        None => crate::model::chosen_project(current, &issues.projects),
+        Some(id) if !initiative_by_filter() => initiative_project(&issues.projects, id, current),
+        _ => crate::model::chosen_project(current, &issues.projects),
     }
 }
 
 pub(crate) fn project_in_scope(issues: &Issues, scope: &ProjectScope) -> bool {
-    let Some(id) = issues.initiative_id.as_deref() else {
+    let Some(id) = issues
+        .initiative_id
+        .as_deref()
+        .filter(|_| !initiative_by_filter())
+    else {
         return true;
     };
     active_projects(&issues.projects, id).any(|project| project.key == scope.key())
 }
 
 pub(crate) fn no_initiative_projects(issues: &Issues) -> bool {
-    issues.initiative_id.is_some() && issues.project == ProjectScope::AllProjects
+    !initiative_by_filter()
+        && issues.initiative_id.is_some()
+        && issues.project == ProjectScope::AllProjects
 }
 
 fn active_projects<'a>(

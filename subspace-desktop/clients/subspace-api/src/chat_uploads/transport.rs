@@ -9,8 +9,26 @@ const UPLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 6
 
 // qual:allow(coupling, oi) reason: "The private HTTP seam combines pacing, identity checks, response validation and single-attempt writes."
 impl Client {
+    /// Chat uploads, once the backend serves them.
+    fn chat_service(&self) -> Result<(), UploadError> {
+        if self.serves(crate::backend::Feature::ChatUploads) {
+            Ok(())
+        } else {
+            Err(UploadError::Unavailable)
+        }
+    }
     pub fn create_chat_upload(&self, draft: &UploadDraft) -> Result<Upload, UploadError> {
+        self.chat_service()?;
         let user = self.me().map_err(UploadError::from)?.user_id;
+        if self.backend == crate::Backend::Nett {
+            let upload = self.nett_create_chat_upload(draft)?;
+            if !matches_draft(&upload, draft, &user)
+                || self.me().map_err(|_| UploadError::Unconfirmed)?.user_id != user
+            {
+                return Err(UploadError::Unconfirmed);
+            }
+            return validate(upload);
+        }
         let body = super::encoding::create(draft).map_err(|_| UploadError::Invalid)?;
         let upload: Upload = self.chat_post_bytes(&["chat", "uploads"], &body)?;
         if !matches_draft(&upload, draft, &user)
@@ -21,8 +39,17 @@ impl Client {
         validate(upload)
     }
     pub fn check_chat_upload(&self, draft: &UploadDraft) -> Result<Upload, UploadError> {
+        self.chat_service()?;
+        if self.backend == crate::Backend::Nett {
+            // A wait NETT asked for holds: nothing at all is sent before it.
+            self.nett_chat_wait(draft)?;
+        }
         let user = self.me().map_err(UploadError::from)?.user_id;
-        let upload = self.chat_upload(&draft.reference())?;
+        let upload = if self.backend == crate::Backend::Nett {
+            validate(self.nett_check_chat_upload(draft)?)?
+        } else {
+            self.chat_upload(&draft.reference())?
+        };
         if !matches_draft(&upload, draft, &user)
             || self.me().map_err(UploadError::from)?.user_id != user
         {
@@ -31,13 +58,28 @@ impl Client {
         Ok(upload)
     }
     pub fn chat_upload(&self, reference: &str) -> Result<Upload, UploadError> {
+        self.chat_service()?;
+        if self.backend == crate::Backend::Nett {
+            let key = canonical(reference).ok_or(UploadError::Invalid)?;
+            return validate(self.nett_chat_upload(&key)?);
+        }
         let upload: Upload = self
             .get(&["chat", "uploads", reference], &[])
             .map_err(UploadError::from)?;
         validate(upload)
     }
     pub fn resolve_chat_upload(&self, reference: &str) -> Result<Card, UploadError> {
+        self.chat_service()?;
         let key = canonical(reference).ok_or(UploadError::Invalid)?;
+        if self.backend == crate::Backend::Nett {
+            let card = self.nett_resolve_chat_upload(&key)?;
+            if let Some(upload) = &card.upload
+                && validate(upload.clone())?.reference != key
+            {
+                return Err(UploadError::Unavailable);
+            }
+            return Ok(card);
+        }
         let mut cards: Cards = self.chat_post(&["resolve"], json!({"references":[key]}))?;
         let card = cards
             .items
@@ -53,13 +95,18 @@ impl Client {
         Ok(card)
     }
     pub fn chat_upload_bytes(&self, upload: &Upload) -> Result<Vec<u8>, UploadError> {
+        self.chat_service()?;
         validate(upload.clone())?;
-        let url = transport::endpoint(
-            &self.base,
-            &["chat", "uploads", &upload.reference, "content"],
-            &[],
-        )
-        .map_err(UploadError::from)?;
+        if self.backend == crate::Backend::Nett {
+            let bytes = self.nett_chat_upload_bytes(upload)?;
+            if bytes.len() != upload.size_bytes || hash(&bytes) != upload.sha256 {
+                return Err(UploadError::Unavailable);
+            }
+            return Ok(bytes);
+        }
+        let url = self
+            .endpoint(&["chat", "uploads", &upload.reference, "content"], &[])
+            .map_err(UploadError::from)?;
         let bytes = transport::get_bytes_with_timeout(
             &self.agent,
             &url,
@@ -82,7 +129,7 @@ impl Client {
         path: &[&str],
         body: &[u8],
     ) -> Result<T, UploadError> {
-        let url = transport::endpoint(&self.base, path, &[]).map_err(UploadError::from)?;
+        let url = self.endpoint(path, &[]).map_err(UploadError::from)?;
         let response = transport::post_json_bytes(
             self,
             &url,

@@ -60,6 +60,7 @@ pub(crate) fn failure(error: &ReadError) -> Failure {
         ReadError::Forbidden => Failure::Forbidden,
         ReadError::Network => Failure::Network,
         ReadError::Response { status } => Failure::Unexpected { status: *status },
+        ReadError::OrganisationNeeded => Failure::Organisation,
     }
 }
 

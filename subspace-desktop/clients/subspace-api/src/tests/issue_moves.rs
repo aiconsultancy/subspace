@@ -46,3 +46,14 @@ fn a_conflict_does_not_resend_or_choose_new_numbers_automatically() {
     ));
     assert_eq!(mock.requests().len(), 1);
 }
+#[test]
+fn a_subspace_503_leaves_the_move_unconfirmed_as_before() {
+    // The move may have committed behind the 503, so it is checked, not
+    // reported as not done.
+    let preview = serde_json::from_value(preview()).unwrap();
+    let mock = Mock::new(|_| (503, "{}".into()));
+    assert_eq!(
+        client(&mock).move_issue(&preview).err(),
+        Some(IssueSaveError::Unconfirmed)
+    );
+}

@@ -11,15 +11,18 @@ mod issue_writes;
 mod live;
 pub use live::LiveStatus;
 mod pull_requests;
-pub use files::FilesSnapshot;
+pub use files::{AttachmentTarget, AttachmentUpload, FilesSnapshot};
 pub use images::ImagesSnapshot;
 pub use issue_writes::IssueWriteScope;
 mod queue;
 mod reference;
+mod renewal;
 mod rescan;
 mod search;
 mod state;
 mod timeline;
+mod todos;
+pub use todos::TodoListView;
 mod worker;
 use crate::{Client, ListQuery};
 pub use comments::{Attachment, AttachmentState, CommentDraft, CommentState, ImageIntake};
@@ -78,6 +81,14 @@ impl Shared {
     fn enqueue(&self, state: &mut State, task: Task, priority: ReadPriority) {
         self.queue.push(Job::new(state, task), priority);
     }
+
+    /// An explicit reload: a pause NETT asked for ends, so what the person
+    /// asked for is sent now. Subspace API has no such pause.
+    fn resume_nett(&self) {
+        if self.client.service() == crate::Backend::Nett {
+            crate::nett::flow::resume(self.client.flow_account());
+        }
+    }
 }
 
 impl Hub {
@@ -94,7 +105,7 @@ impl Hub {
     }
 
     fn register(current: &mut Option<Weak<Shared>>) -> Result<Self, HubError> {
-        let hub = Self::from_client(Client::new()?, crate::PROFILE_NAME);
+        let hub = Self::from_client(Client::new()?, crate::service_name());
         *current = Some(Arc::downgrade(&hub.0));
         Ok(hub)
     }
@@ -129,6 +140,14 @@ impl Hub {
     pub fn version(&self) -> u64 {
         lock(&self.0.state).snapshot.version
     }
+    /// Whether `other` is this same hub.
+    pub fn same(&self, other: &Hub) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+    /// The backend this hub's client talks to.
+    pub fn service(&self) -> crate::Backend {
+        self.0.client.service()
+    }
     pub fn activate(&self, query: ListQuery) -> Result<(), HubError> {
         self.request_list(query)
     }
@@ -138,6 +157,7 @@ impl Hub {
             .map_err(|_| HubError::InvalidQuery)?;
         let mut state = lock(&self.0.state);
         state.running()?;
+        self.0.resume_nett();
         state.select_project(query.selected_project());
         state.query = Some(query);
         state.revision = state.revision.wrapping_add(1);

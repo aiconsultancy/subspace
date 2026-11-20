@@ -16,6 +16,7 @@ mod relations;
 mod subissues;
 mod summary;
 mod timeline;
+mod todos;
 mod tracker;
 mod workflow;
 
@@ -120,7 +121,10 @@ fn loading(identifier: &str, tokens: &Tokens) -> AnyElement {
                 .pt_4()
                 .text_color(tokens.muted)
                 .child(label)
-                .child("The first load can take up to a minute while Subspace API wakes."),
+                .child(format!(
+                    "The first load can take up to a minute while {} wakes.",
+                    subspace_api_client::service_name()
+                )),
         )
         .child(feedback::skeleton(tokens))
         .into_any_element()
@@ -163,7 +167,7 @@ fn content(
                         "Offline",
                         format!(
                             "{} Showing this issue as last read, {age}.",
-                            crate::scope::NETWORK_MESSAGE
+                            crate::scope::network_message()
                         ),
                     )
                 };
@@ -226,11 +230,14 @@ fn columns(
                 .min_w_0()
                 .when(stacked, |col| col.w_full())
                 .gap_8()
-                .child(summary::section(issues, detail, tokens, cx))
+                .when(subspace_api_client::capabilities().issue_summaries, |col| {
+                    col.child(summary::section(issues, detail, tokens, cx))
+                })
                 .child(description(issues, detail, tokens, cx))
                 .children(crate::media::view::panel(issues, open, cx))
-                .children(crate::media::files::panel(open, cx))
+                .children(crate::media::files::panel(issues, open, cx))
                 .children(subissues::render(detail, open, tokens, cx))
+                .children(todos::render(open, tokens, cx))
                 .child(relations::render(detail, open, tokens, cx))
                 .child(pull_requests::render(open, tokens, cx))
                 .child(timeline::render(issues, open, tokens, cx)),

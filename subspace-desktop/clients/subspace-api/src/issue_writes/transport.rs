@@ -27,15 +27,21 @@ impl Client {
         target: SaveTarget<'_>,
         changes: &IssueChanges,
     ) -> Result<IssueSave, IssueSaveError> {
-        changes.validate(matches!(target, SaveTarget::Create { .. }))?;
+        let create = matches!(target, SaveTarget::Create { .. });
+        let summaries = crate::Capabilities::of(self.backend).issue_summaries;
+        changes.validate_for(create, create && summaries)?;
         if changes.is_tracker(false) && changes.tracker_properties() {
             return Err(IssueSaveError::Invalid);
         }
-        let (reference, body) = encode(target, changes)?;
+        let (reference, mut body) = encode(target, changes)?;
+        if self.backend == crate::Backend::Nett {
+            nett_body(&mut body);
+        }
         let mut path = vec!["issues"];
         path.extend(reference);
-        let url =
-            transport::endpoint(&self.base, &path, &[]).map_err(|_| IssueSaveError::NotSent)?;
+        let url = self
+            .endpoint(&path, &[])
+            .map_err(|_| IssueSaveError::NotSent)?;
         transport::prepare(&url);
         let mut request = if reference.is_none() {
             self.agent.post(url.as_str())
@@ -56,7 +62,19 @@ impl Client {
             .build()
             .send(body.to_string().as_bytes())
             .map_err(|_| IssueSaveError::Unconfirmed)?;
-        decode(response, reference)
+        decode(self, response, reference)
+    }
+}
+
+/// NETT creates an issue in a team and has no summary or owner.
+fn nett_body(body: &mut Value) {
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    object.remove("summary");
+    object.remove("ownerId");
+    if let Some(team) = object.remove("projectId") {
+        object.insert("teamId".into(), team);
     }
 }
 
@@ -79,6 +97,7 @@ fn encode<'a>(
 }
 
 fn decode(
+    client: &Client,
     response: ureq::http::Response<ureq::Body>,
     reference: Option<&str>,
 ) -> Result<IssueSave, IssueSaveError> {
@@ -92,8 +111,9 @@ fn decode(
         StatusCode::OK
     };
     if status == expected {
-        let detail: IssueDetail =
-            transport::read_json(response).map_err(|_| IssueSaveError::Unconfirmed)?;
+        let detail: IssueDetail = client
+            .read(response)
+            .map_err(|_| IssueSaveError::Unconfirmed)?;
         return saved(detail, reference);
     }
     Err(match status.as_u16() {

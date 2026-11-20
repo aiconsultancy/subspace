@@ -138,7 +138,13 @@ impl Issues {
             let check_scope = scope.clone();
             let result = cx
                 .background_spawn(async move {
-                    if checking {
+                    if checking
+                        && subspace_api_client::backend() == subspace_api_client::Backend::Nett
+                    {
+                        // Every previewed issue is read again; nothing is resent.
+                        hub.verify_issue_move(&scope, &sent)
+                            .map(|result| result.issue)
+                    } else if checking {
                         hub.latest_issue(&scope, &id)
                     } else {
                         hub.move_issue(&scope, &sent).map(|result| result.issue)
@@ -151,14 +157,15 @@ impl Issues {
                 };
                 match result {
                     Ok(issue)
-                        if preview
-                            .issues
-                            .first()
-                            .is_some_and(|root| root.new_identifier == issue.fields.identifier) =>
+                        if preview.root_moved_to(&issue.fields.identifier)
+                            && issue.fields.project_id == preview.destination.id =>
                     {
                         this.finish_project_move(issue.fields.identifier, window, cx)
                     }
                     Ok(_) => state.phase = Phase::Failed(IssueSaveError::Conflict),
+                    Err(IssueSaveError::Conflict) => {
+                        state.phase = Phase::Failed(IssueSaveError::Conflict);
+                    }
                     Err(_) if checking => state.phase = Phase::Unconfirmed(preview),
                     Err(IssueSaveError::Unconfirmed) => state.phase = Phase::Unconfirmed(preview),
                     Err(error) => state.phase = Phase::Failed(error),
@@ -243,7 +250,7 @@ mod tests {
         settle_board(
             &board,
             cx,
-            |b| matches!(&b.project_move.as_ref().unwrap().phase,Phase::Preview(p) if p.issues[0].new_identifier=="OPS-8"),
+            |b| matches!(&b.project_move.as_ref().unwrap().phase,Phase::Preview(p) if p.issues[0].new_identifier.as_deref()==Some("OPS-8")),
         );
         release.store(true, Ordering::SeqCst);
         settle_board(&board, cx, |_| returned.load(Ordering::SeqCst));
@@ -252,7 +259,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
         render(cx);
-        assert!(board.read_with(cx,|b,_|matches!(&b.project_move.as_ref().unwrap().phase,Phase::Preview(p) if p.issues[0].new_identifier=="OPS-8")));
+        assert!(board.read_with(cx,|b,_|matches!(&b.project_move.as_ref().unwrap().phase,Phase::Preview(p) if p.issues[0].new_identifier.as_deref()==Some("OPS-8"))));
         assert_eq!(
             fixture
                 .mock
@@ -261,6 +268,68 @@ mod tests {
                 .filter(|r| r.path.ends_with("/move"))
                 .count(),
             0
+        );
+    }
+    /// Subspace API moves an archived sub-issue with its parent and keeps
+    /// it archived, so the default build neither warns nor disables Move.
+    #[gpui_kit::test]
+    fn an_archived_sub_issue_does_not_block_a_subspace_move(cx: &mut TestAppContext) {
+        let fixture = offline_with(|r| {
+            let path = r.path.split('?').next().unwrap();
+            if !path.ends_with("move-preview") {
+                return move_route(
+                    r,
+                    &AtomicUsize::new(1),
+                    &AtomicBool::new(true),
+                    &AtomicBool::new(false),
+                );
+            }
+            Some((200, json!({"token":"b".repeat(64),
+                "source":{"id":"project-SUB","key":"SUB","name":"Fixture"},
+                "destination":{"id":"project-OPS","key":"OPS","name":"Operations"},
+                "issues":[
+                    {"id":"2","version":1,"oldIdentifier":"SUB-2","newIdentifier":"OPS-9","stateId":"state",
+                     "stateName":"Started","cycleCleared":false,"milestoneCleared":false,"estimateCleared":false,
+                     "parentDetached":false,"archived":false},
+                    {"id":"3","version":1,"oldIdentifier":"SUB-3","newIdentifier":"OPS-10","stateId":"state",
+                     "stateName":"Done","cycleCleared":false,"milestoneCleared":false,"estimateCleared":false,
+                     "parentDetached":false,"archived":true}]}).to_string()))
+        });
+        let (board, cx) = board_with_hub(&fixture, cx);
+        settle_board(&board, cx, |b| b.can_create_issue());
+        board.update(cx, |b, cx| b.open_detail("SUB-2".into(), cx));
+        settle_board(&board, cx, Issues::can_edit_issue);
+        cx.update(|window, cx| {
+            board.update(cx, |b, cx| {
+                b.open_project_move(window, cx);
+                b.project_move.as_mut().unwrap().destination = Some("project-OPS".into());
+                b.load_move_preview(cx);
+            })
+        });
+        settle_board(
+            &board,
+            cx,
+            |b| matches!(&b.project_move.as_ref().unwrap().phase, Phase::Preview(p) if p.issues.len() == 2),
+        );
+        cx.update(|window, cx| {
+            board.update(cx, |b, cx| {
+                b.menu = None;
+                b.review_project_move(window, cx);
+            })
+        });
+        assert!(board.read_with(cx, |b, _| b.project_move.as_ref().unwrap().confirming));
+        render(cx);
+        assert!(crate::tests::has(cx, "issue-move-identifiers"));
+        assert!(!crate::tests::has(cx, "issue-move-archived"));
+        assert!(crate::tests::has(cx, "issue-move-confirm"));
+        let disabled = cx.update(|window, _| {
+            use gpui_kit::test::TestWindowExt as _;
+            window.find("issue-move-confirm").disabled()
+        });
+        assert_ne!(
+            disabled,
+            Some(true),
+            "Move stays available in the default build"
         );
     }
     fn move_route(

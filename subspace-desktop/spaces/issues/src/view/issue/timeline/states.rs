@@ -27,10 +27,10 @@ pub(super) fn empty(
     };
     div().text_color(tokens.muted).child(copy)
 }
-fn timeline_failure(error: &ReadError) -> &'static str {
+fn timeline_failure(error: &ReadError) -> String {
     match error {
-        ReadError::Network => crate::scope::NETWORK_MESSAGE,
-        ReadError::SignInNeeded => crate::scope::SIGN_IN_MESSAGE,
-        _ => "Couldn’t load this timeline",
+        ReadError::Network => crate::scope::network_message(),
+        ReadError::SignInNeeded => crate::scope::SIGN_IN_MESSAGE.into(),
+        _ => "Couldn’t load this timeline".into(),
     }
 }

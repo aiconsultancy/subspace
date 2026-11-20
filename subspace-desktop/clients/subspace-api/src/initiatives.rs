@@ -23,6 +23,8 @@ impl Global for Session {}
 
 struct Refresh {
     started_at: Instant,
+    /// The account and organisation scope the read was made for.
+    scope: Option<u64>,
     _task: Task<()>,
 }
 
@@ -37,6 +39,10 @@ pub struct Catalog {
     failed: bool,
     fleet_retry: Option<Task<()>>,
     fleet_failures: u32,
+    /// The account and organisation scope the items belong to. A NETT
+    /// organisation switch keeps the person but changes the scope, which
+    /// retires the items, the selection and any read still in flight.
+    scope: Option<u64>,
 }
 
 impl Catalog {
@@ -80,11 +86,26 @@ impl Catalog {
     }
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.refresh_using(crate::native::generation(), memberships, cx);
+    }
+
+    /// Reads the memberships for `scope` with `read`. A new scope first
+    /// retires everything read for the old one, a read in flight included.
+    fn refresh_using(
+        &mut self,
+        scope: Option<u64>,
+        read: impl FnOnce() -> (Option<String>, Result<Vec<MemberInitiative>, Error>) + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        if self.fence_scope(scope) {
+            cx.notify();
+        }
         if self.fetch.is_some() {
             return;
         }
         let started_at = Instant::now();
-        let read = cx.background_spawn(async { memberships() });
+        let scope = self.scope;
+        let read = cx.background_spawn(async move { read() });
         let task = cx.spawn(async move |catalog, cx| {
             let (actor, result) = read.await;
             _ = catalog.update(cx, |catalog, cx| {
@@ -93,6 +114,7 @@ impl Catalog {
         });
         self.fetch = Some(Refresh {
             started_at,
+            scope,
             _task: task,
         });
         cx.notify();
@@ -108,6 +130,19 @@ impl Catalog {
                 cx.notify();
             }
         }
+    }
+
+    /// Retires everything read for another account or organisation scope:
+    /// the items, the selection, fleet retries and a read in flight, whose
+    /// answer is then dropped. True when something was retired.
+    fn fence_scope(&mut self, scope: Option<u64>) -> bool {
+        if self.scope == scope {
+            return false;
+        }
+        self.scope = scope;
+        let actor = self.actor.clone();
+        self.reset(actor);
+        true
     }
 
     fn record_identity(&mut self, (started_at, identity): &IdentityObservation) -> bool {
@@ -152,7 +187,7 @@ impl Catalog {
         if self
             .fetch
             .as_ref()
-            .is_none_or(|fetch| fetch.started_at != started_at)
+            .is_none_or(|fetch| fetch.started_at != started_at || fetch.scope != self.scope)
         {
             return;
         }
@@ -212,7 +247,10 @@ impl Catalog {
         self.fetch = None;
         self.failed = matches!(
             result,
-            Err(error) if !matches!(error, Error::NotFound | Error::SignInNeeded | Error::Forbidden)
+            Err(error) if !matches!(
+                error,
+                Error::NotFound | Error::SignInNeeded | Error::Forbidden | Error::OrganisationNeeded
+            )
         );
         if !self.failed {
             let items = result.unwrap_or_default();
@@ -256,6 +294,29 @@ impl Catalog {
         self.replace(actor, result);
         self.retry_fleet_lookups(cx);
         cx.notify();
+    }
+
+    /// Reads the memberships for `scope` with `read`, as an organisation
+    /// switch's refresh does.
+    #[cfg(feature = "test-support")]
+    // qual:test_helper
+    pub fn refresh_for_test(
+        &mut self,
+        scope: Option<u64>,
+        read: impl FnOnce() -> (Option<String>, Result<Vec<MemberInitiative>, Error>) + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
+        self.refresh_using(scope, read, cx);
+    }
+
+    /// Moves the catalogue to another account or organisation scope, as an
+    /// organisation switch does.
+    #[cfg(feature = "test-support")]
+    // qual:test_helper
+    pub fn change_scope_for_test(&mut self, scope: Option<u64>, cx: &mut Context<Self>) {
+        if self.fence_scope(scope) {
+            cx.notify();
+        }
     }
 
     #[cfg(feature = "test-support")]
@@ -335,6 +396,25 @@ mod tests {
         assert!(catalog.fence_identity(&Err(Error::Forbidden)));
         assert!(catalog.actor.is_none());
     }
+    #[test]
+    fn another_organisation_retires_the_catalogue_and_its_read_in_flight() {
+        let mut catalog = Catalog::default();
+        assert!(catalog.fence_scope(Some(1)));
+        let entries = serde_json::from_str(r##"[{"id":"a","name":"A","channels":"#a"}]"##).unwrap();
+        catalog.replace(Some("person".into()), Ok(entries));
+        assert!(catalog.select(Some("a")));
+        assert!(!catalog.fence_scope(Some(1)), "the same scope keeps it");
+        // The same person in organisation B: nothing of A survives, even a
+        // read for A that was still in flight or failed in transit.
+        assert!(catalog.fence_scope(Some(2)));
+        assert!(!catalog.has_memberships());
+        assert!(catalog.selected().is_none());
+        assert_eq!(catalog.actor.as_deref(), Some("person"));
+        assert!(catalog.fetch.is_none());
+        catalog.replace(Some("person".into()), Err(Error::Network));
+        assert!(catalog.selected().is_none() && !catalog.has_memberships());
+    }
+
     #[test]
     fn an_older_identity_check_cannot_reinstate_the_previous_account() {
         let mut catalogue = Catalog::default();

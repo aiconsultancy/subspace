@@ -32,13 +32,17 @@ pub(crate) fn project_button(issues: &Issues, cx: &mut Context<Issues>) -> AnyEl
 }
 
 fn open_projects(issues: &mut Issues, window: &mut Window, cx: &mut Context<Issues>) {
-    let contents = MenuContents::new("Project", "Filter projects", menu_options(issues));
+    let contents = if teams() {
+        MenuContents::new("Team", "Filter teams", menu_options(issues))
+    } else {
+        MenuContents::new("Project", "Filter projects", menu_options(issues))
+    };
     open(issues, contents, window, cx);
 }
 
 pub(crate) fn refresh_project_menu(issues: &Issues, cx: &mut Context<Issues>) {
     if let Some(menu) = issues.menu.as_ref()
-        && menu.read(cx).label().as_str() == "Project"
+        && matches!(menu.read(cx).label().as_str(), "Project" | "Team")
     {
         menu.update(cx, |menu, cx| menu.set_options(menu_options(issues), cx));
     }
@@ -78,10 +82,19 @@ fn open(
     cx.notify();
 }
 
+/// Whether the desktop's projects are NETT issue teams, so Issues names them so.
+pub(crate) fn teams() -> bool {
+    subspace_api_client::backend() == subspace_api_client::Backend::Nett
+}
+
+fn all_label() -> &'static str {
+    if teams() { "All teams" } else { "All projects" }
+}
+
 /// `KEY · Name` for a known project, the key alone before the projects load.
 pub(crate) fn project_label(scope: &ProjectScope, projects: &[Project]) -> String {
     match scope {
-        ProjectScope::AllProjects => "All projects".to_owned(),
+        ProjectScope::AllProjects => all_label().to_owned(),
         ProjectScope::Project(key) => projects
             .iter()
             .find(|project| &project.key == key)
@@ -110,7 +123,7 @@ pub(crate) fn project_options(projects: &[Project]) -> Vec<(ProjectScope, String
             )
         })
         .collect();
-    options.push((ProjectScope::AllProjects, "All projects".into()));
+    options.push((ProjectScope::AllProjects, all_label().into()));
     options
 }
 

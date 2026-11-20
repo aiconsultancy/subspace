@@ -80,7 +80,8 @@ impl TextValues {
         if create || self.title != basis.title {
             changes.set(IssueProperty::Title(self.title));
         }
-        if create || self.summary != basis.summary {
+        let summaries = subspace_api_client::capabilities().issue_summaries;
+        if summaries && (create || self.summary != basis.summary) {
             changes.set(IssueProperty::Summary(self.summary));
         }
         if self.description != basis.description {
