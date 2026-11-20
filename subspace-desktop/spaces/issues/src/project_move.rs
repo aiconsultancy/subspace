@@ -8,7 +8,7 @@ use crate::Issues;
 use gpui_kit::{AppContext as _, Context, FocusHandle, Window};
 use subspace_api_client::{
     hub::{Hub, IssueWriteScope},
-    issue_moves::{MovePreview, Unreconciled},
+    issue_moves::{MovePreview, MoveResult, Unreconciled},
     issue_writes::IssueSaveError,
     model::IssueDetail,
 };
@@ -36,13 +36,56 @@ enum Phase {
     Failed(IssueSaveError),
 }
 
-/// What confirming or checking a move found: the root as it is now, and
-/// the sub-issues not confirmed in the destination.
-type MoveOutcome = Result<(IssueDetail, Vec<Unreconciled>), IssueSaveError>;
+/// A move that committed: the root's number after it, and the sub-issues
+/// not confirmed in the destination.
+pub(crate) struct Committed {
+    pub(crate) identifier: String,
+    pub(crate) unreconciled: Vec<Unreconciled>,
+}
 
-/// Confirms `preview`, or checks a move that went unanswered without
-/// sending it again. A check that fails for any reason but a conflict
-/// leaves the move to be checked again.
+/// What confirming or checking a move found.
+type MoveOutcome = Result<Committed, IssueSaveError>;
+
+/// Whether `issue` is the previewed root moved into the destination.
+fn moved_root(preview: &MovePreview, issue: &IssueDetail) -> Result<String, IssueSaveError> {
+    if preview.root_moved_to(&issue.fields.identifier)
+        && issue.fields.project_id == preview.destination.id
+    {
+        Ok(issue.fields.identifier.clone())
+    } else {
+        Err(IssueSaveError::Conflict)
+    }
+}
+
+/// The committed move a result shows: the root's number as NETT recorded
+/// it for this plan, which stays right even if the root moved again since,
+/// or else the root read in the destination.
+fn committed(preview: &MovePreview, result: MoveResult) -> MoveOutcome {
+    let identifier = match result.recorded_root() {
+        Some(recorded) => recorded.to_owned(),
+        None => moved_root(preview, &result.issue)?,
+    };
+    Ok(Committed {
+        identifier,
+        unreconciled: result.unreconciled,
+    })
+}
+
+/// A confirmed move's result, with the debug capture's invented
+/// sub-issues when it asks for them.
+#[cfg(debug_assertions)]
+fn captured(preview: &MovePreview, mut result: MoveResult) -> MoveResult {
+    result.unreconciled = capture::unreconciled(preview, std::mem::take(&mut result.unreconciled));
+    result
+}
+
+#[cfg(not(debug_assertions))]
+fn captured(_: &MovePreview, result: MoveResult) -> MoveResult {
+    result
+}
+
+/// Confirms `preview`, or checks a move that went unanswered. A check that
+/// fails for any reason but a conflict leaves the move to be checked again.
 fn confirm(
     hub: &Hub,
     scope: &IssueWriteScope,
@@ -52,19 +95,21 @@ fn confirm(
 ) -> MoveOutcome {
     let result = if checking && subspace_api_client::backend() == subspace_api_client::Backend::Nett
     {
-        // Every previewed issue is read again; nothing is resent.
+        // NETT replays the identical confirmation when it records moves;
+        // otherwise every previewed issue is read again and nothing is
+        // resent.
         hub.verify_issue_move(scope, preview)
-            .map(|result| (result.issue, result.unreconciled))
+            .and_then(|result| committed(preview, result))
     } else if checking {
-        hub.latest_issue(scope, id).map(|issue| (issue, Vec::new()))
-    } else {
-        hub.move_issue(scope, preview).map(|result| {
-            #[cfg(debug_assertions)]
-            let unreconciled = capture::unreconciled(preview, result.unreconciled);
-            #[cfg(not(debug_assertions))]
-            let unreconciled = result.unreconciled;
-            (result.issue, unreconciled)
+        hub.latest_issue(scope, id).and_then(|issue| {
+            Ok(Committed {
+                identifier: moved_root(preview, &issue)?,
+                unreconciled: Vec::new(),
+            })
         })
+    } else {
+        hub.move_issue(scope, preview)
+            .and_then(|result| committed(preview, captured(preview, result)))
     };
     result.map_err(|error| match error {
         IssueSaveError::Conflict => error,
@@ -211,17 +256,17 @@ impl Issues {
         cx: &mut Context<Self>,
     ) {
         let phase = match result {
-            Ok((issue, unreconciled))
-                if preview.root_moved_to(&issue.fields.identifier)
-                    && issue.fields.project_id == preview.destination.id =>
-            {
+            Ok(Committed {
+                identifier,
+                unreconciled,
+            }) => {
                 if unreconciled.is_empty() {
-                    return self.finish_project_move(issue.fields.identifier, window, cx);
+                    return self.finish_project_move(identifier, window, cx);
                 }
                 self.reload_list(cx);
-                Phase::Moved(issue.fields.identifier, unreconciled)
+                Phase::Moved(identifier, unreconciled)
             }
-            Ok(_) | Err(IssueSaveError::Conflict) => Phase::Failed(IssueSaveError::Conflict),
+            Err(IssueSaveError::Conflict) => Phase::Failed(IssueSaveError::Conflict),
             Err(IssueSaveError::Unconfirmed) => Phase::Unconfirmed(preview.clone()),
             Err(error) => Phase::Failed(error),
         };
@@ -378,18 +423,15 @@ mod tests {
         };
         settle_board(&board, cx, |b| preview(b).is_some());
         let preview = board.read_with(cx, |b, _| preview(b)).unwrap();
-        let mut moved = crate::tests::offline::row("2", "Fixture");
-        moved["identifier"] = json!("OPS-8");
-        moved["projectId"] = json!("project-OPS");
-        moved["projectKey"] = json!("OPS");
-        moved["description"] = json!("");
-        moved["todos"] = json!([]);
-        let moved = serde_json::from_value(moved).unwrap();
+        let moved = super::Committed {
+            identifier: "OPS-8".into(),
+            unreconciled,
+        };
         cx.update(|window, cx| {
             board.update(cx, |b, cx| {
                 b.menu = None;
                 b.review_project_move(window, cx);
-                b.settle_project_move(&preview, Ok((moved, unreconciled)), window, cx);
+                b.settle_project_move(&preview, Ok(moved), window, cx);
             })
         });
         render(cx);
