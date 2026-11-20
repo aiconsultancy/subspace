@@ -24,6 +24,7 @@
 #   CAPTURE_DECISION_SCENARIO=<normal|missing|forbidden|unavailable>  Decisions fixture
 #   CAPTURE_CHANGE_AFTER=<s>   the fixture retitles SUB-1 after <s> seconds, as a change elsewhere
 #   CAPTURE_FLEET=1            the fixture adds the neutral FLT project for web Space evidence
+#   CAPTURE_MOVE_UNCONFIRMED=1  a committed move lists its sub-issues as not confirmed, as a NETT move can
 #   CAPTURE_KEEP_LOG=1         copy the app's logs into <out-dir>
 # Linux uses the native executable, a private Xvfb display and a private
 # D-Bus session, including on Wayland desktops. A Vulkan driver is
@@ -163,6 +164,7 @@ app_env=(
     "SUBSPACE_API_ACCESS_JWT_FILE=$fixture/access-jwt" SUBSPACE_IDENTITY_PROVIDER=
     "SUBSPACE_CAPTURE_DIR=$out" "SUBSPACE_CAPTURE_STEPS=$steps"
 )
+if [ -n "${CAPTURE_MOVE_UNCONFIRMED:-}" ]; then app_env+=(SUBSPACE_CAPTURE_MOVE_UNCONFIRMED=1); fi
 status=0
 if [[ "$platform" = Darwin ]]; then
     app="$fixture/$display_name Capture.app"

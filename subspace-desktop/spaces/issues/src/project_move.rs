@@ -1,4 +1,6 @@
 //! Retained project move preview. Numbers are committed only after the exact list is confirmed.
+#[cfg(debug_assertions)]
+mod capture;
 mod picker;
 mod preview;
 pub(crate) mod view;
@@ -56,8 +58,13 @@ fn confirm(
     } else if checking {
         hub.latest_issue(scope, id).map(|issue| (issue, Vec::new()))
     } else {
-        hub.move_issue(scope, preview)
-            .map(|result| (result.issue, result.unreconciled))
+        hub.move_issue(scope, preview).map(|result| {
+            #[cfg(debug_assertions)]
+            let unreconciled = capture::unreconciled(preview, result.unreconciled);
+            #[cfg(not(debug_assertions))]
+            let unreconciled = result.unreconciled;
+            (result.issue, unreconciled)
+        })
     };
     result.map_err(|error| match error {
         IssueSaveError::Conflict => error,
