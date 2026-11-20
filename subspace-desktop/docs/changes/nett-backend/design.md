@@ -328,17 +328,23 @@ NETT's file host, which never sees the bearer, a cookie or `x-org-id`.
   only uploads still under way or awaiting a check that can change the
   outcome, for 15 minutes, with at most eight closed issues keeping any.
   Expiry needs no timer and happens at the next use however long the hub
-  sat idle. An upload let go, for any of these reasons, has its reservation
-  cancelled under the issue's ID and its bytes released; a queued attempt
-  whose upload was let go sends nothing, and one that ends after it
-  cancels its reservation, or, if the file was stored, reads the open
-  issue's attachments again. Uploads run two at a time on a small pool,
+  sat idle, before the open issue is matched, so reopening an issue never
+  brings back uploads kept too long. An upload let go, for any of these
+  reasons, has its reservation cancelled under the issue's ID and its bytes
+  released; a queued attempt whose upload was let go sends nothing and
+  cancels the reservation it holds, and one that ends after it cancels its
+  reservation, or, if the file was stored, reads the open issue's
+  attachments again. Every upload request, completion and cancellation
+  names the issue by its ID, which still names it after a move. A snapshot
+  shows uploads without their bytes, so a view keeping an old snapshot
+  never keeps them from being freed. Uploads run two at a time on a small pool,
   and the panel takes at most eight uploads and 32 MiB waiting on an
   issue, and 64 MiB across comment drafts and uploads, since a failed
   upload keeps its bytes for Retry. A file is admitted on its issue or
   draft first; only then, if it would not fit in the shared budget, are
   failed uploads kept for closed issues let go, the issue closed first
-  first, and only as far as lets it in: if even all of them would not,
+  first, and only as far as lets it in, counting only bytes nothing else
+  holds, which letting go actually frees: if even all of them would not,
   nothing goes and the file is refused. Dismissing an upload that never
   completed cancels its reservation with `DELETE …/attachments/pending/{uploadId}`. A file is
   added to the issue, opening, organisation and account it was chosen in,
@@ -512,9 +518,11 @@ With `issueMoves`, Issues can move an issue to another team.
   opens the moved issue: moved again since, only for one newer than
   previewed in a third team; not confirmed in the destination yet, for a
   stale or unchanged read; could not be read back; or not read back in
-  time. Reading a move back takes at most 20 seconds in all, each read cut
-  to the time left and never shared with a read already in flight, which
-  could predate the move. A read that finds the account or organisation
+  time. Reading a move back takes at most 20 seconds in all, waiting for a
+  place among the account's requests included, each read cut to the time
+  left and never shared with a read already in flight, which could predate
+  the move. Only a reply about the sub-issue itself can show it moved
+  again. A read that finds the account or organisation
   changed ends the check with a request to sign in, and nothing it found
   is returned. A 503 on the move
   itself may hide a move that committed, so it too is unconfirmed, to be
