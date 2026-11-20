@@ -31,12 +31,10 @@ const fleets = [
     ircHost,
     ircPort: port("SEED_IRC_PLAIN_PORT", 6667),
     ircTls: false,
-    rearAdmiralName: "Rear Admiral Vega",
-    captainNames: ["Captain Lyra", "Captain Orion"],
     agents: [
-      { handle: "aurora-admiral", name: "Rear Admiral Vega", rank: "rearAdmiral", ship: null },
-      { handle: "aurora-lyra", name: "Captain Lyra", rank: "captain", ship: "Lattice" },
-      { handle: "aurora-orion", name: "Captain Orion", rank: "captain", ship: "Plover" },
+      { handle: "aurora-admiral", name: "Rear-Admiral-Vega", rank: "rearAdmiral", ship: null },
+      { handle: "aurora-lyra", name: "Captain-Lyra", rank: "captain", ship: "Lattice" },
+      { handle: "aurora-orion", name: "Captain-Orion", rank: "captain", ship: "Plover" },
     ],
   },
   {
@@ -45,11 +43,9 @@ const fleets = [
     ircHost,
     ircPort: port("SEED_IRC_TLS_PORT", 6697),
     ircTls: true,
-    rearAdmiralName: "Rear Admiral Polaris",
-    captainNames: ["Captain Rigel"],
     agents: [
-      { handle: "borealis-admiral", name: "Rear Admiral Polaris", rank: "rearAdmiral", ship: null },
-      { handle: "borealis-rigel", name: "Captain Rigel", rank: "captain", ship: "Lantern" },
+      { handle: "borealis-admiral", name: "Rear-Admiral-Polaris", rank: "rearAdmiral", ship: null },
+      { handle: "borealis-rigel", name: "Captain-Rigel", rank: "captain", ship: "Lantern" },
     ],
   },
 ] as const;
@@ -114,7 +110,7 @@ async function seedActors(developer: Actor) {
       if (!existing.some((row) => row.serviceTokenClientId === email)) {
         await api.write("POST", "/agents", {
           ...agent,
-          fleet: fleet.name,
+          fleet: fleet.slug,
           defaultModel: "rehearsal-model",
           serviceTokenClientId: email,
         });

@@ -156,6 +156,30 @@ status events contain the environment, commit and state. [GitHub deployment stat
 The API's polling App is a service identity. The fleet installer provisions
 individual agent Apps for Git and GitHub actions.
 
+## Fleets and ships
+
+Authenticated members can read `GET /api/v1/fleets` and look up a fleet by
+slug or ID. Creating or editing a fleet requires a human organisation administrator.
+Human members can create ships under `/api/v1/fleets/{fleetId}/ships` and rename them
+with `PATCH /api/v1/ships/{shipId}`. The fleet reports its agents in rank and
+name order, and its ships in name order. The deprecated leadership fields
+`rearAdmiralName` and `captainNames` come from linked agents.
+
+Agent registration and editing accept `fleetId` and `shipId`. An ID takes
+precedence over its text field. Legacy fleet names resolve within the caller's
+organisation. A ship name creates a ship only within a matched fleet. Captains
+need a ship and rear admirals cannot have one.
+
+The migration preserves legacy agent text and leaves unmatched fleets
+unlinked. It deduplicates ship names within each matched fleet. The upgrade
+retains old configured leadership values in the database for reference. New
+roster responses use registered agents. Apply the
+migration and deploy the API before clients submit IDs. Update fleet installers
+with this release so that they send only the editable fleet fields. The MCP tools
+`subspace_list_fleets`, `subspace_get_fleet`, `subspace_create_fleet`,
+`subspace_update_fleet`, `subspace_list_ships`, `subspace_create_ship` and
+`subspace_rename_ship` follow the same access and validation rules.
+
 ## MCP and agents
 
 Configure an MCP client with the Streamable HTTP URL
@@ -170,7 +194,7 @@ Issue, comment, checklist, planning, decision, review and document mutations
 share the REST services and their version and authorisation checks.
 [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 
-Organisation administrators register and deactivate API agent identities under
+Human organisation administrators register and deactivate API agent identities under
 `/api/v1/agents`. Register an agent with `name`, `rank`, `fleet`, `defaultModel`,
 `serviceTokenClientId` and `ship` for captains. The ranks are `rearAdmiral`,
 `captain` and `crew`. The `serviceTokenClientId` field carries the verified
@@ -202,6 +226,29 @@ Closed cycles retain their issue outcomes. Review requirements evaluate approved
 reviews for an exact document revision or external subject and revision.
 Decision and document revisions are available through the versioned REST routes.
 
+## Decisions
+
+`GET /api/v1/decisions` sorts by creation time and ID, newest first. It
+filters by `issue`, `project`, `status`, `madeByType`, and the exact
+lower-case `tag`. Use `q` to search the title, decision, context, why,
+implications and alternatives without matching case.
+
+List items and detail responses return `recordedBy` and `madeBy` with
+`userId`, `displayName`, `available` and `kind`. The recorder is the
+authenticated member who recorded the decision. The maker is the attributed
+human or registered agent. `madeBy` is null when the maker has no registered
+account, such as relayed crew. A deactivated member stays named with
+`available` set to false. Revision snapshots retain the attribution saved
+with that revision.
+
+`GET /api/v1/decisions/counts` counts the decisions the list would return in
+each status, as `{"proposed":1,"accepted":4,"rejected":1,"superseded":2,"total":8}`.
+Every key is always present and `total` is the sum of the other four. It takes
+the list's filters except `status`, with the same validation, access rules and
+errors, and ignores `status` and paging parameters as the list ignores an
+unknown parameter. The MCP tools `subspace_list_decisions` and
+`subspace_count_decisions` return the same items and counts.
+
 ## Contract and verification
 
 See [OpenAPI](openapi.json) for versioned routes, request shapes, status codes and
@@ -216,12 +263,12 @@ bun install --frozen-lockfile
 bun run typecheck
 bun run lint
 bun test
-TEST_API_URL=http://127.0.0.1:3000 bun test
+TEST_API_URL=http://127.0.0.1:3000 TEST_DATABASE_URL=postgresql://subspace:subspace-local@127.0.0.1:5432/subspace bun test
 bun run openapi
 ```
 
 The HTTP tests require a clean loopback Compose stack and create synthetic
-organisations. For signed pull request and deployment tests, sign in first as
+organisations. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`. For signed pull request and deployment tests, sign in first as
 `admin@example.com` to a dedicated dev organisation. Start the API with that
 organisation's internal UUID in `GITHUB_ORGANISATION_ID` and a local
 `GITHUB_WEBHOOK_SECRET`. Set `TEST_GITHUB_ORGANISATION` to its dev sign-in slug

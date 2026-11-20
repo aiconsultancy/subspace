@@ -1,14 +1,15 @@
-import { and, eq, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { recordAudit } from "./audit";
 import { Database } from "./db";
+import { ShipName } from "./fleets";
 import { AgentRank, CurrentMember, type Member } from "./identity";
 import { Version } from "./initiative-contract";
 import { BearerAuth, handleDb, ValidationErrors, versionedApi } from "./middleware";
-import { byKey, page } from "./paging";
-import { endpointErrors, problem } from "./problems";
-import { organisations, users } from "./schema";
+import { cursorTime, encodeCursor, readCursor } from "./paging";
+import { endpointErrors, problem, validationProblem } from "./problems";
+import { fleets, organisations, ships, users } from "./schema";
 import {
   dateTime,
   dateTimeOrNull,
@@ -22,12 +23,14 @@ import {
 } from "./validation";
 
 const Registration = Schema.Struct({
-  name: Name,
+  name: Name.check(Schema.isMaxLength(64), Schema.isPattern(/^[A-Za-z0-9-]+$/u)),
   rank: AgentRank,
-  fleet: Name,
-  ship: Schema.optional(Schema.NullOr(Name)),
-  defaultModel: Line(120),
-  serviceTokenClientId: Line(256),
+  fleet: Schema.optional(Schema.NullOr(Schema.String)),
+  ship: Schema.optional(Schema.NullOr(Schema.String)),
+  fleetId: Schema.optional(Schema.NullOr(Uuid)),
+  shipId: Schema.optional(Schema.NullOr(Uuid)),
+  defaultModel: Line(100),
+  serviceTokenClientId: Line(200),
 });
 const Edit = Schema.Struct({ ...Registration.fields, version: Schema.optional(Version) });
 const Lifecycle = Schema.Struct({ version: Schema.optional(Version) });
@@ -35,8 +38,10 @@ const Agent = Schema.Struct({
   userId: Uuid,
   name: Name,
   rank: AgentRank,
-  fleet: Name,
+  fleet: Schema.String,
   ship: NullableString,
+  fleetId: Schema.NullOr(Uuid),
+  shipId: Schema.NullOr(Uuid),
   defaultModel: Line(120),
   serviceTokenClientId: Line(256),
   isActive: Schema.Boolean,
@@ -55,6 +60,8 @@ function dto(agent: Member) {
     rank: agent.agentRank!,
     fleet: agent.agentFleet!,
     ship: agent.agentShip,
+    fleetId: agent.agentFleetId,
+    shipId: agent.agentShipId,
     defaultModel: agent.agentModel!,
     serviceTokenClientId: agent.subject,
     isActive: agent.active,
@@ -74,39 +81,75 @@ const scope = (member: Member, id?: string) =>
     id ? eq(users.id, id) : undefined,
   );
 
+function agentRows(db: (typeof Database)["Service"], member: Member, id?: string) {
+  return db
+    .select({
+      agent: users,
+      fleetSlug: fleets.slug,
+      shipName: ships.name,
+      cursorTime: cursorTime(users.createdAt),
+    })
+    .from(users)
+    .leftJoin(fleets, eq(users.agentFleetId, fleets.id))
+    .leftJoin(ships, eq(users.agentShipId, ships.id))
+    .where(scope(member, id))
+    .$dynamic();
+}
+
+type LinkedRow = Effect.Success<ReturnType<typeof agentRows>>[number];
+
+function linkedDto({ agent, fleetSlug, shipName }: LinkedRow) {
+  return dto({
+    ...agent,
+    agentFleet: fleetSlug ?? agent.agentFleet,
+    agentShip: shipName ?? agent.agentShip,
+  });
+}
+
 function listAgents(member: Member, query: { limit?: number; cursor?: string }) {
   return Effect.gen(function* () {
     const db = yield* Database;
-    const rows = yield* db.select().from(users).where(scope(member));
-    const key = (row: Member) => `${row.displayName.toLowerCase()}:${row.id}`;
-    const result = yield* page(
-      rows.sort(byKey(key)),
-      { agents: member.organisationId },
-      key,
-      query.limit,
-      query.cursor,
-    );
-    return { ...result, items: result.items.map(dto) };
+    const { limit = 50, cursor } = query;
+    const anchor = yield* readCursor(cursor);
+    const rows = yield* agentRows(db, member)
+      .where(
+        and(
+          scope(member),
+          anchor
+            ? sql`(${users.createdAt}, ${users.id}) < (${anchor.time}::timestamptz, ${anchor.id}::uuid)`
+            : undefined,
+        ),
+      )
+      .orderBy(desc(users.createdAt), desc(users.id))
+      .limit(limit + 1);
+    const selected = rows.slice(0, limit);
+    const last = selected.at(-1);
+    return {
+      items: selected.map(linkedDto),
+      nextCursor: last && rows.length > limit ? encodeCursor(last.cursorTime, last.agent.id) : null,
+    };
   });
 }
 
 function getAgent(member: Member, id: string) {
   return Effect.gen(function* () {
     const db = yield* Database;
-    const [agent] = yield* db.select().from(users).where(scope(member, id));
-    return agent ? dto(agent) : yield* Effect.fail(problem(404, "Agent not found."));
+    const [row] = yield* agentRows(db, member, id);
+    return row
+      ? linkedDto(row)
+      : yield* Effect.fail(
+          problem(404, "Agent was not found. Use the userId returned by the agents list."),
+        );
   });
 }
 
-function registrationFields(member: Member, data: typeof Registration.Type) {
+function registrationFields(member: Member, data: typeof Registration.Type, old?: Member) {
   return Effect.gen(function* () {
     const db = yield* Database;
     const [org] = yield* db
       .select({ provider: organisations.provider })
       .from(organisations)
       .where(eq(organisations.id, member.organisationId));
-    if (data.rank === "captain" && !data.ship)
-      return yield* Effect.fail(problem(400, "A captain requires a ship."));
     const subject =
       org?.provider === "workos"
         ? data.serviceTokenClientId
@@ -118,11 +161,77 @@ function registrationFields(member: Member, data: typeof Registration.Type) {
       return yield* Effect.fail(
         problem(400, "Use the account subject format for this identity provider."),
       );
+    const fleetSlug = data.fleet?.trim().toLowerCase();
+    const shipName = data.ship?.trim() || null;
+    const existingFleet =
+      old?.agentFleetId === null && old.agentFleet === data.fleet ? old.agentFleet : null;
+    if (
+      !data.fleetId &&
+      !existingFleet &&
+      (!fleetSlug || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(fleetSlug) || fleetSlug.length > 80)
+    )
+      return yield* Effect.fail(
+        validationProblem("fleet", "Use a lower-case fleet slug of 1 to 80 characters."),
+      );
+    if (data.rank === "captain" && !data.shipId && !shipName)
+      return yield* Effect.fail(validationProblem("ship", "A captain needs a ship."));
+    if (data.rank === "rearAdmiral" && (data.shipId || shipName))
+      return yield* Effect.fail(
+        validationProblem("ship", "A rear admiral must not supply a ship."),
+      );
+    if (!data.shipId && shipName && !Schema.is(ShipName)(shipName))
+      return yield* Effect.fail(
+        validationProblem("ship", "Use a ship name on one line without control characters."),
+      );
+
+    const [fleet] = yield* db
+      .select()
+      .from(fleets)
+      .where(
+        and(
+          eq(fleets.organisationId, member.organisationId),
+          data.fleetId ? eq(fleets.id, data.fleetId) : eq(fleets.slug, fleetSlug!),
+        ),
+      )
+      .for("share");
+    if (!fleet && data.fleetId)
+      return yield* Effect.fail(
+        validationProblem("fleetId", "Fleet not found. Use an existing fleet ID."),
+      );
+    let ship: typeof ships.$inferSelect | undefined;
+    if (data.shipId) {
+      if (fleet)
+        [ship] = yield* db
+          .select()
+          .from(ships)
+          .where(and(eq(ships.fleetId, fleet.id), eq(ships.id, data.shipId)))
+          .for("share");
+      if (!ship)
+        return yield* Effect.fail(
+          validationProblem("shipId", "Choose a ship in the selected fleet."),
+        );
+    } else if (fleet && shipName) {
+      yield* db
+        .insert(ships)
+        .values({ organisationId: member.organisationId, fleetId: fleet.id, name: shipName })
+        .onConflictDoNothing();
+      [ship] = yield* db
+        .select()
+        .from(ships)
+        .where(and(eq(ships.fleetId, fleet.id), sql`lower(${ships.name}) = lower(${shipName})`))
+        .for("share");
+      if (!ship)
+        return yield* Effect.fail(
+          problem(409, "The ship name changed. Reload the fleet and retry."),
+        );
+    }
     return {
       displayName: data.name,
       agentRank: data.rank,
-      agentFleet: data.fleet,
-      agentShip: data.ship ?? null,
+      agentFleet: fleet?.slug ?? existingFleet ?? fleetSlug!,
+      agentShip: ship?.name ?? shipName,
+      agentFleetId: fleet?.id ?? null,
+      agentShipId: ship?.id ?? null,
       agentModel: data.defaultModel,
       subject,
     };
@@ -142,21 +251,34 @@ function changeAgent(member: Member, change: AgentChange, id?: string) {
       );
     return yield* db.transaction((tx) =>
       Effect.gen(function* () {
-        yield* tx
-          .select({ id: organisations.id })
-          .from(organisations)
-          .where(eq(organisations.id, member.organisationId))
-          .for("update");
+        yield* (
+          tx
+            .select({ id: organisations.id })
+            .from(organisations)
+            .where(eq(organisations.id, member.organisationId))
+            // Serialize agent changes while allowing foreign keys to take a key-share lock.
+            .for("no key update")
+        );
         const [old] = id ? yield* tx.select().from(users).where(scope(member, id)) : [];
-        if (id && !old) return yield* Effect.fail(problem(404, "Agent not found."));
+        if (id && !old)
+          return yield* Effect.fail(
+            problem(404, "Agent was not found. Use the userId returned by the agents list."),
+          );
         if (old && change.version !== undefined && change.version !== old.version)
-          return yield* Effect.fail(problem(409, "The agent version is stale.", old.version));
+          return yield* Effect.fail(
+            problem(
+              409,
+              `The agent changed. Reload it and retry. Current version is ${old.version}.`,
+              old.version,
+            ),
+          );
         const active =
           change.kind === "activate" ? true : change.kind === "deactivate" ? false : undefined;
-        if (old && active === old.active) return dto(old);
+        if (old && active === old.active)
+          return yield* getAgent(member, old.id).pipe(Effect.provideService(Database, tx));
         const registration =
           "registration" in change
-            ? yield* registrationFields(member, change.registration).pipe(
+            ? yield* registrationFields(member, change.registration, old).pipe(
                 Effect.provideService(Database, tx),
               )
             : undefined;
@@ -217,7 +339,7 @@ function changeAgent(member: Member, change: AgentChange, id?: string) {
           summary: "Changed an agent registration.",
           changes: { rank: saved.agentRank, active: saved.active },
         });
-        return dto(saved);
+        return yield* getAgent(member, saved.id).pipe(Effect.provideService(Database, tx));
       }),
     );
   });

@@ -115,7 +115,15 @@ export const Person = Schema.Struct({
   displayName: Name,
   isFormerMember: Schema.Boolean,
   kind: Schema.Literals(["human", "agent"]),
-  agent: Schema.NullOr(Schema.Struct({ rank: AgentRank, ship: NullableString })),
+  agent: Schema.NullOr(
+    Schema.Struct({
+      rank: AgentRank,
+      fleet: Schema.String,
+      ship: NullableString,
+      fleetId: Schema.NullOr(Uuid),
+      shipId: Schema.NullOr(Uuid),
+    }),
+  ),
 }).annotate({ identifier: "Person" });
 export const UserChoice = Schema.Struct({
   id: Uuid,
@@ -173,7 +181,15 @@ export function person(row: Member | null | undefined) {
         displayName: row.displayName,
         isFormerMember: !row.active,
         kind: memberKind(row),
-        agent: row.agentRank ? { rank: row.agentRank, ship: row.agentShip } : null,
+        agent: row.agentRank
+          ? {
+              rank: row.agentRank,
+              fleet: row.agentFleet!,
+              ship: row.agentShip,
+              fleetId: row.agentFleetId,
+              shipId: row.agentShipId,
+            }
+          : null,
       }
     : null;
 }

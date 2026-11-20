@@ -1,5 +1,6 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { Effect, Schema } from "effect";
+import { and, desc, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import { Effect, Schema, SchemaGetter } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { recordAudit } from "./audit";
 import { Database } from "./db";
@@ -7,10 +8,11 @@ import { AgentRank, CurrentMember, memberKind, type Member } from "./identity";
 import { Version } from "./initiative-contract";
 import { addActivity, lockIssues, readIssue } from "./issues";
 import { BearerAuth, handleDb, ValidationErrors, versionedApi } from "./middleware";
-import { byKey, page } from "./paging";
-import { endpointErrors, problem } from "./problems";
+import { cursorTime, encodeCursor, page, readCursor } from "./paging";
+import { endpointErrors, problem, validationProblem } from "./problems";
 import { readProject } from "./projects";
 import {
+  comments,
   decisionIssues,
   decisionRevisions,
   decisions,
@@ -22,6 +24,8 @@ import {
 } from "./schema";
 import {
   DateOnly,
+  isUuid,
+  Slug,
   dateTime,
   dateTimeOrNull,
   Line,
@@ -34,6 +38,8 @@ import {
   pageOf,
 } from "./validation";
 
+const decisionNotFound =
+  "Decision was not found. Use an ID returned by list decisions (GET /api/v1/decisions or subspace_list_decisions).";
 const Status = Schema.Literals(decisionStatuses);
 const Maker = Schema.Literals(["human", "agent"]);
 const Evidence = Schema.Literals(evidenceKinds);
@@ -70,35 +76,62 @@ const Decision = Schema.Struct({
   issues: Schema.Struct({ items: Schema.Array(DecisionIssue), count: Schema.Int }),
   tags: Schema.Array(Schema.String),
   ...Provenance.fields,
+  madeBy: Schema.NullOr(DecisionMember),
   recordedByUserId: Uuid,
+  recordedBy: DecisionMember,
   version: Version,
   revisionNumber: Version,
   createdAt: Timestamp,
   updatedAt: Timestamp,
 }).annotate({ identifier: "Decision" });
 const Detail = Schema.Struct({
-  ...Decision.fields,
   decision: Schema.String,
   context: Schema.String,
   why: Schema.String,
   implications: Schema.String,
   alternatives: Schema.String,
   acceptedAt: Schema.NullOr(Timestamp),
-  rejectedAt: Schema.NullOr(Timestamp),
   acceptedByUserId: Schema.NullOr(Uuid),
+  rejectedAt: Schema.NullOr(Timestamp),
   rejectedByUserId: Schema.NullOr(Uuid),
   provenance: Provenance,
-  recordedBy: DecisionMember,
+  ...Decision.fields,
 }).annotate({ identifier: "DecisionDetail" });
+const filterText = Schema.optional(Schema.String.check(Schema.isPattern(/^[^\0]*$/u)));
+const queryStatus = Schema.String.pipe(
+  Schema.decodeTo(Status, {
+    decode: SchemaGetter.transform(
+      (text: string) => text.trim().toLowerCase() as typeof Status.Type,
+    ),
+    encode: SchemaGetter.transform((status: typeof Status.Type) => status),
+  }),
+);
+const queryMaker = Schema.String.pipe(
+  Schema.decodeTo(Maker, {
+    decode: SchemaGetter.transform(
+      (text: string) => text.trim().toLowerCase() as typeof Maker.Type,
+    ),
+    encode: SchemaGetter.transform((maker: typeof Maker.Type) => maker),
+  }),
+);
 export const Query = Schema.Struct({
   ...PageQuery,
-  issue: Schema.optional(Ref),
-  project: Schema.optional(Ref),
-  status: Schema.optional(Schema.Array(Status)),
-  madeByType: Schema.optional(Maker),
-  tag: Schema.optional(Line(80)),
-  q: Schema.optional(Paragraph(200)),
+  issue: filterText,
+  project: filterText,
+  status: Schema.optional(Schema.Array(queryStatus)),
+  madeByType: Schema.optional(queryMaker),
+  tag: filterText,
+  q: filterText,
 });
+const { status: _status, limit: _limit, cursor: _cursor, ...countFilters } = Query.fields;
+export const CountQuery = Schema.Struct(countFilters);
+const DecisionCounts = Schema.Struct({
+  proposed: Schema.Int,
+  accepted: Schema.Int,
+  rejected: Schema.Int,
+  superseded: Schema.Int,
+  total: Schema.Int,
+}).annotate({ identifier: "DecisionCounts" });
 export const NewDecision = Schema.Struct({
   projectId: Uuid,
   title: Line(200),
@@ -109,11 +142,16 @@ export const NewDecision = Schema.Struct({
   implications: Schema.optional(Paragraph(50_000)),
   alternatives: Schema.optional(Paragraph(50_000)),
   status: Schema.optional(Schema.Literals(["proposed", "accepted", "rejected"])),
-  tags: Schema.optional(Schema.Array(Line(80)).check(Schema.isMaxLength(50))),
+  tags: Schema.optional(
+    Schema.Array(Slug.check(Schema.isMaxLength(40))).check(Schema.isMaxLength(20)),
+  ),
   issueIds: Schema.optional(Schema.Array(Uuid).check(Schema.isMaxLength(100))),
   supersedesId: Schema.optional(Schema.NullOr(Uuid)),
   madeByType: Schema.optional(Maker),
-  madeByUserId: Schema.optional(Uuid),
+  madeByUserId: Schema.optional(Schema.NullOr(Uuid)),
+  madeByAgentName: Schema.optional(Schema.NullOr(Line(200))),
+  madeByAgentRank: Schema.optional(Schema.NullOr(AgentRank)),
+  madeByAgentModel: Schema.optional(Schema.NullOr(Line(100))),
   evidenceKind: Schema.optional(Schema.NullOr(Evidence)),
   evidenceReference: Schema.optional(Schema.NullOr(Paragraph(2000))),
   evidenceExcerpt: Schema.optional(Schema.NullOr(Paragraph(4000))),
@@ -156,23 +194,39 @@ type Db = (typeof Database)["Service"];
 type Select = typeof decisions.$inferSelect;
 const orgScope = (member: Member) => eq(decisions.organisationId, member.organisationId);
 
-function rowData(db: Db, member: Member, id?: string, project?: string) {
-  const org = member.organisationId;
+const projectJoin = (member: Member) =>
+  and(eq(projects.organisationId, member.organisationId), eq(projects.id, decisions.projectId));
+const actorJoin = (member: Member) =>
+  and(eq(users.organisationId, member.organisationId), eq(users.id, decisions.recordedById));
+
+const maker = alias(users, "decision_maker");
+
+function joinedDecisions(db: Db, member: Member) {
   return db
-    .select({ decision: decisions, project: projects, actor: users })
+    .select({
+      decision: decisions,
+      project: projects,
+      actor: users,
+      maker,
+      cursorTime: cursorTime(decisions.createdAt),
+    })
     .from(decisions)
-    .innerJoin(
-      projects,
-      and(eq(projects.organisationId, org), eq(projects.id, decisions.projectId)),
-    )
-    .innerJoin(users, and(eq(users.organisationId, org), eq(users.id, decisions.recordedById)))
-    .where(
-      and(
-        orgScope(member),
-        id ? eq(decisions.id, id) : undefined,
-        project ? eq(decisions.projectId, project) : undefined,
-      ),
+    .innerJoin(projects, projectJoin(member))
+    .innerJoin(users, actorJoin(member))
+    .leftJoin(
+      maker,
+      and(eq(maker.organisationId, member.organisationId), eq(maker.id, decisions.madeByUserId)),
     );
+}
+
+function rowData(db: Db, member: Member, id: string, project?: string) {
+  return joinedDecisions(db, member).where(
+    and(
+      orgScope(member),
+      eq(decisions.id, id),
+      project ? eq(decisions.projectId, project) : undefined,
+    ),
+  );
 }
 
 type Joined = Effect.Success<ReturnType<typeof rowData>>[number];
@@ -226,18 +280,18 @@ function relatedSummaries(db: Db, member: Member, rows: Joined[]) {
     : Effect.succeed(new Map<string, typeof DecisionSummary.Type>());
 }
 
-function decisionDto(
+export function decisionDto(
   row: Joined,
   links: readonly (typeof DecisionIssue.Type)[],
   related: Map<string, typeof DecisionSummary.Type>,
 ) {
   const { decision: record, project, actor } = row;
   const provenance: typeof Provenance.Type = {
-    madeByType: memberKind(actor),
-    madeByUserId: actor.agentRank ? null : actor.id,
-    madeByAgentName: actor.agentRank ? actor.displayName : null,
-    madeByAgentModel: actor.agentModel,
-    madeByAgentRank: actor.agentRank,
+    madeByType: record.madeByType,
+    madeByUserId: record.madeByUserId,
+    madeByAgentName: record.madeByAgentName,
+    madeByAgentModel: record.madeByAgentModel,
+    madeByAgentRank: record.madeByAgentRank,
     evidenceKind: record.evidenceKind,
     evidenceReference: record.evidenceReference,
     evidenceExcerpt: record.evidenceExcerpt,
@@ -273,16 +327,69 @@ function decisionDto(
     rejectedByUserId: record.rejectedByUserId,
     provenance,
     recordedBy: decisionMember(actor),
+    madeBy: row.maker ? decisionMember(row.maker) : null,
   };
 }
 
 export function getDecision(db: Db, member: Member, id: string) {
   return Effect.gen(function* () {
     const [row] = yield* rowData(db, member, id);
-    if (!row) return yield* Effect.fail(problem(404, "Decision not found."));
+    if (!row) return yield* Effect.fail(problem(404, decisionNotFound));
     const links = yield* linkedIssues(db, member, [id]);
     return decisionDto(row, links.get(id) ?? [], yield* relatedSummaries(db, member, [row]));
   });
+}
+
+function decisionFilters(db: Db, member: Member, filters: typeof CountQuery.Type) {
+  const { project, issue, q, tag, madeByType } = filters;
+  if (issue !== undefined && !isUuid(issue) && !/^.+-[1-9][0-9]*$/u.test(issue))
+    return Effect.fail(validationProblem("issue", "Use an issue ID or identifier such as BIO-42."));
+  const search = q?.trim().toLowerCase();
+  return Effect.succeed(
+    and(
+      orgScope(member),
+      project !== undefined
+        ? isUuid(project)
+          ? eq(decisions.projectId, project)
+          : eq(projects.key, project.toUpperCase())
+        : undefined,
+      madeByType ? eq(decisions.madeByType, madeByType) : undefined,
+      tag !== undefined ? sql`${decisions.tags} @> ${JSON.stringify([tag])}::jsonb` : undefined,
+      issue
+        ? exists(
+            db
+              .select({ id: decisionIssues.issueId })
+              .from(decisionIssues)
+              .innerJoin(
+                issues,
+                and(
+                  eq(issues.organisationId, member.organisationId),
+                  eq(issues.id, decisionIssues.issueId),
+                ),
+              )
+              .where(
+                and(
+                  eq(decisionIssues.organisationId, member.organisationId),
+                  eq(decisionIssues.decisionId, decisions.id),
+                  isUuid(issue) ? eq(issues.id, issue) : eq(issues.identifier, issue.toUpperCase()),
+                ),
+              ),
+          )
+        : undefined,
+      search
+        ? or(
+            ...[
+              decisions.title,
+              decisions.decision,
+              decisions.context,
+              decisions.why,
+              decisions.implications,
+              decisions.alternatives,
+            ].map((column) => sql`strpos(lower(${column}), ${search}) > 0`),
+          )
+        : undefined,
+    ),
+  );
 }
 
 export const listDecisions = (member: Member, query: typeof Query.Type) =>
@@ -290,50 +397,58 @@ export const listDecisions = (member: Member, query: typeof Query.Type) =>
     db.transaction(
       (tx) =>
         Effect.gen(function* () {
-          const { cursor, limit, ...filters } = query;
-          const project = filters.project
-            ? (yield* readProject(tx, member, filters.project)).project.id
-            : undefined;
-          const issue = filters.issue
-            ? (yield* readIssue(tx, member, filters.issue)).id
-            : undefined;
-          const rows = yield* rowData(tx, member, undefined, project);
+          const { limit = 50, cursor, status, ...queryFilters } = query;
+          const anchor = yield* readCursor(cursor);
+          const filters = yield* decisionFilters(tx, member, queryFilters);
+          const rows = yield* joinedDecisions(tx, member)
+            .where(
+              and(
+                filters,
+                status?.length ? inArray(decisions.status, [...status]) : undefined,
+                anchor
+                  ? sql`(${decisions.createdAt}, ${decisions.id}) < (${anchor.time}::timestamptz, ${anchor.id}::uuid)`
+                  : undefined,
+              ),
+            )
+            .orderBy(desc(decisions.createdAt), desc(decisions.id))
+            .limit(limit + 1);
+          const items = rows.slice(0, limit);
           const links = yield* linkedIssues(
             tx,
             member,
-            rows.map(({ decision }) => decision.id),
+            items.map(({ decision }) => decision.id),
           );
-          const search = filters.q?.trim().toLowerCase();
-          const selected = rows.filter(
-            ({ decision, actor }) =>
-              (!filters.madeByType || filters.madeByType === memberKind(actor)) &&
-              (!filters.status?.length || filters.status.includes(decision.status)) &&
-              (!filters.tag ||
-                decision.tags.some((tag) => tag.toLowerCase() === filters.tag?.toLowerCase())) &&
-              (!issue || links.get(decision.id)?.some(({ id }) => id === issue)) &&
-              (!search ||
-                [decision.title, decision.decision, decision.context].some((field) =>
-                  field.toLowerCase().includes(search),
-                )),
-          );
-          const key = ({ decision }: Joined) => {
-            const day = Number(decision.decidedOn.replaceAll("-", ""));
-            return `${String(99_991_231 - day).padStart(8, "0")}:${decision.id}`;
-          };
-          const result = yield* page(
-            selected.sort(byKey(key)),
-            { org: member.organisationId, decisions: filters },
-            key,
-            limit ?? 50,
-            cursor,
-          );
-          const related = yield* relatedSummaries(tx, member, result.items);
+          const related = yield* relatedSummaries(tx, member, items);
+          const last = items.at(-1);
           return {
-            ...result,
-            items: result.items.map((row) =>
-              decisionDto(row, links.get(row.decision.id) ?? [], related),
-            ),
+            items: items.map((row) => decisionDto(row, links.get(row.decision.id) ?? [], related)),
+            nextCursor:
+              last && rows.length > limit ? encodeCursor(last.cursorTime, last.decision.id) : null,
           };
+        }),
+      { isolationLevel: "repeatable read", accessMode: "read only" },
+    ),
+  );
+
+export const countDecisions = (member: Member, query: typeof CountQuery.Type) =>
+  Effect.flatMap(Database, (db) =>
+    db.transaction(
+      (tx) =>
+        Effect.gen(function* () {
+          const filters = yield* decisionFilters(tx, member, query);
+          const rows = yield* tx
+            .select({ status: decisions.status, count: sql<number>`count(*)::int` })
+            .from(decisions)
+            .innerJoin(projects, projectJoin(member))
+            .innerJoin(users, actorJoin(member))
+            .where(filters)
+            .groupBy(decisions.status);
+          const counts = { proposed: 0, accepted: 0, rejected: 0, superseded: 0, total: 0 };
+          for (const { status, count } of rows) {
+            counts[status] = count;
+            counts.total += count;
+          }
+          return counts;
         }),
       { isolationLevel: "repeatable read", accessMode: "read only" },
     ),
@@ -484,28 +599,123 @@ function notifyDecision(
   );
 }
 
+function resolveMaker(db: Db, member: Member, input: typeof NewDecision.Type) {
+  return Effect.gen(function* () {
+    const madeByType = input.madeByType ?? memberKind(member);
+    if (madeByType === "human") {
+      if (input.madeByAgentName || input.madeByAgentRank || input.madeByAgentModel)
+        return yield* Effect.fail(problem(400, "Remove agent provenance from a human decision."));
+      const id = input.madeByUserId ?? (!input.madeByType && !member.agentRank ? member.id : null);
+      const needsEvidence =
+        input.madeByType !== undefined || id !== member.id || member.agentRank !== null;
+      if (!id || (needsEvidence && (!input.evidenceKind || !input.evidenceReference?.trim())))
+        return yield* Effect.fail(
+          problem(400, "A human decision needs a human maker, an evidence kind and reference."),
+        );
+      const [maker] = yield* db
+        .select({ id: users.id })
+        .from(users)
+        .where(
+          and(
+            eq(users.organisationId, member.organisationId),
+            eq(users.id, id),
+            isNull(users.agentRank),
+          ),
+        );
+      if (!maker)
+        return yield* Effect.fail(problem(400, "Choose an existing human user as the maker."));
+      if (input.evidenceKind === "subspaceComment") {
+        const reference = input.evidenceReference;
+        const [comment] =
+          reference && isUuid(reference)
+            ? yield* db
+                .select({ id: comments.id })
+                .from(comments)
+                .where(
+                  and(
+                    eq(comments.organisationId, member.organisationId),
+                    eq(comments.id, reference),
+                    eq(comments.authorId, id),
+                    isNull(comments.deletedAt),
+                  ),
+                )
+                .for("share")
+            : [];
+        if (!comment)
+          return yield* Effect.fail(
+            problem(
+              400,
+              "Use the ID of an undeleted comment written by the decision's human maker.",
+            ),
+          );
+      }
+      return { madeByType, madeByUserId: id };
+    }
+
+    if (!member.agentRank)
+      return yield* Effect.fail(
+        problem(
+          403,
+          "Decision provenance rule 3: humans cannot record agent decisions. Ask the agent to record its own decision.",
+        ),
+      );
+    if (input.madeByUserId)
+      return yield* Effect.fail(
+        problem(400, "Do not supply madeByUserId for an agent decision; the server resolves it."),
+      );
+    const rank = input.madeByAgentRank ?? member.agentRank;
+    const name = input.madeByAgentName ?? member.displayName;
+    const model = input.madeByAgentModel ?? member.agentModel;
+    const relay = rank === "crew" && (input.madeByAgentRank === "crew" || member.relayedCrew);
+    if (
+      !model ||
+      (input.madeByType &&
+        (!input.madeByAgentName || !input.madeByAgentModel || !input.madeByAgentRank))
+    )
+      return yield* Effect.fail(problem(400, "Supply the agent maker's name, rank and model."));
+    if (relay && member.agentRank !== "captain" && member.agentRank !== "rearAdmiral")
+      return yield* Effect.fail(
+        problem(
+          403,
+          "Decision provenance rule 3 (crew): only a registered captain or rear admiral may record a crew decision. Ask a registered agent to relay it.",
+        ),
+      );
+    if (
+      !relay &&
+      (rank !== member.agentRank || name.toLowerCase() !== member.displayName.toLowerCase())
+    )
+      return yield* Effect.fail(
+        problem(403, "Use your own registered agent name and rank when recording your decision."),
+      );
+    return {
+      madeByType,
+      madeByUserId: relay ? null : member.id,
+      madeByAgentName: name,
+      madeByAgentRank: rank,
+      madeByAgentModel: model,
+    };
+  });
+}
+
 export const createDecision = (member: Member, input: typeof NewDecision.Type) =>
   Effect.flatMap(Database, (db) =>
     db.transaction((tx) =>
       Effect.gen(function* () {
         yield* lockIssues(tx, member);
-        const { issueIds, madeByType, madeByUserId, ...fields } = input;
+        const { issueIds, ...fields } = input;
+        const provenance = yield* resolveMaker(tx, member, input);
         const { project } = yield* readProject(tx, member, fields.projectId);
         if (project.archivedAt)
           return yield* Effect.fail(
             problem(409, "Unarchive the project before logging decisions."),
           );
-        if (
-          (madeByType && madeByType !== memberKind(member)) ||
-          (madeByUserId && (member.agentRank || madeByUserId !== member.id))
-        )
-          return yield* Effect.fail(problem(403, "Record decisions under your own identity."));
         const status = fields.status ?? "proposed";
         const target = yield* predecessor(tx, member, project.id, fields.supersedesId);
         const [row] = yield* tx
           .insert(decisions)
           .values({
             ...fields,
+            ...provenance,
             ...statusFields(status, member.id),
             organisationId: member.organisationId,
             recordedById: member.id,
@@ -535,7 +745,7 @@ export function changeDecision(
       Effect.gen(function* () {
         yield* lockIssues(tx, member);
         const [joined] = yield* rowData(tx, member, id);
-        if (!joined) return yield* Effect.fail(problem(404, "Decision not found."));
+        if (!joined) return yield* Effect.fail(problem(404, decisionNotFound));
         const prior = joined.decision;
         if (member.agentRank && prior.recordedById !== member.id)
           return yield* Effect.fail(problem(403, "Agents can change decisions they recorded."));
@@ -667,6 +877,17 @@ export function listRevisions(
   });
 }
 
+// Snapshots saved before `madeBy` existed name a human maker only through `madeByUserId`,
+// which was always the recording member, so their saved `recordedBy` is the maker.
+export function withMadeBy(snapshot: unknown) {
+  if (typeof snapshot !== "object" || snapshot === null || "madeBy" in snapshot) return snapshot;
+  const legacy = snapshot as { madeByUserId?: unknown; recordedBy?: unknown };
+  return {
+    ...snapshot,
+    madeBy: typeof legacy.madeByUserId === "string" ? legacy.recordedBy : null,
+  };
+}
+
 function getRevision(member: Member, id: string, revisionId: string) {
   return Effect.gen(function* () {
     const db = yield* Database;
@@ -676,7 +897,7 @@ function getRevision(member: Member, id: string, revisionId: string) {
     if (!row) return yield* Effect.fail(problem(404, "Decision revision not found."));
     return {
       revision: yield* revisionMetadata(row),
-      snapshot: yield* Schema.decodeUnknownEffect(Detail)(row.snapshot),
+      snapshot: yield* Schema.decodeUnknownEffect(Detail)(withMadeBy(row.snapshot)),
       currentVersion: current.version,
       currentRevisionNumber: current.revisionNumber,
       previousRevisionId: rows[index - 1]?.id ?? null,
@@ -690,6 +911,11 @@ export const decisionGroup = HttpApiGroup.make("decisions")
     HttpApiEndpoint.get("decisions", "/decisions", {
       query: Query,
       success: pageOf(Decision),
+      error: endpointErrors,
+    }),
+    HttpApiEndpoint.get("decisionCounts", "/decisions/counts", {
+      query: CountQuery,
+      success: DecisionCounts,
       error: endpointErrors,
     }),
     HttpApiEndpoint.get("decision", "/decisions/:id", {
@@ -736,6 +962,9 @@ export const decisionHandlers = (
   handlers
     .handle("decisions", ({ query }) =>
       handleDb(Effect.flatMap(CurrentMember, (member) => listDecisions(member, query))),
+    )
+    .handle("decisionCounts", ({ query }) =>
+      handleDb(Effect.flatMap(CurrentMember, (member) => countDecisions(member, query))),
     )
     .handle("decision", ({ params }) =>
       handleDb(

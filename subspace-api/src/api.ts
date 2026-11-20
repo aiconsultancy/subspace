@@ -1,6 +1,6 @@
 import { BunHttpServer } from "@effect/platform-bun";
 import { sql } from "drizzle-orm";
-import { Effect, Layer, Redacted, Schedule, Schema } from "effect";
+import { Effect, Layer, Redacted, Schedule, Schema, type Types } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   HttpApi,
@@ -22,6 +22,12 @@ import { decisionGroup, decisionHandlers } from "./decisions";
 import { Database, databaseLayer } from "./db";
 import {
   CreateFleet,
+  CreateShip,
+  RenameShip,
+  Ship,
+  createShip,
+  listShips,
+  renameShip,
   Fleet,
   FleetAssignment,
   FleetRef,
@@ -63,7 +69,7 @@ import {
   updateInitiative,
 } from "./initiatives";
 import { endpointErrors, problem, Unavailable } from "./problems";
-import { Email, Name, NullableString, PageQuery, Slug, Uuid } from "./validation";
+import { Email, Name, NullableString, PageQuery, pageOf, Slug, Uuid } from "./validation";
 
 import {
   BearerAuth,
@@ -108,6 +114,9 @@ const identityGroup = HttpApiGroup.make("identity")
         agentRank: Schema.NullOr(AgentRank),
         fleet: NullableString,
         ship: NullableString,
+        fleetId: Schema.NullOr(Uuid),
+        shipId: Schema.NullOr(Uuid),
+        isAdmin: Schema.Boolean,
       }),
     }),
     HttpApiEndpoint.get("myInitiatives", "/me/initiatives", {
@@ -122,7 +131,8 @@ const fleetParams = { reference: FleetRef };
 const fleetGroup = HttpApiGroup.make("fleets")
   .add(
     HttpApiEndpoint.get("fleets", "/fleets", {
-      success: Schema.Struct({ items: Schema.Array(Fleet) }),
+      query: PageQuery,
+      success: pageOf(Fleet),
       error: endpointErrors,
     }),
     HttpApiEndpoint.get("fleet", "/fleets/:reference", {
@@ -141,7 +151,25 @@ const fleetGroup = HttpApiGroup.make("fleets")
       success: Fleet,
       error: endpointErrors,
     }),
+    HttpApiEndpoint.get("listShips", "/fleets/:fleetId/ships", {
+      params: { fleetId: Uuid },
+      success: Schema.Array(Ship),
+      error: endpointErrors,
+    }),
+    HttpApiEndpoint.post("createShip", "/fleets/:fleetId/ships", {
+      params: { fleetId: Uuid },
+      payload: CreateShip,
+      success: Ship.pipe(HttpApiSchema.status(201)),
+      error: endpointErrors,
+    }),
+    HttpApiEndpoint.patch("renameShip", "/ships/:shipId", {
+      params: { shipId: Uuid },
+      payload: RenameShip,
+      success: Ship,
+      error: endpointErrors,
+    }),
   )
+  .annotate(HttpApi.PayloadParseOptions, { onExcessProperty: "error" })
   .prefix(prefix)
   .middleware(BearerAuth)
   .middleware(ValidationErrors);
@@ -289,7 +317,9 @@ const identityLive = HttpApiBuilder.group(api, "identity", (handlers) =>
 
 const fleetLive = HttpApiBuilder.group(api, "fleets", (handlers) =>
   handlers
-    .handle("fleets", () => handleDb(Effect.flatMap(CurrentMember, listFleets)))
+    .handle("fleets", ({ query }) =>
+      handleDb(Effect.flatMap(CurrentMember, (member) => listFleets(member, query))),
+    )
     .handle("fleet", ({ params }) =>
       handleDb(Effect.flatMap(CurrentMember, (member) => getFleet(member, params.reference))),
     )
@@ -299,6 +329,19 @@ const fleetLive = HttpApiBuilder.group(api, "fleets", (handlers) =>
     .handle("editFleet", ({ params, payload }) =>
       handleDb(
         Effect.flatMap(CurrentMember, (member) => updateFleet(member, params.reference, payload)),
+      ),
+    )
+    .handle("listShips", ({ params }) =>
+      handleDb(Effect.flatMap(CurrentMember, (member) => listShips(member, params.fleetId))),
+    )
+    .handle("createShip", ({ params, payload }) =>
+      handleDb(
+        Effect.flatMap(CurrentMember, (member) => createShip(member, params.fleetId, payload.name)),
+      ),
+    )
+    .handle("renameShip", ({ params, payload }) =>
+      handleDb(
+        Effect.flatMap(CurrentMember, (member) => renameShip(member, params.shipId, payload)),
       ),
     ),
 );
@@ -389,6 +432,53 @@ function devLive(dev: NonNullable<Config["dev"]>, key: Uint8Array) {
   );
 }
 
+// These resources share a problem document with the CFP API. Keep provider-specific detail.
+const sharedProblems = HttpRouter.middleware<
+  Types.unhandled,
+  HttpServerRequest.HttpServerRequest,
+  true
+>(
+  (next) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const response = yield* next;
+      const path = request.url.split("?", 1)[0]!;
+      if (!/^\/api\/v1\/(?:agents|fleets|ships|decisions)(?:\/|$)/u.test(path)) return response;
+      const input = request.headers["x-correlation-id"];
+      const correlationId =
+        input && /^[a-zA-Z0-9._-]{1,128}$/u.test(input) ? input : crypto.randomUUID();
+      const withCorrelation = HttpServerResponse.setHeader(
+        response,
+        "X-Correlation-Id",
+        correlationId,
+      );
+      const body = response.body;
+      if (body._tag !== "Uint8Array" || !body.contentType.startsWith("application/problem+json"))
+        return withCorrelation;
+      const { title, status, detail, currentVersion, errors } = JSON.parse(
+        body.text ?? new TextDecoder().decode(body.body),
+      );
+      return HttpServerResponse.jsonUnsafe(
+        {
+          type: `https://httpstatuses.com/${status}`,
+          title,
+          status,
+          detail: status === 401 ? "A valid Subspace access token is required." : detail,
+          instance: path,
+          correlationId,
+          errors: errors ?? {},
+          ...(currentVersion == null ? {} : { currentVersion }),
+        },
+        {
+          status: response.status,
+          headers: withCorrelation.headers,
+          contentType: "application/problem+json",
+        },
+      );
+    }),
+  { global: true },
+);
+
 export function routes(
   options: Config,
   devKey: Uint8Array | null,
@@ -429,7 +519,14 @@ export function routes(
               Effect.provideService(Database, db),
               Effect.mapError(() => problem(500, "The membership could not be resolved.")),
             );
-            if (!member)
+            if (member?.agentRank && !member.active)
+              return yield* Effect.fail(
+                problem(
+                  403,
+                  `Agent '${member.displayName}' is deactivated. Ask a human to reactivate it.`,
+                ),
+              );
+            if (!member?.active)
               return yield* Effect.fail(
                 problem(403, "An active organisation membership is required."),
               );
@@ -494,7 +591,7 @@ export function routes(
   const polling = Layer.effectDiscard(pollGitHub(options.github, github)).pipe(
     Layer.provide(resources),
   );
-  return Layer.mergeAll(endpoints, cleanup, polling);
+  return Layer.mergeAll(endpoints, cleanup, polling, sharedProblems);
 }
 
 export function server(options: Config, devKey: Uint8Array | null) {

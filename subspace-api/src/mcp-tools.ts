@@ -1,9 +1,25 @@
+import {
+  CreateFleet,
+  UpdateFleet,
+  FleetRef,
+  CreateShip,
+  RenameShip,
+  createFleet,
+  updateFleet,
+  getFleet,
+  listFleets,
+  createShip,
+  listShips,
+  renameShip,
+} from "./fleets";
 import { Effect, Schema } from "effect";
 import { changeComment, getComment, locateComment } from "./comment-mutations";
 import { AuditQuery, listAudit } from "./audit";
 import { Database } from "./db";
 import {
   changeDecision,
+  CountQuery as DecisionCountQuery,
+  countDecisions,
   createDecision,
   DecisionEdit,
   getDecision,
@@ -438,11 +454,54 @@ export const mcpTools = {
         ? documentReviewStatus(member, input.document, input.documentRevision)
         : issueReviewStatus(member, input.issue, input),
   ),
+  subspace_list_fleets: tool("List fleets.", true, Pagination, listFleets),
+  subspace_get_fleet: tool(
+    "Read a fleet by ID or slug.",
+    true,
+    Schema.Struct({ reference: FleetRef }),
+    (member, { reference }) => getFleet(member, reference),
+  ),
+  subspace_create_fleet: tool(
+    "Create a fleet. Requires a human administrator.",
+    false,
+    Schema.Struct({ fleet: CreateFleet }),
+    (member, { fleet }) => createFleet(member, fleet),
+  ),
+  subspace_update_fleet: tool(
+    "Update a fleet. Requires a human administrator.",
+    false,
+    Schema.Struct({ reference: FleetRef, changes: UpdateFleet }),
+    (member, { reference, changes }) => updateFleet(member, reference, changes),
+  ),
+  subspace_list_ships: tool(
+    "List ships in a fleet.",
+    true,
+    Schema.Struct({ fleetId: Uuid }),
+    (member, { fleetId }) => listShips(member, fleetId),
+  ),
+  subspace_create_ship: tool(
+    "Create a ship in a fleet.",
+    false,
+    Schema.Struct({ fleetId: Uuid, ...CreateShip.fields }),
+    (member, { fleetId, name }) => createShip(member, fleetId, name),
+  ),
+  subspace_rename_ship: tool(
+    "Rename a ship.",
+    false,
+    Schema.Struct({ shipId: Uuid, ...RenameShip.fields }),
+    (member, { shipId, ...changes }) => renameShip(member, shipId, changes),
+  ),
   subspace_list_decisions: tool(
     "List project decisions with optional filters.",
     true,
     Schema.Struct({ filters: Schema.optional(DecisionQuery) }),
     (member, { filters }) => listDecisions(member, filters ?? {}),
+  ),
+  subspace_count_decisions: tool(
+    "Count project decisions by status with optional filters.",
+    true,
+    Schema.Struct({ filters: Schema.optional(DecisionCountQuery) }),
+    (member, { filters }) => countDecisions(member, filters ?? {}),
   ),
   subspace_get_decision: tool(
     "Get the current project decision.",

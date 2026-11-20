@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { Database } from "./db";
-import { fleetDto } from "./fleets";
+import { loadFleetDtos } from "./fleets";
 import { type Member } from "./identity";
 import {
   type ChannelChanges,
@@ -59,11 +59,18 @@ function loadRows(db: Db, organisationId: string) {
       .from(initiativeStakeholders)
       .where(eq(initiativeStakeholders.organisationId, organisationId))
       .orderBy(asc(initiativeStakeholders.name), asc(initiativeStakeholders.id));
+    const fleetDtos = yield* loadFleetDtos(db, organisationId, [
+      ...new Map(rows.flatMap(({ fleet }) => (fleet ? [[fleet.id, fleet] as const] : []))).values(),
+    ]);
     const byInitiative = Map.groupBy(contacts, ({ initiativeId }) => initiativeId);
     return new Map(
       rows.map((row) => [
         row.initiative.id,
-        { ...row, stakeholders: (byInitiative.get(row.initiative.id) ?? []).map(stakeholderDto) },
+        {
+          ...row,
+          fleet: fleetDtos.get(row.initiative.fleetId ?? "") ?? null,
+          stakeholders: (byInitiative.get(row.initiative.id) ?? []).map(stakeholderDto),
+        },
       ]),
     );
   });
@@ -95,7 +102,7 @@ function membership(row: Joined) {
     channels,
     fleetId,
     stakeholders: row.stakeholders,
-    fleet: row.fleet ? fleetDto(row.fleet) : null,
+    fleet: row.fleet,
   };
 }
 
@@ -311,11 +318,10 @@ function allowedParent(rows: ReadonlyMap<string, Joined>, parentId: string | nul
 
 export const createInitiative = (member: Member, payload: typeof CreateInitiative.Type) =>
   Effect.gen(function* () {
-    if (member.role !== "admin" && payload.channelConfiguration) {
+    if (member.role !== "admin" || member.agentRank)
       return yield* Effect.fail(
-        problem(403, "Channel configuration requires organisation admin access."),
+        problem(403, "Initiative creation requires a human Subspace administrator."),
       );
-    }
     const db = yield* Database;
     return yield* db.transaction((tx) =>
       Effect.gen(function* () {

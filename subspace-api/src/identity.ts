@@ -3,7 +3,7 @@ import { Context, Effect, Schema } from "effect";
 import { type PrincipalIdentity } from "./auth";
 import { type Config } from "./config";
 import { Database } from "./db";
-import { fleets, initiativeMemberships, initiatives, organisations, users } from "./schema";
+import { fleets, initiativeMemberships, initiatives, organisations, ships, users } from "./schema";
 
 export const AgentRank = Schema.Literals(["rearAdmiral", "captain", "crew"]);
 export const memberKind = (member: { agentRank: string | null }) =>
@@ -21,18 +21,25 @@ export const findMember = (identity: PrincipalIdentity) =>
   Effect.gen(function* () {
     const db = yield* Database;
     const [row] = yield* db
-      .select({ member: users })
+      .select({ member: users, fleet: fleets.slug, ship: ships.name })
       .from(users)
+      .leftJoin(fleets, eq(fleets.id, users.agentFleetId))
+      .leftJoin(ships, eq(ships.id, users.agentShipId))
       .innerJoin(organisations, eq(users.organisationId, organisations.id))
       .where(
         and(
           eq(users.subject, identity.subject),
           eq(organisations.provider, identity.provider),
           eq(organisations.externalId, identity.externalOrganisation),
-          eq(users.active, true),
         ),
       );
-    return row?.member;
+    return row
+      ? {
+          ...row.member,
+          agentFleet: row.fleet ?? row.member.agentFleet,
+          agentShip: row.ship ?? row.member.agentShip,
+        }
+      : undefined;
   });
 
 interface Profile {
@@ -130,8 +137,6 @@ export const localMember = (
               ircHost: dev.ircHost,
               ircPort: dev.ircPort,
               ircTls: false,
-              rearAdmiralName: "Rear Admiral",
-              captainNames: [],
             })
             .returning();
           const [initiative] = yield* tx
@@ -166,4 +171,7 @@ export const publicProfile = (member: Member) => ({
   agentRank: member.agentRank,
   fleet: member.agentFleet,
   ship: member.agentShip,
+  fleetId: member.agentFleetId,
+  shipId: member.agentShipId,
+  isAdmin: member.role === "admin" && !member.agentRank,
 });
