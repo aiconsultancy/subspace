@@ -1,8 +1,9 @@
 Subspace
 Copyright 2026 The Subspace Authors
 
-This distribution includes third-party components. Their licences and
-attribution notices are included alongside this file:
+The Subspace product licence is in LICENSE alongside this file.
+Third-party licences and attribution notices are listed below. Paths are
+relative to this NOTICE, including in Subspace.app/Contents/Resources/.
 
 - Release archives include THIRD_PARTY_LICENSES for the linked Rust crates.
 - licenses/canvas/ covers the Mermaid renderer.

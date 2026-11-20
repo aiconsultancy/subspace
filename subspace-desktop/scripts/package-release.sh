@@ -35,13 +35,17 @@ case "$target" in
 esac
 mkdir -p "$root/dist"
 stage="$(mktemp -d "$root/dist/.$product-release.XXXXXX")"
-trap 'rm -rf "$stage"' EXIT
+release_build_dir=""
+trap 'rm -rf "$stage" "${release_build_dir:+$release_build_dir}"' EXIT
 stage_product_licences "$stage" "$target"
 cp "${rust_std_notices[@]}" "$stage/licenses/rust-std/"
 release_cargo_args "$target"
 generate_rust_licences "$stage/THIRD_PARTY_LICENSES" "$target"
-cargo build --release --locked -p "$binary_name" "${release_args[@]}"
-build_dir="$target_dir/$target/release"
+# Cargo writes the same executable name for every feature set. Keep it
+# private to this invocation until it is archived with the licence report.
+release_build_dir="$(new_release_build_dir)"
+CARGO_TARGET_DIR="$release_build_dir" cargo build --release --locked -p "$binary_name" "${release_args[@]}"
+build_dir="$release_build_dir/$target/release"
 if [[ "$host" = "$target" ]]; then
     reported_metadata="$("$build_dir/$binary_name$exe" __product_metadata | tr -d '\r')"
     reported="$(jq -er .version <<<"$reported_metadata")"

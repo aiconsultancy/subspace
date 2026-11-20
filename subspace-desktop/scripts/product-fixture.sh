@@ -4,14 +4,14 @@
 
 setup_product_fixture() {
     local root="${root:?}"
-    local checksum
-    fixture_repo="$(mktemp -d "${TMPDIR:-/tmp}/subspace-products.XXXXXX")"
+    local checksum temporary="${TMPDIR:-/tmp}"
+    fixture_repo="$(mktemp -d "${temporary%/}/subspace-products.XXXXXX")"
     trap 'rm -rf "${fixture_repo:?}"' EXIT
     fixture="$fixture_repo/subspace-desktop"
     mkdir -p "$fixture/scripts" "$fixture/bin" "$fixture/metadata" "$fixture/spaces/actions/assets"
     cp "$root/scripts/"{product.sh,prerelease-common.sh,run-app.sh,package-release.sh,package-macos.sh,package-macos-ci.sh,build-macos-app.sh,install-macos.sh,github-oauth-secret.sh,resolve-licence-notices.py} "$fixture/scripts/"
-    cp "$root/"{README.md,NOTICE,about.jq,about.toml} "$fixture/"
-    cp "$root/../LICENSE" "$fixture_repo/"
+    cp "$root/"{README.md,NOTICE,about.jq,about.toml,native-notices.json} "$fixture/"
+    cp "$root/../"{LICENSE,NOTICE} "$fixture_repo/"
     cp -R "$root/licenses" "$fixture/licenses"
     cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$fixture/spaces/actions/assets/"
     printf '[tools]\nrust = { version = "1.77.0", mr_boxington = true }\n' >"$fixture/mise.toml"
@@ -26,6 +26,20 @@ setup_product_fixture() {
       [{crates: ["fixture-linked v1.0.0"], id: "MIT",
         path: "linked-licence.txt", sha256: $checksum}]
     ' >"$fixture/about-notices.json"
+    mkdir -p "$fixture/native/ort/build/download" "$fixture/native/webview2/x64" \
+        "$fixture/git-fork" "$fixture_repo/resolved-framework/host/update"
+    printf 'Fixture ONNX Runtime distribution table\n' >"$fixture/native/ort/build/download/dist.tsv"
+    printf 'Fixture WebView2 loader\n' >"$fixture/native/webview2/x64/WebView2LoaderStatic.lib"
+    printf 'Fixture Git fork licence\n' >"$fixture/git-fork/LICENSE"
+    printf 'Fixture Framework project licence\n' >"$fixture_repo/resolved-framework/LICENSE"
+    local ort_pin webview_pin
+    ort_pin="$(shasum -a 256 "$fixture/native/ort/build/download/dist.tsv" | cut -d ' ' -f1)"
+    webview_pin="$(shasum -a 256 "$fixture/native/webview2/x64/WebView2LoaderStatic.lib" | cut -d ' ' -f1)"
+    jq --arg ort "$ort_pin" --arg webview "$webview_pin" '
+      .onnxruntime.artifacts["build/download/dist.tsv"] = $ort |
+      .webview2.artifacts["x64/WebView2LoaderStatic.lib"] = $webview
+    ' "$fixture/native-notices.json" >"$fixture/native-notices.tmp"
+    mv "$fixture/native-notices.tmp" "$fixture/native-notices.json"
     if [[ -n "${1:-}" ]]; then
         workspace_metadata="$(cat "$1/workspace.json")"
     else
@@ -44,6 +58,24 @@ setup_product_fixture() {
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$FIXTURE/cargo.log"
+target=""; features=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+    case "${args[i]}" in
+        --target) target="${args[i+1]}" ;;
+        --features) features="${args[i+1]}" ;;
+    esac
+done
+component=onnxruntime
+native_dir="$FIXTURE/native/ort"
+if [[ "$target" == *-windows-* ]]; then
+    component=webview2
+    native_dir="$FIXTURE/native/webview2"
+fi
+registry=registry+https://github.com/rust-lang/crates.io-index
+fork_url=https://example.com/fixture/fork
+fork_revision=1234567890abcdef1234567890abcdef12345678
+framework="$FIXTURE/../resolved-framework"
 case "$1" in
     run) cat "$FIXTURE/metadata/subspace.json" ;;
     metadata)
@@ -52,8 +84,14 @@ case "$1" in
         ;;
     tree)
         test -z "${SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET:-}"
-        printf 'subspace v%s\n' "$(jq -r .version "$FIXTURE/metadata/subspace.json")"
+        printf 'subspace v%s (%s/products/subspace)\n' "$(jq -r .version "$FIXTURE/metadata/subspace.json")" "$FIXTURE"
         printf '%s\n' 'fixture-linked v1.0.0' 'fixture-generic v1.0.0' 'fixture-mpl v3.1.4'
+        printf 'fixture-linked v1.0.0 (%s#%.8s)\n' "$fork_url" "$fork_revision"
+        printf 'subspace-update v1.0.0 (%s/host/update)\n' "$framework"
+        jq -r --arg component "$component" --arg version "${FAKE_NATIVE_VERSION:-}" '
+          .[$component] | "\(.crate) v\(if $version == "" then .crate_version else $version end)"
+        ' "$FIXTURE/native-notices.json"
+        if [[ "$features" == *terminal* ]]; then echo 'fixture-terminal v1.0.0'; fi
         if [[ "${FAKE_MISSING_LICENCE:-0}" = 1 ]]; then echo 'fixture-unreported v1.0.0'; fi
         ;;
     about)
@@ -65,31 +103,60 @@ case "$1" in
         if [[ "${FAKE_FALLBACK_LOG_CHANGED:-0}" = 1 ]]; then
             echo '[DEBUG] using canonical MIT text for fixture-linked and fixture-generic' >&2
         else
-            for name in fixture-linked fixture-generic; do
-                echo "[DEBUG] unable to find text for license 'MIT' for crate '$name 1.0.0', falling back to canonical text" >&2
-            done
+            echo "[DEBUG] unable to find text for license 'MIT' for crate 'fixture-linked 1.0.0', falling back to canonical text" >&2
+            if [[ "${FAKE_PARTIAL_FALLBACK:-0}" != 1 ]]; then
+                echo "[DEBUG] unable to find text for license 'MIT' for crate 'fixture-generic 1.0.0', falling back to canonical text" >&2
+            fi
         fi
+        echo "[DEBUG] unable to find text for license 'Apache-2.0' for crate 'subspace-update 1.0.0', falling back to canonical text" >&2
         while [[ "$1" != --output-file ]]; do shift; done
         version="$(jq -r .version "$FIXTURE/metadata/subspace.json")"
-        jq -n --arg version "$version" '
-          {name: "subspace", version: $version} as $product |
-          "registry+https://github.com/rust-lang/crates.io-index" as $registry |
-          {name: "fixture-linked", version: "1.0.0", source: $registry} as $linked |
-          {name: "fixture-generic", version: "1.0.0", source: $registry} as $generic |
-          {name: "fixture-mpl", version: "3.1.4", source: $registry} as $mpl |
-          {name: "fixture-macro", version: "2.0.0"} as $macro |
+        jq -n --arg version "$version" --arg root "$FIXTURE" --arg registry "$registry" \
+          --arg fork "$fork_url" --arg rev "$fork_revision" --arg framework "$framework" \
+          --arg native "$native_dir" --arg component "$component" --arg features "$features" \
+          --arg native_version "${FAKE_NATIVE_VERSION:-}" --arg missing_fork "${FAKE_MISSING_FORK:-0}" \
+          --slurpfile pins "$FIXTURE/native-notices.json" '
+          def local_package($name; $version; $path):
+            {name: $name, version: $version, source: null, id: ("path+file://" + $path + "#" + $name + "@" + $version),
+             manifest_path: ($path + "/Cargo.toml")};
+          def registry_package($name; $version):
+            {name: $name, version: $version, source: $registry, id: ($registry + "#" + $name + "@" + $version),
+             manifest_path: ($root + "/registry/" + $name + "/Cargo.toml")};
+          local_package("subspace"; $version; ($root + "/products/subspace")) as $product |
+          registry_package("fixture-linked"; "1.0.0") as $linked |
+          registry_package("fixture-generic"; "1.0.0") as $generic |
+          registry_package("fixture-mpl"; "3.1.4") as $mpl |
+          registry_package("fixture-macro"; "2.0.0") as $macro |
+          registry_package("fixture-terminal"; "1.0.0") as $terminal |
+          ($pins[0][$component] | registry_package(.crate; (if $native_version == "" then .crate_version else $native_version end)) |
+            .manifest_path = ($native + "/Cargo.toml")) as $native_crate |
+          ($linked | .id = ("git+" + $fork + "#fixture-linked@1.0.0") |
+            .source = ("git+" + $fork + "#" + $rev) | .manifest_path = ($root + "/git-fork/Cargo.toml")) as $git |
+          local_package("subspace-framework"; "1.0.0"; $framework) as $facade |
+          local_package("subspace-update"; "1.0.0"; ($framework + "/host/update")) as $update |
           {
-            crates: ([$product, $linked, $generic, $mpl, $macro] | map({package: .})),
-            licenses: [
+            crates: ([$product, $linked, $generic, $mpl, $macro, $native_crate, $facade, $update]
+              + (if $missing_fork == "1" then [] else [$git] end)
+              + (if $features | contains("terminal") then [$terminal] else [] end) | map({package: .})),
+            licenses: ([
               {id: "Apache-2.0", text: "Fixture project licence", source_path: "LICENSE",
                used_by: [{crate: $product}]},
+              {id: "Apache-2.0", text: "Fixture generic Apache licence", source_path: null,
+               used_by: [{crate: $update}]},
               {id: "MIT", text: "Fixture generic licence", source_path: null,
                used_by: [{crate: $linked}, {crate: $generic}]},
+              {id: "MIT", text: "Fixture native crate licence", source_path: "LICENSE",
+               used_by: [{crate: $native_crate}]},
               {id: "MPL-2.0", text: "Fixture MPL licence", source_path: "LICENSE",
                used_by: [{crate: $mpl}]},
               {id: "ISC", text: "Fixture build-only licence", source_path: null,
                used_by: [{crate: $macro}]}
-            ]
+            ] + (if $missing_fork == "1" then [] else
+              [{id: "MIT", text: "Fixture Git fork licence\n", source_path: ($root + "/git-fork/LICENSE"),
+                used_by: [{crate: $git}]}] end)
+              + (if $features | contains("terminal") then
+                [{id: "MIT", text: "Fixture Terminal licence", source_path: "LICENSE",
+                  used_by: [{crate: $terminal}]}] else [] end))
           }' >"$2"
         ;;
     build)
@@ -114,7 +181,7 @@ case "$1" in
             esac
             shift
         done
-        directory="$FIXTURE/target${target:+/$target}/$release"
+        directory="${CARGO_TARGET_DIR:-$FIXTURE/target}${target:+/$target}/$release"
         mkdir -p "$directory"
         exe=""; case "$target" in *-windows-*) exe=.exe ;; esac
         cat >"$directory/$package$exe" <<'BINARY'
@@ -126,11 +193,21 @@ if [ "${1:-}" = __product_metadata ]; then
     jq --arg version "${FAKE_BINARY_VERSION:-$version}" '.version = $version' "$FIXTURE/metadata/subspace.json"
 fi
 BINARY
+        printf '# features: %s\n' "$features" >>"$directory/$package$exe"
         chmod 755 "$directory/$package$exe"
         # A real build compiles the OAuth secret in; FAKE_DROP_OAUTH_SECRET
         # stands for a stale build cache that did not.
         if [ -n "${SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET:-}" ] && [ "${FAKE_DROP_OAUTH_SECRET:-0}" != 1 ]; then
             printf '# %s\n' "$SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET" >>"$directory/$package$exe"
+        fi
+        if [[ -n "${FIXTURE_BUILD_GATE:-}" ]]; then
+            touch "$FIXTURE_BUILD_GATE/built"
+            for ((waited = 0; waited < 300; waited++)); do
+                [[ ! -f "$FIXTURE_BUILD_GATE/resume" ]] || exit 0
+                sleep 0.1
+            done
+            echo 'timed out waiting to stage the fixture executable' >&2
+            exit 28
         fi
         ;;
     *) echo "unexpected cargo operation: $*" >&2; exit 24 ;;
