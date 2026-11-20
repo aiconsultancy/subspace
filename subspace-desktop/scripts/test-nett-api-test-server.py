@@ -24,7 +24,10 @@ import threading
 import time
 import unittest
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
@@ -721,6 +724,21 @@ class MediaTests(FixtureCase):
         self.org_problem(409, 'PUT', f"/issues/media/{prepared['mediaId']}/upload", dict(version=3, cancel=True))
         self.org_problem(409, 'PUT', f'/issues/media/{IMAGE}/upload', dict(version=1, cancel=True))
 
+    def test_a_rejected_status_read_leaves_the_upload_checking_and_unattached(self):
+        path = '/issues/OPS-1'
+        issue = self.get(path)
+        body, data = self.upload('issueDescription', issueId=issue['id'])
+        prepared = self.ok('POST', '/issues/media/prepare', body)
+        self.assertEqual(self.transfer(prepared, data)[0], 204)
+        complete = dict(uploadId=prepared['uploadId'])
+        checking = self.ok('POST', '/issues/media/from-upload', complete, status=202)
+        status_path = f"/issues/media/uploads/{prepared['uploadId']}"
+        self.org_problem(400, 'GET', status_path + '?unexpected=1')
+        self.assertEqual(self.ok('POST', '/issues/media/from-upload', complete, status=202), checking)
+        self.assertEqual(self.get(path)['media'], issue['media'])
+        self.assertEqual(self.get(status_path)['status'], 'ready')
+        self.assertIn(prepared['mediaId'], [m['mediaId'] for m in self.get(path)['media']])
+
     def test_media_can_be_ready_when_its_completion_answers(self):
         status, value, _ = self.call('POST', '/__fixture/config', dict(mediaReadyAtOnce=True), token=None)
         self.assertEqual(status, 200, value)
@@ -910,6 +928,7 @@ class ChatUploadTests(FileCase):
         lifetime = NETT.parse_stamp(chat['expiresAt']) - NETT.parse_stamp(chat['createdAt'])
         self.assertAlmostEqual(lifetime.total_seconds(), 30 * 86400, delta=5)
         self.assertEqual(self.ok('POST', '/chat/uploads/from-upload', dict(uploadId=upload['uploadId'])), chat)
+        self.assertIsNone(self.server.fixture.transfers[upload['uploadId']]['data'])
         self.assertEqual(self.get(f"/chat/uploads/{chat['reference']}"), chat)
         grant = self.ok('POST', f"/chat/uploads/{chat['reference']}/grants")
         self.assertLessEqual(NETT.parse_stamp(grant['expiresAtUtc']), NETT.parse_stamp(chat['expiresAt']))
@@ -959,6 +978,10 @@ class ChatUploadTests(FileCase):
         self.assertEqual((status, body), (204, b''))
         self.org_problem(404, 'GET', f'/chat/uploads/{reference}')
         self.org_problem(404, 'POST', f'/chat/uploads/{reference}/grants')
+        self.org_problem(404, 'POST', '/chat/uploads/from-upload', dict(uploadId=done['uploadId']))
+        stored = self.server.fixture.chat_uploads[(WORKS, chat['id'])]
+        self.assertNotIn(stored['publicFileId'], self.server.fixture.files)
+        self.assertIsNone(self.server.fixture.transfers[done['uploadId']]['data'])
         self.org_problem(409, 'POST', '/chat/uploads/prepare', self.declaration(b'%PDF-1.4 fixture', 'brief.pdf',
                                                                                 'application/pdf', key))
         _, _, old = self.upload_chat()
@@ -1143,6 +1166,13 @@ class HookTests(FixtureCase):
         text = json.dumps(log)
         self.assertNotIn(TOKEN, text)
         self.assertNotIn(parse_qs(parts.query)['grant'][0], text)
+
+    def test_refused_requests_only_log_the_presence_of_unrecognised_query_parameters(self):
+        query = urlencode([('access_token', TOKEN), ('access_token', 'second-value'),
+                           ('team', TOKEN), ('q', 'private search')])
+        self.problem(401, 'GET', f'/api/v1/auth/context?{query}', token=None)
+        log = self.call('GET', '/__fixture/requests', token=None)[1]
+        self.assertEqual(log[0]['query'], dict(access_token=['REDACTED'], team=['REDACTED'], q=['REDACTED']))
 
 
 def flatten(schema, schemas, depth=0):
@@ -1460,6 +1490,23 @@ class MoveTests(StreamCase):
         hinted = sorted(data['identifier'] for name, data in found if name == 'issueChanged')
         self.assertEqual(hinted, ['WEB-4', 'WEB-5', 'WEB-6'], 'the source team hears of the move')
 
+    def test_create_and_move_never_reuse_an_identifier_vacated_by_a_move(self):
+        def move(ref, destination):
+            preview = self.preview(ref, destination)
+            context = preview['reviewContext']
+            return self.ok('PATCH', f'/issues/{ref}', dict(teamId=destination, version=context['issueVersion'],
+                                                          reviewContext=context, movePreviewToken=preview['token']))
+
+        self.assertEqual(move('OPS-5', WEB)['identifier'], 'WEB-4')
+        self.assertEqual(move('WEB-4', OPS)['identifier'], 'OPS-6')
+        self.org_problem(404, 'GET', '/issues/OPS-5')
+        created = self.ok('POST', '/issues', dict(teamId=WEB, title='A new browser check'), status=201)
+        self.assertEqual(created['identifier'], 'WEB-5')
+        self.org_problem(404, 'GET', '/issues/WEB-4')
+        other = self.ok('POST', '/issues', dict(teamId=NETT.uid('second/team/OPS'), title='Independent numbering'),
+                        status=201, org=SECOND)
+        self.assertEqual(other['identifier'], 'OPS-2')
+
     def test_a_changed_plan_or_an_archived_sub_issue_refuses_the_move(self):
         preview = self.preview()
         confirm = dict(teamId=WEB, version=preview['reviewContext']['issueVersion'],
@@ -1720,25 +1767,52 @@ class FailureHookTests(FileCase):
         refused = self.org_problem(409, 'POST', '/issues/OPS-1/attachments/prepare', declaration)
         self.assertIn('different or finished', refused['detail'])
 
-    def test_only_the_numeric_origin_is_answered_and_a_stalled_body_lets_go(self):
+    def test_only_the_numeric_origin_is_answered(self):
         connection = http.client.HTTPConnection(urlsplit(self.server.origin).netloc, timeout=5)
         self.addCleanup(connection.close)
         connection.putrequest('GET', '/__fixture/requests', skip_host=True)
         connection.putheader('Host', f'localhost:{self.server.server_port}')
         connection.endheaders()
         self.assertEqual(connection.getresponse().status, 421)
-        # A body that never arrives in full gives up and frees the fixture.
-        self.addCleanup(setattr, NETT.Handler, 'timeout', NETT.Handler.timeout)
-        NETT.Handler.timeout = 1
-        stalled = socket.create_connection(('127.0.0.1', self.server.server_port))
-        self.addCleanup(stalled.close)
-        netloc = urlsplit(self.server.origin).netloc
-        stalled.sendall(f'POST /__fixture/config HTTP/1.1\r\nHost: {netloc}\r\n'
-                        'Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{'.encode())
-        time.sleep(0.2)
-        started = time.monotonic()
-        self.assertEqual(self.call('GET', '/__fixture/requests', token=None)[0], 200)
-        self.assertLess(time.monotonic() - started, 3)
+
+    def test_a_trickling_upload_expires_without_blocking_other_requests(self):
+        body, data = self.upload(data=b'x' * 100, draftId=str(uuid.uuid4()))
+        prepared = self.ok('POST', '/issues/media/prepare', body)
+        url = urlsplit(prepared['upload']['uploadUrl'])
+        slow = http.client.HTTPConnection(url.netloc, timeout=3)
+        self.addCleanup(slow.close)
+        stop = threading.Event()
+
+        def trickle():
+            try:
+                while not stop.wait(0.08):
+                    slow.send(b'x')
+            except OSError:
+                pass  # The deadline closes the connection.
+
+        with patch.object(NETT.Handler, 'body_timeout', 1), ThreadPoolExecutor() as pool:
+            slow.putrequest('PUT', f'{url.path}?{url.query}')
+            slow.putheader('Content-Length', str(len(data)))
+            slow.putheader('Content-Type', body['contentType'])
+            slow.endheaders(b'x')
+            sending = pool.submit(trickle)
+            try:
+                # The log is taken at arrival. It must stay readable while the
+                # incomplete request is still receiving bytes.
+                with closing(http.client.HTTPConnection(url.netloc, timeout=0.7)) as probe:
+                    for _ in range(10):
+                        probe.request('GET', '/__fixture/requests')
+                        reply = probe.getresponse()
+                        if any(r['path'] == url.path for r in json.loads(reply.read())):
+                            break
+                        time.sleep(0.02)
+                    else:
+                        self.fail('the fixture did not record the incoming upload')
+                self.assertEqual(slow.getresponse().status, 408)
+            finally:
+                stop.set()
+            sending.result()
+        self.assertEqual(self.transfer(prepared, data)[0], 204, 'a partial body did not commit')
 
     def test_the_request_log_says_when_each_request_arrived(self):
         hook(self, 'requests/clear', {})
@@ -1806,6 +1880,40 @@ class StreamAuthorityTests(StreamCase):
             hook(self, 'members/revoke', dict(org=WORKS, user='grace', closeStreams=False))
         self.assertNotIn(b'issueChanged', self.ends_quickly(response))
         self.refused(403, token=GRACE_TOKEN)
+
+    def test_revocation_waits_for_delivery_already_authorised(self):
+        self.server.keepalive_seconds = 5
+        response = self.open_stream(token=GRACE_TOKEN)
+        self.ready(response)
+        subscriber = next(s for s in self.server.subscribers if s.token == GRACE_TOKEN)
+        authorised, resume, revoked = threading.Event(), threading.Event(), threading.Event()
+        check, close = self.server.authorised, subscriber.close
+
+        def pause_after_authorising(stream):
+            allowed = check(stream)
+            if stream is subscriber and allowed:
+                authorised.set()
+                resume.wait()
+            return allowed
+
+        def close_stream(reason):
+            close(reason)
+            revoked.set()
+
+        with patch.object(self.server, 'authorised', pause_after_authorising), \
+                patch.object(subscriber, 'close', close_stream), ThreadPoolExecutor() as pool:
+            try:
+                hook(self, 'touch', dict(org=WORKS, issue='OPS-1'))
+                self.assertTrue(authorised.wait(2), 'the stream did not authorise the queued event')
+                request = pool.submit(hook, self, 'members/revoke', dict(org=WORKS, user='grace'))
+                self.assertTrue(revoked.wait(2), 'the revoke hook did not close the stream')
+                self.org_problem(403, 'GET', '/issues/OPS-1', token=GRACE_TOKEN)
+                with self.assertRaises(FutureTimeout, msg='revocation answered with a write in flight'):
+                    request.result(timeout=0.15)
+            finally:
+                resume.set()
+            self.assertEqual(request.result(timeout=2)['closed'], 1)
+        self.assertNotIn(b'issueChanged', self.ends_quickly(response))
 
     def test_an_admitted_person_keeps_receiving_while_a_denied_one_is_closed(self):
         ada, grace = self.open_stream(), self.open_stream(token=GRACE_TOKEN)
