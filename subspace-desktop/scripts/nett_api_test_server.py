@@ -90,6 +90,7 @@ MAX_JSON_BYTES = 1_000_000
 MAX_UPLOAD_BYTES = 25_000_000
 MAX_LOGGED_REQUESTS = 10_000
 STREAM_SECONDS = 180
+STREAM_WRITE_SECONDS = 1
 KEEPALIVE_SECONDS = 15
 MAX_STREAMS_PER_USER = 16
 MAX_STREAMS = 256
@@ -1315,7 +1316,7 @@ def hook_touch(ctx):
 
 
 def hook_requests(ctx):
-    return 200, list(ctx.server.requests)
+    return 200, [dict(request) for request in ctx.server.requests]
 
 
 def hook_updates(ctx):
@@ -1370,7 +1371,8 @@ def hook_config(ctx):
     failNext: a list of {method, path, status, retryAfter?, times}; a matching
     request (exact path, no query) gets that status instead of an answer.
     slowBody: {path, seconds, times}; the answer's status and headers go first
-    and its body after the delay. A path ending in * names every path that
+    and its body after the delay. With waitForRelease, setting slowBody to
+    null releases the body early. A path ending in * names every path that
     starts with the rest. dropPutResponse: the next N file-host PUTs
     store their bytes and close the connection without answering.
     mediaReadyAtOnce: managed media completions finish checking at once and
@@ -1418,15 +1420,18 @@ def hook_config(ctx):
         config['failNext'] = parsed
     if 'slowBody' in payload:
         slow = payload['slowBody']
-        if slow is None:
-            config['slowBody'] = None
-        elif not isinstance(slow, dict) or set(slow) - {'path', 'seconds', 'times'} \
-                or not isinstance(slow.get('path'), str) or not is_number(slow.get('seconds')) \
-                or not 0 < slow['seconds'] <= 10:
-            raise Problem(400, 'slowBody is null or {"path": "/…", "seconds": 0–10, "times": K}.')
-        else:
-            config['slowBody'] = dict(path=slow['path'], seconds=slow['seconds'],
-                                      times=bounded(dict(times=slow.get('times', 1)), 'times', 1, 100))
+        if slow is not None:
+            if not isinstance(slow, dict) or set(slow) - {'path', 'seconds', 'times', 'waitForRelease'} \
+                    or not isinstance(slow.get('path'), str) or not is_number(slow.get('seconds')) \
+                    or not 0 < slow['seconds'] <= 10 or not isinstance(slow.get('waitForRelease', False), bool):
+                raise Problem(400, 'slowBody is null or {"path": "/…", "seconds": 0–10, "times": K, '
+                                   '"waitForRelease": B}.')
+            slow = dict(path=slow['path'], seconds=slow['seconds'],
+                        times=bounded(dict(times=slow.get('times', 1)), 'times', 1, 100),
+                        waitForRelease=slow.get('waitForRelease', False))
+        ctx.server.slow_body_release.set()
+        ctx.server.slow_body_release = threading.Event()
+        config['slowBody'] = slow
     if 'dropPutResponse' in payload:
         config['dropPutResponse'] = bounded(payload, 'dropPutResponse', 0, 100)
     if 'mediaReadyAtOnce' in payload:
@@ -3037,6 +3042,7 @@ class FixtureServer(ThreadingHTTPServer):
         self.access_token = access_token
         self.lock = threading.RLock()
         self.requests = []
+        self.slow_body_release = threading.Event()
         self.subscribers = []
         self.served = set(served)
         self.org_served = {}
@@ -3106,7 +3112,8 @@ class FixtureServer(ThreadingHTTPServer):
             slow['times'] -= 1
             if slow['times'] <= 0:
                 self.config['slowBody'] = None
-            return slow['seconds']
+            release = self.slow_body_release if slow['waitForRelease'] else None
+            return slow['seconds'], release
 
     def served_for(self, org):
         """The capability list for `org`: a hook override, or each --serve
@@ -3155,13 +3162,15 @@ class FixtureServer(ThreadingHTTPServer):
         query = {name: values if all(safe_value(name, value) for value in values) else ['REDACTED']
                  for name, values in parse_qs(raw_query, keep_blank_values=True).items()}
         length = headers.get('Content-Length')
-        self.requests.append(dict(method=method, path=path, query=query,
-                                  authorization=headers.get('Authorization') is not None,
-                                  cookie=headers.get('Cookie') is not None, orgHeader=headers.get('x-org-id'),
-                                  contentType=headers.get('Content-Type'),
-                                  contentLength=int(length) if length and re.fullmatch(r'[0-9]{1,10}', length) else None,
-                                  at=round(time.monotonic() - self.started, 3)))
+        request = dict(method=method, path=path, query=query,
+                       authorization=headers.get('Authorization') is not None,
+                       cookie=headers.get('Cookie') is not None, orgHeader=headers.get('x-org-id'),
+                       contentType=headers.get('Content-Type'),
+                       contentLength=int(length) if length and re.fullmatch(r'[0-9]{1,10}', length) else None,
+                       at=round(time.monotonic() - self.started, 3))
+        self.requests.append(request)
         del self.requests[:-MAX_LOGGED_REQUESTS]
+        return request
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -3190,7 +3199,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def answer(self):
         url = urlsplit(self.path)
-        self.request_path = url.path
+        self.request_log = None
         self.revoked_streams = ()
         if self.headers.get('Host') != urlsplit(self.server.origin).netloc:
             # Only the fixture's own numeric origin, so a page that rebinds a
@@ -3198,10 +3207,13 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(421, Problem(421, 'Address the fixture by its numeric loopback origin.'))
             return
         log_request = not url.path.startswith('/__fixture/')
+        if not log_request and any(origin != self.server.origin for origin in self.headers.get_all('Origin', [])):
+            self.respond(403, Problem(403, 'Fixture controls require a same-origin browser request.'))
+            return
         failure = None
         with self.server.lock:
             if log_request:
-                self.server.record(self.command, url.path, url.query, self.headers)
+                self.request_log = self.server.record(self.command, url.path, url.query, self.headers)
                 failure = self.server.take_failure(self.command, url.path)
         try:
             limit = MAX_UPLOAD_BYTES if self.command == 'PUT' and url.path.startswith('/u/') else MAX_JSON_BYTES
@@ -3341,11 +3353,12 @@ class Handler(BaseHTTPRequestHandler):
             lifetime = min(lifetime, max(0.0, subscriber.expires - time.time()))
         deadline = time.monotonic() + lifetime
         try:
+            self.connection.settimeout(STREAM_WRITE_SECONDS)
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
             self.send_header('Cache-Control', 'private, no-store, no-transform')
             self.end_headers()
-            if not self.flush_stream(subscriber, b'event: ready\ndata: null\n\n'):
+            if not self.flush_stream(subscriber, b'event: ready\ndata: null\n\n', deadline):
                 return
             while (remaining := deadline - time.monotonic()) > 0:
                 with subscriber.ready:
@@ -3371,15 +3384,16 @@ class Handler(BaseHTTPRequestHandler):
                 if subscriber in self.server.subscribers:
                     self.server.subscribers.remove(subscriber)
 
-    def flush_stream(self, subscriber, frame, deadline=None):
+    def flush_stream(self, subscriber, frame, deadline):
         """Deliver one batch under the same lock revocation waits for."""
         with subscriber.delivery:
             if not self.server.authorised(subscriber) or subscriber.closed:
                 return False
-            if deadline is not None and time.monotonic() >= deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 return False
-            self.wfile.write(frame)
-            self.wfile.flush()
+            self.connection.settimeout(min(remaining, STREAM_WRITE_SECONDS))
+            self.connection.sendall(frame)
             return True
 
     def respond(self, status, value):
@@ -3411,10 +3425,15 @@ class Handler(BaseHTTPRequestHandler):
         for name, header in headers:
             self.send_header(name, header)
         self.end_headers()
-        delay = self.server.take_slow(getattr(self, 'request_path', ''))
-        if delay:
+        if self.request_log is not None and (slow := self.server.take_slow(self.request_log['path'])):
             self.wfile.flush()
-            time.sleep(delay)
+            with self.server.lock:
+                self.request_log['slowBodyHeadersStatus'] = status
+            seconds, release = slow
+            if release is None:
+                time.sleep(seconds)
+            else:
+                release.wait(seconds)
         if status != 204:
             self.wfile.write(body)
 

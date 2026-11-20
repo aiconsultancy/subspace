@@ -1729,6 +1729,25 @@ class FailureHookTests(FileCase):
         self.call('GET', '/api/v1/auth/context')
         self.assertGreaterEqual(time.monotonic() - started, 0.75)
 
+    def test_a_held_body_logs_the_sent_headers_and_can_be_released(self):
+        path = '/api/v1/auth/context'
+        self.configure(slowBody=dict(path=path, seconds=10, waitForRelease=True))
+        with ThreadPoolExecutor() as pool:
+            waiting = pool.submit(self.call, 'GET', path)
+            try:
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    log = self.call('GET', '/__fixture/requests', token=None)[1]
+                    if log and log[-1].get('slowBodyHeadersStatus') == 200:
+                        break
+                    time.sleep(0.02)
+                else:
+                    self.fail('the fixture did not record the sent headers')
+                self.assertFalse(waiting.done())
+            finally:
+                self.configure(slowBody=None)
+            self.assertEqual(waiting.result(timeout=2)[0], 200)
+
     def test_a_dropped_upload_acknowledgement_still_stores_the_bytes(self):
         data = b'# Restore notes\n'
         upload = self.ok('POST', '/issues/OPS-1/attachments/prepare', self.declaration(data))
@@ -1774,6 +1793,16 @@ class FailureHookTests(FileCase):
         connection.putheader('Host', f'localhost:{self.server.server_port}')
         connection.endheaders()
         self.assertEqual(connection.getresponse().status, 421)
+
+    def test_a_cross_origin_form_cannot_clear_the_request_log(self):
+        self.assertEqual(self.call('GET', '/api/v1/me')[0], 200)
+        for origin in ('http://127.0.0.1:1', 'null'):
+            self.problem(403, 'POST', '/__fixture/requests/clear', form={'clear': 'true'},
+                         token=None, headers={'Origin': origin})
+        self.assertEqual(len(self.call('GET', '/__fixture/requests', token=None)[1]), 1)
+        status, result, _ = self.call('POST', '/__fixture/requests/clear', token=None,
+                                      headers={'Origin': self.server.origin})
+        self.assertEqual((status, result['cleared']), (200, 1))
 
     def test_a_trickling_upload_expires_without_blocking_other_requests(self):
         body, data = self.upload(data=b'x' * 100, draftId=str(uuid.uuid4()))
@@ -1837,6 +1866,34 @@ class StreamReleaseTests(StreamCase):
             self.assertEqual(response.status, 400)
             response.read()
         self.assertEqual(self.open_stream().status, 200, 'refused requests hold no stream')
+
+    def test_a_failed_header_write_releases_the_subscriber(self):
+        self.server.max_streams_per_user = 1
+        with patch.object(NETT.Handler, 'end_headers', side_effect=BrokenPipeError):
+            with self.assertRaises(http.client.RemoteDisconnected):
+                self.open_stream()
+        with self.server.lock:
+            self.assertEqual(self.server.subscribers, [])
+        self.ready(self.open_stream())
+
+    def test_a_stalled_batch_uses_a_short_socket_timeout_and_releases_its_slot(self):
+        self.server.max_streams_per_user = 1
+        response = self.open_stream()
+        self.ready(response)
+        sendall = socket.socket.sendall
+        timeouts = []
+
+        def stall_batch(connection, frame, *args):
+            if frame.startswith(b'event: issueChanged'):
+                timeouts.append(connection.gettimeout())
+                raise socket.timeout
+            return sendall(connection, frame, *args)
+
+        with patch.object(socket.socket, 'sendall', stall_batch):
+            hook(self, 'touch', dict(org=WORKS, issue='OPS-1'))
+            self.assertEqual(self.ends_quickly(response), b'')
+        self.assertEqual(timeouts, [NETT.STREAM_WRITE_SECONDS])
+        self.ready(self.open_stream())
 
 
 class StreamRefusalTests(StreamCase):
