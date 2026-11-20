@@ -90,22 +90,33 @@ release_target_supported() {
     return 1
 }
 
-check_rust_licences() {
-    cargo about generate --locked --fail --manifest-path products/subspace/Cargo.toml \
-        --format json "$@"
-}
+check_rust_licences() (
+    local scratch
+    scratch="$(mktemp -d)" || return
+    trap 'rm -rf "$scratch"' EXIT
+    # The debug diagnostics identify each crate that fell back to SPDX text.
+    # JSON can group a fallback and an identical source-backed file together.
+    cargo about -L debug generate --locked --fail --manifest-path products/subspace/Cargo.toml \
+        --format json "$@" --output-file "$scratch/licences.json" 2>"$scratch/about.log" || {
+        grep -v DEBUG "$scratch/about.log" >&2
+        return 1
+    }
+    grep -E 'WARN|ERROR' "$scratch/about.log" >&2 || true
+    python3 scripts/resolve-licence-notices.py "$scratch/licences.json" "$scratch/about.log"
+)
 
-stage_rust_licences() (
-    local destination="$1" licence_target="$2" scratch
+generate_rust_licences() (
+    local output="$1" licence_target="$2" scratch
     local release_args
+    unset SUBSPACE_GITHUB_OAUTH_CLIENT_SECRET
     release_cargo_args "$licence_target"
     scratch="$(mktemp -d)" || return
     trap 'rm -rf "$scratch"' EXIT
     cargo tree --locked --color never -p "$product" --edges normal,no-proc-macro \
         --prefix none --format '{p}' "${release_args[@]}" >"$scratch/linked" || return
-    check_rust_licences "${release_args[@]}" --config about.toml --output-file "$scratch/licences.json" || return
+    check_rust_licences "${release_args[@]}" --config about.toml >"$scratch/licences.json" || return
     jq -er --arg target "$licence_target" --rawfile tree "$scratch/linked" \
-        -f about.jq "$scratch/licences.json" >"$destination/THIRD_PARTY_LICENSES"
+        -f about.jq "$scratch/licences.json" >"$output"
 )
 
 create_bundle() {

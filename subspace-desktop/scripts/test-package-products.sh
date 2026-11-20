@@ -73,7 +73,7 @@ host_archive="$fixture/dist/$binary-$version-$host_target.tar.gz"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-release.sh" "$host_target" "$version"
 grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal" "$fixture/cargo.log"
-grep -Eq "^about generate --locked --fail --manifest-path products/subspace/Cargo.toml .*--target $host_target --features terminal " "$fixture/cargo.log"
+grep -Eq "^about -L debug generate --locked --fail --manifest-path products/subspace/Cargo.toml .*--target $host_target --features terminal " "$fixture/cargo.log"
 grep -Eq "^tree .*--target $host_target --features terminal$" "$fixture/cargo.log"
 bash "$fixture/scripts/package-release.sh" "$host_target" "$version"
 grep -Fxq -- '__product_metadata' "$fixture/binary.log"
@@ -87,6 +87,7 @@ fi
 unset FAKE_BINARY_VERSION
 cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
+builds_before="$(grep -c '^build ' "$fixture/cargo.log")"
 if FAKE_LICENCE_FAIL=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version"; then
     echo 'expected failed licence policy to stop packaging' >&2
     exit 1
@@ -95,6 +96,19 @@ if FAKE_MISSING_LICENCE=1 bash "$fixture/scripts/package-release.sh" "$host_targ
     echo 'expected incomplete licence report to stop packaging' >&2
     exit 1
 fi
+if FAKE_CLARIFICATION_FAIL=1 bash "$fixture/scripts/package-release.sh" "$host_target" "$version" >"$fixture/clarification.log" 2>&1; then
+    echo 'expected a failed clarification checksum to stop packaging' >&2
+    exit 1
+fi
+grep -Fq 'clarification failed its source validation' "$fixture/clarification.log"
+mv "$fixture/linked-licence.txt" "$fixture/linked-licence.bak"
+if bash "$fixture/scripts/package-release.sh" "$host_target" "$version" >"$fixture/source-notice.log" 2>&1; then
+    echo 'expected a missing source-backed notice to stop packaging' >&2
+    exit 1
+fi
+grep -Fq 'cannot read source-backed licence' "$fixture/source-notice.log"
+mv "$fixture/linked-licence.bak" "$fixture/linked-licence.txt"
+test "$(grep -c '^build ' "$fixture/cargo.log")" = "$builds_before"
 cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 builds_before="$(grep -c '^build ' "$fixture/cargo.log")"
@@ -116,7 +130,7 @@ cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
 grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal" "$fixture/cargo.log"
-grep -Eq "^about generate .*--target $host_target --features terminal " "$fixture/cargo.log"
+grep -Eq "^about -L debug generate .*--target $host_target --features terminal " "$fixture/cargo.log"
 app="$fixture/dist/$name.app"
 test -x "$app/Contents/MacOS/$binary"
 test "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" = "$identifier"
@@ -176,7 +190,7 @@ cmp "$metadata" "$installed/Contents/Resources/product.json"
 HOME="$fixture/home" make -f "$root/Makefile" install-macos \
     FEATURES=terminal,capture TARGET="$host_target"
 grep -Fxq -- "build --release --locked -p $binary --target $host_target --features terminal,capture" "$fixture/cargo.log"
-grep -Eq "^about generate .*--target $host_target --features terminal,capture " "$fixture/cargo.log"
+grep -Eq "^about -L debug generate .*--target $host_target --features terminal,capture " "$fixture/cargo.log"
 : >"$fixture/cargo.log"
 HOME="$fixture/home" make -f "$root/Makefile" install-macos FEATURES=
 if grep -Fq -- --features "$fixture/cargo.log"; then
