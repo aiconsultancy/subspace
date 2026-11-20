@@ -107,7 +107,7 @@ class API(BaseHTTPRequestHandler):
             self.reply(200 if API.fleet else 404, API.fleet or {})
         elif path == "/fleets" and method == "POST":
             assert body["ircHost"] == "127.0.0.1" and body["ircTls"] is True
-            assert body["captainNames"] == ["Orion"] and body["rearAdmiralName"] == "Atlas"
+            assert "captainNames" not in body and "rearAdmiralName" not in body
             API.fleet = {"id": FLEET, **body}
             self.reply(201, API.fleet)
         elif path == "/fleets/example-fleet" and method == "PATCH":

@@ -1,0 +1,963 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "f3be7a06-7b19-4cb4-9d9b-7ea287c37bdd",
+  "prevIds": [
+    "40544632-93d4-495a-90fd-2c8a126dda1f"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "ships"
+      ],
+      "writes": [
+        "s|tbl|public.ships",
+        "n|tbl|public.ships",
+        "e|tbl|public.ships",
+        "n|rel|public.ships",
+        "n|type|public.ships",
+        "n|rel|public.ships_pkey",
+        "n|rel|public.ships_scope_id"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "drop_check",
+      "statementTarget": [
+        "table",
+        "public",
+        "fleets"
+      ],
+      "writes": [
+        "s|ck|public.fleets.fleets_captain_names",
+        "n|ck|public.fleets.fleets_captain_names",
+        "e|ck|public.fleets.fleets_captain_names",
+        "n|con|public.fleets.fleets_captain_names"
+      ],
+      "reads": [
+        "n|tbl|public.fleets",
+        "n|sch|public",
+        "e|col|public.fleets.captain_names"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_decisions",
+        "made_by_type"
+      ],
+      "writes": [
+        "s|col|public.project_decisions.made_by_type",
+        "n|col|public.project_decisions.made_by_type",
+        "e|col|public.project_decisions.made_by_type"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_decisions",
+        "made_by_user_id"
+      ],
+      "writes": [
+        "s|col|public.project_decisions.made_by_user_id",
+        "n|col|public.project_decisions.made_by_user_id",
+        "e|col|public.project_decisions.made_by_user_id"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_decisions",
+        "made_by_agent_name"
+      ],
+      "writes": [
+        "s|col|public.project_decisions.made_by_agent_name",
+        "n|col|public.project_decisions.made_by_agent_name",
+        "e|col|public.project_decisions.made_by_agent_name"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_decisions",
+        "made_by_agent_rank"
+      ],
+      "writes": [
+        "s|col|public.project_decisions.made_by_agent_rank",
+        "n|col|public.project_decisions.made_by_agent_rank",
+        "e|col|public.project_decisions.made_by_agent_rank"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "project_decisions",
+        "made_by_agent_model"
+      ],
+      "writes": [
+        "s|col|public.project_decisions.made_by_agent_model",
+        "n|col|public.project_decisions.made_by_agent_model",
+        "e|col|public.project_decisions.made_by_agent_model"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "fleets",
+        "version"
+      ],
+      "writes": [
+        "s|col|public.fleets.version",
+        "n|col|public.fleets.version",
+        "e|col|public.fleets.version"
+      ],
+      "reads": [
+        "n|tbl|public.fleets",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "users",
+        "agent_fleet_id"
+      ],
+      "writes": [
+        "s|col|public.users.agent_fleet_id",
+        "n|col|public.users.agent_fleet_id",
+        "e|col|public.users.agent_fleet_id"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "users",
+        "agent_ship_id"
+      ],
+      "writes": [
+        "s|col|public.users.agent_ship_id",
+        "n|col|public.users.agent_ship_id",
+        "e|col|public.users.agent_ship_id"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "alter_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "fleets",
+        "irc_host"
+      ],
+      "writes": [
+        "s|colprop|public.fleets.irc_host.notNull"
+      ],
+      "reads": [
+        "n|tbl|public.fleets",
+        "n|sch|public",
+        "n|col|public.fleets.irc_host"
+      ],
+      "sqlHash": "032d8a412cdb2afb"
+    },
+    {
+      "statementType": "alter_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "fleets",
+        "irc_port"
+      ],
+      "writes": [
+        "s|colprop|public.fleets.irc_port.notNull"
+      ],
+      "reads": [
+        "n|tbl|public.fleets",
+        "n|sch|public",
+        "n|col|public.fleets.irc_port"
+      ],
+      "sqlHash": "697fb0ab68b3109d"
+    },
+    {
+      "statementType": "alter_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "fleets",
+        "irc_tls"
+      ],
+      "writes": [
+        "s|colprop|public.fleets.irc_tls.notNull"
+      ],
+      "reads": [
+        "n|tbl|public.fleets",
+        "n|sch|public",
+        "n|col|public.fleets.irc_tls"
+      ],
+      "sqlHash": "16a05785ac6daf7d"
+    },
+    {
+      "statementType": "alter_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "fleets",
+        "rear_admiral_name"
+      ],
+      "writes": [
+        "s|colprop|public.fleets.rear_admiral_name.notNull"
+      ],
+      "reads": [
+        "n|tbl|public.fleets",
+        "n|sch|public",
+        "n|col|public.fleets.rear_admiral_name"
+      ],
+      "sqlHash": "b7f75194b147de6a"
+    },
+    {
+      "statementType": "alter_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "fleets",
+        "captain_names"
+      ],
+      "writes": [
+        "s|colprop|public.fleets.captain_names.notNull"
+      ],
+      "reads": [
+        "n|tbl|public.fleets",
+        "n|sch|public",
+        "n|col|public.fleets.captain_names"
+      ],
+      "sqlHash": "b732d4ed3e1afdbd"
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "ships",
+        "ships_fleet_name"
+      ],
+      "writes": [
+        "s|idx|public.ships_fleet_name",
+        "n|idx|public.ships_fleet_name",
+        "e|idx|public.ships_fleet_name",
+        "n|rel|public.ships_fleet_name"
+      ],
+      "reads": [
+        "n|tbl|public.ships",
+        "n|sch|public",
+        "n|col|public.ships.fleet_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "users",
+        "users_agent_fleet"
+      ],
+      "writes": [
+        "s|idx|public.users_agent_fleet",
+        "n|idx|public.users_agent_fleet",
+        "e|idx|public.users_agent_fleet",
+        "n|rel|public.users_agent_fleet"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.users.agent_fleet_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "project_decisions"
+      ],
+      "writes": [
+        "s|fk|public.project_decisions.project_decisions_IYiWUiqhpLXs_fkey",
+        "n|fk|public.project_decisions.project_decisions_IYiWUiqhpLXs_fkey",
+        "e|fk|public.project_decisions.project_decisions_IYiWUiqhpLXs_fkey",
+        "n|con|public.project_decisions.project_decisions_IYiWUiqhpLXs_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.project_decisions",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.project_decisions.organisation_id",
+        "n|col|public.project_decisions.made_by_user_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "ships"
+      ],
+      "writes": [
+        "s|fk|public.ships.ships_organisation_id_organisations_id_fkey",
+        "n|fk|public.ships.ships_organisation_id_organisations_id_fkey",
+        "e|fk|public.ships.ships_organisation_id_organisations_id_fkey",
+        "n|con|public.ships.ships_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.ships",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.ships.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "ships"
+      ],
+      "writes": [
+        "s|fk|public.ships.ships_organisation_id_fleet_id_fleets_organisation_id_id_fkey",
+        "n|fk|public.ships.ships_organisation_id_fleet_id_fleets_organisation_id_id_fkey",
+        "e|fk|public.ships.ships_organisation_id_fleet_id_fleets_organisation_id_id_fkey",
+        "n|con|public.ships.ships_organisation_id_fleet_id_fleets_organisation_id_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.ships",
+        "n|sch|public",
+        "n|tbl|public.fleets",
+        "n|sch|public",
+        "n|col|public.ships.organisation_id",
+        "n|col|public.ships.fleet_id",
+        "n|col|public.fleets.organisation_id",
+        "n|col|public.fleets.id",
+        "e|uniqueness|public.fleets.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "users"
+      ],
+      "writes": [
+        "s|fk|public.users.users_VZzs4FXQtVZz_fkey",
+        "n|fk|public.users.users_VZzs4FXQtVZz_fkey",
+        "e|fk|public.users.users_VZzs4FXQtVZz_fkey",
+        "n|con|public.users.users_VZzs4FXQtVZz_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|tbl|public.fleets",
+        "n|sch|public",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.agent_fleet_id",
+        "n|col|public.fleets.organisation_id",
+        "n|col|public.fleets.id",
+        "e|uniqueness|public.fleets.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "users"
+      ],
+      "writes": [
+        "s|fk|public.users.users_njO6vz804QAF_fkey",
+        "n|fk|public.users.users_njO6vz804QAF_fkey",
+        "e|fk|public.users.users_njO6vz804QAF_fkey",
+        "n|con|public.users.users_njO6vz804QAF_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|tbl|public.ships",
+        "n|sch|public",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.agent_fleet_id",
+        "n|col|public.users.agent_ship_id",
+        "n|col|public.ships.organisation_id",
+        "n|col|public.ships.fleet_id",
+        "n|col|public.ships.id",
+        "e|uniqueness|public.ships.fleet_id.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "add_check",
+      "statementTarget": [
+        "table",
+        "public",
+        "users"
+      ],
+      "writes": [
+        "s|ck|public.users.agent_ship_requires_fleet",
+        "n|ck|public.users.agent_ship_requires_fleet",
+        "e|ck|public.users.agent_ship_requires_fleet",
+        "n|con|public.users.agent_ship_requires_fleet"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.users.agent_ship_id",
+        "n|col|public.users.agent_fleet_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "ships",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "made_by_type",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "made_by_user_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "made_by_agent_name",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "made_by_agent_rank",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "made_by_agent_model",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "fleets",
+        "name": "version",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "1",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "fleet_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "name",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "version",
+        "type": "integer",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "1",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "users",
+        "name": "agent_fleet_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "users",
+        "name": "agent_ship_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "ships_fleet_name",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "fleet_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "lower(\"name\")",
+            "isExpression": true,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "users",
+        "name": "users_agent_fleet",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "agent_fleet_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "project_decisions",
+        "name": "project_decisions_IYiWUiqhpLXs_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "made_by_user_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "ships_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "ships_organisation_id_fleet_id_fleets_organisation_id_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "fleet_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "fleets",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "users",
+        "name": "users_VZzs4FXQtVZz_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "agent_fleet_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "fleets",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "users",
+        "name": "users_njO6vz804QAF_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "agent_fleet_id",
+          "agent_ship_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "ships",
+        "columnsTo": [
+          "organisation_id",
+          "fleet_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "ships_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "ships_scope_id",
+        "nameExplicit": true,
+        "columns": [
+          "organisation_id",
+          "fleet_id",
+          "id"
+        ],
+        "nullsNotDistinct": false,
+        "entityType": "uniques"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "users",
+        "name": "agent_ship_requires_fleet",
+        "value": "\"agent_ship_id\" is null or \"agent_fleet_id\" is not null",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "drop",
+      "key": "checks\u0000[\"public\",\"fleets\",\"fleets_captain_names\"]"
+    },
+    {
+      "op": "alter",
+      "key": "columns\u0000[\"public\",\"fleets\",\"irc_host\"]",
+      "set": {
+        "notNull": false
+      }
+    },
+    {
+      "op": "alter",
+      "key": "columns\u0000[\"public\",\"fleets\",\"irc_port\"]",
+      "set": {
+        "notNull": false
+      }
+    },
+    {
+      "op": "alter",
+      "key": "columns\u0000[\"public\",\"fleets\",\"irc_tls\"]",
+      "set": {
+        "notNull": false
+      }
+    },
+    {
+      "op": "alter",
+      "key": "columns\u0000[\"public\",\"fleets\",\"rear_admiral_name\"]",
+      "set": {
+        "notNull": false
+      }
+    },
+    {
+      "op": "alter",
+      "key": "columns\u0000[\"public\",\"fleets\",\"captain_names\"]",
+      "set": {
+        "notNull": false
+      }
+    }
+  ]
+}

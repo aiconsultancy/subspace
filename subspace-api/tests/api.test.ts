@@ -126,8 +126,6 @@ describe.skipIf(!baseUrl)("desktop API against Compose PostgreSQL", () => {
       ircHost: "irc.example.com",
       ircPort: 6697,
       ircTls: true,
-      rearAdmiralName: "Rear Admiral",
-      captainNames: ["Captain"],
     };
     expect(
       (await request("/fleets", { method: "POST", body: JSON.stringify(data) }, ordinary)).status,
