@@ -54,6 +54,11 @@ its own OPS team, so OPS-1 names a different issue in each organisation.
 Ada also has a personal organisation without issue tracking. --single-org
 leaves out both the second and the personal organisation, so the caller has
 exactly one accessible organisation.
+
+Request bodies being received at once share one budget of
+MAX_BODY_INTAKE_BYTES: a body waits for room until its deadline, then is
+refused with 503 and Retry-After, so many concurrent near-limit uploads
+cannot hold unbounded memory.
 """
 
 import argparse
@@ -88,6 +93,9 @@ GRANT_SECONDS = 300
 UPLOAD_SECONDS = 900
 MAX_JSON_BYTES = 1_000_000
 MAX_UPLOAD_BYTES = 25_000_000
+# Request body bytes held at once across connections, from admission until the
+# request is answered: two largest uploads and a few JSON bodies.
+MAX_BODY_INTAKE_BYTES = 2 * MAX_UPLOAD_BYTES + 8 * MAX_JSON_BYTES
 MAX_LOGGED_REQUESTS = 10_000
 STREAM_SECONDS = 180
 STREAM_WRITE_SECONDS = 1
@@ -306,6 +314,36 @@ class Subscriber:
             self.closed = self.closed or reason
             self.abort = self.abort or abort
             self.ready.notify()
+
+
+class BodyIntake:
+    """The request body bytes the fixture holds at once, across connections.
+    A body is admitted only while it fits, waiting for room until its deadline,
+    and keeps its place until its request is answered, independently of the
+    fixture's state lock."""
+
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.held = 0
+        self.room = threading.Condition()
+
+    def admit(self, size, deadline):
+        """Reserves size bytes, waiting until deadline. False when no room came."""
+        with self.room:
+            while self.held + size > self.capacity:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self.room.wait(remaining)
+            self.held += size
+            return True
+
+    def release(self, size):
+        if not size:
+            return
+        with self.room:
+            self.held -= size
+            self.room.notify_all()
 
 
 class Drop:
@@ -3050,6 +3088,7 @@ class FixtureServer(ThreadingHTTPServer):
                            mediaReadyAtOnce=False,
                            dropPutResponse=0, dropNext=[])
         self.started = time.monotonic()
+        self.intake = BodyIntake(MAX_BODY_INTAKE_BYTES)
         self.extra_tokens = {}
         self.revoked_tokens = set()
         self.updates_unavailable = False
@@ -3201,6 +3240,7 @@ class Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         self.request_log = None
         self.revoked_streams = ()
+        self.admitted = 0
         if self.headers.get('Host') != urlsplit(self.server.origin).netloc:
             # Only the fixture's own numeric origin, so a page that rebinds a
             # name to loopback cannot drive it.
@@ -3232,6 +3272,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as error:  # Keep serving; report the type only.
             print(f'NETT fixture error: {type(error).__name__}', file=sys.stderr, flush=True)
             status, value = 500, Problem(500, 'The fixture could not answer this request.')
+        finally:
+            # The body has been handled: its place in the intake goes.
+            self.server.intake.release(self.admitted)
+            self.admitted = 0
         # Do not hold the fixture lock while waiting for a subscriber's write.
         for subscriber in self.revoked_streams:
             with subscriber.delivery:
@@ -3301,6 +3345,11 @@ class Handler(BaseHTTPRequestHandler):
         if not size:
             return b''
         deadline = time.monotonic() + self.body_timeout
+        if not self.server.intake.admit(size, deadline):
+            self.close_connection = True
+            raise Problem(503, 'The fixture is receiving too many request bodies at once.',
+                          headers=[('Retry-After', '1')])
+        self.admitted = size
         body = bytearray()
         try:
             while len(body) < size:

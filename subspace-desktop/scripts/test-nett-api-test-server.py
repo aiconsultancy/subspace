@@ -1843,6 +1843,49 @@ class FailureHookTests(FileCase):
             sending.result()
         self.assertEqual(self.transfer(prepared, data)[0], 204, 'a partial body did not commit')
 
+    def test_request_bodies_received_at_once_share_one_budget(self):
+        self.server.intake = NETT.BodyIntake(150)
+        netloc = urlsplit(self.server.origin).netloc
+        path = f'/api/v1/orgs/{WORKS}/issues/media/prepare'
+
+        def post(connection, size, first=b''):
+            connection.putrequest('POST', path)
+            for name, value in (('Authorization', f'Bearer {TOKEN}'), ('x-org-id', WORKS),
+                                ('Content-Type', 'application/json'), ('Content-Length', str(size))):
+                connection.putheader(name, value)
+            connection.endheaders(first or None)
+
+        def held(size):
+            deadline = time.monotonic() + 3
+            while self.server.intake.held != size:
+                self.assertLess(time.monotonic(), deadline, f'{self.server.intake.held} bytes held')
+                time.sleep(0.01)
+
+        slow = http.client.HTTPConnection(netloc, timeout=3)
+        self.addCleanup(slow.close)
+        # A body that has its place but has not all arrived yet.
+        post(slow, 100, b'{')
+        held(100)
+        with patch.object(NETT.Handler, 'body_timeout', 0.3), \
+                closing(http.client.HTTPConnection(netloc, timeout=3)) as second:
+            # Another that would not fit beside it waits for room, then is
+            # refused before any of its bytes are read.
+            post(second, 100)
+            started = time.monotonic()
+            reply = second.getresponse()
+            self.assertEqual((reply.status, reply.getheader('Retry-After')), (503, '1'))
+            self.assertGreaterEqual(time.monotonic() - started, 0.25)
+            reply.read()
+        held(100)
+        # Once the first is answered, its place goes and the next fits.
+        slow.send(b' ' * 98 + b'}')
+        slow.getresponse().read()
+        held(0)
+        status = self.org('POST', '/issues/media/prepare', raw=b'{' + b' ' * 98 + b'}',
+                          headers={'Content-Type': 'application/json'})[0]
+        self.assertNotEqual(status, 503)
+        held(0)
+
     def test_the_request_log_says_when_each_request_arrived(self):
         hook(self, 'requests/clear', {})
         self.call('GET', '/api/v1/auth/context')
