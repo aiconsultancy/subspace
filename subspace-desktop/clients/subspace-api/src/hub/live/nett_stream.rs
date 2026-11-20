@@ -241,6 +241,9 @@ impl Stream<'_> {
     async fn refused(&mut self, scope: &StreamScope) -> Next {
         self.refusals += 1;
         catch_up(self.weak, scope.generation).await;
+        // The list as it was before this refusal's own read: a change that
+        // read, or any read after it, finds ends the wait below.
+        let seen = self.client.nett_served_revision();
         refresh_scope(self.weak, self.client);
         if self.refusals < MAX_REFUSALS {
             return Next::Reconnect;
@@ -249,8 +252,7 @@ impl Stream<'_> {
             return Next::Stop;
         }
         let epoch = scope_epoch(self.weak);
-        let revision = self.client.nett_served_revision();
-        wait_for_scope_epoch_or_revision(self.weak, scope, epoch, (self.client, revision)).await;
+        wait_for_scope_epoch_or_revision(self.weak, scope, epoch, (self.client, seen)).await;
         self.refusals = 0;
         Next::Again
     }

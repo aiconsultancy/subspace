@@ -124,6 +124,28 @@ fn a_stream_stopped_by_refusals_comes_back_when_another_read_finds_access_change
 }
 
 #[test]
+fn a_change_the_last_refusals_own_read_finds_brings_the_stream_back() {
+    let mock = NettMock::serving(&["updates"]);
+    let (org, hub) = works_hub(&mock);
+    wait_for_live_list(&hub);
+    mock.config(&json!({"streamRefusal": {"status": 403, "retryAfter": 0, "times": 2}}));
+    mock.clear_requests();
+    mock.close_streams();
+    // The close and the first refusal each read the capability list again;
+    // the second attempt follows a backoff of most of a second.
+    wait("the first refusal's read", Duration::from_secs(10), &|| {
+        streams(&mock) >= 1 && mock.count("GET", "/desktop/capabilities") >= 2
+    });
+    // Access comes back with a changed list, which the second refusal's
+    // own read finds just as the stream turns off.
+    mock.capabilities(&org, &["updates", "attachments"]);
+    wait("a live stream again", Duration::from_secs(15), &|| {
+        hub.snapshot().live() == LiveStatus::Live
+    });
+    hub.stop();
+}
+
+#[test]
 fn a_count_already_out_when_access_went_does_not_come_back() {
     let mock = NettMock::with_args(&["updates"], &["--keepalive-seconds", "1"]);
     let (org, hub) = works_hub(&mock);
