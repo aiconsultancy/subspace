@@ -130,7 +130,8 @@ fn unreconciled_reason(reason: UnreconciledReason) -> String {
     match reason {
         UnreconciledReason::Elsewhere => "Moved again since".into(),
         UnreconciledReason::Unread(error) => format!("Could not be read back: {error}"),
-        _ => "Could not be confirmed".into(),
+        UnreconciledReason::NotChecked => "Not read back in time".into(),
+        _ => "Not confirmed in the destination yet".into(),
     }
 }
 
@@ -261,4 +262,35 @@ fn inline_controls(board: &Issues, cx: &mut Context<Issues>) -> Div {
             .compact()
             .on_click(cx.listener(|this, _, window, cx| this.close_project_move(window, cx))),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unreconciled_reason;
+    use subspace_api_client::issue_moves::UnreconciledReason;
+
+    /// Only a sub-issue seen in a third team, changed since the preview, is
+    /// said to have moved again; a stale or unchanged read says nothing of
+    /// the kind.
+    #[test]
+    fn each_unconfirmed_sub_issue_says_only_what_its_read_showed() {
+        assert_eq!(
+            unreconciled_reason(UnreconciledReason::Elsewhere),
+            "Moved again since"
+        );
+        assert_eq!(
+            unreconciled_reason(UnreconciledReason::NotConfirmed),
+            "Not confirmed in the destination yet"
+        );
+        assert_eq!(
+            unreconciled_reason(UnreconciledReason::NotChecked),
+            "Not read back in time"
+        );
+        assert_eq!(
+            unreconciled_reason(UnreconciledReason::Unread(
+                subspace_api_client::Error::Network
+            )),
+            "Could not be read back: The service could not be reached. Try again."
+        );
+    }
 }
