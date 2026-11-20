@@ -128,16 +128,9 @@ pub(super) fn load(shared: &Shared, job: &Job, issue: &str, cursor: Option<&str>
     let result = shared.client.issue_images(issue, &page);
     // A NETT token refused before it expires is renewed rather than shown
     // as signed out.
-    let refused = match result {
-        Err(error @ (crate::Error::SignInNeeded | crate::Error::Forbidden)) => {
-            super::renewal::stands(shared, job.generation, sent, error)
-        }
-        _ => false,
-    };
-    let mut state = lock(&shared.state);
-    if !job.current(&state) {
+    let Some((mut state, refused)) = super::renewal::read_back(shared, job, sent, &result) else {
         return;
-    }
+    };
     let Some(issue) = state.snapshot.issue.as_mut() else {
         return;
     };
