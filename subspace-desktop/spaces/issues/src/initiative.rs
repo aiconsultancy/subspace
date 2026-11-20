@@ -100,7 +100,23 @@ pub(crate) fn saved_project(cx: &App) -> Option<ProjectScope> {
 /// to the initiative's projects through its own filter, and any team stays
 /// selectable.
 fn initiative_by_filter() -> bool {
+    #[cfg(test)]
+    if let Some(by_filter) = BY_FILTER.with(std::cell::Cell::get) {
+        return by_filter;
+    }
     subspace_api_client::backend() == subspace_api_client::Backend::Nett
+}
+
+#[cfg(test)]
+thread_local! {
+    static BY_FILTER: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Makes initiatives keep the list to their projects by filter, as a NETT
+/// build does, or not.
+#[cfg(test)]
+pub(crate) fn initiatives_by_filter_for_test(by_filter: Option<bool>) {
+    BY_FILTER.with(|cell| cell.set(by_filter));
 }
 
 /// The initiative a NETT list read keeps to.

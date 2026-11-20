@@ -21,6 +21,8 @@ const MAX_SAVED_BYTES: usize = 25_000_000;
 /// Why a chosen file was not added.
 pub(crate) const CHANGED: &str =
     "The issue changed while the file was chosen, so nothing was added. Choose the file again.";
+/// Why a chosen file was not added while other uploads hold their bytes.
+pub(crate) const UPLOADS_FULL: &str = "Keep at most eight uploads and 32 MiB waiting on an issue, and 64 MiB across drafts and uploads. Dismiss one, then choose the file again.";
 
 #[cfg(test)]
 thread_local! {
@@ -312,6 +314,7 @@ impl Issues {
                 .err()
                 .map(|error| match error {
                     subspace_api_client::uploads::UploadError::Removed => CHANGED.to_owned(),
+                    subspace_api_client::uploads::UploadError::Budget => UPLOADS_FULL.to_owned(),
                     error => error.message(),
                 })
         } else {
