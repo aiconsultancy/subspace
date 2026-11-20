@@ -104,10 +104,19 @@ impl Entry {
         })
     }
 
-    /// When its issue closed, if it can be let go to make room: a closed
-    /// issue's upload with no attempt under way.
+    /// Whether it was closed [`KEPT_FOR`] or longer by `now`.
+    fn expired(&self, now: Instant) -> bool {
+        self.closed
+            .is_some_and(|closed| now.saturating_duration_since(closed) >= KEPT_FOR)
+    }
+
+    /// When its issue closed, if letting it go makes room: a closed issue's
+    /// upload with no attempt under way, whose bytes nothing else holds,
+    /// so letting it go frees them.
     fn idle_since(&self) -> Option<Instant> {
-        self.closed.filter(|_| !self.upload.in_flight())
+        self.closed.filter(|_| {
+            !self.upload.in_flight() && std::sync::Arc::strong_count(&self.upload.bytes) == 1
+        })
     }
 
     /// The reservation to cancel as it is let go.
@@ -117,6 +126,16 @@ impl Entry {
 }
 
 impl AttachmentUpload {
+    /// This upload as a snapshot shows it: everything but its bytes, which
+    /// only the store and an attempt under way hold, so a snapshot kept
+    /// after an upload goes never keeps its bytes from being freed.
+    fn without_bytes(&self) -> Self {
+        Self {
+            bytes: std::sync::Arc::from(Vec::new()),
+            ..self.clone()
+        }
+    }
+
     /// Whether an attempt is under way, or queued: its end settles the row.
     pub(in crate::hub) fn in_flight(&self) -> bool {
         !matches!(
@@ -176,15 +195,18 @@ impl UploadStore {
         });
     }
 
-    /// Follows the open issue at `now`: its uploads show, the others count
-    /// as closed from now if they did not already, and closed uploads kept
-    /// too long or no longer worth keeping, and those of closed issues past
-    /// [`MAX_CLOSED`], are let go. Returns the reservations to cancel.
+    /// Follows the open issue at `now`. Uploads closed too long go first, so
+    /// reopening their issue never brings them back; then the open issue's
+    /// uploads show, the others count as closed from now if they did not
+    /// already, and closed uploads no longer worth keeping, and those of
+    /// closed issues past [`MAX_CLOSED`], go. Returns the reservations to
+    /// cancel.
     fn follow(&mut self, open: Option<&Open>, now: Instant) -> Vec<Cancel> {
+        let mut cancels = self.release(|entry| !entry.expired(now));
         self.entries
             .iter_mut()
             .for_each(|entry| entry.follow(open, now));
-        let mut cancels = self.release(|entry| entry.kept(now));
+        cancels.extend(self.release(|entry| entry.kept(now)));
         let kept = self.closed_issues_kept();
         cancels
             .extend(self.release(|entry| entry.closed.is_none() || kept.contains(&entry.issue.id)));
@@ -248,9 +270,11 @@ impl UploadStore {
 
     /// Room for `size` more bytes beside the `held` bytes the app holds.
     /// Nothing goes if they fit. Otherwise closed issues' uploads with no
-    /// attempt under way go, the issue that closed first first, only as far
-    /// as lets them fit; if even all of those would not, nothing goes and
-    /// the file is refused. Returns the reservations to cancel.
+    /// attempt under way, whose bytes only the store holds, go, the issue
+    /// that closed first first, only as far as lets them fit; if even all of
+    /// those would not, nothing goes and the file is refused. Only bytes
+    /// letting go actually frees are counted. Returns the reservations to
+    /// cancel.
     pub(in crate::hub) fn room(
         &mut self,
         held: usize,
@@ -342,7 +366,11 @@ impl crate::hub::State {
         let mut snapshot = self.snapshot.clone();
         let open = self.open_for_uploads();
         if let Some(issue) = snapshot.issue.as_mut() {
-            let uploads = self.uploads.shown(open.as_ref()).cloned().collect();
+            let uploads = self
+                .uploads
+                .shown(open.as_ref())
+                .map(AttachmentUpload::without_bytes)
+                .collect();
             issue.files.show_uploads(uploads);
         }
         snapshot

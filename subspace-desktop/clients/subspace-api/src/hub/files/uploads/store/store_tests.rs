@@ -190,6 +190,52 @@ fn room_goes_only_as_far_as_lets_the_file_in() {
 }
 
 #[test]
+fn room_counts_only_bytes_letting_go_frees() {
+    let mut state = state();
+    open(&mut state, "OPS-1", Some(ISSUE));
+    let failed = awaiting_check(4 * MIB, "transfer-shared");
+    // Something else, an older snapshot or an attempt, still holds its bytes.
+    let elsewhere = failed.clone();
+    add(&mut state, ISSUE, vec![failed]);
+    state.snapshot.issue = None;
+    state.follow_uploads(Instant::now());
+    let held = 60 * MIB;
+    assert_eq!(state.uploads.room(held, 6 * MIB), Err(UploadError::Budget));
+    assert!(
+        state.uploads.contains_transfer("transfer-shared"),
+        "nothing went"
+    );
+    // Once only the store holds them, letting it go frees them.
+    drop(elsewhere);
+    assert_eq!(
+        state.uploads.room(held, 6 * MIB),
+        Ok(vec![(ISSUE.to_owned(), "transfer-shared".to_owned())])
+    );
+}
+
+#[test]
+fn an_upload_kept_too_long_never_comes_back_as_its_issue_reopens() {
+    // Nothing used the store until the issue reopened, by its key or by
+    // its ID, just as its time ran out.
+    for reference in ["OPS-1", ISSUE] {
+        let mut state = state();
+        let closed = Instant::now();
+        open(&mut state, "OPS-1", Some(ISSUE));
+        add(&mut state, ISSUE, vec![awaiting_check(8, "transfer-stale")]);
+        state.snapshot.issue = None;
+        state.follow_uploads(closed);
+        open(&mut state, reference, None);
+        let cancels = state.follow_uploads(closed + KEPT_FOR);
+        assert_eq!(
+            cancels,
+            [(ISSUE.to_owned(), "transfer-stale".to_owned())],
+            "reopened as {reference}"
+        );
+        assert_eq!(shown(&state), 0, "reopened as {reference}");
+    }
+}
+
+#[test]
 fn at_most_eight_closed_issues_keep_uploads() {
     let mut state = state();
     let start = Instant::now();

@@ -126,6 +126,26 @@ fn a_file_refused_on_its_issue_lets_no_kept_upload_go() {
     hub.stop();
 }
 
+#[test]
+fn a_snapshot_never_holds_an_uploads_bytes() {
+    let mock = Mock::new(|_| (404, "{}".into()));
+    let hub = nett_hub(&mock, "nett-store-snapshot-bytes");
+    let upload = awaiting_check(4 * MIB, "transfer-shown");
+    let bytes = upload.buffer_for_test();
+    {
+        let mut state = lock(&hub.0.state);
+        open(&mut state, "OPS-1", Some(ISSUE));
+        add(&mut state, ISSUE, vec![upload]);
+    }
+    let snapshot = hub.snapshot();
+    assert_eq!(snapshot.issue().unwrap().files().uploads().len(), 1);
+    // The store's copy is the only one: a snapshot kept by a view never
+    // keeps the bytes from being freed when the upload goes.
+    assert_eq!(bytes.strong_count(), 1);
+    drop(snapshot);
+    hub.stop();
+}
+
 /// Whether an upload kept aside for a closed issue has failed.
 fn kept_failure(hub: &Hub) -> bool {
     let state = lock(&hub.0.state);
