@@ -35,10 +35,10 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
 - `.github/workflows/windows-release.yml` runs when `release.yml` creates an
   app release, or by hand on `main` with a tag and a mode: `publish`,
   `sign-only` or `build-only`.
-  - It builds on `subspace-windows` with no secrets.
+  - It builds on `subspace-windows` with no secrets, and only a tag whose
+    commit is on `main`, so pushing a tag cannot get unreviewed code signed.
   - It signs on `subspace-signing` in the `windows-signing` environment, using
-    GitHub OIDC. The environment's deployment rule allows `main` and
-    `subspace-desktop-v*` tags.
+    GitHub OIDC. The environment's deployment rule allows only `main`.
   - It verifies the signature with `Get-AuthenticodeSignature` on Windows.
   - It attaches the archive and its `.sha256`, normally to the draft release.
 - The Azure identity, the vault name and the runner configuration live outside
