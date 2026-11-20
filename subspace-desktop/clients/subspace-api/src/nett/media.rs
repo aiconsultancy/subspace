@@ -175,8 +175,10 @@ fn sleep(delay: Duration) {
 enum Stored {
     /// The record completed from the upload's transfer.
     Found(Value),
-    /// A record with the same name, size and SHA-256 that names no
-    /// transfer: it may be this upload's, or an identical older file.
+    /// A record that may be this upload's: one with the same name, size and
+    /// SHA-256 that names no transfer, which may be an identical older
+    /// file, or one naming this transfer, or a malformed one, that cannot
+    /// be read as this upload's.
     Unknown,
     /// No record on the page can be this upload's.
     Absent,
@@ -184,7 +186,9 @@ enum Stored {
 
 /// Finds the record completed from transfer `upload_id`. A record naming
 /// another transfer, or none because it was never uploaded, is someone
-/// else's file however identical it is.
+/// else's file however identical it is. A record naming this transfer is
+/// this upload's even when it cannot be read or differs from the file sent,
+/// so it never counts as absence: sending again could store the file twice.
 fn stored_among<'a>(
     items: impl IntoIterator<Item = &'a Value>,
     upload_id: &str,
@@ -197,14 +201,32 @@ fn stored_among<'a>(
                 .is_ok_and(|media| declaration.matches(&media))
         };
         match item.get("uploadId") {
-            Some(Value::String(id)) if id == upload_id && identical() => {
-                return Stored::Found(item.clone());
+            Some(Value::String(id)) if id == upload_id => {
+                return if identical() {
+                    Stored::Found(item.clone())
+                } else {
+                    Stored::Unknown
+                };
             }
+            Some(Value::String(_) | Value::Null) => {}
             None if identical() => found = Stored::Unknown,
-            _ => {}
+            None => {}
+            // A transfer named in a shape NETT does not use.
+            Some(_) => found = Stored::Unknown,
         }
     }
     found
+}
+
+/// The next page of an attachment list, if the reply names one. `Err` when
+/// the reply cannot show whether the list ends here.
+fn next_page(reply: &Value) -> Result<Option<String>, ()> {
+    match reply.get("nextCursor") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(cursor)) if cursor.is_empty() => Ok(None),
+        Some(Value::String(cursor)) => Ok(Some(cursor.clone())),
+        Some(_) => Err(()),
+    }
 }
 
 // qual:allow(coupling, oi) reason: "The NETT media boundary composes authenticated reservations and grants with the credential-free file transport."
@@ -495,16 +517,20 @@ impl Client {
                         .map_err(|_| UploadError::Checking)?,
                 )
                 .map_err(|_| UploadError::Checking)?;
-            let items = reply.get("items").and_then(Value::as_array);
-            match stored_among(items.into_iter().flatten(), upload_id, declaration) {
+            // A reply without its list proves nothing about the upload.
+            let items = reply
+                .get("items")
+                .and_then(Value::as_array)
+                .ok_or(UploadError::Checking)?;
+            match stored_among(items, upload_id, declaration) {
                 Stored::Found(record) => {
                     return self.standalone(issue, record, declaration).map(Some);
                 }
                 Stored::Unknown => unknown = true,
                 Stored::Absent => {}
             }
-            match reply.get("nextCursor").and_then(Value::as_str) {
-                Some(cursor) => page.cursor = Some(cursor.to_owned()),
+            match next_page(&reply).map_err(|()| UploadError::Checking)? {
+                Some(cursor) => page.cursor = Some(cursor),
                 None if unknown => return Err(UploadError::Checking),
                 None => return Ok(None),
             }
@@ -863,6 +889,79 @@ mod tests {
             ),
             Stored::Absent
         );
+    }
+
+    #[test]
+    fn a_record_naming_the_transfer_that_cannot_be_read_is_never_absence() {
+        let bytes = b"Stored, but described badly.\n";
+        let declaration =
+            crate::uploads::ImageDeclaration::new("bad.txt", "text/plain", bytes).unwrap();
+        let mut mine = serde_json::json!({
+            "mediaId": "m", "version": 1, "kind": "file", "fileName": "bad.txt",
+            "contentType": "text/plain", "sizeBytes": bytes.len(),
+            "sha256": declaration.sha256, "publicFileId": "pf", "expiresAt": null,
+            "uploadId": "upload-mine",
+        });
+        // NETT stored the file from this transfer, but the record lost its
+        // digest: the outcome stays unknown, so Retry checks, never resends.
+        mine.as_object_mut().unwrap().remove("sha256");
+        assert_eq!(
+            stored_among([&mine], "upload-mine", &declaration),
+            Stored::Unknown
+        );
+        // Or it describes another file.
+        mine["sha256"] = serde_json::json!("0".repeat(64));
+        assert_eq!(
+            stored_among([&mine], "upload-mine", &declaration),
+            Stored::Unknown
+        );
+        // A transfer named in an unexpected shape cannot be ruled out.
+        mine["uploadId"] = serde_json::json!(7);
+        assert_eq!(
+            stored_among([&mine], "upload-mine", &declaration),
+            Stored::Unknown
+        );
+    }
+
+    #[test]
+    fn only_a_list_that_shows_its_end_proves_an_upload_absent() {
+        use super::next_page;
+        use serde_json::json;
+        assert_eq!(next_page(&json!({"items": []})), Ok(None));
+        assert_eq!(next_page(&json!({"nextCursor": null})), Ok(None));
+        assert_eq!(
+            next_page(&json!({"nextCursor": "c2"})),
+            Ok(Some("c2".into()))
+        );
+        assert_eq!(next_page(&json!({"nextCursor": 2})), Err(()));
+    }
+
+    #[test]
+    fn a_recovery_read_that_is_not_a_complete_list_leaves_the_upload_unknown() {
+        let mock = subspace_framework::client_test_support::Mock::new(|request| {
+            if request.path.ends_with("/desktop/capabilities") {
+                (200, r#"{"features":["attachments"]}"#.into())
+            } else if request.path.contains("/attachments") {
+                // No list at all: nothing shows the upload is not stored.
+                (200, r#"{"nextCursor":null}"#.into())
+            } else {
+                (404, "{}".into())
+            }
+        });
+        let client = crate::Client::nett_loopback(
+            &format!("{}/api", mock.base_url()),
+            Some("00000000-0000-4000-8000-0000000000d1"),
+            Some(subspace_framework::core::Secret::new("nett-recovery-list")),
+        )
+        .unwrap()
+        .without_live();
+        let declaration =
+            crate::uploads::ImageDeclaration::new("lost.txt", "text/plain", b"Lost reply.\n")
+                .unwrap();
+        assert!(matches!(
+            client.stored_attachment("OPS-1", "upload-mine", &declaration),
+            Err(crate::uploads::UploadError::Checking)
+        ));
     }
 
     fn key(account: u64, org: &str) -> GrantKey {
