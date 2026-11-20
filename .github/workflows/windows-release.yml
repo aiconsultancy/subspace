@@ -118,6 +118,10 @@ jobs:
         working-directory: subspace-desktop
         env:
           VERSION: ${{ steps.release.outputs.version }}
+          # The app cannot start in a Windows Server container, which lacks
+          # desktop libraries such as DirectComposition, so the script does
+          # not run it to read its version back.
+          SUBSPACE_PACKAGE_SKIP_RUN_CHECK: "1"
         run: |
           set -euo pipefail
           bash scripts/package-release.sh "$TARGET" "$VERSION"
