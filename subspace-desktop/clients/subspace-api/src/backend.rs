@@ -106,7 +106,7 @@ type Scope = (String, String, u64);
 /// again: NETT can enable a feature for an organisation while the app runs.
 pub(crate) const SERVED_FOR: Duration = Duration::from_secs(5 * 60);
 /// How long a list that could not be read again keeps answering before the
-/// next try.
+/// next try, doubling with each failure in a row up to [`SERVED_FOR`].
 const SERVED_RETRY: Duration = Duration::from_secs(30);
 
 /// One organisation and account's capability list, when to read it again,
@@ -117,6 +117,8 @@ struct Served {
     bits: u8,
     next: Instant,
     revision: u64,
+    /// Reads in a row that failed since it was last read.
+    failures: u32,
 }
 
 /// The features NETT says it serves, per API origin, organisation and
@@ -153,6 +155,7 @@ pub(crate) fn record_served(origin: &str, org: &str, account: u64, features: &[F
             bits,
             next,
             revision,
+            failures: 0,
         },
     );
     changed
@@ -194,10 +197,16 @@ pub(crate) fn reread_served(origin: &str, org: &str, account: u64) {
 }
 
 /// A list that could not be read again keeps answering for a while, so a
-/// failing read is not repeated for every feature check.
+/// failing read is not repeated for every feature check: 30 seconds after
+/// the first failure, twice as long after each failure in a row, and at
+/// most [`SERVED_FOR`].
 pub(crate) fn served_unreadable(origin: &str, org: &str, account: u64) {
     if let Some(served) = served_table().get_mut(&scope(origin, org, account)) {
-        served.next = Instant::now() + SERVED_RETRY;
+        let wait = SERVED_RETRY
+            .checked_mul(2u32.saturating_pow(served.failures))
+            .map_or(SERVED_FOR, |wait| wait.min(SERVED_FOR));
+        served.failures = served.failures.saturating_add(1);
+        served.next = Instant::now() + wait;
     }
 }
 
@@ -343,6 +352,43 @@ mod tests {
         assert_eq!(super::served_revision(origin, "org-a", 1), Some(1));
         // Another account's list moves on its own.
         assert_eq!(super::served_revision(origin, "org-a", 2), None);
+    }
+
+    #[test]
+    fn a_list_that_keeps_failing_is_tried_again_less_and_less_often() {
+        use super::{SERVED_FOR, served_current_at, served_unreadable};
+        use std::time::{Duration, Instant};
+        let (origin, org) = ("http://127.0.0.1:4/api", "org-a");
+        record_served(origin, org, 1, &[Feature::Updates]);
+        let mut waits = Vec::new();
+        for _ in 0..6 {
+            let before = Instant::now();
+            served_unreadable(origin, org, 1);
+            // How long the list answers before the next try.
+            let wait = [30, 60, 120, 240, 300]
+                .into_iter()
+                .map(Duration::from_secs)
+                .find(|wait| {
+                    !served_current_at(origin, org, 1, before + *wait + Duration::from_secs(1))
+                })
+                .unwrap_or(SERVED_FOR);
+            waits.push(wait.as_secs());
+        }
+        assert_eq!(
+            waits,
+            [30, 60, 120, 240, 300, 300],
+            "doubling, at most five minutes"
+        );
+        // A list read again starts over.
+        record_served(origin, org, 1, &[Feature::Updates]);
+        let before = Instant::now();
+        served_unreadable(origin, org, 1);
+        assert!(!served_current_at(
+            origin,
+            org,
+            1,
+            before + Duration::from_secs(31)
+        ));
     }
 
     #[test]
