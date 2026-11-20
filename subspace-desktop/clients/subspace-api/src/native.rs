@@ -112,24 +112,39 @@ pub fn use_token_renewal(renew: impl Fn() -> bool + Send + Sync + 'static) {
 
 /// Renews the account's API token once, as after a refused bearer. False
 /// when nothing can renew it. One renewal runs at a time: a caller that
-/// waited for another's renewal, or comes just after one, uses its token.
+/// waited for another's renewal of the same account, or comes just after
+/// one, uses its token. Another account's renewal never stands for this one.
 pub(crate) fn renew_token() -> bool {
-    static RENEWED: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
-    const RECENT: std::time::Duration = std::time::Duration::from_secs(5);
+    static RENEWED: std::sync::Mutex<Option<(Option<u64>, std::time::Instant)>> =
+        std::sync::Mutex::new(None);
     let Some(renew) = RENEWAL.get() else {
         return false;
     };
     let mut last = RENEWED
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if last.is_some_and(|at| at.elapsed() < RECENT) {
+    let account = account_generation();
+    if recently_renewed(*last, account, std::time::Instant::now()) {
         return true;
     }
     let renewed = renew();
     if renewed {
-        *last = Some(std::time::Instant::now());
+        *last = Some((account, std::time::Instant::now()));
     }
     renewed
+}
+
+/// Whether `last`, the latest renewal and its account, stands for a renewal
+/// `account` asks for at `now`.
+fn recently_renewed(
+    last: Option<(Option<u64>, std::time::Instant)>,
+    account: Option<u64>,
+    now: std::time::Instant,
+) -> bool {
+    const RECENT: std::time::Duration = std::time::Duration::from_secs(5);
+    last.is_some_and(|(renewed, at)| {
+        renewed == account && now.saturating_duration_since(at) < RECENT
+    })
 }
 
 /// The signed-in account's generation alone. Reading it notices an account
@@ -279,8 +294,27 @@ mod tests {
 
     use super::{
         agent, bearer, configure_api_origin, configured_api_origin, generation, private_api, ready,
-        use_native_account,
+        recently_renewed, use_native_account,
     };
+
+    #[test]
+    fn a_renewal_stands_only_for_the_same_account_and_only_briefly() {
+        let now = std::time::Instant::now();
+        let last = Some((Some(1), now));
+        assert!(recently_renewed(
+            last,
+            Some(1),
+            now + std::time::Duration::from_secs(2)
+        ));
+        // Another account, just signed in, renews its own token.
+        assert!(!recently_renewed(last, Some(2), now));
+        assert!(!recently_renewed(
+            last,
+            Some(1),
+            now + std::time::Duration::from_secs(6)
+        ));
+        assert!(!recently_renewed(None, Some(1), now));
+    }
     use subspace_framework::core::Secret;
     use url::Url;
 

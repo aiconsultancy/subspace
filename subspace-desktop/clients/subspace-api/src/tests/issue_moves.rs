@@ -47,6 +47,40 @@ fn a_conflict_does_not_resend_or_choose_new_numbers_automatically() {
     assert_eq!(mock.requests().len(), 1);
 }
 #[test]
+fn a_nett_503_on_the_confirmation_leaves_the_move_to_be_checked() {
+    // The move may have committed behind a gateway's 503: the editor checks
+    // it rather than offering a fresh preview as if NETT were only busy.
+    let org = "00000000-0000-4000-8000-000000000001";
+    let mock = Mock::new(|r| {
+        if r.path.ends_with("/desktop/capabilities") {
+            (200, json!({"features": ["issueMoves"]}).to_string())
+        } else {
+            (503, "{}".into())
+        }
+    });
+    let api = crate::Client::nett_loopback(
+        &format!("{}/api", mock.base_url()),
+        Some(org),
+        Some(subspace_framework::core::Secret::new("nett-move-503")),
+    )
+    .unwrap()
+    .without_live();
+    let mut preview = preview();
+    preview["reviewContext"] = json!({"issueVersion": 1});
+    let preview = serde_json::from_value(preview).unwrap();
+    assert_eq!(
+        api.move_issue(&preview).err(),
+        Some(IssueSaveError::Unconfirmed)
+    );
+    let patches = mock
+        .requests()
+        .iter()
+        .filter(|r| r.method == "PATCH")
+        .count();
+    assert_eq!(patches, 1, "sent once, never again");
+}
+
+#[test]
 fn a_subspace_503_leaves_the_move_unconfirmed_as_before() {
     // The move may have committed behind the 503, so it is checked, not
     // reported as not done.

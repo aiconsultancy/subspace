@@ -273,9 +273,13 @@ impl Client {
             404 => Err(IssueSaveError::Unavailable),
             409 => Err(IssueSaveError::Conflict),
             429 => Err(IssueSaveError::RateLimited),
-            // NETT's 503 asks for a wait like a 429; Subspace API's leaves
-            // the move unconfirmed, as it always has.
-            503 if self.backend == crate::Backend::Nett => Err(IssueSaveError::RateLimited),
+            // A NETT preview's 503 asks for a wait like a 429. A move's 503
+            // may hide a move that committed, on either backend, so it is
+            // left unconfirmed, to be checked without moving again; any wait
+            // NETT asked for already holds the account's requests.
+            503 if self.backend == crate::Backend::Nett && !detail => {
+                Err(IssueSaveError::RateLimited)
+            }
             _ => Err(IssueSaveError::Unconfirmed),
         }
     }

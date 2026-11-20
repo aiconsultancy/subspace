@@ -170,6 +170,43 @@ fn sleep(delay: Duration) {
     std::thread::sleep(delay);
 }
 
+/// What one page of attachment records says of an upload.
+#[derive(Debug, PartialEq)]
+enum Stored {
+    /// The record completed from the upload's transfer.
+    Found(Value),
+    /// A record with the same name, size and SHA-256 that names no
+    /// transfer: it may be this upload's, or an identical older file.
+    Unknown,
+    /// No record on the page can be this upload's.
+    Absent,
+}
+
+/// Finds the record completed from transfer `upload_id`. A record naming
+/// another transfer, or none because it was never uploaded, is someone
+/// else's file however identical it is.
+fn stored_among<'a>(
+    items: impl IntoIterator<Item = &'a Value>,
+    upload_id: &str,
+    declaration: &ImageDeclaration,
+) -> Stored {
+    let mut found = Stored::Absent;
+    for item in items {
+        let identical = || {
+            serde_json::from_value::<IssueMedia>(item.clone())
+                .is_ok_and(|media| declaration.matches(&media))
+        };
+        match item.get("uploadId") {
+            Some(Value::String(id)) if id == upload_id && identical() => {
+                return Stored::Found(item.clone());
+            }
+            None if identical() => found = Stored::Unknown,
+            _ => {}
+        }
+    }
+    found
+}
+
 // qual:allow(coupling, oi) reason: "The NETT media boundary composes authenticated reservations and grants with the credential-free file transport."
 impl Client {
     /// The issue's images, from descriptions and comments.
@@ -412,9 +449,11 @@ impl Client {
     /// the same completion again, which replays the stored record if it
     /// already happened. A 409 or 404 proves nothing on its own: NETT also
     /// answers so when the issue changed or was archived after the upload
-    /// was stored. So the issue's attachments are read: the file found
-    /// there was stored; `None` means a complete read shows it was not.
-    /// Anything less leaves the outcome unknown, to be checked again.
+    /// was stored. So the issue's attachments are read, each naming the
+    /// transfer it was completed from: the record from this transfer was
+    /// stored; `None` means a complete read shows it was not. Anything less,
+    /// such as an identical file whose transfer is not named, leaves the
+    /// outcome unknown, to be checked again.
     pub(crate) fn nett_complete_attachment(
         &self,
         issue: &str,
@@ -424,32 +463,49 @@ impl Client {
         match self.complete_attachment(issue, upload_id) {
             Ok(record) => self.standalone(issue, record, declaration).map(Some),
             Err(TransferError::Conflict | TransferError::Missing) => {
-                self.stored_attachment(issue, declaration)
+                self.stored_attachment(issue, upload_id, declaration)
             }
             Err(error) => Err(after_bytes(error)),
         }
     }
 
-    /// The issue's attachment with this file's name, size and SHA-256, read
-    /// across every page. `None` only when the whole list was read.
+    /// The issue's attachment completed from transfer `upload_id`, read
+    /// across every page. `None` only when the whole list was read and no
+    /// record could be this upload's.
     fn stored_attachment(
         &self,
         issue: &str,
+        upload_id: &str,
         declaration: &ImageDeclaration,
     ) -> Result<Option<IssueMedia>, UploadError> {
+        if !self
+            .nett_serves(crate::backend::Feature::Attachments)
+            .unwrap_or(false)
+        {
+            return Err(UploadError::Checking);
+        }
         let mut page = PageRequest::default();
+        let mut unknown = false;
         for _ in 0..MAX_STORED_PAGES {
-            let read = self
-                .nett_attachments(issue, &page)
+            let reply = self
+                .nett_value(
+                    &["issues", issue, "attachments"],
+                    &page
+                        .parameters(MAX_ATTACHMENT_PAGE)
+                        .map_err(|_| UploadError::Checking)?,
+                )
                 .map_err(|_| UploadError::Checking)?;
-            if let Some(found) = read.items.into_iter().find(|media| {
-                matches!(media.binding, MediaBinding::Standalone { .. })
-                    && declaration.matches(media)
-            }) {
-                return Ok(Some(found));
+            let items = reply.get("items").and_then(Value::as_array);
+            match stored_among(items.into_iter().flatten(), upload_id, declaration) {
+                Stored::Found(record) => {
+                    return self.standalone(issue, record, declaration).map(Some);
+                }
+                Stored::Unknown => unknown = true,
+                Stored::Absent => {}
             }
-            match read.next_cursor {
-                Some(cursor) => page.cursor = Some(cursor),
+            match reply.get("nextCursor").and_then(Value::as_str) {
+                Some(cursor) => page.cursor = Some(cursor.to_owned()),
+                None if unknown => return Err(UploadError::Checking),
                 None => return Ok(None),
             }
         }
@@ -763,9 +819,51 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    use super::{GrantKey, cached, remember};
+    use super::{GrantKey, Stored, cached, remember, stored_among};
     use chrono::{Duration, Utc};
     use url::Url;
+
+    #[test]
+    fn a_recovered_upload_is_the_record_from_its_own_transfer() {
+        let bytes = b"Same file, twice.\n";
+        let declaration =
+            crate::uploads::ImageDeclaration::new("same.txt", "text/plain", bytes).unwrap();
+        let record = |upload: serde_json::Value| {
+            serde_json::json!({
+                "mediaId": "m", "version": 1, "kind": "file", "fileName": "same.txt",
+                "contentType": "text/plain", "sizeBytes": bytes.len(),
+                "sha256": declaration.sha256, "publicFileId": "pf", "expiresAt": null,
+                "uploadId": upload,
+            })
+        };
+        let older = record(serde_json::json!("upload-older"));
+        let mine = record(serde_json::json!("upload-mine"));
+        // An identical file stored from another transfer is not this one.
+        assert_eq!(
+            stored_among([&older], "upload-mine", &declaration),
+            Stored::Absent
+        );
+        assert_eq!(
+            stored_among([&older, &mine], "upload-mine", &declaration),
+            Stored::Found(mine.clone())
+        );
+        // A record that names no transfer leaves the outcome unknown.
+        let mut unnamed = older.clone();
+        unnamed.as_object_mut().unwrap().remove("uploadId");
+        assert_eq!(
+            stored_among([&unnamed], "upload-mine", &declaration),
+            Stored::Unknown
+        );
+        // One that was never uploaded, such as a seeded file, is not it.
+        assert_eq!(
+            stored_among(
+                [&record(serde_json::Value::Null)],
+                "upload-mine",
+                &declaration
+            ),
+            Stored::Absent
+        );
+    }
 
     fn key(account: u64, org: &str) -> GrantKey {
         GrantKey {

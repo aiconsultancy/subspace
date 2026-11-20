@@ -82,6 +82,12 @@ impl Drop for Permit {
     }
 }
 
+/// Requests the account has in flight now.
+#[cfg(test)]
+pub(crate) fn active(account: u64) -> usize {
+    account_state(&mut flows(), account).active
+}
+
 /// How long the account's requests are still paused.
 pub(crate) fn paused_for(account: u64) -> Option<Duration> {
     let mut guard = flows();
