@@ -4,9 +4,6 @@
 //! account and the renewal are chosen once.
 
 use serde_json::{Value, json};
-use std::io::{BufRead as _, BufReader};
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -14,47 +11,16 @@ use subspace_api_client::hub::{Hub, HubStatus, LiveStatus};
 use subspace_api_client::{Client, ListQuery, ListTab, nett};
 use subspace_framework::core::Secret;
 
+#[path = "../src/tests/nett/process.rs"]
+mod process;
+use process::NettProcess as Mock;
+
 /// Fixture traffic stays on loopback: no proxy from the environment sees it.
 fn direct() -> ureq::Agent {
     ureq::Agent::config_builder().proxy(None).build().into()
 }
 
-struct Mock {
-    child: Child,
-    origin: String,
-}
-
 impl Mock {
-    fn start() -> Self {
-        let script =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/nett_api_test_server.py");
-        let mut child = Command::new(
-            subspace_framework::core::path::find_tool("python3")
-                .expect("python3 runs the NETT mock"),
-        )
-        .arg("-I")
-        .arg(&script)
-        .args(["--port", "0", "--serve", "updates"])
-        .env_clear()
-        // Windows Python needs SYSTEMROOT to open a socket.
-        .envs(std::env::var_os("SYSTEMROOT").map(|root| ("SYSTEMROOT", root)))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("python3 runs the NETT mock");
-        let mut line = String::new();
-        if let Some(stdout) = child.stdout.take() {
-            let _ = BufReader::new(stdout).read_line(&mut line);
-        }
-        let origin = line
-            .trim()
-            .strip_prefix("NETT fixture listening on ")
-            .map(str::to_owned)
-            .expect("the NETT mock started");
-        Self { child, origin }
-    }
-
     /// Update streams opened so far.
     fn streams(&self) -> usize {
         let mut response = direct()
@@ -77,13 +43,6 @@ impl Mock {
     }
 }
 
-impl Drop for Mock {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 fn wait(what: &str, done: &dyn Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(15);
     while !done() {
@@ -94,7 +53,7 @@ fn wait(what: &str, done: &dyn Fn() -> bool) {
 
 #[test]
 fn a_refused_token_is_renewed_once_and_the_stream_carries_on() {
-    let mock = Mock::start();
+    let mock = Mock::start(&["updates"], &[]);
     mock.hook(
         "tokens",
         &json!({"token": "nett-fixture-first", "user": "ada"}),
