@@ -94,7 +94,8 @@ fn nett_provider(namespace: &str) -> Option<Arc<dyn Provider>> {
         if !launch.workos_api_url.is_empty() {
             config = config.with_api_url(&launch.workos_api_url)?;
         }
-        Ok(Arc::new(SessionManager::system(config, namespace)))
+        let credentials = nett_credentials(namespace, &launch.nett_api_url);
+        Ok(Arc::new(SessionManager::system(config, &credentials)))
     })();
     match built {
         Ok(provider) => Some(provider),
@@ -103,6 +104,18 @@ fn nett_provider(namespace: &str) -> Option<Arc<dyn Provider>> {
             None
         }
     }
+}
+
+/// Where a NETT build keeps its WorkOS sign-in: apart for each NETT API
+/// origin. A sign-in kept for one origin is never restored, and so its
+/// bearer is never sent, when a launch points the build at another, such as
+/// a loopback fixture: that origin asks for its own sign-in first.
+fn nett_credentials(namespace: &str, nett_api_url: &str) -> String {
+    let origin = url::Url::parse(nett_api_url).map_or_else(
+        |_| nett_api_url.to_owned(),
+        |url| url.origin().ascii_serialization(),
+    );
+    format!("{namespace}.nett@{origin}")
 }
 
 /// `namespace` is the bundle identifier, which keeps keychain entries apart.
@@ -190,10 +203,12 @@ fn use_account(source: AccountTokenSource, resource: &'static str) {
     // long-lived that the held token cannot satisfy it: the provider renews
     // and keeps the fresh token, which the next ordinary request returns.
     subspace_api_client::use_token_renewal(move || {
-        let _ = renewing.token_for(resource, FORCE_RENEWAL);
-        renewing
-            .token_for(resource, MINIMUM_API_TOKEN_VALIDITY)
-            .is_ok()
+        renewed(|minimum| {
+            renewing
+                .token_for(resource, minimum)
+                .ok()
+                .map(|grant| fingerprint(grant.token.expose()))
+        })
     });
     subspace_api_client::use_native_account(
         move || account.generation(),
@@ -209,6 +224,25 @@ fn use_account(source: AccountTokenSource, resource: &'static str) {
                 .map_err(api_error)
         },
     );
+}
+
+/// Whether a forced renewal left the provider holding a different token.
+/// A refresh that failed leaves the refused token in place, still valid by
+/// its own clock: that is no renewal, so the caller treats the refusal as
+/// standing rather than trying the same bearer again as if it were fresh.
+fn renewed(token_for: impl Fn(Duration) -> Option<u64>) -> bool {
+    let refused = token_for(MINIMUM_API_TOKEN_VALIDITY);
+    let _ = token_for(FORCE_RENEWAL);
+    let after = token_for(MINIMUM_API_TOKEN_VALIDITY);
+    after.is_some() && after != refused
+}
+
+/// Tells tokens apart without keeping a copy of either.
+fn fingerprint(token: &str) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    token.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// A NETT build has no update channel of its own yet, so the public
@@ -234,8 +268,9 @@ fn api_error(error: Error) -> subspace_api_client::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{STAMPED, api_error};
+    use super::{FORCE_RENEWAL, STAMPED, api_error, nett_credentials, renewed};
     use crate::launch::resolve;
+    use std::cell::Cell;
     use subspace_framework::account::Error;
 
     #[test]
@@ -247,6 +282,42 @@ mod tests {
             launch.backend == crate::settings::ApiBackend::Nett,
             super::nett()
         );
+    }
+
+    #[test]
+    fn a_nett_sign_in_is_kept_apart_for_each_api_origin() {
+        let built = nett_credentials("app.example", "https://api.nett.example/api");
+        assert_eq!(
+            built,
+            nett_credentials("app.example", "https://api.nett.example")
+        );
+        // A launch pointing elsewhere, a fixture included, never restores
+        // the sign-in kept for the build's own NETT API.
+        for elsewhere in [
+            "http://127.0.0.1:8080/api",
+            "https://other.nett.example/api",
+            "https://api.nett.example:8443/api",
+        ] {
+            assert_ne!(built, nett_credentials("app.example", elsewhere));
+        }
+    }
+
+    #[test]
+    fn a_renewal_that_kept_the_refused_token_is_no_renewal() {
+        // The refresh fails: the provider still hands out the refused token.
+        let held = Cell::new(1_u64);
+        assert!(!renewed(|_| Some(held.get())));
+        // The refresh succeeds: the next ordinary request gets a new token.
+        assert!(renewed(|minimum| {
+            if minimum == FORCE_RENEWAL {
+                held.set(2);
+                None
+            } else {
+                Some(held.get())
+            }
+        }));
+        // No token at all afterwards is no renewal either.
+        assert!(!renewed(|_| None));
     }
 
     #[test]
