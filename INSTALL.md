@@ -147,7 +147,8 @@ Ask these before running anything. Defaults are in bold.
     the rear admiral in Slack or Microsoft Teams? Slack works with a private VM
     as is ([Slack](docs/slack.md)). Teams needs an Azure VM and one public
     callback path ([Teams](docs/teams.md)). Teams bots cannot talk to each
-    other, so only the rear admiral uses Teams.
+    other, so captains coordinate in IRC, and the installer connects only the
+    rear admiral to Teams.
 
 ## Install on a local VM
 
