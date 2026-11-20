@@ -109,12 +109,14 @@ pub(crate) const SERVED_FOR: Duration = Duration::from_secs(5 * 60);
 /// next try.
 const SERVED_RETRY: Duration = Duration::from_secs(30);
 
-/// One organisation and account's capability list, and when to read it
-/// again. A list due to be read again still answers until it is.
+/// One organisation and account's capability list, when to read it again,
+/// and how many times it changed since it was first read. A list due to be
+/// read again still answers until it is.
 #[derive(Clone, Copy)]
 struct Served {
     bits: u8,
     next: Instant,
+    revision: u64,
 }
 
 /// The features NETT says it serves, per API origin, organisation and
@@ -133,15 +135,36 @@ fn scope(origin: &str, org: &str, account: u64) -> Scope {
 
 /// Records what NETT serves for one organisation and account, used until
 /// [`SERVED_FOR`] has passed. Returns whether it differs from the list
-/// known before, if there was one.
+/// known before, if there was one; a list that differs is a new revision,
+/// whoever read it.
 pub(crate) fn record_served(origin: &str, org: &str, account: u64, features: &[Feature]) -> bool {
     let bits = features
         .iter()
         .fold(0, |bits, feature| bits | feature.bit());
     let next = Instant::now() + SERVED_FOR;
+    let mut table = served_table();
+    let key = scope(origin, org, account);
+    let before = table.get(&key).copied();
+    let changed = before.is_some_and(|before| before.bits != bits);
+    let revision = before.map_or(0, |before| before.revision.wrapping_add(u64::from(changed)));
+    table.insert(
+        key,
+        Served {
+            bits,
+            next,
+            revision,
+        },
+    );
+    changed
+}
+
+/// Which revision of the capability list this organisation and account
+/// holds, `None` before one was read. It moves whenever a read finds the
+/// list changed, so a waiting reader notices a change another read found.
+pub(crate) fn served_revision(origin: &str, org: &str, account: u64) -> Option<u64> {
     served_table()
-        .insert(scope(origin, org, account), Served { bits, next })
-        .is_some_and(|before| before.bits != bits)
+        .get(&scope(origin, org, account))
+        .map(|served| served.revision)
 }
 
 /// Whether the capability list for this organisation and account was read
@@ -306,6 +329,20 @@ mod tests {
         let b = Capabilities::with(Backend::Nett, scope("org-b"));
         assert!(!b.chat_uploads && !b.initiative_channels);
         assert!(!nett_serves(origin, None, 1, Feature::ChatUploads));
+    }
+
+    #[test]
+    fn a_list_that_changes_is_a_new_revision_and_one_read_again_unchanged_is_not() {
+        let origin = "http://127.0.0.1:3/api";
+        assert_eq!(super::served_revision(origin, "org-a", 1), None);
+        assert!(!record_served(origin, "org-a", 1, &[]));
+        assert_eq!(super::served_revision(origin, "org-a", 1), Some(0));
+        assert!(!record_served(origin, "org-a", 1, &[]));
+        assert_eq!(super::served_revision(origin, "org-a", 1), Some(0));
+        assert!(record_served(origin, "org-a", 1, &[Feature::Updates]));
+        assert_eq!(super::served_revision(origin, "org-a", 1), Some(1));
+        // Another account's list moves on its own.
+        assert_eq!(super::served_revision(origin, "org-a", 2), None);
     }
 
     #[test]

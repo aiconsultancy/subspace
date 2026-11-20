@@ -193,6 +193,14 @@ impl Client {
         })
     }
 
+    /// Which revision of the organisation's capability list is held, `None`
+    /// before one was read: it moves whenever any read finds it changed.
+    pub(crate) fn nett_served_revision(&self) -> Option<u64> {
+        self.org.as_deref().and_then(|org| {
+            crate::backend::served_revision(self.base.as_str(), org, self.flow_account())
+        })
+    }
+
     /// Keeps a capability list that could not be read again answering for a
     /// while, so the failing read is not repeated at once.
     pub(crate) fn nett_served_unreadable(&self) {

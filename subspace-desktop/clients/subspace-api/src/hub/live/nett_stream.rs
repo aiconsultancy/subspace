@@ -18,8 +18,8 @@ use crate::backend::Feature;
 use crate::hub::{ScopeGeneration, Shared, State, lock};
 use crate::live::{self, LiveError};
 use capabilities::{
-    recheck_capabilities, refresh_scope, scope_epoch, wait_for_scope_epoch_or_capabilities,
-    wait_for_scope_or_epoch_change,
+    Woken, announce, recheck_capabilities, refresh_scope, scope_epoch,
+    wait_for_scope_epoch_or_capabilities, wait_for_scope_or_epoch_change,
 };
 use std::collections::BTreeSet;
 use std::sync::Weak;
@@ -94,9 +94,12 @@ impl Stream<'_> {
             hold(self.weak, scope.generation, wait).await;
             return Next::Again;
         }
+        // The list's revision before it is consulted, so a change any read
+        // finds from here on wakes the stream once it is off.
+        let revision = self.client.nett_served_revision();
         match self.client.nett_serves(Feature::Updates) {
             Ok(true) => self.connect(scope).await,
-            Ok(false) => self.unserved(scope).await,
+            Ok(false) => self.unserved(scope, revision).await,
             // The list could not be read: try again later, not "never".
             Err(_) => self.unreadable(scope).await,
         }
@@ -123,14 +126,23 @@ impl Stream<'_> {
 
     /// NETT may enable the stream while the app runs: once the list is due
     /// to be read again, after its lifetime or an explicit reload, it is
-    /// read, and the stream opened if the organisation now serves it.
-    async fn unserved(&self, scope: &StreamScope) -> Next {
+    /// read, and the stream opened if the organisation now serves it. A read
+    /// elsewhere that finds the list changed, as an explicit reload's first
+    /// team read may before the stream looks, does the same: the Spaces are
+    /// told, and the next round opens the stream if it is served now.
+    async fn unserved(&self, scope: &StreamScope, revision: Option<u64>) -> Next {
         if self.status(LiveStatus::Off, Some(scope.generation)) == Next::Stop {
             return Next::Stop;
         }
         let epoch = scope_epoch(self.weak);
-        if wait_for_scope_epoch_or_capabilities(self.weak, scope, epoch, self.client).await {
-            recheck_capabilities(self.weak, self.client);
+        let woken =
+            wait_for_scope_epoch_or_capabilities(self.weak, scope, epoch, self.client, revision)
+                .await;
+        match woken {
+            Woken::Due => recheck_capabilities(self.weak, self.client),
+            // A first list is no change to announce.
+            Woken::Changed if revision.is_some() => announce(self.weak),
+            Woken::Changed | Woken::Moved => {}
         }
         Next::Again
     }

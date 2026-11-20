@@ -32,6 +32,34 @@ fn an_organisation_without_updates_neither_streams_nor_polls() {
 }
 
 #[test]
+fn a_capability_read_elsewhere_that_enables_updates_turns_the_stream_on() {
+    let mock = NettMock::start();
+    let (org, hub) = works_hub(&mock);
+    wait("the list and no stream", Duration::from_secs(10), &|| {
+        let snapshot = hub.snapshot();
+        snapshot.list().is_some() && snapshot.live() == LiveStatus::Off
+    });
+    let epoch = hub.snapshot().scope_epoch();
+    // NETT enables updates, and another read of the same account, as an
+    // explicit reload's first team read may, finds that first: the list is
+    // current again before the stream sees it due.
+    mock.capabilities(&org, &["updates"]);
+    let elsewhere =
+        Client::nett_loopback(&mock.api(), Some(&org), Some(Secret::new(TOKEN))).unwrap();
+    assert_eq!(elsewhere.nett_refresh_served(), Ok(true));
+    assert!(elsewhere.nett_served_current());
+    wait("a live stream", Duration::from_secs(10), &|| {
+        hub.snapshot().live() == LiveStatus::Live
+    });
+    assert_ne!(
+        hub.snapshot().scope_epoch(),
+        epoch,
+        "the Spaces read their initiatives again"
+    );
+    hub.stop();
+}
+
+#[test]
 fn a_server_close_catches_up_through_rest_and_reads_capabilities_again() {
     let mock = NettMock::serving(&["updates"]);
     let (_, hub) = works_hub(&mock);
