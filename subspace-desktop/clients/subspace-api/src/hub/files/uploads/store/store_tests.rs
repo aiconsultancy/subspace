@@ -1,4 +1,4 @@
-use super::{KEPT_FOR, UploadIssue};
+use super::{Cancel, KEPT_FOR, UploadIssue};
 use crate::hub::files::uploads::AttachmentUpload;
 use crate::hub::{AttachmentState, IssueSnapshot, IssueStatus, State};
 use crate::uploads::UploadError;
@@ -228,22 +228,33 @@ fn an_upload_kept_past_its_time_comes_back_to_be_checked_as_its_issue_reopens() 
     }
 }
 
-#[test]
-fn past_eight_closed_issues_the_oldest_lets_its_bytes_go() {
-    let mut state = state();
-    let start = Instant::now();
+/// Opens, adds an upload waiting for a check, holding `transfer-{n}`, to
+/// and closes each issue `n` of `issues`, `n` seconds after `start`, with
+/// the reservations the store cancels.
+pub(super) fn close_issues_holding(
+    state: &mut State,
+    issues: std::ops::Range<u64>,
+    start: Instant,
+) -> Vec<Cancel> {
     let mut cancels = Vec::new();
-    for n in 0..9u64 {
-        let id = format!("00000000-0000-4000-8000-00000000010{n}");
-        open(&mut state, &format!("OPS-{n}"), Some(&id));
+    for n in issues {
+        let id = format!("00000000-0000-4000-8000-{n:012}");
+        open(state, &format!("OPS-{n}"), Some(&id));
         add(
-            &mut state,
+            state,
             &id,
             vec![awaiting_check(8, &format!("transfer-{n}"))],
         );
         state.snapshot.issue = None;
         cancels.extend(state.follow_uploads(start + Duration::from_secs(n)));
     }
+    cancels
+}
+
+#[test]
+fn past_eight_closed_issues_the_oldest_lets_its_bytes_go() {
+    let mut state = state();
+    let cancels = close_issues_holding(&mut state, 0..9, Instant::now());
     assert!(
         cancels.is_empty(),
         "nothing that may be stored is cancelled"
