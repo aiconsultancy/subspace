@@ -4,12 +4,15 @@
 
 setup_product_fixture() {
     local root="${root:?}"
-    fixture="$(mktemp -d "${TMPDIR:-/tmp}/subspace-products.XXXXXX")"
-    trap 'rm -rf "${fixture:?}"' EXIT
-    mkdir -p "$fixture/scripts" "$fixture/bin" "$fixture/metadata"
+    fixture_repo="$(mktemp -d "${TMPDIR:-/tmp}/subspace-products.XXXXXX")"
+    trap 'rm -rf "${fixture_repo:?}"' EXIT
+    fixture="$fixture_repo/subspace-desktop"
+    mkdir -p "$fixture/scripts" "$fixture/bin" "$fixture/metadata" "$fixture/spaces/actions/assets"
     cp "$root/scripts/"{product.sh,prerelease-common.sh,run-app.sh,package-release.sh,package-macos.sh,package-macos-ci.sh,build-macos-app.sh,install-macos.sh,github-oauth-secret.sh} "$fixture/scripts/"
     cp "$root/README.md" "$fixture/README.md"
+    cp "$root/../"{LICENSE,NOTICE} "$fixture_repo/"
     cp -R "$root/licenses" "$fixture/licenses"
+    cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$fixture/spaces/actions/assets/"
     if [[ -n "${1:-}" ]]; then
         workspace_metadata="$(cat "$1/workspace.json")"
     else

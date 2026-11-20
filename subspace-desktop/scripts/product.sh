@@ -59,6 +59,15 @@ load_product() {
     target_dir="$(resolve_target_dir "${CARGO_TARGET_DIR:-$(jq -er '.target_directory' <<<"$metadata")}")"
 }
 
+stage_product_licences() {
+    local destination="$1"
+    local octicons="$destination/licenses/icons/octicons"
+    mkdir -p "$octicons"
+    cp -R "$root/licenses/." "$destination/licenses/"
+    cp "$root/spaces/actions/assets/"{README.md,OCTICONS-LICENSE.txt} "$octicons/"
+    cp "$root/../"{LICENSE,NOTICE} "$destination/"
+}
+
 create_bundle() {
     local root="${root:?}"
     local binary="$1" app="$2" identifier="$3" label="$4"
@@ -74,7 +83,7 @@ create_bundle() {
     chmod 755 "$app/Contents/MacOS/$binary_name"
     cp "$icon" "$app/Contents/Resources/$icon_name.icns"
     printf '%s\n' "$product_metadata" >"$app/Contents/Resources/product.json"
-    cp -R "$root/licenses" "$app/Contents/Resources/licenses"
+    stage_product_licences "$app/Contents/Resources"
     cat >"$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
