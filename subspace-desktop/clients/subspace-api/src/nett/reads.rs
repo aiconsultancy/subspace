@@ -100,6 +100,25 @@ impl Client {
         Ok(value)
     }
 
+    /// The issue `reference`, read afresh within `timeout`: never a read
+    /// already in flight, which could predate a change just made, and tried
+    /// once. A reply read after the account or organisation changed belongs
+    /// to no one.
+    pub(crate) fn nett_issue_within(
+        &self,
+        reference: &str,
+        timeout: std::time::Duration,
+    ) -> Result<crate::model::IssueDetail, Error> {
+        let url = self.endpoint(&["issues", reference], &[])?;
+        let mut value: Value =
+            transport::get_within(&self.agent, &url, self.access_jwt.as_ref(), timeout)?;
+        self.current()?;
+        #[cfg(test)]
+        crate::native::test_lease::read_accepted();
+        wire::normalise(&mut value);
+        serde_json::from_value(value).map_err(|_| Error::InvalidResponse)
+    }
+
     fn coalesced_read(&self, url: &url::Url) -> Result<Value, Error> {
         super::flow::coalesce(self.account_key(), url.as_str(), || {
             let mut attempt = 1;
