@@ -171,6 +171,11 @@ your Compose override or through your container host's volume controls.
 | `IRC_ACCOUNTS_JSON`, `IRC_ACCOUNTS_FILE` | empty | Service-account seed JSON or mounted JSON file |
 | `IRC_CHANNELS_JSON`, `IRC_CHANNELS_FILE` | empty | Channel seed JSON or mounted JSON file |
 | `IRC_CHANNEL_FOUNDER` | operator account | Default founder for entries that omit it |
+| `IRC_HISTORY_DATABASE` | `sqlite` | Where persistent history goes: `sqlite` (in the volume) or `postgresql` |
+| `IRC_POSTGRES_HOST`, `IRC_POSTGRES_PORT` | empty, `5432` | PostgreSQL server for history |
+| `IRC_POSTGRES_USER`, `IRC_POSTGRES_DATABASE` | `ergo`, `ergo_history` | Role and database Ergo uses; it creates its tables itself |
+| `IRC_POSTGRES_SSL_MODE` | `disable` | `disable`, `require`, `verify-ca` or `verify-full` |
+| `IRC_POSTGRES_PASSWORD_FILE`, `IRC_POSTGRES_PASSWORD` | empty | The role's password, preferably as a mounted file |
 
 Mounted credentials avoid exposing passwords through Docker's environment
 inspection. The operator password file supports a final line ending.
@@ -193,7 +198,11 @@ its password is changed.
 ## History and backups
 
 The volume contains Ergo's accounts and channel registrations (`ircd.db`),
-the SQLite history database (`history.db`) and the local TLS bundle.
+the SQLite history database (`history.db`) and the local TLS bundle. With
+`IRC_HISTORY_DATABASE=postgresql`, history goes to that PostgreSQL database
+instead; back it up with the database. The fleet installer does this on a
+single-host fleet, giving Ergo its own `ergo_history` database and role in
+the same PostgreSQL as the Subspace API.
 Registered channels and direct messages for signed-in users persist by
 default, with a 90-day retention period. Unregistered channels use memory
 and lose their scrollback on restart. SQLite gives a single Ergo instance
