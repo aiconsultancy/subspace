@@ -1,4 +1,4 @@
-use super::super::{organisation, server::NettMock, wait};
+use super::super::{TOKEN, organisation, server::NettMock, wait};
 use super::{open_live_issue, streams, wait_for_live_list, works_hub};
 use crate::hub::{Hub, LiveStatus};
 use crate::{Client, ListQuery, ListTab};
@@ -97,6 +97,29 @@ fn a_lasting_403_on_the_stream_stops_it_instead_of_polling() {
     assert!(mock.count("GET", "/issues/groups") >= 2);
     std::thread::sleep(Duration::from_millis(2500));
     assert_eq!(streams(&mock), attempts, "no further attempts");
+    hub.stop();
+}
+
+#[test]
+fn a_stream_stopped_by_refusals_comes_back_when_another_read_finds_access_changed() {
+    let mock = NettMock::serving(&["updates"]);
+    let (org, hub) = works_hub(&mock);
+    wait_for_live_list(&hub);
+    mock.config(&json!({"streamRefusal": {"status": 403, "retryAfter": 0, "times": 50}}));
+    mock.close_streams();
+    wait("the stream off", Duration::from_secs(20), &|| {
+        hub.snapshot().live() == LiveStatus::Off
+    });
+    // Access comes back, and an explicit reload's read of the same account
+    // finds the capability list changed, while the followed teams stay.
+    mock.config(&json!({"streamRefusal": null}));
+    mock.capabilities(&org, &["updates", "attachments"]);
+    let elsewhere =
+        Client::nett_loopback(&mock.api(), Some(&org), Some(Secret::new(TOKEN))).unwrap();
+    assert_eq!(elsewhere.nett_refresh_served(), Ok(true));
+    wait("a live stream again", Duration::from_secs(10), &|| {
+        hub.snapshot().live() == LiveStatus::Live
+    });
     hub.stop();
 }
 
