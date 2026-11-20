@@ -96,6 +96,27 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(crew["githubApp"], apps[2])
         self.assertEqual(crew["name"], "Rigel")
 
+    def test_stargate_fleet_api_is_an_operator_listener(self):
+        example = Path(__file__).resolve().parents[1] / "fleet.example.json"
+        config = json.loads(example.read_text())
+        config["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
+        secrets = {"proxyKey": "fixture-model-proxy-key", "ircPasswords": {
+            account: "fixture-password" for account in ("example-atlas", "example-orion")
+        }}
+        self.assertIsNone(validate(config, secrets)["stargate"]["api"])
+        config["stargate"] = {"api": {}}
+        cfg = validate(config, secrets)
+        self.assertEqual(cfg["stargate"]["api"], {"port": 8484})
+        self.assertIn(8484, cfg["listeners"])
+        config["stargate"] = {"api": {"port": 8070}}
+        with self.assertRaisesRegex(Invalid, "distinct ports"):
+            validate(config, secrets)
+        config["stargate"] = {"api": {"port": 8484, "listen": "0.0.0.0:8484"}}
+        with self.assertRaises(Invalid):
+            validate(config, secrets)
+        result = rules({"dashboard": 8070, "agentsview": 8080, "proxy": 8317, "stargate-api": 8484}, [1700], [701])
+        self.assertIn('oifname "lo" tcp dport 8484 meta skuid != { 0, 1700 } reject', result)
+
     def test_toolchain_versions_are_data(self):
         self.assertEqual(toolchain_config({"node": False, "go": "1.26.1"}), {"go": "1.26.1"})
         with self.assertRaises(Invalid):
