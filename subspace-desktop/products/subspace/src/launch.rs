@@ -5,8 +5,9 @@
 //!
 //! A set variable wins over the stamped value, even when empty:
 //! `SUBSPACE_IDENTITY_PROVIDER=` turns sign-in off for one run. A Subspace
-//! API build refuses NETT settings, and a NETT build refuses every Subspace
-//! API setting, signs in only with WorkOS and needs a valid NETT API URL.
+//! API build refuses NETT settings and, signing in with WorkOS, an invalid
+//! client ID. A NETT build refuses every Subspace API setting, signs in
+//! only with WorkOS and needs a valid NETT API URL.
 
 use crate::settings::{ApiBackend, refused_in_nett, valid_api_url, valid_workos_client_id};
 use std::collections::BTreeMap;
@@ -112,6 +113,13 @@ pub(crate) fn resolve(
             }
             if !launch.api_url.is_empty() && !valid_api_url(&launch.api_url) {
                 return Err(subspace_url_error());
+            }
+            // The build refuses an invalid WorkOS client, and so does a run
+            // that overrides it: a bad ID fails here, not at sign-in.
+            if launch.provider == "workos" && !valid_workos_client_id(&launch.workos_client_id) {
+                return Err(format!(
+                    "The workos provider requires a WorkOS client ID (workos_client_id or {WORKOS_CLIENT_ID}), such as client_01ABC."
+                ));
             }
             launch.nett_api_url.clear();
         }
@@ -267,6 +275,35 @@ mod tests {
         )
         .unwrap_err();
         assert!(invalid.contains("Subspace API URL"), "{invalid}");
+    }
+
+    #[test]
+    fn a_subspace_build_signing_in_with_workos_checks_its_client_at_launch() {
+        let workos = Stamped {
+            provider: "workos",
+            workos_client_id: CLIENT,
+            ..SUBSPACE
+        };
+        assert_eq!(
+            resolve(&workos, Vec::new()).unwrap().workos_client_id,
+            CLIENT
+        );
+        for client in ["wrong_id", "", "client_", "client id"] {
+            let error =
+                resolve(&workos, vars(&[("SUBSPACE_WORKOS_CLIENT_ID", client)])).unwrap_err();
+            assert!(error.contains("WorkOS client ID"), "{client:?}: {error}");
+        }
+        // Switching a dev build to WorkOS for one run needs a valid client.
+        let switched = vars(&[("SUBSPACE_IDENTITY_PROVIDER", "workos")]);
+        assert!(resolve(&SUBSPACE, switched).is_err());
+        let switched = vars(&[
+            ("SUBSPACE_IDENTITY_PROVIDER", "workos"),
+            ("SUBSPACE_WORKOS_CLIENT_ID", CLIENT),
+        ]);
+        assert_eq!(resolve(&SUBSPACE, switched).unwrap().provider, "workos");
+        // Other providers never read the WorkOS client.
+        let dev = vars(&[("SUBSPACE_WORKOS_CLIENT_ID", "wrong_id")]);
+        assert_eq!(resolve(&SUBSPACE, dev).unwrap().provider, "dev");
     }
 
     #[test]
