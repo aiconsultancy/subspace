@@ -447,7 +447,7 @@ initiatives again. Until a new list
 arrives, the previous one still answers; one that cannot be read again is
 tried again after 30 seconds, then twice as long after each failure in a
 row, up to five minutes. The desktop
-uses five names and ignores every other name,
+uses six names and ignores every other name,
 including `issueSubscribers`, `notificationUnread`, `issueDocumentArchive`
 and `repositories`.
 
@@ -457,6 +457,7 @@ and `repositories`.
 | `attachments` | The description's file media stand in for the attachment list, and the panel offers no add, save or remove. Comment images and files still work. | The Attachments panel adds, saves and removes standalone attachments. |
 | `chatUploads` | File and paste-upload actions in Channels are hidden; a paste stays plain text. | Uploads work as described under [Chat uploads](#chat-uploads). |
 | `issueMoves` | Moving an issue to another team is hidden. | The move preview and confirmation work as described under [Moves](#moves). |
+| `issueMoveReplay` | A move's numbers are read back after it commits, and **Check issue** reads the issues back without sending the move again. | NETT's reply records the move, and **Check issue** replays the confirmation, as described under [Replaying a confirmation](#replaying-a-confirmation). |
 | `updates` | No stream is opened, and nothing is polled: Issues says live updates are off, and changes made elsewhere show after a reload. | The hub follows the stream as described under [Live updates](#live-updates). |
 
 Some things stay off because NETT is not adding them: the issue summary and
@@ -555,6 +556,42 @@ With `issueMoves`, Issues can move an issue to another team.
   NETT build's editor shows that refusal plainly. The default build keeps
   moving archived sub-issues with their parent, as Subspace API does.
 
+### Replaying a confirmation
+
+Reading a move back has to guess whether it committed, and a teammate's
+move of the root, or a sub-issue moved again since, can fool any rule. With
+`issueMoveReplay`, NETT records each commit under its preview token, in the
+same transaction as the move, and keeps the record for at least seven
+days. Without the capability, everything above applies unchanged.
+
+- Every successful confirmation's reply carries a `move` object beside the
+  root's detail: `{token, committedAt, replayed, actorType, issues}`, where
+  `issues` lists exactly the issues this commit moved, root first in
+  preview order, each `{id, oldIdentifier, newIdentifier, version}` as
+  committed. When it names this plan's token and exactly the previewed
+  issues, each numbered in the destination, the client takes the numbers
+  from it, reads nothing back and leaves nothing unreconciled. A reply
+  without a valid `move` object is read back as above.
+- **Check issue** sends the identical confirmation again, same body and
+  token. NETT takes the plan's lock before it looks for the record and
+  skips the version and plan checks, so a replay that arrives while the
+  first confirmation is still committing waits for it. A 200 means the
+  move committed: the editor opens the root under the number NETT recorded
+  for this plan, even if a sub-issue or the root has moved again since. A
+  409 with the problem code `IssueMove.PlanChanged` (read from the
+  problem's `code` or `errorCode` member) means the plan never committed,
+  and the editor offers a fresh preview. Any other 409, a network error or
+  a 5xx leaves the move unconfirmed, to be checked again. If the first
+  confirmation never reached NETT and the plan still matches, the replay
+  commits it, as the person already confirmed.
+- The client replays only within 24 hours of first sending the
+  confirmation, by the wall clock, which keeps counting while the computer
+  sleeps; a clock set back before the send counts as expired. After that,
+  **Check issue** reads the issues back as above, and a fresh preview
+  follows if the plan did not happen.
+- The panel's states and wording are unchanged: a replayed move that
+  committed shows like any committed move.
+
 ## To-dos
 
 NETT issues have named lists of items. In a NETT build the issue view shows
@@ -632,7 +669,8 @@ No test calls a real NETT environment.
   document, checks every existing route and response property against it.
 - The mock implements every route of every feature it advertises:
   initiative discovery (with fleetless, nested and archived initiatives),
-  standalone attachments, chat uploads, moves and the update stream, from
+  standalone attachments, chat uploads, moves with replayable
+  confirmation and the update stream, from
   dedicated contract fixtures. Every organisation route needs exactly one
   matching `x-org-id` (403 when missing or different), each token acts as
   its own person, and a stream rechecks its bearer and the person's access
@@ -640,8 +678,9 @@ No test calls a real NETT environment.
   completion answer 202 first or managed media ready at once, fail, delay
   or drop a chosen request, drop a PUT's reply, expire reservations, refuse
   grants to a second account, revoke a token or a membership, hide a
-  project from one person, close or refuse streams and archive a team or an
-  issue.
+  project from one person, close or refuse streams, archive a team or an
+  issue, lose a committed move's reply, hold a move's commit so a replay
+  arrives mid-commit, and age move commit records past their seven days.
 - Client unit tests cover the path, query and body translation, the JSON
   mapping, organisation selection, the grant cache and flow control.
 - End-to-end client tests run the actual adapter operations against the mock
@@ -650,7 +689,10 @@ No test calls a real NETT environment.
   cursors, conflicts, pending completion, that the file host receives no
   credentials and that the bytes are sent exactly once, including after a
   lost PUT reply, a lost or refused completion reply and a long check, for
-  standalone attachments, comment media and chat. They also cover a stored
+  standalone attachments, comment media and chat, and for a move whose
+  reply was lost: replayed and committed, a plan changed and never moved, a
+  replay while the commit is in flight, a replay after a sub-issue moved
+  again, a server without replay, and the 24-hour cutoff. They also cover a stored
   upload whose check is refused after the issue was archived, a proven
   absence, a check after a refresh, a lapsed reservation, a final refusal,
   a wait held for five minutes at most, a day-long wait that a reload
