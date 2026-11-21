@@ -8,7 +8,7 @@ use subspace_framework::dashboard::{Dashboard as _, DashboardEvent, ReturnPoint}
 
 use super::is_loaded;
 use crate::Issues;
-use crate::tests::offline::{Offline, board_with_hub, offline, settle_board};
+use crate::tests::offline::{Offline, board_with_hub, fixture_hub, offline, settle_board};
 use crate::tests::{has, label, press, render, selected};
 
 fn channel() -> ReturnPoint {
@@ -223,4 +223,36 @@ fn a_live_reread_of_the_open_issue_keeps_its_origin(cx: &mut TestAppContext) {
     );
     press(cx, "escape");
     assert_eq!(*seen.borrow(), [channel()]);
+}
+
+#[gpui_kit::test]
+fn a_new_hub_forgets_the_origin_from_the_last_account(cx: &mut TestAppContext) {
+    let (fixture, board, cx) = ready(cx);
+    let (seen, _subscription) = returns(&board, cx);
+    let decision = ReturnPoint {
+        board: "decisions",
+        label: "Adopt a review rota".into(),
+        location: Some("{\"number\":7}".into()),
+    };
+    arrive_by_link(&board, Some(decision), "SUB-1", cx);
+    assert_eq!(
+        label(cx, "issue-back").as_deref(),
+        Some("Back to Adopt a review rota")
+    );
+    // The hub restarts for another account, as `poll_hub` does when the
+    // signed-in account changes.
+    let (hub, address) = fixture_hub(&fixture);
+    cx.update(|_, cx| crate::link::install(cx, hub, Some(address)));
+    board.update(cx, |board, cx| board.poll_hub(cx));
+    cx.update(|_, cx| assert!(board.read(cx).back.origin().is_none()));
+    settle_board(&board, cx, |board| board.issue("issue:1").is_some());
+    // An issue opened afterwards from this board, as from the palette, has
+    // no arrival: Back goes to the list, not to the old account's decision.
+    let url = link(&board, "SUB-2", cx);
+    board.update(cx, |board, cx| assert!(board.open_link(&url, cx)));
+    settle_board(&board, cx, |board| is_loaded(board, "SUB-2"));
+    render(cx);
+    assert_eq!(label(cx, "issue-back").as_deref(), Some("Back to issues"));
+    press(cx, "escape");
+    assert!(seen.borrow().is_empty());
 }

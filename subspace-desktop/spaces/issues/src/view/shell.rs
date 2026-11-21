@@ -54,7 +54,9 @@ pub(super) fn list(
     let shown = issues.shown_docks(&Tokens::current(cx));
     let pane = Pane::new("issues-pane")
         .when_some(toolbar(issues, head, shown, cx), |pane, toolbar| {
-            pane.tabs(view_tabs(issues)).toolbar(toolbar)
+            // A screen standing in for the list names no view.
+            pane.when(head != Head::Bare, |pane| pane.tabs(view_tabs(issues)))
+                .toolbar(toolbar)
         })
         .child(content);
     Workspace::new("issues-workspace")
@@ -85,8 +87,21 @@ fn toolbar(issues: &Issues, head: Head, shown: Docks, cx: &mut Context<Issues>) 
     match head {
         Head::List => Some(list_toolbar(issues, shown, cx)),
         Head::Activity => Some(activity_toolbar(issues, shown, cx)),
-        Head::Bare => None,
+        Head::Bare => bare_toolbar(shown, || crate::organisation::button(issues, cx)),
     }
+}
+
+/// A screen standing in for the list has no toolbar, except that the NETT
+/// organisation menu stays in reach while the navigator, which otherwise
+/// holds it, is hidden: the screen asking for an organisation points at it.
+fn bare_toolbar(
+    shown: Docks,
+    organisation: impl FnOnce() -> Option<AnyElement>,
+) -> Option<Toolbar> {
+    if shown.navigator {
+        return None;
+    }
+    organisation().map(|menu| Toolbar::new("issues-toolbar").leading(menu))
 }
 
 /// Search and filters on the leading side; how the list is grouped, the
@@ -172,4 +187,31 @@ fn sub_issues_button(issues: &Issues, cx: &Context<Issues>) -> impl IntoElement 
     .tooltip(tooltip)
     .latched(issues.sub_issues == SubIssues::Flat)
     .on_click(cx.listener(|this, _, _, cx| this.toggle_sub_issues(cx)))
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::{IntoElement as _, div};
+
+    use super::bare_toolbar;
+    use crate::docks::Docks;
+
+    const HIDDEN: Docks = Docks {
+        navigator: false,
+        inspector: true,
+    };
+
+    #[test]
+    fn a_screen_keeps_the_organisation_menu_while_the_navigator_is_hidden() {
+        let picker = || Some(div().into_any_element());
+        assert!(bare_toolbar(HIDDEN, picker).is_some());
+        assert!(
+            bare_toolbar(Docks::default(), || panic!("the navigator holds the menu")).is_none(),
+            "the navigator's header holds it"
+        );
+        assert!(
+            bare_toolbar(HIDDEN, || None).is_none(),
+            "no menu, as outside NETT or with one organisation, leaves no toolbar"
+        );
+    }
 }
