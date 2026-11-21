@@ -144,9 +144,10 @@ jobs:
             echo "in subspace-desktop/ and run \`make release-macos\`."
           } >>"$GITHUB_STEP_SUMMARY"
       - name: Build, sign and attach the app's Windows archive
+        id: windows-release
         if: steps.release.outputs['subspace-desktop--release_created'] == 'true'
-        # A failed start must not stop the steps after it; start the workflow
-        # by hand instead (see subspace-desktop/docs/installation.md).
+        # A failed start must not stop the steps after it; the next step says
+        # how to start the workflow by hand.
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -161,6 +162,15 @@ jobs:
           esac
           gh workflow run windows-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG"
           echo "Started windows-release for $TAG." >>"$GITHUB_STEP_SUMMARY"
+      - name: Say how to start windows-release by hand
+        if: steps.windows-release.outcome == 'failure'
+        env:
+          TAG: ${{ steps.release.outputs['subspace-desktop--tag_name'] }}
+        run: |
+          {
+            echo "Could not start windows-release for $TAG. Start it by hand before publishing:"
+            echo "\`gh workflow run windows-release.yml -R $GITHUB_REPOSITORY --ref main -f tag=$TAG\`"
+          } >>"$GITHUB_STEP_SUMMARY"
       - name: Fast-forward the integration branch to main
         if: steps.release.outputs.releases_created == 'true' || steps.after-merge.outputs.releases_created == 'true'
         env:
