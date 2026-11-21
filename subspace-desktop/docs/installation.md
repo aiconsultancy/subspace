@@ -572,9 +572,11 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
    deployment subnet, refuses the tag unless it is a stable release whose
    commit is on `main`, so only reviewed code is signed, whoever pushed the
    tag. It fixes that commit and the archive's name for the rest of the run.
-2. **build**, on `subspace-windows`, checks out that commit and runs
+2. **build**, on `subspace-windows`, checks out that commit, installs
+   `cargo-about` at the version and SHA-256 its `mise.toml` pins, and runs
    `scripts/package-release.sh x86_64-pc-windows-msvc <version>` with no
-   secrets. The app cannot start in a Windows Server container, so the job
+   secrets. The runner image provides Python 3 as `python3`, which packaging
+   also needs. The app cannot start in a Windows Server container, so the job
    sets `SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1` and the script does not run the
    app to read its version back. The runner is a Windows Server 2022
    container on a node pool that scales from zero to one, so a run may wait a
