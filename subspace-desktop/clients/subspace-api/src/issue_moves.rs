@@ -197,7 +197,9 @@ impl Client {
         if preview.moves_archived_sub_issue() {
             return Err(IssueSaveError::ArchivedSubIssue);
         }
-        replay::note_sent(self, &preview.token);
+        if replays {
+            replay::note_sent(self, &preview.token);
+        }
         let (issue, commit) = self.send_confirmation(preview, false)?;
         if replays && let Some(result) = replay::recorded(preview, issue.clone(), commit) {
             return Ok(result);

@@ -169,6 +169,18 @@ impl Client {
         self.nett_verify_move(preview, None)
     }
 
+    /// Checks a NETT move by reading it back, never sending it: for a
+    /// caller that may not write the move again.
+    pub(crate) fn read_back_issue_move(
+        &self,
+        preview: &MovePreview,
+    ) -> Result<MoveResult, IssueSaveError> {
+        if self.backend != crate::Backend::Nett {
+            return Err(IssueSaveError::Unavailable);
+        }
+        self.nett_verify_move(preview, None)
+    }
+
     pub(super) fn nett_verify_move(
         &self,
         preview: &MovePreview,
