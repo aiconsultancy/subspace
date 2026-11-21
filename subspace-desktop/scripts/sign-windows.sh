@@ -113,16 +113,21 @@ for path in "$@"; do
 		# the signed archive. Refuse links, unsafe paths and duplicate entries.
 		while IFS= read -r member; do
 			# Windows drops trailing dots and spaces from a name, so evil.dll.
-			# would land as evil.dll, and it reserves device names such as NUL
-			# in any folder and with any extension.
+			# would land as evil.dll; it forbids <>:"|?* and control
+			# characters; and it reserves device names such as NUL in any
+			# folder and with any extension. unzip lists a name it can't show
+			# in ASCII with ? in place of each byte, so that is refused too.
 			case "$member" in
-			'' | /* | *\\* | *:* | .. | ../* | */.. | */../* | *. | *./* | *" " | *" "/*)
+			'' | /* | *\\* | .. | ../* | */.. | */../* | *. | *./* | *" " | *" "/* | *[\<\>:\"\|?\*]* | *[[:cntrl:]]*)
 				fail "unsafe entry in $path: $member" ;;
 			esac
 			IFS=/ read -r -a parts <<<"$(printf '%s' "$member" | tr '[:upper:]' '[:lower:]')"
 			for part in "${parts[@]}"; do
-				case "${part%%.*}" in
-				con | prn | aux | nul | com[1-9] | lpt[1-9]) fail "unsafe entry in $path: $member" ;;
+				stem="${part%%.*}"
+				stem="${stem%"${stem##*[! ]}"}"
+				case "$stem" in
+				con | prn | aux | nul | 'conin$' | 'conout$' | com[0-9] | lpt[0-9])
+					fail "unsafe entry in $path: $member" ;;
 				esac
 			done
 		done <"$stage/$index.entries"

@@ -86,6 +86,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      pull-requests: read # Find the pull request that made the release commit.
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
@@ -102,6 +103,7 @@ jobs:
       - name: Resolve the release
         id: release
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
           EXPECTED_COMMIT: ${{ inputs.commit }}
         run: |
@@ -125,11 +127,21 @@ jobs:
             echo "$TAG points at $commit, which is not in main's first-parent history; only those commits are built and signed" >&2
             exit 1
           fi
-          # A desktop release commit changes only the files Release Please
-          # does, so a tag on any other commit is refused, however it reached
-          # main.
+          # The merge commit of a merged Release Please pull request into main,
+          # never a commit from inside another pull request, however that was
+          # merged: after a rebase merge, GitHub records only the last commit.
+          prs="$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit/pulls")"
+          if ! jq -e --arg c "$commit" --arg repo "$GITHUB_REPOSITORY" '
+            [.[] | select(.merge_commit_sha == $c and .merged_at != null
+              and .base.ref == "main" and .head.repo.full_name == $repo
+              and .head.ref == "release-please--branches--main--components--subspace-desktop"
+              and .user.login == "github-actions[bot]")] | length == 1' <<<"$prs" >/dev/null; then
+            echo "$commit is not the merge commit of a merged Release Please pull request for the desktop" >&2
+            exit 1
+          fi
+          # And it changes only the files Release Please changes.
           allowed='^(\.release-please-manifest\.json|subspace-desktop/(CHANGELOG\.md|Cargo\.(toml|lock)|terminal/(panel|runtime)/Cargo\.(toml|lock)))$'
-          changed="$(git diff --no-ext-diff --no-textconv --name-only "$commit^1" "$commit")"
+          changed="$(git diff --no-ext-diff --no-textconv --no-renames --name-only "$commit^1" "$commit")"
           if [[ -z "$changed" ]] || grep -vE "$allowed" <<<"$changed" >/dev/null; then
             printf '%s is not a Release Please release commit; it changes:\n%s\n' "$commit" "$changed" >&2
             exit 1
