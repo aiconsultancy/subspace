@@ -67,7 +67,30 @@ impl Rows {
     }
 }
 
-fn mount(cx: &mut TestAppContext) -> (Clicks, Rc<Cell<usize>>, &mut VisualTestContext) {
+/// Two navigators side by side in one window, as two workspaces would be,
+/// each with two rows.
+struct TwoNavigators;
+
+impl Render for TwoNavigators {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let navigator = |id: &'static str, rows: [&'static str; 2]| {
+            let [first, second] = rows;
+            div().id(id).flex_1().min_h_0().child(
+                Navigator::new(id)
+                    .child(NavRow::new(first, first).on_click(|_, _, _| {}))
+                    .child(NavRow::new(second, second).on_click(|_, _, _| {})),
+            )
+        };
+        div()
+            .size_full()
+            .flex()
+            .key_context(DASHBOARD_CONTEXT)
+            .child(navigator("first", ["first-a", "first-b"]))
+            .child(navigator("second", ["second-a", "second-b"]))
+    }
+}
+
+fn bind_list_keys(cx: &mut TestAppContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         let context = Some(DASHBOARD_CONTEXT);
@@ -77,6 +100,10 @@ fn mount(cx: &mut TestAppContext) -> (Clicks, Rc<Cell<usize>>, &mut VisualTestCo
             KeyBinding::new("enter", Activate, context),
         ]);
     });
+}
+
+fn mount(cx: &mut TestAppContext) -> (Clicks, Rc<Cell<usize>>, &mut VisualTestContext) {
+    bind_list_keys(cx);
     let clicks = Clicks::default();
     let menus = Rc::new(Cell::new(0));
     let (rows_clicks, rows_menus) = (clicks.clone(), menus.clone());
@@ -186,4 +213,43 @@ fn the_menu_of_another_row_chooses_it_first(cx: &mut TestAppContext) {
     assert!(menus.get() >= 1, "the menu opened");
     let clicks = clicks.borrow();
     assert!(!clicks.is_empty() && clicks.iter().all(|key| *key == "nav-b"));
+}
+
+#[gpui_kit::test]
+fn two_navigators_in_one_window_each_keep_their_own_row_order(cx: &mut TestAppContext) {
+    bind_list_keys(cx);
+    let (_, cx) = cx.add_window_view(|_, _| TwoNavigators);
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        window.focus_next(cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("first-a").focused(), Some(true));
+        window.press("down", cx);
+        assert_eq!(
+            window.find("first-b").focused(),
+            Some(true),
+            "the first navigator's keys still move after the second draws"
+        );
+        window.press("down", cx);
+        assert_eq!(
+            window.find("first-b").focused(),
+            Some(true),
+            "down on the first navigator's last row stays in that navigator"
+        );
+        window.press("up", cx);
+        assert_eq!(window.find("first-a").focused(), Some(true));
+        window.focus_next(cx);
+        window.focus_next(cx);
+        window.render_frame(cx);
+        assert_eq!(window.find("second-a").focused(), Some(true));
+        window.press("down", cx);
+        assert_eq!(window.find("second-b").focused(), Some(true));
+        window.press("up", cx);
+        window.press("up", cx);
+        assert_eq!(
+            window.find("second-a").focused(),
+            Some(true),
+            "up on the second navigator's first row stays in that navigator"
+        );
+    });
 }

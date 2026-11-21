@@ -78,7 +78,8 @@ impl ParentElement for Navigator {
 
 impl RenderOnce for Navigator {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        // The rows draw after this, each taking its place in the row order.
+        // The rows draw after this, each taking its place in this navigator's
+        // own row order.
         row_order::begin(window, cx);
         let tokens = Tokens::current(cx);
         let tree_label = self.title.clone();
@@ -276,7 +277,7 @@ impl NavRow {
 impl RenderOnce for NavRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let tokens = Tokens::current(cx);
-        let focus = row_focus(&self.key, self.on_click.is_some(), window, cx);
+        let (focus, rows) = row_focus(&self.key, self.on_click.is_some(), window, cx);
         let ring = focus.is_focused(window) && window.last_input_was_keyboard();
         let group = SharedString::from(format!("nav-row:{}", self.key));
         let title_id = SharedString::from(format!("nav-row-title:{}", self.key));
@@ -309,7 +310,7 @@ impl RenderOnce for NavRow {
             .child(truncated::text(title_id, self.label).flex_1())
             .children(self.count.map(|count| count_mark(count, mono, &tokens)))
             .children(self.trailing);
-        let row = with_handlers(row, focus, self.on_click.clone());
+        let row = with_handlers(row, focus, rows, self.on_click.clone());
         // The selected row is already the one its menu acts on.
         let select = self.on_click.filter(|_| !self.selected);
         with_menu(row, self.menu, select)

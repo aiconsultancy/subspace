@@ -5,11 +5,12 @@ use std::rc::Rc;
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Div, ElementId, FocusHandle, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, App, ClickEvent, Div, ElementId, Entity, FocusHandle, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled,
+    Window, div, px,
 };
 
-use super::row_order::{self, Step};
+use super::row_order::{self, NavigatorRows, Step};
 use crate::anchored::AnchoredContextMenuExt as _;
 use crate::row_menu::{self, GroupedMenu};
 use crate::tokens::Tokens;
@@ -87,16 +88,25 @@ pub(super) fn count_mark(count: SharedString, mono: SharedString, tokens: &Token
 /// The row's pointer and keyboard handlers. A click chooses the row but
 /// leaves the keyboard focus where it was; Tab and the list keys bring it
 /// here, and Enter chooses it as a click does. The list keys move only
-/// between the navigator's rows and stop at the first and the last.
-pub(super) fn with_handlers<E>(row: E, focus: FocusHandle, on_click: Option<ClickHandler>) -> E
+/// between the rows of the row's own navigator, `rows`, and stop at the first
+/// and the last.
+pub(super) fn with_handlers<E>(
+    row: E,
+    focus: FocusHandle,
+    rows: Option<Entity<NavigatorRows>>,
+    on_click: Option<ClickHandler>,
+) -> E
 where
     E: StatefulInteractiveElement + gpui_kit::prelude::FluentBuilder,
 {
     let from = focus.clone();
+    let next = rows.clone();
     row.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-        .on_action(move |_: &SelectNext, window, cx| row_order::step(&from, Step::Next, window, cx))
+        .on_action(move |_: &SelectNext, window, cx| {
+            row_order::step(next.as_ref(), &from, Step::Next, window, cx)
+        })
         .on_action(move |_: &SelectPrevious, window, cx| {
-            row_order::step(&focus, Step::Previous, window, cx)
+            row_order::step(rows.as_ref(), &focus, Step::Previous, window, cx)
         })
         .when_some(on_click, |row, on_click| {
             let activate = on_click.clone();
@@ -108,23 +118,24 @@ where
 }
 
 /// The row's own focus handle, kept across frames, in the tab order. A
-/// `focusable` row also takes its place in the navigator's row order.
+/// `focusable` row also takes its place in the row order of the navigator
+/// drawn before it, which comes back for its list keys to move in.
 pub(super) fn row_focus(
     key: &SharedString,
     focusable: bool,
     window: &mut Window,
     cx: &mut App,
-) -> FocusHandle {
-    let focus = window
-        .use_keyed_state(
-            (ElementId::Name(key.clone()), "nav-row-focus"),
-            cx,
-            |_, cx| cx.focus_handle().tab_stop(true),
-        )
-        .read(cx)
-        .clone();
-    if focusable {
-        row_order::push(&focus, window, cx);
-    }
-    focus
+) -> (FocusHandle, Option<Entity<NavigatorRows>>) {
+    let state = window.use_keyed_state(
+        (ElementId::Name(key.clone()), "nav-row-focus"),
+        cx,
+        |_, cx| cx.focus_handle().tab_stop(true),
+    );
+    let focus = state.read(cx).clone();
+    let rows = if focusable {
+        row_order::push(&focus, state.entity_id(), window, cx)
+    } else {
+        None
+    };
+    (focus, rows)
 }
