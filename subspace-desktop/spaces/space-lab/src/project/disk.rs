@@ -12,16 +12,22 @@ use std::time::{Duration, Instant};
 const LOCK_WAIT: Duration = Duration::from_secs(2);
 const LOCK_RETRY: Duration = Duration::from_millis(10);
 
+/// Creates a directory, or accepts a real one that is already there. Creating
+/// before checking lets concurrent openers of one store race safely: the loser
+/// gets `AlreadyExists` and checks what the winner made. A symlink, dangling
+/// or not, or a file at the path also gives `AlreadyExists` and is rejected.
 pub(super) fn directory(path: &Path) -> Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => ensure!(
-            metadata.is_dir() && !metadata.file_type().is_symlink(),
-            "unsafe directory: {}",
-            path.display()
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => fs::create_dir(path)?,
+    match fs::create_dir(path) {
+        Ok(()) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error.into()),
     }
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "unsafe directory: {}",
+        path.display()
+    );
     Ok(())
 }
 

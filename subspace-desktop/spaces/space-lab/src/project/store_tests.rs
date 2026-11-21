@@ -189,6 +189,68 @@ fn source_and_project_directory_symlinks_fail_closed() {
     assert!(store.load("../private").is_err());
 }
 
+/// Opens the store for `root` from `openers` threads released together.
+fn open_concurrently(root: &std::path::Path, openers: usize) -> Vec<anyhow::Result<()>> {
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(openers));
+    let threads: Vec<_> = (0..openers)
+        .map(|_| {
+            let root = root.to_path_buf();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                ProjectStore::new(root).map(|_| ())
+            })
+        })
+        .collect();
+    threads
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect()
+}
+
+/// At start-up the first catalogue load and the live-update observer open the
+/// store for one fresh root at once. Every opener succeeds, whichever of them
+/// creates the `projects` and `project-snapshots` folders.
+#[test]
+fn concurrent_store_opening_on_a_fresh_root_succeeds() {
+    for _ in 0..20 {
+        let root = tempfile::tempdir().unwrap();
+        for result in open_concurrently(root.path(), 16) {
+            assert!(result.is_ok(), "{result:?}");
+        }
+        assert!(root.path().join("projects").is_dir());
+        assert!(root.path().join("project-snapshots").is_dir());
+    }
+}
+
+#[test]
+fn store_rejects_a_file_in_place_of_its_projects_folder() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("projects"), b"not a folder").unwrap();
+    let error = ProjectStore::new(root.path()).unwrap_err();
+    assert!(error.to_string().contains("unsafe directory"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn store_rejects_a_symlink_in_place_of_its_projects_folder() {
+    use std::os::unix::fs::symlink;
+    let outside = tempfile::tempdir().unwrap();
+    let linked = tempfile::tempdir().unwrap();
+    symlink(outside.path(), linked.path().join("projects")).unwrap();
+    let dangling = tempfile::tempdir().unwrap();
+    symlink(
+        outside.path().join("missing"),
+        dangling.path().join("projects"),
+    )
+    .unwrap();
+    for root in [&linked, &dangling] {
+        let error = ProjectStore::new(root.path()).unwrap_err();
+        assert!(error.to_string().contains("unsafe directory"), "{error}");
+    }
+    assert!(!outside.path().join("missing").exists());
+}
+
 /// A lock held for a moment, as by a child that inherited it while another
 /// thread was spawning a process, does not fail the next project write.
 #[test]

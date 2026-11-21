@@ -209,3 +209,5 @@ record. [Change records](changes/README.md) explains the convention.
   starting with Decisions dropping what it read when the account changes.
 - [Space Lab rename](changes/space-lab-rename/intent.md): Board Lab renamed
   Space Lab, in its display name and every identifier, with no migration.
+- [Space Lab store race](changes/space-lab-store-race/intent.md): Space Lab's
+  project folders created without a start-up race.
