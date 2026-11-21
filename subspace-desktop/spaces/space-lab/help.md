@@ -29,7 +29,7 @@ the same guide through `board_help`, including its example code and the
 screenshot catalog. Screenshots show synthetic data.
 
 The retained **Canvas** and **Dashboard** prototypes are hidden by default.
-To show them, enable **Show prototype views** in **Settings > Boards > Space Lab**,
+To show them, enable **Show prototype views** in **Settings > Spaces > Space Lab**,
 under **Experiments**, then save and restart Subspace. This changes view
 visibility only; it does not remove saved prototypes or their tools.
 
@@ -514,13 +514,13 @@ select anything. This was read from source, not confirmed in a running app.
 
 ### Board settings
 
-Open **Settings > Boards > Space Lab**. The page describes Space Lab as an
+Open **Settings > Spaces > Space Lab**. The page describes Space Lab as an
 experimental, opt-in feature to use at your own risk, available on macOS ARM64
 only and off by default.
 
 | Setting | Default | Notes |
 | --- | --- | --- |
-| **Enabled** | Off in release builds, on in debug builds | Save applies it without a restart. |
+| **Enabled** | Off | Save applies it without a restart. Only a build with the app's `space-lab` feature has Space Lab; release builds leave it out. |
 | **Show prototype views** (Experiments) | Off | Shows the Canvas and Dashboard views. Save and restart to apply. Hidden prototypes keep their saved data and tools. |
 
 Space Lab has no connection settings, no notifications and no background-update
@@ -577,8 +577,8 @@ More checks:
 | `Space Lab unavailable` | The platform is not macOS ARM64, or the application data directory is unavailable or relative. There is no fallback. |
 | `No configured Python, Node or Bun environments` | Open **Environments** and configure or provision one. **Create** is disabled until one exists. |
 | `A project operation is pending. Wait, then try the control or action again.` | A project operation is still running. Wait for `Working…` to end. |
-| Board missing from the switcher | Release builds ship it off. Enable it in **Settings > General > Boards** and save. |
-| Canvas or Dashboard view missing | Turn on **Show prototype views** under **Settings > Boards > Space Lab**, save and restart. |
+| Board missing from the switcher | It starts off. Turn on **Enabled** in **Settings > Spaces > Space Lab**, or add it from **Add a Space**, and save. Release builds do not include it; use a build with the app's `space-lab` feature, such as `make run-unreleased`. |
+| Canvas or Dashboard view missing | Turn on **Show prototype views** under **Settings > Spaces > Space Lab**, save and restart. |
 | Table export did not save | The chosen file already exists, or the save failed. Choose a new filename. |
 | Project export fails | Known configured credentials in source are rejected. Remove them and export again. |
 

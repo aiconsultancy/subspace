@@ -21,7 +21,9 @@ Back to the [change record](intent.md).
 - [x] Guidance: hooks on every commit (S33), screenshot pairs in one theme
       (S38), Decisions in the Space directory (S39); S37 refuted.
 - [x] A headless test for each behavioural fix.
-- [ ] S32: fix the Board Lab guide on the Space Lab rename branch.
+- [x] S32: fix the Board Lab guide on the Space Lab rename branch (its
+      settings path and default, in the
+      [Space Lab guide](../../../spaces/space-lab/help.md#board-settings)).
 - [x] Build and test both projects, `make check`, `mise run quality` and
       `make interfaces` (see [delivery](delivery.md#checks)).
 - [x] Captures of the changes visible in the UI
