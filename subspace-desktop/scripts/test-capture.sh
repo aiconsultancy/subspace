@@ -66,7 +66,7 @@ shots="$(cd "$fixture/shots" && pwd)"
 fail() { echo "capture: $*" >&2; exit 1; }
 if [[ "$host_platform" = Darwin ]]; then
 TMPDIR="$fixture/tmp" XDG_CONFIG_HOME=/real-user/config GH_CONFIG_DIR=/real-user/gh GH_TOKEN=real-user-token \
-    CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" CAPTURE_CONFIG='{"boards": {"actions": true}}' \
+    CAPTURE_FEATURES='' CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" CAPTURE_CONFIG='{"boards": {"actions": true}}' \
     CAPTURE_DECISION_SCENARIO=forbidden CAPTURE_MOVE_UNCONFIRMED=1 CAPTURE_UPLOAD_SCENARIO=unknown \
     bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >"$fixture/capture.out"
 
