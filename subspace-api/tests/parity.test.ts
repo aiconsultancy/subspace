@@ -1381,6 +1381,175 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
     await call(404, `/initiatives/${initiativeId}/projects`, "other");
   });
 
+  test("ready for agents is refused on assigned issues and cleared by any assignment", async () => {
+    type Ready = Issue & { readyForAgents: boolean; assignee: { userId: string } | null };
+    const captain = members.get("captain")!;
+    const rearAdmiral = members.get("rearAdmiral")!;
+    const plain = await call<Ready>(201, "/issues", "admin", "POST", {
+      projectId,
+      title: "Ready default fixture",
+      summary: "Fixture issue",
+    });
+    expect(plain.readyForAgents).toBe(false);
+    await call(400, "/issues", "member", "POST", {
+      projectId,
+      title: "Ready assigned fixture",
+      summary: "Fixture issue",
+      assigneeId: captain,
+      readyForAgents: true,
+    });
+    const ready = await call<Ready>(201, "/issues", "member", "POST", {
+      projectId,
+      title: "Ready flagged fixture",
+      summary: "Fixture issue",
+      readyForAgents: true,
+    });
+    expect(ready).toMatchObject({ readyForAgents: true, assignee: null });
+    expect(await call(200, `/issues/${ready.id}`, "captain")).toMatchObject({
+      readyForAgents: true,
+    });
+    const listed = await call<Page<Ready>>(
+      200,
+      "/issues?project=PAR&q=Ready+flagged&readyForAgents=true&assignee=none",
+      "rearAdmiral",
+    );
+    expect(listed.items).toEqual([expect.objectContaining({ id: ready.id, readyForAgents: true })]);
+    expect(
+      (await call<Page<Ready>>(200, "/issues?project=PAR&q=Ready+flagged&readyForAgents=false"))
+        .items,
+    ).toEqual([]);
+    expect(
+      (await call<Page<Ready>>(200, "/issues?project=PAR&q=Ready+default&readyForAgents=false"))
+        .items,
+    ).toEqual([expect.objectContaining({ id: plain.id, readyForAgents: false })]);
+    const invalid = await http("/issues?readyForAgents=maybe", "admin");
+    const invalidSubscribed = await http("/issues?subscribed=maybe", "admin");
+    expect(invalid.status).toBe(400);
+    expect(invalidSubscribed.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ status: 400, title: "Bad Request" });
+
+    // Two captains accept the same offer from the same version: only the first write lands.
+    const accepted = await call<Ready>(200, `/issues/${ready.id}`, "captain", "PATCH", {
+      version: ready.version,
+      assigneeId: captain,
+    });
+    expect(accepted).toMatchObject({
+      readyForAgents: false,
+      assignee: { userId: captain },
+      version: ready.version + 1,
+    });
+    const second = await http(`/issues/${ready.id}`, "rearAdmiral", "PATCH", {
+      version: ready.version,
+      assigneeId: rearAdmiral,
+    });
+    expect(second.status).toBe(409);
+    expect(await second.json()).toMatchObject({ currentVersion: ready.version + 1 });
+    const activity = await call<Page<{ kind: string; data: { fields?: string[] } }>>(
+      200,
+      `/issues/${ready.id}/activity`,
+      "admin",
+    );
+    const assignment = activity.items.find(({ kind }) => kind === "issue.changed");
+    expect(assignment?.data.fields).toEqual(["assigneeId", "readyForAgents"]);
+
+    // An assigned issue cannot be flagged, alone or with a new assignee in the same write.
+    await call(400, `/issues/${ready.id}`, "admin", "PATCH", {
+      version: accepted.version,
+      readyForAgents: true,
+    });
+    await call(400, `/issues/${ready.id}`, "admin", "PATCH", {
+      version: accepted.version,
+      assigneeId: rearAdmiral,
+      readyForAgents: true,
+    });
+    const unassigned = await call<Ready>(200, `/issues/${ready.id}`, "admin", "PATCH", {
+      version: accepted.version,
+      assigneeId: null,
+    });
+    expect(unassigned).toMatchObject({ readyForAgents: false, assignee: null });
+    const reflagged = await call<Ready>(200, `/issues/${ready.id}`, "admin", "PATCH", {
+      version: unassigned.version,
+      readyForAgents: true,
+    });
+    expect(reflagged.readyForAgents).toBe(true);
+    const reassigned = await call<Ready>(200, `/issues/${ready.id}`, "admin", "PATCH", {
+      version: reflagged.version,
+      assigneeId: captain,
+    });
+    const handedBack = await call<Ready>(200, `/issues/${ready.id}`, "admin", "PATCH", {
+      version: reassigned.version,
+      assigneeId: null,
+      readyForAgents: true,
+    });
+    expect(handedBack).toMatchObject({ readyForAgents: true, assignee: null });
+    const quiet = await call<Ready>(200, `/issues/${ready.id}`, "admin", "PATCH", {
+      version: handedBack.version,
+      title: "Ready flagged fixture, renamed",
+    });
+    expect(quiet.readyForAgents).toBe(true);
+    const latest = await call<Page<{ kind: string; data: { fields?: string[] } }>>(
+      200,
+      `/issues/${ready.id}/activity?limit=1`,
+      "admin",
+    );
+    expect(latest.items[0]?.data.fields).toEqual(["title"]);
+  });
+
+  test("assignee and updatedSince filters combine for an agent assignee", async () => {
+    const captain = members.get("captain")!;
+    const before = encodeURIComponent(new Date(Date.now() - 60_000).toISOString());
+    const issue = await createIssue("Agent assignment window fixture", "admin", {
+      assigneeId: captain,
+    });
+    await createIssue("Agent assignment window fixture, unassigned");
+    const after = encodeURIComponent(new Date(Date.now() + 60_000).toISOString());
+    const path = `/issues?q=Agent+assignment+window&assignee=${captain}`;
+    expect((await call<Page<Issue>>(200, `${path}&updatedSince=${before}`)).items).toEqual([
+      expect.objectContaining({ id: issue.id }),
+    ]);
+    expect((await call<Page<Issue>>(200, `${path}&updatedSince=${after}`)).items).toEqual([]);
+  });
+
+  test("MCP issue tools accept, return and filter by readyForAgents", async () => {
+    const created = await tool<Issue & { readyForAgents: boolean }>(
+      "subspace_create_issue",
+      {
+        project: "PAR",
+        title: "MCP ready fixture",
+        summary: "Offered to the fleet",
+        readyForAgents: true,
+      },
+      "member",
+    );
+    expect(created.isError).toBe(false);
+    expect(created.structuredContent.readyForAgents).toBe(true);
+    const listed = await tool<Page<{ id: string; readyForAgents: boolean }>>(
+      "subspace_list_issues",
+      { filters: { project: "PAR", q: "MCP ready", readyForAgents: true, assignee: ["none"] } },
+      "rearAdmiral",
+    );
+    expect(listed.structuredContent.items).toEqual([
+      expect.objectContaining({ id: created.structuredContent.id, readyForAgents: true }),
+    ]);
+    const claimed = await tool<{ readyForAgents: boolean; version: number }>(
+      "subspace_update_issue",
+      {
+        issue: created.structuredContent.id,
+        changes: { version: created.structuredContent.version, assigneeId: members.get("captain") },
+      },
+    );
+    expect(claimed.structuredContent).toMatchObject({
+      readyForAgents: false,
+      version: created.structuredContent.version + 1,
+    });
+    const refused = await tool<{ status: number }>("subspace_update_issue", {
+      issue: created.structuredContent.id,
+      changes: { version: claimed.structuredContent.version, readyForAgents: true },
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.structuredContent.status).toBe(400);
+  });
+
   test.each([
     "/projects/PAR",
     "/projects/PAR/workflow-states",
