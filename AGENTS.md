@@ -80,165 +80,78 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
 
 ## Pull request review clearance
 
-Every pull request needs clearance from two independent model reviews before
-it merges: Claude Opus 5.5 at high effort and GPT-6.2 Sol at high effort. They
-come on top of the project checks, never instead of them. Review the diff
-before opening the pull request: fetch the target branch from the remote the
-pull request will target, run both reviews on the local branch against it, and
-deal with what they find first, so the pull request opens already reviewed.
-The clearances also gate the merge.
+Before merging, obtain two independent, read-only reviews of the PR changes.
 
-Run both reviews with the **trusted** copy of
-[`scripts/review-pr.sh`](scripts/review-pr.sh), the one on the canonical
-repository's `main`, never the copy in the change under review. Take the
-launcher below from the canonical `main` too, read straight from GitHub rather
-than from any local branch, tag or checkout, which could hold a changed copy:
+- **GPT-6.2 Sol** at high effort.
+- **Claude Opus 5.5** at high effort.
+
+Each reviewer must actually run the named model at the specified effort and
+inspect the PR diff. A read-only subagent or a restricted CLI reviewer counts.
+Both reviewers must be independent of the implementation agent.
+
+**The gate is the two model verdicts.** [`scripts/review-pr.sh`](scripts/review-pr.sh)
+is an optional helper. If the helper cannot launch a model, run that model
+through another read-only method. A launch error, timeout or missing receipt
+affects only the helper's own run. Completed reviews recorded in the PR still
+count, and any critical or high findings still need resolution.
+
+### Run and record the reviews
+
+- Give each reviewer the diff from the pinned commits and relevant files.
+  Disable external diff tools and text conversion when preparing a Git diff.
+  Have a person inspect any binary or submodule changes the reviewers cannot
+  read. Check for secrets before sharing review material.
+- Reviewers read and report findings only. Disable write tools and external
+  actions where the launcher supports those controls. Use an isolated session
+  if the current one could run hooks or settings from the change.
+- Reviews can run before or after opening the PR. Confirm that a local review
+  covers the PR's target branch, merge base and head.
+- Verify each model and effort from the launch settings or session output.
+  Under **Reviews**, record the model, effort, method, target branch, merge base,
+  head, reviewed range, verdict and how each finding was resolved. Check review
+  text for secrets before posting it. Flag changes to agent instructions, hooks,
+  workflows, task runners or the helper for a maintainer to read before merging.
+- A review is clear when the reviewer inspected the change and found no
+  remaining critical or high findings. Verify each finding. Fix or refute each
+  critical or high finding and review the amended code. For medium and low
+  findings, record the reason for any decision to leave them open.
+- Have both reviewers cover any changes to the reviewed diff. Run full reviews
+  after a rebase or rewrite that changes commit trees, or when the target
+  branch or merge base changes. If only commit metadata changes, the reviewers
+  may carry forward their verdicts after verifying each commit tree in order
+  against the reviewed commits. Record that verification against the new head.
+- Immediately before merging, confirm both clear verdicts cover the current
+  head, target branch and merge base, and that project checks pass. When
+  merging with `gh`, use `--match-head-commit` with the reviewed head.
+
+### Optional review helper
+
+If using the helper, read these instructions on canonical `main` and fetch
+the script from there. Run it from the repository root with `pr` set to the
+pull request number.
 
 ```sh
-gh api --hostname github.com -H 'Accept: application/vnd.github.raw' \
-  'repos/aiconsultancy/subspace/contents/AGENTS.md?ref=refs/heads/main'
-```
-
-The launcher fetches the script into a private scratch repository with no Git
-configuration, so no URL rewrite can substitute another copy:
-
-```sh
-review() (
-  d=$(mktemp -d) && trap 'rm -rf "$d"' EXIT &&
-  tg() { env -i PATH="$PATH" HOME="$HOME" GIT_CONFIG_GLOBAL=/dev/null \
-    GIT_CONFIG_NOSYSTEM=1 git "$@"; } &&
-  tg init -q --bare --template= "$d/r.git" &&
-  tg -C "$d/r.git" -c credential.helper= -c 'credential.helper=!gh auth git-credential' \
-    fetch -q --depth=1 https://github.com/aiconsultancy/subspace.git refs/heads/main &&
-  tg -C "$d/r.git" show FETCH_HEAD:scripts/review-pr.sh > "$d/review-pr.sh" &&
-  test -s "$d/review-pr.sh" && bash "$d/review-pr.sh" "$@"
+review_pr() (
+  helper=$(mktemp) && trap 'rm -f "$helper"' EXIT &&
+  gh api --hostname github.com -H 'Accept: application/vnd.github.raw' \
+    'repos/aiconsultancy/subspace/contents/scripts/review-pr.sh?ref=refs/heads/main' > "$helper" &&
+  test -s "$helper" && bash "$helper" "$@"
 )
-git fetch "$remote" "+refs/heads/$target:refs/remotes/$remote/$target" &&
-  review --local "refs/remotes/$remote/$target"     # this clone's HEAD, before opening
-review --local "refs/remotes/$remote/$target" --since "$cleared"  # after a local review
-review --pr "$pr"                                   # the pushed head
-review --pr "$pr" --since "$cleared"                # commits added after a --pr review
+review_pr --pr "$pr" --repo aiconsultancy/subspace
 ```
 
-These commands are for the person or agent preparing the pull request. Here
-`$remote` is the name of the remote the pull request targets (for example
-`origin` or `public`), `$target` its branch, `$pr` the pull request number and
-`$cleared` the last cleared head. Each step of the launcher must succeed before
-the next runs, so a failed fetch never runs a stale or empty launcher. The
-launcher passes only `PATH` and `HOME` to Git, so a `gh` signed in through
-`GH_TOKEN` alone, a proxy, or a custom CA bundle needs those variables added to
-`tg`. A proxy or CA bundle can then see or alter the fetch, so use only ones
-you control.
+The helper verifies its own copy, scans for secrets and isolates its reviewers.
+Use `review_pr --help` for local and incremental runs. Its receipts apply to
+its own incremental mode.
 
-It needs `git`, `gh`, `codex`, `claude`, `python3` and `gitleaks`, and runs
-from Claude Code and from Codex alike. It:
+### Exceptions
 
-- does all Git work in a fresh scratch repository with no user, system or
-  repository configuration, so no URL rewrites, hooks, filters or attributes
-  apply. It fetches the pull request from the repository GitHub names and
-  checks that both the head and base commits match;
-- refuses to run unless it matches the canonical `main` copy;
-- clears inherited `GIT_*` variables, and scans every commit in the range
-  (merges against each parent) plus everything the reviewers would see with
-  gitleaks before anything is sent to a model, stopping on a possible secret.
-  It uses gitleaks' built-in rules only, so no `gitleaks:allow` comment, config
-  or ignore file in the change can exempt a line;
-- stops on binary changes other than images, PDFs and fonts, which a person
-  looks at, and on submodule pointer changes, since the reviewers cannot read
-  either;
-- writes the diff and a snapshot straight from the committed files;
-- runs GPT-6.2 Sol with no shell or file access at all, on the diff passed
-  inline with 25 lines of context;
-- runs Claude Opus 5.5 in restricted mode with only Read, Grep and Glob,
-  confined to the diff and the snapshot;
-- starts both reviewers from an empty folder with a fixed minimal environment,
-  and with user and project settings, hooks, rules and MCP servers switched off;
-- passes the pull request's title and any author notes only as untrusted data,
-  after the instructions;
-- checks the Sol session header for the model and high effort, and that Opus
-  was the only model used. `--effort high` is passed to Claude, but its result
-  does not report the effort;
-- requires each report to end with a JSON summary of its findings and what it
-  checked, then a highest-severity line and a verdict. The verdict is worked out
-  from the summary, the findings' tags and the footer together, so a report
-  that lists a high finding, or checks nothing, cannot clear;
-- keeps Sol's transcript out of Claude's reach, keeps only the two reports and
-  session metadata unless `--keep` is given, and saves a clear receipt (pull
-  request, target, merge base and head) for `--since` to check.
-
-Edits to the script are reviewed by `main`'s copy like any other change. Only
-the change that first adds the script, while `main` has no copy, may run with
-`--bootstrap`; a person reads the script before running it, and that run saves
-no receipt.
-
-It exits 0 when both reviews are clear, 1 when either is not clear, and 2
-when a review did not run or could not be checked.
-
-**Clearance.** A review clears when it finished, read the change, and ended
-with `Verdict: clear`, meaning no critical or high finding remains. Critical
-and high findings block the merge: fix each one, or show that it is wrong.
-
-**Lesser findings.** Medium and low findings do not block, so the agent decides
-which ones are worth fixing, and should lean towards fixing them in the same
-pull request before it merges. Listing findings in the pull request as
-"follow-ups" does not track them; it only records technical debt. Leave a
-finding unfixed only when you have decided it is not worth fixing, and record
-that reason under **Reviews**, never a plan to fix it later.
-
-**After changes.**
-- When new commits are added on top of a cleared head, run both reviews with
-  `--since <cleared head>` in the same mode as the cleared review. The script
-  refuses unless this clone holds a clear receipt for that head, pull request
-  (or local branch), target and merge base. A local receipt does not carry
-  over to `--pr`: after the pull request opens, keep reviewing locally on the
-  same branch, or run a full `--pr` review. Before counting a local review as
-  the pull request's clearance, check against GitHub's view of the pull
-  request (`gh pr view "$pr" --repo aiconsultancy/subspace --json
-  headRefOid,baseRefName,baseRefOid`) that the reviewed head is exactly the
-  pull request's head, that the reviewed target is its base branch (the remote
-  you fetched must be the pull request's base repository, and the branch names
-  must match), and that `git merge-base <headRefOid> <baseRefOid>` is the merge
-  base that was reviewed, after fetching the base so that `baseRefOid` exists
-  locally. This is a check you run by hand; when in doubt, run a full `--pr`
-  review, which checks the same things itself.
-- Any reused clearance, from a local or a `--pr` review, needs the merge base
-  between the head and the pull request's base to be unchanged. If the base
-  branch's history was rewritten, run both full reviews again.
-- Run both full reviews again after any rebase or rewritten history, after a
-  change that does more than fix findings, and whenever the pull request's
-  target branch changes.
-- Any other new head, including one that only re-signs or rewords commits,
-  needs a review of its own, so that the script scans and reviews exactly what
-  merges.
-
-**Recording and merging.**
-- Record every review under **Reviews** in the pull request: the range and
-  target reviewed, each verdict, and how each finding was resolved.
-- Before copying review text into the pull request, check it for secrets.
-  The script scans both reports with gitleaks and says if it found anything.
-- When the script names changed agent instructions, hooks, workflows, task
-  runners (`prek.toml`, `mise.toml`, `Makefile`) or the script itself, a person
-  reads those changes as well.
-- Tick both review checkboxes only when both reviews of the final head are
-  clear. Just before merging, check again (`gh pr view "$pr" --repo
-  aiconsultancy/subspace --json headRefOid,baseRefName,baseRefOid`) that the
-  base branch is the one reviewed and that the merge base between the head and
-  the base is the one reviewed: it can move even without a force push, for
-  example when the base gains a commit the head already contains. If either
-  changed, review again. Then merge with `gh pr merge "$pr" --repo
-  aiconsultancy/subspace --match-head-commit <final head>`. GitHub cannot bind
-  the merge to a merge base, so keep that check immediately before the merge.
-- Push commits in the form they will merge in (signed, reworded) before the
-  final review, so the reviewed head is the pull request's head.
-
-**Exceptions.**
 - **Release Please.** Its pull requests and the release workflow's automated
-  merges are exempt. A Release Please branch that gains any other commit loses
-  the exemption: it needs both reviews and a merge by hand, not the nightly
-  workflow.
-- **Integration merges** (`merge/feat-to-main`) need no new review when every
-  change they bring was cleared in its own pull request. Review anything not
-  covered, such as conflict resolutions, direct commits or hand rebases.
+  merges are exempt. If the branch gains any other commit, both reviews and a
+  manual merge are required.
+- **Integration merges** (`merge/feat-to-main`) reuse clearances for changes
+  already reviewed in their own PRs. Review additional changes, including
+  conflict resolutions, direct commits and hand rebases.
 
 ## Commands
 
