@@ -137,12 +137,12 @@ fn a_check_while_the_confirmation_is_still_committing_waits_for_its_record() {
         std::thread::spawn(move || client.move_issue(&preview))
     };
     // Wait until the confirmation reached NETT, then check from another
-    // window of the same organisation, with its own bearer and flow.
+    // client of the same account and organisation.
     let path = issue_path(&preview.issues[0].id);
     super::super::wait_for("the confirmation to arrive", &|| {
         mock.count("PATCH", &path) == 1
     });
-    let checker = own_client(&mock, "nett-fixture-replay-checker");
+    let checker = own_client(&mock, "nett-fixture-replay-slow");
     let checked = checker.verify_issue_move(&preview).unwrap();
     let confirmed = confirming.join().unwrap().unwrap();
     assert_recorded(&confirmed, &preview, false);
@@ -217,4 +217,79 @@ fn a_check_more_than_a_day_after_the_confirmation_reads_back_instead() {
     assert!(result.commit.is_none(), "read back, not replayed");
     let (patches, reads) = traffic(&mock, &preview);
     assert_eq!((patches, reads), (0, 2));
+}
+
+#[test]
+fn another_account_never_replays_a_confirmation_it_did_not_send() {
+    let (mock, client, preview) = previewed(&REPLAY, "nett-fixture-replay-owner");
+    lose_the_reply(&mock, &client, &preview);
+    mock.clear_requests();
+    let other = own_client(&mock, "nett-fixture-replay-other");
+    let result = other.verify_issue_move(&preview).unwrap();
+    assert!(result.commit.is_none(), "read back, not replayed");
+    assert_eq!(traffic(&mock, &preview), (0, 2));
+}
+
+#[test]
+fn a_confirmation_sent_before_replay_was_served_is_checked_by_reading_back() {
+    let (mock, client, preview) = previewed(&["issueMoves"], "nett-fixture-replay-before");
+    lose_the_reply(&mock, &client, &preview);
+    // NETT starts serving replay, and the client reads the list again; it
+    // kept no record of the move sent before.
+    let org = super::super::organisation(&mock, "Fixture Works");
+    mock.capabilities(&org, &REPLAY);
+    crate::backend::reread_served(client.base.as_str(), &org, client.flow_account());
+    assert!(client.serves(crate::backend::Feature::IssueMoveReplay));
+    mock.clear_requests();
+    let result = client.verify_issue_move(&preview).unwrap();
+    assert!(result.commit.is_none(), "read back, not replayed");
+    assert_eq!(result.moved.len(), 3, "found committed");
+    assert_eq!(traffic(&mock, &preview), (0, 2));
+}
+
+#[test]
+fn the_hub_replays_only_while_both_teams_are_writable() {
+    let mock = NettMock::serving(&REPLAY);
+    let org = super::super::organisation(&mock, "Fixture Works");
+    let hub = crate::hub::Hub::from_client(own_client(&mock, "nett-fixture-replay-hub"), "NETT");
+    hub.activate(crate::ListQuery::new(crate::ListTab::All).project(Some("OPS")))
+        .unwrap();
+    super::super::wait_for("the teams", &|| {
+        hub.snapshot().projects().len() >= 2 && hub.issue_write_scope().is_some()
+    });
+    let scope = hub.issue_write_scope().unwrap();
+    let web = hub
+        .snapshot()
+        .projects()
+        .iter()
+        .find(|team| team.key == "WEB")
+        .unwrap()
+        .id
+        .clone();
+    let preview = hub.preview_issue_move(&scope, "OPS-2", &web).unwrap();
+    // The first send never reaches NETT.
+    let root = issue_path(&preview.issues[0].id);
+    mock.fail_next("PATCH", &org_path(&mock, &root[1..]), 502, None, 1);
+    assert_eq!(
+        hub.move_issue(&scope, &preview).err(),
+        Some(IssueSaveError::Unconfirmed)
+    );
+    // The destination is archived before the check: a replay would write
+    // the move, so the hub reads it back instead.
+    mock.archive_team(&org, "WEB");
+    hub.reload(crate::ListQuery::new(crate::ListTab::All).project(Some("OPS")))
+        .unwrap();
+    super::super::wait_for("the archived team", &|| {
+        hub.issue_write_scope().is_some_and(|scope| {
+            hub.move_issue(&scope, &preview).err() == Some(IssueSaveError::Unavailable)
+        })
+    });
+    mock.clear_requests();
+    assert_eq!(
+        hub.verify_issue_move(&scope, &preview).err(),
+        Some(IssueSaveError::Conflict),
+        "read back: the root is still where it was"
+    );
+    assert_eq!(mock.count("PATCH", &root), 0, "nothing sent");
+    hub.stop();
 }

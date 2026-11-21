@@ -7,7 +7,9 @@
 //! which a teammate's move or a sub-issue moved again since can fool.
 //! NETT keeps its records for at least seven days; the desktop replays
 //! only within 24 hours of first sending a confirmation, and after that
-//! checks by reading back as before.
+//! checks by reading back as before. Only a confirmation sent while NETT
+//! served replay can be replayed, since only then did NETT keep a record,
+//! and only by the account that sent it.
 use super::{MoveItem, MovePreview, MoveResult, preview_number};
 use crate::issue_writes::IssueSaveError;
 use crate::{Client, model::IssueDetail, transport};
@@ -53,11 +55,11 @@ pub struct CommittedIssue {
     pub version: u32,
 }
 
-/// An API origin, organisation and plan token.
-type Sent = (String, String, String);
+/// An API origin, organisation, account and plan token.
+type Sent = (String, String, u64, String);
 
-/// When each confirmation was first sent, by origin, organisation and
-/// token. Entries older than [`REPLAY_FOR`] are dropped as others arrive.
+/// When each confirmation was first sent, by origin, organisation, account
+/// and token. Entries older than [`REPLAY_FOR`] are dropped as others arrive.
 static SENT: Mutex<BTreeMap<Sent, SystemTime>> = Mutex::new(BTreeMap::new());
 
 fn sent_table() -> MutexGuard<'static, BTreeMap<Sent, SystemTime>> {
@@ -68,6 +70,7 @@ fn key(client: &Client, token: &str) -> Sent {
     (
         client.api_origin().to_owned(),
         client.organisation().unwrap_or_default().to_owned(),
+        client.account_key(),
         token.to_owned(),
     )
 }
@@ -79,8 +82,10 @@ fn replayable_at(sent: SystemTime, now: SystemTime) -> bool {
         .is_ok_and(|elapsed| elapsed < REPLAY_FOR)
 }
 
-/// Notes that `client` is sending the confirmation of `token`, unless it
-/// already sent it: the replay window runs from the first send.
+/// Notes that `client` is sending the confirmation of `token` while NETT
+/// serves replay, unless it already sent it: the replay window runs from
+/// the first send. A confirmation sent without replay is never noted, so
+/// its check reads back even once NETT serves replay.
 pub(super) fn note_sent(client: &Client, token: &str) {
     let now = SystemTime::now();
     let mut table = sent_table();
@@ -178,8 +183,9 @@ impl Client {
     }
 
     /// Whether a check of `preview` replays its confirmation: NETT serves
-    /// replayable moves, and this client sent it within the last 24 hours.
-    pub(super) fn replays(&self, preview: &MovePreview) -> bool {
+    /// replayable moves, and this account sent it within the last 24 hours
+    /// while NETT served them.
+    pub(crate) fn replays(&self, preview: &MovePreview) -> bool {
         self.serves(crate::backend::Feature::IssueMoves)
             && self.serves(crate::backend::Feature::IssueMoveReplay)
             && within_window(self, &preview.token)
