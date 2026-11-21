@@ -189,7 +189,7 @@ enum Stored {
 
 /// Finds the record completed from transfer `upload_id`. A record naming
 /// another transfer is someone else's file however identical it is. One
-/// that names none, its `uploadId` missing or `null` because NETT cannot
+/// that names none, its `uploadId` missing, `null` or empty because NETT cannot
 /// prove the transfer that created it, is never a match either, but it may
 /// still be this upload's, so it counts as absence only when its own
 /// fields show another file: an incomplete record, missing its type or
@@ -215,11 +215,15 @@ fn stored_among<'a>(
                     Stored::Unknown
                 };
             }
-            Some(Value::String(_)) => {}
-            None | Some(Value::Null) if !another_file(item, declaration) => {
+            // Only a transfer named in full is another one.
+            Some(Value::String(id)) if !id.trim().is_empty() => {}
+            // An empty name is no name at all.
+            Some(Value::String(_)) | None | Some(Value::Null)
+                if !another_file(item, declaration) =>
+            {
                 found = Stored::Unknown;
             }
-            None | Some(Value::Null) => {}
+            Some(Value::String(_)) | None | Some(Value::Null) => {}
             // A transfer named in a shape NETT does not use.
             Some(_) => found = Stored::Unknown,
         }
@@ -1031,6 +1035,40 @@ mod tests {
         let mut partial = complete;
         partial.as_object_mut().unwrap().remove("contentType");
         let (_mock, client) = recovering(serde_json::json!([partial]));
+        assert!(matches!(
+            client.nett_complete_attachment("OPS-1", "upload-unproven", &declaration),
+            Err(crate::uploads::UploadError::Checking)
+        ));
+    }
+
+    #[test]
+    fn an_empty_upload_id_is_no_proof_of_another_transfer() {
+        let bytes = b"Stored, its transfer unnamed.\n";
+        let declaration =
+            crate::uploads::ImageDeclaration::new("unnamed.txt", "text/plain", bytes).unwrap();
+        let record = |upload: &str| {
+            serde_json::json!({
+                "mediaId": "m", "version": 1, "kind": "file", "fileName": "unnamed.txt",
+                "contentType": "text/plain", "sizeBytes": bytes.len(),
+                "sha256": declaration.sha256, "publicFileId": "pf", "expiresAt": null,
+                "uploadId": upload,
+            })
+        };
+        // Completion committed but its reply was lost, and the list names
+        // the transfer as nothing at all: the outcome stays unknown.
+        for empty in ["", "  "] {
+            assert_eq!(
+                stored_among([&record(empty)], "upload-mine", &declaration),
+                Stored::Unknown,
+                "uploadId {empty:?}"
+            );
+        }
+        // A transfer named in full is another one's, however identical.
+        assert_eq!(
+            stored_among([&record("upload-older")], "upload-mine", &declaration),
+            Stored::Absent
+        );
+        let (_mock, client) = recovering(serde_json::json!([record("")]));
         assert!(matches!(
             client.nett_complete_attachment("OPS-1", "upload-unproven", &declaration),
             Err(crate::uploads::UploadError::Checking)

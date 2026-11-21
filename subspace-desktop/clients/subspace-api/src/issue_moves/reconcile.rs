@@ -1,7 +1,14 @@
 //! Reading a NETT move back: every previewed issue in the destination
-//! team, with a newer version and a number there. After a validated PATCH,
-//! which proves the move committed, a sub-issue found elsewhere or that
-//! cannot be read is reported unreconciled rather than doubting the move.
+//! team, with a newer version and a number there. A validated PATCH reply
+//! is this plan's own, so it proves the move committed. A check's read of
+//! the root in the destination could be someone else's move of it, so the
+//! plan's sub-issues must tie it to this plan: NETT moves a plan's whole
+//! subtree at once, so at least one must have moved with the root and none
+//! may still be where it was. Once the move is proven, a sub-issue found
+//! elsewhere, unread or not read in time is reported unreconciled rather
+//! than doubting it. A root still where it was, or moved without its
+//! sub-issues, shows the plan did not happen; what cannot be read leaves
+//! the move to be checked again.
 //! The reads share one time budget, so a move that committed never waits
 //! behind a request timeout per sub-issue, and each is a fresh read, never
 //! one already in flight that could predate the move. A read that finds
@@ -70,8 +77,41 @@ impl Unreconciled {
 enum ReadBack {
     /// It is in the destination, with its number there.
     Moved(MoveItem),
+    /// It is still in the source team: the root moved without it.
+    Stayed(Unreconciled),
     /// It is not confirmed there, after a move that committed.
     Unreconciled(Unreconciled),
+}
+
+/// What reading a plan's sub-issues back found, in all.
+struct SubIssues {
+    moved: Vec<MoveItem>,
+    unreconciled: Vec<Unreconciled>,
+    /// How many were still in the source team.
+    stayed: usize,
+}
+
+impl SubIssues {
+    /// Whether a check's reads tie the root's move to this plan. NETT moves
+    /// a plan's whole subtree at once, so a sub-issue still where it was
+    /// shows the root was moved some other way, and so does no sub-issue
+    /// moved with it once every one was read: a conflict. With none moved
+    /// and some not read, the move is left to be checked again. A plan
+    /// without sub-issues is the root alone.
+    fn tie(&self, planned: usize) -> Result<(), IssueSaveError> {
+        let unread = self.unreconciled.iter().any(|item| {
+            matches!(
+                item.reason,
+                UnreconciledReason::Unread(_) | UnreconciledReason::NotChecked
+            )
+        });
+        match (self.stayed, self.moved.len()) {
+            (0, _) if planned == 0 => Ok(()),
+            (0, moved) if moved > 0 => Ok(()),
+            (0, _) if unread => Err(IssueSaveError::Unconfirmed),
+            _ => Err(IssueSaveError::Conflict),
+        }
+    }
 }
 
 /// Whether `current` is `previewed` moved into the preview's destination:
@@ -107,23 +147,15 @@ fn reason(
     }
 }
 
-/// What a check makes of a read that did not show an issue moved: one read
-/// elsewhere means the plan did not happen; one not read leaves the move to
-/// be checked again.
-fn check_failure(read: &Option<Result<IssueDetail, Error>>) -> IssueSaveError {
-    match read {
-        Some(Ok(_)) => IssueSaveError::Conflict,
-        _ => IssueSaveError::Unconfirmed,
-    }
-}
-
 // qual:allow(coupling, oi) reason: "Move confirmation reads the issues back through the client's NETT reads."
 impl Client {
     /// Checks a confirmed or possibly confirmed NETT move without sending it
-    /// again: every previewed issue must now be in the destination team,
-    /// with a newer version than previewed and a number there. A read that
-    /// fails leaves the move unconfirmed, to be checked again; an issue
-    /// that did not move means the plan did not happen.
+    /// again. A root read back in the destination, newer than previewed and
+    /// numbered there, with its sub-issues tying that move to this plan,
+    /// means the move committed, any sub-issue not found there listed as
+    /// unreconciled. A root still where it was, or one moved without its
+    /// sub-issues, means the plan did not happen; a root, or sub-issues,
+    /// that cannot be read leave the move unconfirmed, to be checked again.
     pub fn verify_issue_move(&self, preview: &MovePreview) -> Result<MoveResult, IssueSaveError> {
         if self.backend != crate::Backend::Nett {
             return Err(IssueSaveError::Unavailable);
@@ -164,21 +196,43 @@ impl Client {
                 IssueSaveError::Unconfirmed
             });
         }
+        let sub_issues = self.read_sub_issues(preview, deadline)?;
+        // A validated PATCH reply is this plan's own; a check's read of the
+        // root must be tied to the plan by its sub-issues.
+        if checking {
+            sub_issues.tie(preview.issues.len() - 1)?;
+        }
         let mut root_item = first.clone();
         root_item.new_identifier = Some(root.fields.identifier.clone());
-        let mut moved = vec![root_item];
-        let mut unreconciled = Vec::new();
-        for previewed in preview.issues.iter().skip(1) {
-            match self.read_back(preview, previewed, (checking, deadline))? {
-                ReadBack::Moved(item) => moved.push(item),
-                ReadBack::Unreconciled(item) => unreconciled.push(item),
-            }
-        }
         Ok(MoveResult {
             issue: root,
-            moved,
-            unreconciled,
+            moved: std::iter::once(root_item).chain(sub_issues.moved).collect(),
+            unreconciled: sub_issues.unreconciled,
         })
+    }
+
+    /// Reads each previewed sub-issue back before `deadline`.
+    fn read_sub_issues(
+        &self,
+        preview: &MovePreview,
+        deadline: Instant,
+    ) -> Result<SubIssues, IssueSaveError> {
+        let mut found = SubIssues {
+            moved: Vec::new(),
+            unreconciled: Vec::new(),
+            stayed: 0,
+        };
+        for previewed in preview.issues.iter().skip(1) {
+            match self.read_back(preview, previewed, deadline)? {
+                ReadBack::Moved(item) => found.moved.push(item),
+                ReadBack::Stayed(item) => {
+                    found.stayed += 1;
+                    found.unreconciled.push(item);
+                }
+                ReadBack::Unreconciled(item) => found.unreconciled.push(item),
+            }
+        }
+        Ok(found)
     }
 
     /// A check's read of the root, before `deadline`, in this account and
@@ -193,18 +247,15 @@ impl Client {
         read.and_then(Result::ok).ok_or(IssueSaveError::Unconfirmed)
     }
 
-    /// Reads a previewed sub-issue back before `deadline`. A check needs
-    /// each one in the destination: one elsewhere means the plan did not
-    /// happen, and one not read leaves the move to be checked again. After
-    /// a validated PATCH, which proves the move committed, neither undoes
-    /// it: the sub-issue is reported unreconciled, with what reading it
-    /// found. A read that finds the account or organisation changed ends
-    /// the check.
+    /// Reads a previewed sub-issue back before `deadline`, once the root
+    /// was found in the destination: moved with it, still in the source
+    /// team, or otherwise unreconciled, with what reading it found. A read
+    /// that finds the account or organisation changed ends the check.
     fn read_back(
         &self,
         preview: &MovePreview,
         previewed: &MoveItem,
-        (checking, deadline): (bool, Instant),
+        deadline: Instant,
     ) -> Result<ReadBack, IssueSaveError> {
         let read = self.read_within(&previewed.id, deadline);
         self.current().map_err(|_| IssueSaveError::SignIn)?;
@@ -214,7 +265,15 @@ impl Client {
                 item.new_identifier = Some(current.fields.identifier);
                 Ok(ReadBack::Moved(item))
             }
-            read if checking => Err(check_failure(&read)),
+            Some(Ok(current))
+                if current.fields.id == previewed.id
+                    && current.fields.project_id == preview.source.id =>
+            {
+                Ok(ReadBack::Stayed(Unreconciled::of(
+                    previewed,
+                    UnreconciledReason::NotConfirmed,
+                )))
+            }
             read => Ok(ReadBack::Unreconciled(Unreconciled::of(
                 previewed,
                 reason(preview, previewed, read),
@@ -234,5 +293,7 @@ impl Client {
     }
 }
 
+#[cfg(test)]
+mod check_tests;
 #[cfg(test)]
 mod reconcile_tests;

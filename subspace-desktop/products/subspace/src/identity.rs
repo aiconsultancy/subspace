@@ -308,6 +308,12 @@ mod tests {
         // a child process with a home of its own, never in this one.
         let home = tempfile::tempdir().unwrap();
         let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        // Nothing of the developer's shell reaches the launch it resolves.
+        for (name, _) in std::env::vars_os() {
+            if name.to_string_lossy().starts_with("SUBSPACE_") {
+                child.env_remove(name);
+            }
+        }
         for name in [
             "HOME",
             "USERPROFILE",
@@ -319,6 +325,12 @@ mod tests {
         ] {
             child.env(name, home.path());
         }
+        // A value that is not Unicode must not upset the child's checks.
+        #[cfg(unix)]
+        child.env(
+            "IDENTITY_TEST_NOT_UNICODE",
+            <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"\xff"),
+        );
         let run = child
             .args([
                 "--ignored",
@@ -343,6 +355,12 @@ mod tests {
         if std::env::var_os(INSTALL_CHILD).is_none() {
             return;
         }
+        // Names only: a value need not be Unicode.
+        let inherited: Vec<String> = std::env::vars_os()
+            .map(|(name, _)| name.to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("SUBSPACE_") && name != INSTALL_CHILD)
+            .collect();
+        assert!(inherited.is_empty(), "inherited {inherited:?}");
         configure_backend(Vec::new()).unwrap();
         assert_eq!(LAUNCH.get(), Some(&resolve(&STAMPED, Vec::new()).unwrap()));
         assert_eq!(

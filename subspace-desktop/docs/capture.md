@@ -86,6 +86,23 @@ are invented: the first sub-issue was moved again since and the others
 could not be read back. Only a debug capture build against the loopback
 fixture reads the setting.
 
+## Upload fixture
+
+Subspace API keeps no upload transfers, and adding a file needs the system
+file picker, so a standalone upload that NETT left unresolved cannot be made
+in a capture. Set `CAPTURE_UPLOAD_SCENARIO` to show one, invented, as
+`fixture-checklist.txt` in the **Attachments** panel of the first issue
+opened, such as **SUB-1**:
+
+- `unknown`: its bytes went to a reserved transfer and the reply was lost,
+  so it waits for **Check**. Checks against the fixture cannot tell whether
+  it was stored either, so after three, the panel offers to send it again.
+- `absent`: kept while its issue was closed, its bytes were let go, and a
+  check then found it was not stored.
+
+Everything after the seeded upload is the app's own handling. Only a debug
+capture build against the loopback fixture reads the setting.
+
 ## File-drop evidence
 
 Use `drop:<x>,<y>,<fixture-path>` in `STEPS` to dispatch a native file-enter/submit pair at a window position. Supply only a synthetic fixture file; it is read by the isolated capture build and uploaded only to the loopback fixture API. This supports file previews without using the system clipboard or foreground pointer.

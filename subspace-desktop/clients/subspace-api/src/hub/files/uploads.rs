@@ -2,6 +2,9 @@
 //! budget, sent on a small pool, kept in one store under their issue's ID
 //! while it is closed, and, once their bytes may be stored, completed
 //! rather than sent again.
+mod again;
+#[cfg(debug_assertions)]
+mod capture;
 mod sending;
 mod store;
 
@@ -28,7 +31,17 @@ pub struct AttachmentUpload {
     transfer: Option<String>,
     bytes_sent: bool,
     retry_at: Option<std::time::Instant>,
+    /// Whether its bytes were let go, kept for a closed issue too long or
+    /// to make room: a check needs none, but sending again needs the file
+    /// chosen again.
+    released: bool,
+    /// Checks in a row that could not tell whether its file was stored.
+    unknown_checks: u8,
 }
+
+/// Checks in a row that could not tell whether a file was stored before
+/// the person may choose to send it again.
+const MAX_UNKNOWN_CHECKS: u8 = 3;
 
 impl AttachmentUpload {
     /// A new upload of `bytes` under a fresh request key, not yet sent.
@@ -42,14 +55,18 @@ impl AttachmentUpload {
             transfer: None,
             bytes_sent: false,
             retry_at: None,
+            released: false,
+            unknown_checks: 0,
         }
     }
+    // qual:allow(dry, boilerplate) reason: "Readers preserve the immutable snapshot boundary."
     pub fn id(&self) -> &str {
         &self.id
     }
     pub fn file_name(&self) -> &str {
         &self.declaration.file_name
     }
+    // qual:allow(dry, boilerplate) reason: "Readers preserve the immutable snapshot boundary."
     pub fn state(&self) -> &AttachmentState {
         &self.state
     }
@@ -61,8 +78,12 @@ impl AttachmentUpload {
     }
     /// Whether Retry or Check can still change the outcome. A file NETT
     /// rejected (400) or forbade (403) stays refused, so only Dismiss is
-    /// offered.
+    /// offered, as it is for one that would be sent again after its bytes
+    /// were let go.
     pub fn retryable(&self) -> bool {
+        if self.released && !self.checks() {
+            return false;
+        }
         match self.state {
             AttachmentState::Failed(UploadError::Refused {
                 status: 400 | 403 | 413 | 415 | 422,
@@ -77,6 +98,21 @@ impl AttachmentUpload {
     pub fn retry_delay(&self) -> Option<std::time::Duration> {
         self.retry_at
             .and_then(|at| at.checked_duration_since(std::time::Instant::now()))
+    }
+    /// Whether its bytes were let go: sending it again needs the file
+    /// chosen again.
+    // qual:allow(dry, boilerplate) reason: "Readers preserve the immutable snapshot boundary."
+    pub fn released(&self) -> bool {
+        self.released
+    }
+    /// Whether the person may choose to send the file again, warned that it
+    /// may then be attached twice: checks in a row could not tell whether
+    /// it was stored, and its bytes are still held.
+    pub fn may_send_again(&self) -> bool {
+        matches!(self.state, AttachmentState::Failed(_))
+            && self.checks()
+            && !self.released
+            && self.unknown_checks >= MAX_UNKNOWN_CHECKS
     }
 }
 
@@ -189,8 +225,7 @@ impl Hub {
         let open = state.open_for_uploads();
         admit_here(state.uploads.shown(open.as_ref()), bytes.len())?;
         let held = state.held_bytes();
-        let cancels = state.uploads.room(held, bytes.len())?;
-        self.0.cancel_reservations(cancels);
+        state.uploads.room(held, bytes.len())?;
         let bytes: Arc<[u8]> = bytes.into();
         state.attachment_buffers.push(Arc::downgrade(&bytes));
         let upload = AttachmentUpload::new(declaration, bytes);
@@ -308,6 +343,8 @@ impl Shared {
     /// Follows the open issue in the upload store, as every use of it does,
     /// cancelling the reservations of what it lets go.
     pub(in crate::hub) fn follow_uploads(&self, state: &mut State) {
+        #[cfg(debug_assertions)]
+        capture::seed(state);
         let cancels = state.follow_uploads(Instant::now());
         self.cancel_reservations(cancels);
     }
@@ -330,6 +367,8 @@ mod admission_tests {
             transfer: None,
             bytes_sent: false,
             retry_at: None,
+            released: false,
+            unknown_checks: 0,
         }
     }
 

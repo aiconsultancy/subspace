@@ -11,11 +11,11 @@ use subspace_framework::client_test_support::Mock;
 const MIB: usize = 1024 * 1024;
 const KEPT: &str = "00000000-0000-4000-8000-0000000000c7";
 
-/// Whether the kept upload is still kept.
+/// Whether the kept upload is still kept with its bytes.
 fn kept(hub: &Hub) -> bool {
-    lock(&hub.0.state)
-        .uploads
-        .contains_transfer("transfer-kept")
+    let state = lock(&hub.0.state);
+    state.uploads.contains_transfer("transfer-kept")
+        && !state.uploads.released_transfer("transfer-kept")
 }
 
 /// A text file to attach, with its bytes.
@@ -100,13 +100,20 @@ fn an_image_the_draft_refuses_or_already_has_lets_no_kept_upload_go() {
         Ok("existing".into())
     );
     assert!(kept(&hub));
-    // A new image that only fits once the kept upload goes lets it go.
+    // A new image that only fits once the kept upload's bytes go lets them
+    // go; the upload itself stays, to be checked.
     let (declaration, bytes) = image("Second.\n");
     assert!(
         hub.attach_image_at(generation, (&key, lease), declaration, bytes)
             .is_ok()
     );
-    assert!(!kept(&hub), "the kept upload made room");
+    assert!(!kept(&hub), "the kept upload's bytes made room");
+    assert!(
+        lock(&hub.0.state)
+            .uploads
+            .contains_transfer("transfer-kept"),
+        "the upload stays, to be checked"
+    );
     drop(elsewhere);
     hub.stop();
 }

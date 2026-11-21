@@ -301,7 +301,8 @@ NETT's file host, which never sees the bearer, a cookie or `x-org-id`.
   completed from (null for a file that was never uploaded): the record from
   this transfer was stored. A complete read without it means nothing was
   stored, and the next try reserves afresh under a new key; an identical
-  file from another transfer is someone else's. A record that names no
+  file from another transfer is someone else's, but only a transfer named
+  in full: an empty `uploadId` names none. A record that names no
   transfer leaves the outcome unknown, to be checked again, unless the
   name, size or SHA-256 it gives shows another file; an incomplete record,
   missing its type or digest, proves nothing, and neither does a malformed
@@ -310,7 +311,10 @@ NETT's file host, which never sees the bearer, a cookie or `x-org-id`.
   fails. So does a record that names this transfer but cannot be
   read or differs from the file sent, and a reply that does not carry the
   list or show where it ends: only a complete read proves the upload
-  absent. A completion NETT rejects (400) or forbids
+  absent. After three checks in a row that could not tell, the panel
+  also offers Send again, warning that the file may then be attached
+  twice; it sends the file under a new key and leaves the first
+  reservation to lapse. A completion NETT rejects (400) or forbids
   (403) is final, and only Dismiss is offered. A reservation that lapsed
   before its bytes were sent is refused with 409; the next try reserves
   again under a new key. Uploads in progress are kept when the issue is
@@ -326,26 +330,34 @@ NETT's file host, which never sees the bearer, a cookie or `x-org-id`.
   included, first follows the open issue: uploads of other issues count as
   closed from then, each with its own close time, and a closed issue keeps
   only uploads still under way or awaiting a check that can change the
-  outcome, for 15 minutes, with at most eight closed issues keeping any.
-  Expiry needs no timer and happens at the next use however long the hub
-  sat idle, before the open issue is matched, so reopening an issue never
-  brings back uploads kept too long. An upload let go, for any of these
-  reasons, has its reservation cancelled under the issue's ID and its bytes
-  released; a queued attempt whose upload was let go sends nothing and
-  cancels the reservation it holds, and one that ends after it cancels its
-  reservation, or, if the file was stored, reads the open issue's
-  attachments again. Every upload request, completion and cancellation
+  outcome; those that stored nothing go, and their reservations are
+  cancelled under the issue's ID. An upload whose completion may have
+  landed is never cancelled by the store: only a check or the person's
+  Dismiss ends it. What the store lets go is its bytes, which a check does
+  not need, and only once no attempt is under way, since an attempt holds
+  them too and one that fails before sending can still be retried: 15
+  minutes after its issue closed, once more than eight closed issues hold
+  bytes, counting only issues that still hold some, or when a new file
+  needs the room. Past 64 closed uploads that only wait for a check, their
+  bytes gone, the oldest are forgotten, still without cancelling. This
+  needs no timer and happens at the next use however long the hub sat
+  idle; a use that finds the open issue and the store as the last one
+  left them, with no bytes fallen due, does no work, so a snapshot costs
+  the same however many uploads wait. Such an upload shows again when its
+  issue reopens, to be checked;
+  one found not stored then asks for the file to be chosen again. A
+  stored file reads the open issue's attachments again. Every upload request, completion and cancellation
   names the issue by its ID, which still names it after a move. A snapshot
   shows uploads without their bytes, so a view keeping an old snapshot
   never keeps them from being freed. Uploads run two at a time on a small pool,
   and the panel takes at most eight uploads and 32 MiB waiting on an
   issue, and 64 MiB across comment drafts and uploads, since a failed
   upload keeps its bytes for Retry. A file is admitted on its issue or
-  draft first; only then, if it would not fit in the shared budget, are
-  failed uploads kept for closed issues let go, the issue closed first
-  first, and only as far as lets it in, counting only bytes nothing else
-  holds, which letting go actually frees: if even all of them would not,
-  nothing goes and the file is refused. Dismissing an upload that never
+  draft first; only then, if it would not fit in the shared budget, do
+  failed uploads kept for closed issues let their bytes go, the issue
+  closed first first, and only as far as lets it in, counting only bytes
+  nothing else holds, which letting go actually frees: if even all of them
+  would not, nothing goes and the file is refused. Dismissing an upload that never
   completed cancels its reservation with `DELETE …/attachments/pending/{uploadId}`. A file is
   added to the issue, opening, organisation and account it was chosen in,
   or not at all: closing and opening the same issue again counts as a
@@ -433,7 +445,8 @@ elsewhere, such as an explicit reload's first team read, that finds
 updates enabled also turns the stream on and has the Spaces read their
 initiatives again. Until a new list
 arrives, the previous one still answers; one that cannot be read again is
-tried again after 30 seconds. The desktop
+tried again after 30 seconds, then twice as long after each failure in a
+row, up to five minutes. The desktop
 uses five names and ignores every other name,
 including `issueSubscribers`, `notificationUnread`, `issueDocumentArchive`
 and `repositories`.
@@ -508,14 +521,24 @@ With `issueMoves`, Issues can move an issue to another team.
   issue: each must now be in the destination team, numbered there, at a
   newer version than previewed. If the reply is lost or does not show
   the root moved, the move is unconfirmed and **Check issue** repeats
-  only this check, never the move, and a check needs every issue read.
-  A root still where it was, or any issue that did not move, means the plan
-  did not happen, and the editor offers a fresh preview. Once NETT's reply
-  shows the root in the destination, though, the move committed: a
-  sub-issue read back somewhere else was moved again since, and one that
-  cannot be read may have been, so neither undoes the move's success. The
-  editor lists each such sub-issue with what reading it found before it
-  opens the moved issue: moved again since, only for one newer than
+  only this check, never the move. A root still where it was means the
+  plan did not happen, and the editor offers a fresh preview; a root that
+  cannot be read leaves the move to be checked again. NETT's reply is this
+  plan's own, so a reply showing the root in the destination proves the
+  move committed. A check's read of the root there could be a teammate's
+  own move of it, so the plan's sub-issues must tie it to this plan:
+  because NETT moves the whole subtree at once, at least one must read
+  back moved with the root and none may still be in the source team. A
+  sub-issue still there, or none moved once every one was read, means the
+  plan did not happen, a conflict; with none moved and some not read, the
+  move is left to be checked again. A plan without sub-issues is the root
+  alone. A large move's check reads sub-issues only while time is left,
+  and one read back moved is enough to tie it. Once the move is proven,
+  a sub-issue read back somewhere else was moved again since, and one
+  that cannot be read may have been, so neither undoes its success. The
+  editor lists each such sub-issue, in a list that scrolls however long it
+  is so Open stays in view, with what reading it found before it opens
+  the moved issue: moved again since, only for one newer than
   previewed in a third team; not confirmed in the destination yet, for a
   stale or unchanged read; could not be read back; or not read back in
   time. Reading a move back takes at most 20 seconds in all, waiting for a
@@ -588,8 +611,9 @@ existing stream client.
   the list head; an issue or list the person can no longer read is
   cleared, and reads already out for it, such as its counts, pages or
   attachments, are retired with it. A second 403 in a row stops the stream until the
-  followed scope or the capability list changes, so a lasting refusal never
-  turns into polling. A 404 means a requested team is unknown or archived, or the
+  followed scope or the capability list changes, whichever read finds the
+  change, so a lasting refusal never turns into polling and access found
+  again by a reload brings the stream back. A 404 means a requested team is unknown or archived, or the
   organisation no longer serves the stream: the hub stops streaming for the
   rest of its session and reads the capability list and team catalogue
   again. A 429 or 503 waits at least the whole seconds in `Retry-After`, up

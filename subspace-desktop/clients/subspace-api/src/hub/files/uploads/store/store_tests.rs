@@ -1,4 +1,4 @@
-use super::{KEPT_FOR, UploadIssue};
+use super::{Cancel, KEPT_FOR, UploadIssue};
 use crate::hub::files::uploads::AttachmentUpload;
 use crate::hub::{AttachmentState, IssueSnapshot, IssueStatus, State};
 use crate::uploads::UploadError;
@@ -105,7 +105,7 @@ fn a_closed_issue_keeps_only_uploads_that_can_still_finish() {
 }
 
 #[test]
-fn kept_uploads_expire_on_any_use_releasing_their_bytes_and_reservations() {
+fn a_kept_upload_past_its_time_lets_its_bytes_go_but_never_its_reservation() {
     let mut state = state();
     open(&mut state, "OPS-1", Some(ISSUE));
     let waiting = awaiting_check(1024, "transfer-expired");
@@ -116,11 +116,12 @@ fn kept_uploads_expire_on_any_use_releasing_their_bytes_and_reservations() {
     assert!(state.follow_uploads(closed).is_empty());
     assert!(state.follow_uploads(closed + KEPT_FOR / 2).is_empty());
     assert_eq!(state.held_bytes(), 1024);
-    // Kept long enough: the next use lets it go, and its bytes with it.
-    let cancels = state.follow_uploads(closed + KEPT_FOR);
-    assert_eq!(cancels, [(ISSUE.to_owned(), "transfer-expired".to_owned())]);
+    // Kept long enough: the next use lets its bytes go, but its completion
+    // may have landed, so it stays, to be checked, and nothing is cancelled.
+    assert!(state.follow_uploads(closed + KEPT_FOR).is_empty());
     assert!(bytes.upgrade().is_none(), "the bytes are released");
     assert_eq!(state.held_bytes(), 0);
+    assert!(state.uploads.released_transfer("transfer-expired"));
 }
 
 #[test]
@@ -132,7 +133,7 @@ fn each_upload_keeps_the_time_its_own_issue_closed() {
     state.snapshot.issue = None;
     state.follow_uploads(start);
     // The issue opens again later, gets another upload, and closes again:
-    // both are kept from that later close.
+    // both keep their bytes from that later close.
     let later = start + KEPT_FOR / 2;
     open(&mut state, "OPS-1", Some(ISSUE));
     state.follow_uploads(later);
@@ -143,8 +144,12 @@ fn each_upload_keeps_the_time_its_own_issue_closed() {
     );
     state.snapshot.issue = None;
     state.follow_uploads(later);
-    assert!(state.follow_uploads(start + KEPT_FOR).is_empty());
-    assert_eq!(state.follow_uploads(later + KEPT_FOR).len(), 2);
+    state.follow_uploads(start + KEPT_FOR);
+    assert!(!state.uploads.released_transfer("transfer-first"));
+    assert!(!state.uploads.released_transfer("transfer-second"));
+    state.follow_uploads(later + KEPT_FOR);
+    assert!(state.uploads.released_transfer("transfer-first"));
+    assert!(state.uploads.released_transfer("transfer-second"));
 }
 
 #[test]
@@ -163,30 +168,23 @@ fn room_goes_only_as_far_as_lets_the_file_in() {
     }
     let id = "00000000-0000-4000-8000-0000000000a9";
     open(&mut state, "OPS-9", Some(id));
-    add(
-        &mut state,
-        id,
-        vec![upload(
-            4 * MIB,
-            AttachmentState::Checking,
-            Some("busy"),
-            true,
-        )],
-    );
+    let busy = upload(4 * MIB, AttachmentState::Checking, Some("busy"), true);
+    add(&mut state, id, vec![busy]);
     state.snapshot.issue = None;
     state.follow_uploads(start + Duration::from_secs(3));
     let held = 60 * MIB;
     // What fits lets nothing go.
-    assert_eq!(state.uploads.room(held, 4 * MIB), Ok(Vec::new()));
+    assert_eq!(state.uploads.room(held, 4 * MIB), Ok(()));
     // What would not fit even if every failed one went lets nothing go.
     assert_eq!(state.uploads.room(held, 13 * MIB), Err(UploadError::Budget));
-    // Otherwise only as many go as let it in, the issue closed first first.
-    assert_eq!(
-        state.uploads.room(held, 6 * MIB),
-        Ok(vec![(OTHER.to_owned(), "transfer-first".to_owned())])
-    );
-    assert!(state.uploads.contains_transfer("transfer-second"));
-    assert!(state.uploads.contains_transfer("busy"));
+    assert!(!state.uploads.released_transfer("transfer-first"));
+    // Otherwise only as many let their bytes go as let it in, the issue
+    // closed first first; each stays, to be checked.
+    assert_eq!(state.uploads.room(held, 6 * MIB), Ok(()));
+    assert!(state.uploads.released_transfer("transfer-first"));
+    assert!(!state.uploads.released_transfer("transfer-second"));
+    assert!(!state.uploads.released_transfer("busy"));
+    assert!(state.uploads.contains_transfer("transfer-first"));
 }
 
 #[test]
@@ -202,19 +200,17 @@ fn room_counts_only_bytes_letting_go_frees() {
     let held = 60 * MIB;
     assert_eq!(state.uploads.room(held, 6 * MIB), Err(UploadError::Budget));
     assert!(
-        state.uploads.contains_transfer("transfer-shared"),
+        !state.uploads.released_transfer("transfer-shared"),
         "nothing went"
     );
-    // Once only the store holds them, letting it go frees them.
+    // Once only the store holds them, letting them go frees them.
     drop(elsewhere);
-    assert_eq!(
-        state.uploads.room(held, 6 * MIB),
-        Ok(vec![(ISSUE.to_owned(), "transfer-shared".to_owned())])
-    );
+    assert_eq!(state.uploads.room(held, 6 * MIB), Ok(()));
+    assert!(state.uploads.released_transfer("transfer-shared"));
 }
 
 #[test]
-fn an_upload_kept_too_long_never_comes_back_as_its_issue_reopens() {
+fn an_upload_kept_past_its_time_comes_back_to_be_checked_as_its_issue_reopens() {
     // Nothing used the store until the issue reopened, by its key or by
     // its ID, just as its time ran out.
     for reference in ["OPS-1", ISSUE] {
@@ -226,35 +222,46 @@ fn an_upload_kept_too_long_never_comes_back_as_its_issue_reopens() {
         state.follow_uploads(closed);
         open(&mut state, reference, None);
         let cancels = state.follow_uploads(closed + KEPT_FOR);
-        assert_eq!(
-            cancels,
-            [(ISSUE.to_owned(), "transfer-stale".to_owned())],
-            "reopened as {reference}"
-        );
-        assert_eq!(shown(&state), 0, "reopened as {reference}");
+        assert!(cancels.is_empty(), "reopened as {reference}");
+        assert_eq!(shown(&state), 1, "reopened as {reference}");
+        assert!(state.uploads.released_transfer("transfer-stale"));
     }
 }
 
-#[test]
-fn at_most_eight_closed_issues_keep_uploads() {
-    let mut state = state();
-    let start = Instant::now();
+/// Opens, adds an upload waiting for a check, holding `transfer-{n}`, to
+/// and closes each issue `n` of `issues`, `n` seconds after `start`, with
+/// the reservations the store cancels.
+pub(super) fn close_issues_holding(
+    state: &mut State,
+    issues: std::ops::Range<u64>,
+    start: Instant,
+) -> Vec<Cancel> {
     let mut cancels = Vec::new();
-    for n in 0..9u64 {
-        let id = format!("00000000-0000-4000-8000-00000000010{n}");
-        open(&mut state, &format!("OPS-{n}"), Some(&id));
+    for n in issues {
+        let id = format!("00000000-0000-4000-8000-{n:012}");
+        open(state, &format!("OPS-{n}"), Some(&id));
         add(
-            &mut state,
+            state,
             &id,
             vec![awaiting_check(8, &format!("transfer-{n}"))],
         );
         state.snapshot.issue = None;
         cancels.extend(state.follow_uploads(start + Duration::from_secs(n)));
     }
-    let first = "00000000-0000-4000-8000-000000000100".to_owned();
-    assert_eq!(cancels, [(first, "transfer-0".to_owned())]);
-    assert!(!state.uploads.contains_transfer("transfer-0"));
-    assert!(state.uploads.contains_transfer("transfer-8"));
+    cancels
+}
+
+#[test]
+fn past_eight_closed_issues_the_oldest_lets_its_bytes_go() {
+    let mut state = state();
+    let cancels = close_issues_holding(&mut state, 0..9, Instant::now());
+    assert!(
+        cancels.is_empty(),
+        "nothing that may be stored is cancelled"
+    );
+    assert!(state.uploads.released_transfer("transfer-0"));
+    assert!(state.uploads.contains_transfer("transfer-0"));
+    assert!(!state.uploads.released_transfer("transfer-8"));
 }
 
 #[test]

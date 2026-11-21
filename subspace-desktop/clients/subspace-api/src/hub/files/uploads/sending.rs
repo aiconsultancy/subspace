@@ -164,7 +164,7 @@ fn record(
     let stored = matches!(result, Ok(Some(_)));
     let mut cancels: Vec<Cancel> = match state.uploads.row(&upload.id) {
         Some(row) => {
-            settle(row, result, transfer, bytes_sent);
+            settle(row, upload.checks(), result, (transfer, bytes_sent));
             Vec::new()
         }
         None => transfer
@@ -183,16 +183,21 @@ fn record(
     cancels
 }
 
-/// Records what an attempt did to `row`. A stored file's row is taken out
-/// by the caller.
+/// Records what an attempt did to `row`; `checked` when it was a check. A
+/// stored file's row is taken out by the caller. A check that could not
+/// tell whether the file was stored is counted.
 fn settle(
     row: &mut AttachmentUpload,
+    checked: bool,
     result: Result<Option<IssueMedia>, UploadError>,
-    transfer: Option<String>,
-    bytes_sent: bool,
+    (transfer, bytes_sent): (Option<String>, bool),
 ) {
     row.transfer = transfer;
     row.bytes_sent = row.bytes_sent || bytes_sent;
+    row.unknown_checks = match (&result, checked) {
+        (Err(UploadError::Checking), true) => row.unknown_checks.saturating_add(1),
+        _ => 0,
+    };
     match result {
         Ok(Some(_)) => {}
         // Refused for good: nothing was stored, so a retry starts afresh
