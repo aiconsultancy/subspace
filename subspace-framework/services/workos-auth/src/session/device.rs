@@ -126,6 +126,12 @@ fn verification_url(value: &str, loopback: bool) -> Result<url::Url, Error> {
     Ok(url)
 }
 
+/// The endpoint and public client identity for a device-code exchange.
+pub(super) struct PollRequest<'a> {
+    pub url: &'a str,
+    pub client_id: &'a str,
+}
+
 /// Poll until WorkOS grants tokens, the code expires, access is refused,
 /// or the sign-in is cancelled. No exchange outlives the code: each request
 /// is capped by its remaining lifetime, and a reply arriving after the
@@ -133,8 +139,7 @@ fn verification_url(value: &str, loopback: bool) -> Result<url::Url, Error> {
 pub(super) fn poll(
     transport: &dyn Transport,
     clock: &dyn Clock,
-    url: &str,
-    client_id: &str,
+    request: PollRequest<'_>,
     device: &Device,
     cancel: &Cancel,
 ) -> Result<Reply, Error> {
@@ -146,9 +151,9 @@ pub(super) fn poll(
         let form = [
             ("grant_type", GRANT),
             ("device_code", device.code.expose()),
-            ("client_id", client_id),
+            ("client_id", request.client_id),
         ];
-        let outcome = transport.poll_device(url, &form, timeout);
+        let outcome = transport.poll_device(request.url, &form, timeout);
         if clock.now() >= device.deadline {
             return Err(Error::TimedOut);
         }
@@ -240,7 +245,7 @@ impl Clock for VirtualClock {
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock as _, DeviceStart, VirtualClock, poll, validate};
+    use super::{Clock as _, DeviceStart, PollRequest, VirtualClock, poll, validate};
     use crate::http::{DevicePoll, Reply, Transport, User};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
@@ -312,8 +317,10 @@ mod tests {
         let result = poll(
             &transport,
             clock.as_ref(),
-            "https://auth.example.com/user_management/authenticate",
-            "client_fixture",
+            PollRequest {
+                url: "https://auth.example.com/user_management/authenticate",
+                client_id: "client_fixture",
+            },
             &device,
             &Cancel::default(),
         );

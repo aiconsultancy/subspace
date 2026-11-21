@@ -73,3 +73,5 @@ If you want to build a Space or know what the Framework offers one, read
 - [Selectable text in find in page](changes/gpui-text-patch/README.md): native
   range highlights, reveal and Markdown link context actions.
 - [Restart after an update](changes/restart-after-update/README.md): About and Settings restart routing and regression coverage.
+- [WorkOS sign-in quality gate](changes/workos-sign-in-quality/README.md):
+  the Framework refactor that restores the gate after device authorisation.
