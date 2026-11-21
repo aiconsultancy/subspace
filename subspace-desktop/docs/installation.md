@@ -576,6 +576,9 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
    `Cargo.lock` files Release Please updates (and, when `release.yml` starts
    the run, is the release's commit), so only reviewed code is signed, whoever pushed the
    tag. It fixes that commit and the archive's name for the rest of the run.
+   The root `scripts/windows-release-resolve.sh` makes these checks, and
+   `scripts/test-windows-release-resolve.sh` (part of `make release-check`)
+   tests them.
 2. **build**, on `subspace-windows`, checks out that commit, installs
    `cargo-about` at the version and SHA-256 its `mise.toml` pins, and runs
    `scripts/package-release.sh x86_64-pc-windows-msvc <version>` with no
@@ -630,7 +633,10 @@ gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=
 
 The `windows-signing` environment's deployment rule admits only `main`, where
 this workflow runs. It must not admit tags: a workflow committed on a tag
-could then use the signing identity without this workflow's checks. The
+could then use the signing identity without this workflow's checks. In the
+repository's **Settings**, **Environments**, `windows-signing`, set
+**Deployment branches and tags** to **Selected branches and tags** with one
+rule, the branch `main`, and no tag rule. The
 environment holds these secrets, so neither the identity nor the vault is
 written in the repository:
 

@@ -42,13 +42,16 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
     `main`'s first-parent history, changing only the files Release Please
     changes. It also
     refuses a release from before this workflow, whose packaging would run
-    the app and fail.
+    the app and fail. `scripts/windows-release-resolve.sh` makes these
+    checks, and any failed or unexpected GitHub API answer refuses the tag.
   - It builds that commit on `subspace-windows` with no secrets.
   - `package-release.sh` normally runs the built app to read its version
     back. The app cannot start in a Windows Server container, so the job sets
     `SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1` to skip that.
   - It signs on `subspace-signing` in the `windows-signing` environment, using
-    GitHub OIDC. The environment's deployment rule allows only `main`. The
+    GitHub OIDC. The environment's deployment rule must allow only `main`,
+    never a tag pattern: a workflow file committed on an admitted tag could
+    request the signing identity without this workflow's checks. The
     build's scripts could rewrite the build job's outputs, so the sign job
     uses nothing from it but the archive. The script refuses an archive with
     links, unsafe paths or duplicate entries, so a tampered archive can't
@@ -86,7 +89,26 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
   - masking the Key Vault values in GitHub Actions.
 
   It passes under macOS's bash 3.2 and under bash 5.
+- `bash scripts/test-windows-release-resolve.sh`, part of the root
+  `make release-check`, runs the resolve job's checks against a local Git
+  history and a fake `gh`. It covers:
+  - a Release Please merge commit, through an annotated tag, with and without
+    the release's commit given, and a wrong commit given;
+  - malformed, pre-release, padded and missing tags;
+  - a tag on a commit off `main`, on a commit inside a merged pull request
+    and on a feature's merge commit;
+  - a branch named like a tag, pointing elsewhere, either way round;
+  - every way GitHub's answer can fail to name one merged Release Please pull
+    request for the desktop into `main`, a failed API call and an answer
+    that is not a list;
+  - a release commit that changes another file, and a release from before
+    Windows builds.
+
+  It passes under macOS's bash 3.2 and under bash 5.
 - `actionlint` passes on the workflows.
+- Nothing in `windows-release.yml` has run yet: not the resolve job, not the
+  build on the Windows runner, not the signing. The resolve checks are
+  tested only by the fixtures above.
 - A trial build of the runner image compiled the release. The built app then
   failed to start in Windows Server 2022 containers: a missing DLL in Server
   Core, a missing entry point in the full Server image. Containers lack parts
@@ -102,6 +124,21 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
 - [x] `scripts/sign-windows.sh`, its fixture test and `make sign-windows`.
 - [x] `windows-release.yml` and its start from `release.yml`.
 - [x] Installation guide, ways of working and agent instructions.
+- [x] Resolve checks in `scripts/windows-release-resolve.sh`, with fixtures.
 - [ ] Owner: identity validation in the portal, then the Public Trust
       certificate profile.
+- [ ] Owner, in the repository settings, which no change to this repository
+      can set: the `windows-signing` environment's **Deployment branches and
+      tags** must be **Selected branches and tags** with the single branch
+      rule `main` and no tag rule. A read-only check on 2026-11-21 found
+      exactly that; confirm it before the first `sign-only` run with
+      `gh api repos/aiconsultancy/subspace/environments/windows-signing/deployment-branch-policies`:
+      one policy, `"name": "main"`, `"type": "branch"`.
+- [ ] Owner, optional second layer: a tag ruleset, enforcement **Active**,
+      targeting `refs/tags/subspace-desktop-v*` and excluding
+      `refs/tags/subspace-desktop-v*-*` (pre-release tags, which pre-release
+      retention deletes), with **Restrict updates** and **Restrict
+      deletions**. Add **Restrict creations** only with a bypass that lets
+      `release.yml`'s `GITHUB_TOKEN` still create the release tag, and check
+      the next release is tagged. The resolve job does not depend on it.
 - [ ] A `build-only` run, then a `sign-only` run, of `windows-release`.
