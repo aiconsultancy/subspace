@@ -22,7 +22,6 @@ cd "$root"
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
 load_release_toolchain
-require_product_licences
 target="${2:-$("$RUSTC" -vV | sed -n 's/^host: //p')}"
 case "$target" in
 aarch64-apple-darwin) ;;
@@ -32,6 +31,7 @@ aarch64-apple-darwin) ;;
 	;;
 esac
 
+require_product_licences "$target"
 load_product
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_MINIMUM_VERSION"
 rustup target add "$target" >&2

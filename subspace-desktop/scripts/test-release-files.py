@@ -2,13 +2,16 @@
 """Exercise release publication failures and stamp refresh in a small Cargo project."""
 
 from contextlib import redirect_stderr
+import hashlib
 import importlib.util
 import io
+import lzma
 import os
 from pathlib import Path
 import signal
 import subprocess
 import sys
+import tarfile
 from tempfile import TemporaryDirectory
 import time
 from types import SimpleNamespace
@@ -81,6 +84,41 @@ class ReleaseFiles(unittest.TestCase):
         self.assertIn("TOML parse error", local.stderr)
         self.assertIn(credential, local.stderr)
 
+    def test_onnx_uses_verified_archive_instead_of_cached_extraction(self):
+        native = self.root / "ort-cache"
+        cache = self.root / "build-cache"
+        native.mkdir()
+        cache.mkdir()
+        original = b"pinned ONNX Runtime library"
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w") as archive:
+            member = tarfile.TarInfo("libonnxruntime.a")
+            member.size = len(original)
+            archive.addfile(member, io.BytesIO(original))
+        filters = [{"id": lzma.FILTER_LZMA2, "dict_size": 1 << 26}]
+        compressed = lzma.compress(buffer.getvalue(), format=lzma.FORMAT_RAW, filters=filters)
+        digest = hashlib.sha256(compressed).hexdigest()
+        extracted = native / digest / "libonnxruntime.a"
+        extracted.parent.mkdir()
+        extracted.write_bytes(b"tampered extracted library")
+        upstream = native / f"{digest}.tar.lzma2"
+        upstream.write_bytes(b"tampered cached archive")
+        with patch.object(release_files, "ort_download_cache", return_value=native), \
+                patch.object(release_files, "urlopen") as download:
+            with TemporaryDirectory(dir=cache) as temporary:
+                private = Path(temporary)
+                with self.assertRaisesRegex(ValueError, "ONNX Runtime archive checksum mismatch"):
+                    release_files.prepare_onnx_archive(cache, private, "fixture", "", digest)
+                self.assertFalse((private / "lib").exists())
+            upstream.write_bytes(compressed)
+            with TemporaryDirectory(dir=cache) as temporary:
+                library = release_files.prepare_onnx_archive(cache, Path(temporary), "fixture", "", digest)
+                self.assertEqual(library.parent, Path(temporary))
+                self.assertEqual((library / "libonnxruntime.a").read_bytes(), original)
+            download.assert_not_called()
+        self.assertEqual(extracted.read_bytes(), b"tampered extracted library")
+        self.assertEqual((cache / upstream.name).read_bytes(), compressed)
+
     @unittest.skipIf(os.name == "nt", "uses Unix signals and advisory locks")
     def test_cargo_group_stops_before_unlock(self):
         worker = self.root / "cargo-wrapper.py"
@@ -101,6 +139,8 @@ while not pathlib.Path("child-ready").exists():
     time.sleep(0.02)
 if sys.argv[1] == "error":
     sys.exit(23)
+if sys.argv[1] == "success":
+    sys.exit(0)
 child.wait()
 """)
         supervisor = f"""
@@ -116,7 +156,7 @@ with helper["exclusive_lock"](Path(".package.lock")), open("messages", "w") as m
     except subprocess.CalledProcessError as exc:
         sys.exit(exc.returncode)
 """
-        for mode, expected in (("error", 23), ("SIGINT", 42), ("SIGTERM", 42)):
+        for mode, expected in (("success", 0), ("error", 23), ("SIGINT", 42), ("SIGTERM", 42)):
             with self.subTest(mode=mode):
                 cwd = self.root / mode
                 cwd.mkdir()
@@ -127,18 +167,45 @@ with helper["exclusive_lock"](Path(".package.lock")), open("messages", "w") as m
                         while not ready.exists():
                             self.assertLess(time.monotonic(), deadline, "Cargo child never started")
                             time.sleep(0.02)
-                        if mode != "error":
+                        if mode not in {"success", "error"}:
                             process.send_signal(getattr(signal, mode))
                         self.assertEqual(process.wait(timeout=10), expected)
                         with patch.dict(os.environ, {release_files.LOCK_TIMEOUT: "0"}), \
-                                release_files.exclusive_lock(cwd / ".package.lock"), \
-                                release_files.exclusive_lock(cwd / "child.lock"):
+                                release_files.exclusive_lock(cwd / ".package.lock"):
+                            if mode == "success":
+                                with self.assertRaises(TimeoutError):
+                                    with release_files.exclusive_lock(cwd / "child.lock"):
+                                        self.fail("successful Cargo build stopped its child")
+                            else:
+                                with release_files.exclusive_lock(cwd / "child.lock"):
+                                    pass
                             self.assertFalse((cwd / "cached-executable").exists())
                     finally:
                         # Release a surviving child even when the fixture fails.
                         (cwd / "overwrite").touch()
                         if process.poll() is None:
                             process.terminate()
+                        elif mode == "success":
+                            with patch.dict(os.environ, {release_files.LOCK_TIMEOUT: "10"}), \
+                                    release_files.exclusive_lock(cwd / "child.lock"):
+                                pass
+
+    @unittest.skipIf(os.name == "nt", "uses Unix process groups")
+    def test_exited_group_leader_on_macos_counts_as_stopped(self):
+        # macOS reports EPERM, not ESRCH, when only the unreaped leader is left.
+        refused = PermissionError("fixture EPERM")
+        for platform in ("darwin", "linux"):
+            with self.subTest(platform=platform), \
+                    subprocess.Popen([sys.executable, "-c", ""], start_new_session=True) as process, \
+                    patch.object(release_files.os, "killpg", side_effect=refused) as killpg, \
+                    patch.object(release_files.sys, "platform", platform):
+                if platform == "darwin":
+                    release_files.stop_posix_group(process)
+                    self.assertEqual(process.returncode, 0)
+                else:
+                    with self.assertRaisesRegex(PermissionError, "fixture EPERM"):
+                        release_files.stop_posix_group(process)
+                killpg.assert_called_once_with(process.pid, signal.SIGKILL)
 
     def test_failed_checksum_rename_restores_previous_pair(self):
         dist = self.root / "dist"

@@ -8,6 +8,7 @@ mr-boxington = "1.19.0"
 
 [tools."github:EmbarkStudios/cargo-about"]
 version = "0.9.3"
+os = ["linux", "macos/arm64", "windows"]
 
 # SHA-256 digests published with the corresponding upstream release archives.
 [tools."github:EmbarkStudios/cargo-about".platforms]
