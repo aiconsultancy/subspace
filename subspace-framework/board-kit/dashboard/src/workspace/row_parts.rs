@@ -9,6 +9,7 @@ use gpui_kit::{
     MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
+use super::row_order::{self, Step};
 use crate::anchored::AnchoredContextMenuExt as _;
 use crate::row_menu::{self, GroupedMenu};
 use crate::tokens::Tokens;
@@ -85,14 +86,18 @@ pub(super) fn count_mark(count: SharedString, mono: SharedString, tokens: &Token
 
 /// The row's pointer and keyboard handlers. A click chooses the row but
 /// leaves the keyboard focus where it was; Tab and the list keys bring it
-/// here, and Enter chooses it as a click does.
-pub(super) fn with_handlers<E>(row: E, on_click: Option<ClickHandler>) -> E
+/// here, and Enter chooses it as a click does. The list keys move only
+/// between the navigator's rows and stop at the first and the last.
+pub(super) fn with_handlers<E>(row: E, focus: FocusHandle, on_click: Option<ClickHandler>) -> E
 where
     E: StatefulInteractiveElement + gpui_kit::prelude::FluentBuilder,
 {
+    let from = focus.clone();
     row.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-        .on_action(|_: &SelectNext, window, cx| window.focus_next(cx))
-        .on_action(|_: &SelectPrevious, window, cx| window.focus_prev(cx))
+        .on_action(move |_: &SelectNext, window, cx| row_order::step(&from, Step::Next, window, cx))
+        .on_action(move |_: &SelectPrevious, window, cx| {
+            row_order::step(&focus, Step::Previous, window, cx)
+        })
         .when_some(on_click, |row, on_click| {
             let activate = on_click.clone();
             row.on_click(move |event, window, cx| on_click(event, window, cx))
@@ -102,14 +107,24 @@ where
         })
 }
 
-/// The row's own focus handle, kept across frames, in the tab order.
-pub(super) fn row_focus(key: &SharedString, window: &mut Window, cx: &mut App) -> FocusHandle {
-    window
+/// The row's own focus handle, kept across frames, in the tab order. A
+/// `focusable` row also takes its place in the navigator's row order.
+pub(super) fn row_focus(
+    key: &SharedString,
+    focusable: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> FocusHandle {
+    let focus = window
         .use_keyed_state(
             (ElementId::Name(key.clone()), "nav-row-focus"),
             cx,
             |_, cx| cx.focus_handle().tab_stop(true),
         )
         .read(cx)
-        .clone()
+        .clone();
+    if focusable {
+        row_order::push(&focus, window, cx);
+    }
+    focus
 }

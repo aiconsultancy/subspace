@@ -72,7 +72,7 @@ pub(super) fn navigator_slot(dock: AnyElement, tokens: &Tokens, viewport: f32) -
         .on_click(|event, window, cx| reset_on_double_click(NAVIGATOR_TOKEN, event, window, cx))
         .test_support();
     slot("workspace-navigator-slot", width)
-        .child(dock)
+        .child(clipped(dock))
         .child(handle)
         .on_drag_move::<NavigatorResize>(|event, window, cx| {
             let width = event.event.position.x - event.bounds.left();
@@ -89,7 +89,7 @@ pub(super) fn inspector_slot(dock: AnyElement, tokens: &Tokens, viewport: f32) -
         .on_click(|event, window, cx| reset_on_double_click(INSPECTOR_TOKEN, event, window, cx))
         .test_support();
     slot("workspace-inspector-slot", width)
-        .child(dock)
+        .child(clipped(dock))
         .child(handle)
         .on_drag_move::<InspectorResize>(|event, window, cx| {
             let width = event.bounds.right() - event.event.position.x;
@@ -109,6 +109,14 @@ fn slot(id: &'static str, width: f32) -> Stateful<Div> {
         .w(px(width))
         .max_w(relative(FULL_PARENT_WIDTH))
         .h_full()
+}
+
+/// A dock's content, clipped to its slot, so content that cannot shrink,
+/// such as header buttons, never draws over the pane when the dock yields.
+/// The resize handle sits outside the clip, so it keeps its whole width, and
+/// menus and popovers draw deferred, so the clip never cuts them off.
+fn clipped(dock: AnyElement) -> Div {
+    div().size_full().overflow_hidden().child(dock)
 }
 
 /// A draggable edge; the caller places it on the dock's inner side.

@@ -20,6 +20,7 @@ mod layout_tests;
 mod navigator;
 mod pane;
 mod resize;
+mod row_order;
 mod row_parts;
 #[cfg(test)]
 mod tests;
