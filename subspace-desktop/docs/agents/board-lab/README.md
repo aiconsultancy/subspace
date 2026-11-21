@@ -3,7 +3,8 @@
 ## Experimental integration
 
 Board Lab is now a default-off experimental board in full Subspace on macOS
-ARM64. See the [enablement and safety guide](../../board-lab.md).
+ARM64, built in only with the app's `board-lab` feature; release builds leave
+it out. See the [enablement and safety guide](../../board-lab.md).
 Its canonical implementation is `spaces/board-lab/` and the
 adapter is `spaces/board-lab/crates/mxc-worker/`. The standalone
 developer harnesses are retired. Git history retains their source and locks.

@@ -15,16 +15,18 @@ use crate::tokens::{ButtonRole, rem};
 
 /// What a toolbar label shows and says.
 pub struct ToolbarLabel {
-    pub icon: Icon,
+    /// A muted decorative glyph before the text, or none for plain quiet
+    /// text such as "Grouped by state".
+    pub icon: Option<Icon>,
     pub text: SharedString,
     /// The spoken name, which gives the text its context, such as
     /// "Signed in to GitHub as octo-dev".
     pub accessible: SharedString,
 }
 
-/// `label` in the Toolbar role's height, padding and text size, with a
-/// muted decorative glyph, so it shares the band's centre line with its
-/// buttons.
+/// `label` in the Toolbar role's height, padding and text size, with its
+/// muted decorative glyph when it has one, so it shares the band's centre
+/// line with its buttons.
 pub fn label<I: Into<ElementId>>(
     id: I,
     label: ToolbarLabel,
@@ -44,6 +46,10 @@ pub fn label<I: Into<ElementId>>(
         .gap_1()
         .text_size(rem(metrics.font))
         .text_color(tokens.muted)
-        .child(label.icon.size(glyph).text_color(tokens.muted))
+        .children(
+            label
+                .icon
+                .map(|icon| icon.size(glyph).text_color(tokens.muted)),
+        )
         .child(label.text)
 }

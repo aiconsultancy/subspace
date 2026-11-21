@@ -7,7 +7,7 @@ use subspace_framework::client_github::{
     actions::{Definition, Job, match_job_dependencies},
 };
 
-use crate::{Actions, graph::GraphJob, model::RunTarget};
+use crate::{Actions, graph::GraphJob, model::RunTarget, panel::RunDetail};
 
 struct Loaded {
     jobs: Vec<GraphJob>,
@@ -16,6 +16,9 @@ struct Loaded {
 }
 
 impl Actions {
+    /// Reads job `id`'s log for the selected run and shows it in that run's
+    /// tab, which it opens. A log that arrives after the tab closed, or
+    /// moved to another run, is dropped.
     pub(crate) fn load_job_log(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(target) = self.detail.target.clone() else {
             return;
@@ -23,6 +26,14 @@ impl Actions {
         let (Some(client), Some(login)) = (self.client.clone(), self.login.clone()) else {
             return;
         };
+        let key = self
+            .records()
+            .iter()
+            .find(|record| record.run.as_ref() == Some(&target))
+            .map(|record| record.key.clone());
+        if let Some(key) = key {
+            self.open_tab(&key, cx);
+        }
         let generation = self.generation;
         cx.spawn(async move |this, cx| {
             let repo = target.repo.clone();
@@ -30,15 +41,18 @@ impl Actions {
                 .background_spawn(async move { client.actions_job_log(&login, &repo, id) })
                 .await;
             _ = this.update(cx, |this, cx| {
-                if generation != this.generation
-                    || this.detail.target.as_ref() != Some(&target)
-                    || this.list.open_row().is_none()
-                {
+                if generation != this.generation {
+                    return;
+                }
+                let Some(open) = this.open.as_mut() else {
+                    return;
+                };
+                if open.detail.target.as_ref() != Some(&target) {
                     return;
                 }
                 match result {
-                    Ok(log) => this.detail.log = Some(log.text),
-                    Err(error) => this.detail.error = Some(error.to_string()),
+                    Ok(log) => open.detail.log = Some(log.text),
+                    Err(error) => open.detail.error = Some(error.to_string()),
                 }
                 cx.notify();
             });
@@ -66,25 +80,42 @@ impl Actions {
                 .background_spawn(async move { fetch(&client, &login, &fetch_target) })
                 .await;
             _ = this.update(cx, |this, cx| {
-                if generation != this.generation || this.detail.target.as_ref() != Some(&target) {
+                if generation != this.generation {
                     return;
                 }
-                this.detail.loading = false;
-                match result {
-                    Ok(loaded) => {
-                        this.detail.jobs = loaded.jobs.clone();
-                        this.detail.error = None;
-                        this.graph.update(cx, |graph, cx| {
-                            graph.set_jobs(loaded.jobs, loaded.edges, loaded.reason, cx)
-                        });
-                    }
-                    Err(error) => this.detail.error = Some(error),
+                if let Some(open) = this.open.as_mut()
+                    && open.detail.target.as_ref() == Some(&target)
+                {
+                    finish(&mut open.detail, &result);
+                }
+                if this.detail.target.as_ref() != Some(&target) {
+                    cx.notify();
+                    return;
+                }
+                finish(&mut this.detail, &result);
+                if let Ok(loaded) = result {
+                    this.graph.update(cx, |graph, cx| {
+                        graph.set_jobs(loaded.jobs, loaded.edges, loaded.reason, cx)
+                    });
                 }
                 cx.notify();
             });
         })
         .detach();
         cx.notify();
+    }
+}
+
+/// Puts a finished read into one copy of a run's detail: the selection's,
+/// or the opened tab's.
+fn finish(detail: &mut RunDetail, result: &Result<Loaded, String>) {
+    detail.loading = false;
+    match result {
+        Ok(loaded) => {
+            detail.jobs = loaded.jobs.clone();
+            detail.error = None;
+        }
+        Err(error) => detail.error = Some(error.clone()),
     }
 }
 

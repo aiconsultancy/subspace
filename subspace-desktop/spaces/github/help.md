@@ -45,11 +45,34 @@ cannot review, and hides **Comment** when you cannot comment.
 
 ### Sections
 
-**Pull requests** heads the list and shows the current GitHub account when
-one is available. The toolbar beneath it has one tab for each section, with a
-count. Select a tab, or press
-`1` to `4`. The first launch opens **Review requested**. Subspace remembers
-the last section.
+The board has three parts. The navigator on the left is headed **Pull
+requests** and lists the sections under **Views**, each with its count. The
+pane in the middle has one tab named after the current section, a toolbar,
+and the list. The inspector on the right shows the selected pull request. Select a section in the
+navigator, or press `1` to `4`. The first launch opens **Review requested**.
+Subspace remembers the last section.
+
+The navigator's footer names the signed-in account, as `Signed in to GitHub
+as <login>`. When more than one account is signed in, the footer holds the
+account picker instead. The status bar at the bottom of the window shows
+`GitHub · Signed in as <login>` and the section's counts.
+
+### Filter to one repository
+
+Under **Repositories**, the navigator lists the repositories that have pull
+requests in the current section, each with its count, in the list's order.
+With **Favourites only** on, it lists only favourite repositories. Choose one
+to show only its pull requests; the row stays selected, the others stay
+listed so you can switch, and the status bar ends with `<owner/name> only`.
+Choose the selected row again to show every repository.
+
+The toolbar shows **&lt;owner/name&gt; only** (with a cross) while a repository is
+filtered; choose it to show every repository again. While the navigator is
+hidden, the section menu lists the repositories too, as
+`Only <owner/name> · <n> items`. In Commands, **Show all repositories, not only &lt;owner/name&gt;**
+clears the filter. The filter is not saved: it clears when you switch account
+or restart Subspace. When the filtered repository has no pull requests in
+the section you switch to, the list is empty until you clear the filter.
 
 | Key | Section | GitHub search |
 | --- | --- | --- |
@@ -88,9 +111,10 @@ tools share. Manage them here or in Settings:
 - In Settings, edits wait for **Save**; see [Settings](#settings).
 
 Each section loads at most 50 pull requests, most recently updated first. The
-status line shows `<n> open PRs · <n> repos`, or `<shown> of <total> open PRs`
-when GitHub has more than 50. A tab count shows the total. A red count means the
-last load of that section failed. A yellow count means it is loading.
+status bar shows `<n> open PRs · <n> repos`, or `<shown> of <total> open PRs`
+when GitHub has more than 50. A section's count in the navigator shows the
+total. A count followed by `!` means the last load of that section failed; a
+count followed by `…`, or `…` alone, means it is loading.
 
 ### Groups and rows
 
@@ -126,13 +150,15 @@ has no synthetic fixture mode.
 
 | Control | Behavior |
 | --- | --- |
-| Section tabs | **Mine**, **Review requested**, **Involved**, **All open**, as a segmented control. Same as `1` to `4`. |
+| Navigator switch (first) | Hides or shows the navigator. Subspace remembers the choice. |
+| Section menu | Only while the navigator is hidden: names the current section and opens the menu **View**, which lists each section with its count, as `<section> · <n> items`, then each repository of the section, as `Only <owner/name> · <n> items`. Same as `1` to `4`. |
 | **Repositories** (star icon) | Opens the repository search with stars and **Favourites only**. Same as `Shift+F`. Shown pressed while Favourites only is on. |
-| Account (user icon and short login), last | When more than one account is available, opens the account menu. Same as `u`. |
+| **&lt;owner/name&gt; only** (cross icon) | Only while a repository is filtered: shows every repository again. |
+| Account (user icon and short login) | Only while the navigator is hidden and more than one account is available: opens the account menu. Same as `u`. With the navigator shown, the picker is in its footer. |
+| **Refresh** | Loads all sections again. Same as `r`. |
+| Inspector switch (last) | Hides or shows the inspector. Subspace remembers the choice. |
 
-When the window is narrow, the controls move to an overflow menu from the
-end, as `Go to <section> · <n> items`, `Repositories…` and
-`Account: <login>…` when there is an account picker.
+In a narrow pane, the leading controls wrap onto another line.
 
 - **Account**: `u` opens the menu **Account** with the placeholder **Switch
   account**. If only one account is signed in, a toast reads `Only one GitHub
@@ -147,7 +173,9 @@ end, as `Go to <section> · <n> items`, `Repositories…` and
   the open item, or the open diff.
 - Command palette commands: **Switch account…** (with two or more accounts),
   **Go to &lt;section&gt;**, **Assign…**, **Assign to me** or **Unassign me**,
-  **Files: show the diff**, **Open in GitHub**, **Copy URL**, and when allowed
+  **Files: show the diff**, **Open in GitHub**, **Copy URL**, **Show all
+  repositories, not only &lt;owner/name&gt;** (while a repository is
+  filtered), and when allowed
   **Approve**, **Request changes** and **Comment**. The palette key is `Cmd+K`
   on macOS, `Ctrl+K` on Windows and `Ctrl+Shift+K` on Linux.
 
@@ -168,29 +196,52 @@ end, as `Go to <section> · <n> items`, `Repositories…` and
 
 ## Details
 
-Press Enter on a pull request, or click it, to open the detail panel. Press
-Escape to close it. While the panel is open, `j` and `k` step to the next and
-previous item. A short delay avoids a request for each key press. Drag the left
-edge of the panel to change its width. Tab to the divider and use the arrow
-keys to adjust the width from the keyboard. Double-click the divider to reset.
+### The inspector
 
-The title bar shows **Pull request**, `<repository name>#<number>`, previous and
-next buttons, a **GitHub ↗** link and a close button.
+Click a pull request to select it. The inspector on the right shows it: the
+title bar reads `<repository name> #<number>` with **Open**, a GitHub link
+and a close button, then the state, the title and the first paragraph of the
+description, **Properties** (Author, Branch, Files, Updated, and Assignees
+and Labels when it has any), **Reviewers** and **Checks · &lt;n&gt;**. Its
+footer holds the actions: **Approve** (the main one), **Request changes**,
+**Comment**, **Assign**, **Files** and **Close…**, each only when you can use
+it, and all disabled while a write runs. Writing a review or a comment
+replaces the footer's buttons with the composer, and shows the inspector if
+it was hidden. With nothing selected, it reads **Select a pull request to see
+it here.** The close button and the inspector switch hide it; Subspace
+remembers the choice.
+
+With the inspector shown, selecting a pull request loads its details after a
+short delay, so stepping through the list with `j` and `k` does not send a
+request for each key press.
+
+### The pull request page
+
+Press Enter on a pull request, double-click it, or choose **Open** in the
+inspector to open its page. The tab strip then shows the section's tab and
+the pull request's tab, which has a close button. The toolbar holds **Back**,
+the path (`owner/name › #<number>`) and **Approve**, **Request changes** and
+**Comment** when you can use them. The page shows the state, the title, the
+rendered description and the activity in one reading column, with the
+inspector beside it; while the inspector is hidden, its Properties, Reviewers
+and Checks end the column. Press Escape, choose **Back**, close the pull
+request's tab or choose the section's tab to go back to the list. On the page,
+`j` and `k` step to the next and previous pull request.
 
 ### Opening from another board
 
 A board that supports opening GitHub pull requests in Subspace can open this
-same detail panel. Subspace switches to PRs and uses the account currently
+same page. Subspace switches to PRs and uses the account currently
 selected here. The pull request can be outside the current section or your
 favourite repositories, including a closed or merged pull request.
 
-If the pull request is not loaded, the panel shows **Loading…**, then its
+If the pull request is not loaded, the page shows **Loading…**, then its
 details or the read error. Your account still needs repository access. This
 does not add the pull request to a section's saved search results. Escape
-closes the panel as usual and removes the temporary row. Switching sections
+closes the page as usual and removes the temporary row. Switching sections
 or selecting another row also removes it. In the Issues board's Pull requests
 panel, each repository-and-title row has an **Open in PRs** tooltip and opens
-this panel. Its **Open on GitHub** link opens the external page.
+this page. Its **Open on GitHub** link opens the external page.
 
 Channels shows pull request chips with a hover card. PRs supplies the card
 with the account currently selected here, from what it already loaded or
@@ -205,37 +256,39 @@ the lists it replaces. With PRs off, the chips stay but show no details.
 
 | Property | Content |
 | --- | --- |
-| **State** | Open, Draft, Merged or Closed. |
-| **Author** | The author's name or login. |
-| **Files** | `<n> files · +<additions> −<deletions> (d)`, or `Show diff` before details load. |
-| **Branch** | `<head> → <base>`. |
-| **Assignees** | Up to four names then `…`, with the key hint `(a)`, or `Nobody (a)`. |
-| **Labels** | Label names, when the pull request has labels. |
-| **Updated** | `<age> ago · <full date>`. |
+| **Author** | The author's name or login, with an avatar. |
+| **Branch** | `<head> → <base>`, in a monospace font. |
+| **Files** | `<n> files · +<additions> −<deletions>`, or the line counts alone before details load. |
+| **Updated** | `<age> ago`. |
+| **Assignees** | Up to four names then `…`, when it has assignees. |
+| **Labels** | Label names, when it has labels. |
 
 ### Sections
 
-- **Reviewers**: each reviewer with a state of approved, requested changes,
-  reviewed, review requested or dismissed, or **None**.
-- **Checks (&lt;n&gt;)**: each check with a result of passed, failed, pending,
-  neutral, skipped or cancelled, and a `↗` link when it has one. With more than
-  5 checks, the list shows only failing checks until you choose the summary
-  line `<summary> · show all`. Choose `show failing` to collapse it again.
-- **Description**: the pull request text, **Loading…**, or **No description.**
-- **Activity (&lt;n&gt;)**: the latest comments and reviews, with author, review
-  state, age and text. The age links to the item on GitHub.
-- The action bar appears above the checks and again under the activity.
+- **Reviewers**: each reviewer with a glyph and a word: `✓` approved, `±`
+  requested changes, `▭` reviewed, `•` review requested, `○` dismissed; or
+  **None**.
+- **Checks · &lt;n&gt;**: each check with a glyph and a result: `✓` passed,
+  `✕` failed, `◌` pending, `○` neutral, `⊘` skipped or cancelled, and a `↗`
+  link when it has one. The glyph's shape tells the result without its
+  colour. With more than 5 checks, the list shows only failing checks until
+  you choose the summary line `<summary> · show all`. Choose `show failing`
+  to collapse it again.
+- On the page: **Description**, the pull request text, **Loading…**, or **No
+  description.**, and **Activity (&lt;n&gt;)**, the latest comments and
+  reviews, with author, review state, age and text. The age links to the item
+  on GitHub.
 
-If the details fail to load, the panel shows the error text.
+If the details fail to load, the inspector and the page show the error text.
 
 ### Right-click menu
 
-Right-click a row for **Add to chat**, **Open details**, **Open in GitHub**,
-**Copy link**, **Copy title** and **Copy id**.
+Right-click a row for **Open**, **Open in GitHub**, the star for its
+repository, **Copy link**, **Copy title**, **Copy id** and **Add to chat**.
 
 ### Diff view
 
-Press `d`, choose **Files d** in the panel, or choose **Files: show the diff**.
+Press `d`, choose **Files d** in the inspector, or choose **Files: show the diff**.
 The diff view replaces the list.
 
 - The title bar has **Back**, the `owner/name#<number>` reference, the title,
@@ -267,7 +320,7 @@ time.
 
 1. Select a pull request, or open its diff.
 2. Press `Shift+A` for **Approve**, or `Shift+R` for **Request changes**, or
-   choose the button in the panel.
+   choose the button in the inspector or the page's toolbar.
 3. Enter the text. **Approve** has the placeholder **Optional comment**.
    **Request changes** needs text (`What needs to change?`), or the composer
    shows `Text is required.`
@@ -290,7 +343,7 @@ you cannot comment, a toast reads `You cannot comment here`.
 ### Close a pull request
 
 1. Select an open pull request (including a draft), then press `x` or choose
-   **Close… x** in the panel or **Close pull request…** in Commands.
+   **Close… x** in the inspector or **Close pull request…** in Commands.
 2. The dialog asks `Close pull request <repository>#<number>?`. Add an
    optional multi-line comment, or leave it empty.
 3. Choose **Close pull request**, or press `Cmd/Ctrl+Enter`. **Cancel** or
@@ -367,7 +420,7 @@ field, the same letters are ordinary text.
 
 | Key | Action |
 | --- | --- |
-| `j` or Down, `k` or Up | Next or previous row. In the panel, next or previous item. |
+| `j` or Down, `k` or Up | Next or previous row. On a page, next or previous pull request. |
 | Home, End | First or last row. |
 | Enter | Open the pull request. On a repository, fold or unfold it. |
 | Left | Collapse the repository, or select the repository of the selected row. |
@@ -385,7 +438,7 @@ field, the same letters are ordinary text.
 | `i` | Assign to me, or unassign me. |
 | `o` | Open in GitHub. |
 | `y` | Copy the URL. |
-| Escape | Close the panel. |
+| Escape | Back to the list from a page. |
 | `/` | Search pull requests. |
 | `r` | Reload. |
 | `w` | Wrap long titles. |
@@ -455,13 +508,13 @@ A successful local check does not prove that GitHub will accept a write.
   unless **Favourites only** is on; **All open** searches only the
   favourites, which also limit the agent tools.
 - The repository search shows at most 30 repositories.
-- Each section loads at most 50 pull requests. A tab count can be larger.
+- Each section loads at most 50 pull requests. A section's count can be larger.
 - A diff lists at most 3000 files. Expanding a hunk reads a file of up to 1 MB.
   An image is limited to 10 MB.
 - Activity shows at most the latest 50 comments and 50 reviews. Checks list at
   most 100.
 - The board has no issue sections, no merge action and no filters other than
-  search.
+  search, **Favourites only** and the repository filter.
 - Saved lists are older data. They refresh from GitHub when the board loads.
 - Isolated fixture screenshots for closing pull requests are in the
   [close action change record](../../docs/changes/subspace-api-accounts/README.md).

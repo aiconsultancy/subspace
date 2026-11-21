@@ -1,11 +1,11 @@
 use super::panel::{self, Fact};
 use gpui_kit::{
-    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _,
+    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, TestSupportExt as _, div,
 };
 use subspace_api_client::model::IssueDetail;
 use subspace_framework::dashboard::Tokens;
-use subspace_framework::lucide::IconName;
+use subspace_framework::dashboard::workspace;
 
 pub(super) fn facts(detail: &IssueDetail) -> Vec<Fact> {
     let original = detail.fields.provenance.as_ref();
@@ -66,19 +66,21 @@ fn date_label(label: &'static str, original: bool) -> &'static str {
     }
 }
 
-fn format_date(value: &str) -> String {
+/// `2026-12-17` as `17 Dec 2026`; anything else as it is.
+pub(crate) fn format_date(value: &str) -> String {
     crate::view::lanes::short_date(value)
         .and_then(|short| value.get(..4).map(|year| format!("{short} {year}")))
         .unwrap_or_else(|| value.to_owned())
 }
 
-pub(super) fn render(detail: &IssueDetail, tokens: &Tokens) -> AnyElement {
+/// The record under a quiet caption, in compact fact rows.
+pub(super) fn render(detail: &IssueDetail, tokens: &Tokens, cx: &App) -> AnyElement {
     div()
         .id("issue-record")
         .aria_label("Record")
         .test_support()
         .child(
-            panel::group("Record", IconName::Clock, tokens).child(
+            workspace::section("Record", cx).child(
                 panel::grid().children(
                     facts(detail)
                         .into_iter()

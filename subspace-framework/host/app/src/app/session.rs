@@ -173,6 +173,7 @@ impl SubspaceApp {
                 .keywords("view switch open dashboard")
             })
             .collect();
+        commands.push(super::add_space::palette_command(cx));
         if self.main.is_board()
             && self
                 .help_dock

@@ -1,8 +1,9 @@
-//! The board as a GPUI Kit dock: the buffer list in the left dock, each
-//! opened channel, private conversation or server buffer as a panel in the
-//! centre (tabbed, split side by side or above and below, moved and closed
-//! by the user), and the focused channel's member list in the right dock.
-//! The layout is saved in buffer terms and restored on launch.
+//! The conversations as a GPUI Kit dock area in the workspace's pane: each
+//! opened channel, private conversation or server buffer is a panel (tabbed,
+//! split side by side or above and below, moved and closed by the user). The
+//! buffer list shows in the workspace's navigator and the focused channel's
+//! member list in its inspector; whether each shows is kept here. The layout
+//! is saved in buffer terms and restored on launch.
 
 mod layout;
 mod members;
@@ -12,7 +13,7 @@ mod persist;
 
 use std::collections::HashMap;
 
-use gpui_kit::component::dock::{DockArea, DockEvent, DockPlacement};
+use gpui_kit::component::dock::{DockArea, DockEvent};
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, Context, Entity, Subscription, Window};
 use subspace_client_irc::BufferKey;
 
@@ -21,15 +22,19 @@ use crate::conversation::Conversation;
 use crate::members::MemberList;
 use crate::view::Hosted;
 
-pub(crate) use open::{Where, close, request, toggle_members};
-use panels::{BuffersPanel, EmptyPanel, MembersPanel};
+use layout::Side;
+pub(crate) use members::focused_members;
+pub(crate) use open::{Where, close, request, toggle_buffers, toggle_members};
+use panels::EmptyPanel;
 
 /// The dock and what it shows, owned by the board.
 pub(crate) struct IrcDock {
     window: AnyWindowHandle,
     pub area: Entity<DockArea>,
-    buffers: Entity<BuffersPanel>,
-    members: Entity<MembersPanel>,
+    /// Whether the navigator shows the buffer list.
+    buffers: Side,
+    /// Whether the inspector shows the member list.
+    members: Side,
     placeholder: Entity<EmptyPanel>,
     /// The placeholder fills the centre while no conversation is open.
     placeholder_shown: bool,
@@ -48,13 +53,10 @@ pub(crate) struct IrcDock {
 }
 
 impl IrcDock {
-    /// The dock for `board`, with its side docks; the centre is filled once
-    /// the hub is bound ([`restore`]).
+    /// The dock for `board`; the centre is filled, and the side docks'
+    /// visibility read, once the hub is bound ([`restore`]).
     pub fn new(window: &mut Window, cx: &mut Context<Irc>) -> Self {
         let area = subspace_framework::dashboard::tabs::dock::area("irc-dock", Some(1), window, cx);
-        let owner = cx.entity().downgrade();
-        let buffers = cx.new(|cx| BuffersPanel::new(owner, cx));
-        let members = cx.new(MembersPanel::new);
         let placeholder = cx.new(EmptyPanel::new);
         let subscriptions = vec![
             cx.subscribe_in(&area, window, |board, _, event, window, cx| {
@@ -66,8 +68,8 @@ impl IrcDock {
         Self {
             window: window.window_handle(),
             area,
-            buffers,
-            members,
+            buffers: Side::default(),
+            members: Side::default(),
             placeholder,
             placeholder_shown: false,
             open: HashMap::new(),
@@ -80,9 +82,14 @@ impl IrcDock {
         }
     }
 
-    /// Whether the member list dock is open.
-    pub fn members_open(&self, cx: &App) -> bool {
-        self.area.read(cx).is_dock_open(DockPlacement::Right)
+    /// Whether the navigator shows the buffer list.
+    pub fn buffers_open(&self) -> bool {
+        self.buffers.open
+    }
+
+    /// Whether the inspector shows the member list.
+    pub fn members_open(&self) -> bool {
+        self.members.open
     }
 
     /// Forgets the conversations of a hub that was replaced, so the stored

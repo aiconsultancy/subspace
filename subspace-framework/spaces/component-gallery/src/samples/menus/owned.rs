@@ -1,19 +1,20 @@
-//! Menus with an owner: the popover anchor, a row's context menu and the
+//! Menus with an owner: the popover anchor, the context menu's groups and the
 //! repository picker, which searches a fixed fixture list off the UI thread.
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::{
-    Context, Entity, InteractiveElement as _, ParentElement as _, Styled as _, Subscription,
-    Window, div,
+    Context, Div, Entity, InteractiveElement as _, ParentElement as _, Stateful, Styled as _,
+    Subscription, Window, div,
 };
-use subspace_dashboard::Tokens;
 use subspace_dashboard::action::{self, Intent};
 use subspace_dashboard::anchored::AnchoredContextMenuExt as _;
 use subspace_dashboard::repositories::{
     self, PickerSetup, RepositoryPicker, RepositoryPickerEvent,
 };
-use subspace_dashboard::row_menu::{self, RowMenu};
+use subspace_dashboard::row_menu::{self, GroupedMenu, MenuCommand, MenuGroup, RowMenu};
+use subspace_dashboard::{Callback, Tokens};
 use subspace_lucide::IconName;
 
 use crate::ComponentGallery;
@@ -22,6 +23,8 @@ use crate::samples::{FIXTURE_URL, Sample, sample};
 /// The named anchor of the repository picker sample.
 pub(crate) const REPOSITORY_ANCHOR: &str = "gallery-sample:repositories";
 const ROW_WIDTH: f32 = 320.;
+const ROW_SAMPLE: &str = "gallery-sample:row-menu";
+const GROUPS_SAMPLE: &str = "gallery-sample:menu-groups";
 const REPOSITORIES: [&str; 5] = [
     "example/component-gallery",
     "example/fixtures",
@@ -116,18 +119,69 @@ pub(crate) fn row_menus(
         .id("#42")
         .link("GitHub", FIXTURE_URL)
         .opens_details(true);
-    let row = div()
-        .id("gallery-sample:row-menu")
+    let open: Callback = Rc::new(|_, _| {});
+    let row = menu_row(ROW_SAMPLE, "#42 Sample fixture · right-click", tokens)
+        .anchored_context_menu(move |menu, window, cx| {
+            let items = row_menu::row_menu_items(&facts);
+            row_menu::build(
+                menu,
+                row_menu::grouped(items, Some(open.clone())),
+                window,
+                cx,
+            )
+        });
+    let groups = menu_row(GROUPS_SAMPLE, "Every group, in order · right-click", tokens)
+        .anchored_context_menu(|menu, window, cx| row_menu::build(menu, every_group(), window, cx));
+    vec![
+        sample("A row's standard context menu", row),
+        sample(
+            "The seven groups, a disabled command and its reason",
+            groups,
+        ),
+    ]
+}
+
+/// A row to right-click.
+fn menu_row(id: &'static str, text: &'static str, tokens: &Tokens) -> Stateful<Div> {
+    div()
+        .id(id)
         .w(gpui_kit::px(ROW_WIDTH))
         .px(tokens.pad_x)
         .py_1()
         .rounded(tokens.control_radius)
         .bg(tokens.select)
-        .child("#42 Sample fixture · right-click")
-        .anchored_context_menu(move |menu, _, _| {
-            row_menu::popup(menu, row_menu::row_menu_items(&facts), None)
-        });
-    vec![sample("A row's standard context menu", row)]
+        .child(text)
+}
+
+/// One fixture command in every group, the Remove one disabled with its
+/// reason.
+fn every_group() -> GroupedMenu {
+    let command =
+        |group, label: &'static str, icon| MenuCommand::new(group, label, icon, |_, _| {});
+    GroupedMenu::new()
+        .with(command(
+            MenuGroup::Place,
+            "Space settings…",
+            IconName::Settings,
+        ))
+        .with(command(MenuGroup::Open, "Open", IconName::ArrowRight))
+        .with(command(MenuGroup::Act, "Assign", IconName::User))
+        .with(command(MenuGroup::Copy, "Copy title", IconName::Copy))
+        .with(command(
+            MenuGroup::Chat,
+            "Add to chat",
+            IconName::MessageSquarePlus,
+        ))
+        .with(command(
+            MenuGroup::View,
+            "Fold group",
+            IconName::ChevronsDownUp,
+        ))
+        .with(command(MenuGroup::Remove, "Delete…", IconName::Trash))
+        .with(
+            command(MenuGroup::Remove, "Leave", IconName::LogOut)
+                .disabled(true, "The fixture cannot be left."),
+        )
 }
 
 pub(crate) fn repository_pickers(

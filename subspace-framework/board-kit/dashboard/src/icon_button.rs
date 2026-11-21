@@ -8,7 +8,7 @@ mod size;
 #[cfg(test)]
 mod tests;
 
-pub use quiet::{Paint, paint};
+pub use quiet::{Paint, glyph_latch, paint};
 pub use size::{IconButtonSize, Metrics};
 
 pub const PREFERENCE_KEY: &str = "app.icon-button-size";
@@ -59,6 +59,8 @@ pub struct IconButton {
     selected: bool,
     /// Flat in every state whatever the theme's toolbar look.
     flat: bool,
+    /// Latched, shown by the accent glyph alone; see [`Self::latched_glyph`].
+    glyph_latch: bool,
     explicit_radius: bool,
     explicit_name: bool,
     children: Vec<AnyElement>,
@@ -90,6 +92,7 @@ impl IconButton {
             outline: false,
             selected,
             flat: false,
+            glyph_latch: false,
             explicit_radius: false,
             explicit_name: false,
             children: Vec::new(),
@@ -131,6 +134,16 @@ impl IconButton {
     pub fn flat(mut self) -> Self {
         self.flat = true;
         self.ghost()
+    }
+
+    /// A quieter [`Self::latched`] for a quiet glyph button: while on, the
+    /// glyph takes the accent colour and nothing fills the button, so a
+    /// switch that is usually on, such as a workspace dock switch, does not
+    /// draw the eye. It keeps the accessible pressed state, and other latched
+    /// buttons keep their fill.
+    pub fn latched_glyph(mut self, latched: bool) -> Self {
+        self.glyph_latch = true;
+        self.latched(latched)
     }
 
     /// How this button's surface follows `controls`, the theme's control
@@ -231,15 +244,21 @@ impl IconButton {
     /// ghost colour.
     fn finish(&self, tokens: &Tokens, cx: &App) -> Finish {
         match self.surface(&tokens.controls) {
-            Surface::Quiet(look) => Finish::Quiet(paint(
-                look,
-                self.selected,
-                tokens,
-                cx.theme().secondary_foreground,
-            )),
+            Surface::Quiet(look) => Finish::Quiet(self.quiet_paint(look, tokens, cx)),
             Surface::Glass => Finish::Glass(self.selected),
             Surface::Tinted => Finish::Tinted,
             Surface::Native => Finish::Native,
+        }
+    }
+
+    /// A quiet button's paint: a glyph latch shows its state by the glyph
+    /// alone, any other latched button by its fill too.
+    fn quiet_paint(&self, look: ToolbarLook, tokens: &Tokens, cx: &App) -> Paint {
+        let glyph = cx.theme().secondary_foreground;
+        if self.glyph_latch {
+            glyph_latch(look, self.selected, tokens, glyph)
+        } else {
+            paint(look, self.selected, tokens, glyph)
         }
     }
 }

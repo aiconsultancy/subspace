@@ -1,7 +1,7 @@
 //! Deferred composition lets the bar apply its controlled selection to each tab.
 
 use gpui_kit::component::tab::{Tab as KitTab, TabBar as KitTabBar};
-use gpui_kit::component::{Sizable, Size};
+use gpui_kit::component::{ActiveTheme as _, Sizable, Size};
 use gpui_kit::{
     App, ClickEvent, ElementId, InteractiveElement, Interactivity, IntoElement, RenderOnce,
     SharedString, StatefulInteractiveElement, StyleRefinement, Styled, Window,
@@ -67,6 +67,7 @@ pub struct TabBar {
     size: Size,
     suffix: Option<gpui_kit::AnyElement>,
     has_last_empty_space: bool,
+    pane: bool,
 }
 
 // qual:allow(dry, boilerplate) reason: "The fluent TabBar adapter defers native children until controlled selection is known; generated setters would bypass that contract."
@@ -80,7 +81,18 @@ impl TabBar {
             size: Size::Small,
             suffix: None,
             has_last_empty_space: false,
+            pane: false,
         }
+    }
+
+    /// The bar of a workspace pane's tab strip, which names what is open:
+    /// tabs as tall as the strip on the strip's own surface, the open one
+    /// taking the content's surface over the bar's bottom hairline, with the
+    /// native hairline on its trailing side and no accent line along its top.
+    pub(super) fn pane(mut self) -> Self {
+        self.pane = true;
+        self.native = self.native.bg(gpui_kit::transparent_black());
+        self
     }
 
     /// The adjoining content/header surface; defaults to the main content background.
@@ -156,14 +168,16 @@ impl RenderOnce for TabBar {
             None if self.has_last_empty_space => self.native.suffix(gpui_kit::Empty),
             None => self.native,
         };
-        native.children(self.tabs.into_iter().enumerate().map(|(ix, tab)| {
-            paint::tab(
-                tab,
-                self.selected == Some(ix),
-                &tokens,
-                self.surface.unwrap_or(tokens.bg),
-                self.size,
-            )
-        }))
+        let dress = paint::Dress {
+            surface: self.surface.unwrap_or(tokens.bg),
+            size: self.size,
+            pane: self.pane,
+            mono: cx.theme().mono_font_family.clone(),
+        };
+        native.children(
+            self.tabs.into_iter().enumerate().map(|(ix, tab)| {
+                paint::tab(tab, self.selected == Some(ix), &tokens, dress.clone())
+            }),
+        )
     }
 }

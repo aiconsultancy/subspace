@@ -27,7 +27,7 @@ pub(super) fn repository(client: &Client, login: &str, repo: &str) -> RepoResult
             if page.truncated {
                 rows.push(mapping::notice(
                     repo,
-                    "runs-truncated",
+                    mapping::RUNS_TRUNCATED,
                     "Run history is truncated to the client page limit",
                 ));
             }

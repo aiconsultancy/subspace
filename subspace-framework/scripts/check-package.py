@@ -38,6 +38,7 @@ THIRD_PARTY = {
     "subspace-shell": {
         "themes/gpui-kit/*.json": "themes/gpui-kit/LICENSE-APACHE",
         "themes/macos-classic-dark-remix.json": "themes/LICENSE-MACOS-CLASSIC",
+        "themes/twilight-two.json": "themes/gpui-kit/LICENSE-APACHE",
     },
     "subspace-chat": {
         "assets/copilot.svg": "assets/LICENSE-OCTICONS",

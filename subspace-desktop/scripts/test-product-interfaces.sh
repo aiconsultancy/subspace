@@ -6,8 +6,14 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
+# The default build, as released. Board Lab is not in it, so its optional
+# checks (SUBSPACE_FIXTURE_BOARD_LAB=1, macOS ARM64) build with its feature.
+build_args=(build --locked -p subspace)
+if [[ "${SUBSPACE_FIXTURE_BOARD_LAB:-0}" == 1 ]]; then
+    build_args+=(--features board-lab)
+fi
 if [[ "${SUBSPACE_FIXTURE_SKIP_BUILD:-0}" != 1 ]]; then
-    cargo build --locked -p subspace
+    cargo "${build_args[@]}"
 fi
 metadata="$(cargo metadata --no-deps --format-version 1 --locked)"
 target="$(resolve_target_dir "${CARGO_TARGET_DIR:-$(jq -er .target_directory <<<"$metadata")}")"
@@ -77,9 +83,11 @@ invoke __product_metadata
 version="$(jq -er .version "$fixture/output")"
 framework_version="$(jq -er .subspace_version "$fixture/output")"
 test "$(jq -r .binary_name "$fixture/output")" = subspace
-expected_boards='["github","github-copilot-agents","irc","issues","actions","component-gallery"]'
-if "$binary" --about | grep -Fq 'Rust target: aarch64-apple-darwin'; then
-    expected_boards='["github","github-copilot-agents","irc","issues","board-lab","actions","component-gallery"]'
+# Neither unreleased Space (Board Lab, the Component gallery) is in the
+# default build.
+expected_boards='["github","github-copilot-agents","irc","issues","decisions","actions"]'
+if [[ "${SUBSPACE_FIXTURE_BOARD_LAB:-0}" == 1 ]]; then
+    expected_boards='["github","github-copilot-agents","irc","issues","decisions","board-lab","actions"]'
 fi
 test "$(jq -c .boards "$fixture/output")" = "$expected_boards"
 invoke --version

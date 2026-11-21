@@ -25,7 +25,6 @@ impl Phase {
         }
     }
 
-    // qual:allow(dry, repeated_matches) reason: "These are the exhaustive labels for the four delivery phases."
     fn label(self) -> &'static str {
         match self {
             Self::Merged => "PR merged",

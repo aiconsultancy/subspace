@@ -1,7 +1,8 @@
 # Copilot Agents guide
 
 <!-- Evidence: spaces/github-copilot-agents/src (dashboard, keys, model, filters, filters_ui,
-merge, rows, panels, actions, load, watch, logs, palette, agent_tools),
+navigator, shell, ui, view, merge, rows, panels, actions, load, watch, logs, palette,
+agent_tools), subspace-framework/board-kit/dashboard/src/workspace.rs,
 clients/github/src/copilot_agents.rs and copilot_agent_sessions.rs,
 subspace-framework/services/core/src/task_state.rs,
 subspace-framework/board-kit/dashboard/src/alerts.rs and refresh.rs,
@@ -53,21 +54,59 @@ or refuses it.
 
 ## Main view
 
+### Layout
+
+The board has the same zones as every other Space.
+
+| Zone | Contents |
+| --- | --- |
+| Navigator, on the leading side | The board name, the views, the repositories and the GitHub account. |
+| Tab strip, at the top of the pane | The list's tab, named after the view on show, and the opened task or chat beside it. |
+| Toolbar, under the tab strip | The filters on the leading side, and a switch at each end that shows or hides the navigator and the inspector. Under an opened task, **Back** and **Browser (o)**. |
+| List | The rows, in their groups. |
+| Inspector, on the trailing side | The selected task or chat, with its actions in the footer. See [Inspector](#inspector). |
+| Status bar, at the bottom of the window | The account and the counts. |
+
+### Navigator
+
+- **Views** chooses the kind of row: **All tasks and chats**, **Cloud tasks**
+  or **Local chats**. The selected view is the same choice as the **Kind**
+  filter, and the tab in the tab strip carries its name.
+- **Repositories** lists the repositories of the loaded rows. Click one to
+  show only its rows. Click it again to show every repository. This is the
+  same choice as the **Repository** filter. The section is left out while no
+  row names a repository.
+- The number beside a view or a repository is how many rows it would show with
+  the other filters as they are. A row with nothing to show is dimmed.
+- The footer reads `Signed in to GitHub as <login>` once a list has loaded.
+  Before that it reads `Checking the GitHub account…`, and after a failed
+  first load `GitHub account unavailable`.
+- Choose **Hide navigator** at the leading end of the status bar to hide it,
+  and **Show navigator** to show it again. While it is hidden, use the **Kind**
+  and **Repository** filters instead. Drag its inner edge to change its
+  width.
+
 ### Rows
 
 - **Cloud tasks** come from the work account's Copilot agent tasks of the last
   30 days, up to 50, most recently updated first. Subspace also keeps a saved
   reference for each task that it started from chat, and for each task that
   you monitor. Such a task has a row even when the list omits it.
-  Its title is `Task <id>` and its state is `unknown` until its panel opens or
-  a poll fills it in.
-- **Local chats** are the saved sessions of the chat panel. They show `local`
-  where a cloud task shows its repository.
-- A row shows a kind mark (a cloud for cloud tasks, a play mark for local
-  chats), the repository or `local`, the title, the state, the pull request as
-  `#<number> <state>` (`open`, `draft`, `merged` or `closed`), `◉ watched` when
-  monitored, and the age. Finished rows are dimmed. Underscores in a state name
-  show as spaces, such as `in progress` and `waiting for user`.
+  Its title is `Task <id>` and its state is `unknown` until it is selected
+  with the inspector shown, opened, or a poll fills it in.
+- **Local chats** are the saved sessions of the chat panel. They show
+  `Local chat` where a cloud task shows its repository.
+- A row shows a status glyph, the title, then in aligned columns the
+  repository or `Local chat`, the pull request's glyph and `#<number>`, a bell
+  when monitored, and the age on the right. Each state has a glyph of its own
+  shape as well as its colour: a question mark for `waiting_for_user`, a
+  spinner for `queued` (a clock) and `in_progress`, a tick for `completed`, a
+  cross for `failed` and `timed_out`, a slashed circle for `cancelled`, and a
+  dashed circle for `idle` and `unknown`. The pull request's glyph says whether
+  it is open, a draft, merged or closed. Finished rows are dimmed. Underscores
+  in a state name show as spaces, such as `in progress` and `waiting for user`.
+- Click a row to select it and show it in the inspector. Double-click it,
+  press Enter, or choose **Open** in the inspector to open it as a tab.
 
 ### Groups
 
@@ -83,8 +122,11 @@ Enter, to fold or unfold it.
 
 ### Status line and badge
 
-The status line reads `<n> rows · <n> active · <n> waiting for input`, with
-an added `· <n> shown` while a filter hides rows. The board badge shows `!` when a
+The status bar starts with the account, `GitHub · Signed in as <login>`, then
+reads `<n> rows · <n> active · <n> waiting for input`, with an added
+`· <n> shown` while a filter hides rows. Until GitHub has named the account,
+the first part reads `GitHub · Checking account…`,
+`GitHub · Account unavailable` or `GitHub`. The board badge shows `!` when a
 monitored task waits for input, else the number of active rows when it is
 greater than 0.
 
@@ -103,8 +145,12 @@ has no synthetic fixture mode.
 
 ## Toolbar and filters
 
-The toolbar has three filter buttons, **Clear filters** and, for a cloud task,
-**Browser (o)**. When the window is narrow, controls move to an overflow menu.
+The toolbar is at the top of the pane, under the tab strip. Its leading side
+has three filter buttons and **Clear filters**. **Hide navigator** and **Hide
+inspector**, at the two ends of the status bar, hide the navigator and the
+inspector. When the pane is narrow, the filter buttons move to an overflow
+menu. Under an opened task the toolbar has **Back**, which shows the list
+again, and **Browser (o)**.
 
 | Filter | Key | Choices |
 | --- | --- | --- |
@@ -113,13 +159,20 @@ The toolbar has three filter buttons, **Clear filters** and, for a cloud task,
 | **Repository** | `3` | **Any repository**, and the repositories of the loaded rows |
 
 - A filter button shows its title while unset, and the chosen value while set.
+  While the navigator is hidden, the unset **Kind** button reads **All tasks
+  and chats**, the view on show.
 - Filters combine. The repository match ignores case. A local chat has no
   repository, so a repository filter hides local chats.
 - Press `0`, or choose **Clear filters**, to clear all three filters.
+- The navigator sets the same **Kind** and **Repository** filters. See
+  [Navigator](#navigator).
 - Subspace saves the filters as preferences (`github-copilot-agents.kind`, `github-copilot-agents.state`,
-  `github-copilot-agents.repo`).
+  `github-copilot-agents.repo`), and whether the navigator and the inspector
+  show (`github-copilot-agents.navigator`,
+  `github-copilot-agents.inspector`).
 - Press `/` to search. The placeholder is **Search agent tasks and chat
-  sessions**. It searches the loaded rows. Selecting a result shows that row.
+  sessions**. It searches the loaded rows. Selecting a result opens that row
+  as a tab.
 - Press `r`, or use Reload, to load again. Reload also asks the chat panel to
   list its sessions again.
 - Command palette commands (`Cmd+K` on macOS, `Ctrl+K` on Windows, `Ctrl+Shift+K`
@@ -142,13 +195,53 @@ The toolbar has three filter buttons, **Clear filters** and, for a cloud task,
 
 ## Details
 
-Press Enter on a row, or click it, to open the detail panel. Press Escape to
-close it. A cloud task loads its sessions when the panel opens.
+### Inspector
 
-### Cloud task
+The inspector, on the trailing side, shows the selected row. One click on a
+row selects it; the inspector then shows it without opening it. With nothing
+selected it reads `Select a task to see it here.` While an opened task's tab
+shows, the inspector shows that task.
 
-The panel shows **Agent task**, the task ID and the title, and a **Browser (o)**
-link (or **GitHub Agents (o)** when no task page is known).
+- The header names the item briefly: the repository's short name and the pull
+  request number, such as `app #7`, **Agent task**, or **Chat session**. Its
+  controls are **Open**, which opens the row as a tab, the GitHub link (a cloud
+  task's **Open session in browser (o)** or **Open GitHub Agents in browser
+  (o)**), and **Close inspector**.
+- The body shows the state in words beside its glyph, the title, and the start
+  of the last session's prompt once the sessions have loaded. **Properties**
+  lists **Repository**, **Branch** (head, then the branch it merges into),
+  **Model**, **Started**, **Updated**, **Monitor** (`on` or `off`) and
+  **Subject**, each when it is known. **Pull request** is one row, such as
+  `#7 open`, that opens the pull request on GitHub (`p`).
+- **Cannot load sessions** shows as a banner with **Retry** when the sessions
+  fail to load.
+- The footer has the row's actions, the same as their keys: **Open in chat**
+  (`c`); for a cloud task also **Session log** or **Hide log** (`l`),
+  **Monitor** or **Stop monitoring** (`m`), **Copy link** (`y`), and **Show
+  subject** (`u`) when a chat started the task.
+
+Choose **Hide inspector** at the trailing end of the status bar, or **Close
+inspector**, to hide it and give the list the whole pane. The row actions
+still act on the selected row. **Show inspector** shows it again.
+
+A cloud task's sessions are read when it is selected while the inspector
+shows, when the inspector is shown with a task selected, and when a task is
+opened whose sessions are not already loaded. With the inspector hidden,
+selecting reads nothing.
+
+### Opened task
+
+Double-click a row, press Enter on it, or choose **Open** in the inspector to
+open it as a tab beside the list's tab. Opening another row replaces it.
+Choose the list's tab or **Back**, or press Escape, to show the list again;
+the tab stays open. Close the tab with the X on it. Choosing a view or a
+repository in the navigator also shows the list.
+
+The page shows the title and state, then
+**Properties** and the sections below, in a column no wider than easy reading.
+The session log runs the pane's full width under it.
+
+#### Cloud task
 
 | Property | Content |
 | --- | --- |
@@ -165,28 +258,29 @@ Sections:
   model, an **Open this session in browser** link when it is known, base and head
   branch, start, update and finish times, usage, error message and the prompt.
 - **Sessions**: `Loading the task…`, or `This task comes from a saved
-  reference. Its state loads when the panel opens.`
+  reference. Its state loads when it is selected or opened.`
 - **Session log**: see [Read a session log](#read-a-session-log).
 - **Cannot load sessions**: a banner with the error text and **Retry**. The error
   text can be selected and copied.
 
-### Local chat
+#### Local chat
 
-The panel shows **Chat session**, **State** (`busy`, `open` or `saved`),
+The page shows **Chat session**, **State** (`busy`, `open` or `saved`),
 **Created** and **Updated**, and the section **Chat**: `Open in chat (c) shows
 this session in a chat tab.`
 
 ### Right-click menu
 
-Right-click a row for **Add to chat**, **Open details**, **Copy title**, **Copy
-id** and, for a cloud task, **Open in GitHub** and **Copy link**.
+Right-click a row for **Open**, which opens it as a tab, **Copy title** and
+**Add to chat**. A cloud task adds **Open in GitHub** after **Open** and **Copy link**
+before **Copy title**.
 
 ## Actions
 
 ### Open a task in the browser
 
 Select a cloud task and choose **Browser (o)**, or press `o`. The same
-destination is used by the panel link, the palette, the right-click menu, **Copy
+destination is used by the inspector's link, the palette, the right-click menu, **Copy
 link** and the chat replay.
 
 - A loaded session links to its own pull-request session page.
@@ -250,15 +344,19 @@ reads `Select a chat session or a cloud task first`.
 
 ### Read a session log
 
-1. Open a cloud task.
-2. Press `l`. Press `l` again to hide the log.
+1. Select or open a cloud task.
+2. Press `l`, or choose **Session log** in the inspector. The task opens as a
+   tab and the log shows there. Press `l` again to hide the log.
+
+If the task's sessions are still loading, a toast reads `The task is still
+loading. Show the log again in a moment`.
 
 Subspace reads the log of the task's last session, only when you ask for it. It
 shows **Loading the session log…**, then the log as Markdown.
 
 - The log is limited to 2 MB. A cut log ends with `The log was cut at 2 MB; this
   is its start only.`
-- The panel shows at most 400 entries and says how many it leaves out. Each text
+- The page shows at most 400 entries and says how many it leaves out. Each text
   entry is cut at 4,000 characters. A tool call and its answer are collapsed to
   one line, the answer with its length.
 - A failed read shows **Log unavailable.** An empty log reads `This session
@@ -320,8 +418,8 @@ field, the same letters are ordinary text.
 | --- | --- |
 | `j` or Down, `k` or Up | Next or previous row. |
 | Home, End | First or last row. |
-| Enter | Open the task or chat. On a group, fold or unfold it. |
-| Escape | Close the panel. |
+| Enter | Open the task or chat as a tab. On a group, fold or unfold it. |
+| Escape | Back to the list from an opened task. |
 | `1` `2` `3` | Open the Kind, State or Repository filter menu. |
 | `0` | Clear the filters. |
 | `o` | Open the session in the browser, or the GitHub Agents page. |
@@ -354,8 +452,8 @@ Open **Settings > Boards > Copilot Agents**.
 
 The Settings page notes: **Configure task filters, alerts and agent behavior in
 the Copilot Agents dashboard.** Filters, alert sound, alert notification, alert sound name
-and session logs are not Settings fields. Use the filter buttons and the command
-palette.
+and session logs are not Settings fields. Use the filter buttons, the navigator
+and the command palette.
 
 **Settings > Application > Notifications > Play notification sounds** mutes
 this Space's task sounds as well as Copilot chat and every other Space on
@@ -372,7 +470,9 @@ config file, not in the Keychain.
 | The board tab is missing. | Turn on **Enabled** in **Settings > Boards > Copilot Agents** and save. The board is off by default. |
 | **Cannot load the agent tasks** | Read the message. Choose **Sign in with GitHub** in Settings, run `gh auth login`, or set `GH_TOKEN`. Press `r`. |
 | **Showing the last list. Refresh failed:** | The last list is kept. Read the error and press `r`. |
-| A task row has the title `Task <id>` and state `unknown`. | The row comes from a saved reference. Open its panel to load it. |
+| A task row has the title `Task <id>` and state `unknown`. | The row comes from a saved reference. Select it with the inspector shown, or open it, to load it. |
+| A click on a row does not open the task. | A click selects. Double-click the row, press Enter, or choose **Open** in the inspector. |
+| The views and repositories are missing. | The navigator is hidden. Choose **Show navigator** at the leading end of the status bar. |
 | **Cannot load sessions** | Read the error and choose **Retry**. |
 | `Open GitHub Agents in browser` | GitHub did not supply a task page or a pull request. The GitHub Agents home page opens instead. |
 | **Log unavailable.** | The read failed, or the answer held no log. The log needs an OAuth sign-in: sign in as the work account with **Sign in with GitHub** or `gh auth login`, and unset `GH_TOKEN` and `GITHUB_TOKEN`. The endpoint is undocumented. |

@@ -1,11 +1,10 @@
 //! The server's channels we are not in: joining one from the list, and
 //! asking the server for its list again.
 
-use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::{App, Context, WeakEntity};
 use subspace_client_irc::{BufferKey, Command, ConnectionStatus, NetworkId};
 use subspace_framework::dashboard::panel::IconName;
-use subspace_framework::dashboard::row_menu::MenuChat;
+use subspace_framework::dashboard::row_menu::{MenuChat, MenuCommand, MenuGroup};
 use subspace_framework::dashboard::{Group, Row, RowMenu, list};
 
 use crate::state::IrcState;
@@ -53,38 +52,46 @@ pub(crate) fn refresh(board: &Irc, network: &NetworkId, cx: &mut App) {
     );
 }
 
+/// Why joining or refreshing is unavailable.
+pub(crate) const NOT_CONNECTED: &str = "The network isn't connected.";
+
 /// **Join**, for a channel row we are not in; unavailable while its network
 /// is not connected.
-pub(crate) fn join_item(owner: WeakEntity<Irc>, buffer: BufferKey, enabled: bool) -> PopupMenuItem {
-    PopupMenuItem::new("Join")
-        .icon(IconName::Hash)
-        .disabled(!enabled)
-        .on_click(move |_, _, cx| {
-            let buffer = buffer.clone();
-            _ = owner.update(cx, |board, cx| join(board, &buffer, cx));
-        })
+pub(crate) fn join_command(
+    owner: WeakEntity<Irc>,
+    buffer: BufferKey,
+    enabled: bool,
+) -> MenuCommand {
+    MenuCommand::new(MenuGroup::Act, "Join", IconName::Hash, move |_, cx| {
+        let buffer = buffer.clone();
+        _ = owner.update(cx, |board, cx| join(board, &buffer, cx));
+    })
+    .disabled(!enabled, NOT_CONNECTED)
 }
 
 /// **Refresh channel list**, for a network header; unavailable while the
 /// network is not connected.
-pub(crate) fn refresh_item(
+pub(crate) fn refresh_command(
     owner: WeakEntity<Irc>,
     network: NetworkId,
     enabled: bool,
-) -> PopupMenuItem {
-    PopupMenuItem::new(REFRESH)
-        .icon(IconName::RefreshCw)
-        .disabled(!enabled)
-        .on_click(move |_, _, cx| {
+) -> MenuCommand {
+    MenuCommand::new(
+        MenuGroup::Act,
+        REFRESH,
+        IconName::RefreshCw,
+        move |_, cx| {
             let network = network.clone();
             _ = owner.update(cx, |board, cx: &mut Context<Irc>| {
                 refresh(board, &network, cx)
             });
-        })
+        },
+    )
+    .disabled(!enabled, NOT_CONNECTED)
 }
 
 /// A channel we are not in (`listed`) has nothing to open or add to chat:
-/// Copy title, then Join.
+/// Join, then Copy title.
 pub(crate) fn row_menu(row: &Row, listed: bool) -> RowMenu {
     let menu = RowMenu::from_row(row);
     match listed {
@@ -96,7 +103,7 @@ pub(crate) fn row_menu(row: &Row, listed: bool) -> RowMenu {
     }
 }
 
-/// A network header offers Copy title, then Refresh channel list.
+/// A network header offers Refresh channel list, then Copy title.
 pub(crate) fn group_menu(group: &Group) -> RowMenu {
     RowMenu {
         chat: MenuChat::Off,
@@ -106,14 +113,14 @@ pub(crate) fn group_menu(group: &Group) -> RowMenu {
 
 /// **Join** for the board's selected channel we are not in, or **Refresh
 /// channel list** for its selected network header.
-pub(crate) fn menu_item(board: &Irc, cx: &App) -> Option<PopupMenuItem> {
+pub(crate) fn menu_command(board: &Irc, cx: &App) -> Option<MenuCommand> {
     let state = &board.hub.as_ref()?.read(cx).state;
     if let Some(channel) = board.selected_listed() {
         let enabled = connected(state, &channel.network);
-        return Some(join_item(board.me.clone(), channel.clone(), enabled));
+        return Some(join_command(board.me.clone(), channel.clone(), enabled));
     }
     let header = board.selected_buffer().is_none();
     let network = board.selected_network(cx).filter(|_| header)?;
     let enabled = connected(state, &network);
-    Some(refresh_item(board.me.clone(), network, enabled))
+    Some(refresh_command(board.me.clone(), network, enabled))
 }

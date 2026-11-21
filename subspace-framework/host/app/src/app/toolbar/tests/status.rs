@@ -56,6 +56,41 @@ fn status_commands_are_tab_reachable_and_activate_with_enter_and_space(cx: &mut 
     .unwrap();
 }
 
+/// The Space on show has both docks: the bar starts with the navigator's
+/// switch and ends with the inspector's, after Help, and each hands its click
+/// back to the Space.
+#[gpui_kit::test]
+fn the_status_bar_ends_with_the_spaces_dock_switches(cx: &mut TestAppContext) {
+    let root = tempfile::tempdir().unwrap();
+    let (window, app) = rooted_fixture(cx, root.path(), 2200., false);
+    cx.update_window(window, |_, window, _| {
+        let navigator = window.find("workspace-navigator-toggle");
+        assert_eq!(navigator.label(), Some("Hide navigator"));
+        let chat = window.find("status-chat").bounds();
+        assert!(
+            navigator.bounds().right() < chat.left(),
+            "it starts the bar"
+        );
+        let inspector = window.find("workspace-inspector-toggle").bounds();
+        let help = window.find("status-help").bounds();
+        assert!(inspector.left() >= help.right(), "it ends the bar");
+    })
+    .unwrap();
+    click(&window, cx, "workspace-navigator-toggle");
+    let docks = app.read_with(cx, |app, cx| app.space_docks(cx));
+    assert_eq!(docks.navigator, Some(false), "the Space hid its navigator");
+    assert_eq!(docks.inspector, Some(true));
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let navigator = window.find("workspace-navigator-toggle");
+        assert_eq!(navigator.label(), Some("Show navigator"));
+    })
+    .unwrap();
+    click(&window, cx, "workspace-inspector-toggle");
+    let docks = app.read_with(cx, |app, cx| app.space_docks(cx));
+    assert_eq!(docks.inspector, Some(false), "the Space hid its inspector");
+}
+
 pub(in crate::app) fn rooted_fixture(
     cx: &mut TestAppContext,
     root: &std::path::Path,

@@ -82,6 +82,9 @@ impl Page {
         })
     }
 
+    /// The page's element. The native view takes the bounds GPUI lays this
+    /// element out at, so GPUI content that must stay visible, such as the
+    /// Space's toolbar, sits outside it.
     pub(crate) fn view(&self) -> AnyView {
         self.view.clone().into()
     }

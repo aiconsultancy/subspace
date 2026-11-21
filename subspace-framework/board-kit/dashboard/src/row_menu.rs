@@ -1,16 +1,25 @@
-//! The right-click menu a row, a group header or the detail panel offers.
+//! The right-click menu: every context menu is built from the same seven
+//! groups in the same order ([`MenuGroup`]), with a separator between groups
+//! that have commands. A board fills groups in with [`MenuCommand`]s; it
+//! never orders them, and a group with nothing in it is left out.
+//! [`build`] turns a [`GroupedMenu`] into GPUI Kit's `PopupMenu`.
 //!
-//! A dashboard says what its row is ([`RowMenu`]); which entries that earns
-//! is a pure decision ([`row_menu_items`], [`panel_menu_items`]) the app and
-//! the dashboards share, so every menu offers the same things in the same
-//! order. [`popup`] turns the decision into GPUI Kit's `PopupMenu`, the menu
-//! the session list already uses.
+//! A list row, a group header or the detail panel says what it is
+//! ([`RowMenu`]); which standard commands that earns is a pure decision
+//! ([`row_menu_items`], [`panel_menu_items`]) the app and the boards share,
+//! and [`grouped`] turns it into commands.
+
+mod groups;
+mod render;
+
+pub use groups::{GroupedMenu, MenuCommand, MenuGroup, MenuLine};
+pub use render::build;
 
 use gpui_kit::SharedString;
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use subspace_lucide::IconName;
 
 use crate::links::{self, safe_url};
-use crate::{AddSelectionToChat, AddToChat, Callback, Row, set_selection};
+use crate::{Activate, AddSelectionToChat, AddToChat, Callback, Row, set_selection};
 
 /// Whether a menu offers to send what it shows to the chat. Menus offer it
 /// unless their board keeps its content out of chat.
@@ -85,46 +94,63 @@ fn browser_url(url: &str) -> Option<String> {
     safe_url(url).filter(|url| url.starts_with("http://") || url.starts_with("https://"))
 }
 
-/// One entry of a context menu.
+/// One of the standard commands a row, a group header or the detail panel
+/// offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowMenuItem {
-    /// The whole row and its open details, through the shell's `AddToChat`.
-    AddToChat,
-    /// The text selected in the detail panel.
-    CopySelection,
-    AddSelectionToChat,
-    /// The row's Enter action.
+    /// The row's Enter action, "Open".
     OpenDetails,
     OpenInBrowser {
         label: SharedString,
         url: SharedString,
     },
+    /// The text selected in the detail panel.
+    CopySelection,
     CopyLink(SharedString),
     CopyTitle(SharedString),
     CopyId(SharedString),
-    Separator,
+    /// The whole row and its open details, through the shell's `AddToChat`.
+    AddToChat,
+    AddSelectionToChat,
 }
 
-/// What a row's menu offers, in order: the chat, then opening it, then the
-/// copies. A row offers the chat unless its board turned it off and, when
+impl RowMenuItem {
+    /// The group the command belongs to.
+    pub fn group(&self) -> MenuGroup {
+        match self {
+            Self::OpenDetails | Self::OpenInBrowser { .. } => MenuGroup::Open,
+            Self::CopySelection | Self::CopyLink(_) | Self::CopyTitle(_) | Self::CopyId(_) => {
+                MenuGroup::Copy
+            }
+            Self::AddToChat | Self::AddSelectionToChat => MenuGroup::Chat,
+        }
+    }
+}
+
+/// What a row's menu offers, in menu order: opening it, the copies, then
+/// the chat. A row offers the chat unless its board turned it off and, when
 /// it has one, its title.
 pub fn row_menu_items(facts: &RowMenu) -> Vec<RowMenuItem> {
-    let mut items = chat_items(facts.chat);
-    let opening = opening_items(facts, facts.opens_details);
-    let copies = copy_items(facts);
-    extend_group(&mut items, opening);
-    extend_group(&mut items, copies);
+    let mut items = opening_items(facts, facts.opens_details);
+    items.extend(copy_items(facts));
+    items.extend(chat_items(facts.chat));
     items
 }
 
-/// What the detail panel's menu offers: the selection first when there is
-/// one, then the item the panel shows. The panel is already open, so it
-/// never offers to open its own details.
+/// What the detail panel's menu offers, in menu order: the service's page,
+/// Copy for the selection with the item's copies, then the chat. The panel
+/// is already open, so it never offers to open its own details.
 pub fn panel_menu_items(facts: &RowMenu, selection: &str) -> Vec<RowMenuItem> {
-    let mut items = selection_items(selection, facts.chat);
-    extend_group(&mut items, chat_items(facts.chat));
-    extend_group(&mut items, opening_items(facts, false));
-    extend_group(&mut items, copy_items(facts));
+    let selected = !selection.trim().is_empty();
+    let mut items = opening_items(facts, false);
+    if selected {
+        items.push(RowMenuItem::CopySelection);
+    }
+    items.extend(copy_items(facts));
+    items.extend(chat_items(facts.chat));
+    if selected && facts.chat == MenuChat::Offered {
+        items.push(RowMenuItem::AddSelectionToChat);
+    }
     items
 }
 
@@ -136,18 +162,7 @@ fn chat_items(chat: MenuChat) -> Vec<RowMenuItem> {
     }
 }
 
-/// Copy and Add selection, for a selection that holds more than spaces.
-fn selection_items(selection: &str, chat: MenuChat) -> Vec<RowMenuItem> {
-    if selection.trim().is_empty() {
-        return Vec::new();
-    }
-    match chat {
-        MenuChat::Offered => vec![RowMenuItem::CopySelection, RowMenuItem::AddSelectionToChat],
-        MenuChat::Off => vec![RowMenuItem::CopySelection],
-    }
-}
-
-/// Open details and Open in the service's site, when either applies.
+/// Open and Open in the service's site, when either applies.
 fn opening_items(facts: &RowMenu, details: bool) -> Vec<RowMenuItem> {
     let mut items = Vec::new();
     if details {
@@ -178,68 +193,64 @@ fn copy_items(facts: &RowMenu) -> Vec<RowMenuItem> {
     items
 }
 
-/// Appends a group of entries, with a separator when both sides have some.
-fn extend_group(items: &mut Vec<RowMenuItem>, group: Vec<RowMenuItem>) {
-    if group.is_empty() {
-        return;
-    }
-    if !items.is_empty() {
-        items.push(RowMenuItem::Separator);
-    }
-    items.extend(group);
-}
-
-/// Builds `items` into `menu`. `open` is the row's Enter action, which only
-/// a caller that has a row can give.
-pub fn popup(mut menu: PopupMenu, items: Vec<RowMenuItem>, open: Option<Callback>) -> PopupMenu {
-    for item in items {
-        menu = add_item(menu, item, open.clone());
-    }
+/// The commands `items` stand for, in their groups. `open` is the row's
+/// Enter action, which only a caller that has a row can give; without it
+/// the menu has no Open.
+pub fn grouped(items: Vec<RowMenuItem>, open: Option<Callback>) -> GroupedMenu {
+    let mut menu = GroupedMenu::new();
+    menu.extend(
+        items
+            .into_iter()
+            .filter_map(|item| command(item, open.clone())),
+    );
     menu
 }
 
-fn add_item(menu: PopupMenu, item: RowMenuItem, open: Option<Callback>) -> PopupMenu {
-    match item {
-        // The action carries its own key hint, and the shell handles it.
-        RowMenuItem::AddToChat => menu.menu("Add to chat", Box::new(AddToChat)),
-        RowMenuItem::AddSelectionToChat => {
-            menu.menu("Add selection to chat", Box::new(AddSelectionToChat))
+/// One standard command, with its glyph.
+fn command(item: RowMenuItem, open: Option<Callback>) -> Option<MenuCommand> {
+    let group = item.group();
+    Some(match item {
+        RowMenuItem::OpenDetails => {
+            let open = open?;
+            MenuCommand::new(group, "Open", IconName::ArrowRight, move |window, cx| {
+                open(window, cx)
+            })
+            .key(Activate)
         }
-        RowMenuItem::CopySelection => menu.item(copy_item("Copy", String::new())),
-        RowMenuItem::OpenDetails => menu.item(open_item(open)),
-        RowMenuItem::OpenInBrowser { label, url } => menu.item(browser_item(label, url)),
-        RowMenuItem::CopyLink(url) => menu.item(copy_item("Copy link", url.to_string())),
-        RowMenuItem::CopyTitle(title) => menu.item(copy_item("Copy title", title.to_string())),
-        RowMenuItem::CopyId(id) => menu.item(copy_item("Copy id", id.to_string())),
-        RowMenuItem::Separator => menu.separator(),
-    }
+        RowMenuItem::OpenInBrowser { label, url } => {
+            MenuCommand::new(group, label, IconName::ArrowUpRight, move |_, cx| {
+                links::open(&url, cx);
+            })
+        }
+        // An empty text copies the window's selection.
+        RowMenuItem::CopySelection => copy_command("Copy", IconName::Copy, String::new()),
+        RowMenuItem::CopyLink(url) => copy_command("Copy link", IconName::Link, url.to_string()),
+        RowMenuItem::CopyTitle(title) => {
+            copy_command("Copy title", IconName::Copy, title.to_string())
+        }
+        RowMenuItem::CopyId(id) => copy_command("Copy id", IconName::Copy, id.to_string()),
+        // The action carries its own key hint, and the shell handles it.
+        RowMenuItem::AddToChat => {
+            MenuCommand::action(group, "Add to chat", IconName::MessageSquarePlus, AddToChat)
+        }
+        RowMenuItem::AddSelectionToChat => MenuCommand::action(
+            group,
+            "Add selection to chat",
+            IconName::MessageSquareQuote,
+            AddSelectionToChat,
+        ),
+    })
 }
 
 /// Copies `text`, or the window's selection when `text` is empty, which is
-/// what the panel's Copy entry does.
-fn copy_item(label: &'static str, text: String) -> PopupMenuItem {
-    PopupMenuItem::new(label).on_click(move |_, window, cx| {
+/// what the panel's Copy does.
+fn copy_command(label: &'static str, icon: IconName, text: String) -> MenuCommand {
+    MenuCommand::new(MenuGroup::Copy, label, icon, move |window, cx| {
         let text = match text.is_empty() {
             true => gpui_kit::base::TextSelection::selected_text(window, cx),
             false => text.clone(),
         };
         links::copy(text, cx);
-    })
-}
-
-fn browser_item(label: SharedString, url: SharedString) -> PopupMenuItem {
-    PopupMenuItem::new(label).on_click(move |_, _, cx| {
-        links::open(&url, cx);
-    })
-}
-
-/// Open details. Without a callback the entry is there but does nothing,
-/// which cannot happen: the item is only offered when the caller gave one.
-fn open_item(open: Option<Callback>) -> PopupMenuItem {
-    PopupMenuItem::new("Open details").on_click(move |_, window, cx| {
-        if let Some(open) = open.clone() {
-            open(window, cx);
-        }
     })
 }
 
@@ -252,147 +263,4 @@ pub fn hold_selection(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) -> 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{MenuChat, RowMenu, RowMenuItem, panel_menu_items, row_menu_items};
-    use crate::list::{Glyph, Row};
-    use crate::tokens::Tone;
-
-    fn row() -> Row {
-        Row {
-            key: "octo/app#12".into(),
-            icon: Glyph::new("●", Tone::Green),
-            id: Some("#12".into()),
-            title: "Port the board".into(),
-            trailing: Vec::new(),
-            done: false,
-            indent: 0,
-        }
-    }
-
-    #[test]
-    fn a_plain_row_offers_the_chat_its_details_and_its_text() {
-        let items = row_menu_items(&RowMenu::from_row(&row()));
-        assert_eq!(
-            items,
-            [
-                RowMenuItem::AddToChat,
-                RowMenuItem::Separator,
-                RowMenuItem::OpenDetails,
-                RowMenuItem::Separator,
-                RowMenuItem::CopyTitle("Port the board".into()),
-                RowMenuItem::CopyId("#12".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_linked_row_offers_its_service_and_its_link() {
-        let facts = RowMenu::from_row(&row()).link("GitHub", "https://github.com/octo/app/pull/12");
-        let items = row_menu_items(&facts);
-        assert!(items.contains(&RowMenuItem::OpenInBrowser {
-            label: "Open in GitHub".into(),
-            url: "https://github.com/octo/app/pull/12".into(),
-        }));
-        assert!(items.contains(&RowMenuItem::CopyLink(
-            "https://github.com/octo/app/pull/12".into()
-        )));
-    }
-
-    #[test]
-    fn only_browser_links_are_offered() {
-        let facts = RowMenu::new("Row").link("GitHub", "javascript:alert(1)");
-        assert_eq!(facts.url, None);
-        let items = row_menu_items(&facts);
-        assert!(!items.iter().any(|item| matches!(
-            item,
-            RowMenuItem::OpenInBrowser { .. } | RowMenuItem::CopyLink(_)
-        )));
-        let mail = RowMenu::new("Row").link("Mail", "mailto:user@example.com");
-        assert_eq!(mail.url, None, "a mail link is not a page to open");
-    }
-
-    #[test]
-    fn a_row_without_details_or_text_still_offers_the_chat() {
-        let facts = RowMenu::new("  ").opens_details(false);
-        assert_eq!(row_menu_items(&facts), [RowMenuItem::AddToChat]);
-    }
-
-    #[test]
-    fn a_group_header_row_offers_what_it_has() {
-        let facts = RowMenu::new("work/repo")
-            .id("12 risks")
-            .opens_details(false);
-        assert_eq!(
-            row_menu_items(&facts),
-            [
-                RowMenuItem::AddToChat,
-                RowMenuItem::Separator,
-                RowMenuItem::CopyTitle("work/repo".into()),
-                RowMenuItem::CopyId("12 risks".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn the_panel_offers_the_selection_first_and_never_its_own_details() {
-        let facts = RowMenu::from_row(&row()).link("GitHub", "https://github.com/octo/app/pull/12");
-        let items = panel_menu_items(&facts, " select 1 ");
-        assert_eq!(items[0], RowMenuItem::CopySelection);
-        assert_eq!(items[1], RowMenuItem::AddSelectionToChat);
-        assert!(items.contains(&RowMenuItem::AddToChat));
-        assert!(!items.contains(&RowMenuItem::OpenDetails));
-    }
-
-    #[test]
-    fn the_panel_without_a_selection_starts_at_the_item() {
-        let items = panel_menu_items(&RowMenu::from_row(&row()), "   ");
-        assert_eq!(items[0], RowMenuItem::AddToChat);
-        assert!(!items.contains(&RowMenuItem::CopySelection));
-    }
-
-    #[test]
-    fn menus_offer_the_chat_unless_the_board_turns_it_off() {
-        assert_eq!(RowMenu::from_row(&row()).chat, MenuChat::Offered);
-        assert_eq!(RowMenu::default().chat, MenuChat::Offered);
-        let facts = RowMenu {
-            chat: MenuChat::Off,
-            ..RowMenu::from_row(&row())
-        };
-        assert_eq!(
-            row_menu_items(&facts),
-            [
-                RowMenuItem::OpenDetails,
-                RowMenuItem::Separator,
-                RowMenuItem::CopyTitle("Port the board".into()),
-                RowMenuItem::CopyId("#12".into()),
-            ]
-        );
-        let bare = RowMenu {
-            chat: MenuChat::Off,
-            ..RowMenu::new("  ").opens_details(false)
-        };
-        assert_eq!(row_menu_items(&bare), []);
-    }
-
-    #[test]
-    fn a_chat_free_panel_keeps_copy_and_leaves_out_both_chat_entries() {
-        let facts = RowMenu {
-            chat: MenuChat::Off,
-            ..RowMenu::from_row(&row())
-        };
-        let items = panel_menu_items(&facts, "selected words");
-        assert_eq!(
-            items,
-            [
-                RowMenuItem::CopySelection,
-                RowMenuItem::Separator,
-                RowMenuItem::CopyTitle("Port the board".into()),
-                RowMenuItem::CopyId("#12".into()),
-            ]
-        );
-        assert_eq!(
-            panel_menu_items(&facts, "  ")[0],
-            RowMenuItem::CopyTitle("Port the board".into())
-        );
-    }
-}
+mod tests;

@@ -20,6 +20,9 @@ use super::Mode;
 use super::actions::{ActionSpec, footer_actions};
 
 mod activity;
+mod page;
+
+pub use page::page_sections;
 
 use crate::model::{CHECKS_SHOWN, can_comment, can_review, check_summary, is_failed_check};
 use crate::rows::{check_glyph, reviewer_badge};

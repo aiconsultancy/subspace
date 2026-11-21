@@ -1,6 +1,7 @@
-//! IRC client board: a GPUI Kit dock with the networks and their buffers on
-//! the left, each opened conversation as a panel in the centre (tabs and
-//! splits), and the focused channel's members on the right.
+//! IRC client board in the shared workspace shell: the networks and their
+//! buffers in the navigator, each opened conversation as a panel of a GPUI
+//! Kit dock area in the pane (tabs and splits), and the focused channel's
+//! members in the inspector.
 //! The runtime (`subspace-client-irc`) owns every connection; this board
 //! applies its events and sends commands.
 
@@ -52,6 +53,7 @@ use gpui_kit::{
 use subspace_client_irc::{BufferKey, Command, NetworkId, Target};
 use subspace_framework::dashboard::notifications::{Mode, Preferences, Sound, Style};
 use subspace_framework::dashboard::settings::{BoardSettings, SettingsEditorFactory};
+use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
 use subspace_framework::dashboard::{BoardArtwork, Dashboard, DashboardEvent, ListState};
 
 /// The board id, also the notification source and the settings key.
@@ -72,7 +74,8 @@ pub struct Irc {
     active: bool,
     find_revision: u64,
     window_active: bool,
-    /// The buffer list, conversations and member list.
+    /// The conversations, and whether the buffer list and the member list
+    /// show beside them.
     dock: dock::IrcDock,
     join: Option<join::Dialog>,
     initiative_menu: initiatives::Picker,
@@ -82,6 +85,9 @@ pub struct Irc {
     /// The buffers `/` and the palette search, rebuilt on each sync.
     search: std::rc::Rc<subspace_framework::dashboard::ItemSearch>,
     available_height: Entity<f32>,
+    /// The workspace's one text edge, where the navigator's rows start;
+    /// refreshed on each render, as the theme's density may change.
+    text_edge: gpui_kit::Pixels,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -251,20 +257,21 @@ impl Dashboard for Irc {
         config::file(cx)
     }
 
+    /// The service, the networks and how many are connected, then any
+    /// initiative hint: what the Space's heading used to say.
     fn status(&self, cx: &App) -> Option<SharedString> {
-        let hub = self.hub.as_ref()?.read(cx);
-        let networks = hub.state.networks().len();
-        if networks == 0 {
-            return None;
-        }
-        let noun = if networks == 1 { "network" } else { "networks" };
-        Some(
-            format!(
-                "{networks} {noun} · {} connected",
-                hub.state.connected_count()
-            )
-            .into(),
-        )
+        let state = &self.hub.as_ref()?.read(cx).state;
+        let hint = initiatives::hint(self, cx);
+        let (total, connected) = (state.networks().len(), state.connected_count());
+        view::status_line(total, connected, hint.as_deref()).map(SharedString::from)
+    }
+
+    fn docks(&self, cx: &App) -> SpaceDocks {
+        view::space_docks(self, cx)
+    }
+
+    fn toggle_dock(&mut self, dock: SpaceDock, _window: &mut Window, cx: &mut Context<Self>) {
+        view::toggle_space_dock(self, dock, cx);
     }
 
     fn badge(&self, cx: &App) -> Option<SharedString> {
@@ -431,6 +438,15 @@ impl Irc {
             .iter()
             .find(|network| &network.id == id)
             .map_or_else(|| id.0.clone(), |network| network.name.clone())
+    }
+
+    /// The buffer's name where it stands alone, as in a heading: the channel
+    /// or nick, or the network's name for its server buffer.
+    fn buffer_name(&self, buffer: &BufferKey) -> SharedString {
+        match buffer.target {
+            Target::Server => self.network_name(&buffer.network).into(),
+            _ => rows::title(buffer).to_owned().into(),
+        }
     }
 
     fn is_query(buffer: &BufferKey) -> bool {

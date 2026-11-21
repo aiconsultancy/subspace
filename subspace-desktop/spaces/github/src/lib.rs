@@ -8,9 +8,14 @@ mod close_pull_request;
 mod detail;
 mod diff;
 mod favourites;
+mod inspector;
+mod layout;
 mod model;
 mod navigation;
+mod page;
+mod peek;
 mod references;
+mod repo_filter;
 mod rows;
 #[cfg(test)]
 mod sample;
@@ -22,33 +27,30 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
     Action, AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement as _, IntoElement, KeyBinding, KeyContext, ParentElement as _,
     Pixels, Render, SharedString, Stateful, Styled as _, Subscription, Task, TestSupportExt as _,
-    WeakEntity, Window, actions, div, px,
+    WeakEntity, Window, actions, div,
 };
 use subspace_framework::client_github::model::{
     GhItem, GhItemDetail, GhUser, ItemKind, ReviewEvent, SECTIONS, SectionDef, short_login,
 };
 use subspace_framework::client_github::{Client, lifecycle::REFRESH_INTERVAL};
 use subspace_framework::core::http::Error;
-use subspace_framework::dashboard::action::menu_button;
 use subspace_framework::dashboard::anchored::Anchor;
 use subspace_framework::dashboard::composer::{Composer, ComposerEvent};
 use subspace_framework::dashboard::list::{
     self, Detail, Group, GroupIndicator, ListDashboard, ListState, LoadStatus, Row,
 };
 use subspace_framework::dashboard::menu::{Menu, MenuAnchors, MenuContents, MenuEvent, MenuOption};
-use subspace_framework::dashboard::overflow_toolbar::{OverflowToolbar, OverflowUnit, PopupEntry};
 use subspace_framework::dashboard::panel::IconName;
-use subspace_framework::dashboard::row_menu::RowMenu;
-use subspace_framework::dashboard::tabs::{self as dashboard_tabs, TabSpec, TabStatus};
+use subspace_framework::dashboard::row_menu::{MenuCommand, MenuGroup, RowMenu};
+use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
 use subspace_framework::dashboard::{
-    Dashboard, DashboardEvent, ItemSearch, KeyHelp, Modal, PaletteCommand, PaletteOption, Search,
-    SubList, Toast, Tokens, links, panel, prefs, services, view_keys,
+    DASHBOARD_CONTEXT, Dashboard, DashboardEvent, ItemSearch, KeyHelp, Modal, PaletteCommand,
+    PaletteOption, Search, SubList, Toast, Tokens, links, panel, prefs, services, view_keys,
 };
 
 use crate::detail::{Mode, OnAction, PanelAction, PanelInput};
@@ -96,6 +98,8 @@ actions!(
         ToggleFavourite,
         /// Favourites only in Mine, Review requested and Involved, or not.
         ToggleFavouritesOnly,
+        /// Show every repository again, not only the filtered one.
+        ClearRepositoryFilter,
         /// Collapse the repository, or select the item's repository.
         CollapseGroup,
         /// Expand the repository.
@@ -107,11 +111,11 @@ actions!(
 const KEYS: &[KeyHelp] = &[
     KeyHelp::new(
         "j / k",
-        "Next / previous row (in the panel: next / previous item)",
+        "Next / previous row (on a page: next / previous pull request)",
     ),
     KeyHelp::new(
         "Enter",
-        "Open the item; on a repository, collapse or expand it",
+        "Open the pull request's page; on a repository, collapse or expand it",
     ),
     KeyHelp::new("← / →", "Collapse / expand the repository"),
     KeyHelp::new(
@@ -130,7 +134,7 @@ const KEYS: &[KeyHelp] = &[
     KeyHelp::new("i", "Assign to me, or unassign me"),
     KeyHelp::new("o", "Open in GitHub"),
     KeyHelp::new("y", "Copy the URL"),
-    KeyHelp::new("Esc", "Close the panel"),
+    KeyHelp::new("Esc", "Back to the list from a page"),
     KeyHelp::new("Home / End", "First / last row"),
 ];
 
@@ -184,7 +188,6 @@ const SECTION_1: usize = 0;
 const SECTION_2: usize = 1;
 const SECTION_3: usize = 2;
 const SECTION_4: usize = 3;
-const UNMEASURED_WIDTH: f32 = 0.;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SectionStatus {
@@ -279,6 +282,8 @@ struct ComposerState {
 enum MenuTarget {
     Account,
     Assignees(String),
+    /// The view menu, which stands in for the navigator's views.
+    View,
 }
 
 // qual:allow(srp, god_struct) reason: "This retained board owns account selection and its rows and details; all measured methods form one cluster."
@@ -326,7 +331,15 @@ pub struct Github {
     retained_key: Option<String>,
     detail_prefetch: Option<subspace_framework::dashboard::prefetch::Prefetch>,
     _accounts_task: Option<Task<()>>,
-    overflow_toolbar: Option<Entity<OverflowToolbar>>,
+    /// Whether the navigator shows; stored as `github.navigator`.
+    navigator_open: bool,
+    /// Whether the inspector (the detail panel) shows; stored as
+    /// `github.inspector`.
+    inspector_open: bool,
+    /// The one repository the list shows, if any. Kept in memory only.
+    repo_filter: Option<String>,
+    /// The workspace's text edge, read at each render for the list's rows.
+    text_edge: Pixels,
     /// Pull request summaries other Spaces asked for.
     references: references::References,
     _sign_in: Option<Subscription>,
@@ -340,7 +353,6 @@ impl Github {
     fn account_login(&self) -> Option<&str> {
         self.account.as_deref()
     }
-
     fn account_data(&self) -> Option<&Account> {
         let login = self.account.as_deref()?.to_lowercase();
         if self
@@ -409,7 +421,8 @@ impl Github {
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         self.now = model::now_seconds();
         let account = self.account.clone().unwrap_or_default();
-        let mut groups = rows::groups(self.section_items(), &account, self.now);
+        let groups = rows::groups(self.section_items(), &account, self.now);
+        let mut groups = repo_filter::apply(groups, self.repo_filter.as_deref());
         search_index::append_retained(self, &mut groups);
         navigation::append(self, &mut groups);
         self.list.set_groups(groups);
@@ -555,6 +568,7 @@ impl Github {
         self.account = Some(canonical);
         if changed {
             self.navigation = None;
+            self.repo_filter = None;
         }
         references::account_chosen(self, changed, cx);
         search_index::account_changed(self, changed, cx);
@@ -686,7 +700,12 @@ impl Github {
                 .composer
                 .as_ref()
                 .map(|_| diff.read(cx).item.key.clone()),
-            None => self.list.open_row().map(|row| row.key.to_string()),
+            // The page, else the inspector's selection while it shows.
+            None => self
+                .list
+                .open_row()
+                .or_else(|| self.list.selected_row().filter(|_| self.inspector_open))
+                .map(|row| row.key.to_string()),
         };
         let Some(key) = open else {
             self.detail_key = None;
@@ -756,6 +775,16 @@ impl Github {
         }
     }
 
+    /// The view menu's pick: the section with id `id`, or a repository to
+    /// filter to.
+    fn go_view(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(repo) = id.strip_prefix(repo_filter::MENU_PREFIX) {
+            self.pick_repository(repo, cx);
+        } else if let Some(section) = section_by_id(id) {
+            self.go_section(section.id, cx);
+        }
+    }
+
     fn switch_account(&mut self, _: &SwitchAccount, window: &mut Window, cx: &mut Context<Self>) {
         self.switch_account_at(None, window, cx);
     }
@@ -811,6 +840,7 @@ impl Github {
         let id = match &target {
             MenuTarget::Account => "gh-account",
             MenuTarget::Assignees(_) => "gh-assign",
+            MenuTarget::View => layout::VIEW_ANCHOR,
         };
         let anchor = anchor.unwrap_or_else(|| self.menu_anchors.anchor(id, cx));
         let Some(menu) = self.menu_anchors.open(
@@ -827,6 +857,7 @@ impl Github {
                 match target {
                     MenuTarget::Account => this.set_account(value.to_string(), cx),
                     MenuTarget::Assignees(key) => this.toggle_assignee(key, value.to_string(), cx),
+                    MenuTarget::View => this.go_view(value, cx),
                 }
             }
             cx.notify();
@@ -899,11 +930,9 @@ impl Github {
             emit_toast(Toast::error("You cannot comment here"), cx);
             return;
         }
-        if self.diff.is_none()
-            && self.list.open_row().is_none()
-            && let Some(key) = self.list.activate()
-        {
-            cx.emit(DashboardEvent::Opened(key));
+        // The composer takes the inspector's footer, so the inspector shows.
+        if self.diff.is_none() {
+            self.set_inspector(true, cx);
         }
         let entity = cx.new(|cx| {
             let mut composer = Composer::new(mode.title(), mode.placeholder(), window, cx);
@@ -1292,52 +1321,6 @@ impl Github {
             assignee_bottom_anchor: self.assignee_bottom_anchor.clone(),
         }
     }
-
-    // ---- Toolbar --------------------------------------------------------------------
-
-    fn tab_status(&self, section: &'static str, tokens: &Tokens) -> TabStatus {
-        let account = self.account_data();
-        let data = account.and_then(|a| a.sections.get(section));
-        let status = account.and_then(|a| a.status.get(section));
-        match (data, status) {
-            (Some(data), Some(SectionStatus::Failed(_))) => TabStatus::text(
-                data.total.to_string(),
-                format!("{} items, load failed", data.total),
-                tokens.red,
-            ),
-            (Some(data), Some(SectionStatus::Loading)) => TabStatus::text(
-                data.total.to_string(),
-                format!("{} items, loading", data.total),
-                tokens.yellow,
-            ),
-            (Some(data), _) => TabStatus::count(data.total.into(), tokens.muted),
-            (None, Some(SectionStatus::Failed(_))) => {
-                TabStatus::text("!", "Load failed", tokens.red)
-            }
-            (None, _) => TabStatus::busy(tokens.muted),
-        }
-    }
-
-    fn section_popup_label(&self, section: &'static str) -> String {
-        let data = self
-            .account_data()
-            .and_then(|account| account.sections.get(section));
-        let status = self
-            .account_data()
-            .and_then(|account| account.status.get(section));
-        let title = section_by_id(section).map_or(section, |section| section.title);
-        match (data, status) {
-            (Some(data), Some(SectionStatus::Failed(_))) => {
-                format!("Go to {title} · {} items, load failed", data.total)
-            }
-            (Some(data), Some(SectionStatus::Loading)) => {
-                format!("Go to {title} · {} items, loading", data.total)
-            }
-            (Some(data), _) => format!("Go to {title} · {} items", data.total),
-            (None, Some(SectionStatus::Failed(_))) => format!("Go to {title} · Load failed"),
-            (None, _) => format!("Go to {title} · loading"),
-        }
-    }
 }
 
 impl EventEmitter<DashboardEvent> for Github {}
@@ -1445,7 +1428,10 @@ impl Dashboard for Github {
             retained_key: None,
             detail_prefetch: None,
             _accounts_task: None,
-            overflow_toolbar: None,
+            navigator_open: layout::dock_open(cx, layout::NAVIGATOR_KEY),
+            inspector_open: layout::dock_open(cx, layout::INSPECTOR_KEY),
+            repo_filter: None,
+            text_edge: layout::current_text_edge(cx),
             references: Default::default(),
             _sign_in: references::attach(cx),
         }
@@ -1520,28 +1506,21 @@ impl Dashboard for Github {
         self.detail_prefetch = None;
     }
 
+    fn docks(&self, _cx: &App) -> SpaceDocks {
+        self.space_docks()
+    }
+
+    fn toggle_dock(&mut self, dock: SpaceDock, _window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_space_dock(dock, cx);
+    }
+
     fn status(&self, cx: &App) -> Option<SharedString> {
         if let Some((diff, _)) = &self.diff {
             return Some(format!("{} · files", diff.read(cx).key()).into());
         }
-        let data = self.account_data()?.sections.get(self.section)?;
-        let noun = match self.kind() {
-            ItemKind::Pr => "open PRs",
-            ItemKind::Issue => "open issues",
-        };
-        let repos = self.list.groups().len();
-        let shown = if data.total as usize > data.items.len() {
-            format!("{} of {}", data.items.len(), data.total)
-        } else {
-            data.total.to_string()
-        };
-        Some(
-            format!(
-                "{shown} {noun} · {repos} {}",
-                if repos == 1 { "repo" } else { "repos" }
-            )
-            .into(),
-        )
+        let counts = self.view_counts();
+        let line = layout::status_line(&self.scope_line(), counts.as_deref());
+        Some(repo_filter::with_note(line, self.repo_filter.as_deref()).into())
     }
 
     fn busy(&self, _cx: &App) -> bool {
@@ -1669,8 +1648,10 @@ impl Dashboard for Github {
 }
 
 impl ListDashboard for Github {
+    /// Rows start at the workspace's text edge, as the navigator's and the
+    /// toolbar's content do.
     fn list_side_inset(&self) -> Option<Pixels> {
-        Some(LIST_SIDE_INSET)
+        Some(self.text_edge)
     }
 
     fn comfortable_rows(&self) -> bool {
@@ -1681,10 +1662,33 @@ impl ListDashboard for Github {
         navigation::selection_changed(self, selected.as_deref(), cx);
     }
 
+    /// Closing the page drops a pull request opened from another Space.
     fn on_panel_toggled(&mut self, open: bool, cx: &mut Context<Self>) {
         if !open {
             navigation::clear(self, cx);
         }
+    }
+
+    /// One click on a pull request only selects it, which fills the
+    /// inspector; a double click, Enter or the inspector's Open opens its
+    /// page. Repository headers still fold on one click.
+    fn activates_on_click(&self, _row: &Row) -> bool {
+        false
+    }
+
+    /// The row's state glyph, as the list draws it, with an id the tests
+    /// can click.
+    fn row_leading(&self, row: &Row, cx: &App) -> Option<AnyElement> {
+        let tokens = Tokens::current(cx);
+        Some(
+            div()
+                .id(SharedString::from(format!("gh-row:{}", row.key)))
+                .test_support()
+                .flex_shrink_0()
+                .text_color(tokens.glyph(&row.icon))
+                .child(row.icon.text.clone())
+                .into_any_element(),
+        )
     }
 
     fn list(&self) -> &ListState {
@@ -1708,13 +1712,6 @@ impl ListDashboard for Github {
         (title.into(), hint.into())
     }
 
-    fn panel_extra(&self, key: &str, cx: &App) -> Option<AnyElement> {
-        let tokens = Tokens::current(cx);
-        let item = self.find_item(key)?;
-        let input = self.panel_input(item, &tokens);
-        Some(detail::panel_extra(input, &tokens, self.panel_actions()))
-    }
-
     /// The row's page on GitHub, so the menu can open and copy it.
     fn row_menu(&self, row: &Row) -> RowMenu {
         let facts = RowMenu::from_row(row);
@@ -1734,21 +1731,19 @@ impl ListDashboard for Github {
         )
     }
 
-    /// The star for the repository of the line the menu is for.
-    fn extend_row_menu(&self, menu: PopupMenu, _cx: &App) -> PopupMenu {
-        let Some(repo) = self.selected_repo() else {
-            return menu;
+    /// The star for the repository of the line the menu is for, in the Act
+    /// group, with its key.
+    fn row_commands(board: &Entity<Self>, cx: &App) -> Vec<MenuCommand> {
+        let this = board.read(cx);
+        let Some(repo) = this.selected_repo() else {
+            return Vec::new();
         };
-        let label = favourites::toggle_label(&repo, self.favourites.contains(&repo));
-        let weak = self.weak.clone();
-        menu.separator()
-            .item(
-                PopupMenuItem::new(label)
-                    .icon(IconName::Star)
-                    .on_click(move |_, _, cx| {
-                        _ = weak.update(cx, |this, cx| this.toggle_favourite(repo.clone(), cx));
-                    }),
-            )
+        let label = favourites::toggle_label(&repo, this.favourites.contains(&repo));
+        let weak = board.downgrade();
+        let star = MenuCommand::new(MenuGroup::Act, label, IconName::Star, move |_, cx| {
+            _ = weak.update(cx, |this, cx| this.toggle_favourite(repo.clone(), cx));
+        });
+        vec![star.key(ToggleFavourite)]
     }
 
     fn group_indicators(&self, group: &Group, _cx: &App) -> Vec<GroupIndicator> {
@@ -1834,35 +1829,42 @@ impl Github {
             .children(panel)
     }
 
+    /// The list view: the workspace, which holds the navigator and the list
+    /// with its tab, toolbar and list (or the open pull request's page), and
+    /// the inspector. The root carries the Space's key context and focus
+    /// around all of them, so keys answer from the navigator, the page and
+    /// the inspector as well as from the list.
     fn list_root(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
-        let toolbar = self.toolbar(cx);
-        v_flex()
+        let workspace = self.workspace(window, cx);
+        let mut context = KeyContext::new_with_defaults(cx.platform_info().os);
+        context.add(DASHBOARD_CONTEXT);
+        context.add(Self::ID);
+        let root = v_flex()
             .id("github-list-root")
+            .key_context(context)
+            .track_focus(&self.focus)
             .size_full()
             .min_h_0()
-            .child(list::header(
-                Self::ID,
-                "Pull requests",
-                self.scope_line(),
-                LIST_SIDE_INSET,
-                cx,
-            ))
-            .child(toolbar)
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(list::render(self, window, cx)),
-            )
+            .child(div().flex_1().min_h_0().child(workspace));
+        page::with_page_keys(root, cx)
     }
 
+    /// The account context at the start of the status line.
     fn scope_line(&self) -> String {
-        match self.account_login() {
-            _ if self.accounts_error.is_some() => "GitHub · Account unavailable".into(),
-            Some(login) if !self.accounts.is_empty() => format!("GitHub · Signed in as {login}"),
-            _ if self.started => "GitHub · Checking account…".into(),
-            _ => "GitHub".into(),
-        }
+        self.signed().scope_line()
+    }
+
+    /// The current view's counts, such as `8 open PRs · 4 repos`, once its
+    /// list has loaded.
+    fn view_counts(&self) -> Option<String> {
+        let data = self.account_data()?.sections.get(self.section)?;
+        let noun = match self.kind() {
+            ItemKind::Pr => "open PRs",
+            ItemKind::Issue => "open issues",
+        };
+        let repos = self.list.groups().len();
+        let counts = layout::counts_line(data.items.len(), data.total, repos, noun);
+        Some(counts)
     }
 
     /// The item of the diff view, when the composer is open on it.
@@ -1924,6 +1926,9 @@ impl Render for Github {
             .on_action(cx.listener(|this, _: &ToggleFavouritesOnly, _, cx| {
                 this.toggle_favourites_only(cx);
             }))
+            .on_action(cx.listener(|this, _: &ClearRepositoryFilter, _, cx| {
+                this.clear_repository_filter(cx);
+            }))
             .on_action(cx.listener(|this, _: &Approve, window, cx| {
                 this.compose(Mode::Approve, window, cx);
             }))
@@ -1948,189 +1953,7 @@ impl Render for Github {
     }
 }
 
-/// Use the same content edge as the Issues list.
-const LIST_SIDE_INSET: Pixels = px(24.);
-
-/// The toolbar's own elements.
-impl Github {
-    fn account_picker_unit(&self) -> OverflowUnit {
-        let entity = self.weak.clone();
-        let label = format!("Account: {}…", self.account.as_deref().unwrap_or("…"));
-        let account = PopupEntry::anchored(move |anchor| {
-            let entity = entity.clone();
-            PopupMenuItem::new(label.clone())
-                .icon(IconName::User)
-                .on_click(move |_, window, cx| {
-                    _ = entity.update(cx, |this, cx| {
-                        this.switch_account_at(Some(anchor.host()), window, cx)
-                    });
-                })
-        });
-        let account_entity = self.weak.clone();
-        OverflowUnit::inline(
-            "gh-account",
-            UNMEASURED_WIDTH,
-            move |_, cx| {
-                account_entity
-                    .update(cx, |this, cx| this.account_button(cx))
-                    .map_or_else(
-                        |_| div().into_any_element(),
-                        |element| element.into_any_element(),
-                    )
-            },
-            vec![account],
-        )
-    }
-
-    fn tabs_unit(&self, tokens: Tokens) -> OverflowUnit {
-        let sections: Vec<&'static SectionDef> = sections_of(self.kind()).collect();
-        let selected = sections
-            .iter()
-            .position(|section| section.id == self.section)
-            .unwrap_or_default();
-        let tabs_entity = self.weak.clone();
-        let entries = sections
-            .iter()
-            .enumerate()
-            .map(|(index, section)| {
-                let entity = self.weak.clone();
-                let label = self.section_popup_label(section.id);
-                let icon = github_section_icon(section.id);
-                PopupEntry::new(move || {
-                    let entity = entity.clone();
-                    PopupMenuItem::new(label.clone())
-                        .icon(icon)
-                        .checked(index == selected)
-                        .on_click(move |_, _, cx| {
-                            _ = entity.update(cx, |this, cx| this.section_action(index, cx));
-                        })
-                })
-            })
-            .collect();
-        OverflowUnit::inline(
-            "gh-section-tabs",
-            UNMEASURED_WIDTH,
-            move |_, cx| {
-                tabs_entity
-                    .update(cx, |this, cx| this.section_tabs(&tokens, cx))
-                    .map_or_else(
-                        |_| div().into_any_element(),
-                        |element| element.into_any_element(),
-                    )
-            },
-            entries,
-        )
-    }
-
-    fn toolbar_units(&self, tokens: Tokens) -> Vec<OverflowUnit> {
-        let mut units = vec![self.tabs_unit(tokens), self.repositories_unit()];
-        if self.accounts.len() > 1 {
-            units.push(self.account_picker_unit());
-        }
-        units
-    }
-
-    /// The Repositories control, after the tabs it scopes.
-    fn repositories_unit(&self) -> OverflowUnit {
-        let entity = self.weak.clone();
-        let entry = PopupEntry::anchored(move |anchor| {
-            let entity = entity.clone();
-            PopupMenuItem::new("Repositories…")
-                .icon(IconName::Star)
-                .on_click(move |_, window, cx| {
-                    _ = entity.update(cx, |this, cx| {
-                        this.open_repositories(Some(anchor.host()), window, cx)
-                    });
-                })
-        });
-        let inline = self.weak.clone();
-        OverflowUnit::inline(
-            favourites::ANCHOR,
-            UNMEASURED_WIDTH,
-            move |_, cx| {
-                inline
-                    .update(cx, |this, cx| this.repositories_button(cx))
-                    .unwrap_or_else(|_| div().into_any_element())
-            },
-            vec![entry],
-        )
-    }
-
-    /// Shows Favourites only as the control's latched state.
-    fn repositories_button(&self, cx: &mut Context<Self>) -> AnyElement {
-        let only = self.favourites.only;
-        let name = match only {
-            true => "Repositories, Favourites only on",
-            false => "Repositories",
-        };
-        let button = menu_button("gh-repos-button", IconName::Star, "Repositories", only)
-            .accessibility_label(name)
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.open_repositories(None, window, cx);
-            }));
-        self.menu_anchors.trigger(favourites::ANCHOR, button, cx)
-    }
-
-    /// The section tabs, Repositories and the account.
-    fn toolbar(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let tokens = Tokens::current(cx);
-        let units = self.toolbar_units(tokens);
-        let toolbar = OverflowToolbar::sync(&mut self.overflow_toolbar, units, cx);
-        self.menu_anchors.set_toolbar(&toolbar);
-        div()
-            .id("github-list-toolbar")
-            .test_support()
-            .w_full()
-            .flex_shrink_0()
-            .px(LIST_SIDE_INSET)
-            .pb_2()
-            .child(toolbar)
-            .into_any_element()
-    }
-
-    /// The account picker, shown when more than one account is signed in.
-    fn account_button(&self, cx: &mut Context<Self>) -> AnyElement {
-        let account = self.account.clone().unwrap_or_else(|| "…".into());
-        let login = short_login(&account);
-        let button = menu_button("gh-account-button", IconName::User, login, false)
-            .accessibility_label(format!("GitHub account: {login}"))
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.switch_account(&SwitchAccount, window, cx);
-            }));
-        self.menu_anchors.trigger("gh-account", button, cx)
-    }
-
-    /// One tab per section of the current kind, each with its count.
-    fn section_tabs(
-        &self,
-        tokens: &Tokens,
-        cx: &mut Context<Self>,
-    ) -> subspace_framework::dashboard::tabs::TabBar {
-        let sections: Vec<&'static SectionDef> = sections_of(self.kind()).collect();
-        let selected = sections
-            .iter()
-            .position(|section| section.id == self.section)
-            .unwrap_or_default();
-        let tabs: Vec<_> = sections
-            .iter()
-            .map(|section| {
-                dashboard_tabs::tab(
-                    TabSpec::new(section.title, github_section_icon(section.id))
-                        .status(self.tab_status(section.id, tokens)),
-                )
-            })
-            .collect();
-        dashboard_tabs::tab_bar("gh-section-tabs")
-            .selected_index(selected)
-            .children(tabs)
-            .on_click(cx.listener(move |this, index: &usize, _, cx| {
-                if let Some(section) = sections.get(*index) {
-                    this.go_section(section.id, cx);
-                }
-            }))
-    }
-}
-
+/// The glyph of a view, in the navigator and on the view menu.
 fn github_section_icon(section: &str) -> IconName {
     match section {
         "mine" => IconName::UserRound,
@@ -2231,6 +2054,15 @@ impl Github {
                 .shortcut("F"),
             PaletteCommand::new(only, ToggleFavouritesOnly).keywords("favourite filter scope"),
         ];
+        if let Some(repo) = &self.repo_filter {
+            commands.push(
+                PaletteCommand::new(
+                    format!("Show all repositories, not only {repo}"),
+                    ClearRepositoryFilter,
+                )
+                .keywords("repository filter clear all"),
+            );
+        }
         if let Some(repo) = self.selected_repo() {
             let label = favourites::toggle_label(&repo, self.favourites.contains(&repo));
             commands.push(

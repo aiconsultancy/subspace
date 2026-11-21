@@ -4,10 +4,10 @@
 //! visible to callers. Boards continue to own field values and validation.
 
 use gpui_kit::component::input::{Editor, EditorState, Input, InputState, Textarea, TextareaState};
-use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::{
     App, Div, ElementId, Entity, IntoElement, ParentElement as _, PathPromptOptions, Pixels,
-    SharedString, Styled as _, Window, div,
+    SharedString, Styled as _, Window, div, transparent_black,
 };
 use subspace_lucide::IconName;
 
@@ -53,6 +53,24 @@ pub fn input(
         InputSize::Small => input.small(),
         InputSize::ExtraSmall => input.xsmall(),
     }
+}
+
+/// The search field of a workspace toolbar: a [`InputRole::Search`] input
+/// with the search glyph and a clear button, filled with the theme's quiet
+/// `pane` surface and no visible border at rest, so it sits on the toolbar
+/// band like its buttons. Keyboard focus still draws the native focus ring.
+pub fn toolbar_search(
+    state: &Entity<InputState>,
+    accessible_label: impl Into<SharedString>,
+    cx: &App,
+) -> Input {
+    let tokens = Tokens::current(cx);
+    input(state, InputRole::Search, accessible_label)
+        .prefix(Icon::from(IconName::Search).xsmall())
+        .cleanable(true)
+        .bg(tokens.pane)
+        .border_color(transparent_black())
+        .rounded(tokens.control_radius)
 }
 
 /// Build a native code editor without replacing its editor state or events.

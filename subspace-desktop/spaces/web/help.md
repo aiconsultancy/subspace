@@ -72,14 +72,17 @@ before you install an update from a source you do not trust.
 
 ## Main view
 
-The board shows the page in a native view that fills the board. Subspace menus
-and dialogs that open over the page can appear behind it. The board hides the
-native view while another board is active or something covers it.
+The board has a toolbar and, below it, the page in a native view that fills the
+rest of the board. A web Space has no navigator and no inspector, and it has
+no tab strip because it shows one page. Subspace menus and dialogs that open
+over the page can appear behind it. The board hides the native view while
+another board is active or something covers it.
 
 - **Opening.** The page is created the first time you show the board. Until
-  then the board says `Opening the page…`.
+  then the board says `Opening the page…` below the toolbar.
 - **Cannot show this page.** When the page cannot open, the board shows an
-  error box with the reason and a **Retry** button. Reasons include
+  error box below the toolbar, with the reason and a **Retry** button. Reasons
+  include
   `Set an https:// address for this board under webBoards in the config file.`
   and `<path> has no index.html. Build the app into this folder, then select
   Retry.` An app with an invalid manifest says that it cannot open.
@@ -159,8 +162,10 @@ provenance is not recorded in this guide. -->
 
 ## Toolbar and filters
 
-The board adds page controls to the shell toolbar. They are disabled until the
-page exists.
+The page controls are in the board's own toolbar, directly above the page, not
+in the title bar. They are disabled until the page exists.
+
+The navigation controls are at the start of the toolbar:
 
 | Control | Action |
 | --- | --- |
@@ -168,10 +173,23 @@ page exists.
 | **Forward** | Move forward through the page's history. |
 | **Reload page** | Load the page again. The shell's reload (`r` or `Cmd+R`) does the same. |
 | **Go to the start page** | Open the configured address. |
+
+After them the toolbar shows the board's title and where the page is: the host
+of the page you are on, with the port when it is not the default, or
+`Local web app` for a folder app. This is the real site, whatever the page
+calls itself. Until the page reports its address, the toolbar shows the site
+of the configured address. Once it has, the status bar shows the same place
+unless a notice replaces it.
+
+The end of the toolbar has the page's other action:
+
+| Control | Action |
+| --- | --- |
 | **Open in browser** | Open the current page in your default browser. Web app boards do not have it, and an app's private address never opens there. |
 
-There are no filters, groups or search items. A failed navigation action puts
-its error in the status bar.
+In a narrow window the controls at the start wrap onto a second line, and the
+page starts below them. There are no filters, groups or search items. A failed
+navigation action puts its error in the status bar.
 
 Links that open a new window open in your default browser when they are
 `http://` or `https://` pages. The board opens at most one browser page per
@@ -182,8 +200,8 @@ localhost.`
 
 ## Details
 
-A web Space has no detail panel. The page is the whole view. A folder app that
-has a manifest can use the native bridge described below.
+A web Space has no detail panel. The page is the whole view below the toolbar.
+A folder app that has a manifest can use the native bridge described below.
 
 ### App bridge
 

@@ -70,6 +70,14 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
   staged diff before committing. The pre-push hook runs code checks only for
   changed projects. Markdown changes run the applicable documentation checks.
   [Repository hook configuration](prek.toml)
+- Before the first commit in a clone, check that `.git/hooks/pre-commit` and
+  `.git/hooks/pre-push` exist, and run `make hooks` if either is missing. A
+  fresh clone has neither, and without them nothing checks a commit or a push.
+- Open a pull request only after the hooks have run on every commit in it and
+  on the push. A commit made another way, such as through the GitHub API or
+  the web editor, skips them: run `prek run --from-ref <base> --to-ref HEAD`
+  and `prek run --stage pre-push --from-ref <base> --to-ref HEAD` on the
+  range first, and say in the pull request that you did.
 - Write prose in British English. Keep existing code and API identifiers.
 - Keep this public repository free of secrets, tokens, real tenant or client
   IDs, internal hostnames, personal data, and organisation-specific branding
@@ -77,6 +85,9 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
   `example.com` in docs and `.env.example` files. Configure identity
   providers and service endpoints at build or run time.
 - Keep generated build output out of commits.
+- Build a new or changed Space to the
+  [design guide](subspace-framework/docs/design-guide.md): the same
+  workspace shell, zones and rules in every Space.
 - Merge a pull request only after both model reviews clear it. See
   [Pull request review clearance](#pull-request-review-clearance).
 
@@ -196,6 +207,9 @@ and exercise the shared behaviour with the local stack.
   [documentation index](subspace-desktop/docs/README.md).
 - [Framework AGENTS.md](subspace-framework/AGENTS.md) and
   [documentation index](subspace-framework/docs/README.md).
+- [Design guide](subspace-framework/docs/design-guide.md): how every Space
+  is laid out, the shell anatomy image, and the checklist reviewers use on
+  UI screenshots.
 - [Desktop agent skills](subspace-desktop/.agents/skills) and
   [Framework agent skills](subspace-framework/.agents/skills) hold the local
   checklists and specialised workflows.

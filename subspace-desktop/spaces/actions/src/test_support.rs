@@ -2,7 +2,7 @@
 
 use crate::{
     load::mapping,
-    model::{Record, RunTarget},
+    model::{Record, RunFacts, RunTarget},
 };
 
 /// A successful `CI` run on `main` by `ann` in `repo`.
@@ -19,6 +19,12 @@ pub(crate) fn run(repo: &str) -> Record {
         branch: "main".into(),
         actor: "ann".into(),
         attempt: 1,
+    });
+    record.facts = Some(RunFacts {
+        event: "push".into(),
+        age: "4h".into(),
+        started: String::new(),
+        review: None,
     });
     record
 }

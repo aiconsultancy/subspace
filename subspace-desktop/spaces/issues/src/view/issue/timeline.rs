@@ -1,6 +1,7 @@
 //! The issue's local timeline. The board-wide Activity tab is independent.
 
 mod activity_tabs;
+mod composer;
 mod decisions;
 mod rows;
 mod states;
@@ -74,7 +75,7 @@ fn discussion(
         .gap_3()
         .children(controls(issues, issue, cx))
         .child(content(issues, issue, tokens, cx))
-        .child(crate::authoring::view::root(issues, tokens, cx))
+        .child(composer::render(issues, issue, tokens, cx))
 }
 
 fn content(

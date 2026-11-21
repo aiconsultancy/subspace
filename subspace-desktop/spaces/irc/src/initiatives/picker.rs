@@ -1,18 +1,13 @@
-//! The searchable Initiative picker uses the same treatment as Issues.
+//! The searchable Initiative picker uses the same treatment as Issues. Its
+//! button leads the pane's toolbar; its hint goes to the status bar.
 
 use crate::Irc;
-use gpui_kit::component::{h_flex, v_flex};
-use gpui_kit::{
-    AnyElement, App, Context, Entity, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, Styled as _, TestSupportExt as _, Window, div, px,
-};
+use gpui_kit::{AnyElement, App, Context, Entity, Window};
 use subspace_api_client::initiatives::Catalog;
+use subspace_framework::dashboard::PaletteCommand;
 use subspace_framework::dashboard::anchored::Anchor;
-use subspace_framework::dashboard::icon_button::Metrics;
 use subspace_framework::dashboard::menu::{Menu, MenuAnchors, MenuEvent};
-use subspace_framework::dashboard::{Dashboard as _, PaletteCommand, list};
 
-pub(crate) const SPACE_INSET: gpui_kit::Pixels = px(24.);
 const ANCHOR: &str = "irc-initiative";
 const LOCAL_LABEL: &str = "Local channels";
 
@@ -34,45 +29,9 @@ impl Picker {
     }
 }
 
-pub(crate) fn heading(board: &mut Irc, cx: &mut Context<Irc>) -> AnyElement {
-    let toolbar = crate::toolbar::render(board, cx);
-    v_flex()
-        .flex_shrink_0()
-        .child(list::header(
-            Irc::ID,
-            Irc::TITLE,
-            scope(board, cx),
-            SPACE_INSET,
-            cx,
-        ))
-        .children(toolbar.map(|toolbar| {
-            h_flex()
-                .id("irc-controls")
-                .test_support()
-                .w_full()
-                .px(SPACE_INSET)
-                .pb_2()
-                .gap_2()
-                .children(button(board, cx))
-                .child(
-                    div()
-                        .ml_auto()
-                        .flex_shrink_1()
-                        .min_w(Metrics::current(cx).overflow_width())
-                        .child(toolbar),
-                )
-        }))
-        .into_any_element()
-}
-
-fn scope(board: &Irc, cx: &App) -> String {
-    let status = board
-        .status(cx)
-        .map_or_else(|| "IRC".into(), |status| format!("IRC · {status}"));
-    initiative_hint(board, cx).map_or_else(|| status.clone(), |hint| format!("{status} · {hint}"))
-}
-
-fn initiative_hint(board: &Irc, cx: &App) -> Option<String> {
+/// What the status bar adds about initiatives: the connection the selected
+/// one still needs, or that the memberships are being read or unavailable.
+pub(crate) fn hint(board: &Irc, cx: &App) -> Option<String> {
     if !subspace_api_client::capabilities().initiative_channels {
         return None;
     }
@@ -102,7 +61,8 @@ fn catalog<'a>(board: &'a Irc, cx: &'a App) -> Option<&'a Catalog> {
         .then_some(catalog)
 }
 
-fn button(board: &Irc, cx: &mut Context<Irc>) -> Option<AnyElement> {
+/// The picker's button, while there is an initiative to choose.
+pub(crate) fn button(board: &Irc, cx: &mut Context<Irc>) -> Option<AnyElement> {
     let button = catalog(board, cx)?
         .button("irc-initiative-button", LOCAL_LABEL)
         .on_click(cx.listener(|this, _, window, cx| open(this, window, cx)));

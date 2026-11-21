@@ -100,13 +100,17 @@ calls two HTTPS APIs from `src/api.js` this way.
    requested permissions.
 5. Choose **Install now**. The web Space appears in the switcher at once.
 
+Subspace draws one toolbar above your page. It has **Back**, **Forward**,
+**Reload page** and **Go to the start page**, then the web Space's name and
+`Local web app`. Your page gets the whole area below the toolbar.
+
 An installed folder is a private snapshot. After you change the files, choose
 **Edit… > Replace source…** and validate and install again.
 
 For quicker iteration, configure a live folder by hand in the configuration
 file (see [Settings and stored state](../README.md#settings-and-stored-state)).
-Subspace then serves the folder directly, and **Reload page** shows your
-changes:
+Subspace then serves the folder directly, and **Reload page** in that toolbar
+shows your changes:
 
 ```json
 {

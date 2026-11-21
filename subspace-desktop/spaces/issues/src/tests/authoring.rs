@@ -7,11 +7,25 @@ use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 #[gpui_kit::test]
 fn detail_exposes_comment_attachment_intake_without_issue_editing(cx: &mut TestAppContext) {
     let fixture = offline();
-    let (_board, cx) = open_first(&fixture, cx);
+    let (board, cx) = open_first(&fixture, cx);
     render(cx);
     assert!(has(cx, "issue-comment-composer"));
+    assert!(has(cx, "issue-comment-start"), "at rest it is one line");
+    assert!(!has(cx, "attach-comment-image"));
+    open_composer(&board, cx);
+    assert!(has(cx, "issue-comment-composer"));
+    assert!(!has(cx, "issue-comment-start"));
     assert!(!has(cx, "issue-edit"));
     assert!(has(cx, "attach-comment-image"));
+}
+
+/// Opens the root composer from its compact line at the end of the page.
+fn open_composer(board: &Entity<crate::Issues>, cx: &mut VisualTestContext) {
+    use gpui_kit::test::TestWindowExt as _;
+    cx.update(|_, cx| board.read(cx).issue_view.scroll.scroll_to_bottom());
+    render(cx);
+    cx.update(|window, cx| window.click("issue-comment-start", cx));
+    render(cx);
 }
 
 #[gpui_kit::test]
@@ -93,6 +107,9 @@ fn submit_text(
     text: &str,
 ) {
     use gpui_kit::test::TestWindowExt as _;
+    if parent.is_none() {
+        open_composer(board, cx);
+    }
     cx.update(|window, cx| {
         board.update(cx, |board, cx| board.focus_comment(parent, window, cx));
         window.input(text, cx);

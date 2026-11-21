@@ -25,11 +25,15 @@ fn identifiers_use_the_code_font_role(cx: &mut gpui_kit::TestAppContext) {
 }
 
 #[test]
-fn project_goes_first_then_labels_as_the_window_narrows() {
-    assert_eq!(Lanes::for_width(1440.), Lanes { labels: true });
-    assert_eq!(Lanes::for_width(1100.), Lanes { labels: true });
-    assert_eq!(Lanes::for_width(900.), Lanes { labels: false });
-    assert_eq!(Lanes::for_width(0.), Lanes::for_width(1440.));
+fn labels_go_as_the_pane_narrows() {
+    assert_eq!(
+        Lanes::for_width(880.),
+        Lanes { labels: true },
+        "a 1440 px window with both docks"
+    );
+    assert_eq!(Lanes::for_width(720.), Lanes { labels: true });
+    assert_eq!(Lanes::for_width(719.), Lanes { labels: false });
+    assert_eq!(Lanes::for_width(0.), Lanes::for_width(880.));
 }
 
 #[test]

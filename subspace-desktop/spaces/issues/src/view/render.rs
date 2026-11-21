@@ -1,12 +1,14 @@
-use super::{Issues, Tokens, activity_controls, body_element, controls, header, issue, scope};
+use super::shell::{self, Head};
+use super::{Issues, Tokens, body_element, issue};
 use crate::keys;
+use crate::scope::{self, Body};
 use gpui_kit::component::v_flex;
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
     Render, Styled as _, TestSupportExt as _, Window, div,
 };
-use subspace_framework::dashboard::{DASHBOARD_CONTEXT, ListDashboard as _, list};
+use subspace_framework::dashboard::workspace::text_edge;
+use subspace_framework::dashboard::{DASHBOARD_CONTEXT, list};
 impl Render for Issues {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let identity = subspace_framework::dashboard::Dashboard::find_documents(self, cx).0;
@@ -17,6 +19,7 @@ impl Render for Issues {
 fn content(issues: &mut Issues, window: &mut Window, cx: &mut Context<Issues>) -> AnyElement {
     issues.width = f32::from(window.viewport_size().width);
     let tokens = Tokens::current(cx);
+    issues.text_edge = text_edge(&tokens);
     if let Some(page) = special_page(issues, &tokens, cx) {
         return page;
     }
@@ -45,32 +48,45 @@ fn content(issues: &mut Issues, window: &mut Window, cx: &mut Context<Issues>) -
             .children(issues.menu_anchors.view())
             .into_any_element();
     }
-    if crate::initiative::no_initiative_projects(issues) && issues.is_ready() {
-        return root
-            .children(no_projects(issues, &tokens, cx))
-            .children(issues.menu_anchors.view())
-            .into_any_element();
-    }
-    if issues.activity.visible && issues.is_ready() {
-        return root
-            .child(header(issues, &tokens, cx))
-            .child(activity_controls(issues, &tokens, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(list::render(issues, window, cx)),
-            )
-            .children(issues.menu_anchors.view())
-            .into_any_element();
-    }
-    root.child(header(issues, &tokens, cx))
-        .when(body.controls(), |root| {
-            root.child(controls(issues, &tokens, cx))
-        })
-        .child(body_element(issues, &body, &tokens, window, cx))
+    root.child(list_workspace(issues, &body, &tokens, window, cx))
         .children(issues.menu_anchors.view())
         .into_any_element()
+}
+
+/// The list's workspace: the issue list, the activity feed, an initiative
+/// with no projects, or the screen that stands in for the list.
+fn list_workspace(
+    issues: &Issues,
+    body: &Body,
+    tokens: &Tokens,
+    window: &mut Window,
+    cx: &mut Context<Issues>,
+) -> AnyElement {
+    if crate::initiative::no_initiative_projects(issues) && issues.is_ready() {
+        let head = if issues.activity.visible {
+            Head::Activity
+        } else {
+            Head::List
+        };
+        let state = no_projects_state(issues, tokens, cx);
+        return shell::list(issues, state, head, cx);
+    }
+    if issues.activity.visible && issues.is_ready() {
+        let feed = div()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .child(list::render(issues, window, cx))
+            .into_any_element();
+        return shell::list(issues, feed, Head::Activity, cx);
+    }
+    let head = if body.controls() {
+        Head::List
+    } else {
+        Head::Bare
+    };
+    let content = body_element(issues, body, tokens, window, cx);
+    shell::list(issues, content, head, cx)
 }
 
 fn special_page(board: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) -> Option<AnyElement> {
@@ -91,25 +107,13 @@ fn special_page(board: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) -> Op
     })
 }
 
-fn no_projects(issues: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) -> [AnyElement; 3] {
-    [
-        header(issues, tokens, cx).into_any_element(),
-        if issues.activity.visible {
-            activity_controls(issues, tokens, cx)
-        } else {
-            controls(issues, tokens, cx)
-        }
-        .into_any_element(),
-        no_projects_state(issues, tokens, cx),
-    ]
-}
-
 fn no_projects_state(issues: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) -> AnyElement {
     if let crate::listing::Status::Failed(failure) = &issues.listing.status {
         return super::states::render(issues, &scope::Screen::Failed(failure.clone()), tokens, cx);
     }
     div()
-        .px(issues.list_side_inset().unwrap_or(tokens.pad_x))
+        .px(text_edge(tokens))
+        .py_3()
         .text_color(tokens.muted)
         .child("No active projects in this initiative")
         .into_any_element()

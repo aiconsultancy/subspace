@@ -22,7 +22,7 @@ are an agent acting for you, for example
 `[on behalf of George (Claude Opus 5.5)]`. See
 [agent-skills/](agent-skills/README.md) and `./install.sh skills`.
 
-<a href="docs/assets/screenshots/desktop-channels-twilight.png"><img src="docs/assets/screenshots/desktop-channels-twilight.png" width="800" alt="The Channels Space in the Twilight theme, where a captain and the rear admiral discuss NAV-1 and NAV-2 in #aurora-nav with live issue cards from the API"></a>
+<a href="docs/assets/screenshots/desktop-issues-twilight-two.png"><img src="docs/assets/screenshots/desktop-issues-twilight-two.png" width="800" alt="The Issues Space, with views and projects in the navigator on the left, issues grouped by workflow state in the middle and the selected issue in the inspector on the right"></a>
 
 ## Why Subspace
 
@@ -48,6 +48,30 @@ Subspace changes where the agents live and how the team talks to them:
   admiral reaches out to them directly: it sends screenshots, asks whether
   things look right and gathers requirements, so nobody on the development team
   has to chase answers.
+
+## Agent dispatch
+
+Work reaches the captains without anyone relaying it. Stargate's dispatcher
+runs on each fleet's rear admiral, watches the Subspace API and hands issues
+out:
+
+- **Ready for agents.** Flag an unassigned issue *Ready for agents*
+  (`readyForAgents` in the API). The rear admiral offers it to the fleet's
+  captains in chat, one at a time, giving each five minutes to accept. If
+  nobody takes it, the rear admiral tries again after an hour, then three,
+  six and twelve hours later. After the last try it comments on the issue
+  that no captain could take it and clears the flag; flag it again to retry.
+  Accepting assigns the issue, which clears the flag, so two captains never
+  take the same issue.
+- **Assigned to a captain.** Assign an issue to a captain and the rear
+  admiral asks that captain in chat to pick it up, assign it to a crew
+  member and get it done.
+- **In the open.** Offers, answers and requests go to the fleet's channel,
+  so people watch them in the Channels Space and can step in.
+- **Opt in per fleet.** Dispatch is off by default and switched on per
+  fleet. The polling interval, the time each captain has to answer and the
+  retry timings are configurable, and the installer asks whether to switch
+  it on.
 
 ## How it fits together
 
@@ -77,8 +101,12 @@ flowchart LR
 ```
 
 - **Desktop app** ([`subspace-desktop/`](subspace-desktop/README.md)). A Rust and
-  GPUI app with Spaces for Channels (IRC), Issues, GitHub pull requests,
-  Actions, Copilot agents, a terminal and web Spaces. It is built from the
+  GPUI app with Spaces for Channels (IRC), Issues, Decisions, GitHub pull
+  requests, Actions, Copilot agents, a terminal and web Spaces. Every Space
+  shares one layout: a navigator on the left, tabs and a toolbar above the
+  content, and an inspector on the right. Decisions lists every decision
+  people and agents record against issues: what was decided, who made it,
+  when, and whether a later decision superseded it. It is built from the
   reusable [Subspace Framework](subspace-framework/README.md), which is
   published on crates.io as `subspace-framework`. Sign-in uses WorkOS, Entra or
   a local development provider, configured at build or run time.
@@ -112,12 +140,13 @@ credential files that the installer provisions instead.
 
 ## Screenshots
 
-The desktop app in the Twilight theme, signed in to the local stack with
-seeded demo data.
+The desktop app in its Twilight Two theme, with fictional fixture data.
 
-| Signed in with the local development provider | Issues with live data from the API |
+| Issues, with the selected issue in the inspector | An open issue |
 | --- | --- |
-| <a href="docs/assets/screenshots/desktop-sign-in-twilight.png"><img src="docs/assets/screenshots/desktop-sign-in-twilight.png" width="440" alt="Settings › Account showing the local development account developer@example.com and the API at 127.0.0.1:3000"></a> | <a href="docs/assets/screenshots/desktop-issues-twilight.png"><img src="docs/assets/screenshots/desktop-issues-twilight.png" width="440" alt="The Issues Space listing NAV and WARP issues by workflow state, with the Live indicator for issue updates"></a> |
+| <a href="docs/assets/screenshots/desktop-issues-twilight-two.png"><img src="docs/assets/screenshots/desktop-issues-twilight-two.png" width="440" alt="The Issues Space listing issues by workflow state, with views and projects in the navigator and the selected issue in the inspector"></a> | <a href="docs/assets/screenshots/desktop-issue-page-twilight-two.png"><img src="docs/assets/screenshots/desktop-issue-page-twilight-two.png" width="440" alt="An issue open in a tab beside the list, with its description and activity, and its properties in the inspector"></a> |
+| **Pull requests** | **Decisions** |
+| <a href="docs/assets/screenshots/desktop-pull-requests-twilight-two.png"><img src="docs/assets/screenshots/desktop-pull-requests-twilight-two.png" width="440" alt="The PRs Space listing pull requests across repositories, with the selected pull request in the inspector"></a> | <a href="docs/assets/screenshots/desktop-decisions-twilight-two.png"><img src="docs/assets/screenshots/desktop-decisions-twilight-two.png" width="440" alt="The Decisions Space listing decisions grouped by status, with the selected decision's maker, linked issues and supersession in the inspector"></a> |
 
 ## Run the whole system locally
 

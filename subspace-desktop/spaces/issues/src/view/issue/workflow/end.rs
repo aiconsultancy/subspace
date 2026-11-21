@@ -1,15 +1,16 @@
-//! The end slot: the path's last stop, holding the issue's end state. Where
-//! the issue can be edited it is a quiet button that opens the shared menu of
-//! the project's end states, the current one checked; a pick changes the
-//! state with the editor's write. Trackers, whose state Subspace API derives
-//! from their sub-issues, and read-only issues show it as a plain stop.
+//! The end slot: the bar's last segment, holding the issue's end state.
+//! Where the issue can be edited, its name under the rule is a quiet button
+//! that opens the shared menu of the project's end states, the current one
+//! checked; a pick changes the state with the editor's write. Trackers,
+//! whose state Subspace API derives from their sub-issues, and read-only
+//! issues show it as a plain segment.
 //!
 //! The board has no duplicate-of picker, so Duplicate changes the state like
 //! any other end state.
 
-use gpui_kit::component::{Icon, Sizable as _, h_flex, spinner::Spinner, v_flex};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, spinner::Spinner};
 use gpui_kit::{
-    AnyElement, App, Context, Div, IntoElement as _, ParentElement as _, Styled as _, Window, phi,
+    AnyElement, Context, Div, IntoElement as _, ParentElement as _, Styled as _, Window,
 };
 use subspace_api_client::model::{IssueDetail, WorkflowState};
 use subspace_framework::dashboard::Tokens;
@@ -18,7 +19,7 @@ use subspace_framework::dashboard::menu::{MenuContents, MenuEvent, MenuOption};
 use subspace_framework::lucide::IconName;
 
 use super::FlightPath;
-use super::drawing::{beacon, caption, cell, mark_colour, ring, waypoint};
+use super::drawing::{caption, cell, rule, step};
 use crate::Issues;
 
 /// The end slot's button and its menu anchor.
@@ -39,16 +40,18 @@ pub(super) fn slot(
     cx: &mut Context<Issues>,
 ) -> Option<AnyElement> {
     let state = path.end?;
+    let segment = path.segment(path.count().saturating_sub(1));
     if !changeable(issues, detail) {
-        return Some(waypoint(state, path.current_id, tokens, cx).into_any_element());
+        return Some(step(state, segment, tokens).into_any_element());
     }
     let stop = Stop {
         state,
-        current: state.id == path.current_id,
+        current: segment.current,
         busy: issues.changing_state(&detail.fields.id),
     };
     Some(
         cell()
+            .child(rule(segment.filled, tokens))
             .child(trigger(issues, &stop, tokens, cx))
             .into_any_element(),
     )
@@ -64,8 +67,8 @@ fn trigger(
     tokens: &Tokens,
     cx: &mut Context<Issues>,
 ) -> AnyElement {
-    // A quiet row button sized to the stop, so its beacon stays on the trail.
-    let button = row_button(ANCHOR, label(stop), content(stop, tokens, cx))
+    // A quiet row button around the name under the rule.
+    let button = row_button(ANCHOR, label(stop), content(stop, tokens))
         .w_auto()
         .h_auto()
         .loading(stop.busy)
@@ -84,33 +87,21 @@ fn label(stop: &Stop<'_>) -> String {
     format!("End state: {}. {action}", stop.state.name)
 }
 
-fn content(stop: &Stop<'_>, tokens: &Tokens, cx: &App) -> Div {
-    let mark = if stop.busy {
-        ring(stop.current, tokens).child(Spinner::new().small().color(mark_colour(
-            stop.current,
-            tokens.muted,
-            cx,
-        )))
-    } else {
-        beacon(stop.state, stop.current, tokens, cx)
-    };
-    // The button's tighter line height would lift the caption above its
-    // peers' on the other stops; keep the page's default.
-    v_flex()
-        .flex_1()
-        .items_center()
-        .gap_1()
-        .line_height(phi())
-        .child(mark)
+/// The end state's name with the menu's chevron, and a spinner while the
+/// state changes.
+fn content(stop: &Stop<'_>, tokens: &Tokens) -> Div {
+    h_flex()
+        .min_w_0()
+        .gap_0p5()
+        .children(
+            stop.busy
+                .then(|| Spinner::new().small().color(tokens.muted)),
+        )
+        .child(caption(&stop.state.name, stop.current, tokens))
         .child(
-            h_flex()
-                .gap_0p5()
-                .child(caption(&stop.state.name, stop.current, tokens))
-                .child(
-                    Icon::from(IconName::ChevronDown)
-                        .xsmall()
-                        .text_color(tokens.muted),
-                ),
+            Icon::from(IconName::ChevronDown)
+                .xsmall()
+                .text_color(tokens.muted),
         )
 }
 

@@ -43,7 +43,7 @@ impl NoOrganisation {
     }
     pub(crate) fn message(self) -> &'static str {
         match self {
-            Self::Choose => "Choose the organisation to work in from the Organisation menu above.",
+            Self::Choose => "Choose the organisation to work in from the Organisation menu.",
             Self::NoneEligible => {
                 "This account has no NETT organisation with issue tracking. Ask an administrator to add you to one, then try again."
             }
@@ -175,7 +175,8 @@ pub(crate) fn scope_line(profile: &str, access: &Access) -> String {
         Access::Starting => profile.into(),
     }
 }
-/// The live indicator's words, or none before the board is signed in.
+/// How changes made elsewhere arrive, or nothing before the board is
+/// signed in.
 pub(crate) fn live_line(access: &Access, live: LiveStatus) -> Option<&'static str> {
     if !matches!(access, Access::Ready { .. }) {
         return None;
@@ -189,25 +190,52 @@ pub(crate) fn live_line(access: &Access, live: LiveStatus) -> Option<&'static st
     })
 }
 
+/// The connection the status bar leads with: the service and account, then
+/// how changes made elsewhere arrive, such as
+/// *Subspace API · Signed in as Ada Fixture · Live*.
+pub(crate) fn context_line(profile: &str, access: &Access, live: LiveStatus) -> String {
+    let scope = scope_line(profile, access);
+    match live_line(access, live) {
+        Some(live) => format!("{scope} · {live}"),
+        None => scope,
+    }
+}
+
+/// The list's status bar line: the connection, then the count and when the
+/// list was read. Offline, the account and *Offline* stand alone.
 pub(crate) fn status_line(
     profile: &str,
     access: &Access,
+    live: LiveStatus,
     listing: &Listing,
     now: Instant,
 ) -> String {
     if listing.offline().is_some() {
-        return format!("{profile} · Offline");
+        return match access {
+            Access::Failed(_) => scope_line(profile, access),
+            _ => format!("{} · Offline", scope_line(profile, access)),
+        };
     }
+    let context = context_line(profile, access, live);
     match (&listing.content, listing.issue_count()) {
         (Some(content), Some(count)) => format!(
-            "{profile} · {count} {} · {}",
+            "{context} · {count} {} · {}",
             if count == 1 { "issue" } else { "issues" },
             updated(content.read_at, now)
         ),
-        _ if listing.status == Status::Loading => format!("{profile} · Loading issues…"),
-        _ => scope_line(profile, access),
+        _ if listing.status == Status::Loading => format!("{context} · Loading issues…"),
+        _ => context,
     }
 }
+/// The list's status bar line with how many sub-issues it hides, when it
+/// hides some, as the Sub-issues switch also says.
+pub(crate) fn with_hidden(line: String, hidden: Option<u32>) -> String {
+    match hidden {
+        Some(count) => format!("{line} · {count} sub-issues hidden"),
+        None => line,
+    }
+}
+
 pub(crate) fn list_status(
     listing: &Listing,
     now: Instant,

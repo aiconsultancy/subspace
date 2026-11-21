@@ -75,10 +75,6 @@ impl Tab {
     pub(crate) fn from_key(key: &str) -> Option<Tab> {
         Tab::ALL.into_iter().find(|tab| tab.key() == key)
     }
-
-    pub(crate) fn index(self) -> usize {
-        Tab::ALL.iter().position(|tab| *tab == self).unwrap_or(0)
-    }
 }
 
 /// Include sub-issues in their state groups, or hide them in the list.

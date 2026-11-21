@@ -32,6 +32,7 @@ fn saved_selection_and_snapshot_cancel_keep_the_saved_appearance(cx: &mut TestAp
             &expected_fonts.body,
             &expected_fonts.mono,
             &font_names(cx),
+            &[],
         );
         assert_eq!(
             Theme::global(cx).font_family.as_ref(),

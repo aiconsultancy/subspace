@@ -73,6 +73,7 @@ pub mod tokens;
 pub mod toolbar_label;
 pub mod truncated;
 pub mod typography;
+pub mod workspace;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -663,6 +664,25 @@ pub trait Dashboard: Render + Focusable + EventEmitter<DashboardEvent> {
     /// Short status for the toolbar, such as item counts.
     fn status(&self, _cx: &App) -> Option<SharedString> {
         None
+    }
+
+    /// The docks this Space has on the workspace shell, and whether each
+    /// shows now. The shell's status bar draws a switch for each dock
+    /// reported: the navigator's at its leading end, the inspector's at its
+    /// trailing end. The default, [`workspace::SpaceDocks::NONE`], draws none.
+    fn docks(&self, _cx: &App) -> workspace::SpaceDocks {
+        workspace::SpaceDocks::NONE
+    }
+
+    /// Show or hide `dock`: its status bar switch was used. Keep the choice
+    /// with the Space's other stored choices and notify. The default does
+    /// nothing.
+    fn toggle_dock(
+        &mut self,
+        _dock: workspace::SpaceDock,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
     }
 
     /// A short mark on this dashboard's switcher tab, such as a count of

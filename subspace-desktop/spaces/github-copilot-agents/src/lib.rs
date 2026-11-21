@@ -20,15 +20,22 @@ mod dashboard;
 mod dates;
 mod filters;
 mod filters_ui;
+mod inspector;
+mod item;
 mod keys;
+mod lanes;
 mod load;
 mod logs;
 mod merge;
 mod model;
+mod navigator;
+mod opened;
 mod palette;
 mod panels;
+mod peek;
 mod rows;
 mod search_index;
+mod shell;
 mod ui;
 mod view;
 mod watch;
@@ -71,18 +78,28 @@ pub struct CopilotAgents {
     rows: Vec<AgentRow>,
     counts: Counts,
     filters: Filters,
-    /// The open panel's task, and which request it came from, so a slow
-    /// answer for a row the user already left is dropped.
+    /// The one detail slot: the sessions of the task the inspector or the
+    /// opened tab shows, and which request they came from, so a slow answer
+    /// for a row the user already left is dropped.
     detail: Option<TaskDetail>,
     detail_key: Option<String>,
     detail_error: Option<String>,
     detail_request: KeyedRequest<String>,
-    /// The one session log the panel shows, and the request that fills it.
+    /// The one session log the opened tab shows, and the request that fills it.
     log: Option<logs::OpenLog>,
     log_request: u64,
     loading: bool,
     error: Option<String>,
     loaded_at: Option<Instant>,
+    /// The work login GitHub named, once a list load asked for it. The
+    /// navigator's footer and the status bar read it.
+    login: Option<String>,
+    /// Whether the navigator shows.
+    navigator_open: bool,
+    /// Whether the inspector shows the selection beside the pane.
+    inspector_open: bool,
+    /// The row open as a tab beside the list, and which tab shows.
+    item: opened::OpenItem,
     /// The state the watcher last saw, by task id.
     previous: HashMap<String, String>,
     backoff: PollBackoff,
@@ -101,15 +118,14 @@ impl CopilotAgents {
         self.all_rows.iter().find(|row| row.key == key)
     }
 
-    /// What the row actions act on: the open panel's row, else the selected
-    /// one. A group header stands for nothing here.
+    /// What the row actions and the inspector act on: the opened row while
+    /// its tab shows, else the selected one. A group header stands for
+    /// nothing here.
     pub(crate) fn target(&self) -> Option<&AgentRow> {
-        let key = self
-            .list
-            .open_row()
-            .map(|row| &row.key)
-            .or(self.list.selected())?;
-        self.row(key)
+        match self.item.showing() {
+            Some(key) => self.row(key),
+            None => self.row(self.list.selected()?),
+        }
     }
 
     // ---- Rows --------------------------------------------------------------------------
@@ -168,17 +184,13 @@ impl CopilotAgents {
 impl EventEmitter<DashboardEvent> for CopilotAgents {}
 
 impl CopilotAgents {
-    /// The toolbar's summary line.
+    /// What is known of the GitHub account the tasks belong to.
+    pub(crate) fn account(&self) -> ui::Account<'_> {
+        ui::Account::of(self.login.as_deref(), self.loading, self.error.is_some())
+    }
+
+    /// The status bar's line: the account, then the counts.
     fn status_text(&self) -> String {
-        let filtered = match self.rows.len() == self.all_rows.len() {
-            true => String::new(),
-            false => format!(" · {} shown", self.rows.len()),
-        };
-        format!(
-            "{} rows · {} active · {} waiting for input{filtered}",
-            self.all_rows.len(),
-            self.counts.active,
-            self.counts.waiting
-        )
+        ui::status_line(&self.account().scope(), self.counts, self.rows.len())
     }
 }

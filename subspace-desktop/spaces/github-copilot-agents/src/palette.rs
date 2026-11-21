@@ -89,7 +89,7 @@ impl CopilotAgents {
         commands
     }
 
-    /// Whether the panel's open row is the one whose log is on show.
+    /// Whether the loaded task is the one whose log is on show.
     fn log_shown(&self) -> bool {
         match self.log.as_ref().map(|log| log.task_key.as_str()) {
             Some(key) => Some(key) == self.detail_key.as_deref(),

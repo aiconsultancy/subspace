@@ -1,5 +1,12 @@
 @AGENTS.md
 
+## UI work
+
+UI work in any Space follows the
+[design guide](subspace-framework/docs/design-guide.md): the workspace
+shell's zones and rules, built from the shared components. Compare your
+screenshots with its shell anatomy image before asking for review.
+
 ## Pull request reviews from Claude Code
 
 Before merge, obtain and record the independent Claude Opus 5.5 and GPT-6.2 Sol

@@ -1,4 +1,4 @@
-//! Shared searchable menus for account and run filters.
+//! Shared searchable menus for the account, the run filters and the view.
 
 use std::collections::BTreeSet;
 
@@ -9,7 +9,7 @@ use subspace_framework::dashboard::{Glyph, Tone, prefs};
 
 use crate::{
     Actions,
-    model::{Filters, StatusFilter},
+    model::{Filters, StatusFilter, View},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -21,6 +21,8 @@ pub(crate) enum Picker {
     Status,
     Grouping,
     Log,
+    /// The views, offered in the toolbar while the navigator is hidden.
+    View,
 }
 
 impl Picker {
@@ -44,6 +46,7 @@ impl Picker {
             Self::Status => "Status",
             Self::Grouping => "Grouping",
             Self::Log => "Failed job log",
+            Self::View => "View",
         }
     }
 
@@ -61,7 +64,7 @@ impl Picker {
                 }
                 .into(),
             ),
-            Self::Account | Self::Log => None,
+            Self::Account | Self::Log | Self::View => None,
         }
     }
 }
@@ -111,6 +114,7 @@ pub(crate) fn picker_values(this: &Actions, kind: Picker) -> Vec<String> {
             .map(|s| s.title().to_owned())
             .collect(),
         Picker::Grouping => vec!["Workflow".into(), "Status".into()],
+        Picker::View => View::ALL.map(|view| view.title().to_owned()).to_vec(),
         _ => run_choices(this, kind),
     }
 }
@@ -138,12 +142,20 @@ pub(crate) fn pick(this: &mut Actions, kind: Picker, value: String, cx: &mut Con
     match kind {
         Picker::Log => {
             if let Some(id) = value.split(' ').next().and_then(|id| id.parse().ok()) {
+                // The log shows in the run's details, so they must show.
+                this.show_inspector(cx);
                 this.load_job_log(id, cx);
             }
             return;
         }
         Picker::Account => {
             this.switch_account(value, cx);
+            return;
+        }
+        Picker::View => {
+            if let Some(view) = View::named(&value) {
+                this.set_view(view, cx);
+            }
             return;
         }
         Picker::Branch => this.filters.branch = filter,

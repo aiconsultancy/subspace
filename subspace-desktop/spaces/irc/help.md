@@ -1,7 +1,8 @@
 # Channels guide
 
 <!--
-Evidence: spaces/irc/src/{lib,view,rows,state,state/apply,state/counts,
+Evidence: spaces/irc/src/{lib,view,view/frame,view/conversations,
+view/details,dock,dock/layout,rows,state,state/apply,state/counts,
 state/removed,remove,lines,style,text,transcript,transcript/scroll,
 transcript/fill,members,compose,compose/recall,compose/complete,
 compose/suggest,compose/offer,join,listing,toolbar,hub,hub/running,config,setup,prompt,schema,editor,
@@ -67,16 +68,29 @@ toolbar button to show or hide this guide.
 
 ## Main view
 
-The controls below **Channels** put the initiative picker on the left and
-**Connect** or **Disconnect**, **Join…**, **Members** and **More** on the
-right. In a narrow window, use **More toolbar actions** to reach buttons
-that do not fit.
+Channels has three parts. The navigator on the left is titled **Channels**
+and lists each network with its buffers. The pane in the middle shows each
+open channel, private conversation or server buffer as a panel. The
+inspector on the right is titled **Members** and lists the members of the
+channel you are working in.
 
-The board is a dock: the list of buffers on the left, each open channel,
-private conversation or server buffer as a panel in the middle, and the
-member list of the channel you are working in on the right. Drag a dock's
-edge to resize it. The layout, including which conversations are open, how
-they are split and the docks' widths, is kept for the next launch.
+The toolbar at the top of the pane names the conversation in front in strong
+text, with its topic beside it in quieter text (its network while it has no
+topic). The initiative picker, when you have one, comes before
+that name. **Connect** or **Disconnect**, **Join…** and **More** are on the
+right. The switches at the two ends of the status bar, at the bottom of the
+window, show or hide the navigator and the inspector. While the navigator is
+hidden, a menu at the start of the toolbar names the conversation in front and lists every network's
+conversations; choose one to show it.
+
+Drag the inner edge of the navigator or the inspector to resize it, and
+double-click the edge to go back to the default width. Every Space shares
+the two widths. Which conversations are open, how they are split, and
+whether the navigator and the inspector show are kept for the next launch.
+
+The status bar shows `IRC`, the number of networks and how many of them are
+connected, then any note about initiatives, such as the connection an
+initiative still needs.
 
 ### Conversations, tabs and splits
 
@@ -105,7 +119,7 @@ connection state in words: **Disconnected**, **Connecting…**, **Signing in…*
    They are greyed out and show how many people are in each, such as
    `7 users`. See [Join channels from the list](#join-channels-from-the-list).
 
-A row's trailing number counts unread messages. It uses the accent colour and
+A row's small trailing number counts unread messages. It uses the accent colour and
 the row title turns bold when the unread messages mention you. In a private
 conversation any unread message makes the title bold. Joins, parts and other
 membership lines never count as unread.
@@ -118,20 +132,21 @@ replies to replies. Loading older history can increase the count. It works
 in channels and private conversations. Replies still appear inline; the
 count does not open a pane yet.
 
-Opening a row shows its conversation. Messages are grouped by sender: the
+Opening a row shows its conversation. Message text is at most 760 px wide,
+so a wide window does not stretch its lines. Messages are grouped by sender: the
 first message shows an avatar with the sender's initials, the nick in a colour
 that stays the same for that nick (your own nick uses the strong text colour)
-and the local time (`HH:MM`). Further messages from the same person within
+and the local time (`HH:MM`) in monospace. Further messages from the same person within
 five minutes follow without repeating them; point at one to see its time.
 The message or line under the pointer is shaded, as in Slack.
 `/me` actions are italic and notices are muted and marked **Notice**. Lines
-that mention you have a highlighted background. A pill on a rule starts each
-day: **Today**, **Yesterday** or the date.
+that mention you have a highlighted background. Each day starts with
+**Today**, **Yesterday** or the date between two hairlines.
 
 Joins, parts, quits and nick changes are condensed into one muted line, such
 as `alice, bob joined · carol left`. Topic changes, modes, server lines and
-errors stay as single compact lines. The **Server** buffer shows every line
-this way.
+errors stay as single compact lines in smaller, quieter text, each with its
+time in a monospace column. The **Server** buffer shows every line this way.
 
 mIRC bold, italic, underline, strikethrough and monospace formatting show as
 sent. mIRC colours show as a light tint of the theme's matching colour behind
@@ -163,7 +178,7 @@ another buffer and back; **Jump to latest** returns to the newest line.
 ### Switch initiatives
 
 If you have Subspace initiative memberships and a Subspace IRC connection,
-open the initiative menu below **Channels**. Search for an initiative and
+open the initiative menu at the start of the toolbar. Search for an initiative and
 select it to join its channels. **Local channels** restores the autojoin
 list in your IRC settings. The initiative choice also filters the Projects
 menu in Issues. You can change or clear the selection from either Space.
@@ -183,8 +198,9 @@ Subspace API is temporarily unreachable.
 | Control | What it does |
 | --- | --- |
 | **Connect** / **Disconnect** | Connects or disconnects the network of the selected row or group. Disabled until you select one. |
-| **Join…** | Opens **Join a channel on** the selected network. |
-| **Members** | Shows or hides the member list dock. |
+| **Join…** | Opens **Join a channel on** the selected network. The **+** in the navigator's header does the same. |
+| **Show navigator** / **Hide navigator** | The first button of the status bar shows or hides the list of networks and buffers. |
+| **Show inspector** / **Hide inspector** | The last button of the status bar shows or hides the member list. |
 | **More** | **Leave channel** leaves the selected channel and removes it from the list; for a channel you are no longer in, it reads **Remove from list**. **Close conversation** removes the selected private conversation from the list. Each is disabled for other kinds of row, as is **Leave channel** for a channel you are in while its network is not connected. |
 
 The board has no filters. Reload (`r`) connects every network that is
@@ -193,15 +209,19 @@ disconnected or failed.
 ## Details
 
 The dock tab names the conversation. Point at the name to read its network
-and topic. The **Members** toolbar button opens the member list. It follows the
-conversation you are working in and lists **Operators**, **Voiced** and
-**Members**, each sorted by nick with a small avatar and the nick's prefix.
-Away members are dimmed. Choose a member to open a private conversation with
-them, or × to hide the list. The list fills the dock up to the window's
-edge at any width you drag it to.
+and topic; the toolbar shows the topic for the conversation in front. The last
+button of the toolbar opens the member list in the inspector, whose title
+counts the members, such as **Members · 4**. It follows the conversation you
+are working in and lists **Operators**, **Voiced** and **Members**, each
+sorted by nick with a small avatar and the nick. A quiet note follows where
+Channels knows more: **you** for your own nick, and **owner**, **admin** or
+**half-operator** among the operators. Away members are dimmed. Choose a member to open a private conversation with them, or × to
+hide the list. For the **Server** buffer and private conversations the
+inspector says **No channel**.
 
-Point at the **Server** buffer's name for the connection status, any error,
-your nick and the IRCv3 capabilities the server enabled.
+The toolbar shows the **Server** buffer's connection status, any error, your
+nick and the IRCv3 capabilities the server enabled; pointing at its tab's
+name shows the same.
 
 When Subspace starts, each channel and private conversation shows the messages
 kept from earlier sessions straight away. After connecting, it asks the server
@@ -253,8 +273,9 @@ none.
 
 ### Send files as attachments
 
-Drop or paste files into the conversation, or choose **Send as attachment…**
-to turn the text you typed into a Markdown attachment. Each file waits above
+Drop or paste files into the conversation, or choose the paperclip
+(**Send as attachment…**) on the line above the composer to turn the text you
+typed into a Markdown attachment. Each file waits above
 the composer as a small thumbnail; hover it for the name and size, and use its
 **×** to remove it. Removing a text attachment puts its text back when the
 composer is empty.
@@ -280,8 +301,8 @@ message is kept." If the connection drops while your message is being sent,
 your text and attachments stay and the composer says some lines may have
 gone: check the channel before you press **Enter** again.
 
-The composer says “Visible to signed-in Subspace users for 30 days. Don’t
-paste credentials into chat.” Put material worth retaining on an issue.
+One quiet line above the composer, beside the paperclip, says “Visible to
+signed-in Subspace users for 30 days. Don’t paste credentials into chat.” Put material worth retaining on an issue.
 
 Received attachments show as a row of thumbnails under the message, in the
 order they were sent; the reference text is hidden once it resolves. Images

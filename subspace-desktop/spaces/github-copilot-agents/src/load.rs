@@ -17,9 +17,14 @@ use subspace_framework::dashboard::{DashboardEvent, Toast, alerts, refresh};
 use crate::model::Kind;
 use crate::{CopilotAgents, watch};
 
-/// What one list load returns: the task list, and the saved references,
-/// which are read from the same background thread.
-type ListResult = (Result<Vec<Task>, Error>, Vec<SubjectTaskRef>);
+/// What one list load returns: the task list, the saved references, which
+/// are read from the same background thread, and the work login when the
+/// load was asked to name it.
+type ListResult = (
+    Result<Vec<Task>, Error>,
+    Vec<SubjectTaskRef>,
+    Option<String>,
+);
 
 impl CopilotAgents {
     /// Loads the task list and the saved references, unless a load runs.
@@ -33,9 +38,11 @@ impl CopilotAgents {
             return;
         };
         self.loading = true;
+        // The login does not change while the app runs, so one answer lasts.
+        let name_login = self.login.is_none();
         cx.spawn(async move |this, cx| {
             let loaded = cx
-                .background_spawn(async move { list_tasks(&client, store) })
+                .background_spawn(async move { list_tasks(&client, store, name_login) })
                 .await;
             _ = this.update(cx, |this, cx| {
                 this.apply_list(loaded, cx);
@@ -46,9 +53,12 @@ impl CopilotAgents {
         cx.notify();
     }
 
-    fn apply_list(&mut self, (tasks, saved): ListResult, cx: &mut Context<Self>) {
+    fn apply_list(&mut self, (tasks, saved, login): ListResult, cx: &mut Context<Self>) {
         self.loading = false;
         self.saved = saved;
+        if login.is_some() {
+            self.login = login;
+        }
         match tasks {
             Ok(tasks) => {
                 self.loaded_at = Some(Instant::now());
@@ -72,8 +82,8 @@ impl CopilotAgents {
 
     // ---- The open panel ------------------------------------------------------------
 
-    /// Loads the sessions of the task the panel opened on. A local chat and
-    /// a task whose detail is already shown need no request.
+    /// Loads the sessions of the task the inspector or the opened tab shows.
+    /// A local chat needs no request.
     pub(crate) fn load_detail(&mut self, key: &str, cx: &mut Context<Self>) {
         let Some(row) = self.row(key).filter(|row| row.kind == Kind::Cloud) else {
             self.detail_key = Some(key.to_owned());
@@ -246,11 +256,21 @@ pub(crate) fn record_monitor(
     store.record(&subject, entry)
 }
 
-/// The task list and the saved references, both blocking reads.
-fn list_tasks(client: &GithubClient, store: Option<Arc<TaskStore>>) -> ListResult {
+/// The task list and the saved references, both blocking reads. With
+/// `name_login`, a list that loaded also names the work login it was read
+/// as: one more small request, which the navigator and the status bar show.
+fn list_tasks(
+    client: &GithubClient,
+    store: Option<Arc<TaskStore>>,
+    name_login: bool,
+) -> ListResult {
     let tasks = client.list_my_copilot_agent_tasks().map(|list| list.tasks);
+    let login = match name_login && tasks.is_ok() {
+        true => client.work_login().ok(),
+        false => None,
+    };
     let saved = store.and_then(|store| store.all().ok()).unwrap_or_default();
-    (tasks, saved)
+    (tasks, saved, login)
 }
 
 /// One request per monitored task. The detail endpoint is the only one that

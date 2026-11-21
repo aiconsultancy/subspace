@@ -1,6 +1,7 @@
-//! The NETT organisation menu in the Issues header. It shows only in a NETT
-//! build whose account has several business organisations; choosing one
-//! retires the hub's data for the previous organisation and starts again.
+//! The NETT organisation menu in the navigator's header, or in the toolbar
+//! while the navigator is hidden. It shows only in a NETT build whose
+//! account has several business organisations; choosing one retires the
+//! hub's data for the previous organisation and starts again.
 
 use gpui_kit::{AnyElement, Context, Pixels, Styled as _, Window, px};
 use subspace_api_client::nett::{self, Snapshot};
