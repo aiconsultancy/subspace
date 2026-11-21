@@ -140,6 +140,33 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "fleetId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "shipId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "isAdmin": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -150,7 +177,10 @@
                     "agentName",
                     "agentRank",
                     "fleet",
-                    "ship"
+                    "ship",
+                    "fleetId",
+                    "shipId",
+                    "isAdmin"
                   ],
                   "additionalProperties": false
                 }
@@ -314,7 +344,25 @@
           "fleets"
         ],
         "operationId": "fleets.fleets",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[Ee][+-]?\\d+)?$"
+            },
+            "required": false
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          }
+        ],
         "security": [
           {
             "bearer": []
@@ -333,10 +381,21 @@
                       "items": {
                         "$ref": "#/components/schemas/Fleet"
                       }
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     }
                   },
                   "required": [
-                    "items"
+                    "items",
+                    "nextCursor"
                   ],
                   "additionalProperties": false
                 }
@@ -570,20 +629,6 @@
                       }
                     ]
                   },
-                  "rearAdmiralName": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 120
-                  },
-                  "captainNames": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 120
-                    },
-                    "maxItems": 100
-                  },
                   "vmHost": {
                     "anyOf": [
                       {
@@ -604,9 +649,7 @@
                   "name",
                   "ircHost",
                   "ircPort",
-                  "ircTls",
-                  "rearAdmiralName",
-                  "captainNames"
+                  "ircTls"
                 ],
                 "additionalProperties": false
               }
@@ -628,7 +671,9 @@
             "in": "path",
             "schema": {
               "type": "string",
-              "maxLength": 80
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "^[^\\0]*$"
             },
             "required": true
           }
@@ -742,7 +787,9 @@
             "in": "path",
             "schema": {
               "type": "string",
-              "maxLength": 80
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "^[^\\0]*$"
             },
             "required": true
           }
@@ -921,34 +968,6 @@
                       }
                     ]
                   },
-                  "rearAdmiralName": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "minLength": 1,
-                        "maxLength": 120
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "captainNames": {
-                    "anyOf": [
-                      {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 120
-                        },
-                        "maxItems": 100
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
                   "vmHost": {
                     "anyOf": [
                       {
@@ -962,8 +981,426 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "version": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "maximum": 9007199254740991,
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/v1/fleets/{fleetId}/ships": {
+      "get": {
+        "tags": [
+          "fleets"
+        ],
+        "operationId": "fleets.listShips",
+        "parameters": [
+          {
+            "name": "fleetId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Ship"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "fleets"
+        ],
+        "operationId": "fleets.createShip",
+        "parameters": [
+          {
+            "name": "fleetId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Ship",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ship"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/api/v1/ships/{shipId}": {
+      "patch": {
+        "tags": [
+          "fleets"
+        ],
+        "operationId": "fleets.renameShip",
+        "parameters": [
+          {
+            "name": "shipId",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+              "format": "uuid"
+            },
+            "required": true
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ship",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ship"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "minLength": 1
+                  },
+                  "version": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "maximum": 9007199254740991,
+                        "exclusiveMinimum": 0
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "name"
+                ],
                 "additionalProperties": false
               }
             }
@@ -16090,6 +16527,18 @@
             "required": false
           },
           {
+            "name": "assigneeKind",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "human",
+                "agent"
+              ]
+            },
+            "required": false
+          },
+          {
             "name": "owner",
             "in": "query",
             "schema": {
@@ -16909,6 +17358,18 @@
                 "maxLength": 120,
                 "minLength": 1
               }
+            },
+            "required": false
+          },
+          {
+            "name": "assigneeKind",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "human",
+                "agent"
+              ]
             },
             "required": false
           },
@@ -22542,8 +23003,7 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "maxLength": 120,
-              "minLength": 1
+              "pattern": "^[^\\0]*$"
             },
             "required": false
           },
@@ -22552,8 +23012,7 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "maxLength": 120,
-              "minLength": 1
+              "pattern": "^[^\\0]*$"
             },
             "required": false
           },
@@ -22563,13 +23022,7 @@
             "schema": {
               "type": "array",
               "items": {
-                "type": "string",
-                "enum": [
-                  "proposed",
-                  "accepted",
-                  "rejected",
-                  "superseded"
-                ]
+                "type": "string"
               }
             },
             "required": false
@@ -22578,11 +23031,7 @@
             "name": "madeByType",
             "in": "query",
             "schema": {
-              "type": "string",
-              "enum": [
-                "human",
-                "agent"
-              ]
+              "type": "string"
             },
             "required": false
           },
@@ -22591,8 +23040,7 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "maxLength": 80,
-              "minLength": 1
+              "pattern": "^[^\\0]*$"
             },
             "required": false
           },
@@ -22601,7 +23049,7 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "maxLength": 200
+              "pattern": "^[^\\0]*$"
             },
             "required": false
           }
@@ -22920,10 +23368,9 @@
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "maxLength": 80,
-                          "minLength": 1
+                          "maxLength": 40
                         },
-                        "maxItems": 50
+                        "maxItems": 20
                       },
                       {
                         "type": "null"
@@ -22984,6 +23431,57 @@
                       },
                       {
                         "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "madeByAgentName": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200,
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "madeByAgentRank": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "rearAdmiral",
+                          "captain",
+                          "crew"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "madeByAgentModel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 100,
+                        "minLength": 1
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
                       }
                     ]
                   },
@@ -22996,7 +23494,8 @@
                           "teamsMessage",
                           "subspaceComment",
                           "documentOrUrl",
-                          "meeting"
+                          "meeting",
+                          "other"
                         ]
                       },
                       {
@@ -23047,6 +23546,157 @@
             }
           },
           "required": true
+        }
+      }
+    },
+    "/api/v1/decisions/counts": {
+      "get": {
+        "tags": [
+          "decisions"
+        ],
+        "operationId": "decisions.decisionCounts",
+        "parameters": [
+          {
+            "name": "issue",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[^\\0]*$"
+            },
+            "required": false
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[^\\0]*$"
+            },
+            "required": false
+          },
+          {
+            "name": "madeByType",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "required": false
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[^\\0]*$"
+            },
+            "required": false
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[^\\0]*$"
+            },
+            "required": false
+          }
+        ],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "DecisionCounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionCounts"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -23371,10 +24021,9 @@
                         "type": "array",
                         "items": {
                           "type": "string",
-                          "maxLength": 80,
-                          "minLength": 1
+                          "maxLength": 40
                         },
-                        "maxItems": 50
+                        "maxItems": 20
                       },
                       {
                         "type": "null"
@@ -30551,14 +31200,36 @@
                             ]
                           },
                           "fleet": {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 120
+                            "type": "string"
                           },
                           "ship": {
                             "anyOf": [
                               {
                                 "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "fleetId": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                                "format": "uuid"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "shipId": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                                "format": "uuid"
                               },
                               {
                                 "type": "null"
@@ -30623,6 +31294,8 @@
                           "rank",
                           "fleet",
                           "ship",
+                          "fleetId",
+                          "shipId",
                           "defaultModel",
                           "serviceTokenClientId",
                           "isActive",
@@ -30776,14 +31449,36 @@
                       ]
                     },
                     "fleet": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 120
+                      "type": "string"
                     },
                     "ship": {
                       "anyOf": [
                         {
                           "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "fleetId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "shipId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
                         },
                         {
                           "type": "null"
@@ -30848,6 +31543,8 @@
                     "rank",
                     "fleet",
                     "ship",
+                    "fleetId",
+                    "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
                     "isActive",
@@ -30953,7 +31650,8 @@
                   "name": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 120
+                    "maxLength": 64,
+                    "pattern": "^[A-Za-z0-9-]+$"
                   },
                   "rank": {
                     "type": "string",
@@ -30964,16 +31662,52 @@
                     ]
                   },
                   "fleet": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 120
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "ship": {
                     "anyOf": [
                       {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "fleetId": {
+                    "anyOf": [
+                      {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 120
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                        "format": "uuid"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "shipId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                        "format": "uuid"
                       },
                       {
                         "type": "null"
@@ -30985,19 +31719,18 @@
                   },
                   "defaultModel": {
                     "type": "string",
-                    "maxLength": 120,
+                    "maxLength": 100,
                     "minLength": 1
                   },
                   "serviceTokenClientId": {
                     "type": "string",
-                    "maxLength": 256,
+                    "maxLength": 200,
                     "minLength": 1
                   }
                 },
                 "required": [
                   "name",
                   "rank",
-                  "fleet",
                   "defaultModel",
                   "serviceTokenClientId"
                 ],
@@ -31059,14 +31792,36 @@
                       ]
                     },
                     "fleet": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 120
+                      "type": "string"
                     },
                     "ship": {
                       "anyOf": [
                         {
                           "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "fleetId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "shipId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
                         },
                         {
                           "type": "null"
@@ -31131,6 +31886,8 @@
                     "rank",
                     "fleet",
                     "ship",
+                    "fleetId",
+                    "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
                     "isActive",
@@ -31277,14 +32034,36 @@
                       ]
                     },
                     "fleet": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 120
+                      "type": "string"
                     },
                     "ship": {
                       "anyOf": [
                         {
                           "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "fleetId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "shipId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
                         },
                         {
                           "type": "null"
@@ -31349,6 +32128,8 @@
                     "rank",
                     "fleet",
                     "ship",
+                    "fleetId",
+                    "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
                     "isActive",
@@ -31454,7 +32235,8 @@
                   "name": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 120
+                    "maxLength": 64,
+                    "pattern": "^[A-Za-z0-9-]+$"
                   },
                   "rank": {
                     "type": "string",
@@ -31465,16 +32247,52 @@
                     ]
                   },
                   "fleet": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 120
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "ship": {
                     "anyOf": [
                       {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "fleetId": {
+                    "anyOf": [
+                      {
                         "type": "string",
-                        "minLength": 1,
-                        "maxLength": 120
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                        "format": "uuid"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "shipId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                        "format": "uuid"
                       },
                       {
                         "type": "null"
@@ -31486,12 +32304,12 @@
                   },
                   "defaultModel": {
                     "type": "string",
-                    "maxLength": 120,
+                    "maxLength": 100,
                     "minLength": 1
                   },
                   "serviceTokenClientId": {
                     "type": "string",
-                    "maxLength": 256,
+                    "maxLength": 200,
                     "minLength": 1
                   },
                   "version": {
@@ -31510,7 +32328,6 @@
                 "required": [
                   "name",
                   "rank",
-                  "fleet",
                   "defaultModel",
                   "serviceTokenClientId"
                 ],
@@ -31572,14 +32389,36 @@
                       ]
                     },
                     "fleet": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 120
+                      "type": "string"
                     },
                     "ship": {
                       "anyOf": [
                         {
                           "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "fleetId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "shipId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
                         },
                         {
                           "type": "null"
@@ -31644,6 +32483,8 @@
                     "rank",
                     "fleet",
                     "ship",
+                    "fleetId",
+                    "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
                     "isActive",
@@ -31817,14 +32658,36 @@
                       ]
                     },
                     "fleet": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 120
+                      "type": "string"
                     },
                     "ship": {
                       "anyOf": [
                         {
                           "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "fleetId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "shipId": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                          "format": "uuid"
                         },
                         {
                           "type": "null"
@@ -31889,6 +32752,8 @@
                     "rank",
                     "fleet",
                     "ship",
+                    "fleetId",
+                    "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
                     "isActive",
@@ -33653,12 +34518,20 @@
           "detail": {
             "type": "string"
           },
-          "currentVersion": {
+          "instance": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -33675,6 +34548,18 @@
                     "type": "string"
                   }
                 }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               {
                 "type": "null"
@@ -33711,12 +34596,20 @@
           "detail": {
             "type": "string"
           },
-          "currentVersion": {
+          "instance": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -33733,6 +34626,18 @@
                     "type": "string"
                   }
                 }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               {
                 "type": "null"
@@ -33769,12 +34674,20 @@
           "detail": {
             "type": "string"
           },
-          "currentVersion": {
+          "instance": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -33791,6 +34704,18 @@
                     "type": "string"
                   }
                 }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               {
                 "type": "null"
@@ -33827,12 +34752,20 @@
           "detail": {
             "type": "string"
           },
-          "currentVersion": {
+          "instance": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -33849,6 +34782,18 @@
                     "type": "string"
                   }
                 }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               {
                 "type": "null"
@@ -33885,12 +34830,20 @@
           "detail": {
             "type": "string"
           },
-          "currentVersion": {
+          "instance": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -33907,6 +34860,18 @@
                     "type": "string"
                   }
                 }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               {
                 "type": "null"
@@ -33943,12 +34908,20 @@
           "detail": {
             "type": "string"
           },
-          "currentVersion": {
+          "instance": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -33965,6 +34938,18 @@
                     "type": "string"
                   }
                 }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               {
                 "type": "null"
@@ -34001,12 +34986,20 @@
           "detail": {
             "type": "string"
           },
-          "currentVersion": {
+          "instance": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -34023,6 +35016,18 @@
                     "type": "string"
                   }
                 }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               {
                 "type": "null"
@@ -34059,12 +35064,20 @@
           "detail": {
             "type": "string"
           },
-          "currentVersion": {
+          "instance": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -34081,6 +35094,18 @@
                     "type": "string"
                   }
                 }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               {
                 "type": "null"
@@ -34132,6 +35157,9 @@
                       "crew"
                     ]
                   },
+                  "fleet": {
+                    "type": "string"
+                  },
                   "ship": {
                     "anyOf": [
                       {
@@ -34141,11 +35169,38 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "fleetId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                        "format": "uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "shipId": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                        "format": "uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
                   "rank",
-                  "ship"
+                  "fleet",
+                  "ship",
+                  "fleetId",
+                  "shipId"
                 ],
                 "additionalProperties": false
               },
@@ -34640,6 +35695,68 @@
       "DecisionDetail": {
         "type": "object",
         "properties": {
+          "decision": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          },
+          "implications": {
+            "type": "string"
+          },
+          "alternatives": {
+            "type": "string"
+          },
+          "acceptedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "acceptedByUserId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rejectedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rejectedByUserId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/DecisionProvenance"
+          },
           "id": {
             "type": "string",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
@@ -34908,7 +36025,8 @@
                   "teamsMessage",
                   "subspaceComment",
                   "documentOrUrl",
-                  "meeting"
+                  "meeting",
+                  "other"
                 ]
               },
               {
@@ -34936,88 +36054,49 @@
               }
             ]
           },
+          "madeBy": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "userId": {
+                    "type": "string",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                    "format": "uuid"
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "maxLength": 120,
+                    "minLength": 1
+                  },
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "human",
+                      "agent"
+                    ]
+                  }
+                },
+                "required": [
+                  "userId",
+                  "displayName",
+                  "available",
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "recordedByUserId": {
             "type": "string",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
             "format": "uuid"
-          },
-          "version": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 2147483647
-          },
-          "revisionNumber": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 2147483647
-          },
-          "createdAt": {
-            "type": "string"
-          },
-          "updatedAt": {
-            "type": "string"
-          },
-          "decision": {
-            "type": "string"
-          },
-          "context": {
-            "type": "string"
-          },
-          "why": {
-            "type": "string"
-          },
-          "implications": {
-            "type": "string"
-          },
-          "alternatives": {
-            "type": "string"
-          },
-          "acceptedAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "rejectedAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "acceptedByUserId": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "rejectedByUserId": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "provenance": {
-            "$ref": "#/components/schemas/DecisionProvenance"
           },
           "recordedBy": {
             "type": "object",
@@ -35050,9 +36129,35 @@
               "kind"
             ],
             "additionalProperties": false
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "revisionNumber": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
           }
         },
         "required": [
+          "decision",
+          "context",
+          "why",
+          "implications",
+          "alternatives",
+          "acceptedAt",
+          "acceptedByUserId",
+          "rejectedAt",
+          "rejectedByUserId",
+          "provenance",
           "id",
           "title",
           "status",
@@ -35074,22 +36179,13 @@
           "evidenceKind",
           "evidenceReference",
           "evidenceExcerpt",
+          "madeBy",
           "recordedByUserId",
+          "recordedBy",
           "version",
           "revisionNumber",
           "createdAt",
-          "updatedAt",
-          "decision",
-          "context",
-          "why",
-          "implications",
-          "alternatives",
-          "acceptedAt",
-          "rejectedAt",
-          "acceptedByUserId",
-          "rejectedByUserId",
-          "provenance",
-          "recordedBy"
+          "updatedAt"
         ],
         "additionalProperties": false
       },
@@ -35159,7 +36255,8 @@
                   "teamsMessage",
                   "subspaceComment",
                   "documentOrUrl",
-                  "meeting"
+                  "meeting",
+                  "other"
                 ]
               },
               {
@@ -35197,6 +36294,44 @@
           "evidenceKind",
           "evidenceReference",
           "evidenceExcerpt"
+        ],
+        "additionalProperties": false
+      },
+      "DecisionCounts": {
+        "type": "object",
+        "properties": {
+          "proposed": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "accepted": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "rejected": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "superseded": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "total": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "proposed",
+          "accepted",
+          "rejected",
+          "superseded",
+          "total"
         ],
         "additionalProperties": false
       },
@@ -35471,7 +36606,8 @@
                   "teamsMessage",
                   "subspaceComment",
                   "documentOrUrl",
-                  "meeting"
+                  "meeting",
+                  "other"
                 ]
               },
               {
@@ -35499,10 +36635,81 @@
               }
             ]
           },
+          "madeBy": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "userId": {
+                    "type": "string",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                    "format": "uuid"
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "maxLength": 120,
+                    "minLength": 1
+                  },
+                  "available": {
+                    "type": "boolean"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "human",
+                      "agent"
+                    ]
+                  }
+                },
+                "required": [
+                  "userId",
+                  "displayName",
+                  "available",
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "recordedByUserId": {
             "type": "string",
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
             "format": "uuid"
+          },
+          "recordedBy": {
+            "type": "object",
+            "properties": {
+              "userId": {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              "displayName": {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              "available": {
+                "type": "boolean"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "human",
+                  "agent"
+                ]
+              }
+            },
+            "required": [
+              "userId",
+              "displayName",
+              "available",
+              "kind"
+            ],
+            "additionalProperties": false
           },
           "version": {
             "type": "integer",
@@ -35543,7 +36750,9 @@
           "evidenceKind",
           "evidenceReference",
           "evidenceExcerpt",
+          "madeBy",
           "recordedByUserId",
+          "recordedBy",
           "version",
           "revisionNumber",
           "createdAt",
@@ -35796,12 +37005,20 @@
           "detail": {
             "type": "string"
           },
-          "currentVersion": {
+          "instance": {
             "anyOf": [
               {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
               },
               {
                 "type": "null"
@@ -35818,6 +37035,18 @@
                     "type": "string"
                   }
                 }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               {
                 "type": "null"
@@ -38462,26 +39691,49 @@
       "Fleet": {
         "type": "object",
         "properties": {
-          "slug": {
+          "id": {
             "type": "string",
-            "maxLength": 80
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": "string"
           },
           "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120
+            "type": "string"
           },
           "ircHost": {
-            "type": "string",
-            "maxLength": 253
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 253
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "ircPort": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 65535
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "ircTls": {
-            "type": "boolean"
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "ircWebsocketUrl": {
             "anyOf": [
@@ -38495,20 +39747,6 @@
               }
             ]
           },
-          "rearAdmiralName": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120
-          },
-          "captainNames": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 120
-            },
-            "maxItems": 100
-          },
           "vmHost": {
             "anyOf": [
               {
@@ -38520,25 +39758,57 @@
               }
             ]
           },
-          "id": {
-            "type": "string",
-            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
-            "format": "uuid"
+          "rearAdmiralName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "captainNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "irc": {
             "type": "object",
             "properties": {
               "host": {
-                "type": "string",
-                "maxLength": 253
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 253
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "port": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 65535
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "tls": {
-                "type": "boolean"
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "websocketUrl": {
                 "anyOf": [
@@ -38566,22 +39836,109 @@
           },
           "updatedAt": {
             "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "maximum": 9007199254740991,
+            "exclusiveMinimum": 0
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "userId": {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "rank": {
+                  "type": "string",
+                  "enum": [
+                    "rearAdmiral",
+                    "captain",
+                    "crew"
+                  ]
+                },
+                "shipId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                      "format": "uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "ship": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "available": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "userId",
+                "name",
+                "rank",
+                "shipId",
+                "ship",
+                "available"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "ships": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                  "format": "uuid"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
+          "id",
           "slug",
           "name",
           "ircHost",
           "ircPort",
           "ircTls",
           "ircWebsocketUrl",
+          "vmHost",
           "rearAdmiralName",
           "captainNames",
-          "vmHost",
-          "id",
           "irc",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "version",
+          "agents",
+          "ships"
         ],
         "additionalProperties": false
       },
@@ -38853,6 +40210,44 @@
           "version",
           "createdAt",
           "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "Ship": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "fleetId": {
+            "type": "string",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "maximum": 9007199254740991,
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "fleetId",
+          "name",
+          "createdAt",
+          "updatedAt",
+          "version"
         ],
         "additionalProperties": false
       },

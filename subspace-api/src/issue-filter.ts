@@ -1,11 +1,24 @@
-import { and, eq, exists, gte, inArray, isNull, lt, lte, notExists, or, sql } from "drizzle-orm";
+import {
+  and,
+  eq,
+  exists,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  notExists,
+  or,
+  sql,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { Effect } from "effect";
 import { type Database } from "./db";
 import { type Member } from "./identity";
 import { type IssueQuery } from "./issue-contract";
 import { readProject } from "./projects";
-import { cycles, issueLabels, issues, issueSubscriptions, projects, states } from "./schema";
+import { cycles, issueLabels, issues, issueSubscriptions, projects, states, users } from "./schema";
 import { today } from "./validation";
 
 type Db = (typeof Database)["Service"];
@@ -136,6 +149,22 @@ export function issueConditions(db: Db, member: Member, filters: IssueFilter, pa
           : undefined,
         filters.priority?.length ? inArray(issues.priority, filters.priority) : undefined,
         personFilter(issues.assigneeId, member.id, filters.assignee),
+        filters.assigneeKind
+          ? exists(
+              db
+                .select({ id: users.id })
+                .from(users)
+                .where(
+                  and(
+                    eq(users.organisationId, org),
+                    eq(users.id, issues.assigneeId),
+                    filters.assigneeKind === "agent"
+                      ? isNotNull(users.agentRank)
+                      : isNull(users.agentRank),
+                  ),
+                ),
+            )
+          : undefined,
         personFilter(issues.ownerId, member.id, filters.owner),
         personFilter(issues.createdById, member.id, filters.creator),
         filters.type ? eq(issues.type, filters.type) : undefined,

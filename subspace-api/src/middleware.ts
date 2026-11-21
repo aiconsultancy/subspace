@@ -1,6 +1,7 @@
 import { EffectDrizzleQueryError } from "drizzle-orm/effect-core/errors";
-import { Effect } from "effect";
+import { Effect, SchemaIssue } from "effect";
 import { isSqlError } from "effect/sql/SqlError";
+import { HttpServerRequest } from "effect/http";
 import { HttpApiMiddleware, HttpApiSecurity } from "effect/http-api";
 import { CurrentMember } from "./identity";
 import {
@@ -10,6 +11,7 @@ import {
   InternalError,
   problem,
   Unauthorised,
+  validationProblem,
 } from "./problems";
 
 export const versionedApi = "/api/v1";
@@ -27,14 +29,74 @@ export class ValidationErrors extends HttpApiMiddleware.Service<ValidationErrors
   { error: [BadRequest, InternalError] },
 ) {}
 
+const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1();
+const pagedResources = new Set(["agents", "fleets", "decisions"]);
+
 export const validationErrors = HttpApiMiddleware.layerSchemaErrorTransform(
   ValidationErrors,
-  (error) =>
-    Effect.fail(
-      error.kind === "ResponseHeaders"
-        ? problem(500, "The response could not be serialised.")
-        : problem(400, "The request contains invalid fields."),
-    ),
+  (error, { group, endpoint }) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const url = new URL(request.url, "http://localhost");
+      const invalid = formatIssues(error.cause.issue).issues[0]?.path?.[0];
+      if (error.kind === "Query" && pagedResources.has(group.identifier)) {
+        const value = typeof invalid === "string" ? url.searchParams.get(invalid) : null;
+        if (invalid === "limit" && value !== null) {
+          const limit = Number(value);
+          const message =
+            Number.isInteger(limit) && (limit < 1 || limit > 200)
+              ? "Use a limit from 1 to 200 (default 50)."
+              : `Value [${value}] is not valid for a [Int32] property!`;
+          return yield* Effect.fail(validationProblem(invalid, message));
+        }
+        if (group.identifier === "decisions" && value !== null && typeof invalid === "string") {
+          if (invalid === "madeByType" || invalid === "status") {
+            const type = invalid === "madeByType" ? "DecisionMakerType" : "ProjectDecisionStatus[]";
+            return yield* Effect.fail(
+              validationProblem(invalid, `Value [${value}] is not valid for a [${type}] property!`),
+            );
+          }
+          if (value.includes("\0"))
+            return yield* Effect.fail(
+              validationProblem(invalid, `Remove the NUL character from ${invalid}.`),
+            );
+        }
+      }
+      if (error.kind === "Params" && pagedResources.has(group.identifier)) {
+        const field = group.identifier === "decisions" && invalid === "id" ? "decisionId" : invalid;
+        if (
+          field === "decisionId" ||
+          field === "agentId" ||
+          field === "fleetId" ||
+          field === "shipId"
+        ) {
+          const segment =
+            field === "fleetId" ? url.pathname.split("/").at(-2) : url.pathname.split("/").at(-1);
+          return yield* Effect.fail(
+            validationProblem(field, `Value [${segment}] is not valid for a [Guid] property!`),
+          );
+        }
+      }
+      if (
+        error.kind === "Payload" &&
+        (endpoint.identifier === "createShip" || endpoint.identifier === "renameShip")
+      ) {
+        if (invalid === "name")
+          return yield* Effect.fail(
+            validationProblem(
+              "name",
+              "Use 1 to 64 characters on one line without surrounding whitespace.",
+            ),
+          );
+        if (invalid === "version")
+          return yield* Effect.fail(validationProblem("version", "Use a positive version."));
+      }
+      return yield* Effect.fail(
+        error.kind === "ResponseHeaders"
+          ? problem(500, "The response could not be serialised.")
+          : problem(400, "The request contains invalid fields."),
+      );
+    }),
 );
 
 type DomainProblem = (typeof endpointErrors)[number]["Type"];

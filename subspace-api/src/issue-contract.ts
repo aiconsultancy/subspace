@@ -187,6 +187,7 @@ export const IssueFilter = {
   state: Schema.optional(Schema.Array(Ref)),
   priority: Schema.optional(Schema.Array(Priority)),
   assignee: Schema.optional(Schema.Array(Ref)),
+  assigneeKind: Schema.optional(Schema.Literals(["human", "agent"])),
   owner: Schema.optional(Schema.Array(Ref)),
   label: Schema.optional(Schema.Array(Uuid)),
   creator: Schema.optional(Schema.Array(Ref)),

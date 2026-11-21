@@ -83,9 +83,9 @@ function createIssue(title: string, role: TokenRole = "admin", fields: object = 
 
 function agentInput(rank: "rearAdmiral" | "captain" | "crew") {
   return {
-    name: `Fixture ${rank}`,
+    name: `Fixture-${rank}`,
     rank,
-    fleet: "Example fleet",
+    fleet: "example-fleet",
     ship: rank === "rearAdmiral" ? null : "Example ship",
     defaultModel: "example-model",
     serviceTokenClientId: `${rank.toLowerCase()}@example.com`,
@@ -189,6 +189,98 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
     },
   );
 
+  test("fleet and ship links by ID and name follow the roster and hardware names", async () => {
+    const fleet = {
+      slug: `roster-${suffix}`,
+      name: "Example fleet",
+      ircHost: "irc.example.test",
+      ircPort: 6697,
+      ircTls: true,
+    };
+    await call(403, "/fleets", "member", "POST", fleet);
+    await call(400, "/fleets", "admin", "POST", { ...fleet, rearAdmiralName: "Ignored name" });
+    const registered = await call<Versioned>(201, "/fleets", "admin", "POST", fleet);
+    await call(409, "/fleets", "admin", "POST", fleet);
+    await call(403, `/fleets/${registered.id}/ships`, "captain", "POST", { name: "Forbidden" });
+    const ship = await call<Versioned>(201, `/fleets/${registered.id}/ships`, "member", "POST", {
+      name: "Aurora",
+    });
+    await call(409, `/fleets/${registered.id}/ships`, "admin", "POST", { name: "aUrOrA" });
+    const captain = {
+      ...agentInput("captain"),
+      name: "Zeta-captain",
+      serviceTokenClientId: "zeta@example.test",
+    };
+    await call(400, "/agents", "admin", "POST", { ...captain, fleetId, shipId: ship.id });
+    const linked = await call<{ userId: string }>(201, "/agents", "admin", "POST", {
+      ...captain,
+      fleetId: registered.id,
+      shipId: ship.id,
+    });
+    await call(201, "/agents", "admin", "POST", {
+      ...captain,
+      name: "Alpha-captain",
+      serviceTokenClientId: "alpha@example.test",
+      fleet: fleet.slug,
+      ship: "zenith",
+    });
+    await call(201, "/agents", "admin", "POST", {
+      ...agentInput("rearAdmiral"),
+      name: "Roster-admiral",
+      serviceTokenClientId: "roster-admiral@example.test",
+      fleetId: registered.id,
+    });
+    await call(200, `/ships/${ship.id}`, "member", "PATCH", {
+      version: ship.version,
+      name: "Borealis",
+    });
+    await call(409, `/ships/${ship.id}`, "admin", "PATCH", {
+      version: ship.version,
+      name: "Stale",
+    });
+    expect(await call(200, `/agents/${linked.userId}`)).toMatchObject({
+      fleetId: registered.id,
+      fleet: fleet.slug,
+      shipId: ship.id,
+      ship: "Borealis",
+    });
+    const signInResponse = await http("/auth/dev/token", undefined, "POST", {
+      email: captain.serviceTokenClientId,
+      organisation,
+    });
+    expect(signInResponse.status).toBe(200);
+    const { accessToken } = (await signInResponse.json()) as { accessToken: string };
+    const profile = await http("/me", undefined, "GET", undefined, {
+      Authorization: `Bearer ${accessToken}`,
+    });
+    expect(profile.status).toBe(200);
+    expect(await profile.json()).toMatchObject({
+      fleetId: registered.id,
+      fleet: fleet.slug,
+      shipId: ship.id,
+      ship: "Borealis",
+    });
+    expect(await call(200, `/fleets/${fleet.slug}`)).toMatchObject({
+      rearAdmiralName: "Roster-admiral",
+      captainNames: ["Alpha-captain", "Zeta-captain"],
+      agents: [
+        { name: "Roster-admiral", rank: "rearAdmiral", shipId: null, ship: null },
+        { name: "Alpha-captain", rank: "captain", ship: "zenith" },
+        { name: "Zeta-captain", rank: "captain", shipId: ship.id, ship: "Borealis" },
+      ],
+      ships: [{ id: ship.id, name: "Borealis" }, { name: "zenith" }],
+    });
+    expect(await call(200, `/fleets/${registered.id}/ships`, "member")).toMatchObject([
+      { id: ship.id, fleetId: registered.id, name: "Borealis" },
+      { fleetId: registered.id, name: "zenith" },
+    ]);
+    await call(404, `/fleets/${registered.id}/ships`, "other");
+    await call(403, "/initiatives", "member", "POST", {
+      name: "Forbidden",
+      ownerId: members.get("member"),
+    });
+  });
+
   test("only command ranks may relay crew work, and audit keeps the authenticated actor", async () => {
     const relayedCrew = { name: "Example crew", model: "example-model" };
     for (const role of ["member", "crew"] as const) {
@@ -233,6 +325,7 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
 
   test("ordinary member cannot register agents, replace repositories or modify project requirements", async () => {
     await call(403, "/agents", "member", "POST", agentInput("captain"));
+    await call(403, `/fleets/${fleetId}`, "member", "PATCH", { ircHost: "other.example.test" });
     const project = await call<Versioned>(200, `/projects/${projectId}`);
     await call(403, `/projects/${projectId}/repositories`, "member", "PUT", {
       version: project.version,
@@ -248,7 +341,7 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
     await call(409, "/agents", "admin", "POST", {
       ...agentInput("captain"),
       serviceTokenClientId: "member@example.com",
-      name: "Duplicate subject fixture",
+      name: "Duplicate-subject-fixture",
     });
     await call(400, "/agents", "admin", "POST", { ...agentInput("captain"), ship: null });
     const id = members.get("captain");
@@ -418,7 +511,7 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       name: "Stakeholder parent",
       ownerId: members.get("admin"),
     });
-    const child = await call<Versioned>(201, "/initiatives", "member", "POST", {
+    const child = await call<Versioned>(201, "/initiatives", "admin", "POST", {
       name: "Stakeholder child",
       ownerId: members.get("member"),
       parentId: parent.id,
@@ -627,6 +720,175 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       snapshot: { title: "Proposed update", status: "proposed" },
       currentVersion: 3,
     });
+  });
+
+  test("decision list items name their members and counts follow the list's filters and access", async () => {
+    type Member = { userId: string; displayName: string; available: boolean; kind: string };
+    type Decision = Versioned & {
+      status: string;
+      recordedBy: Member;
+      madeBy: Member | null;
+      madeByAgentName: string | null;
+    };
+    type Counts = Record<"proposed" | "accepted" | "rejected" | "superseded" | "total", number>;
+    const project = await call<Versioned>(201, "/projects", "admin", "POST", {
+      key: "CNT",
+      name: "Counts fixture",
+    });
+    const issue = await createIssue("Counted decision issue", "admin", { projectId: project.id });
+    const log = (role: TokenRole, fields: object) =>
+      call<Decision>(201, "/decisions", role, "POST", {
+        projectId: project.id,
+        decidedOn: "2026-11-01",
+        decision: "Fixture decision text",
+        ...fields,
+      });
+    await call(400, "/decisions", "member", "POST", {
+      projectId: project.id,
+      title: "Unverified attribution",
+      decidedOn: "2026-11-20",
+      decision: "Example decision",
+      madeByUserId: members.get("admin"),
+    });
+    await call(400, "/decisions", "captain", "POST", {
+      projectId: project.id,
+      title: "Incomplete crew relay",
+      decidedOn: "2026-11-20",
+      decision: "Example decision",
+      madeByAgentRank: "crew",
+    });
+    const cache = await log("admin", {
+      title: "Adopt the example cache",
+      status: "accepted",
+      tags: ["design"],
+      issueIds: [issue.id],
+    });
+    const proposal = await log("captain", {
+      title: "Agent proposal",
+      decision: "Use the fixture queue",
+      tags: ["design"],
+    });
+    await log("member", { title: "Rejected fixture", status: "rejected" });
+    const old = await log("member", { title: "Earlier approach", status: "accepted" });
+    await log("admin", { title: "Later approach", status: "accepted", supersedesId: old.id });
+
+    const listed = await call<Page<Decision>>(200, "/decisions?project=CNT&limit=200");
+    const byId = new Map(listed.items.map((item) => [item.id, item]));
+    expect(byId.get(cache.id)).toMatchObject({
+      madeBy: { userId: members.get("admin"), available: true, kind: "human" },
+      recordedBy: { userId: members.get("admin"), available: true, kind: "human" },
+    });
+    expect(byId.get(cache.id)!.madeBy).toEqual(byId.get(cache.id)!.recordedBy);
+    expect(byId.get(proposal.id)).toMatchObject({
+      madeBy: { userId: members.get("captain"), available: true, kind: "agent" },
+      madeByAgentName: agentInput("captain").name,
+      recordedBy: { userId: members.get("captain"), available: true, kind: "agent" },
+    });
+    const detail = await call<Decision>(200, `/decisions/${cache.id}`);
+    expect(detail.madeBy).toEqual(byId.get(cache.id)!.madeBy);
+    expect(detail.recordedBy).toEqual(byId.get(cache.id)!.recordedBy);
+    const revisions = await call<Page<{ id: string }>>(200, `/decisions/${cache.id}/revisions`);
+    expect(
+      await call(200, `/decisions/${cache.id}/revisions/${revisions.items[0]!.id}`),
+    ).toMatchObject({ snapshot: { madeBy: detail.madeBy, recordedBy: detail.recordedBy } });
+    const mcpList = await tool<Page<Decision>>("subspace_list_decisions", {
+      filters: { project: "CNT", limit: 200 },
+    });
+    expect(mcpList.structuredContent.items.find((item) => item.id === proposal.id)).toMatchObject({
+      madeBy: byId.get(proposal.id)!.madeBy,
+      recordedBy: byId.get(proposal.id)!.recordedBy,
+    });
+
+    // Each count must equal what the list returns for the same filters.
+    const expectCounts = async (filters: string, expected: Counts) => {
+      const counts = await call<Counts>(200, `/decisions/counts?${filters}`);
+      expect([filters, counts]).toEqual([filters, expected]);
+      const items = (await call<Page<Decision>>(200, `/decisions?${filters}&limit=200`)).items;
+      const tally = (status: string) => items.filter((item) => item.status === status).length;
+      expect([filters, items.length, tally("proposed"), tally("accepted")]).toEqual([
+        filters,
+        expected.total,
+        expected.proposed,
+        expected.accepted,
+      ]);
+      expect([tally("rejected"), tally("superseded")]).toEqual([
+        expected.rejected,
+        expected.superseded,
+      ]);
+    };
+    const none = { proposed: 0, accepted: 0, rejected: 0, superseded: 0, total: 0 };
+    await expectCounts("project=CNT", {
+      proposed: 1,
+      accepted: 2,
+      rejected: 1,
+      superseded: 1,
+      total: 5,
+    });
+    await expectCounts("project=cnt&madeByType=agent", { ...none, proposed: 1, total: 1 });
+    await expectCounts("project=CNT&madeByType=human", {
+      ...none,
+      accepted: 2,
+      rejected: 1,
+      superseded: 1,
+      total: 4,
+    });
+    await expectCounts("project=CNT&tag=design", { ...none, proposed: 1, accepted: 1, total: 2 });
+    await expectCounts("project=CNT&tag=DESIGN", none);
+    await expectCounts(`issue=${issue.identifier}`, { ...none, accepted: 1, total: 1 });
+    await expectCounts("project=CNT&q=%20FIXTURE%20QUEUE%20", { ...none, proposed: 1, total: 1 });
+    await expectCounts("project=CNT&q=approach", { ...none, accepted: 1, superseded: 1, total: 2 });
+    expect(await call(200, "/decisions/counts?project=CNT&status=rejected&limit=1")).toEqual(
+      await call(200, "/decisions/counts?project=CNT"),
+    );
+    expect(
+      (await tool<Counts>("subspace_count_decisions", { filters: { project: "CNT" } }))
+        .structuredContent,
+    ).toEqual(await call(200, "/decisions/counts?project=CNT"));
+
+    // Access and bad input fail exactly as the list does.
+    for (const query of ["project=CNT", "project=NONE", `issue=${issue.id}`, "madeByType=robot"]) {
+      for (const role of ["admin", "other"] as const) {
+        const list = await http(`/decisions?${query}`, role);
+        const counts = await http(`/decisions/counts?${query}`, role);
+        expect([query, role, counts.status]).toEqual([query, role, list.status]);
+        if (list.status !== 200) {
+          const normalise = ({
+            instance: _instance,
+            correlationId: _correlationId,
+            ...error
+          }: Record<string, unknown>) => error;
+          expect(normalise((await counts.json()) as Record<string, unknown>)).toEqual(
+            normalise((await list.json()) as Record<string, unknown>),
+          );
+        } else await Promise.all([list.body?.cancel(), counts.body?.cancel()]);
+      }
+    }
+    expect((await http("/decisions/counts")).status).toBe(401);
+    expect(await call(200, "/decisions/counts", "other")).toEqual(none);
+
+    // An agent that is deactivated stays named on its decisions, marked unavailable.
+    const captain = members.get("captain")!;
+    const agent = await call<Versioned>(200, `/agents/${captain}`);
+    const disabled = await call<Versioned>(200, `/agents/${captain}/deactivate`, "admin", "POST", {
+      version: agent.version,
+    });
+    try {
+      const after = await call<Page<Decision>>(200, "/decisions?project=CNT&madeByType=agent");
+      expect(after.items.map(({ recordedBy, madeBy }) => ({ recordedBy, madeBy }))).toEqual([
+        {
+          recordedBy: { ...byId.get(proposal.id)!.recordedBy, available: false },
+          madeBy: { ...byId.get(proposal.id)!.madeBy!, available: false },
+        },
+      ]);
+      expect(await call(200, `/decisions/${proposal.id}`)).toMatchObject({
+        recordedBy: { userId: captain, available: false },
+        madeBy: { userId: captain, available: false },
+      });
+    } finally {
+      await call(200, `/agents/${captain}/reactivate`, "admin", "POST", {
+        version: disabled.version,
+      });
+    }
   });
 
   test.skipIf(!webhookSecret || !fixtureOrg)(
@@ -1128,7 +1390,6 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
     "/issue-cycles?project=PAR",
     "/issues?project=PAR",
     "/issues/groups?project=PAR&groupBy=state",
-    "/decisions?project=PAR",
     "/audit?project=PAR",
   ])("foreign organisation has no access to %s", async (path) => {
     await call(404, path, "other");
