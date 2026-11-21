@@ -98,7 +98,7 @@ impl DiffView {
         segmented::control(
             "diff-layout",
             [Segment::new("Unified"), Segment::new("Split")],
-            Some(usize::from(self.layout == Layout::Split)),
+            Some(self.layout_index()),
             tokens,
             move |index, _, _, cx| {
                 _ = entity.update(cx, |view, cx| {
@@ -113,6 +113,11 @@ impl DiffView {
                 });
             },
         )
+    }
+
+    /// The chosen layout's place among the toggles: unified first, then split.
+    fn layout_index(&self) -> usize {
+        usize::from(self.layout == Layout::Split)
     }
 
     pub(super) fn tree(&self, tokens: &Tokens, window: &mut Window, cx: &mut Context<Self>) -> Div {

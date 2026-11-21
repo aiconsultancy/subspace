@@ -15,7 +15,7 @@ use subspace_framework::dashboard::list::{Detail, ServiceLink};
 mod actions;
 mod panel;
 
-pub use panel::{OnAction, PanelAction, PanelInput, panel_extra};
+pub use panel::{OnAction, PanelAction, PanelInput, page_sections, panel_extra};
 
 use crate::model::{age, full_date};
 use crate::rows::state_label;
