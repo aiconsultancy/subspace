@@ -150,7 +150,8 @@ has three filter buttons and **Clear filters**. **Hide navigator** and **Hide
 inspector**, at the two ends of the status bar, hide the navigator and the
 inspector. When the pane is narrow, the filter buttons move to an overflow
 menu. Under an opened task the toolbar has **Back**, which shows the list
-again, and **Browser (o)**.
+again, and **Browser (o)**. Pressing `1`, `2` or `3` on an opened task shows
+the list first, then opens that filter's menu from its button.
 
 | Filter | Key | Choices |
 | --- | --- | --- |
@@ -235,7 +236,9 @@ Double-click a row, press Enter on it, or choose **Open** in the inspector to
 open it as a tab beside the list's tab. Opening another row replaces it.
 Choose the list's tab or **Back**, or press Escape, to show the list again;
 the tab stays open. Close the tab with the X on it. Choosing a view or a
-repository in the navigator also shows the list.
+repository in the navigator also shows the list. If the task leaves the list,
+the page reads `This task is no longer listed.` and its tab, now named
+**Not listed**, still closes with its X.
 
 The page shows the title and state, then
 **Properties** and the sections below, in a column no wider than easy reading.
@@ -351,7 +354,7 @@ reads `Select a chat session or a cloud task first`.
 If the task's sessions are still loading, a toast reads `The task is still
 loading. Show the log again in a moment`.
 
-Subspace reads the log of the task's last session, only when you ask for it. It
+Subspace shows the log of the task's last session only when you ask for it. It
 shows **Loading the session log…**, then the log as Markdown.
 
 - The log is limited to 2 MB. A cut log ends with `The log was cut at 2 MB; this
@@ -366,9 +369,15 @@ shows **Loading the session log…**, then the log as Markdown.
   With no open cloud task, it reads `Open a cloud task first`.
 - Turn session logs on or off with **Session logs** in the command palette. They
   are on by default.
-- One log is open at a time. Subspace keeps up to 8 logs, at most 4 MB in total,
-  in `github-copilot-agents-session-log.json`. While the open task still runs, each watcher
+- One log is open at a time. The logs you show are kept in
+  `github-copilot-agents-session-log.json`: up to 8 logs, at most 4 MB in
+  total, the oldest dropped first. While the open task still runs, each watcher
   round reads the log again.
+- While session logs are on and this Space's full-text search policy is on,
+  loading a task's sessions (selecting it with the inspector shown, or opening
+  it) also reads its last session log for the search index, without showing
+  it or adding it to that file. With the policy off, nothing is read for the
+  index.
 
 ### Agent tools
 

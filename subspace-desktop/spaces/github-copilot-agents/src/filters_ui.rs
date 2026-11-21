@@ -82,12 +82,19 @@ impl CopilotAgents {
         options
     }
 
+    /// Opens a filter's menu from its toolbar button. The filters sit on
+    /// the list's toolbar, which an opened task's tab replaces, so a key or
+    /// command on an opened task shows the list first: the menu then hangs
+    /// from a button that is drawn, and its pick shows in the list.
     pub(crate) fn open_filter_menu(
         &mut self,
         picking: Picking,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.item.showing().is_some() {
+            self.show_list(cx);
+        }
         self.open_filter_menu_at(picking, None, window, cx);
     }
 

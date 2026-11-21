@@ -127,9 +127,15 @@ when the inspector is shown with a row selected, when a row is opened whose
 sessions are not held, and when switching to the other tab changes the target.
 With the inspector hidden, selecting reads nothing. Opening a row the
 inspector already read reads nothing more, where the old panel read again. An
-answer for a row the user already left is dropped. As before, each loaded
-detail may prefetch and index the last session's log when full-text search is
-on.
+answer for a row the user already left is dropped.
+
+When a task's sessions load (a row selected with the inspector shown, or
+opened), `logs::load::prefetch_latest` reads the last session's log for the
+search index only if session logs are on, the app's full-text search service
+exists and this Space's full-text search policy is on. With the policy off,
+nothing is read. The read takes the cache file's copy when it holds that
+session, and otherwise calls the Copilot API. The log goes only into the
+search index: it is not shown, and it is not written to the cache file.
 
 ## Open a cloud session in the browser
 
@@ -153,9 +159,11 @@ Failed session loads show a shared error with selectable diagnostics and Retry.
 ## The session log
 
 **l** opens the target cloud task as a tab and shows the log of its last
-session there, and hides it again. The log is read only when asked for;
-selecting a row never reads one. While the task's sessions are still loading,
-a toast asks to try again.
+session there, and hides it again. The log is shown only when asked for.
+When this Space's full-text search policy is on, loading a task's sessions
+may already have read its last session's log for the search index (see
+[Reads](#reads)); turning **Session logs** off stops both. While the task's
+sessions are still loading, a toast asks to try again.
 
 It comes from the undocumented Copilot session API, which the `gh` CLI itself
 uses:
@@ -183,9 +191,11 @@ the tool's name, each tool answer collapsed to one line with its length, and
 the entry's `created` time as the stamp the other panels use. A log over 400
 entries says how many it left out.
 
-One log is held at a time. It is cached by session id and last update in
-`github-copilot-agents-session-log.json` beside the state file (`prefs::write_cache`), never
-in `state.json`. While the open task is still running, the watcher's round
+The panel holds one log at a time. Each shown log is cached by session id
+and last update in `github-copilot-agents-session-log.json` beside the state
+file (`prefs::write_cache`), never in `state.json`. The file keeps up to 8
+logs and at most 4 MB in all (`MAX_CACHED_LOGS`, `MAX_CACHE_BYTES` in
+`logs.rs`), dropping the oldest first but always keeping at least one. While the open task is still running, the watcher's round
 reads the log again; nothing is streamed, and a refresh neither reads nor
 writes the cache.
 

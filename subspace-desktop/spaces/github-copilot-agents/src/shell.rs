@@ -29,6 +29,8 @@ const ACCOUNT_ID: &str = "github-copilot-agents-account";
 pub(crate) const BACK_ID: &str = "github-copilot-agents-back";
 /// The pane's toolbar, the list's or the opened item's.
 const TOOLBAR_ID: &str = "github-copilot-agents-toolbar";
+/// The opened tab's name once its row has left the list.
+const GONE_TAB: &str = "Not listed";
 
 // qual:allow(coupling, oi) reason: "One file per concern of the Copilot Agents dashboard, as its list, detail and filter files already are; this one owns the workspace shell around the list."
 impl CopilotAgents {
@@ -69,7 +71,8 @@ impl CopilotAgents {
     }
 
     /// The list's tab, named after the view on show, then the opened
-    /// item's, which closes.
+    /// item's, which closes. The opened tab stays while its row has left
+    /// the list, so the page that says so can still be closed.
     fn open_tabs(&self, cx: &mut Context<Self>) -> tabs::TabBar {
         let view = self.filters.kind;
         let bar = tabs::pane_tab_bar("github-copilot-agents-tabs")
@@ -79,17 +82,19 @@ impl CopilotAgents {
                 view_icon(view),
             )))
             .on_click(cx.listener(|this, index: &usize, _, cx| this.show_tab(*index, cx)));
-        match self.item.key.as_deref().and_then(|key| self.row(key)) {
-            Some(row) => bar.child(
-                tabs::tab(TabSpec::new(
-                    peek::tab_title(row),
-                    view_icon(Some(row.kind)),
-                ))
-                .aria_label(format!("{}: {}", peek::name(row), row.title))
-                .on_close(cx.listener(|this, _: &ClickEvent, _, cx| this.close_item(cx))),
-            ),
-            None => bar,
-        }
+        let Some(key) = self.item.key.as_deref() else {
+            return bar;
+        };
+        let tab = match self.row(key) {
+            Some(row) => tabs::tab(TabSpec::new(
+                peek::tab_title(row),
+                view_icon(Some(row.kind)),
+            ))
+            .aria_label(format!("{}: {}", peek::name(row), row.title)),
+            None => tabs::tab(TabSpec::new(GONE_TAB, view_icon(None)))
+                .aria_label("Opened task: no longer listed"),
+        };
+        bar.child(tab.on_close(cx.listener(|this, _: &ClickEvent, _, cx| this.close_item(cx))))
     }
 
     /// The list's toolbar: the filters. The actions on the selection sit in

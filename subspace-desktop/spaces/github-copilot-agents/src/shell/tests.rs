@@ -9,7 +9,7 @@ use subspace_framework::dashboard::list::{self, ListDashboard as _, ListState};
 use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
 use subspace_framework::dashboard::{Dashboard as _, ItemSearch, prefs};
 
-use super::{BACK_ID, stored_docks};
+use super::stored_docks;
 use crate::CopilotAgents;
 use crate::filters::{Counts, Filters};
 use crate::inspector::OPEN_ID;
@@ -152,70 +152,6 @@ fn a_click_selects_a_row_and_the_inspector_shows_it_without_opening_it(cx: &mut 
 }
 
 #[gpui_kit::test]
-fn enter_or_a_double_click_opens_the_row_as_a_tab_and_back_returns_to_the_list(
-    cx: &mut TestAppContext,
-) {
-    start(cx);
-    let (board, cx) = cx.add_window_view(board);
-    board.update(cx, |board, cx| {
-        list::update(board, cx, |list| list.select(TASK_KEY.into()));
-        // What Enter and a double click do.
-        list::update(board, cx, |list| {
-            list.activate();
-        });
-        assert_eq!(board.item.showing(), Some(TASK_KEY));
-        assert!(
-            board.list.open_row().is_none(),
-            "the shared detail panel stays shut"
-        );
-    });
-    settle(cx);
-    assert!(drawn(cx, ITEM_ID), "the task is the pane's content");
-    assert!(drawn(cx, "github-copilot-agents-item-reading"));
-    assert!(drawn(cx, "workspace-tab-strip"));
-    assert!(drawn(cx, BACK_ID));
-    assert!(
-        drawn(cx, "github-copilot-agents-peek-head"),
-        "the inspector shows the open task"
-    );
-    assert!(!drawn(cx, OPEN_ID), "an open task offers no Open");
-
-    cx.update(|window, cx| window.click(BACK_ID, cx));
-    settle(cx);
-    assert!(!drawn(cx, ITEM_ID));
-    board.read_with(cx, |board, _| {
-        assert!(board.item.showing().is_none());
-        assert_eq!(
-            board.item.key.as_deref(),
-            Some(TASK_KEY),
-            "Back leaves the tab open"
-        );
-    });
-}
-
-#[gpui_kit::test]
-fn open_in_the_inspector_opens_the_selection_and_closing_the_tab_shows_the_list(
-    cx: &mut TestAppContext,
-) {
-    start(cx);
-    let (board, cx) = cx.add_window_view(board);
-    board.update(cx, |board, cx| {
-        list::update(board, cx, |list| list.select(TASK_KEY.into()));
-    });
-    settle(cx);
-    cx.update(|window, cx| window.click(OPEN_ID, cx));
-    settle(cx);
-    assert!(drawn(cx, ITEM_ID));
-
-    board.update(cx, |board, cx| board.close_item(cx));
-    settle(cx);
-    assert!(!drawn(cx, ITEM_ID));
-    board.read_with(cx, |board, _| {
-        assert!(board.item.key.is_none(), "the tab is gone");
-    });
-}
-
-#[gpui_kit::test]
 fn both_docks_show_until_hidden_and_a_later_board_starts_as_they_were_left(
     cx: &mut TestAppContext,
 ) {
@@ -299,3 +235,5 @@ fn the_shell_toolbar_is_empty_and_the_status_leads_with_the_account(cx: &mut Tes
         })
         .unwrap();
 }
+
+mod opened;
