@@ -75,14 +75,16 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
   fresh clone has neither, and without them nothing checks a commit or a push.
 - Open a pull request only after the hooks have run on every commit in it and
   on the push. A commit made another way, such as through the GitHub API or
-  the web editor, skips them. Then, with the branch checked out, a clean
-  working tree and `base=$(git merge-base origin/main HEAD)`, run the commit
-  hooks on each commit and the push hooks on the whole range, and say in the
-  pull request that you did:
+  the web editor, skips them. Then, as the pull request's author and before
+  opening it, with the branch checked out, a clean working tree and
+  `base=$(git merge-base origin/main HEAD)`, run the commit hooks on each
+  commit and the push hooks on the whole range, and say in the pull request
+  that you did. Reviewers do not run it.
 
   ```sh
   branch=$(git branch --show-current)
-  (
+  [ -n "$branch" ] || echo 'Check out the branch first.' >&2
+  [ -n "$branch" ] && (
     for c in $(git rev-list --reverse "$base..HEAD"); do
       git checkout --quiet --detach "$c" && prek run --last-commit || exit
     done
@@ -90,18 +92,19 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
     prek run --stage pre-push --from-ref "$base" --to-ref HEAD
   ```
 
-  The loop checks out each commit in turn, merge commits included, and runs
-  the hooks on its files against its first parent. It does not rewrite
-  history. When every commit passes it returns to the branch and runs the
-  push hooks. At the first
-  failure it stops, detached at that commit with any hook fixes in the
-  working tree: read them with `git diff`, return with
-  `git checkout --force "$branch"`, which drops only those fixes, then fix
-  that commit on the branch. A single `prek run --from-ref "$base"` is not
-  enough: it checks the files as they are in the current checkout, so it
-  misses a problem, such as a private key, added in one commit and removed in
-  a later one. Nor is `git rebase --exec`: it flattens merge commits and
-  never checks their snapshots.
+  From a detached HEAD it stops before checking anything, as it could not
+  return to the branch. The loop checks out each commit in turn, merge
+  commits included, and runs the hooks on its files against its first
+  parent. It does not rewrite history. When every commit passes it returns
+  to the branch and runs the push hooks. At the first failure it stops,
+  detached at that commit with any hook fixes in the working tree: read
+  them with `git diff`, return with `git checkout --force "$branch"`, which
+  drops only those fixes, then fix that commit on the branch. A single
+  `prek run --from-ref "$base"` is not enough: it checks the files as they
+  are in the current checkout, so it misses a problem, such as a private
+  key, added in one commit and removed in a later one. Nor is
+  `git rebase --exec`: it flattens merge commits and never checks their
+  snapshots.
 - Write prose in British English. Keep existing code and API identifiers.
 - Keep this public repository free of secrets, tokens, real tenant or client
   IDs, internal hostnames, personal data, and organisation-specific branding
