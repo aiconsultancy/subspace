@@ -112,11 +112,11 @@ for path in "$@"; do
 		# would copy files from this machine, such as Azure's token cache, into
 		# the signed archive. Refuse links, unsafe paths and duplicate entries.
 		while IFS= read -r member; do
-			# Windows drops trailing dots and spaces from a name, so evil.dll.
-			# would land as evil.dll; it forbids <>:"|?* and control
-			# characters; and it reserves device names such as NUL in any
-			# folder and with any extension. unzip lists a name it can't show
-			# in ASCII with ? in place of each byte, so that is refused too.
+			# Release archives use plain ASCII names. Windows drops trailing
+			# dots and spaces from a name, so evil.dll. would land as evil.dll;
+			# it forbids <>:"|?* and control characters; and it reserves device
+			# names such as NUL in any folder and with any extension.
+			if LC_ALL=C grep -q '[^ -~]' <<<"$member"; then fail "unsafe entry in $path: $member"; fi
 			case "$member" in
 			'' | /* | *\\* | .. | ../* | */.. | */../* | *. | *./* | *" " | *" "/* | *[\<\>:\"\|?\*]* | *[[:cntrl:]]*)
 				fail "unsafe entry in $path: $member" ;;
