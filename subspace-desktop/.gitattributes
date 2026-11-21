@@ -12,3 +12,7 @@ licenses/onnxruntime/LICENSE -text whitespace=-blank-at-eol,-blank-at-eof,-space
 licenses/onnxruntime/ThirdPartyNotices.txt -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 licenses/rust-crates/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 licenses/webview2/*.txt -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+licenses/fonts/LICENSE-* -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+
+# Embedded font files are binary: no line-ending conversion or text diff.
+*.ttf binary
