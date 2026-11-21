@@ -2,6 +2,7 @@
 //! runtime's [`Event`]s in order. Pure data: no GPUI, no sockets.
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::ops::Range;
 
 use chrono::{DateTime, Duration, Utc};
 use subspace_client_irc::{
@@ -12,6 +13,7 @@ use subspace_client_irc::{
 mod apply;
 mod counts;
 mod directory;
+mod folding;
 mod joins;
 mod merge;
 mod removed;
@@ -43,6 +45,11 @@ pub(crate) struct Network {
     /// Nick-wide status lines while connected; dropped when the connection
     /// ends and never stored.
     pub statuses: Statuses,
+    /// The sequences of every line already held when the current connection
+    /// began, such as lines restored from the store or seen on an earlier
+    /// connection; `None` while not connected. Lines outside the range, live
+    /// or from history, arrived on this connection.
+    pub held_at_connect: Option<Range<i64>>,
 }
 
 /// A line with a local sequence number: a stable identity for lines that
@@ -98,6 +105,10 @@ pub(crate) struct Buffer {
     pub read_marker: Option<DateTime<Utc>>,
     pub joined: bool,
     pub history: History,
+    /// The held lines that are trusted request progress, by sequence: the
+    /// transcript folds them into their request's status line, and they
+    /// never count as unread. A line stays folded while it is held.
+    pub folded: HashSet<i64>,
 }
 
 impl Buffer {
@@ -190,6 +201,7 @@ impl IrcState {
                 if let Some(old) = self.network(&network.id) {
                     network.status = old.status.clone();
                     network.caps = old.caps.clone();
+                    network.held_at_connect = old.held_at_connect.clone();
                     if matches!(old.status, ConnectionStatus::Connected { .. }) {
                         network.nick = old.nick.clone();
                         network.statuses = old.statuses.clone();
@@ -331,6 +343,7 @@ impl IrcState {
             return;
         }
         merge::merge(self, key, lines, false);
+        folding::refold(self, &folding::Scope::Buffer(key.clone()));
     }
 
     /// The newest message each channel and private conversation of
@@ -450,6 +463,7 @@ fn network(config: &NetworkConfig) -> Network {
         nick: config.nickname.clone(),
         caps: Vec::new(),
         statuses: Statuses::default(),
+        held_at_connect: None,
     }
 }
 

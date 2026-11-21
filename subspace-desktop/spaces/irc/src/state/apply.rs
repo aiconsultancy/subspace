@@ -7,12 +7,20 @@ use subspace_client_irc::{BufferKey, Event, Line, LineKind, Member, NetworkId, T
 
 use super::{
     Attention, AttentionKind, Entry, HISTORY_MAX, HistoryState, IrcState, LINE_CAP, Topic, counts,
-    typing_expiry,
+    folding, typing_expiry,
 };
 
 mod status;
 
+/// Applies `event`, then folds any request progress it made trustworthy.
 pub(super) fn event(state: &mut IrcState, event: Event, now: DateTime<Utc>) -> Option<Attention> {
+    let scope = folding::scope(&event);
+    let attention = dispatch(state, event, now);
+    scope.iter().for_each(|scope| folding::refold(state, scope));
+    attention
+}
+
+fn dispatch(state: &mut IrcState, event: Event, now: DateTime<Utc>) -> Option<Attention> {
     match event {
         Event::NickStatus {
             network,
@@ -214,6 +222,8 @@ fn append(state: &mut IrcState, line: Line) -> Option<Attention> {
         return None;
     }
     let highlight = super::is_highlight(&line, &state.highlights);
+    // Trusted progress folds into its request's status line: never unread.
+    let folded = crate::thread_status::folds(state, &line);
     let key = line.buffer.clone();
     let seq = state.next_seq;
     state.next_seq += 1;
@@ -231,7 +241,7 @@ fn append(state: &mut IrcState, line: Line) -> Option<Attention> {
         line,
         highlight,
     };
-    let unread = counts::count(buffer, &key, &entry);
+    let unread = counts::count(buffer, &key, &entry, folded);
     let attention = unread.then(|| attention(&entry)).flatten();
     buffer.entries.push_back(entry);
     let cap = LINE_CAP + buffer.history.extra;

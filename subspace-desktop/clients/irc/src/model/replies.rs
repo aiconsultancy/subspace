@@ -121,6 +121,7 @@ impl Line {
             buffer,
             id: None,
             reply_to: None,
+            client_tags: BTreeMap::new(),
             time,
             kind,
             from: None,

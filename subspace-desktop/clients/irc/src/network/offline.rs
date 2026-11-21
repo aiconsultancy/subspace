@@ -19,6 +19,7 @@ impl Reply {
                 buffer,
                 id: None,
                 reply_to: None,
+                client_tags: Default::default(),
                 time: now,
                 kind: LineKind::Error,
                 from: None,

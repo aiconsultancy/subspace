@@ -1,5 +1,7 @@
 //! Building displayable lines: buffers, timestamps, ownership and highlights.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 
 use super::{Session, send::REPLY};
@@ -30,6 +32,7 @@ pub(super) fn line(
             .tag(REPLY)
             .filter(|id| !id.is_empty() && matches!(message.command.as_str(), "PRIVMSG" | "NOTICE"))
             .map(str::to_string),
+        client_tags: client_tags(message),
         time: message
             .tag("time")
             .and_then(parse_time)
@@ -53,6 +56,7 @@ pub(super) fn local_line(session: &Session, target: Target, kind: LineKind, text
         buffer: session.buffer(target),
         id: None,
         reply_to: None,
+        client_tags: BTreeMap::new(),
         time: session.now,
         kind,
         from: own.then(|| session.reg.nick.clone()),
@@ -61,6 +65,18 @@ pub(super) fn local_line(session: &Session, target: Target, kind: LineKind, text
         highlight: false,
         own,
     }
+}
+
+/// The client-only tags (`+` prefix) of a `PRIVMSG` or `NOTICE`, except the
+/// reply reference, which [`Line::reply_to`] holds. Other commands keep none.
+fn client_tags(message: &Message) -> BTreeMap<String, String> {
+    let message_or_notice = matches!(message.command.as_str(), "PRIVMSG" | "NOTICE");
+    message
+        .tags
+        .iter()
+        .filter(|(key, _)| message_or_notice && key.starts_with('+') && key.as_str() != REPLY)
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
 }
 
 pub(super) fn parse_time(text: &str) -> Option<DateTime<Utc>> {

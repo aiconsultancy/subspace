@@ -5,8 +5,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+mod listing;
 mod replies;
 mod send_result;
+pub use listing::ListedChannel;
 pub use replies::ThreadRoots;
 pub use send_result::SendResult;
 
@@ -138,6 +140,12 @@ pub struct Line {
     /// later history page can resolve its root with [`Line::thread_root`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
+    /// The client-only tags (`+` prefix) of a `PRIVMSG` or `NOTICE`, as
+    /// received, such as a machine-readable marker another client added.
+    /// `+draft/reply` is not repeated here; see [`Line::reply_to`]. A
+    /// multiline message takes them from its opening `BATCH` only.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub client_tags: std::collections::BTreeMap<String, String>,
     /// `server-time`, else the time received.
     pub time: DateTime<Utc>,
     pub kind: LineKind,
@@ -198,18 +206,6 @@ pub struct Anchor {
     /// The line's IRCv3 `msgid`, when it has one.
     pub id: Option<String>,
     pub time: DateTime<Utc>,
-}
-
-/// One channel from the server's `LIST` reply (`RPL_LIST`, 322).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ListedChannel {
-    pub name: String,
-    /// The visible users the server counted.
-    pub users: u32,
-    /// The topic as sent, mIRC formatting intact; some servers lead it with
-    /// the channel modes, such as `[+nt]`.
-    #[serde(default)]
-    pub topic: String,
 }
 
 /// What the runtime reports. Owners apply events in order.

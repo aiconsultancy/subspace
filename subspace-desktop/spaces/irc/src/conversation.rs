@@ -32,6 +32,7 @@ use subspace_framework::dashboard::Tokens;
 use crate::compose::{self, Draft};
 use crate::hub::Hub;
 use crate::markup::{Mentions, Ref};
+use crate::thread_status;
 use crate::transcript::{self, Claim, Row, RowContext, Scroller};
 
 /// What a conversation asks its host to do.
@@ -54,6 +55,7 @@ pub(crate) struct Conversation {
     scroll: Scroller,
     pub(crate) summaries: summaries::Summaries,
     replies: Rc<transcript::replies::Counts>,
+    statuses: Rc<thread_status::Statuses>,
     pub(crate) draft: Draft,
     pub(crate) tray: crate::uploads::outgoing::Tray,
     pub(crate) upload_viewer: Option<crate::uploads::viewer::Viewer>,
@@ -105,6 +107,7 @@ impl Conversation {
             scroll: Scroller::new(cx),
             summaries: Default::default(),
             replies: Rc::default(),
+            statuses: Rc::default(),
             draft,
             tray: crate::uploads::outgoing::Tray::default(),
             upload_viewer: None,
@@ -159,24 +162,26 @@ impl Conversation {
     /// Shows the buffer from its latest line.
     fn show_latest(&mut self, cx: &mut Context<Self>) {
         self.refresh_replies(cx);
+        self.refresh_statuses(cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
         self.scroll.reset(rows, ids, cx);
     }
 
     /// Scrolls to the line numbered `seq` and selects it, as opening a
-    /// search result does. False when the buffer does not hold it.
+    /// search result does. Folded progress shows its request instead. False
+    /// when the buffer does not hold it.
     pub fn reveal(&mut self, seq: i64, cx: &mut Context<Self>) -> bool {
         let (rows, ids) = self.current_rows(cx);
-        let at = self
+        let shown = self
             .hub
             .read(cx)
             .state
             .buffer(&self.buffer)
-            .and_then(|held| held.entries.iter().position(|entry| entry.seq == seq));
-        let index = at.and_then(|at| transcript::row_of(&rows, at));
+            .and_then(|held| thread_status::shown_entry(held, seq));
+        let index = shown.and_then(|(at, _)| transcript::row_of(&rows, at));
         self.scroll.replace(rows, ids, cx);
-        let Some(index) = index else {
+        let (Some(index), Some((_, seq))) = (index, shown) else {
             return false;
         };
         self.target = Some(seq);
@@ -195,11 +200,12 @@ impl Conversation {
 
     /// Re-reads the buffer after the hub changed, keeping the reader's place.
     fn sync(&mut self, cx: &mut Context<Self>) {
-        let previous = self.replies.clone();
+        let previous = (self.replies.clone(), self.statuses.clone());
         self.refresh_replies(cx);
+        self.refresh_statuses(cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
-        let changed = self.changed_reply_rows(&rows, &previous, cx);
+        let changed = self.changed_reply_rows(&rows, (&*previous.0, &*previous.1), cx);
         let revision = self.find_active.then(|| find::revision(self, cx));
         let find_changed = self.scroll.rows() != rows || self.find_source != revision;
         self.find_source = revision;
@@ -215,10 +221,11 @@ impl Conversation {
         cx.notify();
     }
 
+    /// Root rows whose reply count or request status changed, to remeasure.
     fn changed_reply_rows(
         &self,
         rows: &[Row],
-        previous: &transcript::replies::Counts,
+        (replies, statuses): (&transcript::replies::Counts, &thread_status::Statuses),
         cx: &App,
     ) -> Vec<usize> {
         self.hub
@@ -226,7 +233,18 @@ impl Conversation {
             .state
             .buffer(&self.buffer)
             .map(|held| {
-                transcript::replies::changed_rows(rows, &held.entries, previous, &self.replies)
+                let entries = &held.entries;
+                let mut changed =
+                    transcript::replies::changed_rows(rows, entries, replies, &*self.replies);
+                changed.extend(transcript::replies::changed_rows(
+                    rows,
+                    entries,
+                    statuses,
+                    &*self.statuses,
+                ));
+                changed.sort_unstable();
+                changed.dedup();
+                changed
             })
             .unwrap_or_default()
     }
@@ -240,6 +258,20 @@ impl Conversation {
             .map(|held| transcript::replies::counts(&self.buffer, held))
             .unwrap_or_default();
         self.replies = Rc::new(counts);
+    }
+
+    /// Rebuilds the request status lines; markers held from before the
+    /// network's current connection read as stale.
+    fn refresh_statuses(&mut self, cx: &App) {
+        let state = &self.hub.read(cx).state;
+        let connected = state
+            .network(&self.buffer.network)
+            .and_then(|network| network.held_at_connect.as_ref());
+        let statuses = state
+            .buffer(&self.buffer)
+            .map(|held| thread_status::statuses(held, connected))
+            .unwrap_or_default();
+        self.statuses = Rc::new(statuses);
     }
 
     /// The shared row facts: who may be mentioned, today, and where
@@ -256,7 +288,9 @@ impl Conversation {
             focus: self.keyboard.at,
             card: self.keyboard.at.and(self.keyboard.card.clone()),
             upload_focus: keys::focused_upload(self, cx),
-            replies: self.replies.clone(),
+            // Shared counts, not copies: each row takes a reference.
+            replies: Rc::clone(&self.replies),
+            statuses: Rc::clone(&self.statuses),
         }
     }
 

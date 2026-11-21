@@ -295,6 +295,12 @@ retain it. Ordinary composer and agent sends are unchanged.
 See the [protocol change record](changes/irc-reply-tags/README.md) for tests
 and proof commands.
 
+The runtime also keeps the other client-only tags (`+` prefix) of a
+`PRIVMSG` or `NOTICE` as `Line::client_tags`, live and in history, so a
+Space can read a machine-readable marker that another client added. A
+multiline message takes them from its opening `BATCH` only. They are stored
+with the line.
+
 ### Loaded reply counts
 
 A root message with loaded replies shows their count and the latest reply's
@@ -318,6 +324,56 @@ tooltip says why otherwise. Commands that need the server while a network is
 disconnected or still connecting (input, joins, leaving a channel) leave a
 **Not connected** error line instead of being dropped. Your user modes read as
 `Your user modes are +Zi` (`RPL_UMODEIS`) or `Your user modes changed: +w`.
+
+### Request status lines
+
+Stargate reports progress on a request as a `NOTICE` carrying
+`+stargate/progress=<stage>` (`thread_status::PROGRESS_TAG`) and
+`+draft/reply=<the request's msgid>`. Channels folds trusted progress into
+one line under that request, such as `astra · Using a tool`, updated in
+place, instead of a reply row per notice. It never reads the notice's
+prose. The contract, the trust rule and its sources, and the stage mapping
+are in the [change record](changes/irc-thread-status/spec.md).
+
+- **Trust.** A notice folds only when it replies to a message or action
+  this buffer holds (in a private conversation, our own), and its
+  server-set `account` tag names the account the server reports for the
+  ship that request asks: the nick its first word addresses (`nick:`,
+  `nick,` or `@nick`), or a private conversation's partner, looked up in the
+  member lists (`WHOX`, `extended-join`, `account-notify`). Without that
+  account, nothing folds. Untrusted, unrecognised and uncorrelated notices,
+  questions, answer instructions and final replies stay ordinary messages,
+  counted and notified as before.
+- **One line per request**, keyed by the request's own message ID, so two
+  requests in one thread each have one. The newest trusted notice sets
+  **Receipt unconfirmed**, **Accepted**, **Queued**, **Thinking**, **Using a
+  tool**, **Waiting to retry**, **Waiting for your answer**, **Answer
+  received** or **Writing a reply**; an update to one request leaves the
+  others alone.
+  The agent is the nick on the newest trusted notice, shown as plain
+  text on one line and cut to 32 characters.
+- **Endings.** `completed` or `failed` removes only its request's line, and
+  no later or older notice brings it back. A main-room final reply without a
+  reply tag clears nothing.
+- **Stale.** The line shows the last stage, its time and a **Stale** pill
+  when the notice carried `,disconnected`, while the network is not
+  connected, or when the notice was already held when the network's current
+  connection began (`Network::held_at_connect`): restored from the store or
+  seen before a reconnect. Anything received on the current connection,
+  live or as history, is current.
+- **Counting.** `Buffer::folded` holds the trusted notices, refreshed after
+  every new line, history page, backfill, restore and member list change
+  (`state/folding.rs`); a line stays folded while held. Folded notices make
+  no row, are not replies, never count as unread and never notify, live or
+  from history. They are stored and searchable; opening one from Search
+  shows its request.
+- **Reopening.** Statuses are rebuilt from the held lines on every change,
+  so a restart or a reopened thread reads the same.
+- The composer's typing line is unchanged and stays conversation-wide.
+- This status belongs to one request, by its message ID. It is not the
+  nick-wide `status` metadata from `draft/metadata-2`
+  (`Event::NickStatus`), which this change leaves as it is; a separate
+  change, `channels-agent-status`, shows that one.
 
 ## Message history and search
 
@@ -834,6 +890,15 @@ until it is stopped, and writes the matching Channels configuration for
 [agent status change record](changes/channels-agent-status/delivery.md#evidence)
 has the commands.
 
+`scripts/irc-thread-status-fixture.py --config <file>` writes a Channels
+configuration for `CAPTURE_IRC_CONFIG` and plays a fictional ship, `astra`,
+answering three requests in `#thread-status` with tagged progress: two in
+one thread, a question and its answer, a lookalike notice from another
+account (`nova`), a lost event stream, a main-room final reply and one
+request completing, timed from when the capture build joins. Both register
+throwaway accounts on the local server. Its capture command is in the
+[change record](changes/irc-thread-status/delivery.md).
+
 The runtime's integration test against the same server runs when
 `IRC_TEST_SERVER` is set (`IRC_TEST_SERVER=127.0.0.1:16667 cargo test -p
 subspace-client-irc`) and is skipped otherwise. With the same variable,
@@ -874,9 +939,10 @@ messages after its anchor.
   mentions us or is in a private conversation raises `Attention`. History
   (`chathistory` batches, with their `draft/event-playback` events), a
   bouncer's replay (`Event::Replayed`, from ZNC's `znc.in/playback` batch),
-  our own lines, the **Server** buffer and lines the read marker covers
-  never do. The hub raises it for conversations not on screen (the focused
-  one and each tab group's displayed tab, published by the board), as a
+  our own lines, the **Server** buffer, lines the read marker covers and
+  folded request progress never do. The hub raises it for conversations not
+  on screen (the focused one and each tab group's displayed tab, published
+  by the board), as a
   `Notice::described` from `notice.rs`: who and where, with the network as
   the OS body, never the message. IRC declares OS delivery with the Glass
   sound as its notification defaults. See
@@ -948,6 +1014,13 @@ messages after its anchor.
   at low opacity; a row that mentions us keeps its `select` fill
   (`transcript/fill.rs`). Message and compact-line text is capped at
   `workspace::READING_WIDTH_PX`; the row's fill runs the pane's width.
+  `thread_status.rs` reads the progress marker and `thread_status/trust.rs`
+  decides which notices the server vouches for; `state/folding.rs` keeps
+  each buffer's folded set, which `lines.rs` leaves out of the rows.
+  `thread_status/model.rs` rebuilds each request's status from the folded
+  notices on every conversation sync, beside the reply counts, and
+  `transcript/status.rs` draws it under the request with GPUI Kit's
+  `Marker` (see [Request status lines](#request-status-lines)).
   See [GPUI-Kit messaging reuse](../../subspace-framework/docs/ui-components.md#gpui-kit-messaging-reuse).
 - The composer (`compose.rs`) is the shared `ChatInput::message` in plain-text
   mode with recall keys, under the shared completion list. `Enter` sends and
