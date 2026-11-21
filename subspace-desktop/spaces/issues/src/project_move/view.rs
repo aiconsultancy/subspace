@@ -2,7 +2,7 @@ use super::{Issues, Phase, picker};
 use gpui_kit::component::{Disableable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyElement, Context, Div, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    Styled as _, TestSupportExt as _, div,
+    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
 };
 use subspace_api_client::issue_moves::{Unreconciled, UnreconciledReason};
 use subspace_framework::dashboard::{
@@ -86,8 +86,12 @@ fn moved(
     cx: &mut Context<Issues>,
 ) -> Div {
     let open = identifier.to_owned();
+    // The list takes what room there is and scrolls, however long, so Open
+    // stays in view below it.
     v_flex()
         .gap_3()
+        .flex_1()
+        .min_h_0()
         .child(format!(
             "Moved to {identifier}. These sub-issues could not be confirmed there. Check each one before relying on the move."
         ))
@@ -96,6 +100,8 @@ fn moved(
                 .id("issue-move-unreconciled")
                 .test_support()
                 .gap_1()
+                .min_h_0()
+                .overflow_y_scroll()
                 .children(unreconciled.iter().map(|item| unreconciled_row(item, tokens))),
         )
         .child(

@@ -67,7 +67,7 @@ fail() { echo "capture: $*" >&2; exit 1; }
 if [[ "$host_platform" = Darwin ]]; then
 TMPDIR="$fixture/tmp" XDG_CONFIG_HOME=/real-user/config GH_CONFIG_DIR=/real-user/gh GH_TOKEN=real-user-token \
     CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" CAPTURE_CONFIG='{"boards": {"actions": true}}' \
-    CAPTURE_DECISION_SCENARIO=forbidden CAPTURE_MOVE_UNCONFIRMED=1 \
+    CAPTURE_DECISION_SCENARIO=forbidden CAPTURE_MOVE_UNCONFIRMED=1 CAPTURE_UPLOAD_SCENARIO=unknown \
     bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >"$fixture/capture.out"
 
 args="$fixture/open/args.txt"
@@ -85,6 +85,7 @@ for expected in "XDG_CONFIG_HOME=$home/.config" "XDG_DATA_HOME=$home/.local/shar
 done
 grep -Eq "^GH_CONFIG_DIR=$fixture/tmp/" "$args" || fail "gh config is not the fixture"
 grep -Fxq SUBSPACE_CAPTURE_MOVE_UNCONFIRMED=1 "$args" || fail "CAPTURE_MOVE_UNCONFIRMED did not reach the app"
+grep -Fxq SUBSPACE_CAPTURE_UPLOAD_SCENARIO=unknown "$args" || fail "CAPTURE_UPLOAD_SCENARIO did not reach the app"
 grep -Eq "^SUBSPACE_API_ACCESS_JWT_FILE=$fixture/tmp/[^/]+/access-jwt$" "$args" || fail "the access assertion is not a private fixture file"
 if grep -Fq fixture-access "$args"; then fail "the access assertion itself reached open"; fi
 grep -Eq "^PATH=$fixture/tmp/[^:]+/bin:/usr/bin:/bin:/usr/sbin:/sbin$" "$args" || fail "PATH is not the fixture"
@@ -112,6 +113,10 @@ rm -rf "$fixture/open"
 TMPDIR="$fixture/tmp" CAPTURE_NO_GH=1 bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null
 if grep -Fxq hosts.yml "$fixture/open/gh.txt"; then fail "CAPTURE_NO_GH left gh accounts"; fi
 if grep -Fq SUBSPACE_CAPTURE_MOVE_UNCONFIRMED "$fixture/open/args.txt"; then fail "the move fixture is on by default"; fi
+if grep -Fq SUBSPACE_CAPTURE_UPLOAD_SCENARIO "$fixture/open/args.txt"; then fail "the upload fixture is on by default"; fi
+if TMPDIR="$fixture/tmp" CAPTURE_UPLOAD_SCENARIO=other bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null 2>&1; then
+    fail "an unknown upload scenario was accepted"
+fi
 fi
 
 # The Linux native executable records the environment it actually receives.

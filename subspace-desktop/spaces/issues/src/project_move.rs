@@ -364,21 +364,14 @@ mod tests {
             "Move stays available in the default build"
         );
     }
-    /// A NETT move can commit while some of its sub-issues cannot be read
-    /// back in the destination: they are listed, with what was found, and
-    /// the moved issue opens only when the person asks.
-    #[gpui_kit::test]
-    fn a_move_with_sub_issues_it_could_not_confirm_lists_them_first(cx: &mut TestAppContext) {
-        use subspace_api_client::issue_moves::{Unreconciled, UnreconciledReason};
-        let fixture = offline_with(|r| {
-            move_route(
-                r,
-                &AtomicUsize::new(1),
-                &AtomicBool::new(true),
-                &AtomicBool::new(false),
-            )
-        });
-        let (board, cx) = previewing_a_move_to_ops(&fixture, cx);
+    /// The board, after a move to OPS committed with `unreconciled`
+    /// sub-issues it could not confirm, as a NETT move may.
+    fn moved_with<'a>(
+        fixture: &Offline,
+        cx: &'a mut TestAppContext,
+        unreconciled: Vec<subspace_api_client::issue_moves::Unreconciled>,
+    ) -> (Entity<Issues>, &'a mut VisualTestContext) {
+        let (board, cx) = previewing_a_move_to_ops(fixture, cx);
         let preview = |b: &Issues| match &b.project_move.as_ref().unwrap().phase {
             Phase::Preview(preview) => Some(preview.clone()),
             _ => None,
@@ -392,14 +385,6 @@ mod tests {
         moved["description"] = json!("");
         moved["todos"] = json!([]);
         let moved = serde_json::from_value(moved).unwrap();
-        let unreconciled = vec![
-            Unreconciled::new("3", "SUB-3", UnreconciledReason::Elsewhere),
-            Unreconciled::new(
-                "4",
-                "SUB-4",
-                UnreconciledReason::Unread(subspace_api_client::Error::NotFound),
-            ),
-        ];
         cx.update(|window, cx| {
             board.update(cx, |b, cx| {
                 b.menu = None;
@@ -408,8 +393,48 @@ mod tests {
             })
         });
         render(cx);
+        (board, cx)
+    }
+
+    fn fixture() -> Offline {
+        offline_with(|r| {
+            move_route(
+                r,
+                &AtomicUsize::new(1),
+                &AtomicBool::new(true),
+                &AtomicBool::new(false),
+            )
+        })
+    }
+
+    /// A NETT move can commit while some of its sub-issues cannot be read
+    /// back in the destination: they are listed, with what was found, and
+    /// the moved issue opens only when the person asks.
+    #[gpui_kit::test]
+    fn a_move_with_sub_issues_it_could_not_confirm_lists_them_first(cx: &mut TestAppContext) {
+        use subspace_api_client::issue_moves::{Unreconciled, UnreconciledReason};
+        let unreconciled = vec![
+            Unreconciled::new("3", "SUB-3", UnreconciledReason::Elsewhere),
+            Unreconciled::new(
+                "4",
+                "SUB-4",
+                UnreconciledReason::Unread(subspace_api_client::Error::NotFound),
+            ),
+        ];
+        let fixture = fixture();
+        let (board, cx) = moved_with(&fixture, cx, unreconciled);
         assert!(crate::tests::has(cx, "issue-move-unreconciled"));
         assert!(crate::tests::has(cx, "issue-move-open"));
+        // A short list keeps Open right below it.
+        cx.update(|window, _| {
+            use gpui_kit::test::TestWindowExt as _;
+            let list = window.find("issue-move-unreconciled").bounds();
+            let open = window.find("issue-move-open").bounds();
+            assert!(
+                open.top() - list.bottom() < gpui_kit::px(40.),
+                "{list:?} {open:?}"
+            );
+        });
         // The move happened: no fresh preview replaces the list.
         board.update(cx, |b, cx| b.load_move_preview(cx));
         assert!(board.read_with(cx, |b, _| matches!(
@@ -422,6 +447,35 @@ mod tests {
             })
         });
         assert!(board.read_with(cx, |b, _| b.project_move.is_none()));
+    }
+
+    /// However many sub-issues a large move could not confirm, the list
+    /// scrolls and Open stays in view.
+    #[gpui_kit::test]
+    fn a_long_list_of_unconfirmed_sub_issues_keeps_open_in_view(cx: &mut TestAppContext) {
+        use subspace_api_client::issue_moves::{Unreconciled, UnreconciledReason};
+        let unreconciled = (0..300)
+            .map(|n| {
+                Unreconciled::new(
+                    n.to_string(),
+                    format!("SUB-{n}"),
+                    UnreconciledReason::NotChecked,
+                )
+            })
+            .collect();
+        let fixture = fixture();
+        let (_board, cx) = moved_with(&fixture, cx, unreconciled);
+        cx.update(|window, _| {
+            use gpui_kit::test::TestWindowExt as _;
+            let open = window.find("issue-move-open");
+            assert!(open.visible(), "Open is in view: {:?}", open.bounds());
+            let list = window.find("issue-move-unreconciled").bounds();
+            assert!(list.bottom() <= open.bounds().top(), "{list:?} above Open");
+            assert!(
+                list.size.height < gpui_kit::px(300. * 20.),
+                "the list scrolls"
+            );
+        });
     }
     /// Mounts the board on `fixture`, opens SUB-2 and asks for a preview of
     /// its move to OPS.

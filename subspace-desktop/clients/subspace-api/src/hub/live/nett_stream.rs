@@ -19,7 +19,7 @@ use crate::hub::{ScopeGeneration, Shared, State, lock};
 use crate::live::{self, LiveError};
 use capabilities::{
     Woken, announce_if_changed, recheck_capabilities, refresh_scope, scope_epoch,
-    wait_for_scope_epoch_or_capabilities, wait_for_scope_or_epoch_change,
+    wait_for_scope_epoch_or_capabilities, wait_for_scope_epoch_or_revision,
 };
 use std::collections::BTreeSet;
 use std::sync::Weak;
@@ -236,11 +236,14 @@ impl Stream<'_> {
     }
 
     /// Access changed: read again what the person may see. A second refusal
-    /// in a row stops reconnecting until the followed scope or the
-    /// capability list changes.
+    /// in a row stops reconnecting until the followed scope changes, or the
+    /// capability list does, whichever read finds it.
     async fn refused(&mut self, scope: &StreamScope) -> Next {
         self.refusals += 1;
         catch_up(self.weak, scope.generation).await;
+        // The list as it was before this refusal's own read: a change that
+        // read, or any read after it, finds ends the wait below.
+        let seen = self.client.nett_served_revision();
         refresh_scope(self.weak, self.client);
         if self.refusals < MAX_REFUSALS {
             return Next::Reconnect;
@@ -249,7 +252,7 @@ impl Stream<'_> {
             return Next::Stop;
         }
         let epoch = scope_epoch(self.weak);
-        wait_for_scope_or_epoch_change(self.weak, scope, epoch).await;
+        wait_for_scope_epoch_or_revision(self.weak, scope, epoch, (self.client, seen)).await;
         self.refusals = 0;
         Next::Again
     }
