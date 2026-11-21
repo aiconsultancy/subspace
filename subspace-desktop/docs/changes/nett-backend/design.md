@@ -576,14 +576,21 @@ days. Without the capability, everything above applies unchanged.
   token. NETT takes the plan's lock before it looks for the record and
   skips the version and plan checks, so a replay that arrives while the
   first confirmation is still committing waits for it. A 200 means the
-  move committed: the editor opens the root under the number NETT recorded
-  for this plan, even if a sub-issue or the root has moved again since. A
+  move committed, with the numbers NETT recorded for this plan, even if a
+  sub-issue or the root has moved again since; the editor opens the root
+  by its stable ID, since the number it was given may be gone. A
   409 with the problem code `IssueMove.PlanChanged` (read from the
   problem's `code` or `errorCode` member) means the plan never committed,
   and the editor offers a fresh preview. Any other 409, a network error or
   a 5xx leaves the move unconfirmed, to be checked again. If the first
   confirmation never reached NETT and the plan still matches, the replay
   commits it, as the person already confirmed.
+- Only a confirmation sent while NETT served `issueMoveReplay` is
+  replayed, since only then did NETT keep a record; one sent earlier is
+  read back even once the capability appears. Only the account that sent
+  it replays it, and the Issues hub replays only while both teams are
+  writable, as confirming requires, because a replay commits a move whose
+  first send never arrived; otherwise it reads the move back.
 - The client replays only within 24 hours of first sending the
   confirmation, by the wall clock, which keeps counting while the computer
   sleeps; a clock set back before the send counts as expired. After that,
@@ -680,7 +687,10 @@ No test calls a real NETT environment.
   grants to a second account, revoke a token or a membership, hide a
   project from one person, close or refuse streams, archive a team or an
   issue, lose a committed move's reply, hold a move's commit so a replay
-  arrives mid-commit, and age move commit records past their seven days.
+  arrives mid-commit, and age move commit records past their seven days. A
+  move that waited for its plan's lock or a slow commit checks the caller's
+  access again, and a replay that changes the recorded confirmation is
+  refused.
 - Client unit tests cover the path, query and body translation, the JSON
   mapping, organisation selection, the grant cache and flow control.
 - End-to-end client tests run the actual adapter operations against the mock
