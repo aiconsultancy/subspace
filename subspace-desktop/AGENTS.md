@@ -86,8 +86,9 @@ forwards the app's targets here.
 - In non-interactive shells, run Cargo through mise (`mise exec -- cargo ...`)
   so builds use the Mr Boxington cache.
 - prek runs the hooks (`make hooks` installs them). Commits run file hygiene,
-  the format check and gitleaks; pushes run `make check` and
-  `mise run quality`. The hooks refuse commits to `main`. Vendored files and
+  the format check and gitleaks. The pre-push hook selects checks by project
+  and file type. See [Gates](docs/ways-of-working.md#gates). The hooks refuse
+  commits to `main`. Vendored files and
   `.agents/skills` keep their upstream bytes.
 - After moving or renaming the workspace folder, run `cargo clean`: Cargo
   does not rebuild tests that embed their old absolute `CARGO_MANIFEST_DIR`.
@@ -337,9 +338,8 @@ not replace them.
   `release.yml` starts it on a new `subspace-framework-v*` tag (see the
   Framework's publishing guide); `packslip.yml` signs each published desktop
   release with packslip (see the installation guide). None of them builds or
-  tests the app: `make check` and `mise run quality` are the gate; the prek
-  pre-push hook runs both, and the root `make release-check` covers the
-  release tooling.
+  tests the app. The [pre-push checks](docs/ways-of-working.md#gates) cover
+  desktop changes, and the root `make release-check` covers release tooling.
 - Release Please's pull requests (`release-please--branches--main--components--*`)
   are the only commits that change a version; review and merge them on
   `main`. After a release, `release.yml` fast-forwards
@@ -413,7 +413,7 @@ not replace them.
 
 ## Code Quality Rules
 
-- Run `mise run quality` after making changes. It compares the workspace with
+- Run `mise run quality` after changing Rust code. It compares the workspace with
   `rustqual-baseline.json` and fails only when the quality score drops below
   the baseline. The prek pre-push hook runs the same task.
 - The check compares the overall score only. A new finding that leaves the
