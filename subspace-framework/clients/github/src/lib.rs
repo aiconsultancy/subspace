@@ -23,6 +23,8 @@ mod raw;
 pub mod scope;
 mod transport;
 pub mod validate;
+mod work;
+pub use work::PinnedWork;
 
 use std::sync::Arc;
 use std::thread;
@@ -141,6 +143,8 @@ pub struct Client {
     api_url: String,
     /// The Copilot API base GraphQL named, resolved at most once per run.
     copilot_api: std::sync::OnceLock<String>,
+    /// Whose the last work credential [`Client::pin_work`] verified is.
+    verified: std::sync::Mutex<Option<work::Verified>>,
     assignable: Ttl<Vec<GhUser>>,
     diffs: Lru<DiffResponse>,
     files: Lru<String>,
@@ -299,6 +303,7 @@ impl Client {
             work_account: None,
             api_url: api_url(),
             copilot_api: copilot_api_override(),
+            verified: std::sync::Mutex::new(None),
             assignable: Ttl::new(ASSIGNABLE_TTL),
             diffs: Lru::new(DIFF_CACHE_ENTRIES, |_| 1),
             files: Lru::new(FILE_CACHE_BYTES, String::len),
@@ -401,26 +406,25 @@ impl Client {
         Ok(data.viewer.login)
     }
 
+    /// Resolves the work account's credential once and verifies whose it is
+    /// with that same credential, for an operation whose every request must
+    /// be made as one account. The chosen gh account wins, else the first
+    /// enterprise (EMU) login, as in [`Client::work_login`]. A credential
+    /// verified earlier this run is not looked up again, so this needs no
+    /// request then, offline included.
+    pub fn pin_work(&self) -> Result<PinnedWork<'_>, Error> {
+        PinnedWork::pin(self)
+    }
+
     /// Selects the chosen gh account, else the first enterprise (EMU) login,
     /// and verifies that the selected credential really belongs to it.
-    /// Environment tokens belonging to another account are rejected.
+    /// Environment tokens belonging to another account are rejected. A
+    /// caller that goes on to make requests as that account should use
+    /// [`Client::pin_work`] instead, so they go out with the credential
+    /// verified here.
+    // qual:api - Consumed by app crates through the Framework facade.
     pub fn work_login(&self) -> Result<String, Error> {
-        let accounts = self
-            .credentials
-            .github_accounts()
-            .map_err(|_| Error::Status {
-                status: http_status::BAD_GATEWAY,
-                message: "No GitHub accounts are configured for the work account.".into(),
-            })?;
-        let login =
-            pick_work_login(&accounts.logins, self.work_account.as_ref()).ok_or_else(|| {
-                Error::Status {
-                    status: http_status::BAD_GATEWAY,
-                    message: "No work (EMU) or chosen GitHub account is configured.".into(),
-                }
-            })?;
-        let actual = self.viewer_login(Some(login))?;
-        verified_work_login(login, &actual)
+        self.pin_work().map(|work| work.login().to_owned())
     }
 
     /// The credential for `login` (REQ-21), for callers that only need to

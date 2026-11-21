@@ -71,7 +71,8 @@ fn raw(id: &str) -> Value {
 
 fn resolve_first(client: &Client) -> Task {
     let mut rows = [raw("task-1"), raw("task-2")];
-    let pulls = super::resolve_task_pulls(client, "work_emu", &mut rows);
+    let work = crate::PinnedWork::for_tests(client, "work_emu", "U_work").unwrap();
+    let pulls = super::resolve_task_pulls(&work, &mut rows);
     linked_task(&rows[0], None, &pulls)
 }
 

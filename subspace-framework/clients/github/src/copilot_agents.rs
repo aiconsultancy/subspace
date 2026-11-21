@@ -3,9 +3,9 @@
 use serde_json::{Value, json};
 
 use crate::Client;
+use crate::PinnedWork;
 use crate::transport;
 use subspace_core::http::Error;
-use subspace_core::http::status as http_status;
 
 use crate::MAX_BODY_BYTES;
 use std::collections::HashMap;
@@ -76,19 +76,38 @@ impl Client {
         submission::start(self, input, scope, submission)
     }
 
-    /// The authenticated work user's recent tasks across every repository.
-    /// Missing repository names and pull node ids are resolved once per
-    /// repository, not once per task.
+    /// The authenticated work user's recent tasks across every repository,
+    /// read with one pinned work credential ([`Client::pin_work`]).
     // qual:api
     pub fn list_my_copilot_agent_tasks(&self) -> Result<TaskList, Error> {
-        let login = self.work_login()?;
-        let value = self.agent_get(
-            &login,
-            &format!(
-                "/agents/tasks?per_page={MAX_TASKS}&sort=updated_at&direction=desc&since={}",
-                since_30_days()
-            ),
-        )?;
+        self.pin_work()?.list_my_copilot_agent_tasks()
+    }
+
+    /// One task and its sessions, by id, without a repository path, read
+    /// with one pinned work credential ([`Client::pin_work`]).
+    // qual:api
+    pub fn get_copilot_agent_task_detail(
+        &self,
+        task_id: &str,
+        subject: Option<Subject>,
+    ) -> Result<TaskDetail, Error> {
+        validate_task_id(task_id)?;
+        self.pin_work()?
+            .get_copilot_agent_task_detail(task_id, subject)
+    }
+}
+
+impl PinnedWork<'_> {
+    /// The work account's recent tasks across every repository. Missing
+    /// repository names and pull node ids are resolved once per repository,
+    /// not once per task, and every request goes out with the pinned
+    /// credential.
+    // qual:api
+    pub fn list_my_copilot_agent_tasks(&self) -> Result<TaskList, Error> {
+        let value = self.agent_get(&format!(
+            "/agents/tasks?per_page={MAX_TASKS}&sort=updated_at&direction=desc&since={}",
+            since_30_days()
+        ))?;
         let mut values: Vec<Value> = value
             .get("tasks")
             .and_then(Value::as_array)
@@ -97,7 +116,7 @@ impl Client {
             .into_iter()
             .take(MAX_TASKS)
             .collect();
-        let pulls = lookup::resolve_task_pulls(self, &login, &mut values);
+        let pulls = lookup::resolve_task_pulls(self, &mut values);
         Ok(TaskList {
             tasks: values
                 .iter()
@@ -106,7 +125,7 @@ impl Client {
         })
     }
 
-    /// One task and its sessions, by id, without a repository path.
+    /// One task and its sessions, by id, with the pinned credential.
     // qual:api
     pub fn get_copilot_agent_task_detail(
         &self,
@@ -114,9 +133,8 @@ impl Client {
         subject: Option<Subject>,
     ) -> Result<TaskDetail, Error> {
         validate_task_id(task_id)?;
-        let login = self.work_login()?;
-        let mut raw = self.agent_get(&login, &format!("/agents/tasks/{task_id}"))?;
-        let pulls = lookup::resolve_task_pulls(self, &login, std::slice::from_mut(&mut raw));
+        let mut raw = self.agent_get(&format!("/agents/tasks/{task_id}"))?;
+        let pulls = lookup::resolve_task_pulls(self, std::slice::from_mut(&mut raw));
         let sessions = serde_json::from_value::<RawSessions>(raw.clone())
             .map(|raw| raw.sessions)
             .unwrap_or_default();
@@ -126,57 +144,21 @@ impl Client {
         })
     }
 
-    fn agent_get(&self, login: &str, path: &str) -> Result<Value, Error> {
-        let url = format!("{}{}", self.api_url, path);
-        let credential = self
-            .credentials
-            .github(Some(login))
-            .map_err(|e| Error::Status {
-                status: http_status::BAD_GATEWAY,
-                message: e.to_string(),
-            })?;
-        let result = transport::get_rest_version(
-            &url,
-            &credential,
-            login,
-            transport::JSON,
-            AGENT_API_VERSION,
-        )
-        .or_else(|error| {
+    fn agent_get(&self, path: &str) -> Result<Value, Error> {
+        let url = format!("{}{}", self.client.api_url, path);
+        let response = self.get(&url, Some(AGENT_API_VERSION)).or_else(|error| {
             if transport::is_api_version_rejection(&error) {
-                transport::get_rest_version(
-                    &url,
-                    &credential,
-                    login,
-                    transport::JSON,
-                    FALLBACK_API_VERSION,
-                )
+                self.get(&url, Some(FALLBACK_API_VERSION))
             } else {
                 Err(error)
             }
-        });
-        if matches!(
-            result,
-            Err(Error::Status {
-                status: http_status::UNAUTHORIZED,
-                ..
-            })
-        ) {
-            self.credentials.invalidate(&credential);
-        }
-        let response = result?;
+        })?;
         let body = transport::read_limited(response, MAX_BODY_BYTES)?;
         serde_json::from_slice(&body).map_err(|_| transport::unexpected("response"))
     }
-}
 
-impl Client {
     /// The pull requests the GraphQL node ids of `artifacts` resolve to.
-    fn pulls_by_node_id(
-        &self,
-        login: &str,
-        artifacts: &[RawArtifact],
-    ) -> HashMap<u64, PullRequestArtifact> {
+    fn pulls_by_node_id(&self, artifacts: &[RawArtifact]) -> HashMap<u64, PullRequestArtifact> {
         let node_ids: Vec<String> = artifacts
             .iter()
             .filter_map(|artifact| artifact.data.as_ref()?.global_id.clone())
@@ -185,28 +167,18 @@ impl Client {
         if node_ids.is_empty() {
             return HashMap::new();
         }
-        self.graphql::<PullNodes>(
-            Some(login),
-            PULL_NODES_QUERY,
-            json!({ "ids": node_ids }),
-            false,
-        )
-        .map(|data| artifacts_from_nodes(data.nodes))
-        .unwrap_or_default()
+        self.graphql::<PullNodes>(PULL_NODES_QUERY, json!({ "ids": node_ids }))
+            .map(|data| artifacts_from_nodes(data.nodes))
+            .unwrap_or_default()
     }
 
     /// Fills the gaps in `pulls` from the repository's recent pull requests.
-    fn fill_pulls_from_rest(
-        &self,
-        login: &str,
-        repo: &str,
-        pulls: &mut HashMap<u64, PullRequestArtifact>,
-    ) {
+    fn fill_pulls_from_rest(&self, repo: &str, pulls: &mut HashMap<u64, PullRequestArtifact>) {
         let url = format!(
             "{}/repos/{repo}/pulls?state=all&sort=created&direction=desc&per_page={PULLS_PER_PAGE}",
-            self.api_url
+            self.client.api_url
         );
-        let Ok(rows) = self.rest_json::<Vec<RawPull>>(login, &url) else {
+        let Ok(rows) = self.rest_json::<Vec<RawPull>>(&url) else {
             return;
         };
         for row in rows {
@@ -221,14 +193,13 @@ impl Client {
 
     fn resolve_pull_artifacts(
         &self,
-        login: &str,
         repo: &str,
         tasks: &[Value],
     ) -> HashMap<u64, PullRequestArtifact> {
         let artifacts: Vec<RawArtifact> = tasks.iter().filter_map(raw_artifact).collect();
-        let mut pulls = self.pulls_by_node_id(login, &artifacts);
+        let mut pulls = self.pulls_by_node_id(&artifacts);
         if needs_rest_lookup(&artifacts, &pulls) {
-            self.fill_pulls_from_rest(login, repo, &mut pulls);
+            self.fill_pulls_from_rest(repo, &mut pulls);
         }
         pulls
     }
