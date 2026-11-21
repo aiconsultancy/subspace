@@ -81,7 +81,8 @@ that name. **Connect** or **Disconnect**, **Join…** and **More** are on the
 right. The switches at the two ends of the status bar, at the bottom of the
 window, show or hide the navigator and the inspector. While the navigator is
 hidden, a menu at the start of the toolbar names the conversation in front and lists every network's
-conversations; choose one to show it.
+conversations; choose one to show it. **Connect** or **Disconnect**, **Join…**
+and **More** then act on that conversation and its network.
 
 Drag the inner edge of the navigator or the inspector to resize it, and
 double-click the edge to go back to the default width. Every Space shares
@@ -197,11 +198,11 @@ Subspace API is temporarily unreachable.
 
 | Control | What it does |
 | --- | --- |
-| **Connect** / **Disconnect** | Connects or disconnects the network of the selected row or group. Disabled until you select one. |
-| **Join…** | Opens **Join a channel on** the selected network. The **+** in the navigator's header does the same. |
+| **Connect** / **Disconnect** | Connects or disconnects the network of the selected row or group, or while the navigator is hidden the network of the conversation in front. Disabled until you select one. |
+| **Join…** | Opens **Join a channel on** the selected network, or while the navigator is hidden the network of the conversation in front. The **+** in the navigator's header does the same. |
 | **Show navigator** / **Hide navigator** | The first button of the status bar shows or hides the list of networks and buffers. |
 | **Show inspector** / **Hide inspector** | The last button of the status bar shows or hides the member list. |
-| **More** | **Leave channel** leaves the selected channel and removes it from the list; for a channel you are no longer in, it reads **Remove from list**. **Close conversation** removes the selected private conversation from the list. Each is disabled for other kinds of row, as is **Leave channel** for a channel you are in while its network is not connected. |
+| **More** | Acts on the selected row, or while the navigator is hidden on the conversation in front. **Leave channel** leaves the selected channel and removes it from the list; for a channel you are no longer in, it reads **Remove from list**. **Close conversation** removes the selected private conversation from the list. Each is disabled for other kinds of row, as is **Leave channel** for a channel you are in while its network is not connected. |
 
 The board has no filters. Reload (`r`) connects every network that is
 disconnected or failed.

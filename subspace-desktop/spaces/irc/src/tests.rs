@@ -17,6 +17,7 @@ mod conversation;
 mod counter;
 mod focus;
 mod formatting;
+mod hidden_navigator;
 mod initiatives;
 mod issues;
 mod items;
