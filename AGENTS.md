@@ -81,16 +81,27 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
   pull request that you did:
 
   ```sh
-  git rebase --exec 'prek run --last-commit' "$base"
-  prek run --stage pre-push --from-ref "$base" --to-ref HEAD
+  branch=$(git branch --show-current)
+  (
+    for c in $(git rev-list --reverse "$base..HEAD"); do
+      git checkout --quiet --detach "$c" && prek run --last-commit || exit
+    done
+  ) && git checkout --quiet "$branch" &&
+    prek run --stage pre-push --from-ref "$base" --to-ref HEAD
   ```
 
-  `git rebase --exec` checks out each commit in turn, leaves commits that
-  pass unchanged, and stops at the first failure; run `git rebase --abort`,
-  then fix that commit. A single `prek run --from-ref "$base"` is not
+  The loop checks out each commit in turn, merge commits included, and runs
+  the hooks on its files against its first parent. It does not rewrite
+  history. When every commit passes it returns to the branch and runs the
+  push hooks. At the first
+  failure it stops, detached at that commit with any hook fixes in the
+  working tree: read them with `git diff`, return with
+  `git checkout --force "$branch"`, which drops only those fixes, then fix
+  that commit on the branch. A single `prek run --from-ref "$base"` is not
   enough: it checks the files as they are in the current checkout, so it
   misses a problem, such as a private key, added in one commit and removed in
-  a later one.
+  a later one. Nor is `git rebase --exec`: it flattens merge commits and
+  never checks their snapshots.
 - Write prose in British English. Keep existing code and API identifiers.
 - Keep this public repository free of secrets, tokens, real tenant or client
   IDs, internal hostnames, personal data, and organisation-specific branding
