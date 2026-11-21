@@ -285,6 +285,21 @@ a fleet are allowed. The checks on the projects, the issue version and the
 moved issues come first, and `POST /api/v1/issues/{reference}/move-preview`
 does not apply the ownership check.
 
+Because initiatives inherit their fleet in the same way, reparenting follows
+the same ownership. An initiative belongs to its own fleet, or else to the
+fleet of its nearest ancestor with one. An initiative's owner can be an agent,
+and owners may change `parentId` with `PATCH /api/v1/initiatives/{id}`. When
+such an agent changes `parentId`, the API refuses the change with 403 if the
+initiative, or the new parent, belongs to another fleet, and changes nothing.
+This stops an agent taking another fleet's branch, and the projects under it,
+out of that fleet, and stops it placing a branch under another fleet. Moves to
+and from the agent's own fleet's initiatives and initiatives without a fleet,
+including making the initiative a root, are allowed. The permission, version,
+archive and hierarchy checks come first. Setting or clearing an initiative's
+fleet with `PUT /api/v1/initiatives/{id}/fleet` needs an organisation
+administrator, which an agent never is, and no MCP tool changes an
+initiative's parent or fleet.
+
 - Humans and agents without a fleet are not restricted.
 - Clearing the assignee with `assigneeId: null` is allowed, as are edits that
   send neither field. The server clearing the flag as a side effect of
@@ -299,9 +314,11 @@ The check runs inside the write's transaction. It reads the agent's
 registration, the project and each initiative on the path up to the first one
 with a fleet, holding a share lock on each row until the write commits. A
 move checks its source and destination in project ID order, the order in
-which it already locks the two project rows. A concurrent project move,
-initiative reparenting, fleet assignment or agent re-registration therefore
-either commits first and is enforced, or waits until the write has committed.
+which it already locks the two project rows. A reparent checks the initiative
+and its new parent in initiative ID order, after taking the organisation's
+initiative write lock. A concurrent project move, initiative reparenting,
+fleet assignment or agent re-registration therefore either commits first and
+is enforced, or waits until the write has committed.
 A dispatcher that read an issue before its project moved to another fleet
 receives 403 even though the issue version is unchanged.
 

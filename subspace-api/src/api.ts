@@ -198,7 +198,10 @@ const initiativeGroup = HttpApiGroup.make("initiatives")
       payload: UpdateInitiative,
       success: InitiativeDetail,
       error: endpointErrors,
-    }),
+    }).annotate(
+      OpenApi.Description,
+      "An agent registered to a fleet that changes parentId receives 403 when the initiative, or the new parent, belongs to another fleet. An initiative belongs to its own fleet, or else to the fleet of its nearest ancestor with one.",
+    ),
     HttpApiEndpoint.post("archiveInitiative", "/initiatives/:id/archive", {
       params: initiativeParams,
       payload: versionPayload,

@@ -11,11 +11,15 @@ import {
   dispatchesIssue,
   foreignFleetDetail,
   foreignFleetMoveDetail,
+  foreignFleetReparentDetail,
+  lockInitiativeFleet,
   lockProjectFleet,
   requireFleetOwnership,
   requireMoveOwnership,
+  requireReparentOwnership,
 } from "../src/fleet-ownership";
 import { CurrentMember, type Member } from "../src/identity";
+import { assignFleet } from "../src/initiatives";
 import { issueGroup, issuesHandlers } from "../src/issues-http";
 import { BearerAuth, validationErrors } from "../src/middleware";
 import { problem } from "../src/problems";
@@ -36,6 +40,7 @@ const [child, parent, root] = [
 const later = "00000000-0000-4000-8000-000000000009";
 const forbidden = problem(403, foreignFleetDetail);
 const forbiddenMove = problem(403, foreignFleetMoveDetail);
+const forbiddenReparent = problem(403, foreignFleetReparentDetail);
 const dialect = new PgDialect();
 
 /**
@@ -235,6 +240,76 @@ test("a move out of or into another fleet's project is refused with the move pro
   expect(into.remaining).toHaveLength(1);
 });
 
+function reparent(
+  db: Db,
+  initiativeId: string,
+  parentId: string | null,
+  rank: Member["agentRank"] = "rearAdmiral",
+) {
+  return Effect.runSync(
+    Effect.match(requireReparentOwnership(db, member(rank), initiativeId, parentId), {
+      onFailure: (error) => error,
+      onSuccess: () => "allowed" as const,
+    }),
+  );
+}
+
+test("an initiative's own fleet decides before its ancestors', and a null start has no fleet", () => {
+  const own = scripted(initiative(parent, beta));
+  expect(Effect.runSync(lockInitiativeFleet(own.db, org, child))).toBe(beta);
+  expect(own.reads).toEqual(["initiatives for share"]);
+  const none = scripted();
+  expect(Effect.runSync(lockInitiativeFleet(none.db, org, null))).toBeNull();
+  expect(none.reads).toEqual([]);
+});
+
+test("humans and agents without a fleet reparent initiatives freely", () => {
+  const none = scripted();
+  expect(reparent(none.db, child, parent, null)).toBe("allowed");
+  expect(none.reads).toEqual([]);
+  const unfleeted = scripted(agent(null));
+  expect(reparent(unfleeted.db, child, null)).toBe("allowed");
+  expect(unfleeted.reads).toEqual(["users for share"]);
+});
+
+test("a reparent locks both ownership paths in initiative ID order and may join own and unfleeted initiatives", () => {
+  // The new parent sorts first, so its path is locked before the initiative's.
+  const allowed = scripted(
+    agent(alpha),
+    initiative(root, null),
+    initiative(null, alpha),
+    initiative(null, null),
+  );
+  expect(reparent(allowed.db, parent, child)).toBe("allowed");
+  expect(allowed.reads).toEqual([
+    "users for share",
+    "initiatives for share",
+    "initiatives for share",
+    "initiatives for share",
+  ]);
+  expect(allowed.keys).toEqual([agentId, child, root, parent]);
+  // A null parent makes the initiative a root, so only the initiative's own path is read.
+  const detached = scripted(agent(alpha), initiative(parent, null), initiative(null, alpha));
+  expect(reparent(detached.db, child, null)).toBe("allowed");
+  expect(detached.keys).toEqual([agentId, child, parent]);
+});
+
+test("reparenting another fleet's initiative out of it, or any initiative into it, is refused", () => {
+  const inherited = scripted(agent(alpha), initiative(parent, null), initiative(null, beta));
+  expect(reparent(inherited.db, child, null)).toEqual(forbiddenReparent);
+  // The initiative's own fleet decides, so ancestors above it are not read.
+  const own = scripted(agent(alpha), initiative(parent, beta), initiative(null, alpha));
+  expect(reparent(own.db, child, null)).toEqual(forbiddenReparent);
+  expect(own.remaining).toHaveLength(1);
+  // The new parent's path is foreign, so the initiative's path is not read.
+  const into = scripted(agent(alpha), initiative(null, beta), initiative(null, null));
+  expect(reparent(into.db, parent, child)).toEqual(forbiddenReparent);
+  expect(into.remaining).toHaveLength(1);
+  const intoLater = scripted(agent(alpha), initiative(null, alpha), initiative(root, beta));
+  expect(reparent(intoLater.db, child, parent)).toEqual(forbiddenReparent);
+  expect(intoLater.keys).toEqual([agentId, child, parent]);
+});
+
 // Serves the real issue routes with a database whose transactions fail as a refused dispatch
 // would, so the wire shape of the 403 is checked without PostgreSQL.
 describe("the refusal on the issue routes", () => {
@@ -287,6 +362,18 @@ describe("the refusal on the issue routes", () => {
   );
   const { handler, dispose } = HttpRouter.toWebHandler(app, { disableLogger: true });
   afterAll(() => dispose());
+
+  test("an agent cannot set or clear an initiative's fleet, before any read", async () => {
+    // Agents are always members, never admins, so the admin check refuses them first.
+    for (const fleetId of [beta, null])
+      expect(
+        await Effect.runPromise(
+          Effect.flip(assignFleet(rearAdmiral, child, fleetId)).pipe(
+            Effect.provideService(Database, refusing as Db),
+          ),
+        ),
+      ).toEqual(problem(403, "Fleet assignment requires organisation admin access."));
+  });
 
   test.each([
     ["POST", "/issues", { projectId, title: "Example", summary: "Example", ...assign }],
@@ -411,10 +498,15 @@ describe.skipIf(!origin)("fleet ownership of dispatch writes over HTTP", () => {
       .result;
   }
 
-  async function programme(name: string, fleetId: string | null, parentId?: string) {
+  async function programme(
+    name: string,
+    fleetId: string | null,
+    parentId?: string,
+    owner: Role = "admin",
+  ) {
     const created = await call<Versioned>(201, "/initiatives", "admin", "POST", {
       name: `${name} ${suffix}`,
-      ownerId: ids.get("admin"),
+      ownerId: ids.get(owner),
       ...(parentId ? { parentId } : {}),
     });
     if (fleetId) await call(200, `/initiatives/${created.id}/fleet`, "admin", "PUT", { fleetId });
@@ -694,6 +786,91 @@ describe.skipIf(!origin)("fleet ownership of dispatch writes over HTTP", () => {
     });
   });
 
+  interface Placed {
+    id: string;
+    parentId: string | null;
+    version: number;
+  }
+  const placed = (id: string) => call<Placed>(200, `/initiatives/${id}`, "admin");
+  async function relink(role: Role, id: string, parentId: string | null) {
+    const { version } = await placed(id);
+    return http(`/initiatives/${id}`, role, "PATCH", { version, parentId });
+  }
+  async function relinked(response: Response, parentId: string | null) {
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as Placed).parentId).toBe(parentId);
+  }
+  async function unmoved(id: string, attempts: (string | null)[]) {
+    const before = await placed(id);
+    for (const parentId of attempts)
+      await refused(await relink("admiral", id, parentId), foreignFleetReparentDetail);
+    expect(await placed(id)).toEqual(before);
+  }
+
+  test("an agent that owns another fleet's initiative cannot reparent it out of that fleet", async () => {
+    const betaProgramme = programmes.get("Beta programme")!;
+    const alphaProgramme = programmes.get("Alpha programme")!;
+    const free = programmes.get("Unfleeted programme")!;
+    const inherited = await programme("Beta outpost", null, betaProgramme, "admiral");
+    await unmoved(inherited, [null, free, alphaProgramme]);
+    const own = await programme("Beta flagship", fleets.beta, undefined, "admiral");
+    await unmoved(own, [free, alphaProgramme]);
+  });
+
+  test("an agent cannot reparent an initiative into another fleet's initiative", async () => {
+    const betaProgramme = programmes.get("Beta programme")!;
+    await unmoved(
+      await programme("Alpha outpost", null, programmes.get("Alpha programme"), "admiral"),
+      [betaProgramme],
+    );
+    await unmoved(await programme("Loose outpost", null, undefined, "admiral"), [betaProgramme]);
+  });
+
+  test("an agent reparents initiatives between its own fleet's initiatives and initiatives without a fleet", async () => {
+    const roaming = await programme("Roaming outpost", null, undefined, "admiral");
+    for (const name of ["Alpha programme", "Unfleeted programme", null, "Alpha workstream"]) {
+      const parentId = name ? programmes.get(name)! : null;
+      await relinked(await relink("admiral", roaming, parentId), parentId);
+    }
+  });
+
+  test("humans and agents without a fleet reparent initiatives across fleets", async () => {
+    const betaProgramme = programmes.get("Beta programme")!;
+    const alphaProgramme = programmes.get("Alpha programme")!;
+    const human = await programme("Human outpost", null, betaProgramme);
+    await relinked(await relink("admin", human, null), null);
+    await relinked(await relink("admin", human, betaProgramme), betaProgramme);
+    await relinked(await relink("admin", human, alphaProgramme), alphaProgramme);
+    const drifting = await programme("Drifter outpost", null, betaProgramme, "drifter");
+    await relinked(await relink("drifter", drifting, alphaProgramme), alphaProgramme);
+  });
+
+  test("a fleet agent cannot set or clear an initiative's fleet", async () => {
+    const owned = await programme("Unassigned outpost", null, undefined, "admiral");
+    for (const fleetId of [fleets.alpha, null]) {
+      const response = await http(`/initiatives/${owned}/fleet`, "admiral", "PUT", { fleetId });
+      expect(response.status).toBe(403);
+      expect(((await response.json()) as { detail: string }).detail).toBe(
+        "Fleet assignment requires organisation admin access.",
+      );
+    }
+    expect(
+      (await call<{ fleetId: string | null }>(200, `/initiatives/${owned}`, "admin")).fleetId,
+    ).toBeNull();
+  });
+
+  // Polls until a backend in the database waits on a row lock.
+  async function waiting(client: pg.Client) {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const { rows: blocked } = await client.query(
+        "select count(*)::int as count from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()",
+      );
+      if (blocked[0].count > 0) return true;
+      await Bun.sleep(100);
+    }
+    return false;
+  }
+
   // Holds an uncommitted ownership change in the API's own database while the agent writes. The
   // write must wait for the change and then enforce it, rather than read the committed state.
   test.skipIf(!testDatabase)(
@@ -707,23 +884,13 @@ describe.skipIf(!origin)("fleet ownership of dispatch writes over HTTP", () => {
         ]);
         if (!rows.length)
           throw new Error("TEST_DATABASE_URL must name the database that TEST_API_URL serves.");
-        const waiting = async () => {
-          for (let attempt = 0; attempt < 50; attempt++) {
-            const { rows: blocked } = await client.query(
-              "select count(*)::int as count from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()",
-            );
-            if (blocked[0].count > 0) return true;
-            await Bun.sleep(100);
-          }
-          return false;
-        };
         const race = async (key: string, change: string, values: unknown[], body: object) => {
           const target = await issue(key, `Raced ${key} fixture`);
           await client.query("begin");
           try {
             await client.query(change, values);
             const pending = edit("admiral", target, body);
-            expect(await waiting()).toBe(true);
+            expect(await waiting(client)).toBe(true);
             await client.query("commit");
             await refused(await pending);
           } catch (error) {
@@ -747,6 +914,41 @@ describe.skipIf(!origin)("fleet ownership of dispatch writes over HTTP", () => {
       } finally {
         await client.end();
       }
+    },
+    20_000,
+  );
+
+  // Holds an uncommitted fleet assignment on the new parent while the agent reparents under it.
+  test.skipIf(!testDatabase)(
+    "a reparent waits for a concurrent fleet assignment on the new parent and then enforces it",
+    async () => {
+      const harbour = await programme("Harbour programme", null);
+      const outpost = await programme("Harbour outpost", null, undefined, "admiral");
+      const before = await placed(outpost);
+      const client = new pg.Client(localDatabase(testDatabase!));
+      await client.connect();
+      try {
+        await client.query("begin");
+        try {
+          await client.query("update initiatives set fleet_id = $1 where id = $2", [
+            fleets.beta,
+            harbour,
+          ]);
+          const pending = http(`/initiatives/${outpost}`, "admiral", "PATCH", {
+            version: before.version,
+            parentId: harbour,
+          });
+          expect(await waiting(client)).toBe(true);
+          await client.query("commit");
+          await refused(await pending, foreignFleetReparentDetail);
+        } catch (error) {
+          await client.query("rollback");
+          throw error;
+        }
+      } finally {
+        await client.end();
+      }
+      expect(await placed(outpost)).toEqual(before);
     },
     20_000,
   );

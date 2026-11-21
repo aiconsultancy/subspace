@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { Database } from "./db";
+import { requireReparentOwnership } from "./fleet-ownership";
 import { loadFleetDtos } from "./fleets";
 import { type Member } from "./identity";
 import {
@@ -400,14 +401,14 @@ export const updateInitiative = (
             problem(409, "Unarchive the initiative branch before editing."),
           );
         }
-        if (
-          "parentId" in changes &&
-          changes.parentId !== row.parentId &&
-          !allowedParent(rows, changes.parentId ?? null, id)
-        ) {
-          return yield* Effect.fail(
-            problem(400, "Select an available parent within the five-level hierarchy."),
-          );
+        if ("parentId" in changes && changes.parentId !== row.parentId) {
+          const parentId = changes.parentId ?? null;
+          if (!allowedParent(rows, parentId, id)) {
+            return yield* Effect.fail(
+              problem(400, "Select an available parent within the five-level hierarchy."),
+            );
+          }
+          yield* requireReparentOwnership(tx, member, id, parentId);
         }
         if (
           "ownerId" in changes &&
