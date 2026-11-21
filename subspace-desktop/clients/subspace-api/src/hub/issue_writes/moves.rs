@@ -50,11 +50,9 @@ impl Hub {
             && self
                 .writable_project(scope, &preview.destination.id)
                 .is_ok();
-        let result = if client.replays(preview) && !writable {
-            client.read_back_issue_move(preview)
-        } else {
-            client.verify_issue_move(preview)
-        };
+        // Decided once, here: the client does not decide again.
+        let replay = writable && client.replays(preview);
+        let result = client.check_issue_move(preview, replay);
         self.require_issue_scope(scope)?;
         result
     }

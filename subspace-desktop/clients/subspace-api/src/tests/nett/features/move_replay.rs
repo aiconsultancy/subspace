@@ -293,3 +293,16 @@ fn the_hub_replays_only_while_both_teams_are_writable() {
     assert_eq!(mock.count("PATCH", &root), 0, "nothing sent");
     hub.stop();
 }
+
+#[test]
+fn a_check_told_to_read_back_never_sends_the_confirmation() {
+    // The hub decides once whether a check replays; the client follows that
+    // decision even when, asked again, it would replay.
+    let (mock, client, preview) = previewed(&REPLAY, "nett-fixture-replay-decided");
+    lose_the_reply(&mock, &client, &preview);
+    assert!(client.replays(&preview));
+    mock.clear_requests();
+    let result = client.check_issue_move(&preview, false).unwrap();
+    assert!(result.commit.is_none(), "read back, not replayed");
+    assert_eq!(traffic(&mock, &preview), (0, 2));
+}
