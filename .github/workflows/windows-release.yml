@@ -33,9 +33,10 @@
 #
 # The release workflow starts it on main when it creates an app release; wait
 # for it to attach the archive to the draft before `make release-macos`
-# publishes the release. It builds only a tag whose commit is on main. The
-# runner group admits only this file on main. To build an older release, or
-# to try the build or the signing without attaching anything:
+# publishes the release. It builds only a tag on a commit in main's
+# first-parent history, from a release that can skip running the app. The
+# runner group admits only this file on main. To try the build or the
+# signing without attaching anything, or to attach a missing archive:
 #   gh workflow run windows-release.yml --ref main -f tag=subspace-desktop-v<version> -f mode=sign-only
 name: windows-release
 
@@ -112,13 +113,16 @@ jobs:
             echo "$TAG points at $commit, not $EXPECTED_COMMIT, the release's commit" >&2
             exit 1
           fi
-          if ! git merge-base --is-ancestor "$commit" HEAD; then
-            echo "$TAG points at $commit, which is not on main; only commits on main are built and signed" >&2
+          # main's own history, not a commit from inside a merged pull request
+          # that review may never have seen as it stands. Release Please tags
+          # the merge commit of each release pull request, which is there.
+          if ! git rev-list --first-parent HEAD | grep -qxF "$commit"; then
+            echo "$TAG points at $commit, which is not in main's first-parent history; only those commits are built and signed" >&2
             exit 1
           fi
           # Older releases run the built app to check it, and it cannot start
           # on the Windows runner; refuse them before a long build.
-          if ! git show "$commit:subspace-desktop/scripts/package-release.sh" | grep -q SUBSPACE_PACKAGE_SKIP_RUN_CHECK; then
+          if ! git grep -qF SUBSPACE_PACKAGE_SKIP_RUN_CHECK "$commit" -- subspace-desktop/scripts/package-release.sh; then
             echo "$TAG predates Windows release builds: its package-release.sh cannot skip running the app" >&2
             exit 1
           fi
@@ -128,7 +132,7 @@ jobs:
             echo "commit=$commit"
             echo "archive=subspace-$version-$TARGET.zip"
           } >>"$GITHUB_OUTPUT"
-          echo "$TAG is $commit, on main." >>"$GITHUB_STEP_SUMMARY"
+          echo "$TAG is $commit, in main's first-parent history." >>"$GITHUB_STEP_SUMMARY"
 
   build:
     needs: resolve
@@ -270,6 +274,13 @@ jobs:
         run: |
           set -euo pipefail
           test -f "$ARCHIVE"
+          # The release has one program, subspace.exe at the root. Refuse any
+          # other Windows binary a tampered build might add for signing.
+          binaries="$(unzip -Z1 "$ARCHIVE" | grep -iE '\.(exe|dll|sys|ocx|cpl|scr|msi|msix)$' || true)"
+          if [[ "$binaries" != subspace.exe ]]; then
+            printf 'expected subspace.exe as the only Windows binary in the archive, found:\n%s\n' "$binaries" >&2
+            exit 1
+          fi
           bash subspace-desktop/scripts/sign-windows.sh "$ARCHIVE"
           echo "sha256=$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
       - name: Sign out of Azure
@@ -353,15 +364,29 @@ jobs:
             echo "$TAG now points at $current, not $COMMIT, which was built" >&2
             exit 1
           fi
-          # A draft's files are replaced; a published release only gains files
-          # it lacks, so installers never see one missing or mismatched.
+          # A draft's files are replaced. A published release only gains the
+          # files it lacks, and keeps any it has only if they match this
+          # archive, so a run after a half-finished upload completes it and
+          # installers never see a mismatched pair.
           release="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets)"
           if [[ "$(jq -r .isDraft <<<"$release")" == true ]]; then
             gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" --repo "$GITHUB_REPOSITORY" --clobber
-          elif jq -e --arg a "$ARCHIVE" '[.assets[].name] | any(. == $a or . == $a + ".sha256")' <<<"$release" >/dev/null; then
-            echo "$TAG is published and already has $ARCHIVE; not replacing a published release's files" >&2
-            exit 1
           else
-            gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" --repo "$GITHUB_REPOSITORY"
+            missing=()
+            for file in "$ARCHIVE" "$ARCHIVE.sha256"; do
+              if ! jq -e --arg f "$file" 'any(.assets[].name; . == $f)' <<<"$release" >/dev/null; then
+                missing+=("$file")
+                continue
+              fi
+              mkdir -p published
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$file" --dir published --clobber
+              if ! cmp -s "$file" "published/$file"; then
+                echo "$TAG is published with a different $file; not replacing a published release's files" >&2
+                exit 1
+              fi
+            done
+            if [[ "${#missing[@]}" -gt 0 ]]; then
+              gh release upload "$TAG" "${missing[@]}" --repo "$GITHUB_REPOSITORY"
+            fi
           fi
           echo "Attached $ARCHIVE to $TAG." >>"$GITHUB_STEP_SUMMARY"
