@@ -9,6 +9,7 @@ use subspace_framework::dashboard::{Dashboard as _, DashboardEvent};
 
 use crate::{Account, Github, SectionData, sample};
 
+mod drafts;
 mod lifecycle;
 mod loading;
 mod references;

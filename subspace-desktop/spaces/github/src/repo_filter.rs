@@ -152,12 +152,14 @@ impl Github {
 
 #[cfg(test)]
 mod tests {
+    use gpui_kit::TestAppContext;
     use subspace_framework::client_github::model::ItemKind;
+    use subspace_framework::dashboard::Dashboard as _;
     use subspace_framework::dashboard::list::Group;
 
     use super::{apply, entries, is_filtered, toggled, with_note};
     use crate::model::group_by_repo;
-    use crate::{rows, sample};
+    use crate::{Github, SectionData, rows, sample};
 
     fn groups() -> Vec<Group> {
         let mut items = sample::items();
@@ -230,5 +232,36 @@ mod tests {
         assert_eq!(with_note(line.clone(), None), line);
         let noted = with_note(line, Some("octo-org/api"));
         assert_eq!(noted, "GitHub · Signed in as octo-dev · octo-org/api only");
+    }
+
+    #[gpui_kit::test]
+    fn the_status_counts_stay_the_views_while_a_repository_is_filtered(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            subspace_framework::dashboard::prefs::init_file(None, cx);
+        });
+        let window = cx.add_window(Github::new);
+        window
+            .update(cx, |board, _, cx| {
+                let mut items = sample::items();
+                items.retain(|item| item.kind == ItemKind::Pr);
+                assert_eq!(items.len(), 5);
+                board.account = Some("octo-dev".into());
+                let section = board.section;
+                let account = board.data.entry("octo-dev".into()).or_default();
+                let data = SectionData {
+                    total: 5,
+                    items,
+                    at: 0,
+                };
+                account.sections.insert(section, data);
+                board.rebuild(cx);
+                let whole = Some("5 open PRs · 3 repos");
+                assert_eq!(board.view_counts().as_deref(), whole);
+                board.pick_repository("octo-org/web", cx);
+                assert_eq!(board.list.groups().len(), 1);
+                assert_eq!(board.view_counts().as_deref(), whole);
+            })
+            .unwrap();
     }
 }
