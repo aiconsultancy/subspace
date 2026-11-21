@@ -4,6 +4,7 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AnyWindowHandle, AppContext as _, Entity, TestAppContext};
 use subspace_dashboard::PaletteMode;
+use subspace_dashboard::workspace::SpaceDocks;
 
 use super::{SubspaceApp, open_fixture, settle};
 
@@ -89,6 +90,33 @@ fn the_status_bar_ends_with_the_spaces_dock_switches(cx: &mut TestAppContext) {
     click(&window, cx, "workspace-inspector-toggle");
     let docks = app.read_with(cx, |app, cx| app.space_docks(cx));
     assert_eq!(docks.inspector, Some(false), "the Space hid its inspector");
+}
+
+/// Zoomed Help covers the Space, so the bar drops its dock switches and a
+/// switch's action cannot change the hidden Space's docks.
+#[gpui_kit::test]
+fn zoomed_help_hides_the_dock_switches_and_keeps_the_hidden_spaces_docks(cx: &mut TestAppContext) {
+    let root = tempfile::tempdir().unwrap();
+    let (window, app) = rooted_fixture(cx, root.path(), 2200., false);
+    click(&window, cx, "status-help");
+    click(&window, cx, "zoom-in");
+    let docks = app.read_with(cx, |app, cx| app.space_docks(cx));
+    assert_eq!(docks, SpaceDocks::NONE, "zoomed Help covers the Space");
+    cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("workspace-navigator-toggle").is_none());
+        assert!(window.try_find("workspace-inspector-toggle").is_none());
+        window.dispatch_action(Box::new(crate::app::ToggleSpaceNavigator), cx);
+        window.dispatch_action(Box::new(crate::app::ToggleSpaceInspector), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let hidden = app.read_with(cx, |app, cx| app.dashboard().unwrap().docks(cx));
+    assert_eq!(
+        hidden,
+        SpaceDocks::both(true, true),
+        "the hidden Space kept its docks"
+    );
 }
 
 pub(in crate::app) fn rooted_fixture(

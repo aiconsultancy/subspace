@@ -32,6 +32,7 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
+refuse_unreleased_features
 load_release_toolchain
 target="${3:-$("$RUSTC" -vV | sed -n 's/^host: //p')}"
 case "$target" in

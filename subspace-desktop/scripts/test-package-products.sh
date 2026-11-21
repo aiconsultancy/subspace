@@ -147,6 +147,23 @@ fi
 unset FAKE_BUILD_FAIL
 cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
+# An inherited feature list never puts an unreleased Space in a release.
+: >"$fixture/cargo.log"
+for features in unreleased-spaces 'terminal board-lab' 'terminal,subspace/component-gallery' $'terminal\nsubspace-framework/component-gallery'; do
+    if SUBSPACE_BUILD_FEATURES="$features" bash "$fixture/scripts/package-release.sh" "$host_target" "$version" 2>"$fixture/unreleased.err"; then
+        echo "expected SUBSPACE_BUILD_FEATURES='$features' to stop the release archive" >&2
+        exit 1
+    fi
+    grep -Fq 'release builds must not include unreleased Spaces' "$fixture/unreleased.err"
+    if SUBSPACE_BUILD_FEATURES="$features" bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile' 2>"$fixture/unreleased.err"; then
+        echo "expected SUBSPACE_BUILD_FEATURES='$features' to stop the macOS app" >&2
+        exit 1
+    fi
+    grep -Fq 'release builds must not include unreleased Spaces' "$fixture/unreleased.err"
+done
+test ! -s "$fixture/cargo.log"
+cmp "$fixture/previous.tar.gz" "$host_archive"
+cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 : >"$fixture/cargo.log"
 SUBSPACE_BUILD_FEATURES=terminal bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile'
 grep -Fq -- "build --release --locked -p $binary --target $host_target --features terminal --message-format=json-render-diagnostics " "$fixture/cargo.log"

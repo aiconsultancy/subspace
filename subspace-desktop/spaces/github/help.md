@@ -64,7 +64,7 @@ requests in the current section, each with its count, in the list's order.
 With **Favourites only** on, it lists only favourite repositories. Choose one
 to show only its pull requests; the row stays selected, the others stay
 listed so you can switch, and the status bar ends with `<owner/name> only`.
-Choose the selected row again to show every repository.
+Its counts stay those of the whole section. Choose the selected row again to show every repository.
 
 The toolbar shows **&lt;owner/name&gt; only** (with a cross) while a repository is
 filtered; choose it to show every repository again. While the navigator is
@@ -339,6 +339,12 @@ request`.
 A toast reads `Commented on #<n>`. When two modes are available, a switch in the
 composer changes between **Approve**, **Request changes** and **Comment**. If
 you cannot comment, a toast reads `You cannot comment here`.
+
+While the composer is open, **Approve**, **Request changes** or **Comment** on
+the same pull request switches its mode and keeps your text. On another pull
+request they leave the draft open, and a toast reads `Send or cancel the draft
+on <owner/name>#<n> first`. Switching account discards the draft, so it is
+never sent as another account.
 
 ### Close a pull request
 

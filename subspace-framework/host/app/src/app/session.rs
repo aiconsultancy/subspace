@@ -175,10 +175,7 @@ impl SubspaceApp {
             .collect();
         commands.push(super::add_space::palette_command(cx));
         if self.main.is_board()
-            && self
-                .help_dock
-                .as_ref()
-                .is_none_or(|host| !host.read(cx).workspace_is_zoomed(cx))
+            && !self.help_zoomed(cx)
             && let Some(board) = self.dashboard()
         {
             commands.extend(board.find_commands(cx));

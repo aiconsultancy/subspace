@@ -81,3 +81,6 @@ If you want to build a Space or know what the Framework offers one, read
 - [Restart after an update](changes/restart-after-update/README.md): About and Settings restart routing and regression coverage.
 - [WorkOS sign-in quality gate](changes/workos-sign-in-quality/README.md):
   the Framework refactor that restores the gate after device authorisation.
+- [Workspace shell review findings](changes/workspace-shell-review-findings/README.md):
+  the shared kit and host app fixes for the open review findings of the
+  workspace shell, with a test for each.

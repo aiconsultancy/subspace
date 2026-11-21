@@ -1,17 +1,18 @@
 //! The parts a navigator row ([`super::NavRow`]) is drawn from: its fill,
-//! its count and its context menu.
+//! its count, its context menu, its handlers and its focus.
 
 use std::rc::Rc;
 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Div, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Styled, Window, div, px,
+    AnyElement, App, ClickEvent, Div, ElementId, FocusHandle, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 
 use crate::anchored::AnchoredContextMenuExt as _;
 use crate::row_menu::{self, GroupedMenu};
 use crate::tokens::Tokens;
+use crate::{Activate, SelectNext, SelectPrevious};
 
 /// A row's fill stops just short of the rows above and below it.
 const FILL_GAP_PX: f32 = 1.;
@@ -22,8 +23,9 @@ pub(super) type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 /// Builds a row's context menu as it opens.
 pub(super) type MenuBuilder = Rc<dyn Fn(&mut Window, &mut App) -> GroupedMenu>;
 
-/// Adds the row's context menu, when it has one. Opening it first runs the
-/// row's click handler, which selects the row.
+/// Adds the row's context menu, when it has one. Opening it first runs
+/// `select`, the click handler of a row that is not selected yet, which
+/// selects the row.
 pub(super) fn with_menu<E>(
     row: E,
     menu: Option<MenuBuilder>,
@@ -47,8 +49,9 @@ where
 
 /// The fill behind a row's content: inset and rounded when the theme insets
 /// rows, edge to edge otherwise. Hover shows only on a row that is not
-/// selected.
-pub(super) fn fill(group: SharedString, selected: bool, tokens: &Tokens) -> Div {
+/// selected. `focused` rings it in the accent while the keyboard is on the
+/// row; the ring is drawn on the fill, so it never moves the row's text.
+pub(super) fn fill(group: SharedString, selected: bool, focused: bool, tokens: &Tokens) -> Div {
     div()
         .absolute()
         .top(px(FILL_GAP_PX))
@@ -62,6 +65,7 @@ pub(super) fn fill(group: SharedString, selected: bool, tokens: &Tokens) -> Div 
         .when(!selected, |fill| {
             fill.group_hover(group, |style| style.bg(tokens.hair))
         })
+        .when(focused, |fill| fill.border_1().border_color(tokens.accent))
 }
 
 /// A row's count, in the monospace family when it is a number, so counts
@@ -77,4 +81,35 @@ pub(super) fn count_mark(count: SharedString, mono: SharedString, tokens: &Token
                 .text_size(tokens.mono_size(COUNT_MONO_PX))
         })
         .child(count)
+}
+
+/// The row's pointer and keyboard handlers. A click chooses the row but
+/// leaves the keyboard focus where it was; Tab and the list keys bring it
+/// here, and Enter chooses it as a click does.
+pub(super) fn with_handlers<E>(row: E, on_click: Option<ClickHandler>) -> E
+where
+    E: StatefulInteractiveElement + gpui_kit::prelude::FluentBuilder,
+{
+    row.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+        .on_action(|_: &SelectNext, window, cx| window.focus_next(cx))
+        .on_action(|_: &SelectPrevious, window, cx| window.focus_prev(cx))
+        .when_some(on_click, |row, on_click| {
+            let activate = on_click.clone();
+            row.on_click(move |event, window, cx| on_click(event, window, cx))
+                .on_action(move |_: &Activate, window, cx| {
+                    activate(&ClickEvent::default(), window, cx)
+                })
+        })
+}
+
+/// The row's own focus handle, kept across frames, in the tab order.
+pub(super) fn row_focus(key: &SharedString, window: &mut Window, cx: &mut App) -> FocusHandle {
+    window
+        .use_keyed_state(
+            (ElementId::Name(key.clone()), "nav-row-focus"),
+            cx,
+            |_, cx| cx.focus_handle().tab_stop(true),
+        )
+        .read(cx)
+        .clone()
 }

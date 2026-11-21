@@ -1,5 +1,6 @@
 //! The Join channel dialog: a channel name, an optional key, on the
-//! selected network.
+//! selected network, or while the navigator is hidden on the network of the
+//! conversation the toolbar names.
 
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{
@@ -47,7 +48,8 @@ pub(crate) fn channel_name(typed: &str) -> Option<String> {
 }
 
 pub(crate) fn open(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc>) {
-    let Some(network) = board.selected_network(cx) else {
+    // The toolbar's network: Join… there names the network it joins on.
+    let Some(network) = board.toolbar_network(cx) else {
         return;
     };
     let network_name = board

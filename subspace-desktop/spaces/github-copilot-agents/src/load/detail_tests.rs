@@ -107,3 +107,38 @@ fn leaving_a_detail_target_rejects_its_pending_answer(cx: &mut TestAppContext) {
         })
         .unwrap();
 }
+
+/// Every list that loads names the account it was read as, so a credential
+/// changed during the session shows in the navigator and the status bar.
+#[gpui_kit::test]
+fn each_loaded_list_renames_the_account_and_a_failed_one_keeps_it(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        prefs::init_file(None, cx);
+    });
+    let window = cx.add_window(board);
+    window
+        .update(cx, |board, _, cx| {
+            board.login = Some("first-login".into());
+            board.apply_list(
+                (Ok(Vec::new()), Vec::new(), Some("second-login".into())),
+                cx,
+            );
+            assert_eq!(board.login.as_deref(), Some("second-login"));
+
+            let offline = Error::Network("offline".into());
+            board.apply_list((Err(offline), Vec::new(), None), cx);
+            assert_eq!(
+                board.login.as_deref(),
+                Some("second-login"),
+                "the list on show was read as this account"
+            );
+
+            board.apply_list((Ok(Vec::new()), Vec::new(), None), cx);
+            assert_eq!(
+                board.login, None,
+                "a list read without a named account names none"
+            );
+        })
+        .unwrap();
+}

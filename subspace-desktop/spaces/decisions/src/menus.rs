@@ -142,6 +142,11 @@ pub(crate) fn open(
     window: &mut Window,
     cx: &mut Context<Decisions>,
 ) {
+    // The menus list the account's projects and tags.
+    if this.follow_account(cx) {
+        this.tidy(window, cx);
+        return;
+    }
     let (anchor, contents) = match kind {
         Kind::View => (
             VIEW_ANCHOR,

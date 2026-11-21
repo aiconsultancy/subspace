@@ -1,6 +1,6 @@
 # Decisions guide
 
-<!-- Sources: spaces/decisions/src/{board,navigator,toolbar,inspector,page,keys,palette,open_issue}. -->
+<!-- Sources: spaces/decisions/src/{board,navigator,toolbar,inspector,page,keys,palette,open_issue,search}. -->
 
 ## Overview
 
@@ -18,6 +18,15 @@ press `?` while the Space has focus.
 Sign in under **Settings > Account**. Decisions uses the same account as
 Issues; you do not enter a token. The first read can take up to a minute
 while Subspace API wakes.
+
+When you switch account or organisation, or sign out, the Space at once
+drops everything it read for the previous account: the list, the selection,
+an open decision and its tab, the account's projects, people and tags, the
+chosen tag and the search. A read still in progress for the previous account
+is discarded when it finishes. The Space then reads the list for the new
+account, or shows **Sign-in required** after a sign-out. The view, maker and
+project you chose stay. **Back** from another Space no longer returns to a
+decision shown before the switch.
 
 ## Main view
 
@@ -42,8 +51,10 @@ the decision (a person's name, or an agent's name and rank) and the date it
 was decided. Superseded and rejected titles read quietly.
 
 The status bar shows **Subspace API**, the signed-in account, the number of
-decisions and when the list was read. A failed read keeps the decisions
-already listed under an **Offline** message.
+decisions and when the list was read. A failed reload keeps the decisions
+already listed under an **Offline** message. A new search or choice clears
+the list first, so if its read fails the Space says why and offers
+**Retry** rather than showing the earlier decisions.
 
 ## Toolbar and filters
 
@@ -94,7 +105,8 @@ Close the decision's tab, or press Escape on the page, to close it.
 
 Choose a linked issue in the inspector, or **Open issue** in the command
 palette. The issue opens in the Issues Space, and its **Back** returns to the
-decision you opened it from. If Issues is turned off, or not signed in, the
+decision you opened it from: its page, or the list with that decision
+selected. If Issues is turned off, or not signed in, the
 Space says so and stays where it is.
 
 ### Follow a supersession
@@ -146,14 +158,17 @@ settings: the account is the one under **Settings › Account**.
 The Space reads only. Log, accept, reject or supersede a decision through
 Subspace API's own tools; there are no editing controls here.
 
-One read lists at most a thousand decisions. A decision shows at most the
-first fifty linked issues the API returns, with the number of the others.
-Revisions of a decision are not shown.
+One read lists at most a thousand decisions. When more match, the count ends
+in **+** and the decisions after the first thousand are not listed; narrow
+the view, maker, project, tag or search to reach them. A decision shows at
+most the first fifty linked issues the API returns, with the number of the
+others. Revisions of a decision are not shown.
 
 Decision content stays in memory. The Space has no agent tools, chat
 context, full-text index, notifications or background updates, and it keeps
-nothing on disk except the navigator choices and dock switches. After
-switching account, reload to read the new account's decisions.
+nothing on disk except the navigator choices and dock switches. Switching
+account or organisation, or signing out, drops what was read for the
+previous account without a reload.
 
 The offline fixture (`scripts/subspace_api_test_server.py`) serves three
 fictional decisions for local work.

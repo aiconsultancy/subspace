@@ -1,7 +1,8 @@
 //! The actions of the pane's toolbar: connect or disconnect the selected
-//! network, join a channel, and leave or close the selected buffer. The
-//! navigator's header repeats Join. The workspace's own switch shows and
-//! hides the members.
+//! network, join a channel, and leave or close the selected buffer. While
+//! the navigator is hidden they act on the conversation the toolbar names
+//! instead. The navigator's header repeats Join. The workspace's own switch
+//! shows and hides the members.
 
 use gpui_kit::component::{Disableable as _, menu::PopupMenuItem};
 use gpui_kit::{App, Context, Entity, IntoElement as _, Window};
@@ -35,7 +36,8 @@ pub(crate) fn render(board: &mut Irc, cx: &mut Context<Irc>) -> Option<Entity<Ov
         board.toolbar = None;
         return None;
     };
-    let network = board.selected_network(cx);
+    // While the navigator is hidden, the conversation the toolbar names.
+    let network = board.toolbar_network(cx);
     let status = network
         .as_ref()
         .and_then(|id| state.network(id))
@@ -188,7 +190,7 @@ fn more(board: &Irc, cx: &App) -> OverflowUnit {
 }
 
 fn removal_items(board: &Irc, cx: &App) -> [(Removal, Option<BufferKey>); 2] {
-    let selected = board.selected_buffer().cloned();
+    let selected = board.toolbar_buffer().cloned();
     let state = board.hub.as_ref().map(|hub| &hub.read(cx).state);
     let removal = selected
         .as_ref()

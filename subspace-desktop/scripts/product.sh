@@ -147,6 +147,27 @@ release_cargo_args() {
     fi
 }
 
+# Spaces that are not ready to ship (see `products/subspace/Cargo.toml`).
+UNRELEASED_FEATURES=(unreleased-spaces board-lab component-gallery)
+
+# Release archives and signed apps never build an unreleased Space, even when
+# the calling shell exports SUBSPACE_BUILD_FEATURES with one. A feature counts
+# with or without a package prefix, such as `subspace/board-lab` or
+# `subspace-framework/component-gallery`.
+refuse_unreleased_features() {
+    local requested=() feature unreleased
+    # Cargo splits a feature list on commas and whitespace, newlines included.
+    IFS=$' \t\n,' read -r -d '' -a requested <<<"${SUBSPACE_BUILD_FEATURES:-}" || true
+    for feature in ${requested[@]+"${requested[@]}"}; do
+        for unreleased in "${UNRELEASED_FEATURES[@]}"; do
+            if [[ "${feature##*/}" = "$unreleased" ]]; then
+                echo "release builds must not include unreleased Spaces: SUBSPACE_BUILD_FEATURES names '$feature'" >&2
+                return 2
+            fi
+        done
+    done
+}
+
 release_target_supported() {
     local supported_target
     for supported_target in "${RELEASE_TARGETS[@]}"; do

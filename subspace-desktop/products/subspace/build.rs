@@ -42,7 +42,6 @@ fn overrides() -> config::Overrides {
     }
 }
 
-// qual:allow(test_quality, untested) reason: "Reads Cargo's build-script environment, which exists only while the build script runs; the stamp it feeds is tested in the app's tests."
 fn build_env() -> stamp::BuildEnv {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap_or_default());
     stamp::BuildEnv {

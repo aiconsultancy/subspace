@@ -398,6 +398,25 @@ impl Irc {
             .map(|network| network.id.clone())
     }
 
+    /// The buffer the pane's toolbar acts on. While the navigator is hidden
+    /// its selection is out of sight, so the toolbar acts on the
+    /// conversation it names; otherwise on the selected row.
+    fn toolbar_buffer(&self) -> Option<&BufferKey> {
+        match self.dock.focused.as_ref() {
+            Some(focused) if !self.dock.buffers_open() => Some(focused),
+            _ => self.selected_buffer(),
+        }
+    }
+
+    /// The network the pane's toolbar acts on, by the same rule as
+    /// [`Self::toolbar_buffer`].
+    fn toolbar_network(&self, cx: &App) -> Option<NetworkId> {
+        match self.dock.focused.as_ref() {
+            Some(focused) if !self.dock.buffers_open() => Some(focused.network.clone()),
+            _ => self.selected_network(cx),
+        }
+    }
+
     fn send(&self, command: Command, cx: &mut App) {
         if let Some(hub) = &self.hub {
             hub.update(cx, |hub, _| hub.send(command));

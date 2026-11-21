@@ -59,19 +59,34 @@ Back to the [change record](intent.md).
   `{api_origin}/v1/issues/{identifier}` to the scope and emits
   `DashboardEvent::Navigate` with that responder key. With no answering Space
   the Space shows "… can't open here. Turn on Issues in Settings and sign in,
-  then try again." `return_location` names the open decision, so Back in
-  Issues returns to it.
+  then try again." The navigation's `origin` names the open decision, or in
+  the list the selected one, so Back in Issues returns to that page or
+  selects that decision again. Return keys carry the account epoch, so a
+  Back to a place shown before an account change does not return.
 
 ## Reads and states
 
-- The list reads up to ten pages of 100. The first read, reload and a stale
-  list (over a minute old on showing the Space) also read `/me`, the projects
-  and the people, which name human makers and recorders.
+- The list reads up to ten pages of 100. Decisions beyond the first 1,000
+  matches are not listed and cannot be paged to in the same view: the count
+  ends in **+**, and narrowing the view, maker, project, tag or search
+  reaches them. A newer read stops a superseded one before its next page.
+  The first read, reload and a stale list (over a minute old on showing the
+  Space) also read `/me`, the projects and the people, which name human
+  makers and recorders.
 - Before the first answer the list shows its skeleton. A sign-in, access or
   organisation failure clears what was read and shows the reason with
-  **Retry**. A network failure keeps the decisions under the shared
-  **Offline** banner. Empty lists say whether the search or the choices left
-  nothing.
+  **Retry**. A network failure on reload keeps the decisions under the shared
+  **Offline** banner; a new search or choice clears the list first, so its
+  failure shows the reason with **Retry**. Empty lists say whether the search
+  or the choices left nothing.
+- Each read takes a lease on the signed-in account and organisation. When
+  the account or organisation changes, or the person signs out, the Space
+  drops the list, selection, open page and tab, directory, tags, tag choice
+  and search, stops reads in flight and drops any answer read under the old
+  lease. It notices within a quarter of a second (the same poll as the Issues
+  Space's hub), and also before drawing, opening a decision, following a
+  link or a Back. It then reads the new account's list while shown, or on
+  next showing. The view, maker and project choices stay.
 - A decision page read that is not found says the decision is no longer
   available; another failure offers **Retry**.
 

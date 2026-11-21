@@ -306,6 +306,7 @@ fn check_row(
             row.child(
                 div()
                     .id(("gh-check-link", index))
+                    .aria_label(crate::inspector::link_label(&check.name, &url))
                     .cursor_pointer()
                     .text_color(tokens.accent)
                     .child("↗")

@@ -50,7 +50,7 @@ fn a_double_click_opens_the_page_in_its_own_tab(cx: &mut TestAppContext) {
     let place = cx
         .update(|_, cx| board.read(cx).return_location(cx))
         .unwrap();
-    assert_eq!(place.key.as_ref(), "decision:d3");
+    assert_eq!(place.key.as_ref(), "decision:0:d3");
     // The list's tab shows the list and keeps the page's tab.
     board.update(cx, |board, cx| board.show_tab(0, cx));
     crate::tests::render(cx);

@@ -5,10 +5,13 @@
 
 use gpui_kit::component::v_flex;
 use gpui_kit::{
-    AnyElement, App, Context, IntoElement, ParentElement as _, Render, Styled as _, Window, div,
+    AnyElement, App, Context, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
+    Render, Styled as _, Window, div,
 };
 use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
-use subspace_framework::dashboard::{Dashboard as _, Tokens, feedback, list, measure, workspace};
+use subspace_framework::dashboard::{
+    DASHBOARD_CONTEXT, Dashboard as _, Tokens, feedback, list, measure, workspace,
+};
 
 use super::{bind_hub, conversations, details, empty};
 use crate::{Irc, dock, initiatives, join, toolbar};
@@ -28,7 +31,15 @@ impl Render for Irc {
         if configured && self.dock.members_open() {
             frame = frame.inspector(inspector(self, cx));
         }
+        // The root carries the Space's key context and focus, so the board
+        // stays focusable and its keys answer while the navigator, whose
+        // list also tracks them, is hidden.
+        let mut context = KeyContext::new_with_defaults(cx.platform_info().os);
+        context.add(DASHBOARD_CONTEXT);
+        context.add(Self::ID);
         v_flex()
+            .key_context(context)
+            .track_focus(&self.focus)
             .relative()
             .size_full()
             .child(frame)

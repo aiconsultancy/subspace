@@ -15,6 +15,8 @@ mod render;
 pub use groups::{GroupedMenu, MenuCommand, MenuGroup, MenuLine};
 pub use render::build;
 
+use std::rc::Rc;
+
 use gpui_kit::SharedString;
 use subspace_lucide::IconName;
 
@@ -125,6 +127,16 @@ impl RowMenuItem {
             Self::AddToChat | Self::AddSelectionToChat => MenuGroup::Chat,
         }
     }
+
+    /// Whether the command acts on the list's selected line rather than on
+    /// facts it carries: Open runs the selected line's Enter action, and the
+    /// shell's Add to chat sends the selected line.
+    pub(crate) fn acts_on_selection(&self) -> bool {
+        matches!(
+            self,
+            Self::OpenDetails | Self::AddToChat | Self::AddSelectionToChat
+        )
+    }
 }
 
 /// What a row's menu offers, in menu order: opening it, the copies, then
@@ -203,6 +215,19 @@ pub fn grouped(items: Vec<RowMenuItem>, open: Option<Callback>) -> GroupedMenu {
             .into_iter()
             .filter_map(|item| command(item, open.clone())),
     );
+    menu
+}
+
+/// The commands `items` stand for, for a line the list could not select:
+/// those that act on the selected line stay in their places, disabled, with
+/// `reason` under them, so they never act on another line.
+pub(crate) fn grouped_unselected(items: Vec<RowMenuItem>, reason: &SharedString) -> GroupedMenu {
+    let inert: Callback = Rc::new(|_, _| {});
+    let mut menu = GroupedMenu::new();
+    menu.extend(items.into_iter().filter_map(|item| {
+        let blocked = item.acts_on_selection();
+        command(item, Some(inert.clone())).map(|command| command.disabled(blocked, reason.clone()))
+    }));
     menu
 }
 

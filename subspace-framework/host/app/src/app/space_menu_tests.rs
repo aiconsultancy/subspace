@@ -181,6 +181,30 @@ fn closing_a_background_space_removes_its_tab_and_keeps_the_current_one(cx: &mut
     });
 }
 
+/// With the navigation rail on, the plus is at the rail's end, not in the
+/// title bar, and the notice says so.
+#[gpui_kit::test]
+fn the_closed_notice_points_to_the_rail_when_navigation_is_vertical(cx: &mut TestAppContext) {
+    let root = tempfile::tempdir().unwrap();
+    let (window, app) = open(root.path(), cx);
+    cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.toggle_navigation_mode(window, cx);
+            app.close_space("beta", window, cx);
+        });
+    })
+    .unwrap();
+    settle(window, cx);
+    assert_eq!(ids(&app, cx), ["alpha", "gamma"]);
+    app.read_with(cx, |app, _| {
+        let toast = &app.toasts.last().unwrap().toast.text;
+        assert_eq!(
+            toast,
+            "Closed Beta. Add it again from the plus at the end of the navigation rail."
+        );
+    });
+}
+
 #[gpui_kit::test]
 fn closing_the_current_space_moves_to_the_previous_tab_and_focuses_it(cx: &mut TestAppContext) {
     let root = tempfile::tempdir().unwrap();

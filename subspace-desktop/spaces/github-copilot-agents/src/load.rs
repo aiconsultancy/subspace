@@ -18,8 +18,8 @@ use crate::model::Kind;
 use crate::{CopilotAgents, watch};
 
 /// What one list load returns: the task list, the saved references, which
-/// are read from the same background thread, and the work login when the
-/// load was asked to name it.
+/// are read from the same background thread, and the work login the list
+/// was read as, when GitHub named it.
 type ListResult = (
     Result<Vec<Task>, Error>,
     Vec<SubjectTaskRef>,
@@ -38,11 +38,9 @@ impl CopilotAgents {
             return;
         };
         self.loading = true;
-        // The login does not change while the app runs, so one answer lasts.
-        let name_login = self.login.is_none();
         cx.spawn(async move |this, cx| {
             let loaded = cx
-                .background_spawn(async move { list_tasks(&client, store, name_login) })
+                .background_spawn(async move { list_tasks(&client, store) })
                 .await;
             _ = this.update(cx, |this, cx| {
                 this.apply_list(loaded, cx);
@@ -53,10 +51,13 @@ impl CopilotAgents {
         cx.notify();
     }
 
+    /// Takes a list answer. A list that loaded names the account it was
+    /// read as, so a changed credential shows on the next load; a failed
+    /// load keeps the account the list on show was read as.
     fn apply_list(&mut self, (tasks, saved, login): ListResult, cx: &mut Context<Self>) {
         self.loading = false;
         self.saved = saved;
-        if login.is_some() {
+        if tasks.is_ok() {
             self.login = login;
         }
         match tasks {
@@ -256,16 +257,13 @@ pub(crate) fn record_monitor(
     store.record(&subject, entry)
 }
 
-/// The task list and the saved references, both blocking reads. With
-/// `name_login`, a list that loaded also names the work login it was read
-/// as: one more small request, which the navigator and the status bar show.
-fn list_tasks(
-    client: &GithubClient,
-    store: Option<Arc<TaskStore>>,
-    name_login: bool,
-) -> ListResult {
+/// The task list and the saved references, both blocking reads. A list
+/// that loaded also names the work login it was read as: one more small
+/// request on every load, so the navigator and the status bar follow a
+/// changed credential instead of naming the first account all session.
+fn list_tasks(client: &GithubClient, store: Option<Arc<TaskStore>>) -> ListResult {
     let tasks = client.list_my_copilot_agent_tasks().map(|list| list.tasks);
-    let login = match name_login && tasks.is_ok() {
+    let login = match tasks.is_ok() {
         true => client.work_login().ok(),
         false => None,
     };

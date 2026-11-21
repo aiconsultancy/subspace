@@ -24,6 +24,7 @@ use crate::rows::{state_glyph, state_label};
 
 mod status_rows;
 
+pub(crate) use status_rows::link_label;
 use status_rows::{reviewers, status_row};
 
 const INSPECTOR_ID: &str = "github-inspector";

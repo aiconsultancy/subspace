@@ -17,6 +17,28 @@ const VIEW_KEYS: [&str; 5] = ["1", "2", "3", "4", "5"];
 /// The Space's commands in the palette.
 pub(crate) fn commands(this: &Decisions) -> Vec<PaletteCommand> {
     let mut commands = Vec::new();
+    // Nothing read for an account that is no longer signed in is offered.
+    let moved = this.account_moved();
+    if !moved {
+        commands.extend(decision_commands(this));
+    }
+    let search = PaletteCommand::new("Search decisions", keys::FocusSearch);
+    commands.push(search.shortcut("/"));
+    commands.extend(view_commands(this));
+    commands.extend(maker_commands(this));
+    if !moved {
+        commands.extend(project_commands(this));
+    }
+    commands.push(callback(this, "Filter by tag…", |this, window, cx| {
+        menus::open(this, Kind::Tag, window, cx);
+    }));
+    commands.extend(dock_commands(this));
+    commands
+}
+
+/// Open or close the decision, then open its linked issues.
+fn decision_commands(this: &Decisions) -> Vec<PaletteCommand> {
+    let mut commands = Vec::new();
     if this.shown_page().is_some() {
         let close = PaletteCommand::new("Close the decision", CloseDetail);
         commands.push(close.shortcut("Esc"));
@@ -25,15 +47,6 @@ pub(crate) fn commands(this: &Decisions) -> Vec<PaletteCommand> {
         commands.push(open.shortcut("Enter"));
     }
     commands.extend(issue_commands(this));
-    let search = PaletteCommand::new("Search decisions", keys::FocusSearch);
-    commands.push(search.shortcut("/"));
-    commands.extend(view_commands(this));
-    commands.extend(maker_commands(this));
-    commands.extend(project_commands(this));
-    commands.push(callback(this, "Filter by tag…", |this, window, cx| {
-        menus::open(this, Kind::Tag, window, cx);
-    }));
-    commands.extend(dock_commands(this));
     commands
 }
 
@@ -116,9 +129,13 @@ fn issue_commands(this: &Decisions) -> Vec<PaletteCommand> {
         .take(MAX_ISSUE_COMMANDS)
         .map(|issue| {
             let identifier = issue.identifier;
-            callback(this, format!("Open issue {identifier}"), move |_, _, cx| {
-                open_issue::open(&identifier, cx);
-            })
+            callback(
+                this,
+                format!("Open issue {identifier}"),
+                move |this, _, cx| {
+                    open_issue::open(&identifier, this, cx);
+                },
+            )
         })
         .collect()
 }

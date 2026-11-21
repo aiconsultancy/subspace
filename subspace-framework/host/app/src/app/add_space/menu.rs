@@ -10,7 +10,7 @@ use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::{Icon, Sizable as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, Context, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
+    App, Context, InteractiveElement as _, IntoElement, ParentElement as _, Role, SharedString,
     StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, WeakEntity, Window, div,
 };
 use subspace_dashboard::Tokens;
@@ -105,15 +105,17 @@ fn space_item(space: OffSpace, app: WeakEntity<SubspaceApp>) -> PopupMenuItem {
         })
 }
 
-/// The item's text. A custom menu item has no accessible name of its own,
-/// so the row carries the Space's title.
+/// The item's text. A custom menu item takes no label of its own, so the
+/// row is an accessible label holding the Space's title, from which the
+/// item takes its name. The description is not part of the name.
 fn space_row(space: &OffSpace, cx: &App) -> impl IntoElement + use<> {
     let tokens = Tokens::current(cx);
     let description = space.description.clone();
     v_flex()
         .id(SharedString::from(format!("add-space-item-{}", space.id)))
         .test_support()
-        .aria_label(space.title.clone())
+        .role(Role::Label)
+        .aria_value(space.title.clone())
         .min_w_0()
         .child(space.title.clone())
         .when(!description.is_empty(), |row| {

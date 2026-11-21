@@ -203,3 +203,6 @@ record. [Change records](changes/README.md) explains the convention.
   font keep the platform's fonts.
 - [Unreleased Spaces](changes/unreleased-spaces/intent.md): Board Lab and the
   Component gallery as Cargo features left out of release builds.
+- [Workspace shell review findings](changes/workspace-shell-review-findings/intent.md):
+  the follow-up that takes every open review finding of the workspace shell,
+  starting with Decisions dropping what it read when the account changes.

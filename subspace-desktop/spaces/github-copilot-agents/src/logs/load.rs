@@ -18,7 +18,9 @@ use crate::logs::{self, LogState, OpenLog};
 // qual:allow(coupling, oi) reason: "One file per concern of the Copilot Agents dashboard, as its list, detail and action files already are; this one owns reading a session log."
 impl CopilotAgents {
     /// Shows the open task's last session log, or hides the one on show.
-    /// The log is read only here, never on selection.
+    /// Only this shows a log. A loaded task detail may also read its last
+    /// log for the search index, and only while that index is on for this
+    /// Space: see [`prefetch_latest`].
     pub(crate) fn toggle_log(&mut self, cx: &mut Context<Self>) {
         let open = self.log.as_ref().map(|log| log.task_key.clone());
         match open {
@@ -160,7 +162,7 @@ fn index_log(
     service: &full_text::Service,
     request: LogIndex<'_>,
 ) -> Result<(), String> {
-    if !service.policy("github-copilot-agents")?.enabled {
+    if !indexes_logs(service)? {
         return Ok(());
     }
     let credential = client.credential(None).map_err(|error| error.to_string())?;
@@ -190,6 +192,15 @@ struct LogIndex<'a> {
     log: &'a SessionLog,
 }
 
+/// Whether the search index takes this Space's session logs.
+fn indexes_logs(service: &full_text::Service) -> Result<bool, String> {
+    Ok(service.policy("github-copilot-agents")?.enabled)
+}
+
+/// Reads a loaded task's last session log for the search index, without
+/// showing it. Nothing is read unless session logs are on and the search
+/// index takes this Space's logs, so selecting a task reads no log the
+/// index would not keep.
 pub(crate) fn prefetch_latest(
     client: Option<Arc<GithubClient>>,
     task_key: String,
@@ -211,22 +222,43 @@ pub(crate) fn prefetch_latest(
         let _ = cx
             .background_spawn(async move {
                 let key = logs::cache_key(&session.id, &session.updated_at);
-                let (log, _) = fetch_log(&client, &session.id, Some(&key))
-                    .map_err(|error| error.to_string())?;
-                index_log(
-                    &client,
-                    &service,
-                    LogIndex {
-                        task_key: &task_key,
-                        session_id: &session.id,
-                        links: &links,
-                        log: &log,
+                prefetch(
+                    || indexes_logs(&service),
+                    || {
+                        fetch_log(&client, &session.id, Some(&key))
+                            .map(|(log, _)| log)
+                            .map_err(|error| error.to_string())
+                    },
+                    |log| {
+                        index_log(
+                            &client,
+                            &service,
+                            LogIndex {
+                                task_key: &task_key,
+                                session_id: &session.id,
+                                links: &links,
+                                log,
+                            },
+                        )
                     },
                 )
             })
             .await;
     })
     .detach();
+}
+
+/// The prefetch's order: the index policy first, and the log only when the
+/// index will keep it.
+fn prefetch(
+    indexed: impl FnOnce() -> Result<bool, String>,
+    fetch: impl FnOnce() -> Result<SessionLog, String>,
+    index: impl FnOnce(&SessionLog) -> Result<(), String>,
+) -> Result<(), String> {
+    if !indexed()? {
+        return Ok(());
+    }
+    index(&fetch()?)
 }
 
 /// One log read: the cache file when `cache_key` is given and holds this
@@ -243,4 +275,68 @@ fn fetch_log(
     let log =
         client.copilot_agent_session_log(session_id, copilot_agent_sessions::MAX_LOG_BYTES)?;
     Ok((log, cache_key.is_some()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use subspace_framework::client_github::copilot_agent_sessions::SessionLog;
+
+    use super::prefetch;
+
+    fn empty_log() -> SessionLog {
+        SessionLog {
+            entries: Vec::new(),
+            truncated: false,
+        }
+    }
+
+    #[test]
+    fn a_prefetch_reads_no_log_the_search_index_would_not_keep() {
+        let fetched = Cell::new(false);
+        let indexed = Cell::new(false);
+        let skipped = prefetch(
+            || Ok(false),
+            || {
+                fetched.set(true);
+                Ok(empty_log())
+            },
+            |_| {
+                indexed.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(skipped, Ok(()));
+        assert!(!fetched.get(), "the index is off, so no log is read");
+        assert!(!indexed.get());
+
+        let failed = prefetch(
+            || Err("no index".into()),
+            || {
+                fetched.set(true);
+                Ok(empty_log())
+            },
+            |_| Ok(()),
+        );
+        assert_eq!(failed, Err("no index".to_owned()));
+        assert!(!fetched.get(), "an unreadable policy reads no log either");
+
+        let kept = prefetch(
+            || Ok(true),
+            || {
+                fetched.set(true);
+                Ok(empty_log())
+            },
+            |_| {
+                indexed.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(kept, Ok(()));
+        assert!(
+            fetched.get() && indexed.get(),
+            "an index that keeps it reads it"
+        );
+    }
 }

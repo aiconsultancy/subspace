@@ -265,8 +265,8 @@ fn issue_row(issue: &Issue, cx: &mut Context<Decisions>) -> AnyElement {
         format!("{} {}", issue.identifier, issue.title),
     ))
     .accessibility_label(format!("Open issue {}: {}", issue.identifier, issue.title))
-    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-        open_issue::open(&identifier, cx);
+    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+        open_issue::open(&identifier, this, cx);
     }));
     div()
         .id(SharedString::from(format!(

@@ -2,6 +2,7 @@
 //! grouped by status, with who made each one and what superseded it. It
 //! reads only; decisions are logged and changed elsewhere.
 
+mod account;
 mod board;
 mod docks;
 mod inspector;
@@ -69,6 +70,19 @@ pub struct Decisions {
     reader: load::Reader,
     /// Each list read's number: an answer to an older read is dropped.
     reads: u64,
+    /// Ends the latest list read early once a newer read supersedes it.
+    stop: load::Stop,
+    /// Each page read's number, as `reads` is for the list.
+    page_reads: u64,
+    /// The account and organisation what the Space holds was read for.
+    lease: Option<load::Lease>,
+    /// Counts account changes; a return location from before one no
+    /// longer returns.
+    account_epoch: u64,
+    /// Whether the Space shows, so an account change reads the new list.
+    active: bool,
+    /// An account change left the search field and a menu to clear.
+    tidy: bool,
     folds: board::Folds,
     /// The text edge of the last frame, which the shared list asks for.
     text_edge: Pixels,
@@ -77,6 +91,7 @@ pub struct Decisions {
     _read: Option<Task<()>>,
     _page_read: Option<Task<()>>,
     _search_task: Option<Task<()>>,
+    _watch: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -121,12 +136,16 @@ impl Dashboard for Decisions {
     }
 
     /// Reads start here: the list is read again when it is over a minute
-    /// old.
-    fn activate(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    /// old, or was read for another account.
+    fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.active = true;
+        self.follow_account(cx);
+        self.tidy(window, cx);
         self.read_if_stale(cx);
     }
 
     fn deactivate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.active = false;
         self.menu_anchors.dismiss(window, cx);
         self.menu = None;
     }
@@ -160,8 +179,10 @@ impl Dashboard for Decisions {
         page::return_location(self)
     }
 
-    fn return_to(&mut self, key: &str, _window: &mut Window, cx: &mut Context<Self>) -> bool {
-        self.return_to_page(key, cx)
+    fn return_to(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.follow_account(cx);
+        self.tidy(window, cx);
+        self.return_to_place(key, cx)
     }
 
     fn modal(&self, _cx: &App) -> Option<Modal> {
@@ -177,7 +198,9 @@ impl Dashboard for Decisions {
         keys::HELP
     }
 
-    fn reload(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.follow_account(cx);
+        self.tidy(window, cx);
         self.read(true, cx);
         if self.shown_page().is_some() {
             self.read_page(cx);
@@ -254,6 +277,9 @@ impl ListDashboard for Decisions {
     }
 
     fn on_activate(&mut self, key: &SharedString, cx: &mut Context<Self>) -> bool {
+        if self.follow_account(cx) {
+            return true;
+        }
         let Some(id) = listing::decision_id(key) else {
             return false;
         };

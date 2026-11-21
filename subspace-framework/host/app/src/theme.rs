@@ -596,6 +596,35 @@ mod tests {
         assert!(!tokens.controls.liquid_glass);
     }
 
+    /// Twilight Two's code and Markdown colours, Markdown URLs and type names
+    /// among them, read as normal text (WCAG 1.4.3, 4.5:1) on every surface
+    /// they are drawn on: the page, the side panels and popovers, the editor
+    /// and its current line.
+    #[test]
+    fn twilight_two_syntax_colours_meet_normal_text_contrast() {
+        let document: serde_json::Value = serde_json::from_str(super::TWILIGHT_TWO_JSON).unwrap();
+        let theme = &document["themes"][0];
+        let surfaces = [
+            &theme["colors"]["background"],
+            &theme["colors"]["sidebar.background"],
+            &theme["colors"]["popover.background"],
+            &theme["highlight"]["editor.background"],
+            &theme["highlight"]["editor.active_line.background"],
+        ]
+        .map(|surface| surface.as_str().unwrap());
+        let syntax = theme["highlight"]["syntax"].as_object().unwrap();
+        for key in ["link_uri", "link_text", "type", "title"] {
+            assert!(syntax.contains_key(key), "{key}");
+        }
+        for (key, style) in syntax {
+            let colour = style["color"].as_str().unwrap();
+            for surface in surfaces {
+                let ratio = contrast(colour, surface);
+                assert!(ratio >= 4.5, "{key} {colour} on {surface}: {ratio:.2}");
+            }
+        }
+    }
+
     /// WCAG 2.2 non-text contrast (1.4.11): an off switch must stay visible
     /// on every surface a form can sit on, and its thumb on its track.
     #[test]
