@@ -74,6 +74,11 @@ pub struct Actions {
     detail: panel::RunDetail,
     /// The item opened in a tab beside the view.
     open: Option<open::OpenTab>,
+    /// The last token given to a jobs or log read; each read takes a new one.
+    requests: u64,
+    /// The jobs read in flight, by its token. One runs at a time; the
+    /// selection or opened tab that waits is read when it ends.
+    reading: Option<u64>,
     pending: Option<dialogs::Confirmation>,
     menu: Option<Entity<subspace_framework::dashboard::menu::Menu>>,
     menu_anchors: subspace_framework::dashboard::menu::MenuAnchors,
@@ -107,6 +112,17 @@ impl Actions {
         self.records()
             .iter()
             .find(|record| record.key == key.as_ref())
+    }
+
+    /// What the writes act on: the selection, unless the opened tab shows
+    /// another item, when they act on nothing rather than on a run out of
+    /// sight.
+    fn write_target(&self) -> Option<&Record> {
+        let selected = self.selected()?;
+        match self.opened() {
+            Some(open) if open.key != selected.key || open.view != self.view => None,
+            _ => Some(selected),
+        }
     }
 
     /// The current account's loaded runs, whatever the view.
@@ -216,6 +232,8 @@ impl Actions {
         self.queued_repos.clear();
         self.detail = Default::default();
         self.open = None;
+        // The old account's read still ends, but its answer is dropped.
+        self.reading = None;
         self.login = Some(login.clone());
         prefs::set(cx, "actions.account", login);
         self.graph = panel::new_graph(cx);

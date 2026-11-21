@@ -67,7 +67,7 @@ fn trigger(this: &Actions) -> IconButton {
         operation.icon(),
         write_label(operation),
     );
-    let reason = crate::writes::unavailable(operation, this.selected());
+    let reason = crate::writes::unavailable(operation, this.write_target());
     wire(button, this.weak.clone(), operation, reason)
 }
 

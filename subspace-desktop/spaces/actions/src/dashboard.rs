@@ -98,6 +98,8 @@ impl Dashboard for Actions {
             graph: panel::new_graph(cx),
             detail: panel::RunDetail::default(),
             open: None,
+            requests: 0,
+            reading: None,
             pending: None,
             menu: None,
             menu_anchors: Default::default(),
@@ -173,7 +175,7 @@ impl Dashboard for Actions {
 
     fn commands(&self, cx: &Context<Self>) -> Vec<PaletteCommand> {
         let mut commands = vec![PaletteCommand::new("Filter Actions…", keys::Status).shortcut("s")];
-        commands.extend(keys::write_commands(self.selected()));
+        commands.extend(keys::write_commands(self.write_target()));
         if let Some(repo) = panel::selected_repository(self).filter(|_| self.login.is_some()) {
             let repo = repo.to_owned();
             let board = cx.weak_entity();

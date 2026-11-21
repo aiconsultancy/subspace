@@ -31,9 +31,30 @@ pub(crate) struct RunDetail {
     pub target: Option<RunTarget>,
     pub jobs: Vec<crate::graph::GraphJob>,
     pub loading: bool,
+    /// Why the jobs did not load. A log that fails says so in `log`.
     pub error: Option<String>,
-    pub log: Option<String>,
+    pub log: LogState,
     pub selected_job: Option<u64>,
+    /// The jobs read this copy waits for or last took. An answer to any
+    /// other read, such as an earlier selection's, is dropped.
+    pub request: u64,
+    /// The log read this copy waits for or last took.
+    pub log_request: u64,
+}
+
+/// A failed job's log in the opened tab: asked for, shown, or failed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum LogState {
+    #[default]
+    None,
+    Loading,
+    Loaded(String),
+    Failed(String),
+}
+
+/// Whether two targets are the same run, whatever their attempts.
+pub(crate) fn same_run(a: &RunTarget, b: &RunTarget) -> bool {
+    a.repo == b.repo && a.id == b.id
 }
 
 pub(crate) fn new_graph(cx: &mut Context<Actions>) -> Entity<crate::graph::FlowGraph> {
@@ -118,8 +139,17 @@ impl ListDashboard for Actions {
         false
     }
 
-    /// A selected run loads its jobs for the inspector and Flow.
+    /// A selected run loads its jobs for the inspector and Flow. Choosing
+    /// another line while the opened tab shows brings back the list that
+    /// holds it, so the tab never shows one run while the inspector and the
+    /// writes act on another.
     fn on_selection_changed(&mut self, selected: Option<SharedString>, cx: &mut Context<Self>) {
+        if let Some(open) = self.open.as_mut()
+            && open.active
+            && selected.as_deref() != Some(open.key.as_str())
+        {
+            open.active = false;
+        }
         let target = selected.and_then(|key| {
             self.records()
                 .iter()

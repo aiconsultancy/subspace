@@ -112,10 +112,20 @@ fn apply_updates(
         this.backoff.succeeded();
         this.loaded_at = Some(std::time::Instant::now());
     }
-    if this.visible
-        && let Some(target) = this.detail.target.clone()
-    {
-        this.load_detail(target, cx);
+    if this.visible {
+        // Read the selected run again as it now stands: a re-run is a new
+        // attempt, whose jobs replace the old attempt's.
+        if let Some(shown) = this.detail.target.clone() {
+            let current = this
+                .runs()
+                .iter()
+                .filter_map(|record| record.run.as_ref())
+                .find(|run| crate::panel::same_run(run, &shown))
+                .cloned()
+                .unwrap_or(shown);
+            this.load_detail(current, cx);
+        }
+        this.refresh_open_detail(cx);
     }
     this.rebuild(cx);
     this.load_queued_repos(cx);

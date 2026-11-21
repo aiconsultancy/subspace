@@ -213,11 +213,20 @@ Actions records**. The board does not keep a persistent full-text index.
 
 - One click on a row selects it and shows it in the inspector. A selected run
   starts a background read of its jobs and its workflow file, as opening a run
-  did before. The selection does not open anything.
+  did before. One read runs at a time: when you move through runs quickly,
+  the run you stop on is read next, and the runs you passed are not read. The
+  selection does not open anything.
 - A double click, Enter or **Open** in the inspector opens the item in a second
   tab beside the view's tab. Click the view's tab, or choose a view, to go back
   to the list; the opened tab stays until you close it with its ×. Opening
   another item replaces it.
+- Clicking the opened tab selects its item again, in its own view, so the
+  inspector, the keys and Commands act on the item the tab shows. Selecting
+  another item, for example from the navigator or a search, shows the list
+  again.
+- In a narrow list a row's columns after the title take at most 60% of the
+  row. The branch and actor columns give way first, then the status word is
+  cut; the age keeps its width.
 - Click a group header, or select it and press Enter, to fold or unfold it.
 
 ### Inspector
@@ -259,7 +268,9 @@ the status and title, **Details** (repository, workflow, branch, actor,
 attempt, event, SHA, started and updated), **Commit** with the commit message,
 **Jobs** with each job's result, duration, runner, labels and steps
 (`<number>. <name> · <result> · <duration>`), and **Job log** once you load a
-log. A review request's tab adds **Environment**, **Allowed reviewer**,
+log. After a re-run, the tab shows **Loading jobs…** until it has read the new
+attempt, so the jobs and log never come from an earlier attempt than the
+facts. A review request's tab adds **Environment**, **Allowed reviewer**,
 **Requester**, **Wait timer** and **Wait timer started**; a release's adds its
 **Release notes**.
 
@@ -307,9 +318,13 @@ link omit the link entries.
 2. Open the **Failed job log** picker and choose a job.
 
 Subspace opens the run in its tab, reads the log on request only, and shows it
-in the **Job log** section. The log is limited to 1 MB. A longer log ends with
-`[Subspace truncated this log at 1 MB.]`. Closing the run's tab discards the
-log.
+in the **Job log** section: **Loading the job log…** first, then the log. The
+log is limited to 1 MB. A longer log ends with
+`[Subspace truncated this log at 1 MB.]`. If you choose another job before a
+log arrives, only the last one you chose shows. A log that cannot be read shows
+`The job log did not load: <error>` in that section, and the jobs stay as they
+were. The picker lists only the jobs of the run that is selected now. Closing
+the run's tab, or a re-run of that run, discards the log.
 
 ### Change a run or review a deployment
 
