@@ -407,6 +407,7 @@ export const issues = pgTable(
     description: text(),
     stateId: uuid("state_id").notNull(),
     assigneeId: uuid("assignee_id"),
+    readyForAgents: boolean("ready_for_agents").default(false).notNull(),
     ownerId: uuid("owner_id"),
     createdById: uuid("created_by_id").notNull(),
     parentId: uuid("parent_id"),
@@ -450,6 +451,12 @@ export const issues = pgTable(
     ),
     index("issues_activity_since_idx").on(table.organisationId, table.lastActivityAt),
     index("issues_manual_order_idx").on(table.organisationId, table.number, table.id),
+    // Supports the dispatcher's poll for ready, unassigned and unarchived issues.
+    index("issues_ready_for_agents_idx")
+      .on(table.organisationId)
+      .where(
+        sql`${table.readyForAgents} and ${table.assigneeId} is null and ${table.archivedAt} is null`,
+      ),
     index("issues_parent_order_idx").on(
       table.organisationId,
       table.parentId,
