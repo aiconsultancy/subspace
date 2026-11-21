@@ -93,7 +93,7 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "truncated::text",
         source: "board-kit/dashboard/src/truncated.rs",
-        used_in: "Shortened titles with the full text on hover in Board Lab, GitHub, chat and the host.",
+        used_in: "Shortened titles with the full text on hover in Space Lab, GitHub, chat and the host.",
         samples: truncated_text,
         kit: None,
     },

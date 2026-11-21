@@ -9504,7 +9504,6 @@ dependencies = [
  "serde_json",
  "subspace-actions-board",
  "subspace-api-client",
- "subspace-board-lab-board",
  "subspace-decisions-board",
  "subspace-descriptor",
  "subspace-framework",
@@ -9512,6 +9511,7 @@ dependencies = [
  "subspace-github-copilot-agents-board",
  "subspace-irc-board",
  "subspace-issues-board",
+ "subspace-space-lab-board",
  "subspace-terminal-panel",
  "subspace-web-board",
  "tempfile",
@@ -9627,27 +9627,6 @@ dependencies = [
  "subspace-product",
  "tokio",
  "usage-lib",
-]
-
-[[package]]
-name = "subspace-board-lab-board"
-version = "0.10.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "gpui-kit",
- "hex",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "subspace-framework",
- "subspace-mxc-worker",
- "tempfile",
- "tokio",
- "toml 1.2.1+spec-1.1.0",
- "url",
- "zip",
 ]
 
 [[package]]
@@ -10047,6 +10026,27 @@ dependencies = [
  "tokio",
  "windows-sys 0.61.2",
  "x11rb",
+]
+
+[[package]]
+name = "subspace-space-lab-board"
+version = "0.10.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "gpui-kit",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "subspace-framework",
+ "subspace-mxc-worker",
+ "tempfile",
+ "tokio",
+ "toml 1.2.1+spec-1.1.0",
+ "url",
+ "zip",
 ]
 
 [[package]]

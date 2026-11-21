@@ -341,7 +341,7 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "gpui_kit::component::slider::Slider",
         source: kit_source!("slider.rs"),
-        used_in: "Density sliders in the theme designer and, through slider::control, Board Lab values.",
+        used_in: "Density sliders in the theme designer and, through slider::control, Space Lab values.",
         samples: choices::sliders,
         kit: Some(Kit {
             paths: &["slider::Slider"],

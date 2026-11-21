@@ -20,7 +20,7 @@ use crate::settings::form::SettingsPage;
 use crate::theme;
 
 const PROTOTYPES: FeatureSpec = FeatureSpec {
-    id: "board.board-lab.prototype-views",
+    id: "board.space-lab.prototype-views",
     title: "Show prototype views",
     description: "Show retained prototypes. Save and restart to apply.",
     stage: FeatureStage::Experimental,
@@ -33,7 +33,7 @@ const NESTED: FeatureSpec = FeatureSpec {
     ..PROTOTYPES
 };
 const LIVE: FeatureSpec = FeatureSpec {
-    id: "board.board-lab.live-display",
+    id: "board.space-lab.live-display",
     title: "Live display",
     stage: FeatureStage::Stable,
     ..PROTOTYPES
@@ -45,24 +45,24 @@ const SECTIONS: &[SettingsSection] = &[SettingsSection {
     children: &[],
     features: &[NESTED],
 }];
-const PROTOTYPES_CONTROL: &str = "feature-board.board-lab.prototype-views";
+const PROTOTYPES_CONTROL: &str = "feature-board.space-lab.prototype-views";
 const NESTED_CONTROL: &str = "feature-board.future.nested-preview";
 
 fn open(root: &Path, cx: &mut TestAppContext) -> WindowHandle<Settings> {
     cx.update(|cx| {
         theme::preview_tests::init_app(cx, root, root.join("state.json"));
         theme::initialize(cx);
-        let mut board_lab = crate::settings::navigation_tests::registration();
-        board_lab.id = "board-lab";
-        board_lab.title = "Board Lab".into();
-        board_lab.settings.features = &[PROTOTYPES, LIVE];
-        board_lab.settings.live_features = &[LIVE.id];
-        board_lab.settings.sections = &[];
+        let mut space_lab = crate::settings::navigation_tests::registration();
+        space_lab.id = "space-lab";
+        space_lab.title = "Space Lab".into();
+        space_lab.settings.features = &[PROTOTYPES, LIVE];
+        space_lab.settings.live_features = &[LIVE.id];
+        space_lab.settings.sections = &[];
         let mut future = crate::settings::navigation_tests::registration();
         future.settings.sections = SECTIONS;
-        cx.set_global(crate::registry::IncludedBoards(vec![board_lab, future]));
+        cx.set_global(crate::registry::IncludedBoards(vec![space_lab, future]));
     });
-    std::fs::write(root.join("config.json"), r#"{"boards":{"board-lab":true}}"#).unwrap();
+    std::fs::write(root.join("config.json"), r#"{"boards":{"space-lab":true}}"#).unwrap();
     reopen(root, cx)
 }
 
@@ -95,18 +95,18 @@ fn save_live_on(settings: WindowHandle<Settings>, root: &Path, cx: &mut TestAppC
     rendered(settings, cx, |window, _| {
         assert!(
             window
-                .try_find("feature-board.board-lab.live-display")
+                .try_find("feature-board.space-lab.live-display")
                 .is_none()
         )
     });
-    page(settings, SettingsPage::Board("board-lab"), cx);
+    page(settings, SettingsPage::Board("space-lab"), cx);
     assert_eq!(
         rendered(settings, cx, |window, _| window
-            .find("feature-board.board-lab.live-display")
+            .find("feature-board.space-lab.live-display")
             .checked()),
         Some(false)
     );
-    click(settings, "feature-board.board-lab.live-display", cx);
+    click(settings, "feature-board.space-lab.live-display", cx);
     cx.update(|cx| assert!(!cx.global::<Services>().config.feature_enabled(&LIVE)));
     settings
         .update(cx, |settings, window, cx| {
@@ -138,14 +138,14 @@ fn save_live_on(settings: WindowHandle<Settings>, root: &Path, cx: &mut TestAppC
 
 fn save_live_off_and_restart_feature(root: &Path, cx: &mut TestAppContext) {
     let reopened = reopen(root, cx);
-    page(reopened, SettingsPage::Board("board-lab"), cx);
-    click(reopened, "feature-board.board-lab.live-display", cx);
+    page(reopened, SettingsPage::Board("space-lab"), cx);
+    click(reopened, "feature-board.space-lab.live-display", cx);
     cx.update(|cx| assert!(cx.global::<Services>().config.feature_enabled(&LIVE)));
     let cancelled = reopen(root, cx);
-    page(cancelled, SettingsPage::Board("board-lab"), cx);
+    page(cancelled, SettingsPage::Board("space-lab"), cx);
     assert_eq!(
         rendered(cancelled, cx, |window, _| window
-            .find("feature-board.board-lab.live-display")
+            .find("feature-board.space-lab.live-display")
             .checked()),
         Some(true)
     );
@@ -183,7 +183,7 @@ fn save_restart_feature(cancelled: WindowHandle<Settings>, root: &Path, cx: &mut
 }
 
 fn toggle_and_save(settings: WindowHandle<Settings>, cx: &mut TestAppContext) -> bool {
-    click(settings, "feature-board.board-lab.live-display", cx);
+    click(settings, "feature-board.space-lab.live-display", cx);
     settings
         .update(cx, |settings, window, cx| {
             settings.save(window, cx).unwrap()
@@ -250,7 +250,7 @@ fn application_experiments_exclude_every_board_owned_feature(cx: &mut TestAppCon
         assert!(window.try_find(PROTOTYPES_CONTROL).is_none());
         assert!(window.try_find(NESTED_CONTROL).is_none());
     });
-    page(settings, SettingsPage::Board("board-lab"), cx);
+    page(settings, SettingsPage::Board("space-lab"), cx);
     assert!(rendered(settings, cx, |window, _| window
         .find(PROTOTYPES_CONTROL)
         .visible()));
@@ -264,10 +264,10 @@ fn application_experiments_exclude_every_board_owned_feature(cx: &mut TestAppCon
 fn board_feature_drafts_save_and_reopen_in_both_directions(cx: &mut TestAppContext) {
     let root = tempfile::tempdir().unwrap();
     let settings = open(root.path(), cx);
-    page(settings, SettingsPage::Board("board-lab"), cx);
+    page(settings, SettingsPage::Board("space-lab"), cx);
     click(settings, PROTOTYPES_CONTROL, cx);
     page(settings, SettingsPage::Experiments, cx);
-    page(settings, SettingsPage::Board("board-lab"), cx);
+    page(settings, SettingsPage::Board("space-lab"), cx);
     assert_eq!(prototype_checked(settings, cx), Some(true));
     settings
         .update(cx, |settings, window, cx| {
@@ -279,7 +279,7 @@ fn board_feature_drafts_save_and_reopen_in_both_directions(cx: &mut TestAppConte
         })
         .unwrap();
     let reopened = reopen(root.path(), cx);
-    page(reopened, SettingsPage::Board("board-lab"), cx);
+    page(reopened, SettingsPage::Board("space-lab"), cx);
     assert_eq!(prototype_checked(reopened, cx), Some(true));
     click(reopened, PROTOTYPES_CONTROL, cx);
     reopened
@@ -289,7 +289,7 @@ fn board_feature_drafts_save_and_reopen_in_both_directions(cx: &mut TestAppConte
         })
         .unwrap();
     let final_editor = reopen(root.path(), cx);
-    page(final_editor, SettingsPage::Board("board-lab"), cx);
+    page(final_editor, SettingsPage::Board("space-lab"), cx);
     assert_eq!(prototype_checked(final_editor, cx), Some(false));
 }
 
@@ -297,15 +297,15 @@ fn board_feature_drafts_save_and_reopen_in_both_directions(cx: &mut TestAppConte
 fn disabled_board_experiments_reject_clicks_and_retain_the_draft(cx: &mut TestAppContext) {
     let root = tempfile::tempdir().unwrap();
     let settings = open(root.path(), cx);
-    page(settings, SettingsPage::Board("board-lab"), cx);
+    page(settings, SettingsPage::Board("space-lab"), cx);
     click(settings, PROTOTYPES_CONTROL, cx);
-    click(settings, "settings-board-lab-enabled", cx);
+    click(settings, "settings-space-lab-enabled", cx);
     assert!(rendered(settings, cx, |window, _| window
         .find("settings-board-off")
         .visible()));
     click(settings, PROTOTYPES_CONTROL, cx);
     assert_eq!(prototype_checked(settings, cx), Some(true));
-    click(settings, "settings-board-lab-enabled", cx);
+    click(settings, "settings-space-lab-enabled", cx);
     assert_eq!(prototype_checked(settings, cx), Some(true));
     click(settings, PROTOTYPES_CONTROL, cx);
     assert_eq!(prototype_checked(settings, cx), Some(false));

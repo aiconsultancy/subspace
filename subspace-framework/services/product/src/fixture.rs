@@ -49,7 +49,7 @@ const BOARDS: &[(&str, bool)] = &[
     ("irc", cfg!(debug_assertions)),
     ("issues", cfg!(debug_assertions)),
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    ("board-lab", cfg!(debug_assertions)),
+    ("space-lab", cfg!(debug_assertions)),
     ("actions", false),
     ("component-gallery", cfg!(debug_assertions)),
 ];

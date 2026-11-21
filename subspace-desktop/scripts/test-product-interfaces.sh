@@ -6,11 +6,11 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
-# The default build, as released. Board Lab is not in it, so its optional
-# checks (SUBSPACE_FIXTURE_BOARD_LAB=1, macOS ARM64) build with its feature.
+# The default build, as released. Space Lab is not in it, so its optional
+# checks (SUBSPACE_FIXTURE_SPACE_LAB=1, macOS ARM64) build with its feature.
 build_args=(build --locked -p subspace)
-if [[ "${SUBSPACE_FIXTURE_BOARD_LAB:-0}" == 1 ]]; then
-    build_args+=(--features board-lab)
+if [[ "${SUBSPACE_FIXTURE_SPACE_LAB:-0}" == 1 ]]; then
+    build_args+=(--features space-lab)
 fi
 if [[ "${SUBSPACE_FIXTURE_SKIP_BUILD:-0}" != 1 ]]; then
     cargo "${build_args[@]}"
@@ -83,19 +83,19 @@ invoke __product_metadata
 version="$(jq -er .version "$fixture/output")"
 framework_version="$(jq -er .subspace_version "$fixture/output")"
 test "$(jq -r .binary_name "$fixture/output")" = subspace
-# Neither unreleased Space (Board Lab, the Component gallery) is in the
+# Neither unreleased Space (Space Lab, the Component gallery) is in the
 # default build.
 expected_boards='["github","github-copilot-agents","irc","issues","decisions","actions"]'
-if [[ "${SUBSPACE_FIXTURE_BOARD_LAB:-0}" == 1 ]]; then
-    # Board Lab is built only for macOS ARM64. Name a wrong target here, not
+if [[ "${SUBSPACE_FIXTURE_SPACE_LAB:-0}" == 1 ]]; then
+    # Space Lab is built only for macOS ARM64. Name a wrong target here, not
     # as a missing board in the list below.
     invoke --about
     if ! grep -Fxq 'Rust target: aarch64-apple-darwin' "$fixture/output"; then
         built_for="$(sed -n 's/^Rust target: //p' "$fixture/output")"
-        echo "SUBSPACE_FIXTURE_BOARD_LAB=1 needs a macOS ARM64 build (aarch64-apple-darwin), not ${built_for:-an unknown target}" >&2
+        echo "SUBSPACE_FIXTURE_SPACE_LAB=1 needs a macOS ARM64 build (aarch64-apple-darwin), not ${built_for:-an unknown target}" >&2
         exit 2
     fi
-    expected_boards='["github","github-copilot-agents","irc","issues","decisions","board-lab","actions"]'
+    expected_boards='["github","github-copilot-agents","irc","issues","decisions","space-lab","actions"]'
 fi
 test "$(jq -c .boards "$fixture/output")" = "$expected_boards"
 invoke --version
@@ -194,20 +194,20 @@ invoke completion zsh
 invoke completion fish
 grep -Fq "subspace __complete-word" "$fixture/output"
 
-if [[ "${SUBSPACE_FIXTURE_BOARD_LAB:-0}" == 1 ]]; then
-    jq '.boards["board-lab"] = true' "$XDG_CONFIG_HOME/subspace/config.json" >"$fixture/lab-config.json"
+if [[ "${SUBSPACE_FIXTURE_SPACE_LAB:-0}" == 1 ]]; then
+    jq '.boards["space-lab"] = true' "$XDG_CONFIG_HOME/subspace/config.json" >"$fixture/lab-config.json"
     cp "$fixture/lab-config.json" "$XDG_CONFIG_HOME/subspace/config.json"
-    invoke board_help get --board_id board-lab --json
-    jq -e '.board_id == "board-lab" and ([.images[].image_id] | sort) == ["apply", "dashboard", "settings"] and all(.images[]; .media_type == "image/webp" and .byte_length > 0 and (.caption | length) > 0)' "$fixture/output" >/dev/null
-    invoke board_help image --board_id board-lab --image_id dashboard --json
-    jq -e '.board_id == "board-lab" and .image_id == "dashboard" and .media_type == "image/webp" and (.data | length) > 0' "$fixture/output" >/dev/null
-    reject board_help image --board_id board-lab --image_id nonexistent --json
+    invoke board_help get --board_id space-lab --json
+    jq -e '.board_id == "space-lab" and ([.images[].image_id] | sort) == ["apply", "dashboard", "settings"] and all(.images[]; .media_type == "image/webp" and .byte_length > 0 and (.caption | length) > 0)' "$fixture/output" >/dev/null
+    invoke board_help image --board_id space-lab --image_id dashboard --json
+    jq -e '.board_id == "space-lab" and .image_id == "dashboard" and .media_type == "image/webp" and (.data | length) > 0' "$fixture/output" >/dev/null
+    reject board_help image --board_id space-lab --image_id nonexistent --json
     grep -Fq 'No bundled help image' "$fixture/error"
-    invoke board-lab-inspect --help
+    invoke space-lab-inspect --help
     grep -Fq -- '--action' "$fixture/output"
-    invoke board-lab-inspect --action environments --json
+    invoke space-lab-inspect --action environments --json
     jq -e '.environments | type == "array"' "$fixture/output" >/dev/null
-    invoke board-lab list --help
+    invoke space-lab list --help
 fi
 
 test ! -s "$SUBSPACE_FIXTURE_FORBIDDEN"

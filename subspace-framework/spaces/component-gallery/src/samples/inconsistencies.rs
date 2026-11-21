@@ -21,8 +21,8 @@ pub(crate) const ITEMS: &[Item] = &[
         kit: None,
     },
     Item {
-        name: "board-lab::row_actions",
-        source: "Subspace App example: spaces/board-lab/src/project_settings/view.rs",
+        name: "space-lab::row_actions",
+        source: "Subspace App example: spaces/space-lab/src/project_settings/view.rs",
         used_in: "Rows of Neutral action buttons with selected() and toggled() for one exclusive choice (Keep, Replace, Clear); the project browser marks the open project with selected() on Quiet action buttons; closest shared: segmented::control.",
         samples: controls::selected_button_row,
         kit: None,

@@ -74,7 +74,7 @@ pub struct GridSnapshot {
 }
 
 impl GridSnapshot {
-    /// Preserve Board Lab's existing 500-row / 8,000-cell result boundary.
+    /// Preserve Space Lab's existing 500-row / 8,000-cell result boundary.
     pub fn new(columns: Vec<String>, rows: Vec<Vec<GridCell>>) -> Result<Self, &'static str> {
         if columns.is_empty()
             || columns.len() > MAX_CELLS

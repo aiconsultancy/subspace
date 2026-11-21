@@ -79,13 +79,13 @@ forwards the app's targets here.
   unreleased Spaces built in, then on the app alone in its release
   configuration.
 - `make build`, `make run`, `make format`.
-- Board Lab and the Component gallery are not ready to ship: they are the
-  app's `board-lab` and `component-gallery` features (both:
-  `unreleased-spaces`), never in `default`, so release, packaging and capture
-  builds leave them out, and the release packaging scripts refuse a
-  `SUBSPACE_BUILD_FEATURES` that names them. `make run-unreleased` runs the
-  app with both; they start off, so turn them on in Settings or from
-  **Add a Space**.
+- Space Lab and the Component gallery are not ready to ship: they are the
+  app's `space-lab` and `component-gallery` features (both:
+  `unreleased-spaces`), never in `default`, so release and packaging builds
+  leave them out, and capture builds do too unless `CAPTURE_FEATURES` names
+  one. The release packaging scripts refuse a `SUBSPACE_BUILD_FEATURES` that
+  names them. `make run-unreleased` runs the app with both; they start off,
+  so turn them on in Settings or from **Add a Space**.
 - `make interfaces` checks the real headless product interface.
 - `MISE_ENV=terminal make check-terminal` checks the excluded terminal crates
   with Zig.
@@ -301,7 +301,9 @@ compare them yourself before asking for review.
   fictional `octo-dev` gh accounts, and the fictional GitHub
   (`scripts/github_test_server.py`) and Subspace API servers on loopback, so no real
   API or Keychain session is used. Options are in the script's header:
-  `CAPTURE_THEME`, `CAPTURE_STATE`, `CAPTURE_CONFIG` (such as enabled boards)
+  `CAPTURE_THEME`, `CAPTURE_STATE`, `CAPTURE_CONFIG` (such as enabled boards),
+  `CAPTURE_FEATURES` (extra Cargo features, such as
+  `space-lab,component-gallery`, which `CAPTURE_CONFIG` must still turn on)
   and `CAPTURE_IRC_CONFIG` for a config naming the local Ergo server from
   `scripts/irc-test-server.sh` (`127.0.0.1:16667`). The build runs in your
   environment, so `SUBSPACE_REPORT_ISSUE_REPOSITORY= make capture …`

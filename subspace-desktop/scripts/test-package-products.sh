@@ -149,7 +149,7 @@ cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 # An inherited feature list never puts an unreleased Space in a release.
 : >"$fixture/cargo.log"
-for features in unreleased-spaces 'terminal board-lab' 'terminal,subspace/component-gallery' $'terminal\nsubspace-framework/component-gallery'; do
+for features in unreleased-spaces 'terminal space-lab' 'terminal,subspace/component-gallery' $'terminal\nsubspace-framework/component-gallery'; do
     if SUBSPACE_BUILD_FEATURES="$features" bash "$fixture/scripts/package-release.sh" "$host_target" "$version" 2>"$fixture/unreleased.err"; then
         echo "expected SUBSPACE_BUILD_FEATURES='$features' to stop the release archive" >&2
         exit 1

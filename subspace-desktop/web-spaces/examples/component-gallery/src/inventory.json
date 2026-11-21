@@ -770,12 +770,12 @@
     "usage": "Not a Kit card"
   },
   {
-    "id": "inconsistencies-board-lab-row-actions",
-    "name": "board-lab::row_actions",
+    "id": "inconsistencies-space-lab-row-actions",
+    "name": "space-lab::row_actions",
     "section": "inconsistencies",
     "sectionTitle": "Inconsistencies (one-offs)",
     "library": "Subspace",
-    "source": "subspace-desktop/spaces/board-lab/src/project_settings/view.rs",
+    "source": "subspace-desktop/spaces/space-lab/src/project_settings/view.rs",
     "states": "Shared segmented::control: Keep selected; Replace; Clear. Not copied selected action buttons.",
     "usage": "Not a Kit card"
   },

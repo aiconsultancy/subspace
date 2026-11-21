@@ -265,7 +265,7 @@ def host_module_violations(root: Path, file: Path, text: str) -> list[str]:
 # Files that read PATH for a reason other than finding a tool.
 PATH_LOOKUP_EXEMPTIONS = {
     # Reads the PATH that `mise env --json` prints to record tool roots.
-    "spaces/board-lab/src/environments/extensions.rs",
+    "spaces/space-lab/src/environments/extensions.rs",
     # The terminal chooses its Windows shell through an injected probe.
     "terminal/runtime/src/program.rs",
 }

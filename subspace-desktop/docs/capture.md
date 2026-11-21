@@ -57,6 +57,13 @@ elsewhere. `CAPTURE_KEEP_LOG=1` keeps the app and API fixture logs in
 the output directory for diagnosis. A failed launch or render fails the
 command; inspect retained logs before using the evidence.
 
+`CAPTURE_FEATURES=<features>` adds Cargo features of the app to the capture
+build, for evidence of a Space that the default build leaves out. Without it
+the capture build is unchanged and shows neither unreleased Space. A Space
+built in this way still starts off, so turn it on with `CAPTURE_CONFIG`, for
+example `CAPTURE_FEATURES=space-lab
+CAPTURE_CONFIG='{"boards":{"space-lab":true}}'` on macOS ARM64.
+
 The step syntax is listed in [AGENTS.md](../AGENTS.md#ui-change-evidence).
 Capture uses the same steps and fixture data on both platforms. Window
 decorations and text rasterisation can differ between operating systems.

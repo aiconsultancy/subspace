@@ -27,6 +27,9 @@
 #   CAPTURE_MOVE_UNCONFIRMED=1  a committed move lists its sub-issues as not confirmed, as a NETT move can
 #   CAPTURE_UPLOAD_SCENARIO=<unknown|absent>  the first issue opened shows an upload NETT left unresolved
 #   CAPTURE_KEEP_LOG=1         copy the app's logs into <out-dir>
+#   CAPTURE_FEATURES=<list>    comma-separated Cargo features added to the build, such as
+#                              space-lab,component-gallery; built in, they start off until
+#                              CAPTURE_CONFIG turns them on
 # Linux uses the native executable, a private Xvfb display and a private
 # D-Bus session, including on Wayland desktops. A Vulkan driver is
 # required; Mesa lavapipe supports headless machines without a GPU.
@@ -66,6 +69,9 @@ features=(--features capture)
 # (`make capture` sets MISE_ENV=terminal) provides.
 if command -v zig >/dev/null 2>&1; then
     features+=(--features terminal)
+fi
+if [[ -n "${CAPTURE_FEATURES:-}" ]]; then
+    features+=(--features "$CAPTURE_FEATURES")
 fi
 cargo build --locked -p "$binary_name" "${features[@]}"
 

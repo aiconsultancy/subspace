@@ -33,14 +33,14 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "native_grid::NativeGrid",
         source: "board-kit/dashboard/src/native_grid.rs",
-        used_in: "Tabular results in the Board Lab project view.",
+        used_in: "Tabular results in the Space Lab project view.",
         samples: native_grid,
         kit: None,
     },
     Item {
         name: "chart::Chart",
         source: "board-kit/dashboard/src/chart.rs",
-        used_in: "Result charts in Board Lab and chat canvases.",
+        used_in: "Result charts in Space Lab and chat canvases.",
         samples: chart,
         kit: None,
     },

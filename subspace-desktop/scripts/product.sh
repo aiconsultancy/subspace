@@ -148,11 +148,11 @@ release_cargo_args() {
 }
 
 # Spaces that are not ready to ship (see `products/subspace/Cargo.toml`).
-UNRELEASED_FEATURES=(unreleased-spaces board-lab component-gallery)
+UNRELEASED_FEATURES=(unreleased-spaces space-lab component-gallery)
 
 # Release archives and signed apps never build an unreleased Space, even when
 # the calling shell exports SUBSPACE_BUILD_FEATURES with one. A feature counts
-# with or without a package prefix, such as `subspace/board-lab` or
+# with or without a package prefix, such as `subspace/space-lab` or
 # `subspace-framework/component-gallery`.
 refuse_unreleased_features() {
     local requested=() feature unreleased
