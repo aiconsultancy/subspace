@@ -6,7 +6,9 @@ use crate::icon_button::IconButton;
 use crate::tokens::ButtonRole;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex};
-use gpui_kit::{App, ElementId, IntoElement, ParentElement as _, SharedString, Styled as _, px};
+use gpui_kit::{
+    App, ElementId, FontWeight, IntoElement, ParentElement as _, SharedString, Styled as _, px,
+};
 use subspace_lucide::SvgIcon;
 
 /// Header actions sit 4 px shorter than the previous 32 px board override.
@@ -86,6 +88,19 @@ pub fn action_button(
     labelled(id, ButtonRole::Action, intent, icon, label)
 }
 
+/// The Space's one main action, at the trailing end of its pane toolbar,
+/// such as New issue…: a filled primary button in the Toolbar role, its label
+/// semibold. A toolbar has at most one; every other toolbar action is
+/// neutral or quiet.
+pub fn main_action(
+    id: impl Into<ElementId>,
+    icon: SvgIcon,
+    label: impl Into<SharedString>,
+) -> IconButton {
+    labelled(id, ButtonRole::Toolbar, Intent::Primary, Some(icon), label)
+        .font_weight(FontWeight::SEMIBOLD)
+}
+
 /// A dialog footer button, such as Cancel or Save. Put the dismissing action
 /// first and the committing one last.
 pub fn dialog_button(
@@ -127,6 +142,21 @@ pub fn menu_button(
     let label = label.into();
     action_button(id, menu_button_intent(active), Some(icon), label.clone())
         .role(ButtonRole::Toolbar)
+        .dropdown_caret(true)
+        .accessibility_label(label)
+}
+
+/// A filter's menu trigger named by its label alone, such as Assignee or
+/// Priority in a pane toolbar: the decorative trailing chevron and no leading
+/// glyph. Like [`menu_button`], it is primary only while its filter is set.
+pub fn filter_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    active: bool,
+) -> IconButton {
+    let label = label.into();
+    let intent = menu_button_intent(active);
+    labelled(id, ButtonRole::Toolbar, intent, None, label.clone())
         .dropdown_caret(true)
         .accessibility_label(label)
 }

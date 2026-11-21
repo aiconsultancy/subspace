@@ -20,6 +20,7 @@ use subspace_dashboard::{Tokens, glass, prefs};
 use subspace_lucide::IconName;
 
 use super::SubspaceApp;
+use super::add_space::menu as add_space;
 use super::space_menu::with_space_menu;
 use super::toolbar::style::tab_badge;
 use sizing::{BUTTON, ICON};
@@ -132,7 +133,8 @@ impl SubspaceApp {
                     .min_h_0()
                     .gap(px(sizing::INSET))
                     .overflow_y_scroll()
-                    .children(tabs),
+                    .children(tabs)
+                    .child(add_space::button(add_space::RAIL_ID, cx.weak_entity())),
             )
             .child(
                 gpui_kit::div()

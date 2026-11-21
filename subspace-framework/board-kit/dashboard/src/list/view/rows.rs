@@ -186,7 +186,7 @@ pub(super) fn group_row<D: ListDashboard>(
         }));
     match facts {
         Some(facts) => {
-            let menu = line_menu(group.key.clone(), facts, cx);
+            let menu = line_menu(group.key.clone(), facts, true, cx);
             header
                 .anchored_context_menu(move |popup, window, cx| menu(popup, window, cx))
                 .into_any_element()
@@ -214,7 +214,7 @@ pub(super) fn item_row<D: ListDashboard>(
     let wrap = crate::wrap(cx);
     let selected = list.selected() == Some(&row.key);
     let key = row.key.clone();
-    let menu = line_menu(row.key.clone(), this.row_menu(row), cx);
+    let menu = line_menu(row.key.clone(), this.row_menu(row), false, cx);
     let single_click = this.activates_on_click(row);
     let title_color = if row.done && !selected {
         tokens.muted

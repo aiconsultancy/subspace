@@ -1,4 +1,5 @@
 mod about_dialog;
+mod add_space;
 mod background_refresh;
 mod board_help;
 mod chat;
@@ -119,6 +120,12 @@ actions!(
         ShowTerminalHelp,
         ToggleNavigationMode,
         ToggleNavigationCollapsed,
+        /// Show or hide the active Space's navigator, from its status bar
+        /// switch.
+        ToggleSpaceNavigator,
+        /// Show or hide the active Space's inspector, from its status bar
+        /// switch.
+        ToggleSpaceInspector,
         PaletteEscape,
         PaletteBackspace
     ]

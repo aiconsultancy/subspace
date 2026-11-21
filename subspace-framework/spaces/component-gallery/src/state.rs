@@ -71,6 +71,8 @@ pub(crate) struct Retained {
     pub(crate) forms: Forms,
     pub(crate) messaging: Messaging,
     pub(crate) toolbar: Entity<OverflowToolbar>,
+    /// The search inputs of the `workspace::Toolbar` and `workspace::Pane` samples.
+    pub(crate) searches: navigation::workspace::Searches,
     pub(crate) popover: PopoverHost,
     pub(crate) list: Entity<FixtureList>,
     pub(crate) list_notes: Entity<FixtureList>,
@@ -120,6 +122,7 @@ impl Retained {
             forms: Forms::new(window, cx),
             messaging: Messaging::new(window, cx),
             toolbar: navigation::overflow_toolbar(cx),
+            searches: navigation::workspace::Searches::new(window, cx),
             popover: PopoverHost::new(cx),
             list: cx.new(|cx| FixtureList::new(window, cx)),
             list_notes: cx.new(FixtureList::with_notes),

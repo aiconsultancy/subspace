@@ -22,6 +22,9 @@ pub(super) const MOTION_MILLIS_DEFAULT: u64 = 140;
 pub(super) const CONTROL_RADIUS_DEFAULT: f32 = 4.;
 pub(super) const SURFACE_RADIUS_DEFAULT: f32 = 6.;
 pub(super) const NAV_ROUND_DEFAULT: f32 = 1.;
+pub(super) const STRIP_HEIGHT_DEFAULT: f32 = 34.;
+pub(super) const NAVIGATOR_WIDTH_DEFAULT: f32 = 240.;
+pub(super) const INSPECTOR_WIDTH_DEFAULT: f32 = 320.;
 
 const CAPTION_FONT_DEFAULT: f32 = 11.;
 const SECONDARY_FONT_DEFAULT: f32 = 12.;

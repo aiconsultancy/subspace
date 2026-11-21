@@ -45,6 +45,11 @@ pub struct ProductBuild {
     /// none: `None` offers no Sign in with GitHub anywhere, and tokens come
     /// from the environment, the config file and the `gh` CLI as before.
     pub github_oauth: Option<subspace_github_auth::OAuthClient>,
+    /// Font files the app embeds, registered with the text system before the
+    /// theme is applied. A theme or Settings that names one of their families
+    /// gets it on every platform; automatic choices still use the platform's
+    /// fonts. `&[]` embeds none.
+    pub fonts: &'static [crate::BundledFont],
     /// The GitHub repository (`owner/name`) Report issue files into. `None`
     /// or blank hides Report issue; a malformed one hides it with a notice.
     #[cfg(feature = "report-issue")]
@@ -119,6 +124,7 @@ pub fn launch(
                 extensions: build.settings_extensions,
                 dock_panel: build.dock_panel,
                 github_oauth: build.github_oauth,
+                fonts: build.fonts,
                 #[cfg(feature = "report-issue")]
                 report_issue_repository: build.report_issue_repository,
             },

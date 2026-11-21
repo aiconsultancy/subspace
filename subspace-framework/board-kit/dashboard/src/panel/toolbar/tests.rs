@@ -65,7 +65,7 @@ fn item(window: &mut Window, label: &str) -> usize {
 }
 
 #[gpui_kit::test]
-fn xl_panel_header_keeps_back_and_body_visible_with_single_row_overflow_actions(
+fn xl_panel_header_keeps_close_and_body_visible_with_single_row_overflow_actions(
     cx: &mut TestAppContext,
 ) {
     cx.update(|cx| {
@@ -83,12 +83,14 @@ fn xl_panel_header_keeps_back_and_body_visible_with_single_row_overflow_actions(
     settle(cx);
     cx.update(|window, cx| {
         let toolbar = window.find("panel-toolbar").bounds();
-        let back = window.find("panel-back").bounds();
+        let close = window.find("panel-close").bounds();
         let trigger = window.find("overflow-toolbar-button").bounds();
         assert!(toolbar.size.height <= px(73.));
-        assert_eq!(back.size.height, px(72.));
-        assert_eq!(back.center().y, trigger.center().y);
-        assert!(trigger.right() <= toolbar.right() && back.left() >= toolbar.left());
+        assert_eq!(close.size.height, px(72.));
+        assert_eq!(close.center().y, trigger.center().y);
+        // Close is the last control and never moves into overflow.
+        assert!(trigger.right() <= close.left() && close.right() <= toolbar.right());
+        assert!(trigger.left() >= toolbar.left());
         assert!(window.find("panel-content").bounds().top() >= toolbar.bottom());
         window.click("overflow-toolbar-button", cx);
         let next = item(window, "Next item");
@@ -104,9 +106,7 @@ fn xl_panel_header_keeps_back_and_body_visible_with_single_row_overflow_actions(
     cx.run_until_parked();
     cx.update(|window, cx| {
         assert_eq!(view.read(cx).chats, 1);
-        window.click("overflow-toolbar-button", cx);
-        let close = item(window, "Close details");
-        window.within("popup-menu").click(close, cx);
+        window.click("panel-close", cx);
     });
     assert_eq!(closed.get(), 1);
 }

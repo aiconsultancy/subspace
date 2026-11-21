@@ -1,11 +1,11 @@
-use super::{external, external_marked_with_label};
+use super::{external, external_marked, external_marked_with_label};
 use crate::Tokens;
 use gpui_kit::test::{TestSupportExt as _, TestWindowExt as _};
 use gpui_kit::{
-    AppContext as _, Bounds, ClipboardItem, Context, Element as _, FocusHandle,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, RenderOnce as _, Role,
-    Styled as _, TestAppContext, VisualTestContext, Window, WindowBounds, WindowOptions, accesskit,
-    canvas, div, px, size,
+    AppContext as _, Bounds, ClipboardItem, Context, Element as _, ElementId, FocusHandle,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, RenderOnce as _,
+    Role, Styled as _, TestAppContext, VisualTestContext, Window, WindowBounds, WindowOptions,
+    accesskit, canvas, div, px, size,
 };
 use std::{cell::RefCell, rc::Rc};
 
@@ -224,4 +224,90 @@ fn right_click_copies_the_destination_without_opening_it(cx: &mut TestAppContext
     );
     assert_eq!(cx.opened_url(), None);
     cx.update(|window, _| assert!(window.try_find(0usize).is_none()));
+}
+
+/// A bare address with no break opportunities, far wider than the panel.
+const LONG_ADDRESS: &str = "https://example.invalid/fixture-review-0042-unbroken";
+
+/// The same marked link twice: in a host wide enough to show the whole
+/// address, which gives its natural width, and in a narrow fixed-width panel
+/// like an inspector's value column.
+struct NarrowPanelFixture;
+
+impl Render for NarrowPanelFixture {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .items_start()
+            .gap_4()
+            .p_4()
+            .child(div().id("wide-host").flex().child(long_link()))
+            .child(
+                div()
+                    .id("narrow-panel")
+                    .test_support()
+                    .flex()
+                    .w(px(120.))
+                    .child(long_link()),
+            )
+    }
+}
+
+fn long_link() -> gpui_kit::AnyElement {
+    let tokens = Tokens::one_dark();
+    external_marked("long-link", LONG_ADDRESS, LONG_ADDRESS, &tokens)
+}
+
+fn mount_panels(cx: &mut TestAppContext) -> VisualTestContext {
+    cx.update(gpui_kit::init);
+    let (window, _) = cx.update(|cx| {
+        gpui_kit::open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                    Default::default(),
+                    size(px(640.), px(480.)),
+                ))),
+                ..Default::default()
+            },
+            cx,
+            |_, cx| cx.new(|_| NarrowPanelFixture),
+        )
+        .expect("open narrow panel test window")
+    });
+    let mut cx = VisualTestContext::from_window(window, cx);
+    settle(&mut cx);
+    cx
+}
+
+/// Where the address's text element was laid out and painted inside the
+/// identified element `within`.
+fn painted_address(window: &Window, within: &'static str) -> Bounds<Pixels> {
+    let within = ElementId::from(within);
+    gpui_kit::base::test_support::texts(window)
+        .into_iter()
+        .find(|text| text.text() == LONG_ADDRESS && text.path().contains(&within))
+        .unwrap_or_else(|| panic!("{LONG_ADDRESS} was not painted in {within:?}"))
+        .bounds()
+}
+
+#[gpui_kit::test]
+fn a_long_marked_address_shortens_to_fit_a_narrow_panel(cx: &mut TestAppContext) {
+    let mut cx = mount_panels(cx);
+    cx.update(|window, _| {
+        let panel = window.find("narrow-panel").bounds();
+        let natural = painted_address(window, "wide-host");
+        let label = painted_address(window, "narrow-panel");
+        // Too long to fit, so a pass is not down to short text.
+        assert!(natural.size.width > panel.size.width);
+        // The label itself, not a host that merely has `max_w_full`, stays in
+        // the panel and stops short of its edge by the glyph's gap and
+        // extra-small size, a rem between them, so the glyph shows too.
+        assert!(label.size.width > px(0.));
+        assert!(label.left() >= panel.left());
+        assert!(
+            panel.right() - label.right() >= window.rem_size(),
+            "label {label:?} leaves no room for the glyph in {panel:?}"
+        );
+    });
 }

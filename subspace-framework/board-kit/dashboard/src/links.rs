@@ -7,7 +7,7 @@ use gpui_kit::component::{Icon, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClipboardItem, ElementId, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, SharedString, Styled as _,
+    ParentElement as _, SharedString, Styled as _, div,
 };
 
 use crate::anchored::AnchoredContextMenuExt as _;
@@ -97,13 +97,28 @@ fn link(
         .open_with(|url, _, _, cx| {
             open(url, cx);
         })
-        .child(text.clone().test_text(text))
+        .when(!marked, |link| {
+            link.child(text.clone().test_text(text.clone()))
+        })
         .when(marked, |link| {
+            // A long label, such as a bare address, shortens to an ellipsis
+            // instead of running past the panel that holds it.
             link.flex()
                 .min_w_0()
+                .max_w_full()
                 .items_center()
                 .gap_1()
-                .child(Icon::from(subspace_lucide::IconName::ExternalLink).xsmall())
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .child(text.clone().test_text(text.clone())),
+                )
+                .child(
+                    Icon::from(subspace_lucide::IconName::ExternalLink)
+                        .xsmall()
+                        .flex_shrink_0(),
+                )
         })
 }
 

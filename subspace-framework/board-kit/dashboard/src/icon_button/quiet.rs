@@ -82,6 +82,22 @@ pub fn paint(look: ToolbarLook, on: bool, tokens: &Tokens, glyph: Hsla) -> Paint
     }
 }
 
+/// The paint of a glyph latch ([`super::IconButton::latched_glyph`]): the
+/// finishes of a button that is off, with the glyph and text in the accent
+/// colour while it is on. No fill marks the state, so a pair of them at a
+/// toolbar's ends stays quiet.
+pub fn glyph_latch(look: ToolbarLook, on: bool, tokens: &Tokens, glyph: Hsla) -> Paint {
+    let off = paint(look, false, tokens, glyph);
+    if !on {
+        return off;
+    }
+    Paint {
+        glyph: tokens.accent,
+        hover_glyph: tokens.accent,
+        ..off
+    }
+}
+
 /// Dress a native button in `paint`. The transparent hairline of a flat
 /// finish keeps every button the same size and gives the keyboard focus ring
 /// an edge to follow. A latched button keeps its accessible pressed state;

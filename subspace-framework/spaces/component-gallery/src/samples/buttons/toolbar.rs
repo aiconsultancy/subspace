@@ -20,13 +20,14 @@ pub(in crate::samples) fn latched_icon_buttons(
     _: &mut Window,
     cx: &mut Context<ComponentGallery>,
 ) -> Vec<Sample> {
-    [
+    let size = IconButtonSize::current(cx).label();
+    let mut samples: Vec<Sample> = [
         (false, "Off", "gallery-sample:latched-off"),
         (true, "On", "gallery-sample:latched-on"),
     ]
     .map(|(latched, caption, id)| {
         sample(
-            format!("{caption}, {}", IconButtonSize::current(cx).label()),
+            format!("{caption}, {size}"),
             div().p_2().bg(tokens.bg).child(
                 IconButton::new(id)
                     .icon(IconName::TextWrap)
@@ -37,7 +38,19 @@ pub(in crate::samples) fn latched_icon_buttons(
             ),
         )
     })
-    .into()
+    .into();
+    samples.push(sample(
+        format!("Glyph latch on, as a workspace dock switch, {size}"),
+        div().p_2().bg(tokens.bg).child(
+            IconButton::new("gallery-sample:latched-glyph")
+                .icon(IconName::PanelLeft)
+                .accessibility_label("Hide navigator")
+                .tooltip("Hide navigator")
+                .latched_glyph(true)
+                .on_click(ignore_click),
+        ),
+    ));
+    samples
 }
 
 pub(in crate::samples) fn menu_buttons(

@@ -297,7 +297,7 @@ mod tests {
         density.set("--unknown", 3.0);
         assert!(density.is_empty());
         assert!(!density.is_changed("--unknown"));
-        assert_eq!(controls().count(), 41);
+        assert_eq!(controls().count(), 44);
     }
 
     #[test]

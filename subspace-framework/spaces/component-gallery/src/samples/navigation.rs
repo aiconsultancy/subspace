@@ -1,5 +1,8 @@
 //! Navigation and chrome: glass capsules and controls, the overflow
-//! toolbar, the surface header and the semantic tokens.
+//! toolbar, the surface header, the workspace shell's parts and the semantic
+//! tokens.
+
+pub(crate) mod workspace;
 
 use gpui_kit::component::button::Button;
 use gpui_kit::component::{Selectable as _, h_flex, v_flex};
@@ -79,6 +82,11 @@ pub(crate) const ITEMS: &[Item] = &[
         samples: surface_headers,
         kit: None,
     },
+    workspace::NAVIGATOR,
+    workspace::TOOLBAR,
+    workspace::DOCK_SWITCH,
+    workspace::PANE,
+    workspace::INSPECTOR,
     Item {
         name: "tokens::Tokens",
         source: "board-kit/dashboard/src/tokens.rs",

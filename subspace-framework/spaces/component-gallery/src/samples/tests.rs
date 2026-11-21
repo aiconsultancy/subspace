@@ -139,7 +139,11 @@ fn latched_pair_follows_all_four_global_sizes(cx: &mut TestAppContext) {
                     captions,
                     [
                         format!("Off, {}", choice.label()),
-                        format!("On, {}", choice.label())
+                        format!("On, {}", choice.label()),
+                        format!(
+                            "Glyph latch on, as a workspace dock switch, {}",
+                            choice.label()
+                        )
                     ]
                 );
                 assert_eq!(IconButtonSize::current(cx), choice);

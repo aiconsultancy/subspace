@@ -1,12 +1,12 @@
 //! Appearance only; native tabs and buttons retain activation and focus.
 
-use super::{CONTENT_GAP, Tab};
+use super::{CONTENT_GAP, Tab, TabSpec};
 use crate::{Tokens, icon_button::IconButton, tokens::ButtonFinish};
 use gpui_kit::component::{Size, h_flex, tab::Tab as KitTab};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, FontWeight, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, Styled as _, TestSupportExt as _, Window, div, px,
+    AnyElement, App, ClickEvent, Div, FontWeight, InteractiveElement as _, IntoElement as _,
+    ParentElement as _, Pixels, SharedString, Styled as _, TestSupportExt as _, Window, div, px,
 };
 use std::rc::Rc;
 use subspace_lucide::IconName;
@@ -19,6 +19,8 @@ const DISABLED_OPACITY: f32 = 0.5;
 const PREFIX_GAP: f32 = 0.25;
 const ACCENT_EDGE: f32 = 2.;
 const DOT_SIZE: f32 = 5.;
+/// An opened item's key, at the default monospace setting.
+const KEY_MONO_PX: f32 = 11.5;
 const GROUP: &str = "subspace-resource-tab";
 // Kit's TabVariant::Tab heights are private. Keep this mapping aligned with
 // its public Sizable API; render tests check the small and default heights.
@@ -85,46 +87,27 @@ pub fn unread_dot(tokens: &Tokens) -> AnyElement {
         .into_any_element()
 }
 
-pub(super) fn tab(
-    tab: Tab,
-    selected: bool,
-    tokens: &Tokens,
-    surface: gpui_kit::Hsla,
-    size: Size,
-) -> KitTab {
+/// How a bar dresses its tabs.
+#[derive(Clone)]
+pub(super) struct Dress {
+    /// The adjoining content or header surface the selected tab takes.
+    pub(super) surface: gpui_kit::Hsla,
+    pub(super) size: Size,
+    /// A workspace pane's tab strip: each tab is as tall as the strip, and
+    /// the open one joins the content below it with no accent line.
+    pub(super) pane: bool,
+    /// The monospace family, for an opened item's key.
+    pub(super) mono: SharedString,
+}
+
+pub(super) fn tab(tab: Tab, selected: bool, tokens: &Tokens, dress: Dress) -> KitTab {
     let disabled = tab.spec.disabled;
-    let normal = state(selected, false, disabled, tokens, surface);
-    let hover = state(selected, true, disabled, tokens, surface);
+    let normal = state(selected, false, disabled, tokens, dress.surface);
+    let hover = state(selected, true, disabled, tokens, dress.surface);
     let glass_hover = tokens.controls.toolbar_look.hover == ButtonFinish::Glass;
     let close_label = tab_label(&tab.spec.label);
-    let content = h_flex()
-        .id("tab-content-row")
-        .test_support()
-        // Kit's anonymous prefix box clamps a negative child margin to zero.
-        // Cancel its gap_1 here, also reducing the inner box's natural width.
-        .ml(-gpui_kit::rems(PREFIX_GAP))
-        .gap(px(CONTENT_GAP))
-        .items_center()
-        .text_color(normal.foreground)
-        .font_weight(normal.weight)
-        .when(disabled, |row| row.opacity(DISABLED_OPACITY))
-        .when(tab.spec.unread, |row| row.child(unread_dot(tokens)))
-        .when_some(tab.spec.icon, |row, icon| row.child(icon.size_3p5()))
-        .map(|row| match tab.spec.content {
-            Some(content) => row.child(content),
-            None => row.child(tab.spec.label.clone()),
-        })
-        .when_some(tab.spec.status, |row, status| {
-            row.child(
-                div()
-                    .text_color(if disabled {
-                        tokens.muted
-                    } else {
-                        status.colour
-                    })
-                    .child(status.visible),
-            )
-        });
+    let height = tab_height(&dress, tokens);
+    let edge = (selected && !disabled && !dress.pane).then_some(normal.edge);
     let fill = div()
         .absolute()
         .top_0()
@@ -138,17 +121,81 @@ pub(super) fn tab(
         .when(!selected && !disabled && glass_hover, |layer| {
             layer.child(hover_rim(tokens.glass_rim))
         });
+    let content = content_row(tab.spec, &normal, tokens, dress.mono);
     tab.native
         .group(GROUP)
-        .prefix(layers(
-            fill,
-            (selected && !disabled).then_some(normal.edge),
-            size,
-        ))
+        .when(dress.pane, |tab| tab.min_h(height))
+        .prefix(layers(fill, edge, height))
         .child(content)
         .when_some(tab.close, |tab, handler| {
             tab.suffix(close_button(handler, selected, disabled, &close_label))
         })
+}
+
+/// The tab's glyph, an opened item's key, its label and its status.
+fn content_row(
+    spec: TabSpec,
+    normal: &State,
+    tokens: &Tokens,
+    mono: SharedString,
+) -> impl gpui_kit::IntoElement + use<> {
+    let disabled = spec.disabled;
+    h_flex()
+        .id("tab-content-row")
+        .test_support()
+        // Kit's anonymous prefix box clamps a negative child margin to zero.
+        // Cancel its gap_1 here, also reducing the inner box's natural width.
+        .ml(-gpui_kit::rems(PREFIX_GAP))
+        .gap(px(CONTENT_GAP))
+        .items_center()
+        .text_color(normal.foreground)
+        .font_weight(normal.weight)
+        .when(disabled, |row| row.opacity(DISABLED_OPACITY))
+        .when(spec.unread, |row| row.child(unread_dot(tokens)))
+        .when_some(spec.icon, |row, icon| row.child(icon.size_3p5()))
+        .when_some(spec.key, |row, key| row.child(key_mark(key, mono, tokens)))
+        .map(|row| match spec.content {
+            Some(content) => row.child(content),
+            None => row.child(spec.label.clone()),
+        })
+        .when_some(spec.status, |row, status| {
+            row.child(
+                div()
+                    .text_color(if disabled {
+                        tokens.muted
+                    } else {
+                        status.colour
+                    })
+                    .child(status.visible),
+            )
+        })
+}
+
+/// An opened item's key: monospace and muted, before its title.
+fn key_mark(key: SharedString, mono: SharedString, tokens: &Tokens) -> Div {
+    div()
+        .flex_shrink_0()
+        .font_family(mono)
+        .font_weight(FontWeight::NORMAL)
+        .text_size(tokens.mono_size(KEY_MONO_PX))
+        .text_color(tokens.muted)
+        .child(key)
+}
+
+/// The tab's height: Kit's for the bar's size, or the strip's in a pane's
+/// tab strip, which the tab's least height stretches it to.
+fn tab_height(dress: &Dress, tokens: &Tokens) -> Pixels {
+    let natural = match dress.size {
+        Size::XSmall => XSMALL_HEIGHT,
+        Size::Small => SMALL_HEIGHT,
+        Size::Large => LARGE_HEIGHT,
+        _ => DEFAULT_HEIGHT,
+    };
+    if dress.pane {
+        px(natural.max(f32::from(tokens.strip_height)))
+    } else {
+        px(natural)
+    }
 }
 
 fn hover_rim(colour: gpui_kit::Hsla) -> impl gpui_kit::IntoElement {
@@ -182,19 +229,13 @@ fn hover_rim(colour: gpui_kit::Hsla) -> impl gpui_kit::IntoElement {
 fn layers(
     fill: gpui_kit::Div,
     edge: Option<gpui_kit::Hsla>,
-    size: Size,
+    height: Pixels,
 ) -> impl gpui_kit::IntoElement {
-    let height = match size {
-        Size::XSmall => XSMALL_HEIGHT,
-        Size::Small => SMALL_HEIGHT,
-        Size::Large => LARGE_HEIGHT,
-        _ => DEFAULT_HEIGHT,
-    };
     div()
         .id("tab-layers")
         .test_support()
         .w_0()
-        .h(px(height))
+        .h(height)
         .child(fill)
         .when_some(edge, |column, edge| {
             column.child(

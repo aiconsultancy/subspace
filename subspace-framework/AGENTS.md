@@ -167,6 +167,10 @@ with what `make check` enforces. In short:
 Existing direct controls are migration candidates, not permission to copy
 them.
 
+Every Space is laid out on the workspace shell (`dashboard::workspace`). The [design guide](docs/design-guide.md)
+says what goes in each zone, the layout rules, and how to build a new Space
+on it. A change to the shell updates that guide and its anatomy image.
+
 ## Conventions
 
 - Use edition 2024, the workspace dependencies and lints, and `gpui-kit` as
