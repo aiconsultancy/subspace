@@ -38,6 +38,22 @@ pub trait ActionsApi {
         repo: &str,
         run_id: u64,
     ) -> Result<Page<Job>, subspace_core::http::Error>;
+    /// The jobs of attempt `attempt` of run `run_id`. A re-run is a new
+    /// attempt with jobs of its own, so a caller that read one attempt's run
+    /// asks for that attempt's jobs, not whichever attempt is newest by the
+    /// time the read lands. Attempt 0, which a run without `run_attempt`
+    /// maps to, reads the run's latest jobs, as the default does for an
+    /// implementation that cannot read one attempt.
+    fn actions_attempt_jobs(
+        &self,
+        login: &str,
+        repo: &str,
+        run_id: u64,
+        attempt: u64,
+    ) -> Result<Page<Job>, subspace_core::http::Error> {
+        let _ = attempt;
+        self.actions_jobs(login, repo, run_id)
+    }
     fn actions_job_log(
         &self,
         login: &str,

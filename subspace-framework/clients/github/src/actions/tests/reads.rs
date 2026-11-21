@@ -168,3 +168,33 @@ fn environment_policies_are_nested_and_nullable() {
     assert_eq!(reviewer.slug.as_deref(), Some("release-team"));
     assert!(environments.items[1].deployment_branch_policy.is_none());
 }
+
+#[test]
+fn an_attempts_jobs_come_from_that_attempt_and_attempt_zero_reads_the_latest() {
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let seen = lines.clone();
+    let base = serve(move |request| {
+        seen.lock().unwrap().push(request.line.clone());
+        let path = request.line.split_whitespace().nth(1).unwrap();
+        let (id, attempt) = match path.split('?').next().unwrap() {
+            "/repos/o/r/actions/runs/20/attempts/1/jobs" => (31, 1),
+            "/repos/o/r/actions/runs/20/jobs" => (32, 2),
+            _ => return Reply::status(404, r#"{"message":"Not Found"}"#),
+        };
+        let body = json!({"jobs":[{"id":id,"run_id":20,"run_attempt":attempt,"name":"Build"}]});
+        Reply::json(body.to_string())
+    });
+    let client = client(base);
+    let first = client.actions_attempt_jobs("ann", "o/r", 20, 1).unwrap();
+    assert_eq!(first.items[0].id, 31, "attempt 1's jobs, not the newest");
+    let latest = client.actions_attempt_jobs("ann", "o/r", 20, 0).unwrap();
+    assert_eq!(latest.items[0].id, 32);
+    let unnamed = client.actions_jobs("ann", "o/r", 20).unwrap();
+    assert_eq!(unnamed.items[0].id, 32);
+    let lines = lines.lock().unwrap();
+    let attempt_read = lines[0].as_str();
+    assert!(attempt_read.contains("/runs/20/attempts/1/jobs?"));
+    assert!(!attempt_read.contains("filter="), "GitHub has no filter");
+    let latest_read = lines[1].as_str();
+    assert!(latest_read.contains("/runs/20/jobs?filter=latest"));
+}
