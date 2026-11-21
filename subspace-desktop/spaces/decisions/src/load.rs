@@ -1,9 +1,12 @@
 //! Reading Subspace API. Client calls block, so the Space runs them in the
 //! background (`cx.background_spawn`) through a [`Reader`], which the tests
-//! replace with fixture answers.
+//! replace with fixture answers. Each read carries a [`Lease`] on the
+//! account it was made for, and a list read a [`Stop`] that a newer read
+//! sets.
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use subspace_api_client::issue_writes::ChoiceSource;
 use subspace_api_client::model::{DecisionDetail, DecisionListItem, Me, Page, Project};
@@ -16,11 +19,46 @@ use crate::words::People;
 const MAX_PAGES: usize = 10;
 
 /// What a list read asks for: the decisions for this query, and first the
-/// account, its projects and its people when `directory` is set.
+/// account, its projects and its people when `directory` is set. `stop`
+/// ends the read before its next page once its answer is no longer wanted.
 #[derive(Clone)]
 pub(crate) struct Plan {
     pub(crate) query: DecisionQuery,
     pub(crate) directory: bool,
+    pub(crate) stop: Stop,
+}
+
+/// Set when a newer read, or another account, supersedes a list read: the
+/// read stops before its next page, and its answer is dropped.
+#[derive(Clone, Default)]
+pub(crate) struct Stop(Arc<AtomicBool>);
+
+impl Stop {
+    pub(crate) fn stop(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn stopped(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// The account and organisation a read was made for. Once either changes,
+/// what the read found belongs to no one on screen.
+#[derive(Clone)]
+pub(crate) struct Lease(Arc<dyn Fn() -> bool + Send + Sync>);
+
+impl Lease {
+    /// A lease that ends once `moved` answers true.
+    pub(crate) fn new(moved: impl Fn() -> bool + Send + Sync + 'static) -> Self {
+        Self(Arc::new(moved))
+    }
+
+    /// Whether the signed-in account or organisation changed since the
+    /// lease was taken, including a sign-out.
+    pub(crate) fn moved(&self) -> bool {
+        (self.0)()
+    }
 }
 
 /// The signed-in account, the projects it can see and its people's names.
@@ -45,12 +83,15 @@ pub(crate) struct Answer {
 
 pub(crate) type ListRead = Arc<dyn Fn(&Plan) -> Answer + Send + Sync>;
 pub(crate) type DetailRead = Arc<dyn Fn(&str) -> Result<DecisionDetail, Error> + Send + Sync>;
+pub(crate) type LeaseRead = Arc<dyn Fn() -> Lease + Send + Sync>;
 
-/// The Space's two reads: a list and one decision.
+/// The Space's two reads, a list and one decision, and the lease each read
+/// takes on the signed-in account just before it starts.
 #[derive(Clone)]
 pub(crate) struct Reader {
     pub(crate) list: ListRead,
     pub(crate) detail: DetailRead,
+    pub(crate) lease: LeaseRead,
 }
 
 impl Reader {
@@ -59,8 +100,18 @@ impl Reader {
         Self {
             list: Arc::new(read_list),
             detail: Arc::new(read_detail),
+            lease: Arc::new(lease),
         }
     }
+}
+
+/// A lease on the account a new client acts for. It is taken before the
+/// read's own client, so a read can only be newer than its lease: an
+/// account change between the two drops a good answer, never keeps a stale
+/// one. Without a client nothing is read, so there is nothing to watch.
+fn lease() -> Lease {
+    let client = Client::new().ok();
+    Lease::new(move || client.as_ref().is_some_and(Client::account_changed))
 }
 
 /// Why a read failed, as the Space words it.
@@ -134,7 +185,7 @@ fn read_list(plan: &Plan) -> Answer {
     }
     Answer {
         directory,
-        found: all_pages(|page| client.decisions(&plan.query, page)),
+        found: all_pages(&plan.stop, |page| client.decisions(&plan.query, page)),
     }
 }
 
@@ -170,8 +221,10 @@ fn read_detail(id: &str) -> Result<DecisionDetail, Error> {
 }
 
 /// Reads pages with `read` until the last, or until [`MAX_PAGES`], and
-/// refuses a cursor that repeats.
+/// refuses a cursor that repeats. A read that `stop` ends asks for no
+/// further page; its answer is dropped, so what it returns does not matter.
 pub(crate) fn all_pages(
+    stop: &Stop,
     mut read: impl FnMut(&PageRequest) -> Result<Page<DecisionListItem>, Error>,
 ) -> Result<Found, Error> {
     let mut page = PageRequest::default();
@@ -179,6 +232,9 @@ pub(crate) fn all_pages(
     let mut items = Vec::new();
     let mut cursors = HashSet::new();
     for _ in 0..MAX_PAGES {
+        if stop.stopped() {
+            return Ok(Found { items, more: true });
+        }
         let found = read(&page)?;
         items.extend(found.items);
         let Some(cursor) = found.next_cursor else {
@@ -198,7 +254,7 @@ mod tests {
     use subspace_api_client::Error;
     use subspace_api_client::model::{DecisionListItem, Page};
 
-    use super::{Failure, all_pages, failure};
+    use super::{Failure, Stop, all_pages, failure};
     use crate::fixtures;
 
     fn page(ids: &[&str], next: Option<&str>) -> Page<DecisionListItem> {
@@ -210,7 +266,7 @@ mod tests {
     #[test]
     fn every_page_is_read_until_the_last() {
         let mut asked = Vec::new();
-        let found = all_pages(|request| {
+        let found = all_pages(&Stop::default(), |request| {
             asked.push((request.limit, request.cursor.clone()));
             Ok(match request.cursor.as_deref() {
                 None => page(&["a", "b"], Some("next")),
@@ -226,17 +282,33 @@ mod tests {
 
     #[test]
     fn a_repeated_cursor_is_refused_and_a_long_list_stops_with_more() {
-        let repeated = all_pages(|_| Ok(page(&["a"], Some("same"))));
+        let go = Stop::default();
+        let repeated = all_pages(&go, |_| Ok(page(&["a"], Some("same"))));
         assert!(matches!(repeated, Err(Error::InvalidResponse)));
         let mut cursor = 0;
-        let long = all_pages(|_| {
+        let long = all_pages(&go, |_| {
             cursor += 1;
             Ok(page(&["a"], Some(cursor.to_string().as_str())))
         })
         .unwrap();
         assert!(long.more);
         assert_eq!(long.items.len(), 10);
-        assert!(all_pages(|_| Err(Error::Network)).is_err());
+        assert!(all_pages(&go, |_| Err(Error::Network)).is_err());
+    }
+
+    #[test]
+    fn a_stopped_read_asks_for_no_further_page() {
+        let stop = Stop::default();
+        let mut asked = 0;
+        let found = all_pages(&stop, |_| {
+            asked += 1;
+            // A newer read supersedes this one while its first page loads.
+            stop.stop();
+            Ok(page(&["a"], Some(asked.to_string().as_str())))
+        })
+        .unwrap();
+        assert_eq!(asked, 1, "no page after the stop");
+        assert_eq!(found.items.len(), 1);
     }
 
     #[test]

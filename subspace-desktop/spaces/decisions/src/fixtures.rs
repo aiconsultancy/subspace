@@ -2,13 +2,17 @@
 //! because the client's records are `#[non_exhaustive]`. The names follow
 //! the approved mock-up's fixtures; none is a real person or service.
 
+mod accounts;
+
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 use subspace_api_client::model::{DecisionDetail, DecisionListItem, Me, Project};
 use subspace_api_client::{DecisionQuery, Error};
 
-use crate::load::{Answer, Directory, Found, Plan, Reader};
+pub(crate) use accounts::{Accounts, OTHER_DECISION, OTHER_NAME, Who, reader_for};
+
+use crate::load::{Answer, Directory, Found, Lease, Plan, Reader};
 use crate::words::People;
 
 /// The signed-in person, who recorded every fixture decision.
@@ -251,15 +255,13 @@ pub(crate) fn detail(id: &str) -> Option<DecisionDetail> {
     serde_json::from_value(value).ok()
 }
 
+fn me(id: &str, name: &str) -> Me {
+    serde_json::from_value(json!({"userId": id, "kind": "human", "displayName": name})).unwrap()
+}
+
 fn directory() -> Directory {
-    let me: Me = serde_json::from_value(json!({
-        "userId": OPERATOR,
-        "kind": "human",
-        "displayName": OPERATOR_NAME,
-    }))
-    .unwrap();
     Directory {
-        me,
+        me: me(OPERATOR, OPERATOR_NAME),
         projects: projects(),
         people: people(),
     }
@@ -294,21 +296,32 @@ fn answer(plan: &Plan) -> Answer {
     }
 }
 
+/// A lease on an account that never changes.
+fn steady() -> Lease {
+    Lease::new(|| false)
+}
+
 /// Reads that answer from the fixture decisions at once.
 pub(crate) fn reader() -> Reader {
     Reader {
         list: Arc::new(answer),
         detail: Arc::new(|id: &str| detail(id).ok_or(Error::NotFound)),
+        lease: Arc::new(steady),
     }
 }
 
 /// Reads that fail with `error`.
 pub(crate) fn failing(error: Error) -> Reader {
     Reader {
-        list: Arc::new(move |plan: &Plan| Answer {
-            directory: plan.directory.then_some(Err(error)),
-            found: Err(error),
-        }),
+        list: Arc::new(move |plan: &Plan| refused(plan, error)),
         detail: Arc::new(move |_: &str| Err(error)),
+        lease: Arc::new(steady),
+    }
+}
+
+fn refused(plan: &Plan, error: Error) -> Answer {
+    Answer {
+        directory: plan.directory.then_some(Err(error)),
+        found: Err(error),
     }
 }

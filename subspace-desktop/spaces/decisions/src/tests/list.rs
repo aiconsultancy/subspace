@@ -134,6 +134,28 @@ fn the_search_reads_after_it_is_committed_and_opens_every_group(cx: &mut TestApp
     );
 }
 
+#[gpui_kit::test]
+fn a_failed_search_shows_no_rows_found_for_the_previous_text(cx: &mut TestAppContext) {
+    let (board, cx) = mount(cx);
+    board.update(cx, |board, _| {
+        board.reader = fixtures::failing(Error::Network)
+    });
+    cx.update(|window, cx| {
+        board.update(cx, |board, cx| {
+            board
+                .search
+                .update(cx, |input, cx| input.set_value("relay", window, cx));
+            search::commit(board, cx);
+        });
+    });
+    render(cx);
+    assert!(
+        rows(&board, cx).is_empty(),
+        "the previous text's rows do not stay under the new text"
+    );
+    assert_eq!(label(cx, "decisions-state").as_deref(), Some("Offline"));
+}
+
 /// Uses a dock's switch as the shell's status bar does: through the Space's
 /// dock contract.
 fn use_dock_switch(board: &Entity<Decisions>, cx: &mut VisualTestContext, dock: SpaceDock) {

@@ -9,7 +9,7 @@ use subspace_framework::contracts::issues::{CurrentScope, IssueScope};
 use subspace_framework::dashboard::contracts::{self, BoardContracts, Declaration, MessageKey};
 use subspace_framework::dashboard::{BoardNavigation, DashboardEvent, Toast};
 
-use crate::{Decisions, ID};
+use crate::{Decisions, ID, page};
 
 /// The Space asks for the issue scope; it answers and publishes nothing.
 pub(crate) const CONTRACTS: BoardContracts =
@@ -31,16 +31,20 @@ pub(crate) fn unavailable(identifier: &str) -> String {
 }
 
 /// Shows issue `identifier` in the Space that answers for issues, or says
-/// why it can't.
-pub(crate) fn open(identifier: &str, cx: &mut Context<Decisions>) {
+/// why it can't. Nothing opens once the decision it was listed under was
+/// read for an account that is no longer signed in.
+pub(crate) fn open(identifier: &str, decisions: &mut Decisions, cx: &mut Context<Decisions>) {
+    if decisions.follow_account(cx) {
+        return;
+    }
     let scope = contracts::request(ID, &CurrentScope, cx).ok().flatten();
     let event = match scope.and_then(|scope| address(&scope, identifier)) {
         Some(url) => DashboardEvent::Navigate(BoardNavigation {
             responder: MessageKey::request::<CurrentScope>(),
             url: url.into(),
-            // The shell asks this Space's return_location, so Back in
-            // Issues returns to the open decision.
-            origin: None,
+            // Back in Issues returns to the open decision, or to the
+            // decision selected in the list.
+            origin: page::issue_origin(decisions),
         }),
         None => DashboardEvent::Toast(Toast::info(unavailable(identifier))),
     };

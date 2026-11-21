@@ -8,12 +8,15 @@ use subspace_api_client::Error;
 use subspace_api_client::model::DecisionDetail;
 use subspace_framework::dashboard::ReturnLocation;
 
-use crate::load::{self, Failure};
+use crate::load::{self, Failure, Lease};
 use crate::{Decisions, peek};
 
 /// A Back from another Space returns to the page with this key, then the
-/// decision's id.
+/// account epoch and the decision's id.
 const RETURN_PREFIX: &str = "decision:";
+/// A Back to the list returns to the decision selected there with this
+/// key, then the account epoch and the decision's id.
+const SELECTED_PREFIX: &str = "decision-row:";
 
 /// The open decision and how its read went.
 pub(crate) struct Page {
@@ -42,10 +45,31 @@ fn page_state(result: Result<DecisionDetail, Error>) -> PageState {
 /// The open page as a place a Back on another Space returns to.
 pub(crate) fn return_location(decisions: &Decisions) -> Option<ReturnLocation> {
     let page = decisions.shown_page()?;
-    Some(ReturnLocation {
-        label: page.title.clone().into(),
-        key: format!("{RETURN_PREFIX}{}", page.id).into(),
+    Some(place(decisions, RETURN_PREFIX, &page.id, &page.title))
+}
+
+/// Where a Back from a linked issue returns: the open page, or in the list
+/// the decision whose inspector the issue was chosen from.
+pub(crate) fn issue_origin(decisions: &Decisions) -> Option<ReturnLocation> {
+    return_location(decisions).or_else(|| {
+        let item = decisions.selected_item()?;
+        Some(place(decisions, SELECTED_PREFIX, &item.id, &item.title))
     })
+}
+
+/// A return location for decision `id` under the current account epoch.
+fn place(decisions: &Decisions, prefix: &str, id: &str, title: &str) -> ReturnLocation {
+    ReturnLocation {
+        label: title.to_owned().into(),
+        key: format!("{prefix}{}:{id}", decisions.account_epoch).into(),
+    }
+}
+
+/// The decision id in `key` after `prefix`, when the key was given under
+/// account epoch `epoch`.
+fn returning<'a>(key: &'a str, prefix: &str, epoch: u64) -> Option<&'a str> {
+    let (given, id) = key.strip_prefix(prefix)?.split_once(':')?;
+    (given.parse::<u64>().ok() == Some(epoch) && !id.is_empty()).then_some(id)
 }
 
 // qual:allow(coupling, oi) reason: "Opening, reading and closing the page change the Space's pane and tab strip together."
@@ -63,6 +87,9 @@ impl Decisions {
 
     /// Opens decision `id` as the page, in place of any other.
     pub(crate) fn open_page(&mut self, id: String, title: String, cx: &mut Context<Self>) {
+        if self.follow_account(cx) {
+            return;
+        }
         self.page = Some(Page {
             id,
             title,
@@ -80,23 +107,32 @@ impl Decisions {
         };
         page.state = PageState::Loading;
         let id = page.id.clone();
-        let wanted = id.clone();
-        let reader = self.reader.detail.clone();
-        let read = cx.background_spawn(async move { reader(&id) });
+        self.page_reads = self.page_reads.wrapping_add(1);
+        let number = self.page_reads;
+        let (reader, lease) = (self.reader.detail.clone(), self.reader.lease.clone());
+        let read = cx.background_spawn(async move {
+            let lease = lease();
+            (lease, reader(&id))
+        });
         self._page_read = Some(cx.spawn(async move |this, cx| {
-            let result = read.await;
-            _ = this.update(cx, |this, cx| this.finish_page(&wanted, result, cx));
+            let (lease, result) = read.await;
+            _ = this.update(cx, |this, cx| this.finish_page(number, &lease, result, cx));
         }));
         cx.notify();
     }
 
     fn finish_page(
         &mut self,
-        id: &str,
+        number: u64,
+        lease: &Lease,
         result: Result<DecisionDetail, Error>,
         cx: &mut Context<Self>,
     ) {
-        let Some(page) = self.page.as_mut().filter(|page| page.id == id) else {
+        let wanted = number == self.page_reads && self.page.is_some();
+        if !self.landed(wanted, lease, cx) {
+            return;
+        }
+        let Some(page) = self.page.as_mut() else {
             return;
         };
         page.state = page_state(result);
@@ -129,6 +165,7 @@ impl Decisions {
 
     /// A click on the tab strip: the list's tab, or the page's.
     pub(crate) fn show_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.follow_account(cx);
         self.showing_page = index > 0 && self.page.is_some();
         cx.notify();
     }
@@ -141,12 +178,26 @@ impl Decisions {
         }
     }
 
-    /// A Back from another Space: the page it was opened from.
-    pub(crate) fn return_to_page(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
-        let Some(id) = key.strip_prefix(RETURN_PREFIX) else {
+    /// A Back from another Space: the page it was opened from, or the
+    /// decision selected in the list. A place given before an account
+    /// change no longer exists.
+    pub(crate) fn return_to_place(&mut self, key: &str, cx: &mut Context<Self>) -> bool {
+        let epoch = self.account_epoch;
+        if let Some(id) = returning(key, RETURN_PREFIX, epoch) {
+            let id = id.to_owned();
+            self.open_decision(&id, cx);
+            return true;
+        }
+        let Some(id) = returning(key, SELECTED_PREFIX, epoch) else {
             return false;
         };
-        self.open_decision(id, cx);
+        let id = id.to_owned();
+        self.show_list(cx);
+        // The list may since have been read without it; the list still shows.
+        if let Some(item) = self.item(&id) {
+            let title = item.title.clone();
+            self.follow(&id, &title, cx);
+        }
         true
     }
 }
@@ -155,9 +206,26 @@ impl Decisions {
 mod tests {
     use subspace_api_client::Error;
 
-    use super::{PageState, page_state};
+    use super::{PageState, RETURN_PREFIX, SELECTED_PREFIX, page_state, returning};
     use crate::fixtures;
     use crate::load::Failure;
+
+    #[test]
+    fn a_return_key_names_its_account_epoch() {
+        assert_eq!(returning("decision:3:d2", RETURN_PREFIX, 3), Some("d2"));
+        assert_eq!(
+            returning("decision-row:0:d2", SELECTED_PREFIX, 0),
+            Some("d2")
+        );
+        assert_eq!(
+            returning("decision:2:d2", RETURN_PREFIX, 3),
+            None,
+            "an earlier account"
+        );
+        assert_eq!(returning("decision:d2", RETURN_PREFIX, 0), None);
+        assert_eq!(returning("decision-row:0:d2", RETURN_PREFIX, 0), None);
+        assert_eq!(returning("decision:0:", RETURN_PREFIX, 0), None);
+    }
 
     #[test]
     fn a_read_becomes_the_page_s_state() {
