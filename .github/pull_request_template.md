@@ -8,7 +8,7 @@ Run through this before opening the pull request and again before merging.
 See [Ways of working](https://github.com/aiconsultancy/subspace/blob/main/subspace-desktop/docs/ways-of-working.md#before-opening-or-merging-a-pull-request).
 
 - [ ] Commits are conventional (`type(scope)!: summary`), one logical change each, rebased with no merge noise
-- [ ] `make check` and `mise run quality` pass (the prek pre-push hook runs both; no `--no-verify`)
+- [ ] Pre-push checks pass for the changed projects. Markdown-only changes run documentation checks where configured.
 - [ ] Change record under `subspace-desktop/docs/changes/<slug>/` (intent, spec, delivery, tasks)
 - [ ] New or moved pages under `docs/` are linked from `docs/README.md`; guides, `docs/mcp.md` and `docs/cli.md` match the behaviour
 - [ ] Visual changes: before and after screenshots from the capture build with fixture data, embedded under **Screenshots** with commit-pinned URLs (see [UI change evidence](https://github.com/aiconsultancy/subspace/blob/main/subspace-desktop/AGENTS.md#ui-change-evidence)), or "no UI change". Integration merges into `main` embed each included change's key images, or link the pull requests that carry them. A pull request with visual changes and no images is not ready to merge.

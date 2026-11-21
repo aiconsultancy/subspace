@@ -1,11 +1,8 @@
 # Hooks for the Subspace Framework workspace. In this repository the root
-# prek.toml adds file hygiene and installs both hook types; on its own, run
-# `prek install` here.
+# prek.toml adds file hygiene and installs both hook types.
 #
-# Commits run the format check and secret scanning. Pushes run `mise run
-# check` (architecture, docs, format, cargo-shear, clippy with warnings
-# denied and tests) and rustqual, which fails only when the score drops below
-# `rustqual-baseline.json`; refresh it with `mise run quality-baseline`.
+# Commits check Rust formatting and scan for secrets.
+# Push checks are selected in the root prek.toml.
 
 [[repos]]
 repo = "local"
@@ -16,24 +13,6 @@ name = "framework: cargo fmt --check"
 entry = "mise run fmt-check"
 language = "system"
 files = "\\.rs$|^\\.rustfmt\\.toml$"
-pass_filenames = false
-
-[[repos.hooks]]
-id = "check"
-name = "framework: mise run check"
-entry = "mise run check"
-language = "system"
-stages = ["pre-push"]
-always_run = true
-pass_filenames = false
-
-[[repos.hooks]]
-id = "rustqual"
-name = "framework: rustqual, no regression from baseline"
-entry = "mise run quality"
-language = "system"
-stages = ["pre-push"]
-files = "\\.rs$|^rustqual(\\.toml|-baseline\\.json)$"
 pass_filenames = false
 
 [[repos]]
