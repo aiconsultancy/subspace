@@ -82,8 +82,10 @@ forwards the app's targets here.
 - Board Lab and the Component gallery are not ready to ship: they are the
   app's `board-lab` and `component-gallery` features (both:
   `unreleased-spaces`), never in `default`, so release, packaging and capture
-  builds leave them out. `make run-unreleased` runs the app with both; they
-  start off, so turn them on in Settings or from **Add a Space**.
+  builds leave them out, and the release packaging scripts refuse a
+  `SUBSPACE_BUILD_FEATURES` that names them. `make run-unreleased` runs the
+  app with both; they start off, so turn them on in Settings or from
+  **Add a Space**.
 - `make interfaces` checks the real headless product interface.
 - `MISE_ENV=terminal make check-terminal` checks the excluded terminal crates
   with Zig.
@@ -339,7 +341,11 @@ compare them yourself before asking for review.
   themes only when the change is about a theme, colour or contrast.
 - Show each changed state:
   - For a change to existing UI, show before (an `origin/main` build) and
-    after, side by side or as a pair.
+    after, side by side or as a pair, both in the same theme. If the before
+    build does not have the prescribed theme, capture the pair in a theme
+    both builds have, such as the default Cupertino Dark, add the after
+    state in the prescribed theme, and say so in the captions. Check that
+    each image shows the theme you asked for.
   - For a setting with variants, show each variant.
   - For a theme, colour or contrast change, show each affected theme, in its
     light and dark variants.
