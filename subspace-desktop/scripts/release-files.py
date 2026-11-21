@@ -260,6 +260,12 @@ def stop_posix_group(process):
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # The unreaped leader keeps this group ours. macOS returns EPERM,
+        # not ESRCH, when the group has no member left to signal, such as
+        # when only the exited leader remains.
+        if sys.platform != "darwin":
+            raise
     # A Linux container's init may leave orphaned zombies indefinitely.
     # Check for live writers while the leader still holds the group ID.
     while sys.platform == "linux" and linux_group_has_live_members(process.pid):

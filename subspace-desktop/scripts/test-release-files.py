@@ -190,6 +190,23 @@ with helper["exclusive_lock"](Path(".package.lock")), open("messages", "w") as m
                                     release_files.exclusive_lock(cwd / "child.lock"):
                                 pass
 
+    @unittest.skipIf(os.name == "nt", "uses Unix process groups")
+    def test_exited_group_leader_on_macos_counts_as_stopped(self):
+        # macOS reports EPERM, not ESRCH, when only the unreaped leader is left.
+        refused = PermissionError("fixture EPERM")
+        for platform in ("darwin", "linux"):
+            with self.subTest(platform=platform), \
+                    subprocess.Popen([sys.executable, "-c", ""], start_new_session=True) as process, \
+                    patch.object(release_files.os, "killpg", side_effect=refused) as killpg, \
+                    patch.object(release_files.sys, "platform", platform):
+                if platform == "darwin":
+                    release_files.stop_posix_group(process)
+                    self.assertEqual(process.returncode, 0)
+                else:
+                    with self.assertRaisesRegex(PermissionError, "fixture EPERM"):
+                        release_files.stop_posix_group(process)
+                killpg.assert_called_once_with(process.pid, signal.SIGKILL)
+
     def test_failed_checksum_rename_restores_previous_pair(self):
         dist = self.root / "dist"
         stage = dist / "stage"

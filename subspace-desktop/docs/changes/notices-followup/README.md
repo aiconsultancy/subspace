@@ -34,6 +34,10 @@ private copy. The shipped ONNX Runtime notice records the exact Eigen source.
 
 On POSIX, the helper retains the group leader until it sees Cargo's result.
 It signals a failed or interrupted build group before reaping its leader.
+macOS reports EPERM rather than ESRCH when that group has no member left to
+signal, such as when only the exited leader remains, so the helper treats
+EPERM there as a stopped group and still raises it on other platforms. A
+fixture simulates the error with a patched `os.killpg` for both cases.
 Compiler-cache daemons can survive a successful build. Operators can set
 `SUBSPACE_RELEASE_LOCK_TIMEOUT` to allow for cold builds.
 
