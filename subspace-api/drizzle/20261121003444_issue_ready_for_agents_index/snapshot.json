@@ -1,0 +1,57 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "cbca2eb1-e917-4eeb-bafa-8df99f268361",
+  "prevIds": [
+    "a2548ca3-5794-4932-a9ae-9da7e2f2ceb3"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "issues",
+        "issues_ready_for_agents_idx"
+      ],
+      "writes": [
+        "s|idx|public.issues_ready_for_agents_idx",
+        "n|idx|public.issues_ready_for_agents_idx",
+        "e|idx|public.issues_ready_for_agents_idx",
+        "n|rel|public.issues_ready_for_agents_idx"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public",
+        "n|col|public.issues.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "issues_ready_for_agents_idx",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": "\"ready_for_agents\" and \"assignee_id\" is null and \"archived_at\" is null",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}

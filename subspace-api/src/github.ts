@@ -8,7 +8,14 @@ import { type createGitHubClient } from "./github-app";
 import { githubStatus } from "./github-poll";
 import { CurrentMember, type Member } from "./identity";
 import { Version } from "./initiative-contract";
-import { addActivity, datesForState, lockIssues, readIssue, refreshTrackers } from "./issues";
+import {
+  addActivity,
+  clearReadyForAgents,
+  datesForState,
+  lockIssues,
+  readIssue,
+  refreshTrackers,
+} from "./issues";
 import { BearerAuth, handleDb, ValidationErrors, versionedApi } from "./middleware";
 import { byKey, page } from "./paging";
 import { endpointErrors, problem, Unauthorised } from "./problems";
@@ -438,11 +445,13 @@ function completeIssue(db: Db, issue: typeof issues.$inferSelect, pr: Pr) {
       .orderBy(asc(states.position), asc(states.id))
       .limit(1);
     if (!completed) return "skippedNoState" as const;
+    const cleared = clearReadyForAgents(issue, true);
     yield* db
       .update(issues)
       .set({
         stateId: completed.id,
         ...datesForState("completed", issue),
+        ...cleared.set,
         version: issue.version + 1,
         updatedAt: sql`now()`,
         lastActivityAt: sql`now()`,
@@ -454,7 +463,7 @@ function completeIssue(db: Db, issue: typeof issues.$inferSelect, pr: Pr) {
       issue.id,
       "issue.changed",
       {
-        fields: ["stateId"],
+        fields: ["stateId", ...cleared.fields],
         pullRequest: { repository: pr.repository, number: pr.number },
       },
     );

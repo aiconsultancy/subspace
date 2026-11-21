@@ -6,7 +6,7 @@ import { HttpApi, HttpApiBuilder } from "effect/http-api";
 import { Database } from "../src/db";
 import { CurrentMember, type Member } from "../src/identity";
 import { issueGroup, issuesHandlers } from "../src/issues-http";
-import { readyForAgentsAfter } from "../src/issues";
+import { clearReadyForAgents, isTerminalState, readyForAgentsAfter } from "../src/issues";
 import { mcpTools } from "../src/mcp-tools";
 import { BearerAuth, validationErrors } from "../src/middleware";
 
@@ -15,17 +15,19 @@ const assigneeId = "00000000-0000-4000-8000-000000000002";
 const other = "00000000-0000-4000-8000-000000000003";
 const created = new Date("2026-11-02T09:00:00.000Z");
 
+const open = { tracker: false, terminal: false };
 const run = (
   current: { assigneeId: string | null; readyForAgents: boolean } | null,
   input: { assigneeId?: string | null; readyForAgents?: boolean },
-) => Effect.runSyncExit(readyForAgentsAfter(current, input));
+  result = open,
+) => Effect.runSyncExit(readyForAgentsAfter(current, input, result));
 
-function refused(exit: ReturnType<typeof run>) {
+function refused(
+  exit: ReturnType<typeof run>,
+  detail = "Remove the assignee before marking the issue ready for agents.",
+) {
   expect(Exit.isFailure(exit)).toBe(true);
-  if (Exit.isFailure(exit))
-    expect(JSON.stringify(exit.cause)).toContain(
-      "Remove the assignee before marking the issue ready for agents.",
-    );
+  if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(detail);
 }
 
 test("a new issue defaults to not ready and may be flagged only without an assignee", () => {
@@ -76,6 +78,53 @@ test("clearing the assignee does not set the flag, and unrelated edits keep it",
   expect(run({ assigneeId: null, readyForAgents: true }, { readyForAgents: false })).toEqual(
     Exit.succeed({ readyForAgents: false, changed: true }),
   );
+});
+
+test("a tracker can never be flagged, and retyping an issue to a tracker clears the flag", () => {
+  const tracker = { tracker: true, terminal: false };
+  const detail = "Trackers cannot be marked ready for agents.";
+  refused(run(null, { readyForAgents: true }, tracker), detail);
+  refused(
+    run({ assigneeId: null, readyForAgents: false }, { readyForAgents: true }, tracker),
+    detail,
+  );
+  expect(run({ assigneeId: null, readyForAgents: true }, {}, tracker)).toEqual(
+    Exit.succeed({ readyForAgents: false, changed: true }),
+  );
+  expect(run(null, { readyForAgents: false }, tracker)).toEqual(
+    Exit.succeed({ readyForAgents: false, changed: false }),
+  );
+});
+
+test("a terminal issue cannot be flagged, and closing a flagged issue clears the flag", () => {
+  const closed = { tracker: false, terminal: true };
+  const detail = "Reopen the issue before marking it ready for agents.";
+  refused(run(null, { readyForAgents: true }, closed), detail);
+  refused(
+    run({ assigneeId: null, readyForAgents: false }, { readyForAgents: true }, closed),
+    detail,
+  );
+  expect(run({ assigneeId: null, readyForAgents: true }, {}, closed)).toEqual(
+    Exit.succeed({ readyForAgents: false, changed: true }),
+  );
+  // Reopening does not set the flag again.
+  expect(run({ assigneeId: null, readyForAgents: false }, {})).toEqual(
+    Exit.succeed({ readyForAgents: false, changed: false }),
+  );
+});
+
+test("only completed, canceled and duplicate states are terminal", () => {
+  expect(["completed", "canceled", "duplicate"].every(isTerminalState)).toBe(true);
+  expect(["triage", "backlog", "unstarted", "started"].some(isTerminalState)).toBe(false);
+});
+
+test("side writes clear a set flag and name it, and leave an unset flag alone", () => {
+  expect(clearReadyForAgents({ readyForAgents: true }, true)).toEqual({
+    set: { readyForAgents: false },
+    fields: ["readyForAgents"],
+  });
+  expect(clearReadyForAgents({ readyForAgents: false }, true)).toEqual({ set: {}, fields: [] });
+  expect(clearReadyForAgents({ readyForAgents: true }, false)).toEqual({ set: {}, fields: [] });
 });
 
 test("MCP issue tools accept readyForAgents in the same shapes as REST", () => {
