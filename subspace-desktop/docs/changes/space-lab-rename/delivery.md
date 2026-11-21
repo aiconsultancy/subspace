@@ -33,27 +33,34 @@ in the [unreleased Spaces](../unreleased-spaces/intent.md) and
 
 ## Validation
 
-Run on 21 November 2026 on macOS ARM64, on the uncommitted working tree
-based on `main` at `40b9ebd`:
+First run on 21 November 2026 on macOS ARM64 against `main` at `40b9ebd`,
+then again after rebasing onto `main` at `bef3699`, which had added a release
+packaging guard and a target check naming Board Lab. The rebase renamed both
+(`UNRELEASED_FEATURES` in `scripts/product.sh` now lists `space-lab`).
+
+On the rebased branch:
 
 - `make check` in the desktop: passed. Clippy and the tests ran on the
-  workspace with `subspace/unreleased-spaces` (Space Lab built in, its crate
-  202 tests passing) and then on `subspace` and `subspace-descriptor` alone
-  in the release configuration. The run rebuilt the Component gallery's
-  `dist/` from source; only the renamed strings and the hashed chunk names
-  changed.
+  workspace with `subspace/unreleased-spaces` (Space Lab built in) and then
+  on `subspace` and `subspace-descriptor` alone in the release configuration.
+  The run rebuilds the Component gallery's `dist/` from source and left the
+  committed copy unchanged. Compared with `main`, `dist/` differs only in the
+  renamed strings and the hashed chunk names.
 - `make check` in the Framework: passed.
-- `mise run quality` in the desktop and in the Framework: passed with no
-  regression. The desktop reports one finding against its baseline, a stale
-  `qual:allow` in `products/subspace/build.rs`; the same finding is reported
-  on `main` without this change, so it is not caused by the rename.
+- `mise run quality` in the desktop and in the Framework: passed, with no
+  findings.
+- `make release-check`: passed.
 - `make interfaces`: passed, without Space Lab.
-- `SUBSPACE_FIXTURE_SPACE_LAB=1 make interfaces`: passed, with Space Lab
-  built in and turned on.
+- `SUBSPACE_FIXTURE_SPACE_LAB=1 make interfaces`: failed at first on the
+  target check from `main`, which replaced the saved metadata with `--about`
+  output before reading the board list, so it could not pass on any build.
+  The script now keeps the metadata in its own file; then it passed, with
+  Space Lab built in and turned on.
 
 Not run: `make run-unreleased` by hand (the captures stand in for Settings;
-**Add a Space** was not checked), `MISE_ENV=terminal make check-terminal`
-(no terminal crate changed), and the model reviews.
+**Add a Space** was not checked) and `MISE_ENV=terminal make check-terminal`
+(no terminal crate changed). The model reviews are recorded in the pull
+request.
 
 The captures show a red "File exists (os error 17)" message in Space Lab's
 welcome page on a fresh profile. It comes from the project store creating

@@ -31,10 +31,11 @@ rename and this fix:
 - `make check` in the desktop: passed, with Space Lab built in for the
   workspace tests and lint, then the release configuration.
 - `mise run quality` in the desktop: passed with no regression and no
-  finding in the touched code. The one finding it reports, a stale
-  `qual:allow` in `products/subspace/build.rs`, is also reported on `main`.
+  finding in the touched code.
+- After rebasing onto `main` at `bef3699`: `make check` and `mise run
+  quality` in both projects passed again, with no findings.
 
-Not run: the model reviews.
+The model reviews are recorded in the pull request.
 
 ## Evidence
 
