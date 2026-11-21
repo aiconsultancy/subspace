@@ -45,15 +45,19 @@ Above the Space, the title bar's Space tabs end with a plus, **Add a Space**
 (at the end of the navigation rail when that layout is on). Its menu lists
 the Spaces that are switched off, each with its glyph, title and one-line
 description, and ends with **Manage Spaces…**. Choosing a Space turns it on
-as its Settings switch and Save do, and opens it. A Space adds nothing to
-this control.
+as its Settings switch and Save do, and opens it; when the change waits for
+a restart, the app opens on that Space when it starts again. A Space adds
+nothing to this control.
 
 ## The rules
 
 1. **Panels tile to the window's edges.** The docks and the pane meet the
    window and each other, separated by hairlines. A Space has no outer
    padding and no margin around the workspace. The room is inside each
-   panel.
+   panel. In a narrow window the docks give up width first, so the pane
+   keeps at least `workspace::PANE_MIN_WIDTH_PX` (320 px) and nothing runs
+   past the workspace's edge. A `Workspace::detail` panel yields the same
+   way.
 2. **One text edge.** Text starts at `workspace::text_edge(&tokens)`, the
    content inset plus the row inset, in every panel: dock headers, navigator
    rows, the toolbar, list rows and the content. A Space has no side inset
@@ -95,6 +99,12 @@ this control.
   puts their switches at the two ends of the status bar.
 - With the navigator hidden, its views stay reachable from a view menu at
   the start of the toolbar, a `menu_button` that names the current view.
+- Navigator rows are tree items (`Role::TreeItem`) in a tree
+  (`Role::Tree`) named after the Space. Tab reaches them, the list keys
+  (down or j, up or k) move between them, and Enter or Space chooses one.
+  A click chooses a row without taking the keyboard focus, so j and k keep
+  driving the list. A row reached from the keyboard shows its focus as an
+  accent border on its fill.
 
 ## Context menus
 
@@ -117,7 +127,13 @@ The rules:
 - **Every command has a Lucide glyph** in the menu's icon slot.
 - **Right-click selects first.** The highlighted row is always the one the
   menu acts on. Shared list rows, group headers and `workspace::NavRow`
-  select the line before the menu opens.
+  select the line before the menu opens. Right-clicking the navigator row
+  that is already selected only opens its menu.
+- **A blocked list keeps what still works.** While a dialog of the Space's
+  blocks navigation, a list row's menu cannot select its row. It keeps
+  Open in and the copies, shows Open, Add to chat and Fold or Unfold
+  disabled with the reason "Finish the open dialog first.", and leaves out
+  the Space's own commands.
 - **Say why not.** A command that exists but cannot run now stays in its
   place, disabled, with one line under it saying why, such as "The last
   open Space can't be closed."
@@ -307,7 +323,8 @@ and the web Space's toolbar (`spaces/web/src/toolbar.rs`).
 6. **The dock switches.** Tell the shell which docks the Space has and
    whether each shows, and take a switch's click back. The status bar draws
    the navigator's switch at its leading end and the inspector's at its
-   trailing end.
+   trailing end. It draws neither while another surface covers the Space,
+   such as the log view, a maximised terminal or zoomed Help.
 
    ```rust
    use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};

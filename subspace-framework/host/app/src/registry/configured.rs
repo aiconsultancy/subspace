@@ -33,6 +33,13 @@ pub(crate) fn retain_provider(
     });
 }
 
+/// Drops the retained provider, so the board set cannot be rebuilt and a
+/// board choice applies only after a restart.
+#[cfg(test)]
+pub(crate) fn forget_provider(cx: &mut App) {
+    cx.remove_global::<Provider>();
+}
+
 /// Reloads the configured provider after a checked, confirmed config write.
 /// Shells observe the factory set and reconcile their retained views and editors.
 /// Native boards' own files are not part of that write, so their settings stay.

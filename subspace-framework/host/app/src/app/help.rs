@@ -60,6 +60,13 @@ fn shell_keys() -> [(&'static str, &'static str); 24] {
 }
 
 impl SubspaceApp {
+    /// Whether Help is zoomed and so covers the Space.
+    pub(super) fn help_zoomed(&self, cx: &App) -> bool {
+        self.help_dock
+            .as_ref()
+            .is_some_and(|host| host.read(cx).workspace_is_zoomed(cx))
+    }
+
     pub(super) fn toggle_help(
         &mut self,
         _: &ToggleHelp,

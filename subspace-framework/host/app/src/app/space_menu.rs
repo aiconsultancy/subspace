@@ -14,6 +14,7 @@ use subspace_dashboard::row_menu::{self, GroupedMenu, MenuCommand, MenuGroup};
 use subspace_lucide::IconName;
 
 use super::cover::cover_while_open;
+use super::navigation::NavigationMode;
 use super::{ACTIVE_KEY, SubspaceApp};
 use crate::settings::board_choice::{self, Applied};
 
@@ -77,11 +78,21 @@ pub(super) fn neighbour(index: usize, len: usize) -> Option<usize> {
     }
 }
 
-/// The toast after Space `title` closed, saying where to add it again.
-fn closed_message(title: &str, applied: Applied) -> String {
+/// The toast after Space `title` closed, saying where to add it again:
+/// `plus`, the place of the Add a Space plus.
+fn closed_message(title: &str, applied: Applied, plus: &str) -> String {
     match applied {
-        Applied::Now => format!("Closed {title}. Add it again from the plus in the title bar."),
+        Applied::Now => format!("Closed {title}. Add it again from {plus}."),
         Applied::AfterRestart => format!("Restart the app to close {title}."),
+    }
+}
+
+/// Where the Add a Space plus is in `navigation`: in the title bar after the
+/// tabs, or at the end of the vertical navigation rail.
+fn plus_place(navigation: NavigationMode) -> &'static str {
+    match navigation {
+        NavigationMode::Horizontal => "the plus in the title bar",
+        NavigationMode::Vertical => "the plus at the end of the navigation rail",
     }
 }
 
@@ -129,7 +140,8 @@ impl SubspaceApp {
         if let (Applied::Now, Some(next)) = (applied, next) {
             self.follow_neighbour(next, window, cx);
         }
-        self.push_toast(Toast::info(closed_message(title, applied)), cx);
+        let message = closed_message(title, applied, plus_place(self.navigation_mode));
+        self.push_toast(Toast::info(message), cx);
     }
 
     /// Makes Space `next` current after the current one closed. While Logs or
@@ -154,7 +166,7 @@ impl SubspaceApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{Applied, closed_message, neighbour};
+    use super::{Applied, NavigationMode, closed_message, neighbour, plus_place};
 
     #[test]
     fn the_neighbour_is_the_previous_tab_or_the_next_for_the_first() {
@@ -167,13 +179,21 @@ mod tests {
 
     #[test]
     fn the_closed_toast_says_where_to_reopen_the_space() {
+        let title_bar = plus_place(NavigationMode::Horizontal);
+        let rail = plus_place(NavigationMode::Vertical);
         assert_eq!(
-            closed_message("Actions", Applied::Now),
+            closed_message("Actions", Applied::Now, title_bar),
             "Closed Actions. Add it again from the plus in the title bar."
         );
         assert_eq!(
-            closed_message("Actions", Applied::AfterRestart),
-            "Restart the app to close Actions."
+            closed_message("Actions", Applied::Now, rail),
+            "Closed Actions. Add it again from the plus at the end of the navigation rail."
         );
+        for plus in [title_bar, rail] {
+            assert_eq!(
+                closed_message("Actions", Applied::AfterRestart, plus),
+                "Restart the app to close Actions."
+            );
+        }
     }
 }

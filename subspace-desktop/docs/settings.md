@@ -107,8 +107,9 @@ choosing **Save**: the tab goes at once and the config file's `boards` entry
 matches what Settings writes. Closing the current Space opens the tab before
 it, or the next tab when it was first. The last open Space can't be closed;
 its menu says so. Nor can the last Space the config file leaves on, if the
-file was edited outside the app. A notice says where to add it again: the
-plus in the title bar. **Space settings…** in the same menu opens that
+file was edited outside the app. A notice says where to add it again: "the
+plus in the title bar" with horizontal navigation, or "the plus at the end of
+the navigation rail" with vertical navigation. **Space settings…** in the same menu opens that
 Space's Settings page.
 
 To turn a Space back on without opening Settings, choose the plus after the

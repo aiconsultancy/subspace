@@ -7,9 +7,9 @@
 pub(super) mod menu;
 
 use gpui_kit::{App, Context, SharedString, Window};
-use subspace_dashboard::{PaletteCommand, PaletteOption, SubList, Toast};
+use subspace_dashboard::{PaletteCommand, PaletteOption, SubList, Toast, prefs};
 
-use super::{OpenSettings, SubspaceApp};
+use super::{ACTIVE_KEY, OpenSettings, SubspaceApp};
 use crate::registry::{self, BoardFactories, BoardRegistration};
 use crate::settings::board_choice::{self, Applied};
 
@@ -169,7 +169,8 @@ pub(super) fn palette_command(cx: &mut Context<SubspaceApp>) -> PaletteCommand {
 
 impl SubspaceApp {
     /// Turns Space `id` on as its Settings switch and Save do, then makes it
-    /// current. Does nothing for a Space that is not off.
+    /// current, or the Space the next start opens on when the change waits
+    /// for a restart. Does nothing for a Space that is not off.
     pub(super) fn open_space(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(space) = off_spaces(cx).into_iter().find(|space| space.id == id) else {
             return;
@@ -189,8 +190,11 @@ impl SubspaceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if applied == Applied::Now {
-            self.show_opened(space.id, window, cx);
+        match applied {
+            Applied::Now => self.show_opened(space.id, window, cx),
+            // The tab comes after a restart; it should then be the current
+            // Space, as it would have been now.
+            Applied::AfterRestart => prefs::set(cx, ACTIVE_KEY, space.id),
         }
         self.push_toast(Toast::info(opened_message(&space.title, applied)), cx);
     }
