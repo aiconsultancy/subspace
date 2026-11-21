@@ -25,32 +25,116 @@ that environment is a separate follow-up.
 | Cloud task | A reference in `copilot-agent-tasks.json`, so a task the chat tool started always has a row and carries its subject |
 | Local chat | The Copilot chat pane's saved sessions |
 
-A reference the task list left out shows as `unknown` until its panel opens or
-a poll fills it in; the dashboard shows what the file holds and invents
+A reference the task list left out shows as `unknown` until its detail is
+read (see [Reads](#reads)) or a poll fills it in; the dashboard shows what the file holds and invents
 nothing.
 
 Rows group by what the user must do about them — **Needs input**, **Active**,
-**Finished** — and sort newest first inside each group. A row shows its kind
-mark, its repository (local chats show `local`), its title, its state, its
-pull request, a watched mark and how long ago it changed.
+**Finished** — and sort newest first inside each group. A row has no id column
+(`Row::id` is `None`, so the titles line up). `ListDashboard::row_leading`
+draws the state's glyph in its tone, one shape per state
+(`peek::state_icon`), and `row_trailing` draws fixed-width lanes
+(`lanes.rs`): the repository or `Local chat`, the pull request's glyph and
+number, a bell when monitored, and the age, right-aligned. Rows are
+comfortable and a group's count follows its name, as in the pull request
+list. The accessible name reads all of it (`peek::row_label`).
 
 Three filters narrow the list: kind, state and repository. They are stored
 under `github-copilot-agents.kind`, `github-copilot-agents.state` and `github-copilot-agents.repo`.
+The navigator sets the kind and the repository as well.
 
-## The detail panel
+## The workspace shell
 
-A cloud task shows its state, repository, times, monitor flag, subject and
-pull request, then one section per agent session: state, model, base and head
-branch, times, usage, error, and the prompt as Markdown. The detail loads on
-selection through `cx.background_spawn`; an answer for a row the user already
-left is dropped.
+The Space draws in the Framework's workspace shell
+(`subspace_framework::dashboard::workspace`), as every Space does. The
+[workspace shell change record](changes/workspace-shell/intent.md) gives the
+reasons.
 
-A local chat shows its title, times and whether a chat tab holds it.
+| Zone | What it holds here |
+| --- | --- |
+| Navigator | Titled **Copilot Agents**. **Views** has a row for each kind: **All tasks and chats**, **Cloud tasks** and **Local chats**. The selected row is the kind filter. **Repositories** has a row for each repository of the loaded rows: a click sets the repository filter and a second click clears it. Each row counts the rows it would show with the other filters as they are. The footer is the account line. |
+| Tab strip | The list's tab, named after the view on show, and the opened row's tab beside it, which closes (`opened::OpenItem`). |
+| Toolbar | Over the list: the three filter menus and **Clear filters**, in the shared overflow toolbar. Over an opened row: **Back** (`github-copilot-agents-back`) and **Browser (o)**. The two dock switches are the status bar's (`Dashboard::docks`). |
+| Content | The shared list, drawn with `list::render_under` under `workspace::pane_head`; or, while the opened row's tab shows, a `workspace::Pane` holding its page (`item.rs`, id `github-copilot-agents-item`). The list's own detail panel never draws. |
+| Inspector | A `workspace::Inspector` in the workspace's `.inspector(..)` slot (`inspector.rs`), showing the target: the opened row while its tab shows, else the selection. With nothing selected it reads "Select a task to see it here." |
+| Status bar | `Dashboard::status`: the account, then the counts. |
+
+The Space draws no heading, and `Dashboard::render_toolbar` returns nothing,
+so the shell's own toolbar no longer carries the filters.
+
+`github-copilot-agents.navigator` and `github-copilot-agents.inspector` record
+whether each dock shows. Both show unless the value is `0`
+(`shell::stored_docks`).
+
+- The filter menus are always drawn, also while the navigator shows, so that
+  keys **1** to **3** have a button to anchor their menus to. With the
+  navigator hidden, the **Kind** menu at the start of the toolbar is the view
+  menu: unset, it reads **All tasks and chats** rather than **Kind**
+  (`ui::unset_label`).
+- A click only selects a row (`activates_on_click` is `false`); a group
+  header still folds. Enter, a double click, a search result, the row menu's
+  **Open** and the inspector's **Open** reach `ListDashboard::on_open`, which
+  shuts the shared panel (`ListState::close_detail`) and opens the row as a
+  tab (`open_item`). Escape (`CloseDetail`) and **Back** show the list and
+  leave the tab open; choosing a view or a repository in the navigator also
+  shows the list. Opening another row replaces the tab, and closing it closes
+  its session log, so the watcher stops reading that log.
+- The inspector switch and the inspector's **Close** only show or hide the
+  inspector; they open and close nothing.
+- The account line needs the work login. A list load that succeeds asks
+  `Client::work_login` for it in the same background job, once per run; later
+  loads reuse the answer. Until then the line reads **Checking account…**,
+  **Account unavailable** after a failed load, or **GitHub** alone.
+
+`navigator.rs` holds the pure logic: the views, the repositories, their counts
+and the row ids. `peek.rs` holds what the inspector, the lanes and the tab say
+of a row: its status words, glyph and tone, its short name, excerpt, facts and
+footer actions. `opened.rs` holds which row is open and which tab shows.
+`ui.rs` holds the account words, the status line and the dock values. `shell.rs` composes the elements, and `view.rs` gives the Space's root
+its key context, so the Space's keys answer wherever in the workspace the
+pointer last went.
+
+## The inspector
+
+The header names the row briefly (`peek::name`: `app #7`, **Agent task** or
+**Chat session**) and carries **Open** (`github-copilot-agents-open`, left out
+beside an opened row), the GitHub link (`browser::link`) and **Close
+inspector**. The body shows the status in words beside its glyph, the title,
+the first paragraph of the last session's prompt, **Properties** (repository,
+branch, model, started, updated, monitor, subject: whichever are known) and the
+pull request as one row that runs **OpenPullRequest**. A failed read shows the
+shared error banner with Retry. The footer's buttons (`peek::acts`) run the
+same actions as **c**, **l**, **m**, **y** and **u**, offered for the same
+rows as the palette's commands.
+
+## The opened row
+
+The page shows what the old detail panel showed (`ListDashboard::detail`,
+built by `panels.rs`): the title and status, the properties, then the pull
+request and one section per agent session: state, model, base and head
+branch, times, usage, error, and the prompt as Markdown. That column is capped
+at `workspace::READING_WIDTH_PX`; the session log section runs the pane's full
+width under it. A local chat shows its title, times and whether a chat tab
+holds it.
+
+## Reads
+
+There is one detail slot (`detail`, `detail_key`): the sessions of the target.
+`sync_detail` reads them through `cx.background_spawn` when the target is not
+already the one held, and only while the inspector shows or an opened row's
+tab shows. So a read happens when a row is selected with the inspector shown,
+when the inspector is shown with a row selected, when a row is opened whose
+sessions are not held, and when switching to the other tab changes the target.
+With the inspector hidden, selecting reads nothing. Opening a row the
+inspector already read reads nothing more, where the old panel read again. An
+answer for a row the user already left is dropped. As before, each loaded
+detail may prefetch and index the last session's log when full-text search is
+on.
 
 ## Open a cloud session in the browser
 
-Select a cloud task and click **Browser (o)**, or press `o`. The panel header,
-palette, row menu, Copy link and chat replay use the same browser destination.
+Select a cloud task and choose the inspector's GitHub link, or press `o`. The
+opened row's **Browser (o)**, the palette, row menu, Copy link and chat replay use the same browser destination.
 Each loaded session also has its own browser link when its pull request is known.
 
 GitHub sometimes omits `html_url` and returns an empty pull-request node ID.
@@ -68,8 +152,10 @@ Failed session loads show a shared error with selectable diagnostics and Retry.
 
 ## The session log
 
-**l** shows the log of the open task's last session, and hides it again. The
-log is read only when asked for; selecting a row never reads one.
+**l** opens the target cloud task as a tab and shows the log of its last
+session there, and hides it again. The log is read only when asked for;
+selecting a row never reads one. While the task's sessions are still loading,
+a toast asks to try again.
 
 It comes from the undocumented Copilot session API, which the `gh` CLI itself
 uses:
@@ -110,7 +196,8 @@ feature off.
 
 | Key | Action |
 | --- | --- |
-| j / k, Enter, Esc | The shared list keys |
+| j / k, Enter | The shared list keys: move the selection; open the row as a tab |
+| Esc | Back to the list from an opened row |
 | 1 / 2 / 3 | Filter by kind, state or repository |
 | 0 | Clear the filters |
 | o | Open the session in the browser, or GitHub Agents if no focused page is available |

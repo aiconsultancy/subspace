@@ -15,7 +15,8 @@ refresh, terminal placement, themes and fonts. The
 
 To close a Space, right-click its tab and choose **Close Space**. It is the
 same as turning off the Space's **Enabled** switch in Settings and choosing
-**Save**. To reopen it, turn **Enabled** back on. The last open Space can't be
+**Save**. To reopen it, choose the plus after the last tab (**Add a Space**)
+and pick it, or turn **Enabled** back on. The last open Space can't be
 closed.
 
 To use GitHub without the GitHub CLI or a token, open a GitHub Space's page,

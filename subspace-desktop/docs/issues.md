@@ -29,6 +29,57 @@ the desktop uses with the exact shapes. Pages use `{ items, nextCursor }`, error
 `application/problem+json`, and JSON names stay camelCase. Unknown response
 fields are ignored for forward compatibility.
 
+## Workspace layout
+
+Issues is the reference Space for the shared workspace
+(`subspace_framework::dashboard::workspace`); `view/shell.rs` builds it
+around the list and `view/issue.rs` around the issue page.
+
+- **Navigator** (`view/shell.rs` `navigator`, pure rows in `navigator.rs`):
+  the title **Issues**, the NETT organisation menu and **New issue** in its
+  header, then Views (My issues with its count, Active, Backlog, All issues,
+  Activity), Projects (Teams in NETT: the project picker's options) and
+  Initiatives (the initiative picker's options, once there is a choice).
+  Rows call the existing `set_tab`, `open_activity`, `set_project` and
+  `Catalog::pick`; from the issue page they close it first.
+- **Tab strip**: the list shows one tab named after the view
+  (`issues-tabs`). The issue page adds the issue's tab, its identifier as
+  the tab's key (`TabSpec::key`) and its title, selected and closable
+  (`issue-tabs`); the view's tab returns to the
+  list and Close goes back as Back does.
+- **Toolbar**: on the list, search (`fields::toolbar_search`), Assignee and
+  Priority (named by their labels, `action::filter_button`) and Filters
+  lead; the quiet text **Grouped by state** (`issues-grouping`), the
+  Sub-issues switch (`issues-sub-issues`, pressed while sub-issues show; its
+  name and tooltip give the hidden count) and **New issue…**, the one
+  primary action (`action::main_action`), trail. The issue count and the
+  hidden sub-issue count are the status bar's. While
+  the navigator is hidden the view menu (`view_menu.rs`) and the
+  initiative, project and organisation pickers lead it. On the issue page it
+  is the former path bar: Back and the path, then Edit issue… and More.
+- **Content**: the shared list at the workspace's text edge
+  (`list_side_inset` returns `workspace::text_edge`), or the issue in a
+  reading column capped at `workspace::READING_WIDTH_PX`. The decision and
+  attachment text panels sit beside the column inside the pane.
+- **Inspector**: beside the list, a peek of the selected issue built from
+  its list row with no read of its own (`peek.rs`, `view/peek.rs`), with
+  **Open**; on the issue page, Properties, Relations and Record. The
+  activity feed and the screens that stand in for the list have none.
+- **Status bar**: `Dashboard::status` leads with `scope::context_line`, for
+  example *Subspace API · Signed in as Ada Fixture · Live*, then the count
+  and read time. The Space draws no heading, scope line or live indicator.
+
+One click on an issue row selects it and fills the peek
+(`ListDashboard::activates_on_click` is false for issue rows); a double
+click, Enter or the selected row's **Open** opens the page. Group headers,
+more lines and activity rows still act on one click.
+
+`docks.rs` keeps whether the navigator and inspector show in the
+`issues.navigator` and `issues.inspector` preferences, both shown by
+default. A window too narrow for both docks and a 440 px pane holds the
+inspector back first, then the navigator, without changing the choice; a
+switch for a held-back dock says so in a toast.
+
 ## Connect and sign in
 
 Sign in under **Settings > Account** with the identity provider the build
@@ -169,7 +220,8 @@ Reconnects back off from 1 s to 30 s with jitter. The backoff resets after
 60 s live or when the project scope changes. The open issue is read every
 30 s while connecting, reconnecting or polling. An unavailable stream or an
 Access refusal shows **Polling every 30 s** and the client retries in the
-background. `HubSnapshot::live()` drives the header indicator.
+background. `HubSnapshot::live()` drives the live word in the status bar
+(`scope::context_line`).
 `Client::without_live()` disables the stream for tests. The loopback fixture
 can answer 404 for the stream with `--no-updates-stream`. See the
 [change record](changes/subspace-api-accounts/README.md).
@@ -284,8 +336,10 @@ See [issue references](irc.md#issue-references).
 
 ## Back from the issue page
 
-Back (header button, Escape, the palette's Back command) goes where the issue
-was opened from, and its label names it (`spaces/issues/src/back.rs`):
+Back (the toolbar's Back, the issue tab's Close, Escape, the palette's Back
+command) goes where the issue was opened from, and its label names it
+(`spaces/issues/src/back.rs`). The view's tab beside the issue's always goes
+to the list:
 
 - Opened from the list, the board or Activity: the list, with its filters,
   selection and scroll as they were. The label is **Back to issues**.
@@ -311,9 +365,12 @@ toast; the list is the fallback.
 ## Complete issue view
 
 Ported from slice 5 of the upstream issue workspace. The issue page keeps the editor, image
-viewer and comment attachments. Its main column orders Description, media,
-Sub-issues, Relations, Pull requests and Activity; Properties and Record form
-the right column and stack below it under 1000 px. More offers Copy identifier
+viewer and comment attachments. It reads in one column no wider than
+`workspace::READING_WIDTH_PX`, which orders Description, media, Sub-issues,
+Pull requests and Activity. Properties, Relations and Record are the
+inspector's body (`view/issue.rs` `side_column`); while the inspector does
+not show they end the reading column. The timeline's tabs wrap under its
+title while the pane is narrower than the reading width. More offers Copy identifier
 (`y`, Command/Ctrl+Period) and Reload. Tracker help uses the shared anchor's
 Escape, outside dismissal and focus return.
 Right-click the identifier below the title for **Copy issue number**, which
@@ -515,15 +572,15 @@ is found or the list ends. **Show in the description** and **Show in the comment
 
 A `text/plain` or `text/markdown` file, in **Attachments** or as an inline file
 reference, is a native card button that opens a panel to the right of the issue
-page, under the path bar. Other files keep their read-only chips. The panel uses
+page, inside the pane under its toolbar. Other files keep their read-only chips. The panel uses
 the shared detail panel's stored width (clamped to 320 px and 75% of the window),
 surface and left edge, and has no resize handle. Its title bar shows the file
 name and size with a quiet **Close attachment** button, which takes focus on
 open. Escape in the issue page closes an open menu first, then the panel,
 before it goes back to the list; closing returns focus to the opener. Opening
 another issue, going back, hiding the board or losing access clears it. The
-page subtracts the panel's width (`media::text::panel_width`) before it
-chooses one or two columns.
+page subtracts the panel's width (`view::issue::panel::side_width`) before it
+fits the docks and measures the pane.
 
 Bytes come from `GET /v1/issues/attachments/{mediaId}` through the hub's paced
 byte reads and file slots, fenced to the scope and issue revision, never from

@@ -75,8 +75,15 @@ forwards the app's targets here.
 - `make test` for the tests, `make check` before reporting work as done
   (architecture, board-guide and documentation-index checks, format check,
   unused-dependency check with cargo-shear, clippy with warnings denied, tests
-  and script fixtures).
+  and script fixtures). Clippy and the tests run on the workspace with the
+  unreleased Spaces built in, then on the app alone in its release
+  configuration.
 - `make build`, `make run`, `make format`.
+- Board Lab and the Component gallery are not ready to ship: they are the
+  app's `board-lab` and `component-gallery` features (both:
+  `unreleased-spaces`), never in `default`, so release, packaging and capture
+  builds leave them out. `make run-unreleased` runs the app with both; they
+  start off, so turn them on in Settings or from **Add a Space**.
 - `make interfaces` checks the real headless product interface.
 - `MISE_ENV=terminal make check-terminal` checks the excluded terminal crates
   with Zig.
@@ -209,18 +216,40 @@ tokens, through its shared treatment; otherwise a shared component in the
 Framework's board kit; draw a custom element only with a recorded reason.
 Everything visible is a component: no one-off styled controls in Spaces. A
 shared component belongs in the Framework, with its Component gallery card.
+The gallery is only in the app built with `make run-unreleased` (the
+`unreleased-spaces` feature); release builds do not include it.
 
 ## Space layout
 
-Use the Issues Space as the reference when adding a list-based Space or tab,
-including one in a new UI crate. Start with the Space name and a short line of
-service, account or status context when it helps the user. Place tabs and
-filters below the heading. Give the header, controls and list a shared leading
-edge, and use the comfortable row spacing from Issues.
+Every Space uses the Framework's workspace layout
+(`subspace_framework::dashboard::workspace`), with the same zones in the same
+places. The Framework's [design guide](../subspace-framework/docs/design-guide.md)
+is the authority: its zones, rules, interaction rules, shell anatomy image and
+the steps to build a new Space. Use the Issues Space as the reference when
+adding a Space or a view, including one in a new UI crate.
 
-Check the layout in a narrow window. Keep primary controls easy to find and
-use the shared overflow toolbar for controls that need more room. Follow the
-[Framework layout guidance](../subspace-framework/docs/board-integration.md#layout-and-ui)
+The navigator, the leading dock, says where you are looking: the Space's name
+in its header, then its views, projects, networks or repositories as rows. A
+Space draws no heading or context line of its own. The pane's tab strip names
+what is open, such as the list and an opened item, never the Space's views.
+The toolbar under it holds search and filters on the leading side and actions
+on the trailing side. The inspector, the trailing dock, shows the detail of
+the selection, with the actions for it in its footer. Connection, account,
+counts and sync time go in the status bar through `Dashboard::status`, and
+the dock switches at its two ends through `Dashboard::docks` and
+`Dashboard::toggle_dock`.
+
+Start text at `workspace::text_edge` in every panel instead of a side inset of
+the Space's own. Lists run the full width of the pane; cap reading content,
+such as an issue's body or a conversation, at `workspace::READING_WIDTH_PX`.
+Show selection through the row's own fill.
+
+Keep whether the navigator and the inspector show with the Space's other
+stored choices, both shown by default, and report them to the status bar's
+switches through `Dashboard::docks`. While the navigator is hidden, start
+the toolbar with a view menu that names the current view. Check the layout
+in a narrow window with both docks shown. Follow the
+[Framework layout guidance](../subspace-framework/docs/board-integration.md#workspace-layout)
 for the components and hooks.
 
 ## Conventions
@@ -253,7 +282,10 @@ Every change that alters what Subspace shows needs screenshots
 inline in the pull request description. This includes layout, styling,
 controls, icons, themes and interface text. A UI change without them is not
 ready for review. Headless render tests are still required; screenshots do
-not replace them.
+not replace them. Reviewers compare the screenshots with the shell anatomy
+image and the checklist in the design guide's
+[Reviewing a UI change](../subspace-framework/docs/design-guide.md#reviewing-a-ui-change);
+compare them yourself before asking for review.
 
 - Capture from an isolated dev build of the branch, using fixture data. Do not
   use your installed apps, real configurations, real hostnames, real people's
@@ -300,9 +332,11 @@ not replace them.
   `CAPTURE_CONFIG` can install a folder web Space with its grants and
   secrets; `CAPTURE_FLEET=1` adds the neutral `FLT` project whose issues
   such a page can reference.
-- Capture in Cupertino Dark, the default theme: leave `appearance.theme`
-  unset in the fixture state. Capture other themes only when the change is
-  about a theme, colour or contrast.
+- Capture in the bundled **Twilight Two** theme, the approved mock-ups'
+  colours and sizes, so the images can be compared with them: pass
+  `CAPTURE_THEME="Twilight Two"` to `make capture`. The capture script's
+  default stays Cupertino Dark, the app's default theme. Capture other
+  themes only when the change is about a theme, colour or contrast.
 - Show each changed state:
   - For a change to existing UI, show before (an `origin/main` build) and
     after, side by side or as a pair.

@@ -5,7 +5,13 @@ the contracts its Spaces exchange, and which Framework integration points each
 Space uses today. The Framework's side is in
 [What the Framework gives a board](../../subspace-framework/docs/board-integration.md) and its
 [MCP server](../../subspace-framework/docs/mcp.md). Tests in `products/subspace`
-compare the tool and declared-contract tables with the compiled registrations.
+compare the tool and declared-contract tables with the compiled registrations,
+in the release configuration and with the unreleased Spaces built in.
+
+Board Lab (`board-lab`) and the Component gallery (`component-gallery`) are
+not ready to ship. Each is in the app only with its Cargo feature of the same
+name (`unreleased-spaces` turns on both), which release and packaging builds
+leave off; built in, each starts off. Their rows below describe such a build.
 
 ## Tools
 
@@ -28,8 +34,8 @@ compiled catalog.
 | Copilot Agents | `github_copilot_agents_write` | `github_agent_task` |
 | IRC, running app only | `irc_read` | `networks`, `buffers`, `messages`, `members`, `search` |
 | IRC, running app only | `irc_write` | `message`, `join`, `part`, `connect`, `disconnect` |
-| Board Lab alpha, macOS ARM64 | `board_lab_project_inspect` | `schemas`, `list`, `project`, `source`, `state`, `settings_names` |
-| Board Lab alpha, macOS ARM64 | `board_lab_project_edit` | `create`, `save`, `edit_file`, `apply`, `start`, `stop`, `close`, `set_value`, `invoke`, `export` |
+| Board Lab alpha, `board-lab` builds on macOS ARM64 | `board_lab_project_inspect` | `schemas`, `list`, `project`, `source`, `state`, `settings_names` |
+| Board Lab alpha, `board-lab` builds on macOS ARM64 | `board_lab_project_edit` | `create`, `save`, `edit_file`, `apply`, `start`, `stop`, `close`, `set_value`, `invoke`, `export` |
 | Board Lab alpha, legacy fixtures | `board_lab_inspect` | — |
 | Board Lab alpha, legacy fixtures | `board_lab_edit` | — |
 | Board Lab alpha, legacy fixtures | `board_lab_run` | — |
@@ -44,10 +50,11 @@ a second connection under your nick. To reach IRC from another harness, turn on
 **Serve MCP over HTTP** and connect the harness to the app's URL. See
 [IRC](irc.md#agent-tools).
 
-Board Lab is off by default in release builds. Its tools take one flat object
-with an `action` field, not a write batch. See [Board Lab](board-lab.md) for
-enablement, provisioning and execution limits. Unsupported platforms do not
-include these tools.
+Release builds do not include Board Lab or its tools; a build with the
+`board-lab` feature includes it, off by default. Its tools take one flat
+object with an `action` field, not a write batch. See [Board Lab](board-lab.md)
+for enablement, provisioning and execution limits. Unsupported platforms do
+not include these tools.
 
 Native project writes require the expected definition and source revisions.
 Input and action requests also name the accepted session and input revision, so
@@ -90,7 +97,7 @@ HTTP requests are limited to 60 requests per bind per minute and receive
 
 | Contract | Messages | Answers and publishes | Subscribes and asks | Status |
 | --- | --- | --- | --- | --- |
-| `issues` v1 (`subspace_contracts::issues`) | `current-scope` request: profile, API origin and project keys, or none while unavailable. `resolve` request: one resolution per identifier (summary, unavailable, pending, signed out or failed), at most 50. `changed` event | The Issues board, from its Subspace API hub | Channels, to recognise and show issue references ([Channels issue references](irc.md#issue-references)); web Spaces, for app pages allowed `issues` ([Show issues](web-spaces-reference.md#show-issues)) | Delivered: phases 3 and 4 of the [delivery plan](changes/board-contracts/tasks.md); per-reference HTTP reads, with batch HTTP resolution to follow |
+| `issues` v1 (`subspace_contracts::issues`) | `current-scope` request: profile, API origin and project keys, or none while unavailable. `resolve` request: one resolution per identifier (summary, unavailable, pending, signed out or failed), at most 50. `changed` event | The Issues board, from its Subspace API hub | Channels, to recognise and show issue references ([Channels issue references](irc.md#issue-references)); web Spaces, for app pages allowed `issues` ([Show issues](web-spaces-reference.md#show-issues)); Decisions, which asks for the scope to open a decision's linked issues in the answering Space ([Decisions](decisions.md#linked-issues)) | Delivered: phases 3 and 4 of the [delivery plan](changes/board-contracts/tasks.md); per-reference HTTP reads, with batch HTTP resolution to follow |
 | `github` v1 (`subspace_contracts::github`) | `open-pull-request`: navigation responder role for a validated GitHub PR URL. `resolve-pull-requests` request: one resolution per `owner/repo#n` key (summary, unavailable, pending, signed out or failed), at most 50. `changed` event | PRs, through `Dashboard::open_link`; summaries from what its current account loaded and a refresh confirmed, else one background read; a signed-out login answers signed out until it signs in or reads again | Issues, from its pull requests panel and palette. Channels, for pull request chips and hover tiles ([change record](changes/subspace-api-accounts/README.md)) | Delivered: [pull request navigation](changes/subspace-api-accounts/README.md) and [change record](changes/subspace-api-accounts/README.md); unavailable responders and unsupported links fall back to the browser |
 
 **Pull request navigation.** `github@1/open-pull-request`
@@ -161,6 +168,7 @@ the registrations differ.
 | `issues` | responds | `issues@1/resolve` |
 | `issues` | publishes | `issues@1/changed` |
 | `issues` | requests | `github@1/open-pull-request` |
+| `decisions` | requests | `issues@1/current-scope` |
 | `github` | responds | `github@1/open-pull-request` |
 | `github` | responds | `github@1/resolve-pull-requests` |
 | `github` | publishes | `github@1/changed` |
@@ -241,6 +249,20 @@ and publishes `issues@1/changed`, including while its view is hidden.
 The broker holds its responder weakly and stop drops it. See the completed
 [board checklist](changes/nett-issue-workspace/tasks.md) and the
 [phase 3 integration checklist](changes/board-contracts/delivery.md#phase-3-issues-responder).
+
+The Decisions Space (`spaces/decisions`, board id `decisions`) registers its
+identity, artwork (Lucide `scale`), guide, list hooks with the workspace
+layout, toolbar, status, busy state, palette, keys and stored choices (view,
+maker, project and both docks). It reads `GET /decisions` and
+`GET /decisions/{id}` with the shared Subspace API account, in the
+background, and keeps decision content in memory only: no agent tools, chat
+context, full-text index, notifications, background updates or cache. It
+requests `issues@1/current-scope` to open a linked issue: it binds the
+issue's address to the answering Space's scope and emits
+`DashboardEvent::Navigate` with the `current-scope` responder key, so the
+shell calls that Space's `open_link`, as Channels does. It answers and
+publishes nothing. See the [developer page](decisions.md) and the completed
+[board checklist](changes/decisions-space/tasks.md).
 
 1. Configured boards get no artwork, tools, search, features or background
    work of their own (`BoardRegistration::configured`).

@@ -98,6 +98,11 @@ it. The repository's pull request template
   under **Reviews**. Read-only subagents and restricted CLI reviewers count.
   See [Pull request review clearance](../../AGENTS.md#pull-request-review-clearance)
   for the requirements and exceptions.
+- [ ] The screenshots are compared with the shell anatomy image and the
+  checklist in the [design guide](../../subspace-framework/docs/design-guide.md#reviewing-a-ui-change):
+  the same zones in the same places, one text edge, aligned strips, views in
+  the navigator and state in the status bar. Content differs per Space; the
+  layout does not.
 - [ ] UI follows the [component rules](../../subspace-framework/docs/ui-components.md#rules): a GPUI Kit
   component first, then a shared component built from GPUI Kit components,
   custom drawing last with its reason in the catalogue. Every new or changed
