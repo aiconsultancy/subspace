@@ -34,10 +34,12 @@ Tick every kind that applies, then read the linked rules before finishing.
   GPUI Kit component first, then a shared component composed from GPUI Kit
   in the Framework's board kit, custom last with a recorded reason;
   everything is a component with an interactive example on the Component
-  gallery board. Capture screenshots as
+  gallery board (in the app only through `make run-unreleased`; release
+  builds leave it out). Capture screenshots as
   [UI change evidence](../../../AGENTS.md#ui-change-evidence) requires
-  (Cupertino Dark, before and after, fixture data, at most 1600 px), only
-  with `make capture`, never a capture launched by hand.
+  (Twilight Two with `CAPTURE_THEME="Twilight Two"`, before and after,
+  fixture data, at most 1600 px), only with `make capture`, never a capture
+  launched by hand.
 - [ ] **New or changed Space** (a board; the same rules): complete the
   Framework's [board checklist](../../../../subspace-framework/docs/board-checklist.md) in the change
   record, using [What the Framework gives a board](../../../../subspace-framework/docs/board-integration.md);

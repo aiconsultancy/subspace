@@ -18,8 +18,10 @@ The app checks for updates at launch by default. To check manually, open
 
 A desktop dashboard app built with Rust and
 [GPUI Kit](https://github.com/longbridge/gpui-kit). It opens in the Cupertino Dark
-theme, with dense rows with group headers, a detail panel on the right, a dashboard
-switcher in the toolbar, and a ⌘K command palette.
+theme, with Space tabs in the title bar and a ⌘K command palette. Every Space
+uses the same workspace shell: a navigator on the left, a tab strip and
+toolbar above the content, an inspector on the right and the status bar
+(see the [design guide](../subspace-framework/docs/design-guide.md)).
 
 The reusable crates are the **Subspace Framework**. An **App** is a binary
 built from the Framework with a selected set of boards. The **Subspace App**
@@ -31,11 +33,15 @@ by area.
 Status: prototype. This workspace is maintained under `subspace-desktop`
 in `aiconsultancy/subspace`, beside the Framework in `subspace-framework`
 ([The Framework](#the-framework)). The Subspace App includes GitHub, the default-off Copilot Agents board, a
-prototype [Channels Space](docs/irc.md) (IRC) and the default-off
-[Actions board](docs/actions.md). macOS ARM64 also includes the
-default-off [Board Lab alpha](docs/board-lab.md). The developer
-[Component gallery](../subspace-framework/spaces/component-gallery/help.md) shows the shared UI
-controls in their states, with fixture data.
+prototype [Channels Space](docs/irc.md) (IRC), the [Issues](docs/issues.md)
+and [Decisions](docs/decisions.md) Spaces for Subspace API, and the default-off
+[Actions board](docs/actions.md). Two Spaces are not ready to ship and are
+left out of the default and release builds: the
+[Board Lab alpha](docs/board-lab.md) (macOS ARM64 only) and the developer
+[Component gallery](../subspace-framework/spaces/component-gallery/help.md), which shows the shared UI
+controls in their states, with fixture data. Build them in with the
+product's `board-lab` and `component-gallery` features, or both with
+`unreleased-spaces` (`make run-unreleased`); they start off there.
 The standalone Board Lab developer harnesses are retired; the integrated board
 and its [historical design evidence](docs/agents/board-lab/README.md) remain.
 Debug builds dock a [terminal](docs/terminal.md) beside every Space, as they
@@ -61,6 +67,7 @@ screenshots.
 | Copilot Agents | [Copilot agent tasks](spaces/github-copilot-agents/help.md) |
 | Channels | [IRC networks, channels and private messages](spaces/irc/help.md) |
 | Issues | [Subspace API issues and comments](spaces/issues/help.md) |
+| Decisions | [Subspace API decisions](spaces/decisions/help.md) |
 | Board Lab | [Native dashboards and managed environments](spaces/board-lab/help.md) |
 | Actions | [GitHub Actions](spaces/actions/help.md) |
 | Component gallery | [Shared UI components for developers](../subspace-framework/spaces/component-gallery/help.md) |
@@ -175,6 +182,11 @@ Build and run from source with `make run`. On macOS this builds a fresh debug
 `dist/dev/Subspace.app` with the approved icon and opens that exact bundle;
 it does not sign or replace `dist/Subspace.app`. Pass app arguments with
 `make run ARGS='...'`. Arguments run headless, including on macOS.
+`make run-unreleased` does the same with the Spaces that are not ready to
+ship, Board Lab (macOS ARM64) and the Component gallery, built in through the
+product's `unreleased-spaces` feature. Both start off: turn them on in
+Settings or from **Add a Space**. Release, packaging and capture builds
+never include them.
 Use `make capture OUT=<dir>` for isolated fixture screenshots on macOS or
 Linux. Linux uses the native executable on a private Xvfb display; see
 [Desktop capture](docs/capture.md) for prerequisites and options.
@@ -231,8 +243,8 @@ and docs. Every crate here depends on exactly one Framework crate, the facade
 `subspace-framework`, and writes `subspace_framework::<module>::…`
 (`dashboard`, `core`, `shell`, …). Spaces and clients use its default
 features (or `agent`); only `products/subspace` enables `host`,
-`search-onnx`, `component-gallery`, `gpui-kit-text-patch` and, for capture
-builds, `capture`.
+`search-onnx`, `gpui-kit-text-patch` and, for capture builds, `capture`, and
+`component-gallery` only through its own `component-gallery` feature.
 
 ```toml
 # Cargo.toml
@@ -268,10 +280,11 @@ products/descriptor         subspace-descriptor            the app's product des
 spaces/github               subspace-github-board          GitHub pull requests, issues, diffs
 spaces/github-copilot-agents subspace-github-copilot-agents-board GitHub Copilot cloud agent tasks and chats
 spaces/actions              subspace-actions-board         experimental GitHub Actions runs, deployments, releases and job graphs
-spaces/board-lab            subspace-board-lab-board       alpha native dashboards and managed runtimes (macOS ARM64)
+spaces/board-lab            subspace-board-lab-board       alpha native dashboards and managed runtimes (macOS ARM64; `board-lab` feature)
 spaces/board-lab/crates/mxc-worker subspace-mxc-worker     MXC Seatbelt worker adapter; unsupported platforms fail closed
 spaces/irc                  subspace-irc-board             IRC networks, channels and private messages ([docs](docs/irc.md))
 spaces/issues               subspace-issues-board          Subspace issues, activity, comments and attachments
+spaces/decisions            subspace-decisions-board       Subspace decisions, read only
 spaces/web                  subspace-web-board             web pages and installed web Spaces in a native web view
 clients/irc                 subspace-client-irc            IRC and IRCv3 protocol, connections and runtime
 clients/subspace-api        subspace-api-client            Subspace API reads, writes, live updates and development sign-in
@@ -380,12 +393,13 @@ Settings applies them on Save. Disabled boards have
 no UI or agent tools. Config cannot enable a board excluded from a product.
 Actions defaults to disabled in both builds. Enable it in Settings and save;
 its Flow view needs no separate experiment flag.
-Board Lab also defaults to disabled in both builds on macOS ARM64. Enable it
-in Settings and save. Opening it does not install runtimes or packages;
-provisioning requires an explicit action. Linux and Windows do not include
-Board Lab.
-The Component gallery is enabled by default in debug builds and disabled by
-default in release builds. Each board bundles Markdown help for the app and the
+Board Lab and the Component gallery are in the binary only with the
+`board-lab` and `component-gallery` features, which release builds leave off.
+Built in, each defaults to disabled in both builds: enable it in Settings and
+save, or choose it from **Add a Space**. Opening Board Lab does not install
+runtimes or packages; provisioning requires an explicit action. Linux and
+Windows do not include Board Lab, even with its feature.
+Each board bundles Markdown help for the app and the
 read-only `board_help` tool in agent chat/MCP.
 
 The conversation prototype is described in [Agent chat](../subspace-framework/docs/agent-chat.md),
@@ -492,7 +506,7 @@ keeps the collapse control.
 | \` | Theme designer |
 | ? | Show or hide the Help dock panel |
 | Cmd+Shift+/ (Ctrl+Shift+/ on Windows and Linux) | Show or hide Keyboard Shortcuts. Type to filter by key or action; Esc closes it and restores focus |
-| F1 to F12 | Dashboard switch keys with Secondary+1 to Secondary+9. Enabled product order. With every Subspace board on: F1 GitHub, F2 Copilot Agents, F3 Channels, F4 Actions, F5 Component gallery. On macOS ARM64, Board Lab follows Channels. Disabled boards take no slot. Unused positions do nothing. |
+| F1 to F12 | Dashboard switch keys with Secondary+1 to Secondary+9. Enabled product order. With every Subspace board on: F1 GitHub, F2 Copilot Agents, F3 Channels, F4 Issues, F5 Decisions, F6 Actions. A build with the unreleased Spaces adds the Component gallery after Actions and, on macOS ARM64, Board Lab after Decisions. Disabled boards take no slot. Unused positions do nothing. |
 | Secondary+1 to Secondary+9 | Product dashboard order; unused positions do nothing. |
 | Cmd+Shift+L (Ctrl+Shift+L elsewhere) | Show the log viewer |
 | Cmd+Shift+C (Super+Shift+C on Linux, Ctrl+Shift+C on Windows) | Show or hide chat |
@@ -553,6 +567,7 @@ target lists the targets.
 | Build every crate | `make build` |
 | Update compatible dependencies | `make update-deps` |
 | Run the desktop app | `make run` |
+| Run it with Board Lab and the Component gallery | `make run-unreleased` |
 | Tests | `make test` |
 | Format check, lint and tests | `make check` |
 | Format the sources | `make format` |
@@ -560,7 +575,10 @@ target lists the targets.
 Non-interactive shells must use `mise exec -- cargo ...` or mise shims so
 Cargo goes through Mr Boxington. `prek install` installs the format and
 clippy hooks from `prek.toml`. `make check`'s lint step also runs
-`cargo shear` to catch unused dependencies before clippy.
+`cargo shear` to catch unused dependencies before clippy. Clippy and the
+tests run on the workspace with the unreleased Spaces built in
+(`--features subspace/unreleased-spaces`), then again on the app and its
+descriptor alone in the release configuration, so neither rots.
 
 `make update-deps` refreshes `Cargo.lock` within the existing version ranges.
 The Copilot SDK is pinned to `1.0.34` to keep the experimental canvas API and

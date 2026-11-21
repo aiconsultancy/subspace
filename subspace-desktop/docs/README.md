@@ -75,6 +75,9 @@ If you want to build a Space, read [Add a Space](../README.md#add-a-space) and
 the Framework's [What the Framework gives a board](../../subspace-framework/docs/board-integration.md),
 then fill in its [board checklist](../../subspace-framework/docs/board-checklist.md).
 
+- [Design guide](../../subspace-framework/docs/design-guide.md): the
+  workspace shell every Space is built on, its zones and rules, and the
+  anatomy image that pull request screenshots are compared with.
 - [The Subspace App's Spaces](spaces-audit.md): the agent tools the app serves,
   the contracts its Spaces declare and exchange, and the audit of which
   Framework integration points each Space uses, with the gaps.
@@ -91,6 +94,7 @@ then fill in its [board checklist](../../subspace-framework/docs/board-checklist
 | Copilot Agents | [Copilot agent tasks](../spaces/github-copilot-agents/help.md) | [Copilot Agents dashboard](github-copilot-agents.md) |
 | Channels | [IRC networks, channels and private messages](../spaces/irc/help.md) | [Channels](irc.md): configuration, protocol support, initiatives and fleets, agent tools |
 | Issues | [Subspace API issues and comments](../spaces/issues/help.md) | [Issues and Subspace API](issues.md): connection, shared hub and offline fixtures |
+| Decisions | [Subspace API decisions](../spaces/decisions/help.md) | [Decisions](decisions.md): reads, stored choices and opening linked issues |
 | Board Lab | [Native dashboards and managed environments](../spaces/board-lab/help.md) | [Board Lab](board-lab.md): enablement and safety; [design evidence](agents/board-lab/README.md): retired harness history |
 | Actions | [GitHub Actions](../spaces/actions/help.md) | [Actions board](actions.md) |
 | Component gallery | [Shared UI components](../../subspace-framework/spaces/component-gallery/help.md) | |
@@ -185,3 +189,17 @@ record. [Change records](changes/README.md) explains the convention.
 - [Framework split research](changes/framework-split/research.md): separating
   the Framework from the Spaces, what blocks publishing and white-labelling,
   the proposed Space author API and the migration plan.
+- [Workspace shell](changes/workspace-shell/intent.md): one layout for every
+  Space, the restyle to the owner's mock-ups, the dock switches in the status
+  bar and the Twilight Two theme, with the captures and the known gaps.
+- [Standard right-click menu](changes/standard-context-menu/intent.md): the
+  seven groups every menu is built from, in one order.
+- [Add a Space from the title bar](changes/add-space-from-title-bar/intent.md):
+  the plus after the last Space tab and its menu of the Spaces that are off.
+- [Decisions Space](changes/decisions-space/intent.md): a read-only Space
+  listing every decision, built on the workspace shell.
+- [Bundled Inter and JetBrains Mono](changes/bundled-fonts/README.md): the
+  fonts the Subspace App embeds for Twilight Two, and why themes that name no
+  font keep the platform's fonts.
+- [Unreleased Spaces](changes/unreleased-spaces/intent.md): Board Lab and the
+  Component gallery as Cargo features left out of release builds.

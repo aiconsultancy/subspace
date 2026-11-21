@@ -9505,6 +9505,7 @@ dependencies = [
  "subspace-actions-board",
  "subspace-api-client",
  "subspace-board-lab-board",
+ "subspace-decisions-board",
  "subspace-descriptor",
  "subspace-framework",
  "subspace-github-board",
@@ -9769,6 +9770,17 @@ dependencies = [
  "subspace-product",
  "subspace-search",
  "url",
+]
+
+[[package]]
+name = "subspace-decisions-board"
+version = "0.10.0"
+dependencies = [
+ "chrono",
+ "gpui-kit",
+ "serde_json",
+ "subspace-api-client",
+ "subspace-framework",
 ]
 
 [[package]]

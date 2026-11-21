@@ -412,8 +412,9 @@ joined or named in its `channels` setting (the
   `/query`, and the board selects and opens it. **Join** is unavailable
   while the network is not connected; Enter and a double click then leave
   the runtime's **Not connected** line in the server buffer. The menu of a
-  listed row offers **Copy title** and **Join**, without **Add to chat** or
-  **Open details**. Joining does not add the channel to the network's
+  listed row offers **Join** then **Copy title**, without **Add to chat** or
+  **Open**; while the network is not connected, **Join** is disabled with
+  the reason under it. Joining does not add the channel to the network's
   `channels` setting.
 - **Hidden channels**: the server leaves secret (`+s`) and private (`+p`)
   channels out of `LIST` unless you are in them, so they appear only once
@@ -521,7 +522,7 @@ app leaves Kit's `inherit_text_color` off.
 
 Kit separates rows in the copied text with a blank line, as each `TextView`
 ends its paragraph with a line break. Not copied: message sender headers,
-times and day pills, which are labels, not text views. Sender names within
+times and day dividers, which are labels, not text views. Sender names within
 compact server and topic lines are copied with their text. The `MessageScroller` keeps only
 rows near the viewport, so a drag that auto-scrolls far past them can lose
 its start; a fix needs a Kit selection adapter for virtual lists. Right-click
@@ -830,22 +831,49 @@ messages after its anchor.
   [the change record](changes/irc-mention-notifications/spec.md).
 - Each opened buffer has a `Conversation` view (`conversation.rs`): its
   transcript and composer, with its own scroll position and draft. The dock
-  tab carries the buffer name and exposes the topic and network on hover. A
-  channel also has a `MemberList` view (`members.rs`). Both observe the hub
-  and report navigation as events.
-- `dock.rs` hosts them in a GPUI Kit `DockArea`: the buffer list (the shared
-  list, `dock/panels.rs`) in the left dock, conversations as centre panels in
-  tabs and splits (`dock/open.rs`), and the focused channel's member list in
-  the right dock. The member list fills its dock, whose width the user drags
-  and the layout restores. List and conversation events reach it without a
-  window, so dock edits are deferred to the board's window
-  (`dock::with_window`).
-- `dock/layout.rs` is the layout in buffer terms (splits, tab groups, the
-  side docks' widths and visibility), saved under `irc.dock-layout` after
-  every change and restored once the hub is bound (`dock/persist.rs`).
+  tab carries the buffer name and exposes the topic and network on hover;
+  `Conversation::heading` gives the pane's toolbar the name in strong text
+  and the topic in quiet text (`HeaderFacts::quiet`: the network, or the
+  server buffer's status, while there is no topic); its accessible name
+  still says the network. A channel also has a `MemberList` view
+  (`members.rs`), which draws the rank groups under captions such as
+  `Operators · 1`, each member with a small avatar, the nick and a quiet
+  note (`members::note`: `you`, `owner`, `admin` or `half-operator`), and
+  leaves the heading and the scrolling to its host. Both observe
+  the hub and report navigation as events.
+- `view/frame.rs` composes the Framework's workspace shell
+  (`dashboard::workspace`). The navigator is titled **Channels**, has Join in
+  its header and holds the buffer list, drawn by the shared list
+  (`list::render`) so the rows keep their selection, keys, folding and
+  menus; `NavRow` has no menu or key hooks. The list reads as navigator
+  rows: `list_side_inset` returns `workspace::text_edge` (kept in
+  `Irc::text_edge`, refreshed each render), rows keep the theme's row
+  height (not `comfortable_rows`), and `row_trailing` draws unread and user
+  counts at caption size, as `NavRow`'s count. The pane's toolbar leads with the initiative picker and the heading
+  of the conversation in front, and trails with **Connect** or
+  **Disconnect**, **Join…** and **More** (`toolbar.rs`) between the two dock
+  switches. The inspector is titled **Members**, with the count for a
+  channel, and holds the focused channel's `MemberList`. While the navigator
+  is hidden, `view/conversations.rs` adds a menu of every network's
+  conversations at the start of the toolbar. Before a network is configured
+  the pane shows the setup state with no toolbar and no inspector.
+- `dock.rs` hosts the conversations in a GPUI Kit `DockArea`, the pane's
+  content: centre panels in tabs and splits (`dock/open.rs`). The tabs are
+  the dock area's own, one strip per group, so the pane has no tab strip of
+  its own. List and conversation events reach it without a window, so dock
+  edits are deferred to the board's window (`dock::with_window`).
+- `dock/layout.rs` is the layout in buffer terms (splits, tab groups, and
+  whether the navigator and the inspector show), saved under
+  `irc.dock-layout` after every change and restored once the hub is bound
+  (`dock/persist.rs`). The workspace owns the two docks' widths, as density
+  tokens shared by every Space; a layout stored with widths still reads.
   Conversations on networks that are no longer configured are dropped with
   the groups they leave empty. Without a stored layout the first network's
   **Server** buffer opens.
+- `Dashboard::status` carries what the Space's heading used to
+  (`view::status_line`): `IRC`, the networks and how many are connected, then
+  the initiative hint (`initiatives::hint`), such as the connection an
+  initiative still needs.
 - The transcript uses Kit's `MessageScroller` with stable row identities, so
   new lines and prepended history splice in without losing the reading place.
   `lines.rs` groups a sender's messages within five minutes and condenses
@@ -859,14 +887,22 @@ messages after its anchor.
   with mIRC codes, server lines and membership lines go through the same
   view as literal Markdown (`style.rs`, `markup/markdown/literal.rs`,
   `text.rs`; see [Selecting and copying](#selecting-and-copying)).
-  Every row but the day pill is tinted under the pointer with the foreground
+  A day starts with quiet text between two hairlines. Times are in quiet
+  monospace: beside the sender's name, and in the avatar-wide gutter of
+  compact lines, so they read as a column. Senders' names are semibold in
+  their tone.
+  Every row but the day divider is tinted under the pointer with the foreground
   at low opacity; a row that mentions us keeps its `select` fill
-  (`transcript/fill.rs`).
+  (`transcript/fill.rs`). Message and compact-line text is capped at
+  `workspace::READING_WIDTH_PX`; the row's fill runs the pane's width.
   See [GPUI-Kit messaging reuse](../../subspace-framework/docs/ui-components.md#gpui-kit-messaging-reuse).
 - The composer (`compose.rs`) is the shared `ChatInput::message` in plain-text
   mode with recall keys, under the shared completion list. `Enter` sends and
   `Shift+Enter` breaks the line, which the hint under the input names
-  (`Return` on macOS). Up and Down recall sent lines while the draft is empty,
+  (`Return` on macOS). With uploads on, one quiet line above it holds the
+  paperclip (`irc-send-attachment`, **Send as attachment…**) and the
+  retention notice (`uploads/outgoing/view.rs`). `ChatInput` draws its frame
+  edge to edge, so the field is not rounded. Up and Down recall sent lines while the draft is empty,
   one line or a recalled line not yet edited (`ChatInput::set_recalled`), so
   a multi-line message does not stop the walk; they move between the lines of
   any other longer draft. The completion list

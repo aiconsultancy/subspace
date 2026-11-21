@@ -16,6 +16,7 @@ const SUBSPACE_THEMES: &[&str] = &[
     DEFAULT_THEME_DOCUMENT,
     "subspace-channel",
     "macos-classic-dark-remix",
+    "twilight-two",
     "adventure",
     "alduin",
     "asciinema",
@@ -44,8 +45,11 @@ pub fn subspace_descriptor() -> ProductDescriptor {
     subspace_descriptor_for(Channel::current())
 }
 
-/// Subspace: every current board, with board commands under their ids.
-/// The display name, bundle id and release stream follow `channel`.
+/// Subspace: every board this build includes, with board commands under
+/// their ids. The display name, bundle id and release stream follow
+/// `channel`. Board Lab and the Component gallery are listed only with the
+/// `board-lab` and `component-gallery` features, which the app turns on with
+/// its own, and start off in every build profile.
 pub fn subspace_descriptor_for(channel: Channel) -> ProductDescriptor {
     descriptor_for_version(channel, VERSION)
 }
@@ -66,10 +70,12 @@ fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor 
             board("github-copilot-agents", false),
             board("irc", cfg!(debug_assertions)),
             board("issues", cfg!(debug_assertions)),
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            board("board-lab", cfg!(debug_assertions)),
+            board("decisions", cfg!(debug_assertions)),
+            #[cfg(all(feature = "board-lab", target_os = "macos", target_arch = "aarch64"))]
+            board("board-lab", false),
             board("actions", false),
-            board("component-gallery", cfg!(debug_assertions)),
+            #[cfg(feature = "component-gallery")]
+            board("component-gallery", false),
         ],
         update: (!is_integration_version(version)).then(|| {
             release_source(
@@ -138,16 +144,20 @@ fn board(id: &str, default_enabled: bool) -> BoardDescriptor {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn board_lab_is_a_full_product_board_off_by_default_in_release_builds() {
+    fn board_lab_is_listed_only_with_its_feature_and_starts_off() {
         let full = super::subspace_descriptor();
         let lab = full.boards.iter().find(|board| board.id == "board-lab");
         assert_eq!(
             lab.is_some(),
-            cfg!(all(target_os = "macos", target_arch = "aarch64"))
+            cfg!(all(
+                feature = "board-lab",
+                target_os = "macos",
+                target_arch = "aarch64"
+            ))
         );
         if let Some(lab) = lab {
-            // Release builds of every channel ship it off; debug builds preview it.
-            assert_eq!(lab.default_enabled, cfg!(debug_assertions));
+            // Off in every build profile, debug included.
+            assert!(!lab.default_enabled);
         }
     }
 
@@ -161,20 +171,27 @@ mod tests {
             .unwrap();
         assert!(!actions.default_enabled);
         let ids: Vec<_> = full.boards.iter().map(|board| board.id.as_str()).collect();
-        assert_eq!(ids[ids.len() - 2..], ["actions", "component-gallery"]);
+        let tail: &[&str] = if cfg!(feature = "component-gallery") {
+            &["actions", "component-gallery"]
+        } else {
+            &["actions"]
+        };
+        assert_eq!(&ids[ids.len() - tail.len()..], tail);
     }
 
     #[test]
-    fn component_gallery_is_a_full_product_board_off_by_default_in_release_builds() {
+    fn component_gallery_is_listed_last_only_with_its_feature_and_starts_off() {
         let full = super::subspace_descriptor();
         let gallery = full
             .boards
             .iter()
-            .find(|board| board.id == "component-gallery")
-            .unwrap();
-        // Release builds of every channel ship it off; debug builds show it.
-        assert_eq!(gallery.default_enabled, cfg!(debug_assertions));
-        assert_eq!(full.boards.last().unwrap().id, "component-gallery");
+            .find(|board| board.id == "component-gallery");
+        assert_eq!(gallery.is_some(), cfg!(feature = "component-gallery"));
+        if let Some(gallery) = gallery {
+            // Off in every build profile, debug included.
+            assert!(!gallery.default_enabled);
+            assert_eq!(full.boards.last().unwrap().id, "component-gallery");
+        }
     }
     use super::{
         SUBSPACE_BINARY_NAME, SUBSPACE_PRODUCT_ID, known_product_descriptors, subspace_descriptor,
@@ -312,9 +329,11 @@ mod tests {
                 "github-copilot-agents",
                 "irc",
                 "issues",
-                #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                "decisions",
+                #[cfg(all(feature = "board-lab", target_os = "macos", target_arch = "aarch64"))]
                 "board-lab",
                 "actions",
+                #[cfg(feature = "component-gallery")]
                 "component-gallery"
             ]
         );
@@ -324,7 +343,7 @@ mod tests {
     fn board_defaults_follow_the_product_contract() {
         let products = known_products().unwrap();
         let expected_debug_build_default = cfg!(debug_assertions);
-        for id in ["irc", "issues", "component-gallery"] {
+        for id in ["irc", "issues", "decisions"] {
             if let Some(board) = products[0]
                 .boards
                 .iter()
@@ -344,6 +363,16 @@ mod tests {
                 .find(|board| board.id.as_str() == id)
                 .unwrap();
             assert_eq!(board.default_enabled, enabled, "{id}");
+        }
+        // The unreleased Spaces, listed only with their features, start off.
+        for id in ["board-lab", "component-gallery"] {
+            if let Some(board) = products[0]
+                .boards
+                .iter()
+                .find(|board| board.id.as_str() == id)
+            {
+                assert!(!board.default_enabled, "{id}");
+            }
         }
     }
 
@@ -377,7 +406,7 @@ mod tests {
         let defaults = super::subspace_descriptor()
             .boards
             .iter()
-            .filter(|board| matches!(board.id.as_str(), "irc" | "issues" | "component-gallery"))
+            .filter(|board| matches!(board.id.as_str(), "irc" | "issues"))
             .map(|board| board.default_enabled)
             .collect::<Vec<_>>();
         if cfg!(debug_assertions) {

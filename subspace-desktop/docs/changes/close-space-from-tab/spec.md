@@ -46,7 +46,9 @@ the next. While Logs or Search replaces the board, it stays shown and the
 neighbour waits behind it.
 
 A notice confirms the close and says where to reopen it:
-"Closed Actions. Turn it on in Settings to reopen it." If the board set can't
+"Closed Actions. Add it again from the plus in the title bar." (Until the
+[add-a-Space plus](../add-space-from-title-bar/spec.md) existed it said
+"Closed Actions. Turn it on in Settings to reopen it.") If the board set can't
 be rebuilt, the choice is still saved and the notice says "Restart the app to
 close Actions." A failed write shows "Couldn't close Actions: <reason>" and
 changes nothing.
@@ -66,7 +68,9 @@ over the menu. The toolbar's **Show label** menu does the same.
 ## Reopening
 
 Reopening is unchanged: open Settings, choose the Space, turn on **Enabled**
-and choose **Save**.
+and choose **Save**. A later change added the title bar's
+[Add a Space plus](../add-space-from-title-bar/spec.md), which does the same
+in one step.
 
 ## Keyboard
 
