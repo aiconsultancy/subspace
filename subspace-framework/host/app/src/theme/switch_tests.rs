@@ -137,7 +137,7 @@ fn failures(config: ThemeConfig) -> Vec<Failure> {
 #[test]
 fn every_bundled_theme_meets_the_switch_contrast_rule() {
     let variants = bundled_variants();
-    assert_eq!(variants.len(), 42);
+    assert_eq!(variants.len(), 43);
     let failures: Vec<Failure> = variants.into_iter().flat_map(failures).collect();
     assert!(failures.is_empty(), "{failures:#?}");
 }

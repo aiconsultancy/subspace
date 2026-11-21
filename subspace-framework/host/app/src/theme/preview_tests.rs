@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+mod bundled;
 mod defaults;
 mod font_overrides;
 mod selection;
@@ -105,7 +106,7 @@ fn initialize_uses_theme_role_defaults_without_rewriting_preferences(cx: &mut Te
     cx.update(|cx| {
         init_app(cx, root.path(), state_file.clone());
         let installed = font_names(cx);
-        let expected = super::fonts::resolve("", "", "", &installed);
+        let expected = super::fonts::resolve("", "", "", &installed, &[]);
         initialize(cx);
         assert_eq!(
             cx.global::<Typography>().heading.as_ref(),
@@ -142,7 +143,7 @@ fn initialize_keeps_legacy_explicit_font_and_density_preferences(cx: &mut TestAp
         let before = std::fs::read(&state_file).unwrap();
         let warnings = initialize(cx);
         assert_eq!(std::fs::read(&state_file).unwrap(), before);
-        let resolved = super::fonts::resolve(font, font, font, &font_names(cx));
+        let resolved = super::fonts::resolve(font, font, font, &font_names(cx), &[]);
         assert_eq!(Theme::global(cx).font_family.as_ref(), resolved.body);
         assert_eq!(Theme::global(cx).mono_font_family.as_ref(), resolved.mono);
         assert_eq!(super::selected_fonts(cx).body, font);
@@ -169,8 +170,13 @@ fn draft_document_survives_periodic_save_only_in_live_globals(cx: &mut TestAppCo
         init_app(cx, root.path(), state_file.clone());
         initialize(cx);
         let fonts = installed_choices(cx);
-        let resolved =
-            super::fonts::resolve(&fonts.heading, &fonts.body, &fonts.mono, &font_names(cx));
+        let resolved = super::fonts::resolve(
+            &fonts.heading,
+            &fonts.body,
+            &fonts.mono,
+            &font_names(cx),
+            &[],
+        );
         let mut draft = document("Solarized Light", cx).unwrap();
         draft.set_color("background", "#123456").unwrap();
         let mut metadata = draft.metadata().unwrap();

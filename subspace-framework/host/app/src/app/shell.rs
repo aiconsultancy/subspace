@@ -12,12 +12,14 @@ use gpui_kit::{
     Render, Stateful, Styled, Window, div, px,
 };
 use subspace_dashboard::Tokens;
+use subspace_dashboard::workspace::{SpaceDock, SpaceDocks};
 
 use super::keys::{APP_CONTEXT, ShowDashboard};
 use super::state::window_title;
 use super::{
     CloseJig, NextDashboard, PreviousDashboard, Quit, QuitAndRestart, SubspaceApp, ToggleJig,
-    ToggleNavigationCollapsed, ToggleNavigationMode, ToggleWrap,
+    ToggleNavigationCollapsed, ToggleNavigationMode, ToggleSpaceInspector, ToggleSpaceNavigator,
+    ToggleWrap,
 };
 use crate::status_bar::{self, StatusFacts};
 
@@ -157,6 +159,39 @@ impl SubspaceApp {
             .on_action(cx.listener(|app, _: &CloseJig, window, cx| app.set_jig(false, window, cx)))
             .map(|shell| Self::developer_actions(shell, cx))
             .map(|shell| Self::report_issue_actions(shell, cx))
+            .map(|shell| Self::space_dock_actions(shell, cx))
+    }
+
+    /// The status bar's dock switches act on the Space on show.
+    fn space_dock_actions(shell: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
+        shell
+            .on_action(cx.listener(|app, _: &ToggleSpaceNavigator, window, cx| {
+                app.toggle_space_dock(SpaceDock::Navigator, window, cx)
+            }))
+            .on_action(cx.listener(|app, _: &ToggleSpaceInspector, window, cx| {
+                app.toggle_space_dock(SpaceDock::Inspector, window, cx)
+            }))
+    }
+
+    /// Hands a dock switch's click to the Space on show, then redraws the
+    /// status bar with the Space's new state.
+    fn toggle_space_dock(&mut self, dock: SpaceDock, window: &mut Window, cx: &mut Context<Self>) {
+        if self.space_docks(cx).get(dock).is_none() {
+            return;
+        }
+        if let Some(dashboard) = self.dashboard() {
+            dashboard.toggle_dock(dock, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The docks of the Space on show, for the status bar's switches. None
+    /// while another surface, such as the log view or a maximised terminal,
+    /// covers the Space.
+    pub(super) fn space_docks(&self, cx: &App) -> SpaceDocks {
+        self.dashboard()
+            .filter(|_| self.main.is_board() && !self.terminal_maximized())
+            .map_or(SpaceDocks::NONE, |dashboard| dashboard.docks(cx))
     }
 
     pub(super) fn status_facts(&self, cx: &App) -> StatusFacts {
@@ -167,6 +202,7 @@ impl SubspaceApp {
         ];
         StatusFacts {
             status: join_status(status),
+            docks: self.space_docks(cx),
             loading: self.dashboard().is_some_and(|dashboard| dashboard.busy(cx)),
             copilot_busy: chat.is_busy(),
             copilot_attention: chat.needs_attention(),

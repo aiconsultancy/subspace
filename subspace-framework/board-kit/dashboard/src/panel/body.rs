@@ -9,7 +9,6 @@ use gpui_kit::{
 };
 
 const TOP_PADDING_PX: f32 = 16.;
-const SIDE_PADDING_PX: f32 = 20.;
 /// Keeps the last line clear of the panel edge.
 const BOTTOM_PADDING_PX: f32 = 48.;
 const FOOTER_GAP_PX: f32 = 8.;
@@ -69,7 +68,8 @@ fn content(body: PanelBody, window: &mut Window, cx: &mut App) -> Div {
             }
         })
         .pt(px(TOP_PADDING_PX))
-        .px(px(SIDE_PADDING_PX))
+        // The body starts on the workspace's text edge, as the title does.
+        .px(crate::workspace::text_edge(&crate::Tokens::current(cx)))
         .pb(px(bottom_padding))
         .child(if body.content_owns_scroll {
             body.content

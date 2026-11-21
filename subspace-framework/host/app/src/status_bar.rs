@@ -1,5 +1,6 @@
 //! The window's bottom bar: the active dashboard's status on the left,
-//! the chat engine's mark and state and the main keys on the right.
+//! the chat engine's mark and state and the main keys on the right, with the
+//! active Space's dock switches at its two ends.
 
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::status_bar::StatusBar;
@@ -12,11 +13,14 @@ use gpui_kit::{
 use subspace_dashboard::action::{Intent, action_button};
 use subspace_dashboard::icon_button::{IconButton, compact_glyph};
 use subspace_dashboard::tokens::{self, Tokens};
+use subspace_dashboard::workspace::{SpaceDock, SpaceDocks, dock_switch};
 use subspace_lucide::{IconName, SvgIcon};
 
 #[cfg(feature = "report-issue")]
 use crate::app::OpenReportIssue;
-use crate::app::{OpenAbout, ToggleHelp, TogglePalette, palette_key};
+use crate::app::{
+    OpenAbout, ToggleHelp, TogglePalette, ToggleSpaceInspector, ToggleSpaceNavigator, palette_key,
+};
 
 /// Clears the rounded bottom corners of a macOS window.
 const CORNER_INSET: f32 = 12.;
@@ -24,6 +28,8 @@ const CORNER_INSET: f32 = 12.;
 /// What the bar shows; the shell fills it from the dashboard and the chat.
 pub struct StatusFacts {
     pub status: Option<SharedString>,
+    /// The docks of the Space on show, whose switches end the bar.
+    pub docks: SpaceDocks,
     pub loading: bool,
     /// The selected chat engine's name, such as `Copilot` or `Codex`.
     pub chat_engine: &'static str,
@@ -73,6 +79,7 @@ pub fn render(facts: StatusFacts, tokens: &Tokens) -> impl IntoElement {
         tokens.muted
     };
     let commands = commands(&facts);
+    let [navigator, inspector] = dock_switches(facts.docks);
     let bar = StatusBar::new()
         .px(px(CORNER_INSET))
         .text_color(tokens.muted)
@@ -80,13 +87,41 @@ pub fn render(facts: StatusFacts, tokens: &Tokens) -> impl IntoElement {
             h_flex()
                 .gap_2()
                 .items_center()
+                .children(navigator)
                 .when(facts.loading, |left| {
                     left.child(Spinner::new().color(tokens.muted))
                 })
                 .children(facts.status),
         )
         .right(chat_status(facts.chat_icon, copilot, colour, tokens));
-    commands.into_iter().fold(bar, StatusBar::right)
+    commands
+        .into_iter()
+        .chain(inspector)
+        .fold(bar, StatusBar::right)
+}
+
+/// The navigator's switch, which starts the bar, and the inspector's, which
+/// ends it, for the docks the Space on show has.
+pub fn dock_switches(docks: SpaceDocks) -> [Option<IconButton>; 2] {
+    let switch = |dock: SpaceDock| docks.get(dock).map(|shown| dock_command(dock, shown));
+    SpaceDock::ALL.map(switch)
+}
+
+/// A dock switch, compact and flat like the bar's commands, that asks the
+/// shell to show or hide the dock.
+fn dock_command(dock: SpaceDock, shown: bool) -> IconButton {
+    dock_switch(dock, shown, move |_, window, cx| {
+        window.dispatch_action(dock_action(dock), cx);
+    })
+    .compact()
+    .flat()
+}
+
+fn dock_action(dock: SpaceDock) -> Box<dyn Action> {
+    match dock {
+        SpaceDock::Navigator => Box::new(ToggleSpaceNavigator),
+        SpaceDock::Inspector => Box::new(ToggleSpaceInspector),
+    }
 }
 
 /// About, Report issue (when offered), Commands and Help, in that order.
@@ -189,11 +224,12 @@ fn version_button(version: String, available: Option<SharedString>) -> IconButto
 
 #[cfg(test)]
 mod tests {
-    use super::{StatusFacts, commands, copilot_state};
+    use super::{StatusFacts, commands, copilot_state, dock_switches};
     use subspace_core::config::AcpAgent;
     use subspace_dashboard::density::Density;
     use subspace_dashboard::icon_button::{Surface, paint};
     use subspace_dashboard::tokens::{Controls, Tokens, ToolbarLook};
+    use subspace_dashboard::workspace::SpaceDocks;
     use subspace_lucide::IconName;
 
     /// A theme that puts toolbar buttons on glass in every state.
@@ -204,7 +240,10 @@ mod tests {
         let glass = Controls::from_density(&Density::from_json(GLASS));
         for available in [None, Some("v0.3.0".into())] {
             let facts = facts(available, true);
-            for command in commands(&facts) {
+            let [navigator, inspector] = dock_switches(SpaceDocks::both(true, false));
+            let mut buttons = commands(&facts);
+            buttons.extend(navigator.into_iter().chain(inspector));
+            for command in buttons {
                 assert_eq!(command.surface(&glass), Surface::Quiet(ToolbarLook::FLAT));
             }
         }
@@ -225,6 +264,7 @@ mod tests {
     fn facts(available_update: Option<gpui_kit::SharedString>, report_issue: bool) -> StatusFacts {
         StatusFacts {
             status: None,
+            docks: SpaceDocks::NONE,
             loading: false,
             chat_engine: "Copilot",
             chat_icon: IconName::Bot,
@@ -248,6 +288,20 @@ mod tests {
             count(true),
             if cfg!(feature = "report-issue") { 4 } else { 3 }
         );
+    }
+
+    /// A switch for each dock the Space on show has, the navigator's first
+    /// and the inspector's last; none for a Space without docks.
+    #[test]
+    fn the_bar_draws_a_switch_only_for_each_dock_the_space_has() {
+        let drawn = |docks| dock_switches(docks).map(|switch| switch.is_some());
+        assert_eq!(drawn(SpaceDocks::NONE), [false, false]);
+        assert_eq!(drawn(SpaceDocks::both(false, true)), [true, true]);
+        let navigator_only = SpaceDocks {
+            navigator: Some(true),
+            inspector: None,
+        };
+        assert_eq!(drawn(navigator_only), [true, false]);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 //! Menus: anchored dropdowns, native selects, the named menu anchors, the
-//! popover anchor, row menus and the repository picker.
+//! popover anchor, the standard right-click menu and the repository picker.
 
 pub(crate) mod owned;
 
@@ -64,7 +64,7 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "row_menu::RowMenu",
         source: "board-kit/dashboard/src/row_menu.rs",
-        used_in: "The right-click menu of shared list rows, group headers and the detail panel.",
+        used_in: "The standard right-click menu, in seven groups: shared list rows, group headers, the detail panel, navigator rows and the Space tab.",
         samples: owned::row_menus,
         kit: None,
     },

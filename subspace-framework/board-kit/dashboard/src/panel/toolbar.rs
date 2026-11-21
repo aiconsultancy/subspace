@@ -9,12 +9,13 @@ use crate::{
     overflow_toolbar::{OverflowToolbar, OverflowUnit, PopupEntry},
     truncated,
     typography::heading_font,
+    workspace::text_edge,
 };
 use gpui_kit::component::{h_flex, menu::PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Div, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
-    TestSupportExt as _, Window, div, px,
+    AnyElement, App, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
+    Styled as _, TestSupportExt as _, Window, div, px,
 };
 use std::rc::Rc;
 use subspace_lucide::IconName;
@@ -39,22 +40,21 @@ pub(super) fn render(
     let units = units(&header, &actions);
     toolbar.update(cx, |toolbar, cx| toolbar.set_units(units, cx));
     let close = actions.close.clone();
+    // The bar is a workspace dock header: as tall as the pane's tab strip,
+    // its title on the shared text edge, and Close last, outside overflow.
     h_flex()
         .id("panel-toolbar")
         .test_support()
         .w_full()
         .min_w_0()
         .flex_shrink_0()
-        .min_h(tokens.toolbar_height)
+        .min_h(tokens.strip_height)
         .gap(Metrics::current(cx).gap())
-        .px(px(BAR_PADDING_X_PX))
+        .pl(text_edge(tokens))
+        .pr(px(BAR_PADDING_X_PX))
         .border_b_1()
         .border_color(tokens.line)
         .text_size(tokens.row_font)
-        .child(
-            icon_button("panel-back", IconName::ArrowLeft, "Close details")
-                .on_click(move |_, window, cx| close(window, cx)),
-        )
         .child(title(tokens, header, cx))
         .child(
             div()
@@ -64,6 +64,10 @@ pub(super) fn render(
                 .min_w(Metrics::current(cx).overflow_width())
                 .max_w_full()
                 .child(toolbar),
+        )
+        .child(
+            icon_button("panel-close", IconName::X, "Close details")
+                .on_click(move |_, window, cx| close(window, cx)),
         )
         .into_any_element()
 }
@@ -88,8 +92,9 @@ fn title(tokens: &Tokens, header: PanelHeader, cx: &App) -> Div {
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .font_family(heading_font(cx))
+                .font_weight(FontWeight::SEMIBOLD)
                 .text_size(tokens.heading_size(BAR_HEADING_SIZE_PX))
-                .text_color(tokens.fg)
+                .text_color(tokens.fg_strong)
                 .child(header.kind),
         )
         .child(
@@ -128,12 +133,6 @@ fn units(header: &PanelHeader, actions: &PanelActions) -> Vec<OverflowUnit> {
     if let Some(link) = &header.link {
         units.push(link_unit(link.clone()));
     }
-    units.push(callback_unit(
-        "panel-close",
-        IconName::X,
-        "Close details",
-        actions.close.clone(),
-    ));
     units
 }
 

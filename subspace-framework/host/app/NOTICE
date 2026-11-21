@@ -12,3 +12,8 @@ Apache License 2.0 (LICENSE).
   theme for Zed. MIT License, Copyright (c) Jason Lee.
   Licence text: themes/LICENSE-MACOS-CLASSIC.
   Source: https://github.com/huacnlee/zed-theme-macos-classic
+- themes/twilight-two.json: Subspace's Twilight Two theme. Its syntax and
+  other colours the workspace mock-ups do not set are adapted from Twilight
+  in the GPUI Component theme catalogue. Apache License 2.0. Licence text:
+  themes/gpui-kit/LICENSE-APACHE.
+  Source: https://github.com/longbridge/gpui-component

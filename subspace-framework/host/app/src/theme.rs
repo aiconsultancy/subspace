@@ -35,12 +35,16 @@ pub const SUBSPACE_CHANNEL_JSON: &str = include_str!("../themes/subspace-channel
 /// sizes.
 pub const MACOS_CLASSIC_DARK_REMIX_JSON: &str =
     include_str!("../themes/macos-classic-dark-remix.json");
+/// Twilight Two: the workspace shell mock-ups' colours and sizes, with
+/// Twilight's syntax colours (Apache-2.0, `themes/gpui-kit/`).
+pub const TWILIGHT_TWO_JSON: &str = include_str!("../themes/twilight-two.json");
 /// Subspace's own themes by product theme id, ahead of the GPUI Kit catalogue.
 pub const SUBSPACE_THEMES: &[(&str, &str)] = &[
     ("one-dark", THEME_JSON),
     ("cupertino", CUPERTINO_JSON),
     ("subspace-channel", SUBSPACE_CHANNEL_JSON),
     ("macos-classic-dark-remix", MACOS_CLASSIC_DARK_REMIX_JSON),
+    ("twilight-two", TWILIGHT_TWO_JSON),
 ];
 #[cfg(test)]
 pub const THEME_NAME: &str = "Subspace One Dark";
@@ -301,6 +305,7 @@ fn resolve_roles(
         &requested.body,
         &requested.mono,
         &font_names(cx),
+        &crate::bundled_fonts::bundled_only(cx),
     )
 }
 
@@ -344,6 +349,13 @@ pub fn initialize(cx: &mut App) -> Vec<String> {
     warnings
 }
 
+/// Startup: registers the app's embedded fonts, then [`initialize`], so a
+/// theme that names them resolves them without a missing-font notice.
+pub(crate) fn start(fonts: &'static [crate::BundledFont], cx: &mut App) -> Vec<String> {
+    let notice = crate::bundled_fonts::register(fonts, cx);
+    notice.into_iter().chain(initialize(cx)).collect()
+}
+
 pub fn theme_names(cx: &App) -> Vec<String> {
     let Some(choices) = cx.try_global::<ThemeChoices>() else {
         return Vec::new();
@@ -354,8 +366,16 @@ pub fn theme_names(cx: &App) -> Vec<String> {
     names
 }
 
+/// The installed families, with the fonts the app registered at startup,
+/// which count as installed even where the text system does not list them.
 pub fn font_names(cx: &App) -> Vec<String> {
-    let mut names = cx.text_system().all_font_names();
+    let platform = cx.text_system().all_font_names();
+    installed_families(platform, crate::bundled_fonts::registered(cx))
+}
+
+/// The platform's families and the registered ones, sorted without case.
+fn installed_families(mut names: Vec<String>, registered: Vec<String>) -> Vec<String> {
+    names.extend(registered);
     // GPUI maps this virtual family to the platform UI font; it is never listed.
     names.push(SYSTEM_FONT.to_owned());
     names.sort_by_key(|name| name.to_lowercase());
@@ -544,6 +564,36 @@ mod tests {
         for name in ["Solarized Light", "Solarized Dark"] {
             assert_eq!(controls(solarized, name), defaults, "{name} keeps its look");
         }
+    }
+
+    /// Twilight Two is the workspace mock-ups' look, sizes included: text
+    /// 16 px in from each panel edge, inset 32 px rows, 34 px strips and a
+    /// 36 px toolbar of 24 px controls with 6 px corners.
+    #[test]
+    fn twilight_two_carries_the_mock_up_sizes() {
+        use gpui_kit::px;
+        let document = super::ThemeDocument::parse(super::TWILIGHT_TWO_JSON)
+            .unwrap()
+            .variant("Twilight Two")
+            .unwrap();
+        let density = document.metadata().unwrap().density.to_string();
+        let tokens = subspace_dashboard::Tokens::with_density(
+            &subspace_dashboard::density::Density::from_json(&density),
+        );
+        assert_eq!(tokens.pad_x + tokens.row_inset, px(16.), "the text edge");
+        assert!(tokens.inset_rows());
+        assert_eq!(tokens.row_height, px(32.));
+        assert_eq!(tokens.strip_height, px(34.));
+        assert_eq!(tokens.toolbar_height, px(36.));
+        assert_eq!(tokens.chrome_height, px(38.));
+        assert_eq!(tokens.control_radius, px(6.));
+        assert_eq!(tokens.mono_font, px(11.5));
+        let toolbar = tokens.controls.toolbar_button;
+        assert_eq!(toolbar.height, px(24.));
+        assert_eq!(toolbar.radius, px(6.));
+        assert_eq!(toolbar.font, px(12.5));
+        assert_eq!(tokens.controls.nav_height, px(26.));
+        assert!(!tokens.controls.liquid_glass);
     }
 
     /// WCAG 2.2 non-text contrast (1.4.11): an off switch must stay visible

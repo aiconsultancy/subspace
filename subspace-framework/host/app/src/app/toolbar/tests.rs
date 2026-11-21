@@ -12,6 +12,7 @@ use gpui_kit::{
 };
 use subspace_chat::OPEN_KEY;
 use subspace_dashboard::overflow_toolbar::{OverflowToolbar, OverflowUnit, PopupEntry};
+use subspace_dashboard::workspace::{SpaceDock, SpaceDocks};
 use subspace_dashboard::{Dashboard, DashboardEvent, prefs};
 
 mod engine;
@@ -42,6 +43,8 @@ thread_local! {
 struct ToolbarFixture {
     focus: FocusHandle,
     toolbar: Entity<OverflowToolbar>,
+    /// Whether the navigator and the inspector show.
+    docks: [bool; 2],
 }
 
 impl EventEmitter<DashboardEvent> for ToolbarFixture {}
@@ -70,7 +73,18 @@ impl Dashboard for ToolbarFixture {
         Self {
             focus: cx.focus_handle(),
             toolbar: cx.new(|_| OverflowToolbar::new(fixture_units())),
+            docks: [true, true],
         }
+    }
+
+    fn docks(&self, _: &App) -> SpaceDocks {
+        SpaceDocks::both(self.docks[0], self.docks[1])
+    }
+
+    fn toggle_dock(&mut self, dock: SpaceDock, _: &mut Window, cx: &mut Context<Self>) {
+        let index = usize::from(dock == SpaceDock::Inspector);
+        self.docks[index] = !self.docks[index];
+        cx.notify();
     }
 
     fn badge(&self, _: &App) -> Option<SharedString> {

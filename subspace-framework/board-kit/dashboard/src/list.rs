@@ -7,14 +7,13 @@
 
 use std::cell::Cell;
 use std::collections::HashSet;
-use std::rc::Rc;
 
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::{AnyElement, App, Context, Entity, ScrollHandle, SharedString, Window};
 
 use crate::row_menu::{self, MenuChat, RowMenu};
 use crate::tokens::Tone;
-use crate::{Callback, Dashboard, DashboardEvent};
+use crate::{Dashboard, DashboardEvent};
 
 /// Blank space under the last line, so it clears the window edge.
 const LIST_TAIL_HEIGHT_PX: f32 = 48.;
@@ -568,20 +567,36 @@ pub trait ListDashboard: Dashboard {
 
     /// What the row's right-click menu offers. The default gives the row's
     /// title and id, with its details to open; add the item's link by
-    /// overriding.
+    /// overriding. The standard commands take their places among the
+    /// seven groups of [`row_menu::MenuGroup`].
     fn row_menu(&self, row: &Row) -> RowMenu {
         RowMenu::from_row(row)
     }
 
-    /// Append board-owned actions after the standard row menu.
+    /// The board's own commands for the line the menu is for, each in the
+    /// group it belongs to: the item's verbs in `MenuGroup::Act`, leaving or
+    /// removing in `MenuGroup::Remove`. The menu orders the groups. The line
+    /// was selected before this runs, so `board.read(cx).list().selected()`
+    /// is the line the menu is for.
+    fn row_commands(_board: &Entity<Self>, _cx: &App) -> Vec<row_menu::MenuCommand>
+    where
+        Self: Sized,
+    {
+        Vec::new()
+    }
+
+    /// Append board-owned entries to the row menu's Act group. Prefer
+    /// [`Self::row_commands`], which places each command in its group.
     fn extend_row_menu(&self, menu: PopupMenu, _cx: &App) -> PopupMenu {
         menu
     }
 
-    /// Append board-owned submenus after [`Self::extend_row_menu`]. The
-    /// menu's own context builds them; `board` reads the dashboard and acts
-    /// on it from the entries. The line was selected before this runs, so
-    /// `board.read(cx).list().selected()` is the line the menu is for.
+    /// Append board-owned submenus after [`Self::extend_row_menu`], in the
+    /// Act group. The menu's own context builds them; `board` reads the
+    /// dashboard and acts on it from the entries. The line was selected
+    /// before this runs, so `board.read(cx).list().selected()` is the line
+    /// the menu is for. Prefer `MenuCommand::submenu` in
+    /// [`Self::row_commands`].
     fn row_submenus(
         _board: &Entity<Self>,
         menu: PopupMenu,
@@ -601,7 +616,8 @@ pub trait ListDashboard: Dashboard {
 
     /// What a group header's right-click menu offers. `None`, the default,
     /// gives a header no menu: a repository or a section is not an item.
-    /// Override where the header stands for one.
+    /// Override where the header stands for one; its menu also offers Fold
+    /// group or Unfold group in the View group.
     fn group_menu(&self, _group: &Group) -> Option<RowMenu> {
         None
     }
@@ -619,36 +635,6 @@ pub trait ListDashboard: Dashboard {
     /// board's groups.
     fn group_note(&self, _group: &Group, _cx: &App) -> Option<GroupNote> {
         None
-    }
-}
-
-/// The menu a row or group header opens on a right click. Opening it selects
-/// the line first, so the shell's Add to Copilot chat acts on the line the
-/// menu was opened over, and so do the dashboard's own commands.
-pub(crate) fn line_menu<D: ListDashboard>(
-    key: SharedString,
-    facts: RowMenu,
-    cx: &mut Context<D>,
-) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
-    let entity = cx.entity().downgrade();
-    let opener = entity.clone();
-    let open: Callback = Rc::new(move |_, cx| {
-        let _ = opener.update(cx, |this: &mut D, cx| activate(this, cx));
-    });
-    move |menu, window, cx| {
-        let key = key.clone();
-        let _ = entity.update(cx, |this: &mut D, cx| {
-            update(this, cx, |list| list.select(key));
-        });
-        let open = facts.opens_details.then(|| open.clone());
-        let menu = row_menu::popup(menu, row_menu::row_menu_items(&facts), open);
-        match entity.upgrade() {
-            Some(entity) => {
-                let menu = entity.read(cx).extend_row_menu(menu, cx);
-                D::row_submenus(&entity, menu, window, cx)
-            }
-            None => menu,
-        }
     }
 }
 
@@ -700,9 +686,11 @@ pub(crate) fn activate<D: ListDashboard>(this: &mut D, cx: &mut Context<D>) {
     });
 }
 
+mod menu;
 mod view;
 
-pub use view::{header, render, render_body};
+pub(crate) use menu::line_menu;
+pub use view::{header, render, render_body, render_under};
 
 #[cfg(test)]
 #[path = "list/header_tests.rs"]

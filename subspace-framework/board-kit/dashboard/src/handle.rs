@@ -1,201 +1,25 @@
 //! The type-erased dashboard handle the app shell holds, and the
 //! object-safe part of [`Dashboard`] behind it.
 
+mod erased;
 mod find;
 
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext, Entity, FocusHandle, SharedString, Subscription, Window,
 };
 
+use crate::workspace::{SpaceDock, SpaceDocks};
 use crate::{
     AgentContext, Dashboard, DashboardEvent, KeyHelp, Modal, PaletteCommand, ReturnLocation,
     ReturnPoint, Row, Search,
 };
 
+use erased::AnyDashboard;
+
 type FindView = Entity<crate::find_in_page::FindInPage>;
 
 /// Receives a dashboard's events in the app.
 pub type EventSink = Box<dyn Fn(&DashboardEvent, &mut Window, &mut App)>;
-
-/// The object-safe part of [`Dashboard`], for [`DashboardHandle`].
-// qual:allow(coupling, sit) reason: "The generic Entity<D> impl erases each concrete dashboard for the shell's heterogeneous handle list; Dashboard has associated constants and is not object-safe."
-trait AnyDashboard {
-    fn view(&self) -> AnyView;
-    fn find_view(&self, window: &mut Window, cx: &mut App) -> FindView;
-    fn focus_handle(&self, cx: &App) -> FocusHandle;
-    fn activate(&self, window: &mut Window, cx: &mut App);
-    fn deactivate(&self, window: &mut Window, cx: &mut App);
-    fn covered(&self, covered: bool, window: &mut Window, cx: &mut App);
-    fn open_notification(&self, target: u64, window: &mut Window, cx: &mut App);
-    fn window_title(&self, cx: &App) -> Option<SharedString>;
-    fn diagnostic_config_path(&self, cx: &App) -> Option<std::path::PathBuf>;
-    fn background_refresh(&self, cx: &mut App);
-    fn render_toolbar(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement>;
-    fn status(&self, cx: &App) -> Option<SharedString>;
-    fn badge(&self, cx: &App) -> Option<SharedString>;
-    fn busy(&self, cx: &App) -> bool;
-    fn subject(&self, cx: &App) -> Option<Row>;
-    fn agent_context(&self, cx: &App) -> Option<AgentContext>;
-    fn commands(&self, cx: &mut App) -> Vec<PaletteCommand>;
-    fn search(&self, cx: &App) -> Option<Search>;
-    fn open_search_result(&self, id: &str, window: &mut Window, cx: &mut App);
-    fn open_link(&self, url: &str, cx: &mut App) -> bool;
-    fn return_location(&self, cx: &App) -> Option<ReturnLocation>;
-    fn arrived_from(&self, from: Option<ReturnPoint>, cx: &mut App);
-    fn return_to(&self, key: &str, window: &mut Window, cx: &mut App) -> bool;
-    fn open_indexed_result_fenced(
-        &self,
-        hit: &subspace_search::Hit,
-        permit: subspace_search::ReadPermit,
-        window: &mut Window,
-        cx: &mut App,
-    );
-    fn modal(&self, cx: &App) -> Option<Modal>;
-    fn dismiss(&self, window: &mut Window, cx: &mut App);
-    fn keys(&self, cx: &App) -> &'static [KeyHelp];
-    fn help_foot(&self, cx: &App) -> Option<SharedString>;
-    fn quit_warnings(&self, cx: &App) -> Vec<SharedString>;
-    fn reload(&self, window: &mut Window, cx: &mut App);
-    fn subscribe(&self, window: &mut Window, cx: &mut App, sink: EventSink) -> Subscription;
-}
-
-impl<D: Dashboard> AnyDashboard for Entity<D> {
-    fn find_view(&self, window: &mut Window, cx: &mut App) -> FindView {
-        find::create(self, window, cx)
-    }
-    fn open_notification(&self, target: u64, window: &mut Window, cx: &mut App) {
-        self.update(cx, |dashboard, cx| {
-            dashboard.open_notification(target, window, cx)
-        });
-    }
-    fn view(&self) -> AnyView {
-        self.clone().into()
-    }
-
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.read(cx).focus_handle(cx)
-    }
-
-    fn activate(&self, window: &mut Window, cx: &mut App) {
-        self.update(cx, |dashboard, cx| dashboard.activate(window, cx));
-    }
-
-    fn deactivate(&self, window: &mut Window, cx: &mut App) {
-        self.update(cx, |dashboard, cx| dashboard.deactivate(window, cx));
-    }
-
-    fn covered(&self, covered: bool, window: &mut Window, cx: &mut App) {
-        self.update(cx, |dashboard, cx| dashboard.covered(covered, window, cx));
-    }
-
-    fn window_title(&self, cx: &App) -> Option<SharedString> {
-        self.read(cx).window_title(cx)
-    }
-
-    fn diagnostic_config_path(&self, cx: &App) -> Option<std::path::PathBuf> {
-        self.read(cx).diagnostic_config_path(cx)
-    }
-
-    fn background_refresh(&self, cx: &mut App) {
-        self.update(cx, |dashboard, cx| dashboard.background_refresh(cx));
-    }
-
-    fn render_toolbar(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        self.update(cx, |dashboard, cx| dashboard.render_toolbar(window, cx))
-    }
-
-    fn status(&self, cx: &App) -> Option<SharedString> {
-        self.read(cx).status(cx)
-    }
-
-    fn badge(&self, cx: &App) -> Option<SharedString> {
-        self.read(cx).badge(cx)
-    }
-
-    fn busy(&self, cx: &App) -> bool {
-        self.read(cx).busy(cx)
-    }
-
-    fn subject(&self, cx: &App) -> Option<Row> {
-        self.read(cx).subject(cx)
-    }
-
-    fn agent_context(&self, cx: &App) -> Option<AgentContext> {
-        self.read(cx).agent_context(cx)
-    }
-
-    fn commands(&self, cx: &mut App) -> Vec<PaletteCommand> {
-        self.update(cx, |dashboard, cx| dashboard.commands(cx))
-    }
-
-    fn search(&self, cx: &App) -> Option<Search> {
-        self.read(cx).search(cx)
-    }
-
-    fn open_search_result(&self, id: &str, window: &mut Window, cx: &mut App) {
-        self.update(cx, |dashboard, cx| {
-            dashboard.open_search_result(id, window, cx);
-        });
-    }
-
-    fn open_link(&self, url: &str, cx: &mut App) -> bool {
-        self.update(cx, |dashboard, cx| dashboard.open_link(url, cx))
-    }
-
-    fn return_location(&self, cx: &App) -> Option<ReturnLocation> {
-        self.read(cx).return_location(cx)
-    }
-
-    fn arrived_from(&self, from: Option<ReturnPoint>, cx: &mut App) {
-        self.update(cx, |dashboard, cx| dashboard.arrived_from(from, cx));
-    }
-
-    fn return_to(&self, key: &str, window: &mut Window, cx: &mut App) -> bool {
-        self.update(cx, |dashboard, cx| dashboard.return_to(key, window, cx))
-    }
-
-    fn open_indexed_result_fenced(
-        &self,
-        hit: &subspace_search::Hit,
-        permit: subspace_search::ReadPermit,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        self.update(cx, |dashboard, cx| {
-            dashboard.open_indexed_result_fenced(hit, permit, window, cx)
-        });
-    }
-
-    fn modal(&self, cx: &App) -> Option<Modal> {
-        self.read(cx).modal(cx)
-    }
-
-    fn dismiss(&self, window: &mut Window, cx: &mut App) {
-        self.update(cx, |dashboard, cx| dashboard.dismiss(window, cx));
-    }
-
-    fn keys(&self, cx: &App) -> &'static [KeyHelp] {
-        self.read(cx).keys()
-    }
-
-    fn help_foot(&self, cx: &App) -> Option<SharedString> {
-        self.read(cx).help_foot()
-    }
-
-    fn quit_warnings(&self, cx: &App) -> Vec<SharedString> {
-        self.read(cx).quit_warnings(cx)
-    }
-
-    fn reload(&self, window: &mut Window, cx: &mut App) {
-        self.update(cx, |dashboard, cx| dashboard.reload(window, cx));
-    }
-
-    fn subscribe(&self, window: &mut Window, cx: &mut App, sink: EventSink) -> Subscription {
-        window.subscribe(self, cx, move |_, event: &DashboardEvent, window, cx| {
-            sink(event, window, cx);
-        })
-    }
-}
 
 /// A created dashboard, with its type erased so the app can hold a list.
 pub struct DashboardHandle {
@@ -296,6 +120,16 @@ impl DashboardHandle {
 
     pub fn status(&self, cx: &App) -> Option<SharedString> {
         self.inner.status(cx)
+    }
+
+    /// See [`Dashboard::docks`].
+    pub fn docks(&self, cx: &App) -> SpaceDocks {
+        self.inner.docks(cx)
+    }
+
+    /// See [`Dashboard::toggle_dock`].
+    pub fn toggle_dock(&self, dock: SpaceDock, window: &mut Window, cx: &mut App) {
+        self.inner.toggle_dock(dock, window, cx);
     }
 
     /// The mark the switcher tab shows, if the dashboard offers one.
@@ -401,6 +235,7 @@ mod tests {
     };
 
     use super::DashboardHandle;
+    use crate::workspace::{SpaceDock, SpaceDocks};
     use crate::{Dashboard, DashboardEvent};
 
     #[derive(Default)]
@@ -410,6 +245,7 @@ mod tests {
     struct Board {
         focus: FocusHandle,
         source: Option<std::path::PathBuf>,
+        navigator: bool,
     }
     impl EventEmitter<DashboardEvent> for Board {}
     impl Focusable for Board {
@@ -429,6 +265,7 @@ mod tests {
             Self {
                 focus: cx.focus_handle(),
                 source: None,
+                navigator: true,
             }
         }
         fn bind_keys(cx: &mut App) {
@@ -437,7 +274,39 @@ mod tests {
         fn diagnostic_config_path(&self, _: &App) -> Option<std::path::PathBuf> {
             self.source.clone()
         }
+        fn docks(&self, _: &App) -> SpaceDocks {
+            SpaceDocks {
+                navigator: Some(self.navigator),
+                inspector: None,
+            }
+        }
+        fn toggle_dock(&mut self, dock: SpaceDock, _: &mut Window, _: &mut Context<Self>) {
+            if dock == SpaceDock::Navigator {
+                self.navigator = !self.navigator;
+            }
+        }
         fn reload(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+    }
+
+    /// The shell reads a Space's docks and hands a switch's click back
+    /// through the handle; a dock the Space does not have stays absent.
+    #[gpui_kit::test]
+    fn the_handle_reports_a_spaces_docks_and_toggles_them(cx: &mut TestAppContext) {
+        let (board, cx) = cx.add_window_view(Board::new);
+        let handle = DashboardHandle::from_entity(board);
+        cx.update(|window, cx| {
+            assert_eq!(
+                handle.docks(cx),
+                SpaceDocks {
+                    navigator: Some(true),
+                    inspector: None,
+                }
+            );
+            handle.toggle_dock(SpaceDock::Navigator, window, cx);
+            assert_eq!(handle.docks(cx).navigator, Some(false));
+            handle.toggle_dock(SpaceDock::Inspector, window, cx);
+            assert_eq!(handle.docks(cx).inspector, None);
+        });
     }
 
     #[gpui_kit::test]

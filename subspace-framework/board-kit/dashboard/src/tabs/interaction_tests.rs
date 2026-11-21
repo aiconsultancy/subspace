@@ -1,6 +1,6 @@
 //! Exercise native selection and close callbacks through the shared adapter.
 
-use super::{TabSpec, tab, tab_bar};
+use super::{TabSpec, pane_tab_bar, tab, tab_bar};
 use gpui_kit::component::{Sizable as _, Size};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::test::TestWindowExt as _;
@@ -270,5 +270,39 @@ fn the_selected_tab_paints_its_fill_and_accent_edge_across_its_own_bounds(cx: &m
         );
         assert!(edge.left() <= tab.left() + gpui_kit::px(1.) && edge.right() >= tab.right());
         assert!(bar.within(1usize).try_find("tab-selected-edge").is_none());
+    });
+}
+
+struct PaneFixture;
+impl Render for PaneFixture {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().child(
+            pane_tab_bar("pane-tabs")
+                .selected_index(0)
+                .child(tab(TabSpec::plain("All issues")))
+                .child(tab(TabSpec::plain("SUB-12"))),
+        )
+    }
+}
+
+#[gpui_kit::test]
+fn a_pane_tab_strip_joins_the_open_tab_to_the_content_without_an_accent_edge(
+    cx: &mut TestAppContext,
+) {
+    cx.update(gpui_kit::init);
+    let (_, cx) = cx.add_window_view(|_, _| PaneFixture);
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        let strip = crate::Tokens::current(cx).strip_height;
+        let mut bar = window.within("pane-tabs");
+        let tab = bar.find(0usize).bounds();
+        assert_eq!(tab.size.height, strip, "the tab fills the strip");
+        let open = bar.within(0usize);
+        assert_eq!(open.find("tab-layers").bounds().size.height, strip);
+        assert!(open.try_find("tab-selected-edge").is_none());
+        assert!(
+            bar.within(1usize).find("tab-content-row").visible(),
+            "the second tab is drawn too"
+        );
     });
 }

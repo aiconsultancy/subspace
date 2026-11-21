@@ -19,8 +19,8 @@ use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::{Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Context, InteractiveElement as _, IntoElement, ParentElement, SharedString,
-    Styled, WeakEntity, Window, div, px, svg,
+    AnyElement, App, Context, FontWeight, InteractiveElement as _, IntoElement, ParentElement,
+    SharedString, Styled, WeakEntity, Window, div, px, svg,
 };
 use subspace_dashboard::overflow_toolbar::{OverflowUnit, PopupEntry};
 use subspace_dashboard::{PaletteMode, Tokens};
@@ -95,6 +95,7 @@ impl SubspaceApp {
         .child(
             div()
                 .font_family(subspace_dashboard::typography::heading_font(cx))
+                .font_weight(FontWeight::MEDIUM)
                 .text_size(tab_font)
                 .child(data.title.clone()),
         )
@@ -158,7 +159,7 @@ impl SubspaceApp {
     fn sync_tab_units(&mut self, tokens: Tokens, cx: &mut Context<Self>) {
         let weak = cx.weak_entity();
         let closable = self.can_close_space();
-        let units: Vec<OverflowUnit> = self
+        let mut units: Vec<OverflowUnit> = self
             .dashboards
             .iter()
             .enumerate()
@@ -175,6 +176,8 @@ impl SubspaceApp {
                 Self::tab_unit(data, tokens, weak.clone())
             })
             .collect();
+        // The plus follows the last tab, and is the first unit to overflow.
+        units.push(super::add_space::menu::tab_unit(weak));
         self.tabs_toolbar
             .update(cx, |toolbar, cx| toolbar.set_units(units, cx));
     }

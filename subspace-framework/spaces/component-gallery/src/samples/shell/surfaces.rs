@@ -25,19 +25,26 @@ pub(crate) const SURFACES: [Surface; 15] = [
             "glass::nav_button",
             "overflow_toolbar::OverflowToolbar",
             "icon_button::IconButton",
+            "anchored::dropdown_menu",
             "badge::badge",
         ],
     },
     Surface {
         name: "shell::navigation_rail",
         action: Some("subspace_app::ToggleNavigationMode"),
-        composes: &["glass::nav_button", "badge::badge"],
+        composes: &[
+            "glass::nav_button",
+            "icon_button::IconButton",
+            "anchored::dropdown_menu",
+            "badge::badge",
+        ],
     },
     Surface {
         name: "shell::status_bar",
         action: None,
         composes: &[
             "icon_button::IconButton",
+            "workspace::dock_switch",
             "gpui_kit::component::spinner::Spinner",
             "gpui_kit::component::status_bar::StatusBar",
         ],
