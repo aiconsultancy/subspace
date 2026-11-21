@@ -1,6 +1,8 @@
 //! Dock widths. Each dock is as wide as its density token, held inside the
 //! window, and its inner edge drags to resize it. A double click on the edge
-//! goes back to the default width.
+//! goes back to the default width. When the workspace is too narrow for both
+//! docks and the pane's least width, the docks yield (see
+//! [`super::PANE_MIN_WIDTH_PX`]).
 
 use gpui_kit::{
     AnyElement, App, AppContext as _, BorrowAppContext as _, ClickEvent, Div, EmptyView,
@@ -95,12 +97,15 @@ pub(super) fn inspector_slot(dock: AnyElement, tokens: &Tokens, viewport: f32) -
         })
 }
 
-/// A dock's fixed-width place in the workspace row.
+/// A dock's place in the workspace row: its width while there is room, and
+/// narrower, down to nothing, when the pane would otherwise lose its least
+/// width. Docks shrink in proportion to their widths.
 fn slot(id: &'static str, width: f32) -> Stateful<Div> {
     div()
         .id(id)
         .relative()
-        .flex_shrink_0()
+        .flex_shrink_1()
+        .min_w_0()
         .w(px(width))
         .max_w(relative(FULL_PARENT_WIDTH))
         .h_full()
