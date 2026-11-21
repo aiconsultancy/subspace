@@ -51,6 +51,7 @@ check_packaged_licences() {
     fi
     for file in canvas/mermaid-rs-renderer-MIT.txt \
         charts/LICENSE-FLINT-CHART charts/LICENSE-QUICKJS-NG charts/LICENSE-RQUICKJS \
+        fonts/LICENSE-INTER fonts/LICENSE-JETBRAINS-MONO fonts/README.md \
         icons/LICENSE-FEATHER icons/LICENSE-LOBE-ICONS icons/LICENSE-LUCIDE \
         markdown/LICENSE onnxruntime/LICENSE onnxruntime/ThirdPartyNotices.txt \
         rust-std/README.md \
