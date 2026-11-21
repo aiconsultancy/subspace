@@ -2,15 +2,12 @@
 
 ## Pull request reviews from Claude Code
 
-Every pull request needs both model reviews before it merges. See
-[Pull request review clearance](AGENTS.md#pull-request-review-clearance).
-From Claude Code, run the trusted copy of `scripts/review-pr.sh` through
-Bash, as that section shows. It starts the
-Claude Opus 5.5 reviewer as its own `claude -p` agent at high effort, and the
-GPT-6.2 Sol reviewer with the Codex CLI at high effort. Both are isolated and
-can only read.
+Before merge, obtain and record the independent Claude Opus 5.5 and GPT-6.2 Sol
+reviews described in [Pull request review clearance](AGENTS.md#pull-request-review-clearance).
+Use high effort for both. A subagent counts when it runs the named model and
+reviews read-only. Use an isolated reviewer if the current session would run
+hooks or settings from the change under review.
 
-Do not run the Opus review as an in-session subagent instead: a subagent
-inherits this session's hooks and permissions. Verify each finding before
-acting on it, fix critical and high findings before merging, and record both
-reviews under **Reviews** in the pull request.
+The repository's review script is optional. If its launcher cannot start a
+model, use another read-only route for that model and record the actual review
+under **Reviews** in the PR.
