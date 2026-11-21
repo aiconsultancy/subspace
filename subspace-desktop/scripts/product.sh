@@ -100,6 +100,7 @@ product_licence_files() {
     printf '%s\n' ../LICENSE NOTICE \
         licenses/canvas/mermaid-rs-renderer-MIT.txt \
         licenses/charts/{LICENSE-FLINT-CHART,LICENSE-QUICKJS-NG,LICENSE-RQUICKJS,README.md} \
+        licenses/fonts/{LICENSE-INTER,LICENSE-JETBRAINS-MONO,README.md} \
         licenses/icons/{LICENSE-FEATHER,LICENSE-LOBE-ICONS,LICENSE-LUCIDE,README.md} \
         licenses/markdown/{LICENSE,README.md} licenses/rust-std/README.md \
         licenses/terminal/{LICENSE-APACHE,LICENSE-GHOSTTY,LICENSE-MIT,LICENSE-PORTABLE-PTY,README.md} \
