@@ -99,6 +99,16 @@ Checks, screenshots and the findings outside the Framework are recorded in
 the Subspace App's change record,
 `subspace-desktop/docs/changes/workspace-shell-review-findings/delivery.md`.
 
+### Second review round (#35)
+
+| ID | Severity | Location | Outcome | Test |
+| --- | --- | --- | --- | --- |
+| Q1 | High | `clients/github/src/work.rs` (new) | Fixed | `Client::pin_work` and `PinnedWork` pin one verified work credential for a Copilot operation, keyed by its node ID; non-breaking. `tests/work_pin.rs`: `a_pinned_operation_sends_every_request_with_the_credential_it_verified`, `a_rejected_pinned_credential_is_not_retried_with_another`, `a_credential_of_another_account_is_not_pinned`, `a_credential_verified_once_is_pinned_again_without_a_lookup_even_offline` |
+| Q5 | Medium | `board-kit/dashboard/src/workspace/row_order.rs` | Fixed | `two_navigators_in_one_window_each_keep_their_own_row_order` |
+| Q6 | Low | `board-kit/dashboard/src/workspace/row_order.rs` | Fixed | Navigator interaction tests |
+| Q7 | Low | `clients/github/src/actions.rs` | Fixed | `the_default_attempt_read_gives_the_latest_jobs_only_for_attempt_zero` |
+| Q8 | Low | `clients/github/src/actions/request.rs` | Not changed | GitHub's documentation does not show the attempt endpoint leaving out carried-over jobs |
+
 ## Tasks
 
 - [x] S1 to S4 in the shared kit, each with a headless test.
