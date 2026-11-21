@@ -940,9 +940,11 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
         });
         const completion = await call<Page<{ kind: string; data: { fields?: string[] } }>>(
           200,
-          `/issues/${closed.id}/activity?limit=1`,
+          `/issues/${closed.id}/activity`,
         );
-        expect(completion.items[0]?.data.fields).toEqual(["stateId", "readyForAgents"]);
+        expect(
+          completion.items.find((event) => event.kind === "issue.changed")?.data.fields,
+        ).toEqual(["stateId", "readyForAgents"]);
         expect(await call(200, `/issues/${mentioned.id}`)).toMatchObject({
           version: mentioned.version,
         });
