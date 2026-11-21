@@ -10,6 +10,7 @@ cd "$root"
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=scripts/product.sh
 source "$root/scripts/product.sh"
+refuse_unreleased_features
 load_release_toolchain
 host="$("$RUSTC" -vV | sed -n 's/^host: //p')"
 target="${1:-$host}"

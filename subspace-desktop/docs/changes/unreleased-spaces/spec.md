@@ -76,9 +76,20 @@ that variable is set. The `package`, `package-macos`, `release-macos` and
 `package-macos-ci` targets do not set it, and `make install-macos` sets it to
 `terminal`. Nothing in `scripts/`, the `Makefile`, `mise.toml`,
 `mise.terminal.toml` or `.github/workflows/` passes `--all-features` or names
-these features, and the workflows build nothing. A release run from a shell
-that exports `SUBSPACE_BUILD_FEATURES` with these features would include
-them; nothing refuses that.
+these features, and the workflows build nothing.
+
+A shell can still export `SUBSPACE_BUILD_FEATURES`, and the release targets
+pass it on. So `scripts/package-release.sh` and `scripts/package-macos.sh`
+(which `release-macos` and `package-macos-ci` also run) call
+`refuse_unreleased_features` from `scripts/product.sh` before any build: it
+exits with status 2 when the list names `unreleased-spaces`, `board-lab` or
+`component-gallery`, with or without a package prefix such as
+`subspace/board-lab` or `subspace-framework/component-gallery`, split on
+commas and whitespace as Cargo splits it.
+`scripts/test-package-products.sh` checks that both refuse, run no Cargo
+command and leave the previous archive in place. A local install is not a
+release: `make install-macos FEATURES="terminal unreleased-spaces"` still
+installs a build with both Spaces.
 
 ## Running with them
 

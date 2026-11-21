@@ -18,6 +18,9 @@ See the [spec](spec.md) and [delivery](delivery.md).
       and builds with `board-lab` for its optional Board Lab checks.
 - [x] Release and packaging scripts and workflows read: none passes
       `--all-features` or names these features.
+- [ ] Release archives and signed apps refuse an inherited
+      `SUBSPACE_BUILD_FEATURES` that names an unreleased Space, tested in
+      `scripts/test-package-products.sh`. Not yet run.
 - [x] Docs: the Spaces audit, the boards page, the README, `AGENTS.md`, the
       developer checklist, the installation page, Board Lab's page, guide
       and design evidence, and the gallery's guide.

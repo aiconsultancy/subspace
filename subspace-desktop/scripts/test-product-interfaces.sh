@@ -87,6 +87,14 @@ test "$(jq -r .binary_name "$fixture/output")" = subspace
 # default build.
 expected_boards='["github","github-copilot-agents","irc","issues","decisions","actions"]'
 if [[ "${SUBSPACE_FIXTURE_BOARD_LAB:-0}" == 1 ]]; then
+    # Board Lab is built only for macOS ARM64. Name a wrong target here, not
+    # as a missing board in the list below.
+    invoke --about
+    if ! grep -Fxq 'Rust target: aarch64-apple-darwin' "$fixture/output"; then
+        built_for="$(sed -n 's/^Rust target: //p' "$fixture/output")"
+        echo "SUBSPACE_FIXTURE_BOARD_LAB=1 needs a macOS ARM64 build (aarch64-apple-darwin), not ${built_for:-an unknown target}" >&2
+        exit 2
+    fi
     expected_boards='["github","github-copilot-agents","irc","issues","decisions","board-lab","actions"]'
 fi
 test "$(jq -c .boards "$fixture/output")" = "$expected_boards"
@@ -187,7 +195,6 @@ invoke completion fish
 grep -Fq "subspace __complete-word" "$fixture/output"
 
 if [[ "${SUBSPACE_FIXTURE_BOARD_LAB:-0}" == 1 ]]; then
-    "$binary" --about | grep -Fq 'Rust target: aarch64-apple-darwin'
     jq '.boards["board-lab"] = true' "$XDG_CONFIG_HOME/subspace/config.json" >"$fixture/lab-config.json"
     cp "$fixture/lab-config.json" "$XDG_CONFIG_HOME/subspace/config.json"
     invoke board_help get --board_id board-lab --json
