@@ -9,7 +9,7 @@ use gpui_kit::{AppContext as _, Context, SharedString, Task as GpuiTask};
 use subspace_framework::client_github::Client as GithubClient;
 use subspace_framework::client_github::copilot_agents::{Subject, Task, TaskDetail};
 use subspace_framework::core::copilot_agent_tasks::{SubjectTaskRef, TaskStore};
-use subspace_framework::core::http::Error;
+use subspace_framework::core::http::{Error, status};
 use subspace_framework::core::keyed_request::Request;
 use subspace_framework::core::task_state::{AlertKind, POLL_INTERVAL};
 use subspace_framework::dashboard::{DashboardEvent, Toast, alerts, refresh};
@@ -258,18 +258,48 @@ pub(crate) fn record_monitor(
 }
 
 /// The task list and the saved references, both blocking reads. A list
-/// that loaded also names the work login it was read as: one more small
-/// request on every load, so the navigator and the status bar follow a
-/// changed credential instead of naming the first account all session.
+/// that loaded also names the work login it was read as, so the navigator
+/// and the status bar follow a changed credential instead of naming the
+/// first account all session, and never name another account than the
+/// list's own (see [`as_one_account`]).
 fn list_tasks(client: &GithubClient, store: Option<Arc<TaskStore>>) -> ListResult {
-    let tasks = client.list_my_copilot_agent_tasks().map(|list| list.tasks);
-    let login = match tasks.is_ok() {
-        true => client.work_login().ok(),
-        false => None,
+    let listed = as_one_account(
+        || client.work_login(),
+        |_| client.list_my_copilot_agent_tasks().map(|list| list.tasks),
+    );
+    let (tasks, login) = match listed {
+        Ok((tasks, login)) => (Ok(tasks), Some(login)),
+        Err(error) => (Err(error), None),
     };
     let saved = store.and_then(|store| store.all().ok()).unwrap_or_default();
     (tasks, saved, login)
 }
+
+/// Runs `read` as one work account: the login is resolved before the read,
+/// which is given it, and again after it, and the answer is kept, with that
+/// login, only when the two agree. The read resolves the work credential
+/// itself, between the two, so an answer for one account is never named,
+/// cached or indexed as another's when the credential changes meanwhile:
+/// it is refused instead, and the next load reads again.
+pub(crate) fn as_one_account<T>(
+    login: impl Fn() -> Result<String, Error>,
+    read: impl FnOnce(&str) -> Result<T, Error>,
+) -> Result<(T, String), Error> {
+    let before = login()?;
+    let answer = read(&before)?;
+    let after = login()?;
+    if !after.eq_ignore_ascii_case(&before) {
+        return Err(Error::Status {
+            status: status::BAD_GATEWAY,
+            message: ACCOUNT_CHANGED.into(),
+        });
+    }
+    Ok((answer, before))
+}
+
+/// Why an answer read while the work account changed was refused.
+pub(crate) const ACCOUNT_CHANGED: &str =
+    "The GitHub work account changed during the read. Refresh to read it again.";
 
 /// One request per monitored task. The detail endpoint is the only one that
 /// needs no repository path, so it serves as the cheap state read too.
@@ -318,7 +348,64 @@ mod tests {
     use subspace_framework::client_github::copilot_agents::{PullRequestArtifact, Task};
     use subspace_framework::client_github::model::PrState;
 
-    use super::toast;
+    use std::cell::{Cell, RefCell};
+
+    use subspace_framework::core::http::{Error, status};
+
+    use super::{ACCOUNT_CHANGED, as_one_account, toast};
+
+    /// A work login that answers each name in turn, as a credential that
+    /// changes between two lookups does.
+    fn logins<'a>(names: &'a [&'a str]) -> impl Fn() -> Result<String, Error> + 'a {
+        let next = Cell::new(0);
+        move || {
+            let at = next.get();
+            next.set(at + 1);
+            Ok(names[at.min(names.len() - 1)].to_owned())
+        }
+    }
+
+    #[test]
+    fn an_answer_is_named_with_the_account_it_was_read_as() {
+        let given = RefCell::new(String::new());
+        let read = as_one_account(logins(&["octo-dev", "Octo-Dev"]), |login| {
+            *given.borrow_mut() = login.to_owned();
+            Ok("tasks")
+        });
+        let (answer, login) = read.unwrap();
+        assert_eq!((answer, login.as_str()), ("tasks", "octo-dev"));
+        assert_eq!(
+            given.into_inner(),
+            "octo-dev",
+            "the read is given that login"
+        );
+    }
+
+    #[test]
+    fn an_answer_read_while_the_work_account_changed_is_refused() {
+        let read = as_one_account(logins(&["octo-dev", "octo-other"]), |_| Ok("tasks"));
+        let error = read.unwrap_err();
+        assert_eq!(error.to_string(), ACCOUNT_CHANGED);
+    }
+
+    #[test]
+    fn nothing_is_read_without_a_work_account() {
+        let asked = Cell::new(false);
+        let read = as_one_account(
+            || {
+                Err(Error::Status {
+                    status: status::BAD_GATEWAY,
+                    message: "No work account".into(),
+                })
+            },
+            |_| {
+                asked.set(true);
+                Ok("tasks")
+            },
+        );
+        assert!(read.is_err());
+        assert!(!asked.get(), "no read without an account to bind it to");
+    }
 
     fn task() -> Task {
         Task {

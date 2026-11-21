@@ -72,6 +72,12 @@ pub(crate) fn cache_key(session_id: &str, updated_at: &str) -> String {
     format!("{session_id}@{updated_at}")
 }
 
+/// The cache file's key for `key` as read by the work account `login`, so a
+/// log one account read is never taken from the cache for another.
+pub(crate) fn account_key(login: &str, key: &str) -> String {
+    format!("{}/{key}", login.to_ascii_lowercase())
+}
+
 /// The cached log for `key`, when the file holds exactly that one.
 pub(crate) fn cached(key: &str) -> Option<SessionLog> {
     let text = prefs::read_cache(CACHE_FILE)?;
@@ -267,7 +273,22 @@ mod tests {
     use subspace_framework::client_github::copilot_agent_sessions::{LogEntry, SessionLog};
     use subspace_framework::dashboard::Body;
 
-    use super::{HEADING, LogState, OpenLog, UNAVAILABLE, cache_key, log_section};
+    use super::{HEADING, LogState, OpenLog, UNAVAILABLE, account_key, cache_key, log_section};
+
+    #[test]
+    fn a_cached_log_is_kept_apart_for_each_work_account() {
+        let key = cache_key("s1", "2026-10-01T09:00:00Z");
+        assert_ne!(
+            account_key("octo-dev", &key),
+            account_key("octo-other", &key)
+        );
+        assert_eq!(account_key("Octo-Dev", &key), account_key("octo-dev", &key));
+        assert_ne!(
+            account_key("octo-dev", &key),
+            key,
+            "an unbound entry never matches"
+        );
+    }
 
     fn log(entries: Vec<LogEntry>, truncated: bool) -> SessionLog {
         SessionLog { entries, truncated }
