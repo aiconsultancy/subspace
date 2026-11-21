@@ -149,6 +149,9 @@ export function issueConditions(db: Db, member: Member, filters: IssueFilter, pa
           : undefined,
         filters.priority?.length ? inArray(issues.priority, filters.priority) : undefined,
         personFilter(issues.assigneeId, member.id, filters.assignee),
+        filters.readyForAgents === undefined
+          ? undefined
+          : eq(issues.readyForAgents, filters.readyForAgents),
         filters.assigneeKind
           ? exists(
               db

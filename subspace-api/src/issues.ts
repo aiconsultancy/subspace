@@ -308,6 +308,7 @@ function issueDto(row: Joined, snapshot: Snapshot) {
     summary: issue.summary,
     state: stateSummary(row.state),
     assignee: person(issue.assigneeId ? snapshot.membersById.get(issue.assigneeId) : null),
+    readyForAgents: issue.readyForAgents,
     owner: person(issue.ownerId ? snapshot.membersById.get(issue.ownerId) : null),
     priority: issue.priority,
     estimate: issue.estimate,
@@ -668,6 +669,50 @@ function activePeople(
   });
 }
 
+const terminalStateTypes: ReadonlySet<string> = new Set(["completed", "canceled", "duplicate"]);
+export const isTerminalState = (type: string) => terminalStateTypes.has(type);
+
+/**
+ * Works out the ready-for-agents flag a write leaves on an issue. Only an unassigned, open issue
+ * that is not a tracker may be marked ready. A write that leaves an assignee, a terminal state or
+ * a tracker clears the flag in the same write.
+ */
+export function readyForAgentsAfter(
+  current: Pick<IssueRow, "assigneeId" | "readyForAgents"> | null,
+  input: { assigneeId?: string | null; readyForAgents?: boolean },
+  result: { tracker: boolean; terminal: boolean },
+) {
+  const assigneeId =
+    input.assigneeId === undefined ? (current?.assigneeId ?? null) : input.assigneeId;
+  if (input.readyForAgents === true) {
+    if (assigneeId !== null)
+      return Effect.fail(
+        problem(400, "Remove the assignee before marking the issue ready for agents."),
+      );
+    if (result.tracker)
+      return Effect.fail(problem(400, "Trackers cannot be marked ready for agents."));
+    if (result.terminal)
+      return Effect.fail(problem(400, "Reopen the issue before marking it ready for agents."));
+  }
+  const readyForAgents =
+    assigneeId === null && !result.tracker && !result.terminal
+      ? (input.readyForAgents ?? current?.readyForAgents ?? false)
+      : false;
+  return Effect.succeed({
+    readyForAgents,
+    changed: current !== null && current.readyForAgents !== readyForAgents,
+  });
+}
+
+/** Clears the flag in a write that leaves the issue terminal or archived, and names the change. */
+export function clearReadyForAgents(issue: Pick<IssueRow, "readyForAgents">, clears: boolean) {
+  const cleared = clears && issue.readyForAgents;
+  return {
+    set: cleared ? { readyForAgents: false } : {},
+    fields: cleared ? ["readyForAgents"] : [],
+  };
+}
+
 function planningRefs(
   db: Db,
   member: Member,
@@ -834,6 +879,10 @@ export const createIssue = (member: Member, payload: typeof NewIssue.Type) =>
           !estimatePoints[project.estimateScale].includes(editable.estimate)
         )
           return yield* Effect.fail(problem(400, "Choose an estimate on the project scale."));
+        const ready = yield* readyForAgentsAfter(null, editable, {
+          tracker: payload.type === "tracker",
+          terminal: isTerminalState(state) || Boolean(relations?.duplicateOf),
+        });
         yield* activePeople(tx, member, editable);
         yield* planningRefs(tx, member, project.id, editable);
         const parent = yield* linkParent(tx, member, parentId);
@@ -846,6 +895,7 @@ export const createIssue = (member: Member, payload: typeof NewIssue.Type) =>
           .values({
             ...editable,
             ...datesForState(state),
+            readyForAgents: ready.readyForAgents,
             organisationId: member.organisationId,
             projectId: project.id,
             identifier: `${project.key}-${number}`,
@@ -869,6 +919,30 @@ export const createIssue = (member: Member, payload: typeof NewIssue.Type) =>
       }),
     );
   });
+
+/** Whether an edit leaves the issue in a terminal state, including through a duplicate link. */
+function terminalAfterEdit(
+  db: Db,
+  member: Member,
+  issue: IssueRow,
+  next: StateRow["type"] | undefined,
+  duplicateOf: string | null | undefined,
+) {
+  return Effect.gen(function* () {
+    if (duplicateOf) return true;
+    const type =
+      next ??
+      (yield* db
+        .select({ type: states.type })
+        .from(states)
+        .where(
+          and(eq(states.organisationId, member.organisationId), eq(states.id, issue.stateId)),
+        ))[0]?.type;
+    // Removing a duplicate link reopens a duplicate issue in the project's open default state.
+    if (type === "duplicate" && duplicateOf === null && !next) return false;
+    return type !== undefined && isTerminalState(type);
+  });
+}
 
 export const editIssue = (member: Member, reference: string, payload: typeof EditIssue.Type) =>
   Effect.gen(function* () {
@@ -909,6 +983,10 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
           !estimatePoints[project.estimateScale].includes(editable.estimate)
         )
           return yield* Effect.fail(problem(400, "Choose an estimate on the project scale."));
+        const ready = yield* readyForAgentsAfter(issue, editable, {
+          tracker: (editable.type ?? issue.type) === "tracker",
+          terminal: yield* terminalAfterEdit(tx, member, issue, state, relations?.duplicateOf),
+        });
         yield* activePeople(tx, member, editable);
         yield* planningRefs(tx, member, issue.projectId, editable);
         const parent = yield* linkParent(tx, member, parentId, issue.id);
@@ -920,6 +998,7 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
               ? { cycleJoinedAt: editable.cycleId ? new Date() : null }
               : {}),
             ...(state ? datesForState(state, issue) : {}),
+            readyForAgents: ready.readyForAgents,
             parentId: parent,
             updatedAt: sql`now()`,
             lastActivityAt: sql`now()`,
@@ -942,8 +1021,11 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
             relations.remove,
             relations.duplicateOf,
           );
+        const fields = Object.keys(payload).filter((field) => field !== "version");
+        // An assignment that clears the flag records it as changed although the caller did not send it.
+        if (ready.changed && !fields.includes("readyForAgents")) fields.push("readyForAgents");
         yield* addActivity(tx, actor, issue.id, "issue.changed", {
-          fields: Object.keys(payload).filter((field) => field !== "version"),
+          fields,
           mentionUserIds: yield* validatedMentions(
             tx,
             member,
@@ -1460,17 +1542,25 @@ export const setIssueArchived = (
         if (version !== undefined && issue.version !== version)
           return yield* Effect.fail(problem(409, "The issue version is stale.", issue.version));
         if (archive !== Boolean(issue.archivedAt)) {
+          const cleared = clearReadyForAgents(issue, archive);
           yield* tx
             .update(issues)
             .set({
               archivedAt: archive ? new Date() : null,
               archivedById: archive ? member.id : null,
+              ...cleared.set,
               version: issue.version + 1,
               updatedAt: sql`now()`,
               lastActivityAt: sql`now()`,
             })
             .where(and(inOrg(member), eq(issues.id, issue.id)));
-          yield* addActivity(tx, member, issue.id, archive ? "issue.archived" : "issue.unarchived");
+          yield* addActivity(
+            tx,
+            member,
+            issue.id,
+            archive ? "issue.archived" : "issue.unarchived",
+            cleared.fields.length ? { fields: cleared.fields } : {},
+          );
           yield* refreshTrackers(tx, member, [issue.id, issue.parentId]);
         }
         return yield* detailFrom(tx, member, issue.id);

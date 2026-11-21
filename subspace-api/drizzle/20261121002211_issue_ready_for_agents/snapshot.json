@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "a2548ca3-5794-4932-a9ae-9da7e2f2ceb3",
+  "prevIds": [
+    "f3be7a06-7b19-4cb4-9d9b-7ea287c37bdd"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "issues",
+        "ready_for_agents"
+      ],
+      "writes": [
+        "s|col|public.issues.ready_for_agents",
+        "n|col|public.issues.ready_for_agents",
+        "e|col|public.issues.ready_for_agents"
+      ],
+      "reads": [
+        "n|tbl|public.issues",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "issues",
+        "name": "ready_for_agents",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "false",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

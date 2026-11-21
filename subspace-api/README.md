@@ -212,6 +212,52 @@ they explicitly unsubscribe. A member can change their subscription under
 `/api/v1/notifications`. The API sends in-app notices for comments, linked
 Markdown mentions and state changes.
 
+## Ready for agents
+
+Every full issue shape includes `readyForAgents`, a boolean that defaults to
+`false`: list and group items, issue detail and its `children`, relations,
+cycle results and trackers, move results and MCP issue results. The embedded
+`parent` and `duplicateOf` references in issue detail do not carry it; read
+the referenced issue for its flag.
+
+The flag marks an unassigned, open issue as available for a fleet's captains
+to take. Anyone who may edit an issue can set it on create with
+`POST /api/v1/issues` or on edit with `PATCH /api/v1/issues/{reference}`.
+
+- A write that would leave the issue with an assignee and asks for
+  `readyForAgents: true` fails with 400. An edit that clears the assignee and
+  sets the flag in the same request is allowed.
+- Any write that leaves the issue with an assignee sets `readyForAgents` to
+  `false` in the same write and version. Accepting an offer is therefore one
+  versioned assignment, and a second writer with the same version receives 409.
+- Only open issues that are not trackers can be flagged. Asking for
+  `readyForAgents: true` on a write that leaves the issue a tracker or in a
+  completed, canceled or duplicate state fails with 400.
+- A write that makes the issue a tracker, moves it to a terminal state or
+  archives it clears the flag in the same write and version. This includes
+  marking it a duplicate of another issue, a pull request merge that completes
+  it and deleting its workflow state with a terminal replacement.
+- Removing the assignee, reopening or unarchiving does not set the flag again.
+- The issue's activity lists `readyForAgents` among the changed fields
+  whenever the flag changes, including each time the server clears it. An
+  archive that clears it records `fields: ["readyForAgents"]` on the
+  `issue.archived` event.
+
+A partial index on the organisation covers issues that are flagged,
+unassigned and not archived, for the dispatcher's poll. A database trigger also
+clears the flag whenever a write leaves an assignee, so an older API instance
+during a rolling deployment cannot leave an assigned issue flagged. That
+clearing has no activity entry.
+
+`GET /api/v1/issues` and `GET /api/v1/issues/groups` take
+`readyForAgents=true` or `readyForAgents=false`, validated like the other
+boolean filters. Ask for unassigned issues with the existing `assignee=none`,
+so a poller reads `readyForAgents=true&assignee=none`. The `assignee` filter
+also accepts an agent's user ID and combines with `updatedSince`. The MCP
+tools `subspace_create_issue`, `subspace_update_issue` and
+`subspace_list_issues` accept the same field and filter, and every MCP issue
+result carries the field.
+
 ## Planning and stakeholders
 
 Initiative responses include `stakeholders`, a list of names, roles and Slack
