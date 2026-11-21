@@ -79,6 +79,14 @@ pub(super) fn canvas(
         })
 }
 
+/// The layout's place among the layout toggles: Composer, then Compact.
+fn layout_index(layout: CanvasLayout) -> usize {
+    match layout {
+        CanvasLayout::Composer => 0,
+        CanvasLayout::Compact => 1,
+    }
+}
+
 fn profile_and_layout_row(
     this: &mut Workbench,
     cx: &mut Context<Workbench>,
@@ -108,10 +116,7 @@ fn profile_and_layout_row(
             Segment::new("Composer").icon(IconName::Columns3),
             Segment::new("Compact").icon(IconName::Table),
         ],
-        Some(match this.view.layout {
-            CanvasLayout::Composer => 0,
-            CanvasLayout::Compact => 1,
-        }),
+        Some(layout_index(this.view.layout)),
         t,
         move |index, _, _, cx| {
             layout_entity.update(cx, |this, cx| {

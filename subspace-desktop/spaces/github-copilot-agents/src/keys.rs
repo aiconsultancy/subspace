@@ -34,10 +34,10 @@ actions!(
 );
 
 pub(crate) const KEYS: &[KeyHelp] = &[
-    KeyHelp::new("j / k", "Next / previous row"),
+    KeyHelp::new("j / k", "Next / previous row, shown in the inspector"),
     KeyHelp::new(
         "Enter",
-        "Open the task or chat; on a group, fold or unfold it",
+        "Open the task or chat as a tab; on a group, fold or unfold it",
     ),
     KeyHelp::new("1 / 2 / 3", "Filter by kind, state or repository"),
     KeyHelp::new("0", "Clear the filters"),
@@ -51,7 +51,7 @@ pub(crate) const KEYS: &[KeyHelp] = &[
     KeyHelp::new("u", "Name the chat the task came from"),
     KeyHelp::new("c", "Open the chat session in a chat tab"),
     KeyHelp::new("l", "Show the task's session log, or hide it"),
-    KeyHelp::new("Esc", "Close the panel"),
+    KeyHelp::new("Esc", "Back to the list from an open task"),
 ];
 
 pub(crate) const HELP_FOOT: &str = concat!(
@@ -66,6 +66,10 @@ pub(crate) const SEARCH_PLACEHOLDER: &str = "Search agent tasks and chat session
 pub(crate) const KIND_KEY: &str = "github-copilot-agents.kind";
 pub(crate) const GROUP_KEY: &str = "github-copilot-agents.state";
 pub(crate) const REPO_KEY: &str = "github-copilot-agents.repo";
+/// Whether the navigator shows; it does unless this is stored as `0`.
+pub(crate) const NAVIGATOR_KEY: &str = "github-copilot-agents.navigator";
+/// Whether the inspector shows; it does unless this is stored as `0`.
+pub(crate) const INSPECTOR_KEY: &str = "github-copilot-agents.inspector";
 
 /// Which filter a toolbar menu is picking.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

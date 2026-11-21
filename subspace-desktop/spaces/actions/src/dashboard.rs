@@ -9,10 +9,11 @@ use subspace_framework::client_github::Client;
 use subspace_framework::core::task_state::PollBackoff;
 use subspace_framework::dashboard::list::{self, ListState, Row};
 use subspace_framework::dashboard::{
-    Dashboard, DashboardEvent, ItemSearch, Modal, PaletteCommand, Search, services,
+    Dashboard, DashboardEvent, ItemSearch, Modal, PaletteCommand, Search, Tokens, services,
+    workspace,
 };
 
-use crate::{Actions, keys, model, panel};
+use crate::{Actions, docks::Docks, keys, model, panel};
 
 impl EventEmitter<DashboardEvent> for Actions {}
 
@@ -64,24 +65,7 @@ impl Dashboard for Actions {
             .into_iter()
             .find(|view| Some(view.title()) == saved_view.as_deref())
             .unwrap_or_default();
-        let filters = model::Filters {
-            branch: subspace_framework::dashboard::prefs::get(cx, "actions.branch")
-                .filter(|value| !value.is_empty()),
-            workflow: subspace_framework::dashboard::prefs::get(cx, "actions.workflow")
-                .filter(|value| !value.is_empty()),
-            actor: subspace_framework::dashboard::prefs::get(cx, "actions.actor")
-                .filter(|value| !value.is_empty()),
-            status: model::StatusFilter::ALL
-                .into_iter()
-                .find(|status| {
-                    Some(status.title())
-                        == subspace_framework::dashboard::prefs::get(cx, "actions.status")
-                            .as_deref()
-                })
-                .unwrap_or_default(),
-            by_status: subspace_framework::dashboard::prefs::get(cx, "actions.grouping").as_deref()
-                == Some("Status"),
-        };
+        let filters = saved_filters(cx);
         let client = services(cx).map(|s| Arc::new(Client::new(s.credentials.clone())));
         let repos = services(cx)
             .map(|s| s.config.repos.clone())
@@ -107,10 +91,13 @@ impl Dashboard for Actions {
             queued_repos: Default::default(),
             poll: None,
             backoff: PollBackoff::default(),
-            toolbar: None,
+            docks: Docks::load(cx),
+            text_edge: workspace::text_edge(&Tokens::current(cx)),
+            weak: cx.weak_entity(),
             filter_popup: None,
             graph: panel::new_graph(cx),
             detail: panel::RunDetail::default(),
+            open: None,
             pending: None,
             menu: None,
             menu_anchors: Default::default(),
@@ -157,6 +144,19 @@ impl Dashboard for Actions {
         Some(self.status_text().into())
     }
 
+    fn docks(&self, _cx: &App) -> workspace::SpaceDocks {
+        self.space_docks()
+    }
+
+    fn toggle_dock(
+        &mut self,
+        dock: workspace::SpaceDock,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_space_dock(dock, cx);
+    }
+
     fn badge(&self, _cx: &App) -> Option<SharedString> {
         let count = self.snapshot().map_or(0, |data| {
             data.deployments
@@ -173,6 +173,7 @@ impl Dashboard for Actions {
 
     fn commands(&self, cx: &Context<Self>) -> Vec<PaletteCommand> {
         let mut commands = vec![PaletteCommand::new("Filter Actions…", keys::Status).shortcut("s")];
+        commands.extend(keys::write_commands(self.selected()));
         if let Some(repo) = panel::selected_repository(self).filter(|_| self.login.is_some()) {
             let repo = repo.to_owned();
             let board = cx.weak_entity();
@@ -221,5 +222,26 @@ impl Dashboard for Actions {
 
     fn keys(&self) -> &'static [subspace_framework::dashboard::KeyHelp] {
         keys::HELP
+    }
+}
+
+/// The filters as last saved; an empty saved value sets no filter.
+fn saved_filters(cx: &App) -> model::Filters {
+    model::Filters {
+        branch: subspace_framework::dashboard::prefs::get(cx, "actions.branch")
+            .filter(|value| !value.is_empty()),
+        workflow: subspace_framework::dashboard::prefs::get(cx, "actions.workflow")
+            .filter(|value| !value.is_empty()),
+        actor: subspace_framework::dashboard::prefs::get(cx, "actions.actor")
+            .filter(|value| !value.is_empty()),
+        status: model::StatusFilter::ALL
+            .into_iter()
+            .find(|status| {
+                Some(status.title())
+                    == subspace_framework::dashboard::prefs::get(cx, "actions.status").as_deref()
+            })
+            .unwrap_or_default(),
+        by_status: subspace_framework::dashboard::prefs::get(cx, "actions.grouping").as_deref()
+            == Some("Status"),
     }
 }

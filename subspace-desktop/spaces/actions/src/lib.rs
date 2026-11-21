@@ -2,14 +2,19 @@
 
 mod dashboard;
 mod dialogs;
+mod docks;
 mod fetch;
 mod filter_popup;
 pub mod graph;
+mod inspector;
 mod keys;
+mod lanes;
 mod load;
 mod menus;
 mod model;
+mod navigator;
 mod notes;
+mod open;
 mod panel;
 mod poll;
 mod rows;
@@ -25,11 +30,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use fetch::Fetch;
-use gpui_kit::{Context, Entity, FocusHandle, Task};
+use gpui_kit::{Context, Entity, FocusHandle, Pixels, Task, WeakEntity};
 use subspace_framework::client_github::Client;
 use subspace_framework::core::task_state::PollBackoff;
 use subspace_framework::dashboard::list::{GroupNote, ListState, LoadStatus};
-use subspace_framework::dashboard::overflow_toolbar::OverflowToolbar;
 use subspace_framework::dashboard::{ItemSearch, SearchDoc, prefs};
 
 use model::{Filters, Record, Snapshot, View};
@@ -56,10 +60,20 @@ pub struct Actions {
     queued_repos: BTreeSet<String>,
     poll: Option<Task<()>>,
     backoff: PollBackoff,
-    toolbar: Option<Entity<OverflowToolbar>>,
+    /// Which docks show, saved as preferences.
+    docks: docks::Docks,
+    /// Where text starts in every panel, as of the last render. The shared
+    /// list asks for its inset without the tokens to work it out.
+    text_edge: Pixels,
+    /// Lets a control built outside `Context<Self>`, such as the detail
+    /// panel's footer, reach the board.
+    weak: WeakEntity<Actions>,
     filter_popup: Option<Entity<filter_popup::FilterPopup>>,
     graph: Entity<graph::FlowGraph>,
+    /// The selected run's jobs, for the inspector and Flow.
     detail: panel::RunDetail,
+    /// The item opened in a tab beside the view.
+    open: Option<open::OpenTab>,
     pending: Option<dialogs::Confirmation>,
     menu: Option<Entity<subspace_framework::dashboard::menu::Menu>>,
     menu_anchors: subspace_framework::dashboard::menu::MenuAnchors,
@@ -73,10 +87,15 @@ impl Actions {
     }
 
     fn records(&self) -> &[Record] {
+        self.records_in(self.view)
+    }
+
+    /// The records `view` lists; Flow draws the runs.
+    fn records_in(&self, view: View) -> &[Record] {
         let Some(data) = self.snapshot() else {
             return &[];
         };
-        match self.view {
+        match view {
             View::Runs | View::Flow => &data.runs,
             View::Deployments => &data.deployments,
             View::Releases => &data.releases,
@@ -88,6 +107,20 @@ impl Actions {
         self.records()
             .iter()
             .find(|record| record.key == key.as_ref())
+    }
+
+    /// The current account's loaded runs, whatever the view.
+    fn runs(&self) -> &[Record] {
+        self.snapshot().map_or(&[][..], |data| data.runs.as_slice())
+    }
+
+    /// What the board knows about the account it reads as.
+    fn account(&self) -> notes::Account<'_> {
+        notes::Account::of(
+            self.login.as_deref(),
+            self.fetch.loads_records(),
+            self.error.is_some(),
+        )
     }
 
     fn rebuild(&mut self, cx: &mut Context<Self>) {
@@ -113,7 +146,8 @@ impl Actions {
             .iter()
             .map(|record| {
                 (
-                    SearchDoc::new(record.key.clone(), record.title.clone()),
+                    SearchDoc::new(record.key.clone(), record.title.clone())
+                        .meta(rows::search_meta(record)),
                     rows::row(record),
                 )
             })
@@ -146,22 +180,31 @@ impl Actions {
     fn set_view(&mut self, view: View, cx: &mut Context<Self>) {
         self.filter_popup = None;
         self.view = view;
+        // Choosing a view shows it; an opened item keeps its tab.
+        if let Some(open) = &mut self.open {
+            open.active = false;
+        }
         prefs::set(cx, "actions.view", view.title());
         self.rebuild(cx);
     }
 
+    /// The shell's status line: the account and the counts that the heading
+    /// and its context line once showed above the list.
     fn status_text(&self) -> String {
-        let runs = self.snapshot().map_or(&[][..], |data| data.runs.as_slice());
-        let active = runs.iter().filter(|run| run.active).count();
-        let age = notes::freshness(
-            self.fetch.loads_records(),
-            self.loaded_at.map(|at| at.elapsed().as_secs()),
-        );
-        format!(
-            "{} runs · {active} active · {} · {age}",
-            runs.len(),
-            self.filters.status.title()
-        )
+        let runs = self.runs();
+        notes::status_line(&notes::Status {
+            account: self.account(),
+            runs: runs.len(),
+            active: runs.iter().filter(|run| run.active).count(),
+            filter: self.filters.status.title(),
+            truncated: runs
+                .iter()
+                .any(|run| load::mapping::is_notice(run, load::mapping::RUNS_TRUNCATED)),
+            freshness: notes::freshness(
+                self.fetch.loads_records(),
+                self.loaded_at.map(|at| at.elapsed().as_secs()),
+            ),
+        })
     }
 
     fn switch_account(&mut self, login: String, cx: &mut Context<Self>) {
@@ -172,6 +215,7 @@ impl Actions {
         self.fetch = Fetch::Idle;
         self.queued_repos.clear();
         self.detail = Default::default();
+        self.open = None;
         self.login = Some(login.clone());
         prefs::set(cx, "actions.account", login);
         self.graph = panel::new_graph(cx);

@@ -1,4 +1,4 @@
-//! What the detail panel shows for a cloud task and for a local chat.
+//! What the opened tab shows for a cloud task and for a local chat.
 
 use subspace_framework::client_github::copilot_agents::{
     TaskDetail, TaskSession, session_browser_url,
@@ -171,7 +171,7 @@ pub fn note_section(state: &str) -> Section {
     match state {
         UNKNOWN => Section::text(
             "Sessions",
-            "This task comes from a saved reference. Its state loads when the panel opens.",
+            "This task comes from a saved reference. Its state loads when it is selected or opened.",
         ),
         _ => Section::text("Sessions", LOADING),
     }

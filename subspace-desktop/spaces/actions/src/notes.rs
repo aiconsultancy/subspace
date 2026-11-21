@@ -180,6 +180,81 @@ pub(crate) fn freshness(loading: bool, age_seconds: Option<u64>) -> String {
     }
 }
 
+/// What the board knows about the GitHub account it reads as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Account<'a> {
+    SignedIn(&'a str),
+    /// Discovery or the first load is still running.
+    Checking,
+    /// A read failed before any account was chosen.
+    Unavailable,
+    Unknown,
+}
+
+impl<'a> Account<'a> {
+    /// A chosen login wins; without one, a running load is still checking
+    /// and a failed read left the account unavailable.
+    pub(crate) fn of(login: Option<&'a str>, loading: bool, failed: bool) -> Self {
+        match login {
+            Some(login) => Self::SignedIn(login),
+            None if loading => Self::Checking,
+            None if failed => Self::Unavailable,
+            None => Self::Unknown,
+        }
+    }
+
+    /// The status line's first part: the service, then the account.
+    pub(crate) fn status(self) -> String {
+        match self {
+            Self::SignedIn(login) => format!("GitHub · {login}"),
+            Self::Checking => "GitHub · Checking account…".into(),
+            Self::Unavailable => "GitHub · Account unavailable".into(),
+            Self::Unknown => "GitHub".into(),
+        }
+    }
+
+    /// The navigator's footer.
+    pub(crate) fn line(self) -> String {
+        match self {
+            Self::SignedIn(login) => format!("Signed in to GitHub as {login}"),
+            Self::Checking => "Checking GitHub account…".into(),
+            Self::Unavailable => "GitHub account unavailable".into(),
+            Self::Unknown => "Not signed in to GitHub".into(),
+        }
+    }
+}
+
+/// What the shell's status line says about the board.
+pub(crate) struct Status<'a> {
+    pub account: Account<'a>,
+    pub runs: usize,
+    pub active: usize,
+    /// The status filter's title, such as "Failed".
+    pub filter: &'a str,
+    /// A repository's run history was cut at the client's page limit.
+    pub truncated: bool,
+    /// See [`freshness`].
+    pub freshness: String,
+}
+
+/// The status line: the account, the run counts, the status filter, a
+/// notice when the run history is cut, then the freshness.
+pub(crate) fn status_line(status: &Status) -> String {
+    let notice = if status.truncated {
+        " · run history truncated"
+    } else {
+        ""
+    };
+    format!(
+        "{} · {} runs · {} active · {}{notice} · {}",
+        status.account.status(),
+        status.runs,
+        status.active,
+        status.filter,
+        status.freshness
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
@@ -189,8 +264,8 @@ mod tests {
     use subspace_framework::dashboard::{Glyph, Tone};
 
     use super::{
-        Progress, filter_summary, freshness, group_notes, loaded_key, no_matches, nothing_matches,
-        visible_groups,
+        Account, Progress, Status, filter_summary, freshness, group_notes, loaded_key, no_matches,
+        nothing_matches, status_line, visible_groups,
     };
     use crate::model::{Filters, StatusFilter, View};
 
@@ -376,5 +451,51 @@ mod tests {
         assert_eq!(freshness(true, None), "Loading runs…");
         assert_eq!(freshness(false, Some(4)), "4s ago");
         assert_eq!(freshness(false, None), "not loaded");
+    }
+
+    #[test]
+    fn the_account_is_named_once_chosen_and_explained_until_then() {
+        let signed_in = Account::of(Some("octo-dev"), true, true);
+        assert_eq!(signed_in, Account::SignedIn("octo-dev"), "a login wins");
+        assert_eq!(signed_in.status(), "GitHub · octo-dev");
+        assert_eq!(signed_in.line(), "Signed in to GitHub as octo-dev");
+
+        let checking = Account::of(None, true, true);
+        assert_eq!(checking, Account::Checking, "a running load is checking");
+        assert_eq!(checking.status(), "GitHub · Checking account…");
+        assert_eq!(checking.line(), "Checking GitHub account…");
+
+        let unavailable = Account::of(None, false, true);
+        assert_eq!(unavailable.status(), "GitHub · Account unavailable");
+        assert_eq!(unavailable.line(), "GitHub account unavailable");
+
+        let unknown = Account::of(None, false, false);
+        assert_eq!(unknown.status(), "GitHub");
+        assert_eq!(unknown.line(), "Not signed in to GitHub");
+    }
+
+    #[test]
+    fn the_status_line_carries_the_account_the_counts_and_the_freshness() {
+        let mut status = Status {
+            account: Account::SignedIn("octo-dev"),
+            runs: 602,
+            active: 3,
+            filter: "All",
+            truncated: false,
+            freshness: freshness(false, Some(8)),
+        };
+        assert_eq!(
+            status_line(&status),
+            "GitHub · octo-dev · 602 runs · 3 active · All · 8s ago"
+        );
+        status.truncated = true;
+        assert_eq!(
+            status_line(&status),
+            "GitHub · octo-dev · 602 runs · 3 active · All · run history truncated · 8s ago"
+        );
+        status.account = Account::Unknown;
+        status.freshness = freshness(true, None);
+        assert!(status_line(&status).starts_with("GitHub · 602 runs"));
+        assert!(status_line(&status).ends_with("· Loading runs…"));
     }
 }

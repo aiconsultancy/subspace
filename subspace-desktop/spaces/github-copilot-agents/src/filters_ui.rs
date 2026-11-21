@@ -13,7 +13,7 @@ use crate::CopilotAgents;
 use crate::filters::Filters;
 use crate::keys::{GROUP_KEY, KIND_KEY, OpenSession, Picking, REPO_KEY};
 use crate::model::{Kind, StateGroup};
-use crate::ui::{ALL, button_id, menu_title};
+use crate::ui::{ALL, button_id, menu_title, unset_label};
 
 const UNMEASURED_WIDTH: f32 = 0.;
 
@@ -126,10 +126,11 @@ impl CopilotAgents {
 
     fn filter_button(&self, picking: Picking, cx: &mut Context<Self>) -> AnyElement {
         let set = self.filter_label(picking);
+        let unset = unset_label(picking, self.navigator_open);
         let button = menu_button(
             button_id(picking),
             filter_icon(picking),
-            set.as_deref().unwrap_or(menu_title(picking)),
+            set.as_deref().unwrap_or(unset),
             set.is_some(),
         )
         .on_click(cx.listener(move |this, _, window, cx| {
@@ -179,43 +180,22 @@ impl CopilotAgents {
         )
     }
 
-    fn browser_unit(
-        entity: gpui_kit::WeakEntity<CopilotAgents>,
-        label: gpui_kit::SharedString,
-    ) -> OverflowUnit {
-        let inline_entity = entity.clone();
-        let popup_label = label.clone();
-        OverflowUnit::inline(
-            "github-copilot-agents-browser",
-            UNMEASURED_WIDTH,
-            move |_, cx| {
-                inline_entity
-                    .update(cx, |_, cx| {
-                        action_button(
-                            "github-copilot-agents-browser",
-                            Intent::Neutral,
-                            Some(IconName::ExternalLink),
-                            "Browser (o)",
-                        )
-                        .tooltip(label.clone())
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_session(&OpenSession, window, cx)
-                        }))
-                    })
-                    .map_or_else(
-                        |_| div().into_any_element(),
-                        |element| element.into_any_element(),
-                    )
-            },
-            vec![PopupEntry::new(move || {
-                let entity = entity.clone();
-                PopupMenuItem::new(popup_label.clone())
-                    .icon(IconName::ExternalLink)
-                    .on_click(move |_, window, cx| {
-                        _ = entity
-                            .update(cx, |this, cx| this.open_session(&OpenSession, window, cx));
-                    })
-            })],
+    /// Browser (o) for the opened task, on the trailing side of its tab's
+    /// toolbar. A row with no page on GitHub has none.
+    pub(crate) fn browser_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let link = self.target().and_then(crate::browser::link)?;
+        Some(
+            action_button(
+                "github-copilot-agents-browser",
+                Intent::Neutral,
+                Some(IconName::ExternalLink),
+                "Browser (o)",
+            )
+            .tooltip(link.label)
+            .on_click(
+                cx.listener(|this, _, window, cx| this.open_session(&OpenSession, window, cx)),
+            )
+            .into_any_element(),
         )
     }
 
@@ -237,19 +217,12 @@ impl CopilotAgents {
                 entity.clone(),
             ),
         ];
-        units.extend(
-            [
-                (!self.filters.is_empty()).then(|| Self::clear_unit(entity.clone())),
-                self.target()
-                    .and_then(crate::browser::link)
-                    .map(|link| Self::browser_unit(entity, link.label)),
-            ]
-            .into_iter()
-            .flatten(),
-        );
+        units.extend((!self.filters.is_empty()).then(|| Self::clear_unit(entity)));
         units
     }
 
+    /// The filters, for the leading side of the pane's toolbar. They stay
+    /// one row: in a narrow pane the last of them move to an overflow menu.
     pub(crate) fn toolbar(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let units = self.toolbar_units(cx.entity().downgrade());
         let toolbar = subspace_framework::dashboard::overflow_toolbar::OverflowToolbar::sync(

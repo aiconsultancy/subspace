@@ -41,6 +41,24 @@ impl Operation {
         Self::Reject,
     ];
 
+    /// The writes on the selected run or review, in the inspector's footer
+    /// in this order: the review first, as the decision a waiting run asks
+    /// for, then the run's own writes. Trigger starts a new run and stays in
+    /// the toolbar.
+    pub(crate) const FOOTER: [Self; 5] = [
+        Self::Approve,
+        Self::Reject,
+        Self::Rerun,
+        Self::RerunFailed,
+        Self::Cancel,
+    ];
+
+    /// The title with the ellipsis of a control that opens the confirmation,
+    /// such as "Trigger…".
+    pub(crate) fn prompt(self) -> String {
+        format!("{}…", self.title())
+    }
+
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::Dispatch => "Trigger",
@@ -60,6 +78,12 @@ impl Operation {
             Self::Approve => IconName::Check,
         }
     }
+}
+
+/// Whether `operation` is the footer's one primary action for `record`:
+/// Approve, when a review is what the run waits for.
+pub(crate) fn is_primary(operation: Operation, record: Option<&Record>) -> bool {
+    operation == Operation::Approve && record.is_some_and(|record| record.approval.is_some())
 }
 
 pub(crate) fn unavailable(operation: Operation, record: Option<&Record>) -> Option<&'static str> {
@@ -241,7 +265,33 @@ fn execute(client: &Client, login: &str, submission: &Submission) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    use super::{Operation, unavailable};
+    use super::{Operation, is_primary, unavailable};
+    use crate::model::Record;
+
+    #[test]
+    fn the_footer_leads_with_the_review_and_holds_every_write_on_the_run() {
+        let mut footer = Operation::FOOTER.to_vec();
+        assert_eq!(footer[..2], [Operation::Approve, Operation::Reject]);
+        footer.sort_by_key(|operation| Operation::ALL.iter().position(|o| o == operation));
+        assert_eq!(footer[..], Operation::ALL[1..], "every write but Trigger");
+    }
+
+    #[test]
+    fn approve_is_primary_only_when_a_review_waits() {
+        let mut run = crate::test_support::run("octo/app");
+        assert!(!is_primary(Operation::Approve, Some(&run)), "nothing waits");
+        assert!(!is_primary(Operation::Approve, None));
+        run.approval = Some((7, false));
+        assert!(is_primary(Operation::Approve, Some(&run)));
+        let others = Operation::FOOTER[1..].iter();
+        assert!(
+            others
+                .clone()
+                .all(|operation| !is_primary(*operation, Some(&run)))
+        );
+        run.approval = Some((7, true));
+        assert_eq!(others.filter(|o| is_primary(**o, Some(&run))).count(), 0);
+    }
 
     #[test]
     fn writes_require_a_selected_target() {
@@ -252,5 +302,40 @@ mod tests {
             );
             assert!(!operation.title().is_empty());
         }
+    }
+
+    #[test]
+    fn every_write_but_trigger_sits_with_the_selection() {
+        assert_eq!(Operation::ALL[0], Operation::Dispatch);
+        assert!(!Operation::FOOTER.contains(&Operation::Dispatch));
+        assert_eq!(Operation::Dispatch.prompt(), "Trigger…");
+        assert_eq!(Operation::RerunFailed.prompt(), "Re-run failed…");
+    }
+
+    #[test]
+    fn the_selected_run_decides_which_writes_apply() {
+        let mut run = crate::test_support::run("octo/app");
+        let allowed = |record: &Record| {
+            Operation::ALL.map(|operation| unavailable(operation, Some(record)).is_none())
+        };
+        assert_eq!(
+            allowed(&run),
+            [true, true, true, false, false, false],
+            "a finished run: no cancel, and no review without a request"
+        );
+        run.active = true;
+        run.approval = Some((7, true));
+        assert_eq!(
+            allowed(&run),
+            [true; 6],
+            "a waiting review this account may give"
+        );
+        run.approval = Some((7, false));
+        assert_eq!(
+            unavailable(Operation::Approve, Some(&run)),
+            Some("This account cannot review this environment")
+        );
+        run.run = None;
+        assert_eq!(allowed(&run), [false; 6], "an item with no run");
     }
 }

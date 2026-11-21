@@ -1,8 +1,8 @@
 # Board Lab guide
 
 <!--
-Evidence: spaces/board-lab/src/{lib,help_images}.rs, workbench/{mod,state,view/*}.rs,
-project_browser/{view,commands,creation,sync}.rs, project_view/*.rs,
+Evidence: spaces/board-lab/src/{lib,help_images,shell}.rs, workbench/{mod,state,view/*}.rs,
+project_browser/{facts,view,view/*,commands,creation,sync}.rs, project_view/*.rs,
 project_settings/{view,import}.rs, project_tools/*.rs, lab_tools/*.rs,
 project/{validation,store}.rs, environments/*.rs, editors.rs;
 subspace-framework/board-kit/dashboard/src/native_grid/view/controls.rs;
@@ -50,10 +50,12 @@ Board Lab has two parts:
   platform check fails at run time, the board shows `Board Lab unavailable` with
   `Board Lab requires macOS ARM64; no worker fallback is available.` There is no
   unsandboxed fallback.
-- **Availability.** Release builds of every channel ship Board Lab off. Debug
-  builds turn it on. A saved `boards."board-lab"` choice in `config.json` always
-  wins. Open **Settings > General > Boards**, enable **Board Lab** and save. The
-  board appears without a restart. Disabling it hides it, but open project
+- **Availability.** Board Lab is not ready to ship, so released builds of
+  Subspace do not include it. Developer builds made with its `board-lab`
+  feature include it, off by default. A saved `boards."board-lab"` choice in
+  `config.json` always wins. Open **Settings > General > Boards**, enable
+  **Board Lab** and save, or choose it from **Add a Space**. The board appears
+  without a restart. Disabling it hides it, but open project
   workers keep running until you quit Subspace.
 - **No automatic installs.** Enabling or opening the board does not download
   tools, install packages or provision an environment, and it never starts a
@@ -83,25 +85,41 @@ Board Lab has two parts:
 
 ## Main view
 
-The board has a tab bar and an `Alpha` label at its right. The default tabs are
-**Projects** and **Environments**. With prototype views on, the order is
-**Projects**, **Canvas**, **Dashboard**, **Environments**. The first view is
-**Projects**. A saved Canvas or Dashboard selection falls back to **Projects**
-when prototype views are off.
+Board Lab has the same layout in every view: a navigator on the left, and a
+pane with a tab strip, a toolbar and the content.
 
-### Projects tab
+- **Navigator.** Its header shows `Board Lab`, an `Alpha` label and a **New
+  project** button. Below it, a switch selects the view. The default views are
+  **Projects** and **Environments**. With prototype views on, the order is
+  **Projects**, **Canvas**, **Dashboard**, **Environments**. The first view is
+  **Projects**. A saved Canvas or Dashboard selection falls back to
+  **Projects** when prototype views are off. Under the switch, the navigator
+  lists the projects or the environments. Drag its right edge to resize it.
+- **Tab strip.** One tab names what is open in the pane: the open project,
+  `Welcome` when no project is open, `New project` while you create one, or
+  the view's name in the other views.
+- **Toolbar.** The button at its left end hides or shows the navigator, and
+  Board Lab remembers the choice. While the navigator is hidden, a menu named
+  after the current view takes its place. It lists the views and **New
+  project**, and in **Projects** also the projects and **Refresh projects**.
+- **Status bar.** Subspace's status bar at the bottom of the window shows
+  Board Lab's status line.
 
-- The left sidebar has the **Projects** heading, a **New project** button, a
-  list of project titles and a **Refresh projects** button. An empty list shows
-  `No projects yet`.
-- With nothing open, the main area says `Your native dashboards`, that source
-  stays in ordinary files and that no worker starts until you choose Start, and
-  that environment installation is separate.
-- An open project shows a header with its title and the buttons **Start…**
-  (**Restart…** after a failure), **Apply & Restart…**, **Stop**, a **Project**
-  menu and **Close**. **Apply & Restart…** appears only while the worker is
-  starting or running, or when working changes exist.
-- Two revision lines sit below the header:
+### Projects view
+
+- The navigator lists the project titles. Choose one to open it. An empty list
+  shows `No projects yet`. **Refresh projects** is at the foot of the
+  navigator.
+- With nothing open, the tab reads `Welcome` and the toolbar shows **Projects**
+  and a **New project** button. The content says `Your native dashboards`, that
+  source stays in ordinary files and that no worker starts until you choose
+  Start, and that environment installation is separate. Below that are **New
+  project** and **Open Environments**, which shows the **Environments** view.
+- With a project open, the tab and the toolbar show its title. The toolbar has
+  the buttons **Start…** (**Restart…** after a failure), **Apply & Restart…**,
+  **Stop**, a **Project** menu and **Close**. **Apply & Restart…** appears only
+  while the worker is starting or running, or when working changes exist.
+- Two revision lines sit at the top of the content:
   `Working · definition <12 characters> · source <12 characters>` and
   `Running · definition … · source … · <status>`, or `Running · none (not
   started)`. When they differ, the board adds `Working changes are not running.
@@ -111,22 +129,25 @@ when prototype views are off.
 - The project's own dashboard fills the rest of the area. Each component with a
   result shows a metadata line, `Scope: <scope> · Reported evaluation: <UTC
   time>`. The reported time comes from project code.
-- The footer shows the status line, or `Working…` while an operation is
-  pending. Errors appear in a red band above the footer.
+- The status bar shows the status line, such as `Running · <project title>` for the
+  open project's worker, or `Working…` while an operation is pending. Errors
+  appear in a red band at the bottom of the content.
 - Components are rows, columns, grids, text, sliders, selects, buttons, charts
   and tables. A slider whose range cannot be represented shows the value and the
   note `Readonly: this range cannot be represented by the slider`.
 
-### Environments tab
+### Environments view
 
-A card for each configured environment shows its title, `ready` or
-`not provisioned`, its tools, its runtime, version, package count and package
-manager. Select a card to select that environment. The built-in catalog has
+The navigator lists the configured environments, each with `ready` or
+`not provisioned`. In the content, a card for each environment shows its title,
+`ready` or `not provisioned`, its tools, its runtime, version, package count
+and package manager. Select a card or its navigator row to select that
+environment. The built-in catalog has
 **Python data** (`python-data`), **Node services** (`node-services`),
 **Bun notebook** (`bun-notebook`), **Python alternate** (`python-alt`) and
 **CLI lab** (`cli-lab`, a shell profile that native projects do not use). A
 `catalog.json` file in the environments directory can replace this list. It is
-limited to 64 KiB and 16 environments. A warning on this tab states that tool
+limited to 64 KiB and 16 environments. A warning in this view states that tool
 and package installation is a trusted, network-enabled host step, that worker
 execution uses MXC, and that Python's historical releases lack the mise
 attestation receipt that newer releases have. Historical Python pins currently
@@ -135,7 +156,7 @@ workaround, not production policy.
 
 ### Existing canvases and snapshots
 
-The **Canvas** and **Dashboard** tabs retain the earlier fixture recipes and
+The **Canvas** and **Dashboard** views retain the earlier fixture recipes and
 saved visualizations. Fixture financial data is synthetic, not live service
 data. Imported canvases without a refresh recipe remain labelled snapshots.
 Native projects do not replace those formats or historical saved presets.
@@ -164,20 +185,25 @@ screenshot. -->
 
 ## Toolbar and filters
 
-Board Lab has no toolbar of its own and no board-level filter. Controls are in
-the tab bar and in each tab.
+Board Lab has no board-level filter. Its controls are in the navigator, in the
+pane's toolbar and in each view's content. The Canvas, Dashboard and
+Environments views keep their controls in the content.
 
 | Control | Where | Purpose |
 | --- | --- | --- |
-| **Projects**, **Canvas**, **Dashboard**, **Environments** | Tab bar | Switch view. Canvas and Dashboard need prototype views. |
-| **New project**, **Refresh projects** | Projects sidebar | Create a project or reread the project list, the environments and the detected editors. |
-| **Start…**, **Restart…**, **Apply & Restart…**, **Stop**, **Close** | Project header | Control the worker. Each running or starting project disables Start. |
-| **Project** menu | Project header | **Settings…**, **Open in VS Code**, **Open in Zed**, **Refresh working files**, **Export…**. With no editor found it shows a disabled `VS Code and Zed not detected`. |
+| **Projects**, **Canvas**, **Dashboard**, **Environments** | Navigator switch, or the view menu while the navigator is hidden | Switch view. Canvas and Dashboard need prototype views. |
+| **New project** | Navigator header, the toolbar and the content while nothing is open, and the view menu | Open the New project form. |
+| **Refresh projects** | Foot of the navigator in Projects, and the view menu | Reread the project list, the environments and the detected editors. |
+| **Open Environments** | Content while nothing is open | Show the Environments view. |
+| **Start…**, **Restart…**, **Apply & Restart…**, **Stop**, **Close** | Toolbar of an open project | Control the worker. Each running or starting project disables Start. |
+| **Project** menu | Toolbar of an open project | **Settings…**, **Open in VS Code**, **Open in Zed**, **Refresh working files**, **Export…**. With no editor found it shows a disabled `VS Code and Zed not detected`. |
+| **Hide navigator**, **Show navigator** | Left end of the status bar | Hide or show the navigator. The choice is remembered. |
 
-The shared board shell shows the board status. For Projects it shows the
+Subspace's status bar shows the board status. For Projects it shows the
 status line, such as `Open a project or create one. Starting a worker is always
-explicit.` or `Project closed; its worker is stopped.` A busy board shows
-`Working…`. The global reload command rereads the Canvas catalog and presets.
+explicit.`, `Running · <project title>` or `Project closed; its worker is stopped.` A
+pending project operation shows `Working…`. The global reload command rereads
+the Canvas catalog and presets.
 
 Tables in a project have their own toolbar, described in
 [Explore table results](#explore-table-results). Table filters are per column
@@ -404,7 +430,7 @@ execution authority independently.
 
 Choose **Stop** to stop the worker. Choose **Close** to stop and close the
 project. The status line then reads `Project closed; its worker is stopped.`
-Switching boards or tabs only pauses UI observation. See
+Switching boards or views only pauses UI observation. See
 [Network and lifecycle](#network-and-lifecycle).
 
 ### Ask Copilot to help
@@ -495,7 +521,7 @@ only and off by default.
 | Setting | Default | Notes |
 | --- | --- | --- |
 | **Enabled** | Off in release builds, on in debug builds | Save applies it without a restart. |
-| **Show prototype views** (Experiments) | Off | Shows the Canvas and Dashboard tabs. Save and restart to apply. Hidden prototypes keep their saved data and tools. |
+| **Show prototype views** (Experiments) | Off | Shows the Canvas and Dashboard views. Save and restart to apply. Hidden prototypes keep their saved data and tools. |
 
 Board Lab has no connection settings, no notifications and no background-update
 controls. Project values are in the Project settings dialog below.
@@ -552,7 +578,7 @@ More checks:
 | `No configured Python, Node or Bun environments` | Open **Environments** and configure or provision one. **Create** is disabled until one exists. |
 | `A project operation is pending. Wait, then try the control or action again.` | A project operation is still running. Wait for `Working…` to end. |
 | Board missing from the switcher | Release builds ship it off. Enable it in **Settings > General > Boards** and save. |
-| Canvas or Dashboard tab missing | Turn on **Show prototype views** under **Settings > Boards > Board Lab**, save and restart. |
+| Canvas or Dashboard view missing | Turn on **Show prototype views** under **Settings > Boards > Board Lab**, save and restart. |
 | Table export did not save | The chosen file already exists, or the save failed. Choose a new filename. |
 | Project export fails | Known configured credentials in source are rejected. Remove them and export again. |
 

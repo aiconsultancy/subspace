@@ -174,7 +174,7 @@ fn show_label(shown: bool) -> &'static str {
 }
 
 /// `text` at most `max` characters, with a mark when it was cut.
-fn clip(text: &str, max: usize) -> String {
+pub(crate) fn clip(text: &str, max: usize) -> String {
     match text.char_indices().nth(max) {
         Some((at, _)) => format!("{}\u{2026}", &text[..at]),
         None => text.to_owned(),

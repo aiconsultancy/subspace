@@ -1,9 +1,10 @@
 # Actions guide
 
-<!-- Evidence: spaces/actions/src (dashboard, toolbar, keys, menus, model, rows,
-panel, dialogs, writes, poll, load, graph), clients/github/src/actions,
-subspace-framework/host/app/src/settings. Live GitHub
-behavior was not tested while this guide was written. -->
+<!-- Evidence: spaces/actions/src (dashboard, view, navigator, toolbar, docks,
+keys, menus, model, rows, lanes, inspector, open, panel, dialogs, writes, poll,
+load, graph),
+clients/github/src/actions, subspace-framework/host/app/src/settings. Live
+GitHub behavior was not tested while this guide was written. -->
 
 ## Overview
 
@@ -48,15 +49,30 @@ and makes no request.
 
 ## Main view
 
-The board has four views. Select a view with the tabs in the toolbar or with
-the keys `1` to `4`. Subspace remembers the last view.
+The Space has the same layout as every Space:
+
+- The **navigator** on the left is titled **Actions**. **Views** lists the
+  four views, and the section under it lists the groups of the list on show.
+  The line at the bottom names the GitHub account, such as
+  `Signed in to GitHub as <account>`.
+- The **pane** in the middle has a tab named after the current view, a second
+  tab for the item you open, the toolbar, and then the list, the Flow graph or
+  the opened item.
+- The **inspector** on the right shows the selected item, with the buttons
+  that change it at the bottom.
+- The **status bar** at the bottom of the window shows the account, the run
+  counts and when Actions last loaded.
+
+The board has four views. Select a view in the navigator or with the keys
+`1` to `4`. Subspace remembers the last view. **Runs** shows the number of
+loaded runs beside its name.
 
 | View | Key | Content |
 | --- | --- | --- |
 | **Runs** | `1` | Workflow runs, grouped by repository. |
 | **Deployments** | `2` | Each environment with its latest deployment, and runs that wait for review. |
 | **Releases** | `3` | Recent releases, and tags that have no release. |
-| **Flow** | `4` | The job graph of the open run. |
+| **Flow** | `4` | The job graph of the selected run. |
 
 ### Runs, Deployments and Releases lists
 
@@ -65,9 +81,14 @@ the keys `1` to `4`. Subspace remembers the last view.
 - In **Runs**, groups are `owner/name · <workflow>` by default, or
   `owner/name · <status>` when grouping is by status. In **Deployments** and
   **Releases**, there is one group per repository.
-- A run row shows the run ID, a status mark, and the title
-  `<workflow> #<number> · <branch> · <actor> · <event> · <age>`. A run that is
-  queued, in progress, waiting, requested or pending also shows a busy mark.
+- A run row shows, in columns that line up across groups: a status mark, the
+  run ID, the title `<workflow> #<number>`, the branch as a chip, the actor
+  and event (`<actor> · <event>`), the status in words and in its colour, and
+  the age. Each kind of status has its own mark, so it reads without colour:
+  a tick for success, a cross for failure, a turning circle for in progress, a
+  clock for queued or waiting, a slashed circle for cancelled and a dashed
+  circle for skipped.
+- Item search also matches a run's branch, actor, workflow, event and status.
 - A **Deployments** row is either an environment
   (`<environment> · <ref> · <latest status>`) or a review request
   (`Review <environment> · <workflow> #<number>`, status waiting).
@@ -80,7 +101,12 @@ the keys `1` to `4`. Subspace remembers the last view.
   queued, pending and requested; muted for all other states.
 - Repositories show **Loading runs…** while their runs arrive. The status line shows
   the same message while Actions is loading.
-- The status line shows `<n> runs · <n> active · <status filter> · <n>s ago`.
+- The status line shows
+  `GitHub · <account> · <n> runs · <n> active · <status filter> · <n>s ago`.
+  It adds `run history truncated` before the age when a repository has more
+  runs than Subspace loads. Before an account is known it shows
+  `GitHub · Checking account…` or `GitHub · Account unavailable` in place of
+  the account.
   The board badge shows the number of pending deployment reviews when that
   number is greater than 0.
 - Click a group header, or select it and press Enter, to fold or unfold the
@@ -88,8 +114,8 @@ the keys `1` to `4`. Subspace remembers the last view.
 
 ### Flow
 
-Flow shows one node per job of the run that is open in **Runs**. It shows
-**No run selected** until you open a run. See [Flow graph](#flow-graph).
+Flow shows one node per job of the run selected in **Runs**. It shows
+**No run selected** until you select a run. See [Flow graph](#flow-graph).
 
 ### Screenshots
 
@@ -98,11 +124,26 @@ and Releases.
 
 ## Toolbar and filters
 
-The **Actions** heading shows the current GitHub account when one is available.
-The toolbar beneath it aligns with the repository headings. The view tabs have
-their own row. **Filters**, **Account**, **Failed job log**
-and the write buttons sit beneath. At narrow widths, the account, log and write
-controls move to the overflow menu as needed.
+The toolbar sits under the pane's tab. **Filters**, the account picker and
+**Failed job log** are on the left, and **Trigger…** is on the right. The
+switches at the two ends of the status bar, at the bottom of the window,
+show or hide the navigator and the inspector, and Subspace remembers both
+choices. In a narrow pane the controls on the left
+wrap onto a second line.
+
+### Navigator
+
+- Choose a row under **Views** to change view. The current view is
+  highlighted.
+- The section under **Views** lists the groups of the list: **Workflows** in
+  **Runs** (**Statuses** when grouping is by status) and **Repositories** in
+  **Deployments** and **Releases**. Each row shows the group's count, and the
+  repository owner is left out unless two owners share a name. Choose a row to
+  unfold that group, select its heading and scroll the list to it. **Flow**
+  has no such section.
+- When the navigator is hidden, a menu named after the current view appears
+  at the start of the toolbar. Use it, or the keys `1` to `4`, to change
+  view.
 
 ### Filters
 
@@ -128,18 +169,23 @@ open the panel and focus that field.
   in Subspace on the loaded runs. They do not change which runs GitHub returns.
   Each repository explains when it has no matching runs. If none match, the
   **Clear filters** button resets the run filters and keeps your grouping.
-- Subspace saves the view, status, branch, workflow, actor, grouping and account
-  as preferences. They are not secrets.
+- Subspace saves the view, status, branch, workflow, actor, grouping and
+  account as preferences, with whether the navigator and the inspector
+  show. They are not secrets.
 
 ### Account and failed job log
 
-- **Account** (or `u`) lists the `gh` logins when the credential comes from the `gh`
-  CLI, or the one login of the token otherwise. Until you choose an account
+- The account picker (or `u`) is named after the current account, or
+  **Account** before one is known. It lists the `gh` logins when the
+  credential comes from the `gh` CLI, or the one login of the token
+  otherwise. Until you choose an account
   on this board, it uses the shared GitHub account saved in Settings. A board
   choice takes priority on later starts. A change discards in-flight
   results for the previous account, and records stay separate for each account.
   The picker does nothing while a confirmation dialog is open.
-- **Failed job log** lists the failed jobs of the open run as `<id> · <name>`.
+- **Failed job log** lists the failed jobs of the selected run as
+  `<id> · <name>`. Choosing one opens the run in its tab and shows the log
+  there.
   See [Read a failed job log](#read-a-failed-job-log).
 
 ### Refresh
@@ -165,39 +211,57 @@ Actions records**. The board does not keep a persistent full-text index.
 
 ## Details
 
-Press Enter on a row, or click it, to open the detail panel. Press Escape to
-close it. The panel title bar has the item kind and ID, previous and next item
-buttons, a **GitHub** link and a close button. Drag the left edge of the panel,
-or focus it and use the Left and Right keys (Shift for larger steps), to change
-its width.
+- One click on a row selects it and shows it in the inspector. A selected run
+  starts a background read of its jobs and its workflow file, as opening a run
+  did before. The selection does not open anything.
+- A double click, Enter or **Open** in the inspector opens the item in a second
+  tab beside the view's tab. Click the view's tab, or choose a view, to go back
+  to the list; the opened tab stays until you close it with its ×. Opening
+  another item replaces it.
+- Click a group header, or select it and press Enter, to fold or unfold it.
 
-### Run details
+### Inspector
 
-Opening a run starts a background read of its jobs. The panel shows
-**Loading jobs…** while it waits. A loaded list stays visible during a refresh.
+The inspector's header names the run (`Run <id>`), or the kind of item, and
+has **Open**, **Open on GitHub** and **Close inspector**. With nothing
+selected it says `Select a run to see it here.`
 
-- Properties: **Event**, **SHA**, **Started**, **Updated**.
-- **Commit**: the commit message.
-- One section for each job, titled `<name> · <status> · <duration>`. The body
-  shows the runner (or **Not assigned**), labels, and each step as
-  `<number>. <name> · <result> · <duration>`. Durations are `<n>s`, `Running`
-  or `Not started`.
-- **Jobs**: `No jobs yet. A queued run may not have started.` when the run has
-  no jobs.
-- **Load failed**: the error text, when a read fails.
-- **Job log**: appears after you load a log. Closing the panel discards it.
+For a run it shows:
 
-### Review request details
+- The status with its mark, in words and colour, then the title. A waiting run
+  adds one line saying what it waits on, such as `Waiting for a reviewer to
+  approve the production environment.`, `Waiting for a runner.` or `Waiting to
+  start.`
+- **Details**: **Repository**, **Branch**, **Actor**, **Event** and
+  **Started**.
+- **Jobs**: one line per job with its status mark, name and result and
+  duration (`success · 134s`), or `Running` or `Not started`. It shows
+  **Loading jobs…** while the jobs load, `No jobs yet. A queued run may not
+  have started.` when there are none, and the error when the read fails.
+- **Environment**, when the run waits for a review: the environment's name and
+  its reviewers, from the pending deployments loaded in **Deployments**.
+- At the bottom: **Approve**, **Reject**, **Re-run**, **Re-run failed** and
+  **Cancel run**. **Approve** is the main action when a review is what the run
+  waits for. See
+  [Change a run or review a deployment](#change-a-run-or-review-a-deployment).
 
-A review request shows the run properties and **Environment**,
-**Allowed reviewer** (`true` or `false`), **Requester**, **Wait timer** in
-minutes and **Wait timer started**.
+An environment or a release shows its status, title and properties: an
+environment's **Environment**, **Ref**, **Protected branches** (or `No branch
+policy`) and **Updated**; a release's **Tag**, **Published** and **Author**.
 
-### Environment and release details
+The switch at the right end of the status bar hides the inspector and
+shows it again. The selection stays, so **Flow**, the keys and Commands keep working.
 
-- An environment shows **Environment**, **Ref**, **Protected branches** (or
-  `No branch policy`) and **Updated**, with a link to the environment.
-- A release shows **Tag**, **Published**, **Author** and **Release notes**.
+### An opened run
+
+A run's tab shows everything opening a run showed before, at reading width:
+the status and title, **Details** (repository, workflow, branch, actor,
+attempt, event, SHA, started and updated), **Commit** with the commit message,
+**Jobs** with each job's result, duration, runner, labels and steps
+(`<number>. <name> · <result> · <duration>`), and **Job log** once you load a
+log. A review request's tab adds **Environment**, **Allowed reviewer**,
+**Requester**, **Wait timer** and **Wait timer started**; a release's adds its
+**Release notes**.
 
 ### Flow graph
 
@@ -211,9 +275,10 @@ variants. Each node shows the job name, a status mark with its state and
 duration, and the runner, labels and steps.
 
 - Click a node, or move with the arrow keys, to select a job. Enter selects the
-  focused job again. The job panel shows kind **Job**, its ID and name, the
-  status, duration, runner, labels and steps. Its close button closes only that
-  panel.
+  focused job again. The inspector then shows the job: its name, result and
+  duration, and its runner, labels and steps. **Close job** returns it to the
+  run. It ends with the buttons that change the run, when that run is still
+  the one selected in **Runs**.
 - Drag the background to pan. Drag a node to move it. Use the mouse wheel or a
   pinch gesture to zoom. Zoom ranges from 0.01 to 2.5.
 - The toolbar above the graph has **Zoom in**, **Zoom out**, **Fit** and
@@ -232,34 +297,41 @@ duration, and the runner, labels and steps.
 ### Open or copy a link
 
 Press `o` to open the selected record in GitHub. Press `y` to copy its link.
-Right-click a row for **Add to chat**, **Open details**, **Open in GitHub**,
-**Copy link**, **Copy title** and **Copy id**. Release and review rows without a
+Right-click a row for **Open**, **Open in GitHub**, **Copy link**, **Copy
+title**, **Copy id** and **Add to chat**. Release and review rows without a
 link omit the link entries.
 
 ### Read a failed job log
 
-1. Open a run in **Runs**.
+1. Select a run in **Runs**.
 2. Open the **Failed job log** picker and choose a job.
 
-Subspace reads the log on request only, and shows it in the **Job log** section.
-The log is limited to 1 MB. A longer log ends with
-`[Subspace truncated this log at 1 MB.]`. Closing the detail panel discards the
+Subspace opens the run in its tab, reads the log on request only, and shows it
+in the **Job log** section. The log is limited to 1 MB. A longer log ends with
+`[Subspace truncated this log at 1 MB.]`. Closing the run's tab discards the
 log.
 
 ### Change a run or review a deployment
 
-Select a run or a review request, then choose one of these buttons or keys. A
-button is disabled, with a reason in its tooltip, when the action does not
-apply.
+Select a run or a review request, then choose one of these buttons, keys or
+commands. A button is disabled, with a reason in its tooltip, when the action
+does not apply.
 
-| Button | Key | Applies when |
-| --- | --- | --- |
-| **Trigger** | `d` | A run is selected. The run's workflow is dispatched. |
-| **Re-run** | `R` (`Shift+R`) | The run has an attempt. |
-| **Re-run failed** | none | The run has an attempt. |
-| **Cancel run** | `x` | The run is active. |
-| **Approve** | `A` (`Shift+A`) | The selected item is a review request, and your account can review it. |
-| **Reject** | none | The same conditions as **Approve**. |
+- **Trigger…** is in the toolbar, because it starts a new run.
+- The other buttons act on the selected item, so they are at the bottom of the
+  inspector. Select the run or the review request to see them. An
+  environment, a release or a notice has no run, so it has none.
+- Commands lists each action that applies to the selected item, with its
+  key. Use Commands or a key when the inspector is hidden.
+
+| Button | Key | Command | Applies when |
+| --- | --- | --- | --- |
+| **Trigger…** | `d` | **Trigger…** | A run is selected. The run's workflow is dispatched. |
+| **Re-run** | `R` (`Shift+R`) | **Re-run…** | The run has an attempt. |
+| **Re-run failed** | none | **Re-run failed…** | The run has an attempt. |
+| **Cancel run** | `x` | **Cancel run…** | The run is active. |
+| **Approve** | `A` (`Shift+A`) | **Approve…** | The selected item is a review request, and your account can review it. |
+| **Reject** | none | **Reject…** | The same conditions as **Approve**. |
 
 Disabled reasons: **Select a run or pending deployment first**, **This item has
 no workflow run**, **A completed run cannot be cancelled**, **The run has no
@@ -268,7 +340,7 @@ attempt to re-run** and **This account cannot review this environment**.
 Every action opens a `Confirm <action>` dialog that shows the repository and
 the target. No request is sent before you choose **Confirm**.
 
-1. Choose the button or press the key.
+1. Choose the button or the command, or press the key.
 2. Complete the fields of the dialog, if any.
 3. Choose **Confirm**. The button changes to **Applying…**. Choose **Back**, or
    press Escape, to close the dialog without a request. Back and Escape do
@@ -312,8 +384,8 @@ letters are ordinary text in an input.
 | --- | --- |
 | `j` or Down, `k` or Up | Next or previous row. |
 | Home, End | First or last row. |
-| Enter | Open details, or fold or unfold a group. |
-| Escape | Close details, a menu or a dialog. |
+| Enter | Open the selected item in a tab, or fold or unfold a group. |
+| Escape | Close a menu or a dialog. |
 | `1` `2` `3` `4` | Runs, Deployments, Releases, Flow. |
 | `s` `b` `g` `u` | Open the Status, Branch, Grouping or Account picker. |
 | `d` `R` `x` `A` | Trigger, Re-run, Cancel run, Approve, each with confirmation. |
@@ -350,7 +422,7 @@ switch.
 ### Polling
 
 - Polling runs only while the Actions board is visible, and reads only the runs
-  that are still active, the jobs of the open run and the pending reviews.
+  that are still active, the jobs of the selected run and the pending reviews.
   It does not re-read completed runs, environments, releases or tags.
 - The delay is the longer of the **Update interval** (30 seconds for
   **Default**) and the error back-off. After an error the back-off doubles from
@@ -369,6 +441,8 @@ switch.
 | **Dependencies unavailable** in Flow | Read the reason in the banner. The workflow file may be unreadable, over 1 MB, ambiguous or too large. |
 | **Definition unreadable** or **Definition unavailable** in Trigger | Enter flat JSON string values. Subspace cannot check them. |
 | A write button is disabled. | Read its tooltip. Select a run or review request, or use an account that can review the environment. |
+| The write buttons are missing. | Select a run or a review request: the buttons are at the bottom of the inspector. If the inspector is hidden, choose the switch at the right end of the status bar, or use Commands. |
+| The navigator or the inspector is missing. | Choose the switch at the left or the right end of the status bar. |
 | A write fails. | The dialog stays open with the GitHub error. Check Actions write, deployment write and reviewer permissions. |
 | Data does not change. | Press `r` to refresh all repositories now. Check **Background updates** and the global automatic refresh switch. |
 
