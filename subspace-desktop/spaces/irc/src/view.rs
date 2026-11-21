@@ -1,14 +1,14 @@
-//! The board's view: the dock (buffer list, conversations, member list),
-//! rows from the state, and keeping the hub told which buffer is read.
+//! The board's view: the workspace (buffer list, conversations, member
+//! list), rows from the state, and keeping the hub told which buffer is read.
 
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
-use gpui_kit::component::{Icon, Sizable as _};
+use gpui_kit::component::{Icon, Sizable as _, h_flex};
 use gpui_kit::{
-    AnyElement, App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Styled as _, TestSupportExt as _, Window, div,
+    AnyElement, App, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, Styled as _, TestSupportExt as _, WeakEntity, Window, div,
 };
 use subspace_client_irc::{BufferKey, Target};
 use subspace_framework::dashboard::panel::IconName;
+use subspace_framework::dashboard::row_menu::{MenuCommand, MenuGroup};
 use subspace_framework::dashboard::{
     Detail, Group, ListDashboard, ListState, Row, RowMenu, Tokens, list,
 };
@@ -16,6 +16,7 @@ use subspace_framework::dashboard::{
 use crate::dock::{self, IrcDock, Where};
 use crate::{Irc, hub, listing, remove, rows, setup, transcript};
 
+mod conversations;
 mod details;
 mod empty;
 mod frame;
@@ -23,7 +24,8 @@ mod hosting;
 
 use details::{kind, kind_icon};
 
-pub(crate) use details::server_summary;
+pub(crate) use details::{server_summary, status_line};
+pub(crate) use frame::{space_docks, toggle_space_dock};
 pub(crate) use hosting::{Hosted, open_channel};
 /// Fewer lines than this on open asks the server for recent history.
 const HISTORY_ON_OPEN: usize = 50;
@@ -55,6 +57,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         reveal: None,
         search: std::rc::Rc::new(subspace_framework::dashboard::ItemSearch::new([])),
         available_height: subspace_framework::dashboard::measure::unmeasured(cx),
+        text_edge: subspace_framework::dashboard::workspace::text_edge(&Tokens::current(cx)),
         _subscriptions: subscriptions,
     };
     bind_hub(&mut board, cx);
@@ -199,13 +202,10 @@ impl ListDashboard for Irc {
         &mut self.list
     }
 
-    /// Rows have no details panel; the conversation shows in the dock.
+    /// Rows have no details panel; the conversation shows in the pane.
     fn detail(&self, key: &str) -> Option<Detail> {
         let buffer = self.buffers.get(key)?;
-        let title: SharedString = match buffer.target {
-            Target::Server => self.network_name(&buffer.network).into(),
-            _ => rows::title(buffer).to_owned().into(),
-        };
+        let title = self.buffer_name(buffer);
         Some(Detail {
             kind: kind(&buffer.target).into(),
             id: title.clone(),
@@ -230,6 +230,31 @@ impl ListDashboard for Irc {
                         .xsmall()
                         .text_color(tokens.muted),
                 )
+                .into_any_element(),
+        )
+    }
+
+    /// Networks and their buffers start on the workspace's one text edge,
+    /// as navigator rows do.
+    fn list_side_inset(&self) -> Option<gpui_kit::Pixels> {
+        Some(self.text_edge)
+    }
+
+    /// An unread count or a channel's user count, as a navigator row's
+    /// quiet count: small, at the trailing edge.
+    fn row_trailing(&self, row: &Row, cx: &App) -> Option<AnyElement> {
+        let tokens = Tokens::current(cx);
+        Some(
+            h_flex()
+                .flex_shrink_0()
+                .gap_1()
+                .children(row.trailing.iter().map(|glyph| {
+                    div()
+                        .flex_shrink_0()
+                        .text_size(tokens.caption_size())
+                        .text_color(tokens.glyph(glyph))
+                        .child(glyph.text.clone())
+                }))
                 .into_any_element(),
         )
     }
@@ -284,46 +309,41 @@ impl ListDashboard for Irc {
         true
     }
 
-    /// Opening beside or below, then leaving a channel or closing a private
-    /// conversation. The server row offers no removal.
-    fn extend_row_menu(&self, menu: PopupMenu, cx: &App) -> PopupMenu {
-        if let Some(item) = listing::menu_item(self, cx) {
-            return menu.separator().item(item);
+    /// Joining a listed channel or refreshing a network's list; for a
+    /// buffer, opening beside or below, then leaving a channel or closing a
+    /// private conversation. The server row offers no removal.
+    fn row_commands(board: &Entity<Self>, cx: &App) -> Vec<MenuCommand> {
+        let this = board.read(cx);
+        if let Some(command) = listing::menu_command(this, cx) {
+            return vec![command];
         }
-        let Some(buffer) = self.selected_buffer().cloned() else {
-            return menu;
+        let Some(buffer) = this.selected_buffer().cloned() else {
+            return Vec::new();
         };
-        let menu = [
-            ("Open to the right", IconName::PanelRight, Where::Right),
-            ("Open below", IconName::PanelBottom, Where::Below),
-        ]
-        .into_iter()
-        .fold(menu.separator(), |menu, (label, icon, place)| {
-            let (owner, buffer) = (self.me.clone(), buffer.clone());
-            menu.item(
-                PopupMenuItem::new(label)
-                    .icon(icon)
-                    .on_click(move |_, _, cx| {
-                        let buffer = buffer.clone();
-                        _ = owner.update(cx, |board, cx| dock::request(board, buffer, place, cx));
-                    }),
-            )
-        });
-        let Some(state) = self.hub.as_ref().map(|hub| &hub.read(cx).state) else {
-            return menu;
-        };
-        let Some(removal) = remove::Removal::now(state, &buffer) else {
-            return menu;
-        };
-        let available = remove::available(state, &buffer);
-        menu.separator().item(remove::item(
-            self.me.clone(),
-            removal,
-            available.then_some(buffer),
-        ))
+        let mut commands = open_beside(&this.me, &buffer);
+        let state = this.hub.as_ref().map(|hub| &hub.read(cx).state);
+        commands.extend(state.and_then(|state| remove::command(this.me.clone(), state, &buffer)));
+        commands
     }
 
     fn can_navigate(&self, _cx: &App) -> bool {
         self.join.is_none() && self.initiative_menu.host().is_none()
     }
+}
+
+/// Open to the right and Open below, in the Open group.
+fn open_beside(owner: &WeakEntity<Irc>, buffer: &BufferKey) -> Vec<MenuCommand> {
+    [
+        ("Open to the right", IconName::PanelRight, Where::Right),
+        ("Open below", IconName::PanelBottom, Where::Below),
+    ]
+    .into_iter()
+    .map(|(label, icon, place)| {
+        let (owner, buffer) = (owner.clone(), buffer.clone());
+        MenuCommand::new(MenuGroup::Open, label, icon, move |_, cx| {
+            let buffer = buffer.clone();
+            _ = owner.update(cx, |board, cx| dock::request(board, buffer, place, cx));
+        })
+    })
+    .collect()
 }

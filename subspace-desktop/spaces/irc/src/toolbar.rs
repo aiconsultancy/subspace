@@ -1,16 +1,19 @@
-//! Board toolbar: connect or disconnect the selected network, join a
-//! channel, show members, and leave or close the selected buffer.
+//! The actions of the pane's toolbar: connect or disconnect the selected
+//! network, join a channel, and leave or close the selected buffer. The
+//! navigator's header repeats Join. The workspace's own switch shows and
+//! hides the members.
 
 use gpui_kit::component::{Disableable as _, menu::PopupMenuItem};
 use gpui_kit::{App, Context, Entity, IntoElement as _, Window};
 use subspace_client_irc::{BufferKey, Command, ConnectionStatus, NetworkId};
-use subspace_framework::dashboard::action::{Intent, action_button, toolbar_button};
+use subspace_framework::dashboard::action::{Intent, action_button, icon_button};
 use subspace_framework::dashboard::anchored;
+use subspace_framework::dashboard::icon_button::IconButton;
 use subspace_framework::dashboard::overflow_toolbar::{OverflowToolbar, OverflowUnit, PopupEntry};
 use subspace_framework::dashboard::panel::IconName;
 
 use crate::remove::{self, Removal};
-use crate::{Irc, dock, join};
+use crate::{Irc, join};
 
 const UNMEASURED_WIDTH: f32 = 0.;
 
@@ -40,7 +43,6 @@ pub(crate) fn render(board: &mut Irc, cx: &mut Context<Irc>) -> Option<Entity<Ov
     let units = vec![
         connection(board, network, status.is_some_and(is_online)),
         join(board, join_unavailable(status)),
-        members(board, cx),
         more(board, cx),
     ];
     Some(OverflowToolbar::sync(&mut board.toolbar, units, cx))
@@ -51,7 +53,6 @@ struct Control {
     label: &'static str,
     icon: IconName,
     unavailable: Option<&'static str>,
-    active: Option<bool>,
 }
 
 impl Control {
@@ -61,7 +62,6 @@ impl Control {
             label,
             icon,
             unavailable,
-            active,
         } = self;
         let run_popup = run.clone();
         let popup = PopupEntry::new(move || {
@@ -71,22 +71,15 @@ impl Control {
             PopupMenuItem::new(title)
                 .icon(icon)
                 .disabled(unavailable.is_some())
-                .checked(active.unwrap_or(false))
                 .on_click(move |_, window, cx| run(window, cx))
         });
         // A changed icon needs a different projection key. The button ID is stable.
         OverflowUnit::inline(
             label,
             UNMEASURED_WIDTH,
-            move |_, cx| {
+            move |_, _| {
                 let run = run.clone();
-                let button = match active {
-                    Some(active) => {
-                        toolbar_button(id, icon, label, (Intent::Neutral, true), cx).latched(active)
-                    }
-                    None => action_button(id, Intent::Neutral, Some(icon), label),
-                };
-                button
+                action_button(id, Intent::Neutral, Some(icon), label)
                     .disabled(unavailable.is_some())
                     .tooltip(unavailable.unwrap_or(label))
                     .on_click(move |_, window, cx| run(window, cx))
@@ -108,7 +101,6 @@ fn connection(board: &Irc, network: Option<NetworkId>, online: bool) -> Overflow
         label,
         icon,
         unavailable: network.is_none().then_some("Select a network"),
-        active: None,
     }
     .unit(move |_, cx| {
         let Some(network) = network.clone() else {
@@ -142,25 +134,26 @@ fn join(board: &Irc, unavailable: Option<&'static str>) -> OverflowUnit {
         label: "Join…",
         icon: IconName::Hash,
         unavailable,
-        active: None,
     }
     .unit(move |window, cx| {
         _ = owner.update(cx, |board, cx| join::open(board, window, cx));
     })
 }
 
-fn members(board: &Irc, cx: &App) -> OverflowUnit {
-    let owner = board.me.clone();
-    Control {
-        id: "irc-members-toggle",
-        label: "Members",
-        icon: IconName::Users,
-        unavailable: None,
-        active: Some(board.dock.members_open(cx)),
-    }
-    .unit(move |window, cx| {
-        _ = owner.update(cx, |board, cx| dock::toggle_members(board, window, cx));
-    })
+/// The navigator header's Join: the same dialog behind a glyph, unavailable
+/// for the same reasons as **Join…**.
+pub(crate) fn navigator_join(board: &Irc, cx: &mut Context<Irc>) -> IconButton {
+    const LABEL: &str = "Join a channel";
+    let network = board.selected_network(cx);
+    let unavailable = board.hub.as_ref().and_then(|hub| {
+        let state = &hub.read(cx).state;
+        let known = network.as_ref().and_then(|id| state.network(id));
+        join_unavailable(known.map(|known| &known.status))
+    });
+    icon_button("irc-navigator-join", Intent::Quiet, IconName::Plus, LABEL)
+        .disabled(unavailable.is_some())
+        .tooltip(unavailable.unwrap_or(LABEL))
+        .on_click(cx.listener(|board, _, window, cx| join::open(board, window, cx)))
 }
 
 /// Project the removal choices directly into the overflow menu.

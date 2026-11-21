@@ -1,6 +1,6 @@
-//! The dock's layout saved after every change and restored once the hub is
-//! bound: the centre's splits and tab groups read as buffers, and the side
-//! docks' widths and visibility.
+//! The layout saved after every change and restored once the hub is bound:
+//! the centre's splits and tab groups read as buffers, and whether the
+//! workspace's navigator and inspector show.
 
 use std::collections::HashMap;
 
@@ -11,7 +11,7 @@ use gpui_kit::{App, Axis as GpuiAxis, Context, Window, px};
 use subspace_client_irc::{BufferKey, NetworkId};
 use subspace_framework::dashboard::prefs;
 
-use super::layout::{self, Axis, KEY, Layout, Pane, Side};
+use super::layout::{self, Axis, KEY, Layout, Pane};
 use super::open::{self, Where};
 use crate::{Irc, view};
 
@@ -23,6 +23,15 @@ pub(super) fn layout_changed(board: &mut Irc, _: &mut Window, cx: &mut Context<I
         return;
     }
     save(board, cx);
+    cx.notify();
+}
+
+/// Keeps the choice after a switch showed or hid the navigator or the
+/// inspector, and redraws the workspace.
+pub(super) fn docks_changed(board: &mut Irc, cx: &mut Context<Irc>) {
+    if board.dock.restored {
+        save(board, cx);
+    }
     cx.notify();
 }
 
@@ -46,21 +55,10 @@ fn keep_local_centre(board: &Irc, cx: &App) -> bool {
             .is_some_and(|hub| hub.read(cx).initiatives.selected_for_runtime())
 }
 
-/// The layout the area shows, in buffer terms.
-fn read(area: &DockArea, ids: &HashMap<PanelId, BufferKey>) -> Layout {
-    let side = |placement| Side {
-        width: area
-            .dock_size(placement)
-            .map_or(layout::DOCK_WIDTH, f32::from),
-        open: area.is_dock_open(placement),
-    };
-    Layout {
-        center: area
-            .layout(DockPlacement::Center)
-            .and_then(|tree| pane(tree.root(), ids)),
-        buffers: side(DockPlacement::Left),
-        members: side(DockPlacement::Right),
-    }
+/// The centre the area shows, in buffer terms.
+fn read(area: &DockArea, ids: &HashMap<PanelId, BufferKey>) -> Option<Pane> {
+    area.layout(DockPlacement::Center)
+        .and_then(|tree| pane(tree.root(), ids))
 }
 
 /// One container in buffer terms; `None` when it holds no conversation.
@@ -103,9 +101,9 @@ fn pane(node: &PaneNode, ids: &HashMap<PanelId, BufferKey>) -> Option<Pane> {
     }
 }
 
-/// Applies the stored layout: side docks, then the centre's conversations
-/// on networks that are still configured and not removed from the list.
-/// Without one, the first network's server buffer opens.
+/// Applies the stored layout: which side docks show, then the centre's
+/// conversations on networks that are still configured and not removed from
+/// the list. Without one, the first network's server buffer opens.
 pub(super) fn restore(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc>) {
     let networks: Vec<NetworkId> = board
         .networks
@@ -126,7 +124,9 @@ pub(super) fn restore(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc
                 .as_ref()
                 .is_none_or(|hub| !hub.read(cx).state.joins.retired(buffer))
     });
-    install_docks(board, &layout, window, cx);
+    board.dock.buffers = layout.buffers;
+    board.dock.members = layout.members;
+    cx.notify();
     let center = layout
         .center
         .as_ref()
@@ -149,23 +149,6 @@ pub(super) fn restore(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc
             None => open::show_placeholder(board, window, cx),
         },
     }
-}
-
-fn install_docks(board: &mut Irc, layout: &Layout, window: &mut Window, cx: &mut Context<Irc>) {
-    let buffers = DockLayout::tabs().panel_view(panel_handle(board.dock.buffers.clone()), cx);
-    let members = DockLayout::tabs().panel_view(panel_handle(board.dock.members.clone()), cx);
-    board.dock.area.update(cx, |area, cx| {
-        for (placement, panel, side) in [
-            (DockPlacement::Left, buffers, layout.buffers),
-            (DockPlacement::Right, members, layout.members),
-        ] {
-            area.set_dock(placement, panel, window, cx);
-            area.set_dock_size(placement, px(side.width), window, cx);
-            if area.is_dock_open(placement) != side.open {
-                area.toggle_dock(placement, window, cx);
-            }
-        }
-    });
 }
 
 /// The dock layout of `pane`, creating its conversations.
@@ -213,5 +196,9 @@ pub(super) fn current(board: &Irc, cx: &gpui_kit::App) -> Layout {
         .iter()
         .map(|(buffer, hosted)| (PanelId::from(hosted.entity.entity_id()), buffer.clone()))
         .collect();
-    read(board.dock.area.read(cx), &ids)
+    Layout {
+        center: read(board.dock.area.read(cx), &ids),
+        buffers: board.dock.buffers,
+        members: board.dock.members,
+    }
 }

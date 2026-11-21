@@ -1,6 +1,6 @@
-//! The board's dock layout in buffer terms, as stored in the state file:
-//! which conversations are open, in which tab groups and splits, and the
-//! buffer list and member list docks' widths and visibility. Pure, so
+//! The board's layout in buffer terms, as stored in the state file: which
+//! conversations are open, in which tab groups and splits, and whether the
+//! navigator's buffer list and the inspector's member list show. Pure, so
 //! saving, restoring and dropping stale conversations are tested without
 //! GPUI.
 
@@ -9,8 +9,6 @@ use subspace_client_irc::BufferKey;
 
 /// The state-file key of the layout.
 pub(crate) const KEY: &str = "irc.dock-layout";
-/// A dock that has never been resized.
-pub(crate) const DOCK_WIDTH: f32 = 240.;
 
 /// How a split arranges its children.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,19 +35,16 @@ pub(crate) enum Pane {
     },
 }
 
-/// A side dock: its width and whether it is open.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// A side dock of the workspace: whether it shows. The workspace keeps the
+/// docks' widths; a layout stored with widths still reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Side {
-    pub width: f32,
     pub open: bool,
 }
 
 impl Default for Side {
     fn default() -> Self {
-        Self {
-            width: DOCK_WIDTH,
-            open: true,
-        }
+        Self { open: true }
     }
 }
 
@@ -208,14 +203,8 @@ mod tests {
                     ),
                 ],
             }),
-            buffers: Side {
-                width: 180.,
-                open: true,
-            },
-            members: Side {
-                width: 220.,
-                open: false,
-            },
+            buffers: Side { open: true },
+            members: Side { open: false },
         }
     }
 
@@ -242,6 +231,27 @@ mod tests {
     }
 
     #[test]
+    fn side_docks_show_by_default_and_a_layout_stored_with_widths_still_reads() {
+        let unset = Layout::default();
+        assert!(unset.buffers.open && unset.members.open);
+        assert_eq!(decode(Some(r#"{"center":null}"#)), Some(unset));
+        let stored = serde_json::json!({
+            "center": null,
+            "buffers": {"width": 180.0, "open": true},
+            "members": {"width": 220.0, "open": false},
+        })
+        .to_string();
+        assert_eq!(
+            decode(Some(&stored)),
+            Some(Layout {
+                center: None,
+                buffers: Side { open: true },
+                members: Side { open: false },
+            })
+        );
+    }
+
+    #[test]
     fn conversations_on_removed_networks_are_dropped_with_their_empty_groups() {
         let mut layout = layout();
         layout.prune(&local);
@@ -257,7 +267,10 @@ mod tests {
             },
             "the active tab stays active"
         );
-        assert_eq!(layout.members.width, 220., "docks keep their size");
+        assert!(
+            layout.buffers.open && !layout.members.open,
+            "the side docks keep their visibility"
+        );
 
         layout.prune(&|buffer| matches!(buffer.target, Target::Query(_)));
         assert_eq!(

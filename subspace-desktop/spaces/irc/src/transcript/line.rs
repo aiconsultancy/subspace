@@ -7,14 +7,15 @@
 use std::{rc::Rc, sync::Arc};
 
 use chrono::{Local, NaiveDate};
-use gpui_kit::component::h_flex;
 use gpui_kit::component::message::{MessageAlignment, MessageContent};
+use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AnyView, App, FontWeight, InteractiveElement as _, IntoElement as _,
     ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
     TestSupportExt as _, WeakEntity, Window, div, px,
 };
+use subspace_framework::dashboard::workspace::READING_WIDTH_PX;
 use subspace_framework::dashboard::{Tokens, Tone, avatar, chat_bubble};
 
 mod marks;
@@ -31,6 +32,9 @@ use crate::{lines, style, text};
 
 /// The time format of every row, matching the rest of the app.
 const TIME_FORMAT: &str = "%H:%M";
+/// The monospace time's size before density scaling: small enough that
+/// `00:00` fits the avatar-wide gutter.
+const TIME_SIZE_PX: f32 = 10.5;
 
 /// Opens a reference clicked in rich text; rich text needs a thread-safe
 /// handler.
@@ -74,14 +78,31 @@ fn gutter() -> gpui_kit::Div {
     div().flex_shrink_0().w(px(avatar::SENDER_SIZE_PX))
 }
 
+/// A row's time in quiet monospace, so times line up as a column.
+fn time_text(entry: &Entry, tokens: &Tokens, cx: &App) -> gpui_kit::Div {
+    div()
+        .flex_shrink_0()
+        .whitespace_nowrap()
+        .font_family(cx.theme().mono_font_family.clone())
+        .text_size(tokens.mono_size(TIME_SIZE_PX))
+        .text_color(tokens.muted)
+        .child(time(entry))
+}
+
 /// The time in the gutter: always shown on compact lines, only on hover
 /// for a message that continues its sender's group.
-fn gutter_time(entry: &Entry, hover_group: Option<&SharedString>, tokens: &Tokens) -> AnyElement {
+fn gutter_time(
+    entry: &Entry,
+    hover_group: Option<&SharedString>,
+    tokens: &Tokens,
+    cx: &App,
+) -> AnyElement {
     gutter()
         .flex()
         .justify_end()
         .whitespace_nowrap()
-        .text_size(tokens.caption_size())
+        .font_family(cx.theme().mono_font_family.clone())
+        .text_size(tokens.mono_size(TIME_SIZE_PX))
         .text_color(tokens.muted)
         .when_some(hover_group, |time, group| {
             time.invisible()
@@ -91,8 +112,9 @@ fn gutter_time(entry: &Entry, hover_group: Option<&SharedString>, tokens: &Token
         .into_any_element()
 }
 
-/// The sender's name in their tone, a notice mark, and the time.
-fn header(entry: &Entry, nick: &str, tokens: &Tokens) -> AnyElement {
+/// The sender's name in strong text in their tone, a notice mark, and the
+/// time in quiet monospace.
+fn header(entry: &Entry, nick: &str, tokens: &Tokens, cx: &App) -> AnyElement {
     let notice = entry.line.kind == subspace_client_irc::LineKind::Notice;
     h_flex()
         .id(SharedString::from(format!("irc-line:{}:sender", entry.seq)))
@@ -106,7 +128,7 @@ fn header(entry: &Entry, nick: &str, tokens: &Tokens) -> AnyElement {
                 .text_ellipsis()
                 .whitespace_nowrap()
                 .text_size(tokens.row_font)
-                .font_weight(FontWeight::BOLD)
+                .font_weight(FontWeight::SEMIBOLD)
                 .text_color(tokens.tone(style::sender_tone(nick, entry.line.own)))
                 .child(nick.to_owned()),
         )
@@ -118,13 +140,7 @@ fn header(entry: &Entry, nick: &str, tokens: &Tokens) -> AnyElement {
                     .child("Notice"),
             )
         })
-        .child(
-            div()
-                .flex_shrink_0()
-                .text_size(tokens.caption_size())
-                .text_color(tokens.muted)
-                .child(time(entry)),
-        )
+        .child(time_text(entry, tokens, cx))
         .into_any_element()
 }
 
@@ -155,8 +171,11 @@ fn body(
         )),
         cx,
     );
+    // Message text keeps a readable line length in a wide pane; the row's
+    // fill still runs the pane's width.
     div()
         .w_full()
+        .max_w(px(READING_WIDTH_PX))
         .min_w_0()
         .text_size(tokens.row_font)
         .text_color(tokens.tone(view.base))
@@ -170,10 +189,11 @@ fn message_gutter(
     nick: &str,
     continues: bool,
     group: &SharedString,
-    tokens: &Tokens,
+    cx: &App,
 ) -> AnyElement {
+    let tokens = &Tokens::current(cx);
     if continues {
-        gutter_time(entry, Some(group), tokens)
+        gutter_time(entry, Some(group), tokens, cx)
     } else {
         avatar::sender(nick.to_owned(), tokens)
             .flex_shrink_0()
@@ -187,7 +207,7 @@ fn compact(
     first: &Entry,
     spoken: String,
     content: AnyElement,
-    (tokens, fill): (&Tokens, RowFill),
+    (tokens, fill, cx): (&Tokens, RowFill, &App),
 ) -> AnyElement {
     let row = h_flex()
         .id(SharedString::from(format!("{id}:row")))
@@ -201,10 +221,11 @@ fn compact(
         .px_2()
         .py_0p5()
         .rounded(tokens.control_radius)
-        .child(gutter_time(first, None, tokens))
+        .child(gutter_time(first, None, tokens, cx))
         .child(
             div()
                 .flex_1()
+                .max_w(px(READING_WIDTH_PX))
                 .min_w_0()
                 .text_size(tokens.secondary_size())
                 .child(content),
@@ -238,7 +259,7 @@ pub(super) fn line(entry: &Entry, unread: bool, tokens: &Tokens, cx: &App) -> An
         entry,
         spoken,
         text,
-        (tokens, RowFill::of(entry.highlight, unread, tokens)),
+        (tokens, RowFill::of(entry.highlight, unread, tokens), cx),
     )
 }
 
@@ -265,6 +286,6 @@ pub(super) fn membership(run: &[&Entry], tokens: &Tokens, cx: &App) -> AnyElemen
         first,
         summary,
         text,
-        (tokens, RowFill::of(false, false, tokens)),
+        (tokens, RowFill::of(false, false, tokens), cx),
     )
 }

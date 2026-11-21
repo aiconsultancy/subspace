@@ -1,5 +1,5 @@
 //! A conversation's transcript: its rows in Kit's `MessageScroller` (the
-//! older-history control, day pills, messages grouped by sender, compact
+//! older-history control, day dividers, messages grouped by sender, compact
 //! server lines and membership runs) and the typing line. Hosted by
 //! [`crate::conversation::Conversation`].
 
@@ -162,7 +162,7 @@ pub(crate) fn row(
     (element, Vec::new())
 }
 
-/// `Today`, `Yesterday` or the date, in a pill centred on a rule.
+/// `Today`, `Yesterday` or the date, as quiet text between two hairlines.
 fn day_separator(date: NaiveDate, today: NaiveDate, tokens: &Tokens) -> AnyElement {
     let label = lines::day_label(date, today);
     let rule = || div().flex_1().h(px(RULE_PX)).bg(tokens.line);
@@ -172,22 +172,13 @@ fn day_separator(date: NaiveDate, today: NaiveDate, tokens: &Tokens) -> AnyEleme
         .aria_label(label.clone())
         .test_support()
         .w_full()
+        .gap_3()
+        .px_2()
         .py_2()
         .text_size(tokens.caption_size())
         .text_color(tokens.muted)
         .child(rule())
-        .child(
-            div()
-                .flex_shrink_0()
-                .px_3()
-                .py_0p5()
-                .rounded_full()
-                .border_1()
-                .border_color(tokens.line)
-                .bg(tokens.surface)
-                .font_weight(FontWeight::MEDIUM)
-                .child(label),
-        )
+        .child(div().flex_shrink_0().child(label))
         .child(rule())
         .into_any_element()
 }
