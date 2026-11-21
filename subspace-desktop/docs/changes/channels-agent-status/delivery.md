@@ -185,3 +185,41 @@ Run on 21 November 2026 on macOS (arm64), Rust 1.99.0 through mise.
       only); the Linux capture path.
 - [ ] Both model reviews (GPT-6.2 Sol and Claude Opus 5.5, high effort):
       not yet run; required before merging.
+
+## Review findings
+
+Both required reviews, Claude Opus 5.5 and GPT-6.2 Sol at high effort, read
+`70cff6a` through the repository's review helper and cleared it, with no P0
+or P1 findings. Their P2 and P3 findings, and what was done:
+
+- **Fixed:** every `MemberLeft` and `MemberChanged` scanned every member list
+  of the network, even for a nick without a status (Opus, low).
+  `status_if_gone` now returns at once unless the nick holds a status.
+- **Fixed:** the fixture opened its config path following symbolic links,
+  before it knew the server was there (Sol, medium). It now refuses a
+  symbolic link (`O_NOFOLLOW`) and writes the config only after the server
+  has answered.
+- **Fixed:** the fixture accepted `--typing-every 0`, which sends typing
+  notices as fast as it can (Sol, low). It now requires a positive, finite
+  number of seconds.
+- **Left open, for the owner to decide:** the line above the composer shows
+  the status text without the publisher's nick, so a member could publish
+  text that reads as if another nick said it (Sol, medium). The owner's
+  decision was to show what the gateway sends; the gateway's lines name the
+  agent already ("Galactica is thinking…"). The nick is in the line's
+  accessible name and beside the status in the members inspector. Adding a
+  visible label would change the agreed design.
+- **Left open, for the owner to decide:** the line truncates from the end,
+  where the typing text sits, so in a narrow pane several statuses can push
+  "alice is typing…" out of sight, though not out of the tooltip (Sol,
+  medium). Statuses lead by design; a separate, never-cut typing segment is
+  a follow-up if it matters in practice.
+- **Left open:** nicks compare ignoring ASCII case, not by the server's
+  `CASEMAPPING`, so on an `rfc1459` network `[bot]` and `{bot}` do not match
+  (Sol, medium). The Space has no case mapping (the member list's own
+  `you` note compares the same way), and the runtime reports one spelling
+  per nick; Opus judged it an edge case.
+- **Left open:** status lookups are linear in the held statuses (Sol,
+  medium). The map holds only nicks with a live status, normally a few
+  agents mid-turn, so the cost is small; with none held, the scan is
+  empty.

@@ -160,7 +160,12 @@ fn nick_status(state: &mut IrcState, network: &NetworkId, nick: &str, status: Op
 /// conversation's peer keeps a status it set while sharing no channel,
 /// because no channel departure concerns it.
 fn status_if_gone(state: &mut IrcState, network: &NetworkId, nick: &str) {
-    if !in_a_channel(state, network, nick)
+    // Most departures concern a nick without a status: skip the scan.
+    let held = state
+        .network(network)
+        .is_some_and(|held| held.statuses.get(nick).is_some());
+    if held
+        && !in_a_channel(state, network, nick)
         && let Some(network) = network_mut(state, network)
     {
         network.statuses.remove(nick);

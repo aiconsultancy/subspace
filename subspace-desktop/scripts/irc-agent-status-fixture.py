@@ -28,6 +28,7 @@ evidence from a live fleet.
 
 import argparse
 import json
+import math
 import os
 import re
 import select
@@ -169,7 +170,8 @@ def write_config(path, host, port, nick, channel):
         ],
         "highlights": [],
     }
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # Never through a symbolic link: the config goes only where it was asked to.
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, "w") as file:
         json.dump(config, file, indent=2)
 
@@ -230,7 +232,8 @@ def run(args, clients):
     host, port = loopback(args.server)
     if args.nick.lower() in FIXTURE_NICKS:
         raise FixtureError(f"--nick must not be one of the fixture's nicks: {args.nick}")
-    write_config(args.config, host, port, args.nick, args.channel)
+    if not (math.isfinite(args.typing_every) and args.typing_every > 0):
+        raise FixtureError(f"--typing-every must be a positive number of seconds: {args.typing_every}")
     alice = connect(host, port, "alice", args.channel, PERSON_CAPS)
     clients.append(alice)
     alice.send(f"TOPIC {args.channel} :Fictional agents at work, for the status capture")
@@ -241,6 +244,8 @@ def run(args, clients):
     converse(alice, galactica, discovery, args.channel)
     galactica.set_status(args.galactica_status)
     discovery.set_status(args.discovery_status)
+    # Written only once the server has answered, so a failed run leaves no config.
+    write_config(args.config, host, port, args.nick, args.channel)
     print(
         f"agent-status fixture: ready; start the capture with CAPTURE_IRC_CONFIG={args.config}",
         flush=True,
