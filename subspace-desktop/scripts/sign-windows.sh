@@ -112,9 +112,19 @@ for path in "$@"; do
 		# would copy files from this machine, such as Azure's token cache, into
 		# the signed archive. Refuse links, unsafe paths and duplicate entries.
 		while IFS= read -r member; do
+			# Windows drops trailing dots and spaces from a name, so evil.dll.
+			# would land as evil.dll, and it reserves device names such as NUL
+			# in any folder and with any extension.
 			case "$member" in
-			'' | /* | *\\* | *:* | .. | ../* | */.. | */../*) fail "unsafe entry in $path: $member" ;;
+			'' | /* | *\\* | *:* | .. | ../* | */.. | */../* | *. | *./* | *" " | *" "/*)
+				fail "unsafe entry in $path: $member" ;;
 			esac
+			IFS=/ read -r -a parts <<<"$(printf '%s' "$member" | tr '[:upper:]' '[:lower:]')"
+			for part in "${parts[@]}"; do
+				case "${part%%.*}" in
+				con | prn | aux | nul | com[1-9] | lpt[1-9]) fail "unsafe entry in $path: $member" ;;
+				esac
+			done
 		done <"$stage/$index.entries"
 		# Windows treats names that differ only in case as the same file.
 		[[ -z "$(sort -f "$stage/$index.entries" | uniq -di)" ]] || fail "duplicate entries in $path"

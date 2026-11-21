@@ -37,8 +37,9 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
   `sign-only` or `build-only`.
   - A first job on the signing runner refuses a tag whose commit is not on
     `main`, so pushing a tag cannot get unreviewed code signed, and fixes
-    that commit and the archive's name for the run. The commit must be in
-    `main`'s first-parent history, not inside a merged pull request. It also
+    that commit and the archive's name for the run. The commit must be a
+    Release Please release commit in `main`'s first-parent history, changing
+    only the files Release Please changes. It also
     refuses a release from before this workflow, whose packaging would run
     the app and fail.
   - It builds that commit on `subspace-windows` with no secrets.
@@ -78,7 +79,8 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
   - a jsign failure leaving the archive untouched;
   - an archive with nothing to sign;
   - an archive with a symbolic link, an unsafe path or a duplicate entry,
-    including names that differ only in case;
+    including names that differ only in case, end in a dot or space, or name
+    a Windows device;
   - signing an executable whatever the case of its extension;
   - masking the Key Vault values in GitHub Actions.
 
