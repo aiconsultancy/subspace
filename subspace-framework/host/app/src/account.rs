@@ -3,7 +3,7 @@
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Global};
 use std::sync::Arc;
-use subspace_account::{Account, Cancel, Error, Provider, ProviderInfo};
+use subspace_account::{Account, Cancel, Error, Provider, ProviderInfo, Started};
 
 mod bootstrap;
 mod lease;
@@ -122,27 +122,8 @@ impl NativeAccount {
                     return;
                 }
             };
-            let url = started.url.clone();
-            let code = started.code.clone();
             let current = this
-                .update(cx, |this, cx| {
-                    if this.run != run {
-                        return false;
-                    }
-                    this.url = url.clone();
-                    this.code = code.clone();
-                    // A provider without a browser leg completes headlessly.
-                    this.status = if url.is_some() {
-                        Status::Waiting
-                    } else {
-                        Status::Completing
-                    };
-                    if let Some(url) = &url {
-                        cx.open_url(url);
-                    }
-                    cx.notify();
-                    true
-                })
+                .update(cx, |this, cx| this.show_sign_in_prompt(run, &started, cx))
                 .unwrap_or(false);
             if !current {
                 cancel.cancel();
@@ -156,6 +137,23 @@ impl NativeAccount {
             let _ = this.update(cx, |this, cx| this.finish(run, result, cx));
         })
         .detach();
+    }
+
+    fn show_sign_in_prompt(&mut self, run: u64, started: &Started, cx: &mut Context<Self>) -> bool {
+        if self.run != run {
+            return false;
+        }
+        self.url = started.url.clone();
+        self.code = started.code.clone();
+        // A provider without a browser leg completes headlessly.
+        self.status = if self.url.is_some() {
+            Status::Waiting
+        } else {
+            Status::Completing
+        };
+        self.reopen(cx);
+        cx.notify();
+        true
     }
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
