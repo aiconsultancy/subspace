@@ -66,13 +66,19 @@ fn sent_table() -> MutexGuard<'static, BTreeMap<Sent, SystemTime>> {
     SENT.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn key(client: &Client, token: &str) -> Sent {
-    (
-        client.api_origin().to_owned(),
-        client.organisation().unwrap_or_default().to_owned(),
-        client.account_key(),
-        token.to_owned(),
-    )
+/// The key `client`'s confirmation of `token` is recorded under, or `None`
+/// for a client with no account to tell it apart, such as one with neither
+/// a native lease nor a token, which is never recorded as replayable.
+fn key(client: &Client, token: &str) -> Option<Sent> {
+    let account = client.account_key();
+    (account != 0).then(|| {
+        (
+            client.api_origin().to_owned(),
+            client.organisation().unwrap_or_default().to_owned(),
+            account,
+            token.to_owned(),
+        )
+    })
 }
 
 /// Whether a confirmation first sent at `sent` may still be replayed at
@@ -87,18 +93,23 @@ fn replayable_at(sent: SystemTime, now: SystemTime) -> bool {
 /// the first send. A confirmation sent without replay is never noted, so
 /// its check reads back even once NETT serves replay.
 pub(super) fn note_sent(client: &Client, token: &str) {
+    let Some(key) = key(client, token) else {
+        return;
+    };
     let now = SystemTime::now();
     let mut table = sent_table();
     table.retain(|_, sent| replayable_at(*sent, now));
-    table.entry(key(client, token)).or_insert(now);
+    table.entry(key).or_insert(now);
 }
 
 /// Whether `client` sent the confirmation of `token` within the last 24
 /// hours, so a check may replay it.
 pub(super) fn within_window(client: &Client, token: &str) -> bool {
-    sent_table()
-        .get(&key(client, token))
-        .is_some_and(|sent| replayable_at(*sent, SystemTime::now()))
+    key(client, token).is_some_and(|key| {
+        sent_table()
+            .get(&key)
+            .is_some_and(|sent| replayable_at(*sent, SystemTime::now()))
+    })
 }
 
 /// Moves the first send of `token` back by `age`, as if it was that long
@@ -108,7 +119,9 @@ pub(crate) fn backdate(client: &Client, token: &str, age: Duration) {
     let sent = SystemTime::now()
         .checked_sub(age)
         .unwrap_or(SystemTime::UNIX_EPOCH);
-    sent_table().insert(key(client, token), sent);
+    if let Some(key) = key(client, token) {
+        sent_table().insert(key, sent);
+    }
 }
 
 /// What a replayed confirmation's 409 says: with NETT's plan-changed code,
@@ -194,8 +207,31 @@ impl Client {
 
 #[cfg(test)]
 mod tests {
-    use super::{REPLAY_FOR, replayable_at};
+    use super::{REPLAY_FOR, note_sent, replayable_at, within_window};
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn a_client_without_an_account_never_records_a_replayable_confirmation() {
+        let org = "00000000-0000-4000-8000-0000000000f1";
+        let token = "f".repeat(64);
+        let nobody =
+            crate::Client::nett_loopback("http://127.0.0.1:9/api", Some(org), None).unwrap();
+        assert_eq!(nobody.account_key(), 0);
+        note_sent(&nobody, &token);
+        assert!(
+            !within_window(&nobody, &token),
+            "never shared under account 0"
+        );
+        let someone = crate::Client::nett_loopback(
+            "http://127.0.0.1:9/api",
+            Some(org),
+            Some(subspace_framework::core::Secret::new("nett-replay-someone")),
+        )
+        .unwrap();
+        note_sent(&someone, &token);
+        assert!(within_window(&someone, &token));
+        assert!(!within_window(&nobody, &token));
+    }
 
     #[test]
     fn a_confirmation_replays_for_a_day_and_never_across_a_clock_set_back() {
