@@ -8,7 +8,7 @@ use subspace_api_client::Error;
 use subspace_api_client::model::DecisionDetail;
 use subspace_framework::dashboard::ReturnLocation;
 
-use crate::load::{self, Failure, Lease};
+use crate::load::{self, Failure, Leased};
 use crate::{Decisions, peek};
 
 /// A Back from another Space returns to the page with this key, then the
@@ -109,14 +109,11 @@ impl Decisions {
         let id = page.id.clone();
         self.page_reads = self.page_reads.wrapping_add(1);
         let number = self.page_reads;
-        let (reader, lease) = (self.reader.detail.clone(), self.reader.lease.clone());
-        let read = cx.background_spawn(async move {
-            let lease = lease();
-            (lease, reader(&id))
-        });
+        let reader = self.reader.detail.clone();
+        let read = cx.background_spawn(async move { reader(&id) });
         self._page_read = Some(cx.spawn(async move |this, cx| {
-            let (lease, result) = read.await;
-            _ = this.update(cx, |this, cx| this.finish_page(number, &lease, result, cx));
+            let result = read.await;
+            _ = this.update(cx, |this, cx| this.finish_page(number, result, cx));
         }));
         cx.notify();
     }
@@ -124,12 +121,12 @@ impl Decisions {
     fn finish_page(
         &mut self,
         number: u64,
-        lease: &Lease,
-        result: Result<DecisionDetail, Error>,
+        result: Leased<Result<DecisionDetail, Error>>,
         cx: &mut Context<Self>,
     ) {
+        let (lease, result) = result.split(Err);
         let wanted = number == self.page_reads && self.page.is_some();
-        if !self.landed(wanted, lease, cx) {
+        if !self.landed(wanted, lease.as_ref(), cx) {
             return;
         }
         let Some(page) = self.page.as_mut() else {

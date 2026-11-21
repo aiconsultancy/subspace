@@ -19,7 +19,7 @@ Issues crate.
 | Module | Holds |
 | --- | --- |
 | `model` | The navigator's choices (view, maker, project, tag) and the `DecisionQuery` they and the search build. |
-| `load` | The `Reader`: a list read (account, projects, people, then every page of decisions), a detail read and the `Lease` each read takes on the signed-in account, run with `cx.background_spawn`. A list read carries a `Stop` that a newer read sets. Tests replace the reader with fixture answers. |
+| `load` | The `Reader`: a list read (account, projects, people, then every page of decisions), a detail read and the `Lease` each read returns on the account of the client that made it, run with `cx.background_spawn`. A list read carries a `Stop` that a newer read sets. Tests replace the reader with fixture answers. |
 | `account` | Following the signed-in account: the watch that notices an account or organisation change, and what the Space drops when it does. |
 | `state`, `listing`, `words`, `peek` | Pure: what the Space holds between reads, the status groups and their first folds, the counts, the wording and the inspector's facts. |
 | `board`, `search`, `page` | The Space's changes: reads and answers, choices, the debounced search, and the decision page with its tab. |
@@ -55,10 +55,12 @@ Not found shows that the decision is no longer available.
 
 ### Following the account
 
-Each read, list or page, takes a `Lease` on the signed-in account and
-organisation just before it starts, ahead of the read's own client, so an
-account change between the two drops a good answer rather than keeping a
-stale one. The Space looks for an account or organisation change, or a
+Each read, list or page, returns a `Lease` on the account and organisation
+of the very client that made it, so the lease is as old as the client and
+an account change at any point after the client was made ends it. A read
+that can make no client reads nothing for any account: it has no lease,
+shows only its refusal, and leaves the Space watching the account what it
+holds was read for. The Space looks for an account or organisation change, or a
 sign-out, every quarter of a second while it lives, shown or hidden (the
 same interval as the Issues Space's hub poll), and again when it is shown or
 drawn, before it opens a decision or a linked issue, and on a Back from
@@ -67,7 +69,8 @@ another Space.
 When the lease has moved, the Space drops everything read for the previous
 account: the list, the selection, the open page and its tab, the directory
 (account, projects and people), the tags, the chosen tag and the search,
-including the search field's text and any open menu. Reads in flight stop,
+including the search field's text and any open menu, which a frame that
+finds the change clears before it is drawn. Reads in flight stop,
 and an answer that arrives under the old lease is discarded and drops what
 the Space holds, as the change itself does. The Space bumps its account
 epoch, then reads the list for the new account while it shows, or when it

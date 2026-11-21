@@ -1,8 +1,8 @@
 //! Reading Subspace API. Client calls block, so the Space runs them in the
 //! background (`cx.background_spawn`) through a [`Reader`], which the tests
-//! replace with fixture answers. Each read carries a [`Lease`] on the
-//! account it was made for, and a list read a [`Stop`] that a newer read
-//! sets.
+//! replace with fixture answers. Each read returns a [`Lease`] on the
+//! account of the client that made it, and a list read carries a [`Stop`]
+//! that a newer read sets.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -81,17 +81,36 @@ pub(crate) struct Answer {
     pub(crate) found: Result<Found, Error>,
 }
 
-pub(crate) type ListRead = Arc<dyn Fn(&Plan) -> Answer + Send + Sync>;
-pub(crate) type DetailRead = Arc<dyn Fn(&str) -> Result<DecisionDetail, Error> + Send + Sync>;
-pub(crate) type LeaseRead = Arc<dyn Fn() -> Lease + Send + Sync>;
+/// What one read returned. A read through a client comes with a lease on
+/// that client's own account, so whatever it found is watched for the
+/// account it was read for. A read that could make no client read nothing
+/// for any account: it has no lease, and only its refusal.
+pub(crate) enum Leased<T> {
+    Read(Lease, T),
+    Unread(Error),
+}
 
-/// The Space's two reads, a list and one decision, and the lease each read
-/// takes on the signed-in account just before it starts.
+impl<T> Leased<T> {
+    /// The read's lease, if it had a client, and its value, or for a read
+    /// without a client the value `refused` makes of its error.
+    pub(crate) fn split(self, refused: impl FnOnce(Error) -> T) -> (Option<Lease>, T) {
+        match self {
+            Leased::Read(lease, value) => (Some(lease), value),
+            Leased::Unread(error) => (None, refused(error)),
+        }
+    }
+}
+
+pub(crate) type ListRead = Arc<dyn Fn(&Plan) -> Leased<Answer> + Send + Sync>;
+pub(crate) type DetailRead =
+    Arc<dyn Fn(&str) -> Leased<Result<DecisionDetail, Error>> + Send + Sync>;
+
+/// The Space's two reads, a list and one decision, each returning a lease
+/// on the account of the client that made it.
 #[derive(Clone)]
 pub(crate) struct Reader {
     pub(crate) list: ListRead,
     pub(crate) detail: DetailRead,
-    pub(crate) lease: LeaseRead,
 }
 
 impl Reader {
@@ -100,18 +119,29 @@ impl Reader {
         Self {
             list: Arc::new(read_list),
             detail: Arc::new(read_detail),
-            lease: Arc::new(lease),
         }
     }
 }
 
-/// A lease on the account a new client acts for. It is taken before the
-/// read's own client, so a read can only be newer than its lease: an
-/// account change between the two drops a good answer, never keeps a stale
-/// one. Without a client nothing is read, so there is nothing to watch.
-fn lease() -> Lease {
-    let client = Client::new().ok();
-    Lease::new(move || client.as_ref().is_some_and(Client::account_changed))
+/// Reads through `client` under a lease on that same client's account,
+/// which `changed` says has since changed. The lease is as old as the
+/// client, so an account change at any point after the client was made,
+/// during the read included, ends it. Without a client nothing is read.
+fn leased<C, T>(
+    client: Result<C, Error>,
+    changed: fn(&C) -> bool,
+    read: impl FnOnce(&C) -> T,
+) -> Leased<T>
+where
+    C: Send + Sync + 'static,
+{
+    match client {
+        Ok(client) => {
+            let value = read(&client);
+            Leased::Read(Lease::new(move || changed(&client)), value)
+        }
+        Err(error) => Leased::Unread(error),
+    }
 }
 
 /// Why a read failed, as the Space words it.
@@ -174,19 +204,17 @@ pub(crate) fn failure(error: Error) -> Failure {
     }
 }
 
-fn read_list(plan: &Plan) -> Answer {
-    let client = match Client::new() {
-        Ok(client) => client,
-        Err(error) => return refused(plan, error),
-    };
-    let directory = plan.directory.then(|| read_directory(&client));
-    if let Some(Err(error)) = &directory {
-        return refused(plan, *error);
-    }
-    Answer {
-        directory,
-        found: all_pages(&plan.stop, |page| client.decisions(&plan.query, page)),
-    }
+fn read_list(plan: &Plan) -> Leased<Answer> {
+    leased(Client::new(), Client::account_changed, |client| {
+        let directory = plan.directory.then(|| read_directory(client));
+        if let Some(Err(error)) = &directory {
+            return refused(plan, *error);
+        }
+        Answer {
+            directory,
+            found: all_pages(&plan.stop, |page| client.decisions(&plan.query, page)),
+        }
+    })
 }
 
 /// Every part of the answer failed with `error`.
@@ -216,8 +244,10 @@ fn read_directory(client: &Client) -> Result<Directory, Error> {
     })
 }
 
-fn read_detail(id: &str) -> Result<DecisionDetail, Error> {
-    Client::new()?.decision(id)
+fn read_detail(id: &str) -> Leased<Result<DecisionDetail, Error>> {
+    leased(Client::new(), Client::account_changed, |client| {
+        client.decision(id)
+    })
 }
 
 /// Reads pages with `read` until the last, or until [`MAX_PAGES`], and
@@ -250,12 +280,55 @@ pub(crate) fn all_pages(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use serde_json::json;
     use subspace_api_client::Error;
     use subspace_api_client::model::{DecisionListItem, Page};
 
-    use super::{Failure, Stop, all_pages, failure};
+    use super::{Failure, Leased, Stop, all_pages, failure, leased};
     use crate::fixtures;
+
+    /// A client whose account the test changes, as a sign-out or a switch
+    /// of account or organisation does.
+    struct Watched(Arc<AtomicBool>);
+
+    fn changed(client: &Watched) -> bool {
+        client.0.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn a_read_is_leased_on_the_account_of_its_own_client() {
+        let switched = Arc::new(AtomicBool::new(false));
+        let during = switched.clone();
+        let read = leased(Ok(Watched(switched.clone())), changed, |_| {
+            // The account changes while the read runs, after its client
+            // was made: the answer it returns belongs to no one on screen.
+            during.store(true, Ordering::SeqCst);
+            "found"
+        });
+        let Leased::Read(lease, found) = read else {
+            panic!("a read through a client comes with that client's lease");
+        };
+        assert_eq!(found, "found");
+        assert!(lease.moved(), "the change after the client ends its lease");
+        switched.store(false, Ordering::SeqCst);
+        assert!(!lease.moved(), "the lease watches that same client");
+    }
+
+    #[test]
+    fn a_read_that_can_make_no_client_reads_nothing_and_has_no_lease() {
+        let mut asked = false;
+        let read = leased(Err::<Watched, _>(Error::InvalidRequest), changed, |_| {
+            asked = true;
+            "found"
+        });
+        assert!(!asked, "nothing is read without a client");
+        let (lease, found) = read.split(|_| "refused");
+        assert!(lease.is_none());
+        assert_eq!(found, "refused");
+    }
 
     fn page(ids: &[&str], next: Option<&str>) -> Page<DecisionListItem> {
         let item = |id: &str| fixtures::item_value(id, "NAV", "Fixture", "accepted", "2026-11-19");
