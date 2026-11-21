@@ -1638,6 +1638,32 @@ class MoveReplayTests(StreamCase):
         changed = self.org_problem(409, 'PATCH', f'/issues/{root}', confirm)
         self.assertEqual(changed['code'], 'IssueMove.PlanChanged')
 
+    def test_a_slow_commit_checks_access_again_before_it_moves(self):
+        status, _, _ = self.call('POST', '/__fixture/tokens', dict(token='grace-move-token', user='grace'), token=None)
+        self.assertEqual(status, 200)
+        _, confirm = self.confirmation()
+        root = self.issue('OPS-2')['id']
+        self.configure(slowMoveCommit=0.6)
+        with ThreadPoolExecutor(1) as pool:
+            pending = pool.submit(self.org, 'PATCH', f'/issues/{root}', confirm, token='grace-move-token')
+            time.sleep(0.2)
+            status, _, _ = self.call('POST', '/__fixture/members/revoke',
+                                     dict(org=WORKS, user='grace', closeStreams=False), token=None)
+            self.assertEqual(status, 200)
+            code, value, _ = pending.result(5)
+        self.assertEqual(code, 403, value)
+        self.assertEqual(self.issue(root)['teamKey'], 'OPS', 'nothing moved')
+
+    def test_a_replay_that_changes_the_confirmation_is_refused(self):
+        _, confirm = self.confirmation()
+        root = self.ok('PATCH', '/issues/OPS-2', confirm)['id']
+        for changed in (dict(confirm, version=confirm['version'] + 1),
+                        dict(confirm, teamId=OPS),
+                        dict(confirm, reviewContext=dict(confirm['reviewContext'], issueContextVersion=9))):
+            refused = self.org_problem(409, 'PATCH', f'/issues/{root}', changed)
+            self.assertEqual(refused['code'], 'IssueMove.ReplayMismatch')
+        self.assertTrue(self.ok('PATCH', f'/issues/{root}', confirm)['move']['replayed'])
+
     def test_the_move_settings_are_bounded(self):
         for settings in (dict(dropMoveReply=-1), dict(slowMoveCommit=11), dict(slowMoveCommit='1')):
             status, _, _ = self.call('POST', '/__fixture/config', settings, token=None)

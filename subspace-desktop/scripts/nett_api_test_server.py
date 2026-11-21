@@ -113,6 +113,8 @@ MOVE_PLAN_SECONDS = 600
 # when a confirmation's plan no longer matches and nothing committed.
 MOVE_COMMIT_DAYS = 7
 PLAN_CHANGED = 'IssueMove.PlanChanged'
+# The problem code for a replay that does not repeat the recorded confirmation.
+REPLAY_MISMATCH = 'IssueMove.ReplayMismatch'
 # The largest wait a client can be told: any whole number of seconds it can
 # hold, up to the largest unsigned 64-bit value.
 MAX_RETRY_AFTER = 2**64 - 1
@@ -2669,9 +2671,13 @@ def move_commit(ctx, row, payload):
     replays = server.serves(ctx.org, 'issueMoveReplay')
     key = (ctx.org['id'], token)
     with server.plan_lock(key):
+        # Other requests ran while this one waited for the lock.
+        reauthorise(ctx)
         f.purge_move_commits()
         record = f.move_commits.get(key)
         if replays and record is not None and record['rootId'] == row['id']:
+            if record['confirmation'] != confirmation_fields(payload):
+                raise Problem(409, 'A replay must repeat the confirmation exactly.', code=REPLAY_MISMATCH)
             # Nothing changes, so no activity or stream event.
             return 200, f.detail(row) | dict(move=move_result(record, True))
         if not is_integer(payload.get('version')) or not isinstance(payload.get('reviewContext'), dict) \
@@ -2679,7 +2685,9 @@ def move_commit(ctx, row, payload):
             raise Problem(400, 'A move confirmation needs teamId, version, reviewContext and movePreviewToken.')
         if server.config['slowMoveCommit']:
             server.wait_unlocked(server.config['slowMoveCommit'])
+            reauthorise(ctx)
         record = commit_plan(ctx, row, payload, token)
+        record['confirmation'] = confirmation_fields(payload)
         f.move_commits[key] = record
         if server.config['dropMoveReply'] > 0:
             server.config['dropMoveReply'] -= 1
@@ -2687,6 +2695,24 @@ def move_commit(ctx, row, payload):
     if replays:
         return 200, f.detail(row) | dict(move=move_result(record, False))
     return 200, f.detail(row)
+
+
+def confirmation_fields(payload):
+    """What a replay must repeat: the confirmation's destination, version and review context."""
+    return dict(teamId=payload.get('teamId'), version=payload.get('version'),
+                reviewContext=payload.get('reviewContext'))
+
+
+def reauthorise(ctx):
+    """Checks the request's bearer and membership again after it let go of
+    the server lock, as other requests may have revoked either and changed the
+    fixture's caller meanwhile."""
+    f, server = ctx.f, ctx.server
+    f.caller = server.token_user(ctx.token)
+    if ctx.token is None or not server.token_valid(ctx.token):
+        raise Problem(401, 'A valid bearer token is required.')
+    if not f.is_member(ctx.org, f.caller):
+        raise Problem(403, 'You are no longer an active member of this organisation.')
 
 
 def commit_plan(ctx, row, payload, token):
