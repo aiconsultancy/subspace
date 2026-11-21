@@ -5,10 +5,12 @@ Usage, with a fresh local Ergo server from scripts/irc-test-server.sh running:
 
     python3 scripts/irc-thread-status-fixture.py --config <file> &
 
-It writes a Channels configuration for CAPTURE_IRC_CONFIG to <file>, then
-plays requests to the fictional ship `astra` in `#thread-status`. `astra`
-and a second fictional client, `nova`, register throwaway accounts on the
-local server, so their messages carry the server's `account` tag:
+It plays requests to the fictional ship `astra` in `#thread-status`, then,
+once the server has answered, writes a Channels configuration for
+CAPTURE_IRC_CONFIG to <file> (owner-only, never through a symbolic link)
+and prints `ready`. `astra` and a second fictional client, `nova`, register
+throwaway accounts on the local server, so their messages carry the
+server's `account` tag:
 
 1. `subspace` (the nick the configuration gives the capture build) sends
    three requests, the third inside the first one's thread.
@@ -190,7 +192,8 @@ def write_config(path, host, port, nick, channel):
         ],
         "highlights": [],
     }
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # Never through a symbolic link: the config goes only where it was asked to.
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, "w") as file:
         json.dump(config, file, indent=2)
 
@@ -286,7 +289,6 @@ def main():
     clients = []
     try:
         host, port = loopback(args.server)
-        write_config(args.config, host, port, args.nick, args.channel)
         agent = connect(host, port, "astra", args.channel, account=True)
         clients.append(agent)
         agent.send(f"TOPIC {args.channel} :Fictional requests to the fixture ship astra")
@@ -298,6 +300,8 @@ def main():
         finally:
             requester.quit()
         before_capture(agent, nova, args.channel, ids)
+        # Only once the server has answered, so a failed run leaves no config.
+        write_config(args.config, host, port, args.nick, args.channel)
         print(f"thread-status fixture: ready; start the capture with CAPTURE_IRC_CONFIG={args.config}", flush=True)
         joined = lambda m: m[2] == "JOIN" and m[1] == args.nick  # noqa: E731
         if not agent.idle(args.wait, joined):

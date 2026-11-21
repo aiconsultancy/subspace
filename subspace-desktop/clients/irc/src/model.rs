@@ -140,8 +140,9 @@ pub struct Line {
     /// later history page can resolve its root with [`Line::thread_root`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
-    /// The client-only tags (`+` prefix) of a `PRIVMSG` or `NOTICE`, as
-    /// received, such as a machine-readable marker another client added.
+    /// The allow-listed client-only tags (`+` prefix) of a `PRIVMSG` or
+    /// `NOTICE`, as received, such as a machine-readable marker another
+    /// client added: [`crate::KEPT_CLIENT_TAGS`], with short values.
     /// `+draft/reply` is not repeated here; see [`Line::reply_to`]. A
     /// multiline message takes them from its opening `BATCH` only.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]

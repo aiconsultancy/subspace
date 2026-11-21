@@ -295,11 +295,14 @@ retain it. Ordinary composer and agent sends are unchanged.
 See the [protocol change record](changes/irc-reply-tags/README.md) for tests
 and proof commands.
 
-The runtime also keeps the other client-only tags (`+` prefix) of a
-`PRIVMSG` or `NOTICE` as `Line::client_tags`, live and in history, so a
-Space can read a machine-readable marker that another client added. A
-multiline message takes them from its opening `BATCH` only. They are stored
-with the line.
+The runtime also keeps a short allow-list of client-only tags (`+` prefix)
+of a `PRIVMSG` or `NOTICE` as `Line::client_tags`, live and in history, so
+a Space can read a machine-readable marker that another client added:
+`subspace_client_irc::KEPT_CLIENT_TAGS`, today only `+stargate/progress`
+(`PROGRESS_TAG`), with values of at most 64 bytes. Any sender can add
+client-only tags, so every other one, and a longer value, is dropped rather
+than held and stored. A multiline message takes them from its opening
+`BATCH` only. They are stored with the line.
 
 ### Loaded reply counts
 
@@ -337,15 +340,25 @@ are in the [change record](changes/irc-thread-status/spec.md).
 
 - **Trust.** A notice folds only when it replies to a message or action
   this buffer holds (in a private conversation, our own), and its
-  server-set `account` tag names the account the server reports for the
-  ship that request asks: the nick its first word addresses (`nick:`,
-  `nick,` or `@nick`), or a private conversation's partner, looked up in the
-  member lists (`WHOX`, `extended-join`, `account-notify`). Without that
-  account, nothing folds. Untrusted, unrecognised and uncorrelated notices,
-  questions, answer instructions and final replies stay ordinary messages,
-  counted and notified as before.
+  server-set `account` tag names the account that request is pinned to.
+  The request asks a ship: the nick its first word addresses (`nick:`,
+  `nick,` or `@nick`), or a private conversation's partner; a request that
+  addresses its own sender asks no one. Its pin is the account the server
+  reports for that nick in the member lists (`WHOX`, `extended-join`,
+  `account-notify`) when Channels first sees the request with one: as a
+  live request arrives, or, for one held from history, backfill or the
+  store, when it is first evaluated with an account reported. From then
+  on only that account's notices fold, whoever holds the nick later, and
+  member events no longer change it. Without a pin, nothing folds. Pins
+  are kept in the Space's state (`thread_status::Requests`), not in the
+  store: after a restart, a restored request is pinned to whoever holds
+  the nick when the member list first reports an account for it.
+  Untrusted, unrecognised and uncorrelated notices, questions, answer
+  instructions and final replies stay ordinary messages, counted and
+  notified as before.
 - **One line per request**, keyed by the request's own message ID, so two
-  requests in one thread each have one. The newest trusted notice sets
+  requests in one thread each have one. The newest trusted notice by
+  server time (of two at the same time, the later one held) sets
   **Receipt unconfirmed**, **Accepted**, **Queued**, **Thinking**, **Using a
   tool**, **Waiting to retry**, **Waiting for your answer**, **Answer
   received** or **Writing a reply**; an update to one request leaves the
@@ -353,27 +366,34 @@ are in the [change record](changes/irc-thread-status/spec.md).
   The agent is the nick on the newest trusted notice, shown as plain
   text on one line and cut to 32 characters.
 - **Endings.** `completed` or `failed` removes only its request's line, and
-  no later or older notice brings it back. A main-room final reply without a
-  reply tag clears nothing.
+  no later or older notice brings it back. The ending is kept apart from
+  the notice, so it holds after the notice is dropped by the line cap or
+  missing from a reloaded page. A main-room final reply without a reply tag
+  clears nothing.
 - **Stale.** The line shows the last stage, its time and a **Stale** pill
   when the notice carried `,disconnected`, while the network is not
   connected, or when the notice was already held when the network's current
   connection began (`Network::held_at_connect`): restored from the store or
   seen before a reconnect. Anything received on the current connection,
   live or as history, is current.
-- **Counting.** `Buffer::folded` holds the trusted notices, refreshed after
-  every new line, history page, backfill, restore and member list change
-  (`state/folding.rs`); a line stays folded while held. Folded notices make
-  no row, are not replies, never count as unread and never notify, live or
-  from history. They are stored and searchable; opening one from Search
-  shows its request.
+- **Counting.** `Buffer::folded` holds the trusted notices
+  (`state/folding.rs`). A live line is taken in by itself, without reading
+  the buffer again; a history page, backfill or restore folds its buffer
+  again; a member list change only pins requests still waiting for an
+  account, and folds a buffer again only when held progress answers one.
+  A line stays folded while it and its request are held: when the line cap
+  drops the request, its notices show as ordinary notices again. Folded
+  notices make no row, are not replies, never count as unread and never
+  notify, live or from history. They are stored and searchable; opening one
+  from Search shows its request.
 - **Reopening.** Statuses are rebuilt from the held lines on every change,
   so a restart or a reopened thread reads the same.
 - The composer's typing line is unchanged and stays conversation-wide.
 - This status belongs to one request, by its message ID. It is not the
   nick-wide `status` metadata from `draft/metadata-2`
-  (`Event::NickStatus`), which this change leaves as it is; a separate
-  change, `channels-agent-status`, shows that one.
+  (`Event::NickStatus`), which Channels shows above the input and in the
+  member list through the separate `channels-agent-status` change (see
+  [Agent status lines](#agent-status-lines)); the two are kept apart.
 
 ## Message history and search
 
@@ -890,14 +910,15 @@ until it is stopped, and writes the matching Channels configuration for
 [agent status change record](changes/channels-agent-status/delivery.md#evidence)
 has the commands.
 
-`scripts/irc-thread-status-fixture.py --config <file>` writes a Channels
-configuration for `CAPTURE_IRC_CONFIG` and plays a fictional ship, `astra`,
-answering three requests in `#thread-status` with tagged progress: two in
-one thread, a question and its answer, a lookalike notice from another
-account (`nova`), a lost event stream, a main-room final reply and one
-request completing, timed from when the capture build joins. Both register
-throwaway accounts on the local server. Its capture command is in the
-[change record](changes/irc-thread-status/delivery.md).
+`scripts/irc-thread-status-fixture.py --config <file>` plays a fictional
+ship, `astra`, answering three requests in `#thread-status` with tagged
+progress: two in one thread, a question and its answer, a lookalike notice
+from another account (`nova`), a lost event stream, a main-room final reply
+and one request completing, timed from when the capture build joins. Both
+register throwaway accounts on the local server. Once the server has
+answered, it writes the Channels configuration for `CAPTURE_IRC_CONFIG`
+(mode `0600`, never through a symbolic link) and prints `ready`. Its capture
+command is in the [change record](changes/irc-thread-status/delivery.md).
 
 The runtime's integration test against the same server runs when
 `IRC_TEST_SERVER` is set (`IRC_TEST_SERVER=127.0.0.1:16667 cargo test -p

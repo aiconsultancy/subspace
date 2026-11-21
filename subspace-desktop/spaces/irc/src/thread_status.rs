@@ -11,6 +11,7 @@
 //! is ever read for state. See `docs/changes/irc-thread-status/spec.md`.
 
 mod model;
+mod requests;
 #[cfg(test)]
 mod tests;
 mod trust;
@@ -18,11 +19,13 @@ mod trust;
 use subspace_client_irc::{Line, LineKind, Target};
 
 pub(crate) use model::{Shown, Statuses, shown_entry, statuses};
-pub(crate) use trust::{folds, trusted};
+pub(crate) use requests::{Arrival, Requests};
+pub(crate) use trust::{arrival, asked, notices, reported};
 
 /// The client-only tag that marks request progress on a `NOTICE`. Its value
-/// is a stage; a stage before the end may carry `,disconnected`.
-pub(crate) const PROGRESS_TAG: &str = "+stargate/progress";
+/// is a stage; a stage before the end may carry `,disconnected`. The IRC
+/// client keeps it, among the few client-only tags it keeps at all.
+pub(crate) const PROGRESS_TAG: &str = subspace_client_irc::PROGRESS_TAG;
 
 /// The value suffix by which the agent says it lost its own event stream.
 const DISCONNECTED: &str = "disconnected";
@@ -100,14 +103,14 @@ fn tagged(line: &Line) -> Option<&str> {
         .map(String::as_str)
 }
 
-/// `stage`, or `stage,disconnected` before the end. Anything else is not a
-/// marker, so the notice stays an ordinary message.
+/// `stage`, or `stage,disconnected` before the end. Anything else,
+/// including an empty suffix such as `completed,`, is not a marker, so the
+/// notice stays an ordinary message.
 fn parse(value: &str) -> Option<Marker> {
-    let (stage, suffix) = value.split_once(',').unwrap_or((value, ""));
-    let disconnected = match suffix {
-        "" => false,
-        DISCONNECTED => true,
-        _ => return None,
+    let (stage, disconnected) = match value.split_once(',') {
+        None => (value, false),
+        Some((stage, DISCONNECTED)) => (stage, true),
+        Some(_) => return None,
     };
     let phase = match stage {
         "received" | "submitting" => Phase::Unconfirmed,

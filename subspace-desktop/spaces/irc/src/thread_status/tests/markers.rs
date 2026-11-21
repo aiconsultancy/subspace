@@ -19,7 +19,7 @@ fn only_a_tagged_notice_replying_to_a_message_with_a_known_value_is_a_marker() {
             disconnected: false,
         })
     );
-    let refused: [fn(&mut Line); 9] = [
+    let refused: [fn(&mut Line); 11] = [
         |line| line.client_tags.clear(),
         |line| {
             _ = line
@@ -36,6 +36,12 @@ fn only_a_tagged_notice_replying_to_a_message_with_a_known_value_is_a_marker() {
                 .client_tags
                 .insert(PROGRESS_TAG.into(), "completed,disconnected".into())
         },
+        |line| {
+            _ = line
+                .client_tags
+                .insert(PROGRESS_TAG.into(), "completed,".into())
+        },
+        |line| _ = line.client_tags.insert(PROGRESS_TAG.into(), "tool,".into()),
         |line| line.reply_to = None,
         |line| line.own = true,
         |line| line.kind = LineKind::Privmsg,

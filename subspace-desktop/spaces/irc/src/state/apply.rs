@@ -217,16 +217,17 @@ fn typing(
 }
 
 /// A live line: appended, counted, and reported when it may need attention.
+/// Trusted progress folds into its request's status line and never counts.
 fn append(state: &mut IrcState, line: Line) -> Option<Attention> {
     if super::merge::known(state, &line) {
         return None;
     }
     let highlight = super::is_highlight(&line, &state.highlights);
-    // Trusted progress folds into its request's status line: never unread.
-    let folded = crate::thread_status::folds(state, &line);
     let key = line.buffer.clone();
+    folding::make_room(state, &key);
     let seq = state.next_seq;
     state.next_seq += 1;
+    let arrival = crate::thread_status::arrival(state, &line, seq);
     let buffer = state.buffers.entry(key.clone()).or_default();
     // A line ends its sender's typing notice but not their status, which
     // the gateway clears itself when the turn ends.
@@ -241,15 +242,10 @@ fn append(state: &mut IrcState, line: Line) -> Option<Attention> {
         line,
         highlight,
     };
-    let unread = counts::count(buffer, &key, &entry, folded);
+    let unread = counts::count(buffer, &key, &entry, arrival.folds());
     let attention = unread.then(|| attention(&entry)).flatten();
     buffer.entries.push_back(entry);
-    let cap = LINE_CAP + buffer.history.extra;
-    while buffer.entries.len() > cap {
-        if let Some(dropped) = buffer.entries.pop_front() {
-            buffer.unread_entries.remove(&dropped.seq);
-        }
-    }
+    folding::arrived(state, &key, &arrival);
     attention
 }
 

@@ -107,8 +107,12 @@ pub(crate) struct Buffer {
     pub history: History,
     /// The held lines that are trusted request progress, by sequence: the
     /// transcript folds them into their request's status line, and they
-    /// never count as unread. A line stays folded while it is held.
+    /// never count as unread. A line stays folded while it and its request
+    /// are held.
     pub folded: HashSet<i64>,
+    /// Each request's pinned account and ending, kept apart from the lines
+    /// and never stored.
+    pub requests: crate::thread_status::Requests,
 }
 
 impl Buffer {

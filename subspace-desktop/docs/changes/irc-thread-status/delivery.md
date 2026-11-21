@@ -2,24 +2,33 @@
 
 ## What changed
 
-- `subspace-client-irc`: `Line::client_tags` keeps the client-only tags of a
-  `PRIVMSG` or `NOTICE` except `+draft/reply`, live and in history; a
-  multiline message takes them from its opening `BATCH` only
-  (`session/lines.rs`, `session/batch/multiline.rs`, `model.rs`). The field
-  is stored with the line, and older stored lines load without it.
+- `subspace-client-irc`: `Line::client_tags` keeps the allow-listed
+  client-only tags of a `PRIVMSG` or `NOTICE` (`KEPT_CLIENT_TAGS`, today
+  only `PROGRESS_TAG`, `+stargate/progress`, with values of at most 64
+  bytes), live and in history; a multiline message takes them from its
+  opening `BATCH` only (`session/lines.rs`, `session/batch/multiline.rs`,
+  `model.rs`). The field is stored with the line, and older stored lines
+  load without it.
 - `spaces/irc/src/thread_status.rs`: the agreed marker (`PROGRESS_TAG`), its
   values and their labels.
-- `thread_status/trust.rs`: the trust rule. `trusted` lists a buffer's
-  trusted progress notices; `folds` checks one live line before it is
-  counted.
+- `thread_status/trust.rs`: the trust rule. `arrival` reads one live line
+  before it is counted; `asked` and `notices` read a buffer's requests and
+  progress when it folds again; `reported` finds the waiting requests a
+  member list change reports an account for.
+- `thread_status/requests.rs`: `Requests`, held per buffer in
+  `Buffer::requests`: each request's pinned account, the requests waiting
+  for one, the endings, and the folded notices of each held request.
 - `thread_status/model.rs`: one status per request message ID from the
-  folded notices, with endings that stay final, staleness, and the Search
-  mapping (`shown_entry`).
+  folded notices, the newest by server time, with endings that stay final,
+  staleness, and the Search mapping (`shown_entry`).
 - `state.rs`, `state/folding.rs`, `state/apply.rs`, `state/counts.rs`:
-  `Buffer::folded` is refreshed after every new line, history page,
-  backfill, restore and member list change; folded lines never count as
-  unread or notify, and lines counted from history before the server
-  vouched are taken back out. `Network::held_at_connect` decides staleness.
+  `Buffer::folded` is kept current in proportion to each event: a live line
+  by itself, history, backfill and restore by folding their buffer again,
+  and a member list change only for requests waiting for an account.
+  Dropping a request at the line cap stops folding its notices. Folded
+  lines never count as unread or notify, and lines counted from history
+  before the server vouched are taken back out.
+  `Network::held_at_connect` decides staleness.
 - `lines.rs` makes no row for folded lines and never runs a membership row
   across one; `transcript/replies.rs` leaves them out of reply counts.
 - `transcript/status.rs` draws one line per request with GPUI Kit's
@@ -65,9 +74,20 @@
     change was re-applied onto `main`).
 - `lines/tests.rs`: folded lines make no row, keep a sender's group together
   and split a membership run.
-- Client (`session/tests/client_tags.rs`): client-only tags kept live, from the
-  opening batch only and in history; server tags and the reply reference
-  left out.
+- Pinning and retention (`thread_status/tests/pinning.rs` and
+  `retention.rs`, added for the review findings): a nick taken over by
+  another account neither folds, changes nor ends a pinned request, also
+  after the buffer folds again, while the pinned account still can; a
+  request that addresses its own sender folds nothing; a member event does
+  not change a pinned request, and a waiting request is pinned when the
+  server first reports an account; an ending survives the eviction of its
+  notice and a reload without it; an older replayed stage does not replace
+  a newer one; a notice whose request is dropped by the line cap shows, and
+  Search reveals it. `markers.rs` also refuses `completed,` and `tool,`.
+- Client (`session/tests/client_tags.rs`): the allow-listed client-only tag
+  kept live, from the opening batch only and in history; server tags, the
+  reply reference, tags outside the allow-list and over-long values left
+  out.
 - Headless render (`tests/thread_status.rs`): the real board with three
   requests, the third in the first's thread; one line each; folded rows
   absent and the reply count covering only the follow-up and the lookalike;
@@ -206,10 +226,10 @@ describes the change as first written.
   characters with an ellipsis, rather than relying on the server's nick
   rules, with a unit test.
 - **Nick status kept apart.** `draft/metadata-2` nick status
-  (`Event::NickStatus`) is still ignored here; a separate change,
-  `channels-agent-status`, shows it. The two are deliberately different
-  (nick-wide, against per request by message ID); see the Findings in
-  [the spec](spec.md).
+  (`Event::NickStatus`) is shown by Channels through the separate
+  `channels-agent-status` change, now on `main`; this change does not
+  touch it. The two are deliberately different (nick-wide, against per
+  request by message ID); see the Findings in [the spec](spec.md).
 - **Code quality.** `mise run quality` found what the change added to
   `main`'s baseline, all fixed rather than suppressed or rebaselined: the
   pure tests were split into `thread_status/tests/` and the client test
@@ -224,6 +244,14 @@ describes the change as first written.
 - **Capture commands** now use Twilight Two, a 1440 x 900 window and the
   layout key Channels uses on `main`; see [Fixture evidence](#fixture-evidence).
 - **Not carried across:** nothing was left out.
+- **Based again on `19242ec`.** After the agent status feature
+  (`channels-agent-status`, pull requests #30 and #33) merged into `main`,
+  the branch was reset to `origin/main` at `19242ec` and the change
+  re-applied with `git cherry-pick --no-commit`. Two files conflicted and
+  were merged by hand: `spaces/irc/src/state.rs`, where `Network` keeps both
+  new fields (the agent status feature's `statuses` and this change's
+  `held_at_connect`), and `docs/irc.md`, which keeps both fixture
+  paragraphs. The review fixes below were made on top.
 
 Checks after the re-application, run on 21 November 2026 on macOS
 (arm64), Rust 1.99.0 through mise. This was the change's first build.
@@ -253,8 +281,56 @@ Checks after the re-application, run on 21 November 2026 on macOS
 - [ ] Not checked: a real Stargate gateway on a fleet (only the fixture);
       a disconnect of Channels itself in a capture (tests only); screen
       readers (accessible labels are checked in headless tests only).
-- [ ] Both model reviews (GPT-6.2 Sol and Claude Opus 5.5, high effort):
-      not yet run; required before merging.
+- [x] Both model reviews (GPT-6.2 Sol and Claude Opus 5.5, high effort) of
+      the head before the review fixes: Sol not clear (one high finding),
+      Opus clear. Every finding is in [Review findings](#review-findings).
+
+## Review findings
+
+Two independent reviews of the head before these fixes: GPT-6.2 Sol (high
+effort, verdict not clear) and Claude Opus 5.5 (high effort, verdict clear).
+Every finding, and what was done:
+
+| Reviewer | Severity | Finding | Done |
+| --- | --- | --- | --- |
+| Sol; Opus | High; medium | Trust followed whoever held the addressed nick now, so another account taking it could fold, spoof or end the ship's requests. | **Fixed.** Each request is pinned to the account its ship holds when Channels first sees the request with one: as a live request is appended, or, when first held from history, backfill or the store, when first evaluated with an account reported. Only that account's notices fold, whoever holds the nick later; without a pin nothing folds. Pins live in `Buffer::requests` (`thread_status/requests.rs`), so folding again uses them and member events cannot change them. They are not stored: after a restart a restored request is pinned to whoever holds the nick when the member list first reports an account, a window recorded in the spec. |
+| Opus | Low | A member could address themselves and have their own tagged notices folded. | **Fixed.** A request that addresses its own sender is not a request (`trust.rs` `request`). |
+| Opus; Sol | Medium; medium | Every member event refolded every buffer on the network, and every live line indexed the buffer's requests, twice. | **Fixed.** A live line is taken in by itself (`trust.rs` `arrival`, `folding.rs` `arrived`), without reading the buffer again. A member event with no account does nothing; otherwise it pins only the requests waiting for that nick (or, for a whole list, any waiting nick) in the buffers its list speaks for, and folds a buffer again only when held progress answers a newly pinned request. History, backfill and restore fold their own buffer again, as before. The client's existing per-line dedupe (`merge::known`) on `main` is unchanged. |
+| Sol | Medium | An ending held only while its notice was, so eviction or a partial reload could revive a finished request. | **Fixed.** Endings are kept in `Requests` apart from the lines, and `model.rs` `statuses` honours them. They are not stored either; after a restart the ending comes back from the restored notice, which the store restores whenever it restores the request's earlier progress. |
+| Sol | Medium | An older bouncer replay could replace a newer stage. | **Fixed.** `model.rs` `record` keeps the newest observation by server time; of two at the same time, the later in the buffer. |
+| Sol | Medium | A folded notice stayed hidden, and unrevealable from Search, after its request was evicted; unread was decided before trimming. | **Fixed, by unfolding.** Dropping a request at the line cap stops folding its notices (`folding.rs` `make_room` and `dropped`, `Requests::release`), so they show and Search reveals them; they fold again if the request loads again. `append` now makes room before it decides whether a live notice folds, so a notice whose request that very line drops counts as unread like any notice. |
+| Sol | Low | A trailing comma was accepted, as in `completed,`. | **Fixed.** `thread_status.rs` `parse` accepts only `<stage>` and `<stage>,disconnected`. |
+| Opus | Low | The client kept every client-only tag from any sender, in memory and in the store. | **Fixed, by an allow-list.** The client keeps only `KEPT_CLIENT_TAGS` (`+stargate/progress`), with values of at most 64 bytes (`session/lines.rs`); `+draft/reply` stays in `Line::reply_to`. |
+| Sol | Low | The fixture opened its `--config` path following symbolic links, before the server answered. | **Fixed.** It opens with `O_NOFOLLOW` and mode `0600`, as the agent status fixture does, and writes the config only once the server has answered, before printing `ready`. The `WHOIS`/330 login confirmation is kept. |
+| Sol | Low | Nicks compare in ASCII, not by the network's `CASEMAPPING`. | **Left open.** The Space has no case mapping, and the agent status change made the same decision. Recorded under Limits in the spec. |
+| Opus | Low | Progress loaded from history counts as current however old. | **Left open.** History replayed on join is how Channels learns the current progress after a restart, and the documented fixture captures rely on it. Staleness comes from `,disconnected` and our own disconnect. Recorded under Limits in the spec. |
+
+Checks after the review fixes, on 21 November 2026:
+
+- [x] `cargo test -p subspace-client-irc -p subspace-irc-board`: compiled
+      first time; all pass (Channels 483 passed, 4 ignored as on `main`,
+      now including the agent status tests from #30; the IRC client 241
+      passed).
+- [x] `make check` in `subspace-desktop/`: exit 0 (architecture, docs,
+      format, licences, clippy with warnings denied, the tests in both
+      configurations with 2,402 passed and none failed, script fixtures).
+- [x] `mise run quality` (`rustqual . --findings`): no new finding; the one
+      finding is the stale suppression in `products/subspace/build.rs`
+      reported on `main` too.
+- [x] `rustfmt --edition 2024` on every changed Rust file;
+      `python3 -I -m py_compile` on the fixture.
+- [x] `scripts/check-docs-index.py` and `scripts/check-board-docs.py`.
+- [x] The fixture against a fresh local Ergo 2.19.1 server, captured from
+      this build with the same steps: the same results as the evidence
+      below. The requests arrive from history when the capture build joins,
+      are pinned once the member list reports `astra`'s account, and fold
+      as before; the first request goes stale, the second's line clears on
+      `completed`, the third stays queued, and the untagged notice and
+      `nova`'s lookalike stay notices. That run's window opened at the
+      app's default 1280 x 800 rather than 1440 x 900, so its images were
+      not added; the UI is unchanged, and the images below still show it.
+- [ ] Both model reviews of the new head: not yet run; required before
+      merging.
 
 ## Evidence
 

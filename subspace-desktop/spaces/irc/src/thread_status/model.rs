@@ -1,6 +1,8 @@
 //! Each loaded request's newest trusted progress, and the status line that
 //! shows. Rebuilt from the buffer's lines whenever it changes, so a restored
-//! or reloaded thread reads the same as it did live.
+//! or reloaded thread reads the same as it did live. Endings are also kept
+//! apart from the lines ([`crate::thread_status::Requests`]), so a request
+//! stays ended once the notice that ended it is no longer held.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
@@ -44,7 +46,8 @@ struct Observation {
 /// What the folded progress says, by request message ID.
 #[derive(Default)]
 struct Progress<'a> {
-    /// The newest observation of each request, in buffer order.
+    /// The newest observation of each request by server time; of two at the
+    /// same time, the later in the buffer.
     latest: BTreeMap<&'a str, Observation>,
     /// Requests that completed or failed. No other notice, older or later,
     /// reopens them.
@@ -59,8 +62,19 @@ pub(crate) fn statuses(held: &Buffer, connected: Option<&Range<i64>>) -> Statuse
     let progress = progress(held);
     held.entries
         .iter()
+        .filter(|entry| !ended(held, entry))
         .filter_map(|entry| request_line(entry, &progress, connected))
         .collect()
+}
+
+/// Whether `entry` is a request that ended, also when the notice that
+/// ended it is no longer held.
+fn ended(held: &Buffer, entry: &Entry) -> bool {
+    entry
+        .line
+        .id
+        .as_deref()
+        .is_some_and(|id| held.requests.ended(id))
 }
 
 /// The folded notices of `held`, each against the request it answers.
@@ -102,7 +116,8 @@ pub(super) fn agent_name(nick: &str) -> String {
     name
 }
 
-/// Keeps each request's newest observation, and an ending for good.
+/// Keeps each request's newest observation by server time, so an older
+/// replay never replaces a newer stage, and an ending for good.
 fn record<'a>(
     mut progress: Progress<'a>,
     (request, observation): (&'a str, Observation),
@@ -110,7 +125,13 @@ fn record<'a>(
     if observation.marker.phase == Phase::Finished {
         progress.ended.insert(request);
     }
-    progress.latest.insert(request, observation);
+    let newer = progress
+        .latest
+        .get(request)
+        .is_none_or(|held| observation.time >= held.time);
+    if newer {
+        progress.latest.insert(request, observation);
+    }
     progress
 }
 

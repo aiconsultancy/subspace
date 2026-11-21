@@ -37,6 +37,7 @@ use crate::model::{Anchor, BufferKey, Command, Event, NetworkConfig, NetworkId, 
 use crate::proto::Message;
 
 pub use input::{COMMANDS, CommandHelp, FirstArgument};
+pub use lines::{KEPT_CLIENT_TAGS, PROGRESS_TAG};
 pub use metadata::status_text;
 pub use send::{
     MAX_INLINE_BYTES, check_draft, check_inline_text, connection_batches, draft_line_limit,

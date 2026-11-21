@@ -9,8 +9,9 @@
       `+draft/reply` naming the individual request.
 - [x] Keep client-only tags on lines in the IRC client, live, in history and
       from the opening multiline batch.
-- [x] Trust only the addressed ship's server-authenticated account on a
-      request Channels holds; record the rule and its sources in `spec.md`.
+- [x] Trust only the addressed ship's server-authenticated account, pinned
+      per request, on a request Channels holds; record the rule and its
+      sources in `spec.md`.
 - [x] Keep one status per request message ID: every stage, endings that stay
       final, staleness on a disconnect, reopening.
 - [x] Fold trusted notices out of rows, reply counts, unread counts and
@@ -27,12 +28,25 @@
       workspace shell), by hand, file by file; record what changed in
       `delivery.md`.
 - [x] Bound the agent's nick on the status line to one line of plain text.
-- [x] Keep the nick-wide `draft/metadata-2` status apart: not shown or
-      changed here; `channels-agent-status` shows it.
+- [x] Keep the nick-wide `draft/metadata-2` status apart: not changed
+      here; Channels shows it through `channels-agent-status`, now on
+      `main`.
 - [x] Run `make check` and `mise run quality` after the re-application and
       fix what they find (one clippy lint; no baseline refresh needed).
 - [x] Run the fixture against a live local Ergo server (fixing its login
       wait) and capture the before and after evidence under `evidence/`.
+- [x] Base the branch again on `main` at `19242ec`, after the agent status
+      feature merged (#30, #33); merge `state.rs` and `docs/irc.md` by hand.
+- [x] Address both model reviews of the previous head (see Review findings
+      in `delivery.md`): pin each request's trusted account; refuse a
+      request to its own sender; fold in proportion to each event; keep
+      endings apart from their notices; order progress by server time;
+      unfold progress whose request is dropped; refuse an empty marker
+      suffix; keep only the allow-listed client-only tags; harden the
+      fixture's config file. Leave case mapping and history age open, with
+      reasons.
+- [x] Add pinning, retention, marker and client tests for those fixes.
+- [ ] Build and test the fixes: `cargo test` and `make check`.
 - [ ] Owner: commit (signed), push and open the pull request, with the
       captures embedded by commit-pinned URLs.
 - [ ] Both model reviews clear the final head.

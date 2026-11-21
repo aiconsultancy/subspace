@@ -50,13 +50,13 @@ messages.
   `<nick> is typing…` above the composer. It names no message, so it cannot
   say which request is running.
 - The nickname `status` metadata from `draft/metadata-2`
-  (`Event::NickStatus`) is parsed but not shown on this branch. It is
-  nick-wide too. A separate change, `channels-agent-status`, shows it above
-  the composer and in the members inspector. The two are deliberately
-  different: that status belongs to a nick and says what the agent is doing
-  overall; this change's status belongs to one request, by its message ID.
-  This change neither shows nor changes the nick status handling, and never
-  presents one as the other.
+  (`Event::NickStatus`) is nick-wide too. Channels shows it above the
+  composer and in the members inspector through a separate change,
+  `channels-agent-status`, merged into `main` before this one. The two are
+  deliberately different: that status belongs to a nick and says what the
+  agent is doing overall; this change's status belongs to one request, by
+  its message ID. This change does not change the nick status handling, and
+  never presents one as the other.
 
 ### Verdict on the wire before the marker
 
@@ -91,10 +91,12 @@ tags, from both of its repositories from its next release:
   individual request, also when two requests share one thread, so Channels
   keys each status by that request's message ID, never by the thread root.
 
-Channels reads the tag from one constant, `thread_status::PROGRESS_TAG`. Any
-other value, a suffix on `completed` or `failed`, the tag on a `PRIVMSG` or
-action, or a tagged notice without a reply ID is not a marker: the line
-stays an ordinary message and changes no status.
+Channels reads the tag from one constant, `thread_status::PROGRESS_TAG`
+(the client's `PROGRESS_TAG`). Any other value, any suffix other than
+`,disconnected` (an empty one, as in `tool,` or `completed,`, too), a suffix
+on `completed` or `failed`, the tag on a `PRIVMSG` or action, or a tagged
+notice without a reply ID is not a marker: the line stays an ordinary
+message and changes no status.
 
 ## Trust
 
@@ -108,15 +110,24 @@ when the server vouches for its sender. Every condition must hold:
    addresses one nick: `nick:`, `nick,` or `@nick`, the forms the composer
    completes. In a private conversation it is the conversation's partner.
    A request that addresses no one, or only further on in its text, has no
-   expected ship.
-3. **That ship's server-authenticated account.** The account the IRC server
+   expected ship. Nor does a request that addresses its own sender (compared
+   case-insensitively in ASCII): it is not a request, so a member cannot
+   fold their own tagged notices.
+3. **The account the request is pinned to.** The account the IRC server
    reports for that nick in the member lists: the channel's own, or, for a
    private conversation, those of the network's channels. The client fills
    them from `WHOX` after each join, `extended-join` and `account-notify`
-   (`Member::account`); only the server sets them.
-4. **The notice comes from that account.** The notice's `account` tag, which
-   only the server sets (`account-tag`), names the same account, compared
-   case-insensitively in ASCII.
+   (`Member::account`); only the server sets them. Channels pins each
+   request to the account its ship holds when Channels first sees the
+   request with one reported: for a live request, when the line is
+   appended; for a request first held from history, backfill or the store,
+   when it is first evaluated with an account reported, such as when `WHOX`
+   answers after the history page. Until then the request waits, and
+   nothing on it folds.
+4. **The notice comes from the pinned account.** The notice's `account`
+   tag, which only the server sets (`account-tag`), names the pinned
+   account, compared case-insensitively in ASCII, whoever holds the nick by
+   then.
 
 **Where the expected account comes from.** Channels has no other trustworthy
 source. The Subspace API's fleet record (`Fleet::rear_admiral_name`,
@@ -136,11 +147,31 @@ server does not offer `account-tag`, the ship is not in the channel (or, for
 a private conversation, in any channel we share), `WHOX` has not answered
 yet, the request addresses no one, or the request is not loaded.
 
-**Stability.** Folding is re-evaluated after every new line, history page,
-backfill, restore and member list change (`state/folding.rs`). A notice
-folds as soon as the server vouches for it and stays folded while its line
-is held, so a ship leaving the channel later does not bring its progress
-back as messages.
+**Pins.** The pins are held in the Space's state, per buffer
+(`thread_status::Requests`, in `Buffer::requests`), so folding again from
+the held lines uses them, and member events cannot change a pinned
+request's trust: a ship leaving, or another account taking its nick, changes
+nothing about requests already pinned. A pin outlives its request line, so
+a request that loads again keeps it; each buffer remembers up to twice
+`HISTORY_MAX` pins, the oldest forgotten first.
+
+**Pins do not survive a store round trip.** They are not stored. After a
+restart, a request restored from the store waits until the member list
+first reports an account for its ship, and is pinned to whoever holds the
+nick at that moment, usually when `WHOX` answers after joining. In that
+window, a different account holding the ship's nick would be pinned
+instead. Servers that tie nicks to accounts, as Subspace's Ergo does with
+`force-nick-equals-account`, rule this out.
+
+**Stability.** A live line is taken in by itself: a request is pinned or
+waits, and a notice folds or not, without reading the buffer again. A
+history page, backfill or restore folds its buffer again from the held
+lines. A member list change only pins requests still waiting for an
+account, in the buffers its list speaks for, and folds a buffer again only
+when held progress answers one of them (`state/folding.rs`). A notice stays
+folded while it and its request are held: when the line cap drops the
+request, its notices stop folding and show, and can be found from Search,
+as ordinary notices; they fold again if the request loads again.
 
 **Counting.** A trusted notice never counts as unread and never notifies,
 live or from history. A live notice is checked before it is counted. History
@@ -175,12 +206,19 @@ characters with an ellipsis (`thread_status::model::agent_name`).
 
 - **One line per active request**, under that request's message, after its
   reply count. Two requests in one thread each have their own line.
-- **Newest wins.** The newest trusted notice in the buffer, in order, sets
-  the stage. An update to one request never changes another.
+- **Newest wins.** The newest trusted notice by server time sets the
+  stage; of two at the same time, the later one in the buffer. An older
+  notice replayed later, such as from a bouncer, never replaces a newer
+  stage. An update to one request never changes another.
 - **Endings are final.** `completed` or `failed` clears only the matching
   request, and no other notice, later or loaded from older history, reopens
-  it. A final reply without a reply tag in the main room, or any untagged or
-  `PRIVMSG` reply, clears nothing.
+  it. The ending is kept apart from the notice (`thread_status::Requests`),
+  so it holds after the notice is dropped by the line cap or is missing
+  from a reloaded page, for as long as Channels runs. After a restart it
+  comes back from the restored notice: the store restores each buffer's
+  newest lines, and a request's ending is newer than its progress. A final
+  reply without a reply tag in the main room, or any untagged or `PRIVMSG`
+  reply, clears nothing.
 - **Stale.** The line shows the last known stage with `Last update HH:MM`
   and a **Stale** pill when the notice carried `,disconnected`, while the
   network is not connected, or when the notice was already held when the
@@ -202,21 +240,32 @@ characters with an ellipsis (`thread_status::model::agent_name`).
   Unplug glyph and the shared warning `Pill`. Each line is a status region
   labelled `<agent>: <label>`, with `. Stale: the last update was at HH:MM`
   when stale. It has no focus, click or keyboard behaviour.
-- **Client.** The IRC client keeps the client-only tags of a `PRIVMSG` or
-  `NOTICE`, except `+draft/reply`, as `Line::client_tags`, live and in
-  history, and stores them with the line. A multiline message takes them
-  from its opening `BATCH` only.
+- **Client.** The IRC client keeps only the client-only tags Channels
+  reads (`subspace_client_irc::KEPT_CLIENT_TAGS`: `+stargate/progress`)
+  with values of at most 64 bytes, besides `+draft/reply` in
+  `Line::reply_to`, as `Line::client_tags`, live and in history, and
+  stores them with the line. Every other client-only tag, from any sender,
+  is dropped. A multiline message takes them from its opening `BATCH`
+  only.
 
 ## Limits
 
 - Requests that do not address the ship in their first word, such as
   messages in a channel where Stargate wakes on every human message, fold
   nothing: Channels has no expected account for them.
-- The expected account is the one the server reports now, not when the
-  request was sent. If the ship's nick later belongs to another account,
-  that account's notices on the ship's open requests would be trusted.
-  Servers that tie nicks to accounts, as Subspace's Ergo does with
-  `force-nick-equals-account`, rule this out.
+- A request is pinned when Channels first sees it with an account
+  reported, not when it was sent. A request held from history, or restored
+  from the store after a restart, is pinned to whoever holds the nick when
+  the member list first reports an account (see **Pins** under Trust).
 - A progress notice for a request that is not loaded stays a notice until
   the request loads and folding runs again.
+- Nicks are compared in ASCII, not by the network's `CASEMAPPING`: the
+  Space has no case mapping, as the agent status change also decided. A
+  request to `bot{` on an RFC 1459 network does not reach `bot[`, so its
+  progress stays visible as notices.
+- Progress received on the current connection counts as current, however
+  old, also when it comes from history replayed on join: that is how
+  Channels learns the current progress after a restart, and the fixture's
+  captures rely on it. Staleness comes from `,disconnected` and our own
+  disconnect.
 - The Subspace API's update stream is not used.

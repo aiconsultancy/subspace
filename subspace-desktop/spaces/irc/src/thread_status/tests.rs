@@ -7,6 +7,8 @@ use crate::state::IrcState;
 
 mod lifecycle;
 mod markers;
+mod pinning;
+mod retention;
 mod trust;
 
 /// The fixture ship's account, as the server reports it.
