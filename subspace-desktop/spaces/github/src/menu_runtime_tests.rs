@@ -1,18 +1,15 @@
 //! Real board menu entry points, without live requests or an app shell.
 
-use crate::model::sections_of;
-use crate::{Account, Github, MenuTarget, SectionData, sample};
+use crate::{Github, MenuTarget};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
     AppContext as _, Bounds, Context, Entity, IntoElement, ParentElement as _, Pixels, Render,
-    Role, Styled as _, Subscription, TestAppContext, VisualTestContext, Window, div, px,
+    Styled as _, Subscription, TestAppContext, VisualTestContext, Window, div, px,
 };
-use std::sync::Arc;
-use subspace_framework::client_github::{
-    Client,
-    model::{GhItemDetail, GhUser},
-};
-use subspace_framework::dashboard::Dashboard as _;
+use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks, text_edge};
+use subspace_framework::dashboard::{Dashboard as _, Tokens};
+
+mod workspace;
 
 struct BoardWindow {
     board: Entity<Github>,
@@ -97,9 +94,42 @@ fn assert_menu_edge(window: &mut Window, trigger: Bounds<Pixels>) {
     );
 }
 
+/// Checks that the open menu hangs from the bottom of trigger `id`.
+fn assert_menu_under(cx: &mut VisualTestContext, id: &'static str) {
+    cx.update(|window, _| {
+        let trigger = window.find(id).bounds();
+        assert_menu_edge(window, trigger);
+    });
+}
+
+/// Hides the navigator, which puts the view menu and the account picker in
+/// the pane's toolbar.
+fn hide_navigator(board: &Entity<Github>, cx: &mut VisualTestContext) {
+    board.update(cx, |board, cx| board.toggle_navigator(cx));
+    settle(cx);
+}
+
+/// Uses a dock's switch as the shell's status bar does: through the Space's
+/// dock contract.
+fn use_dock_switch(board: &Entity<Github>, cx: &mut VisualTestContext, dock: SpaceDock) {
+    board.update_in(cx, |board, window, cx| board.toggle_dock(dock, window, cx));
+    settle(cx);
+}
+
+/// The status line the shell shows for the board.
+fn status(board: &Entity<Github>, cx: &mut VisualTestContext) -> String {
+    board.read_with(cx, |board, cx| {
+        board
+            .status(cx)
+            .map(|line| line.to_string())
+            .unwrap_or_default()
+    })
+}
+
 #[gpui_kit::test]
 fn inline_account_toggle_search_pick_and_focus_return(cx: &mut TestAppContext) {
     let (board, cx) = setup(cx, 1600.);
+    hide_navigator(&board, cx);
     cx.update(|window, cx| window.click("gh-account-button", cx));
     settle(cx);
     cx.update(|window, _| {
@@ -119,50 +149,67 @@ fn inline_account_toggle_search_pick_and_focus_return(cx: &mut TestAppContext) {
         assert_eq!(board.account.as_deref(), Some("test-beta"));
         assert!(board.menu.is_none());
     });
-    cx.update(|window, _| {
-        assert_eq!(window.find("gh-account-button").focused(), Some(true));
-        assert_eq!(
-            window.find("github-scope").label(),
-            Some("GitHub · Signed in as test-beta")
-        );
-    });
+    cx.update(|window, _| assert_eq!(window.find("gh-account-button").focused(), Some(true)));
+    assert!(status(&board, cx).starts_with("GitHub · Signed in as test-beta"));
 }
 
 #[gpui_kit::test]
-fn the_header_names_the_space_and_its_one_account_above_aligned_controls(cx: &mut TestAppContext) {
+fn the_navigator_names_the_space_and_its_one_account_and_the_status_line_carries_it(
+    cx: &mut TestAppContext,
+) {
     let (root, cx) = mount_accounts(cx, 1600., &["test-alpha"]);
     let board = root.read_with(cx, |root, _| root.board.clone());
     board.read_with(cx, |board, _| {
         use subspace_framework::dashboard::ListDashboard as _;
         assert!(board.comfortable_rows());
     });
-    cx.update(|window, _| {
+    cx.update(|window, cx| {
         assert!(window.try_find("gh-account-button").is_none());
-        let heading = window.find("github-heading");
-        let scope = window.find("github-scope");
-        assert_eq!(heading.label(), Some("Pull requests"));
-        assert_eq!(heading.role(), Some(Role::Heading));
-        assert_eq!(scope.label(), Some("GitHub · Signed in as test-alpha"));
-        let tabs = window.find("overflow-unit:gh-section-tabs").bounds();
-        let repositories = window.find("gh-repos-button").bounds();
+        assert!(window.try_find("github-heading").is_none());
+        assert!(window.try_find("github-scope").is_none());
+        let footer = window.find("gh-account-line");
+        assert_eq!(footer.label(), Some("Signed in to GitHub as test-alpha"));
+        let navigator = window.find("workspace-navigator").bounds();
+        assert!(footer.bounds().right() <= navigator.right());
+        // The toolbar starts on the workspace's text edge, then runs
+        // Repositories and Refresh; the dock switches are the status bar's.
+        let edge = text_edge(&Tokens::current(cx));
         let toolbar = window.find("github-list-toolbar").bounds();
-        assert_eq!(tabs.left() - toolbar.left(), crate::LIST_SIDE_INSET);
-        assert_eq!(heading.bounds().left(), tabs.left());
-        assert!(heading.bounds().right() <= scope.bounds().left());
-        assert!(scope.bounds().top() < heading.bounds().bottom());
-        assert!(scope.bounds().bottom() <= tabs.top());
-        assert!(tabs.right() <= repositories.left());
-        assert!(window.try_find("gh-account-label").is_none());
+        let repositories = window.find("gh-repos-button").bounds();
+        let refresh = window.find("gh-refresh").bounds();
+        assert_eq!(repositories.left() - toolbar.left(), edge);
+        assert!(navigator.right() <= toolbar.left());
+        assert!(repositories.right() <= refresh.left());
+        assert!(window.try_find("workspace-navigator-toggle").is_none());
+        let strip = window.find("workspace-tab-strip").bounds();
+        assert!(strip.bottom() <= toolbar.top());
     });
+    assert!(status(&board, cx).starts_with("GitHub · Signed in as test-alpha"));
+    let docks = board.read_with(cx, |board, cx| board.docks(cx));
+    assert_eq!(docks, SpaceDocks::both(true, true), "both switches show");
 }
 
 #[gpui_kit::test]
-fn more_than_one_account_is_a_picker_after_repositories(cx: &mut TestAppContext) {
-    let (_, cx) = mount(cx, 1600.);
+fn more_than_one_account_is_a_picker_in_the_navigator_footer_then_after_repositories(
+    cx: &mut TestAppContext,
+) {
+    let (board, cx) = setup(cx, 1600.);
     cx.update(|window, _| {
-        assert!(window.try_find("gh-account-label").is_none());
+        assert!(window.try_find("gh-account-line").is_none());
+        assert!(window.try_find("gh-view-button").is_none());
+        let navigator = window.find("workspace-navigator").bounds();
         let picker = window.find("gh-account-button").bounds();
         let repositories = window.find("gh-repos-button").bounds();
+        assert!(picker.right() <= navigator.right());
+        assert!(navigator.right() <= repositories.left());
+    });
+    hide_navigator(&board, cx);
+    cx.update(|window, _| {
+        assert!(window.try_find("workspace-navigator").is_none());
+        let view = window.find("gh-view-button").bounds();
+        let repositories = window.find("gh-repos-button").bounds();
+        let picker = window.find("gh-account-button").bounds();
+        assert!(view.right() <= repositories.left());
         assert!(repositories.right() <= picker.left());
     });
 }
@@ -170,6 +217,8 @@ fn more_than_one_account_is_a_picker_after_repositories(cx: &mut TestAppContext)
 #[gpui_kit::test]
 fn account_menu_left_edge_follows_the_trigger_after_toolbar_moves(cx: &mut TestAppContext) {
     let (root, cx) = mount(cx, 1600.);
+    let board = root.read_with(cx, |root, _| root.board.clone());
+    hide_navigator(&board, cx);
     let initial = cx.update(|window, _| window.find("gh-account-button").bounds().left());
     for left in [90., 310.] {
         root.update(cx, |root, cx| {
@@ -197,31 +246,18 @@ fn account_menu_left_edge_follows_the_trigger_after_toolbar_moves(cx: &mut TestA
 }
 
 #[gpui_kit::test]
-fn hidden_account_keyboard_and_native_overflow_share_chevron_host(cx: &mut TestAppContext) {
-    let (board, cx) = setup(cx, 100.);
+fn the_account_key_opens_the_menu_at_the_picker(cx: &mut TestAppContext) {
+    let (board, cx) = setup(cx, 1600.);
+    hide_navigator(&board, cx);
     board.update_in(cx, |board, window, cx| board.focus.focus(window, cx));
     cx.simulate_keystrokes("u");
     settle(cx);
-    cx.update(|window, _| {
-        assert!(window.try_find("gh-account-button").is_none());
-        assert_eq!(
-            window.find("menu").bounds().top(),
-            window.find("overflow-toolbar-button").bounds().bottom()
-        );
-    });
-    cx.simulate_keystrokes("escape");
-    settle(cx);
-    cx.update(|window, _| assert_eq!(window.find("overflow-toolbar-button").focused(), Some(true)));
-    // The account is the last unit, after the section tabs and Repositories.
-    let account_entry = board.read_with(cx, |board, _| sections_of(board.kind()).count() + 1);
-    cx.update(|window, cx| {
-        window.click("overflow-toolbar-button", cx);
-        window.click(account_entry, cx);
-    });
-    settle(cx);
-    cx.update(|window, _| {
-        assert!(window.try_find("popup-menu").is_none());
-        assert!(window.try_find("menu").is_some());
+    assert_menu_under(cx, "gh-account-button");
+    board.read_with(cx, |board, _| {
+        assert!(matches!(
+            board.menu.as_ref().map(|(_, target, _)| target),
+            Some(MenuTarget::Account)
+        ))
     });
     board.update_in(cx, |board, window, cx| board.deactivate(window, cx));
     settle(cx);
@@ -229,81 +265,35 @@ fn hidden_account_keyboard_and_native_overflow_share_chevron_host(cx: &mut TestA
     cx.update(|window, _| assert!(window.try_find("menu").is_none()));
 }
 
-fn load_detail(board: &mut Github, cx: &mut Context<Github>) {
-    let item = sample::items().remove(0);
-    let key = item.key.clone();
-    let detail = GhItemDetail {
-        item: item.clone(),
-        body_html: String::new(),
-        reviewers: Vec::new(),
-        check_runs: Vec::new(),
-        events: Vec::new(),
-        viewer_can_review: true,
-        viewer_can_comment: true,
-        changed_files: Some(0),
-    };
-    let mut account = Account::default();
-    account.sections.insert(
-        board.section,
-        SectionData {
-            total: 1,
-            items: vec![item.clone()],
-            at: 0,
-        },
-    );
-    account.details.insert(key.clone(), detail);
-    account.assignable.insert(
-        item.repo.to_lowercase(),
-        vec![GhUser {
-            login: "test-assignee".into(),
-            name: None,
-        }],
-    );
-    board.data.insert("test-alpha".into(), account);
-    let config = subspace_framework::core::config::Config::default();
-    board.client = Some(Arc::new(
-        Client::new(subspace_framework::agent_tools::test_support::credentials(
-            &config,
-        ))
-        .with_api_url("http://127.0.0.1:0"),
-    ));
-    board.rebuild(cx);
-    board.list.reveal(&key);
-    cx.notify();
-}
-
 #[gpui_kit::test]
-fn both_assignee_buttons_use_their_own_measured_trigger_and_keyboard_uses_top(
+fn the_navigator_switches_views_and_the_view_menu_stands_in_while_it_is_hidden(
     cx: &mut TestAppContext,
 ) {
     let (board, cx) = setup(cx, 1600.);
-    board.update(cx, load_detail);
+    cx.update(|window, cx| {
+        assert_eq!(window.find("gh-view:review").selected(), Some(true));
+        window.click("gh-view:mine", cx);
+    });
     settle(cx);
-    for place in ["top", "bottom"] {
-        let id = ("gh-assign", place.len());
-        cx.update(|window, cx| window.click(id, cx));
-        settle(cx);
-        let anchor = board.read_with(cx, |board, cx| match place {
-            "bottom" => board.assignee_bottom_anchor.read(cx).bounds(),
-            _ => board.assignee_anchor.read(cx).bounds(),
-        });
-        cx.update(|window, _| assert_menu_edge(window, anchor));
-        board.read_with(cx, |board, _| {
-            assert!(matches!(
-                board.menu.as_ref().map(|(_, target, _)| target),
-                Some(MenuTarget::Assignees(_))
-            ))
-        });
-        cx.simulate_keystrokes("escape");
-        settle(cx);
-        cx.update(|window, _| assert_eq!(window.find(id).focused(), Some(true)));
-    }
-    board.update_in(cx, |board, window, cx| board.focus.focus(window, cx));
-    cx.simulate_keystrokes("a");
+    board.read_with(cx, |board, _| assert_eq!(board.section, "mine"));
+    cx.update(|window, _| assert_eq!(window.find("gh-view:mine").selected(), Some(true)));
+    use_dock_switch(&board, cx, SpaceDock::Navigator);
+    board.read_with(cx, |board, cx| {
+        assert!(!board.navigator_open);
+        let stored = subspace_framework::dashboard::prefs::get(cx, crate::layout::NAVIGATOR_KEY);
+        assert_eq!(stored.as_deref(), Some("0"));
+    });
+    cx.update(|window, cx| window.click("gh-view-button", cx));
     settle(cx);
-    let anchor = board.read_with(cx, |board, cx| board.assignee_anchor.read(cx).bounds());
-    cx.update(|window, _| assert_menu_edge(window, anchor));
+    assert_menu_under(cx, "gh-view-button");
+    board.read_with(cx, |board, _| {
+        assert!(matches!(
+            board.menu.as_ref().map(|(_, target, _)| target),
+            Some(MenuTarget::View)
+        ))
+    });
     board.update_in(cx, |board, window, cx| board.deactivate(window, cx));
     settle(cx);
-    board.read_with(cx, |board, _| assert!(board.menu.is_none()));
+    use_dock_switch(&board, cx, SpaceDock::Navigator);
+    cx.update(|window, _| assert!(window.try_find("workspace-navigator").is_some()));
 }
