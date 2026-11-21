@@ -27,6 +27,7 @@ release-check: ## Release Please's config, the lockfile sync and the release wor
 	mise -C $(DESKTOP) exec -- python3 "$(CURDIR)/scripts/test-release-tooling.py"
 	bash scripts/test-release-lockfiles.sh
 	bash scripts/test-release-rebuild.sh
+	bash scripts/test-windows-release-resolve.sh
 	python3 scripts/check-release-config.py
 	mise -C $(DESKTOP) exec -- python3 "$(CURDIR)/scripts/sync-lockfiles.py" --check
 	@if command -v actionlint >/dev/null; then actionlint .github/workflows/*.yml; else echo "actionlint is not installed; workflows not linted"; fi

@@ -99,66 +99,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       # Anyone who can push a tag could otherwise get any commit signed. Only
-      # a commit that reached main through review is built and signed.
+      # a Release Please commit in main's first-parent history is built and
+      # signed; the script, from this checkout of main, says how it checks.
+      # scripts/test-windows-release-resolve.sh tests it.
       - name: Resolve the release
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
           EXPECTED_COMMIT: ${{ inputs.commit }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$TAG" =~ ^subspace-desktop-v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$ ]]; then
-            echo "not a stable Subspace desktop release tag: $TAG" >&2
-            exit 1
-          fi
-          version="${BASH_REMATCH[1]}"
-          commit="$(git rev-parse --verify "refs/tags/$TAG^{commit}")"
-          if [[ -n "$EXPECTED_COMMIT" && "$commit" != "$EXPECTED_COMMIT" ]]; then
-            echo "$TAG points at $commit, not $EXPECTED_COMMIT, the release's commit" >&2
-            exit 1
-          fi
-          # main's own history, not a commit from inside a merged pull request
-          # that review may never have seen as it stands. Release Please tags
-          # the merge commit of each release pull request, which is there.
-          # grep reads the whole list: stopping early would kill git with
-          # SIGPIPE and fail the pipeline under pipefail.
-          if ! git rev-list --first-parent HEAD | grep -xF "$commit" >/dev/null; then
-            echo "$TAG points at $commit, which is not in main's first-parent history; only those commits are built and signed" >&2
-            exit 1
-          fi
-          # The merge commit of a merged Release Please pull request into main,
-          # never a commit from inside another pull request, however that was
-          # merged: after a rebase merge, GitHub records only the last commit.
-          prs="$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit/pulls")"
-          if ! jq -e --arg c "$commit" --arg repo "$GITHUB_REPOSITORY" '
-            [.[] | select(.merge_commit_sha == $c and .merged_at != null
-              and .base.ref == "main" and .head.repo.full_name == $repo
-              and .head.ref == "release-please--branches--main--components--subspace-desktop"
-              and .user.login == "github-actions[bot]")] | length == 1' <<<"$prs" >/dev/null; then
-            echo "$commit is not the merge commit of a merged Release Please pull request for the desktop" >&2
-            exit 1
-          fi
-          # And it changes only the files Release Please changes.
-          allowed='^(\.release-please-manifest\.json|subspace-desktop/(CHANGELOG\.md|Cargo\.(toml|lock)|terminal/(panel|runtime)/Cargo\.(toml|lock)))$'
-          changed="$(git diff --no-ext-diff --no-textconv --no-renames --name-only "$commit^1" "$commit")"
-          if [[ -z "$changed" ]] || grep -vE "$allowed" <<<"$changed" >/dev/null; then
-            printf '%s is not a Release Please release commit; it changes:\n%s\n' "$commit" "$changed" >&2
-            exit 1
-          fi
-          # Older releases run the built app to check it, and it cannot start
-          # on the Windows runner; refuse them before a long build.
-          if ! git grep -qF SUBSPACE_PACKAGE_SKIP_RUN_CHECK "$commit" -- subspace-desktop/scripts/package-release.sh; then
-            echo "$TAG predates Windows release builds: its package-release.sh cannot skip running the app" >&2
-            exit 1
-          fi
-          {
-            echo "tag=$TAG"
-            echo "version=$version"
-            echo "commit=$commit"
-            echo "archive=subspace-$version-$TARGET.zip"
-          } >>"$GITHUB_OUTPUT"
-          echo "$TAG is $commit, a release commit in main's first-parent history." >>"$GITHUB_STEP_SUMMARY"
+        run: bash scripts/windows-release-resolve.sh
 
   build:
     needs: resolve
