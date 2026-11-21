@@ -570,10 +570,11 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
 
 1. **resolve**, on `subspace-signing`, a Linux runner in the trusted
    deployment subnet, refuses the tag unless it is a stable release whose
-   commit is a Release Please release commit in `main`'s first-parent
-   history: one that changes only the manifest, the changelog and the
-   `Cargo.toml` and `Cargo.lock` files Release Please updates (and, when
-   `release.yml` starts the run, is the release's commit), so only reviewed code is signed, whoever pushed the
+   commit is the merge commit of a merged Release Please pull request for the
+   desktop, as GitHub records it, in `main`'s first-parent history, and
+   changes only the manifest, the changelog and the `Cargo.toml` and
+   `Cargo.lock` files Release Please updates (and, when `release.yml` starts
+   the run, is the release's commit), so only reviewed code is signed, whoever pushed the
    tag. It fixes that commit and the archive's name for the rest of the run.
 2. **build**, on `subspace-windows`, checks out that commit, installs
    `cargo-about` at the version and SHA-256 its `mise.toml` pins, and runs
@@ -593,7 +594,7 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
    SHA-256 digest, signs in to Azure with GitHub OIDC as the signing
    identity and runs `scripts/sign-windows.sh` on the archive, which refuses
    links, unsafe paths (including names Windows would rewrite, such as a
-   trailing dot, or treat as devices) and duplicate entries. It first
+   trailing dot, forbids, or treats as devices) and duplicate entries. It first
    refuses an archive holding any Windows binary other than `subspace.exe`. It reads the three
    secrets above through the platform Key Vault's private endpoint, masks
    their values in the log, and records the signed archive's SHA-256.

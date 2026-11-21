@@ -152,12 +152,13 @@ expect_failure 'unsafe entry in' sign "$fixture/work/escape.zip"
 python3 - "$fixture/work" <<'PY'
 import sys, zipfile
 work = sys.argv[1]
-for name, member in (("dot", "evil.dll."), ("space", "evil.dll "), ("device", "licenses/NUL.txt")):
+for name, member in (("dot", "evil.dll."), ("space", "evil.dll "), ("device", "licenses/NUL.txt"),
+                     ("superscript", "licenses/COM\u00b9.txt"), ("padded", "NUL .txt"), ("console", "CONIN$")):
     with zipfile.ZipFile(f"{work}/{name}.zip", "w") as z:
         z.writestr("subspace.exe", "exe")
         z.writestr(member, "x")
 PY
-for name in dot space device; do
+for name in dot space device superscript padded console; do
 	expect_failure 'unsafe entry in' sign "$fixture/work/$name.zip"
 done
 expect_failure 'duplicate entries in' sign "$fixture/work/twice.zip"
