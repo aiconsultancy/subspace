@@ -113,10 +113,16 @@ count, and any critical or high findings still need resolution.
   head, reviewed range, verdict and how each finding was resolved. Check review
   text for secrets before posting it. Flag changes to agent instructions, hooks,
   workflows, task runners or the helper for a maintainer to read before merging.
+- The required **Fleet app review** check uses P0 to P3. P0 is critical, P1
+  is high, P2 is medium and P3 is low.
 - A review is clear when the reviewer inspected the change and found no
-  remaining critical or high findings. Verify each finding. Fix or refute each
-  critical or high finding and review the amended code. For medium and low
-  findings, record the reason for any decision to leave them open.
+  remaining P0 or P1 findings. Verify each finding. Fix or refute each P0
+  or P1 in the PR and review any amended code before merging.
+- Use judgement on P2 and P3 findings, including findings from fix rounds.
+  Fix those worth addressing in this PR. Under **Reviews**, record each
+  finding with its fix commit, the reason for leaving it open, or a link to
+  the issue tracking separate work. Once the remaining P2 and P3 findings
+  have a recorded decision, complete the merge checks below.
 - Have both reviewers cover any changes to the reviewed diff. Run full reviews
   after a rebase or rewrite that changes commit trees, or when the target
   branch or merge base changes. If only commit metadata changes, the reviewers
