@@ -147,6 +147,19 @@ with zipfile.ZipFile(f"{work}/twice.zip", "w") as z:
     z.writestr("subspace.exe", "other")
 PY
 expect_failure 'unsafe entry in' sign "$fixture/work/escape.zip"
+
+# Names Windows would rewrite or treat as devices are refused.
+python3 - "$fixture/work" <<'PY'
+import sys, zipfile
+work = sys.argv[1]
+for name, member in (("dot", "evil.dll."), ("space", "evil.dll "), ("device", "licenses/NUL.txt")):
+    with zipfile.ZipFile(f"{work}/{name}.zip", "w") as z:
+        z.writestr("subspace.exe", "exe")
+        z.writestr(member, "x")
+PY
+for name in dot space device; do
+	expect_failure 'unsafe entry in' sign "$fixture/work/$name.zip"
+done
 expect_failure 'duplicate entries in' sign "$fixture/work/twice.zip"
 
 # Names that Windows treats as one file are refused, and an executable is

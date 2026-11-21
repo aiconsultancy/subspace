@@ -36,8 +36,11 @@
 # publishes the release. It builds only a tag on a commit in main's
 # first-parent history, from a release that can skip running the app. The
 # runner group admits only this file on main. To try the build or the
-# signing without attaching anything, or to attach a missing archive:
+# signing without attaching anything:
 #   gh workflow run windows-release.yml --ref main -f tag=subspace-desktop-v<version> -f mode=sign-only
+# To attach a missing archive (re-run a failed attach job instead when its
+# run still has the signed artifact):
+#   gh workflow run windows-release.yml --ref main -f tag=subspace-desktop-v<version>
 name: windows-release
 
 on:
@@ -116,8 +119,19 @@ jobs:
           # main's own history, not a commit from inside a merged pull request
           # that review may never have seen as it stands. Release Please tags
           # the merge commit of each release pull request, which is there.
-          if ! git rev-list --first-parent HEAD | grep -qxF "$commit"; then
+          # grep reads the whole list: stopping early would kill git with
+          # SIGPIPE and fail the pipeline under pipefail.
+          if ! git rev-list --first-parent HEAD | grep -xF "$commit" >/dev/null; then
             echo "$TAG points at $commit, which is not in main's first-parent history; only those commits are built and signed" >&2
+            exit 1
+          fi
+          # A desktop release commit changes only the files Release Please
+          # does, so a tag on any other commit is refused, however it reached
+          # main.
+          allowed='^(\.release-please-manifest\.json|subspace-desktop/(CHANGELOG\.md|Cargo\.(toml|lock)|terminal/(panel|runtime)/Cargo\.(toml|lock)))$'
+          changed="$(git diff --no-ext-diff --no-textconv --name-only "$commit^1" "$commit")"
+          if [[ -z "$changed" ]] || grep -vE "$allowed" <<<"$changed" >/dev/null; then
+            printf '%s is not a Release Please release commit; it changes:\n%s\n' "$commit" "$changed" >&2
             exit 1
           fi
           # Older releases run the built app to check it, and it cannot start
@@ -132,7 +146,7 @@ jobs:
             echo "commit=$commit"
             echo "archive=subspace-$version-$TARGET.zip"
           } >>"$GITHUB_OUTPUT"
-          echo "$TAG is $commit, in main's first-parent history." >>"$GITHUB_STEP_SUMMARY"
+          echo "$TAG is $commit, a release commit in main's first-parent history." >>"$GITHUB_STEP_SUMMARY"
 
   build:
     needs: resolve
@@ -275,8 +289,11 @@ jobs:
           set -euo pipefail
           test -f "$ARCHIVE"
           # The release has one program, subspace.exe at the root. Refuse any
-          # other Windows binary a tampered build might add for signing.
-          binaries="$(unzip -Z1 "$ARCHIVE" | grep -iE '\.(exe|dll|sys|ocx|cpl|scr|msi|msix)$' || true)"
+          # other Windows binary a tampered build might add for signing,
+          # reading names as Windows does, without trailing dots and spaces;
+          # sign-windows.sh refuses such names outright.
+          entries="$(unzip -Z1 "$ARCHIVE")"
+          binaries="$(sed -E 's#[. ]+(/|$)#\1#g' <<<"$entries" | grep -iE '\.(exe|dll|sys|ocx|cpl|scr|msi|msix)$' || true)"
           if [[ "$binaries" != subspace.exe ]]; then
             printf 'expected subspace.exe as the only Windows binary in the archive, found:\n%s\n' "$binaries" >&2
             exit 1
@@ -366,15 +383,24 @@ jobs:
           fi
           # A draft's files are replaced. A published release only gains the
           # files it lacks, and keeps any it has only if they match this
-          # archive, so a run after a half-finished upload completes it and
-          # installers never see a mismatched pair.
-          release="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets)"
+          # run's archive, so re-running this job after a half-finished upload
+          # completes it and installers never see a mismatched pair. A new run
+          # signs again with a new timestamp, so it can't complete one.
+          release="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft)"
           if [[ "$(jq -r .isDraft <<<"$release")" == true ]]; then
             gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" --repo "$GITHUB_REPOSITORY" --clobber
           else
+            assets="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets')"
             missing=()
             for file in "$ARCHIVE" "$ARCHIVE.sha256"; do
-              if ! jq -e --arg f "$file" 'any(.assets[].name; . == $f)' <<<"$release" >/dev/null; then
+              asset="$(jq -c --arg f "$file" 'map(select(.name == $f)) | first // empty' <<<"$assets")"
+              if [[ -z "$asset" ]]; then
+                missing+=("$file")
+                continue
+              fi
+              # A failed upload can leave an empty asset that never finished.
+              if [[ "$(jq -r .state <<<"$asset")" != uploaded ]]; then
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$(jq -r .id <<<"$asset")"
                 missing+=("$file")
                 continue
               fi
