@@ -432,7 +432,7 @@ function devLive(dev: NonNullable<Config["dev"]>, key: Uint8Array) {
   );
 }
 
-// These resources share a problem document with the CFP API. Keep provider-specific detail.
+// These resources share one problem document across API providers. Keep provider-specific detail.
 const sharedProblems = HttpRouter.middleware<
   Types.unhandled,
   HttpServerRequest.HttpServerRequest,
