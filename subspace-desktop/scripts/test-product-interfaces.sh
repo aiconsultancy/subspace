@@ -80,9 +80,11 @@ binary="$target/debug/subspace"
 test -x "$binary"
 ln -s "$binary" "$fixture/bin/subspace"
 invoke __product_metadata
-version="$(jq -er .version "$fixture/output")"
-framework_version="$(jq -er .subspace_version "$fixture/output")"
-test "$(jq -r .binary_name "$fixture/output")" = subspace
+# Kept apart: the Space Lab target check below replaces the output.
+cp "$fixture/output" "$fixture/metadata.json"
+version="$(jq -er .version "$fixture/metadata.json")"
+framework_version="$(jq -er .subspace_version "$fixture/metadata.json")"
+test "$(jq -r .binary_name "$fixture/metadata.json")" = subspace
 # Neither unreleased Space (Space Lab, the Component gallery) is in the
 # default build.
 expected_boards='["github","github-copilot-agents","irc","issues","decisions","actions"]'
@@ -97,7 +99,7 @@ if [[ "${SUBSPACE_FIXTURE_SPACE_LAB:-0}" == 1 ]]; then
     fi
     expected_boards='["github","github-copilot-agents","irc","issues","decisions","space-lab","actions"]'
 fi
-test "$(jq -c .boards "$fixture/output")" = "$expected_boards"
+test "$(jq -c .boards "$fixture/metadata.json")" = "$expected_boards"
 invoke --version
 # A local debug build marks its version: Subspace v<version>-dev-<host>-<unix time>.
 shown="$(cat "$fixture/output")"
