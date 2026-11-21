@@ -15,11 +15,13 @@ mod directory;
 mod joins;
 mod merge;
 mod removed;
+mod statuses;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use directory::{CACHE_FILE as DIRECTORY_CACHE, Directories};
 pub(crate) use removed::{KEY as REMOVED_KEY, Removed};
+pub(crate) use statuses::Statuses;
 
 /// Lines kept per buffer; older live lines are dropped first.
 pub(crate) const LINE_CAP: usize = 2000;
@@ -38,6 +40,9 @@ pub(crate) struct Network {
     /// Our current nick, or the configured one before registration.
     pub nick: String,
     pub caps: Vec<String>,
+    /// Nick-wide status lines while connected; dropped when the connection
+    /// ends and never stored.
+    pub statuses: Statuses,
 }
 
 /// A line with a local sequence number: a stable identity for lines that
@@ -187,6 +192,7 @@ impl IrcState {
                     network.caps = old.caps.clone();
                     if matches!(old.status, ConnectionStatus::Connected { .. }) {
                         network.nick = old.nick.clone();
+                        network.statuses = old.statuses.clone();
                     }
                 }
                 network
@@ -443,6 +449,7 @@ fn network(config: &NetworkConfig) -> Network {
         status: ConnectionStatus::Disconnected,
         nick: config.nickname.clone(),
         caps: Vec::new(),
+        statuses: Statuses::default(),
     }
 }
 

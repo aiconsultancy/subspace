@@ -290,17 +290,13 @@ impl Conversation {
         })
     }
 
-    /// The transcript and the typing line under it.
+    /// The transcript and the line under it: agents' status lines and who
+    /// is typing.
     pub fn render_transcript(&self, cx: &App) -> AnyElement {
         let tokens = Tokens::current(cx);
         let me = self.me.clone();
         let hub = self.hub.downgrade();
-        let typing = self
-            .hub
-            .read(cx)
-            .state
-            .buffer(&self.buffer)
-            .map(|held| transcript::typing_line(held, &tokens));
+        let activity = transcript::activity::line(&self.hub.read(cx).state, &self.buffer, &tokens);
         v_flex()
             .id("irc-transcript-pane")
             .test_support()
@@ -328,7 +324,7 @@ impl Conversation {
                     row
                 },
             )))
-            .children(typing)
+            .children(activity)
             .into_any_element()
     }
 }

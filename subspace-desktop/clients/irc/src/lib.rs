@@ -22,5 +22,5 @@ pub use model::{
 pub use runtime::Runtime;
 pub use session::{
     COMMANDS, CommandHelp, FirstArgument, MAX_INLINE_BYTES, check_draft, check_inline_text,
-    connection_batches, draft_line_limit, message_budget,
+    connection_batches, draft_line_limit, message_budget, status_text,
 };

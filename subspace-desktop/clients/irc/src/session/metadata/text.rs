@@ -2,7 +2,13 @@
 
 const LIMIT: usize = 80;
 
-pub(super) fn clean(text: &str) -> Option<String> {
+/// `text` as status text: IRC formatting, controls and bidi overrides
+/// removed, line separators flattened to spaces, trimmed and cut to 80
+/// Unicode characters including the ellipsis of a cut. `None` when nothing
+/// is left, which means cleared. Markdown, links and mentions stay literal,
+/// so show the result as plain text. Re-exported as
+/// [`status_text`](crate::status_text) for consumers that hold the value.
+pub fn clean(text: &str) -> Option<String> {
     let stripped = crate::format::strip(text);
     let line = single_line(&stripped);
     bounded(&line)

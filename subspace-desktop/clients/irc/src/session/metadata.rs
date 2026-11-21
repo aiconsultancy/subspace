@@ -11,6 +11,8 @@ use crate::proto::Message;
 
 mod text;
 
+pub use text::clean as status_text;
+
 pub(super) const CAP: &str = "draft/metadata-2";
 
 #[derive(Default)]

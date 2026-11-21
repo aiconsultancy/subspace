@@ -4,7 +4,8 @@
 Evidence: spaces/irc/src/{lib,view,view/frame,view/conversations,
 view/details,dock,dock/layout,rows,state,state/apply,state/counts,
 state/removed,remove,lines,style,text,transcript,transcript/scroll,
-transcript/fill,members,compose,compose/recall,compose/complete,
+transcript/fill,transcript/activity,state/statuses,members,compose,
+compose/recall,compose/complete,
 compose/suggest,compose/offer,join,listing,toolbar,hub,hub/running,config,setup,prompt,schema,editor,
 editor/{draft,validate,form,view,network_view},agent_tools,
 agent_tools/{bridge,read,write,read/search},notice,store,store/{mapping,links},
@@ -215,7 +216,10 @@ counts the members, such as **Members · 4**. It follows the conversation you
 are working in and lists **Operators**, **Voiced** and **Members**, each
 sorted by nick with a small avatar and the nick. A quiet note follows where
 Channels knows more: **you** for your own nick, and **owner**, **admin** or
-**half-operator** among the operators. Away members are dimmed. Choose a member to open a private conversation with them, or × to
+**half-operator** among the operators. A member with a status line, as an
+agent has while it works, shows it under the nick, in quiet text and cut with an ellipsis when it
+is longer than the row; point at it to read it whole. Away members are
+dimmed. Choose a member to open a private conversation with them, or × to
 hide the list. For the **Server** buffer and private conversations the
 inspector says **No channel**.
 
@@ -232,8 +236,16 @@ the top of the transcript asks for the 100 lines before the oldest one shown.
 The control disappears when the server has no more.
 
 Above the message input, a line names who is typing, such as
-`alice is typing…`. The empty input reads `Message #channel` or
-`Message nick`.
+`alice is typing…`. While an agent in the conversation is working, the
+same line shows its status first, such as
+`Galactica is thinking… · alice is typing…`: the agent's own words, shown
+as plain text, in place of its typing notice. A status is about the agent's
+nick as a whole, not about any message, and never appears in the
+transcript. Only the channel's members, or the person in a private
+conversation, show their status there. The agent clears its status when it
+finishes; it also goes when the agent leaves your last shared channel or
+disconnects, and when your own connection drops. The empty input reads
+`Message #channel` or `Message nick`.
 
 ## Actions
 

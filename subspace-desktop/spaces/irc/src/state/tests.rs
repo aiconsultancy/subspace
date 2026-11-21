@@ -8,6 +8,7 @@ mod backfill;
 mod history;
 mod listed;
 mod removed;
+mod statuses;
 
 fn state() -> IrcState {
     IrcState::new(&[config()], vec!["Rocket".into()])

@@ -175,7 +175,7 @@ What the board does with them:
 | `draft/chathistory` | Joining a channel, or registering with a stored private conversation, asks only for what was missed since the newest stored line (`LATEST <target> msgid=…`, up to 500 lines), else the latest 100. Opening a buffer with fewer than 50 lines loads recent history; **Load older messages** loads 100 more. Opening a search result the buffer does not hold asks for the 50 lines around it (`AROUND`). Without the capability, the first request reports that there is no history and the row disappears. |
 | `draft/read-marker` | Opening a buffer sends `MARKREAD`; markers from other clients clear unread counts. |
 | `+typing` | Typing notices are sent at most every 3 seconds while you type and `done` when you clear the input; others' notices show above the input and expire after 6 (active) or 30 (paused) seconds. |
-| `draft/metadata-2` | The client subscribes to nickname `status` after registration. It emits `Event::NickStatus { network, nick, status }`; the Space currently ignores it. No visible status row yet. |
+| `draft/metadata-2` | The client subscribes to nickname `status` after registration and emits `Event::NickStatus { network, nick, status }`. The Space holds each network's statuses and shows them above the input and in the member list; see [Agent status lines](#agent-status-lines). |
 | `multi-prefix` | The member column groups members by their highest prefix. |
 | `away-notify` | Away members are muted in the member column. |
 | `echo-message` | Your own lines appear once, as the server delivered them. |
@@ -219,7 +219,52 @@ Markdown, URLs, mentions and issue references remain literal plain text;
 consumers must not interpret them as markup or interactive content.
 
 See [the status protocol change record](changes/irc-agent-status/README.md)
-for sources, tests and delivery gates. The conversation row follows in PR 2.
+for sources, tests and delivery gates.
+
+### Agent status lines
+
+The Space shows what the runtime reports. `Event::NickStatus` sets, replaces
+or clears a nick's status in `Network::statuses` (`state/statuses.rs`): one
+map per network, because a status describes the whole nick, never a buffer
+or a message. It is never stored: the hub's store keeps lines only, and the
+reconnect carry data has no statuses. The value is untrusted, so the
+reducer cleans it again with the client's own cleaner,
+`subspace_client_irc::status_text`, rather than relying on the runtime: one
+plain line of at most 80 characters, where nothing left means cleared.
+Nicks compare ignoring ASCII case, as `members::note` does, because the
+Space does not know the network's case mapping and the runtime reports a
+status under the first spelling it saw.
+
+- **Above the input.** `transcript/activity.rs` composes the line that used
+  to show only who is typing. A conversation shows the statuses of the nicks
+  in it: a channel's members, or a private conversation's peer, never our
+  own nick and never anyone else. The status texts come first, verbatim and
+  joined with ` · `, then the typing notice for the nicks without a status,
+  so an agent that has a status and is also typing shows its status only.
+  The line keeps its height, shows plain text (no Markdown, links, mentions
+  or issue references), is cut with an ellipsis and offers the whole text
+  in a tooltip (`truncated::text`). Its accessible name says whose each
+  status is, such as `Status of galactica: Galactica is thinking…`. With no
+  status, the line reads exactly as the typing line did.
+- **In the member list.** A member with a status has a second, quiet line
+  under the nick in the same row, one line cut with an ellipsis, and the
+  row's accessible name adds it: `Open private messages with galactica,
+  Galactica is thinking…`, then `, away` as before.
+- **Clearing.** A status goes when the runtime clears it (the gateway ends
+  the turn, or the nick quits, changes nick, leaves the last channel we
+  share or the capability goes), and the Space also drops:
+  - every status of a network as soon as its connection is anything but
+    connected, so none survives a reconnect even if the runtime's clears
+    were missed;
+  - a nick's status when it leaves a channel (`MemberLeft`, or the old nick
+    of `MemberChanged`) and no channel of that network we hold still lists
+    it. This matches the runtime's rule for the last shared channel. A
+    private conversation's peer that shares no channel with us has no
+    channel departure, so it keeps its status there.
+
+  A line from the nick ends its typing notice but not its status, which the
+  gateway clears itself. See
+  [the agent status change record](changes/channels-agent-status/intent.md).
 
 ### Reply protocol foundation
 
@@ -782,6 +827,13 @@ with a topic, through a client named `fixture-bot`, such as
 Ergo removes an empty channel, so without it `LIST` shows only the channels
 someone is in.
 
+`scripts/irc-agent-status-fixture.py` (Python standard library only) keeps
+fictional agents with status lines, and a person typing, in `#agent-status`
+until it is stopped, and writes the matching Channels configuration for
+`CAPTURE_IRC_CONFIG` or a dev build. The
+[agent status change record](changes/channels-agent-status/delivery.md#evidence)
+has the commands.
+
 The runtime's integration test against the same server runs when
 `IRC_TEST_SERVER` is set (`IRC_TEST_SERVER=127.0.0.1:16667 cargo test -p
 subspace-client-irc`) and is skipped otherwise. With the same variable,
@@ -814,7 +866,7 @@ messages after its anchor.
   holds the rules. Saved passwords stay in the saved object and are written
   back only when untouched.
 - `state.rs` is a pure reducer over runtime events: networks, buffers, topics,
-  members, typing, read markers and unread and mention counts. Live lines keep
+  members, typing, nick statuses, read markers and unread and mention counts. Live lines keep
   a buffer at 2,000 lines, dropping the oldest. Loaded history raises that
   buffer's limit by the lines it added, up to 10,000; a page that would pass
   10,000 keeps its newest lines that fit and ends **Load older messages**.
@@ -838,7 +890,8 @@ messages after its anchor.
   still says the network. A channel also has a `MemberList` view
   (`members.rs`), which draws the rank groups under captions such as
   `Operators · 1`, each member with a small avatar, the nick and a quiet
-  note (`members::note`: `you`, `owner`, `admin` or `half-operator`), and
+  note (`members::note`: `you`, `owner`, `admin` or `half-operator`), with
+  the member's status line, if any, under the nick, and
   leaves the heading and the scrolling to its host. Both observe
   the hub and report navigation as events.
 - `view/frame.rs` composes the Framework's workspace shell

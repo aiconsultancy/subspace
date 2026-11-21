@@ -6,6 +6,8 @@ use crate::state::server_key;
 
 /// A status change, with a local error line in the server buffer when the
 /// connection failed, so the reason stays readable after it changes again.
+/// Any state but connected drops every nick status of the network, whether
+/// or not the runtime's clears arrived, so none outlives its connection.
 pub(super) fn apply(
     state: &mut IrcState,
     id: &NetworkId,
@@ -18,6 +20,8 @@ pub(super) fn apply(
     };
     if let ConnectionStatus::Connected { nick } = &status {
         network.nick = nick.clone();
+    } else {
+        network.statuses.clear();
     }
     network.status = status;
     if let Some(error) = error {
