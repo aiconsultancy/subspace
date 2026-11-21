@@ -17,9 +17,13 @@ Identity and registration
 - [ ] `RETAIN_WHEN_DISABLED`: set only if the board owns processes
 
 Layout and UI
+- [ ] Workspace layout (`workspace::Workspace`): views in the navigator, what is open in the tab strip, search, filters and actions in the toolbar, the selection's detail in the inspector; no Space heading or context line
+- [ ] One text edge from `workspace::text_edge`; reading content no wider than `workspace::READING_WIDTH_PX`
+- [ ] Navigator and inspector choices stored and reported through `Dashboard::docks` and `Dashboard::toggle_dock` for the status bar's switches; a view menu in the toolbar while the navigator is hidden
+- [ ] Follows the design guide (docs/design-guide.md); its screenshots match the shell anatomy image
 - [ ] List board hooks (`ListDashboard`), or the reason for a custom layout
 - [ ] Components follow the rules in docs/ui-components.md: GPUI Kit or shared components only; any new shared component has a Component gallery card
-- [ ] Toolbar, status, badge and busy
+- [ ] Toolbar, status, badge and busy; connection, account, counts and sync time are in `Dashboard::status`
 - [ ] Palette commands for every toolbar and menu action
 - [ ] Own keys bound in `view_keys(ID)`; `keys` and `help_foot` match the board
 - [ ] Menus and dialogs reported with `modal` and closed by `dismiss`
@@ -74,7 +78,7 @@ Testing and evidence
 | Item | Explained in |
 | --- | --- |
 | Identity, registration, artwork, retain | [Identity and registration](board-integration.md#identity-and-registration) |
-| Lists, toolbar, palette, keys, menus, quit warnings | [Layout and UI](board-integration.md#layout-and-ui) |
+| Workspace layout, lists, toolbar, status, palette, keys, menus, quit warnings | [Layout and UI](board-integration.md#layout-and-ui) |
 | Settings page, connections, config file, features | [Settings and configuration](board-integration.md#settings-and-configuration) |
 | Stored choices, caches, refresh | [Data caching and refresh](board-integration.md#data-caching-and-refresh) |
 | Item search, full-text index, references | [Search](board-integration.md#search) |

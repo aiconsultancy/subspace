@@ -6,7 +6,8 @@ use gpui_kit::{
     AppContext as _, Bounds, Entity, Pixels, Role, TestAppContext, VisualTestContext, Window,
 };
 use subspace_client_irc::{Command, Event};
-use subspace_framework::dashboard::ChatInputEvent;
+use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
+use subspace_framework::dashboard::{ChatInputEvent, Dashboard as _};
 
 use super::{channel_events, inject, mount, settings};
 use crate::fixtures::{at, channel, member, message};
@@ -127,7 +128,7 @@ fn a_conversation_stands_alone_without_the_board(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn side_headings_share_the_tab_row_while_the_transcript_starts_below(cx: &mut TestAppContext) {
+fn the_toolbar_sits_over_the_tabs_and_the_docks_run_beside_the_pane(cx: &mut TestAppContext) {
     let (board, _, cx) = open_channel(cx, channel_events());
     cx.update(|window, _| {
         let tab = window
@@ -136,7 +137,7 @@ fn side_headings_share_the_tab_row_while_the_transcript_starts_below(cx: &mut Te
             .into_iter()
             .find(|tab| tab.label() == Some("#subspace"))
             .expect("the open channel has a tab");
-        assert_dock_alignment(window, tab.bounds());
+        assert_workspace_alignment(window, tab.bounds());
     });
     cx.update(|window, cx| {
         board.update(cx, |board, cx| {
@@ -149,21 +150,28 @@ fn side_headings_share_the_tab_row_while_the_transcript_starts_below(cx: &mut Te
         window.render_frame(cx);
         let title = window.find("conversation-tab-title");
         assert_eq!(title.label(), Some("#subspace"));
-        assert_dock_alignment(window, title.bounds());
+        assert_workspace_alignment(window, title.bounds());
     });
 }
 
-fn assert_dock_alignment(window: &mut Window, title: Bounds<Pixels>) {
+/// The workspace's zones around the conversation whose tab is at `title`.
+fn assert_workspace_alignment(window: &mut Window, title: Bounds<Pixels>) {
+    let toolbar = window.find("irc-toolbar").bounds();
     let transcript = window.find("irc-transcript-pane").bounds();
     let viewport = window.find("irc-transcript-viewport").bounds();
     let dock_top = window.find("dock-area").bounds().top();
-    let members = window.find("irc-members-heading").bounds();
+    let navigator = window.find("workspace-navigator").bounds();
+    let members = window.find("irc-inspector").bounds();
     let group = crate::rows::group_key(&channel("#subspace").network);
     let network_status = window
         .find(gpui_kit::SharedString::from(format!(
             "list-group-count:{group}"
         )))
         .bounds();
+    assert!(
+        toolbar.bottom() <= dock_top && title.top() >= dock_top,
+        "the toolbar {toolbar:?} is over the tabs {title:?}"
+    );
     assert!(
         transcript.top() >= title.bottom(),
         "the transcript {transcript:?} starts below the title {title:?}"
@@ -172,41 +180,68 @@ fn assert_dock_alignment(window: &mut Window, title: Bounds<Pixels>) {
         members.left() >= transcript.right(),
         "the member list is beside the conversation"
     );
-    assert_eq!(
-        members.top(),
-        dock_top,
-        "Members starts at the top of the dock"
-    );
     assert!(
-        network_status.top() >= dock_top && network_status.top() < title.bottom(),
-        "the left network heading {network_status:?} is next to the title {title:?}"
+        network_status.right() <= navigator.right() && navigator.right() <= transcript.left(),
+        "the network row {network_status:?} is in the navigator {navigator:?}"
+    );
+    assert_eq!(
+        (navigator.top(), members.top()),
+        (toolbar.top(), toolbar.top()),
+        "the docks and the pane start on one line"
     );
     assert!(
         viewport.top() > transcript.top(),
         "the scrollable messages start below the spacer"
     );
-    assert!(window.try_find("irc-header").is_none());
+    assert_workspace_words(window);
+}
+
+/// What the navigator and the toolbar say, in place of the Space's heading.
+fn assert_workspace_words(window: &mut Window) {
+    assert_eq!(
+        window.within("irc-toolbar").find("irc-header").label(),
+        Some("#subspace, Local Ergo, topic: Fixture channel · https://example.org"),
+        "the toolbar names the conversation in front, its network and topic"
+    );
+    assert_eq!(
+        window.find("workspace-navigator-title").label(),
+        Some("Channels")
+    );
+    assert!(window.try_find("irc-heading").is_none());
     assert!(window.try_find("irc-members-count").is_none());
 }
 
 #[gpui_kit::test]
-fn the_toolbar_button_and_close_show_and_hide_the_member_dock(cx: &mut TestAppContext) {
+fn the_inspector_switch_and_close_show_and_hide_the_members(cx: &mut TestAppContext) {
     let (board, _, cx) = open_channel(cx, channel_events());
     let shown =
-        |cx: &mut VisualTestContext| board.read_with(cx, |board, cx| board.dock.members_open(cx));
-    assert!(shown(cx));
-    cx.update(|window, cx| window.click("irc-members-toggle", cx));
+        |cx: &mut VisualTestContext| board.read_with(cx, |board, _| board.dock.members_open());
+    let listed = |cx: &mut VisualTestContext| {
+        cx.update(|window, _| window.try_find("irc-member:alice").is_some())
+    };
+    assert!(shown(cx) && listed(cx));
+    let docks = board.read_with(cx, |board, cx| board.docks(cx));
+    assert_eq!(
+        docks,
+        SpaceDocks::both(true, true),
+        "both status bar switches"
+    );
+    // The status bar's switch reaches the Space through its dock contract.
+    let switch = |cx: &mut VisualTestContext| {
+        board.update_in(cx, |board, window, cx| {
+            board.toggle_dock(SpaceDock::Inspector, window, cx)
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.render_frame(cx));
+    };
+    switch(cx);
+    assert!(!shown(cx) && !listed(cx), "hidden");
+    switch(cx);
+    assert!(shown(cx) && listed(cx), "shown again");
+    cx.update(|window, cx| window.click("workspace-inspector-close", cx));
     cx.run_until_parked();
     cx.update(|window, cx| window.render_frame(cx));
-    assert!(!shown(cx), "hidden");
-    cx.update(|window, cx| window.click("irc-members-toggle", cx));
-    cx.run_until_parked();
-    cx.update(|window, cx| window.render_frame(cx));
-    assert!(shown(cx), "shown again");
-    cx.update(|window, cx| window.click("irc-members-close", cx));
-    cx.run_until_parked();
-    cx.update(|window, cx| window.render_frame(cx));
-    assert!(!shown(cx), "closed from the list");
+    assert!(!shown(cx) && !listed(cx), "closed from the inspector");
 }
 
 #[gpui_kit::test]

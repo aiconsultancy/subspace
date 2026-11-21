@@ -15,7 +15,7 @@ const MAX_CHANNEL_BYTES: usize = 200;
 mod endpoint;
 mod picker;
 pub(crate) use endpoint::Endpoint;
-pub(crate) use picker::{Picker, SPACE_INSET, command, dismiss_stale_picker, heading};
+pub(crate) use picker::{Picker, button, command, dismiss_stale_picker, hint};
 
 pub(crate) struct InitiativeIrc {
     pub(crate) catalog: Entity<Catalog>,

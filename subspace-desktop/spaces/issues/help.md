@@ -35,8 +35,14 @@ The first load can take up to a minute while Subspace API wakes.
 
 ## Main view
 
-The heading shows **Subspace API** and the connected person's display name.
-Choose **My issues**, **Active**, **Backlog**, **All issues** or **Activity**.
+Issues uses the same layout as every Space. The navigator on the left lists
+where you are looking: **Views** (**My issues**, with the count of your open
+issues, **Active**, **Backlog**, **All issues** and **Activity**),
+**Projects** (**All projects** and each active project in the current
+initiative) and, when you belong to initiatives, **Initiatives**. The selected
+row is the one showing. **New issue** sits in the navigator's header. The tab
+above the list names the view, and the toolbar under it holds search, filters
+and actions. The inspector on the right shows the selected issue.
 
 The list groups issues by workflow state within one project, or by state
 type across projects. **Done**, **Cancelled** and **Duplicate** start folded.
@@ -44,17 +50,34 @@ Unfold a group to read its issues. The board remembers your folded groups.
 
 Rows show the priority, project identifier (such as **SUB-12**), state,
 tracker mark, title, progress, labels, due date, estimate and assignee when
-available. Labels use their service colours. Narrow windows omit label chips.
+available. Labels use their service colours. A narrow list omits label chips.
 A group loads another page when you move near its end. **Show more** reads
 the next page; a failed page offers **Retry**.
 
-The status line shows the issue count and when the list was read. A failed
-network read keeps previously loaded rows under an **Offline** message.
+Click a row to select it. The inspector then shows the issue's state, title,
+summary, priority, assignee, project, labels, due date and latest activity.
+Double-click the row, press Enter, or choose **Open** on the selected row or
+in the inspector's header to open the issue page.
+
+The status bar shows **Subspace API**, who is signed in, how changes made
+elsewhere arrive, the issue count, when the list was read and, while
+sub-issues are hidden, how many are. A failed network read keeps previously
+loaded rows under an **Offline** message.
+
+### Navigator and inspector
+
+The switches at the two ends of the status bar, at the bottom of the
+window, show or hide the navigator and the inspector; **Close inspector** in the inspector's header also hides it.
+Issues remembers both choices. While the navigator is hidden, the toolbar
+starts with a view menu that names the current view, followed by the
+initiative and project pickers. A window too narrow for both docks and the
+list hides the inspector first, then the navigator, without changing your
+choice.
 
 ### Activity
 
 Choose **Activity**, or press `5`, for **Trackers in progress** and **Recently
-updated · Past 7 days**. The project picker scopes both sections. Recent rows
+updated · Past 7 days**. The chosen project scopes both sections. Recent rows
 show the latest change, its actor when available, and its age. Open a row to
 read the issue. **Back** returns to the same Activity selection. **Load more**
 reads another page for that section. Activity is not updated live: press
@@ -62,31 +85,36 @@ reads another page for that section. Activity is not updated live: press
 
 ## Toolbar and filters
 
+The views, projects and initiatives are navigator rows; the rest sit in the
+toolbar.
+
 | Control | What it does |
 | --- | --- |
 | **My issues** | Issues assigned to you. Its count shows your open issues. |
 | **Active** | Issues in todo or in progress states. |
 | **Backlog** | Backlog issues. |
 | **All issues** | Issues across workflow states. |
-| **Search issues** | Searches the current tab after a short typing pause. If only **All issues** has matches, it becomes the selected tab and keeps the query and explicit filters. From **My issues**, this can show work assigned to other people. An exact identifier takes precedence over text matches. |
-| Initiative | Choose from your Subspace initiative memberships. This stays in sync with Channels. **All initiatives** clears the filter. |
-| Project | Choose an active project in the current initiative. Clearing the initiative makes the full project list and **All projects** available. |
+| **Search issues** | Searches the current view after a short typing pause. If only **All issues** has matches, it becomes the selected view and keeps the query and explicit filters. From **My issues**, this can show work assigned to other people. An exact identifier takes precedence over text matches. |
+| Initiatives | Choose from your Subspace initiative memberships in the navigator, or the initiative picker while the navigator is hidden. This stays in sync with Channels. **All initiatives** clears the filter. |
+| Projects | Choose an active project in the current initiative in the navigator, or the project picker while the navigator is hidden. Clearing the initiative makes the full project list and **All projects** available. |
 | **Assignee** | **Me**, **No assignee** or **All assignees**. In My issues, choose **All assignees** to open All issues. |
 | **Priority** | Select priorities from **No priority** to **Low**, or clear with **Any priority**. |
 | **Filters** | Workflow statuses for one project, or state types for all projects; issue or tracker type, due date and **Show archived**. |
-| **Sub-issues** | Include sub-issues in their state groups. Off by default. |
+| **Grouped by state** | Says how the list is grouped. It is text, not a control. |
+| **Sub-issues** | Include sub-issues in their state groups; the switch shows pressed while they are included. Off by default. While they are hidden, its tooltip and the status bar say how many are. |
+| **New issue…** | Opens the issue editor. It is the toolbar's main action. |
 
 Type in a menu to find an option. Use arrows and Enter to choose it, or its
 number while the search is empty. Priority and Filters remain open for more
 choices. Escape, Tab or a click outside closes the menu and restores focus.
-Toolbar filters stay in memory. Changing the tab or project clears status
+Toolbar filters stay in memory. Changing the view or project clears status
 filters. My issues uses **Me**. Leaving it restores **All assignees**.
 
 **Reload**, or `r`, reads the current list or issue again. Returning to the
 board refreshes a list whose last read is more than a minute old.
 
 Changes made elsewhere appear on their own in the issue list and the open
-issue. The dot under the connection line shows **Live** once updates start.
+issue. The status bar shows **Live** once updates start.
 It shows **Connecting…** while the Space opens the stream for the projects
 you are viewing, **Reconnecting…** after an interruption, and
 **Polling every 30 s** when the stream is unavailable. The Space reads the
@@ -100,18 +128,25 @@ Reload, which takes the new version and keeps the fields you changed.
 
 ## Details
 
-Click a row or press Enter. The issue page shows its ordered workflow, title,
-state and metadata. Tracker progress comes from the server; **How tracker status
+Double-click a row, press Enter, or choose **Open**. The issue opens in a
+second tab beside the view's tab; choose the view's tab to return to the
+list, or close the issue's tab to go back. The toolbar holds **Back**, the
+path (the project, the parent tracker when there is one, then the issue's
+identifier), **Edit issue…** and **More**. The issue page shows its title,
+metadata and workflow. The workflow is a slim bar, one segment per state,
+filled up to the current state, whose name is in strong text. Tracker progress comes from the server; **How tracker status
 works** explains the calculation. The workflow ends in one slot: **Done**, or
-**Cancelled** or **Duplicate** when the issue ended that way. Click the end slot,
+**Cancelled** or **Duplicate** when the issue ended that way. Click the end slot's name,
 or focus it and press Enter or Space, to choose the end state from the
 project's completed, cancelled and duplicate states; **Edit issue…** changes
 any state. A tracker's end slot follows its sub-issues and cannot be changed.
 Narrow windows show the current state and its position instead.
 
-Description, images, attachments, Sub-issues, Relations, Pull requests and Activity
-form the main column. Properties and Record sit on the right, or below the main
-column in a narrow window. Properties show state, priority, assignee, labels,
+Description, images, attachments, Sub-issues, Pull requests and Activity
+form the reading column. Properties, Relations and Record sit in the
+inspector on the right; while the inspector is hidden, or the window is too
+narrow for it, they follow Activity at the end of the reading column.
+Properties show state, priority, assignee, labels,
 due date, project, milestone, parent and type; populated estimates and cycles
 also appear. Record shows the creator, lifecycle dates, archive facts and update
 date. Imported dates are labelled **Originally created**, **Originally started**,
@@ -168,7 +203,8 @@ its title or identifier. Supported Markdown media references show images or file
 
 Choose **New issue…** or press `c`. From loaded detail, choose **Edit issue…**
 or press `e` to change several fields. A property pencil instead edits just that
-value inline, keeping the issue page visible. Choose the checkmark to save or
+value inline, keeping the issue page visible. Pencils show when the pointer is
+over their row or section, or when you Tab to them. Choose the checkmark to save or
 × to cancel. Command/Ctrl+Enter saves; Escape closes a picker before cancelling
 the field. The Description pencil opens the full editor.
 
@@ -216,7 +252,8 @@ create a duplicate. Subspace never retries an unclear creation automatically.
 
 ### Post a comment or reply
 
-1. Open an issue and type in **Leave a comment**.
+1. Open an issue and choose **Write a comment…** or **Comment** at the end of
+   the discussion. The editor opens with Write, Preview and **Attach files…**.
 2. Choose **Comment**. For a thread, choose **Reply**, enter text and submit.
 3. Wait for the result. Drafts remain in memory while you browse issues.
 
@@ -272,7 +309,7 @@ large to show, and an empty file says so. If the file cannot be read, choose
 | Key | Action |
 | --- | --- |
 | `j` / Down, `k` / Up | Move through list rows; `j` / `k` step between issues in detail. |
-| Enter | Open an issue, fold a group or read more rows. |
+| Enter | Open the selected issue, fold a group or read more rows. A click only selects an issue; a double click opens it. |
 | Escape | Close a menu, then dismiss the text attachment viewer, then the decision panel, then follow the issue's Back destination. |
 | ↑ / ↓, Page Up / Page Down, Home / End | Scroll an open decision. |
 | `1`–`4` | My issues, Active, Backlog, All issues. |

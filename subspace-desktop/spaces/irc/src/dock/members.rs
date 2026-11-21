@@ -1,9 +1,9 @@
-//! The member list dock following the conversation the user works in.
+//! The member list following the conversation the user works in, for the
+//! workspace's inspector.
 
 use gpui_kit::{AppContext as _, Context, Entity};
 use subspace_client_irc::{BufferKey, Target};
 
-use super::open::toggle_members;
 use crate::Irc;
 use crate::members::{MemberList, MemberListEvent};
 use crate::view::{self, Hosted};
@@ -27,13 +27,16 @@ pub(super) fn focus(board: &mut Irc, buffer: &BufferKey, cx: &mut Context<Irc>) 
         board.find_revision = board.find_revision.wrapping_add(1);
         cx.notify();
     }
-    let list = member_list(board, buffer, cx);
-    board
-        .dock
-        .members
-        .update(cx, |panel, cx| panel.set_list(list, cx));
+    // A channel's list is created now, for the inspector to show.
+    member_list(board, buffer, cx);
     view::reveal_row(board, buffer, cx);
     view::publish_visible(board, cx);
+}
+
+/// The member list the inspector shows: that of the conversation the user
+/// works in, when it is a channel.
+pub(crate) fn focused_members(board: &Irc) -> Option<Entity<MemberList>> {
+    open_member_list(board, board.dock.focused.as_ref()?)
 }
 
 /// The member list of channel `buffer`, created the first time.
@@ -80,11 +83,7 @@ fn member_event(
     event: &MemberListEvent,
     cx: &mut Context<Irc>,
 ) {
-    match event {
-        MemberListEvent::OpenQuery(nick) => {
-            let network = list.read(cx).buffer().network.clone();
-            board.open_query(&network, nick, cx);
-        }
-        MemberListEvent::Close => super::with_window(board, cx, toggle_members),
-    }
+    let MemberListEvent::OpenQuery(nick) = event;
+    let network = list.read(cx).buffer().network.clone();
+    board.open_query(&network, nick, cx);
 }

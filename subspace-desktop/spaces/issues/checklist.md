@@ -28,7 +28,7 @@ shared change record. No git state was changed.
 
 ## Data, refresh and search
 
-- [x] Tab, project, sub-issue visibility and group folds use framework preferences. Retired profile/team preferences are not read.
+- [x] Tab, project, sub-issue visibility, whether the navigator and inspector show, and group folds use framework preferences. Retired profile/team preferences are not read.
 - [x] Persistent data store/cache: not applicable; issue content and comment drafts intentionally stay in memory.
 - [x] Store-first display: not applicable because content is not persisted. In-session snapshots preserve list selection.
 - [x] Scheduled background refresh: not applicable; visible activation/reload drives reads in the hub. No blocking client call runs in render.

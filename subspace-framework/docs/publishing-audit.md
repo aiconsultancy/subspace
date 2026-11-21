@@ -141,6 +141,7 @@ fails when a packaged file credits other work without being listed.
 | `subspace-charts` | Flint 0.5.1 `chartjs.js` bundle; the Flint authoring guide adapted in `src/guide.md` and `src/lib.rs` | MIT, Microsoft | `vendor/flint-chart-0.5.1/LICENSE` |
 | `subspace-shell` | GPUI Component theme catalogue (`themes/gpui-kit/*.json`) | Apache-2.0 | `themes/gpui-kit/LICENSE-APACHE`, `PROVENANCE.md` |
 | `subspace-shell` | macOS Classic Dark Remix theme (`themes/macos-classic-dark-remix.json`) | MIT, Jason Lee | `themes/LICENSE-MACOS-CLASSIC` |
+| `subspace-shell` | Twilight Two theme (`themes/twilight-two.json`): Twilight's syntax colours from the GPUI Component catalogue | Apache-2.0 | `themes/gpui-kit/LICENSE-APACHE` |
 | `subspace-chat` | Copilot mark (Primer Octicons) | MIT, GitHub | `assets/LICENSE-OCTICONS` |
 | `subspace-chat` | OpenAI mark (Lobe Icons) | MIT, LobeHub | `assets/LICENSE-LOBE-ICONS` |
 | `subspace-chat` | Claude, OpenCode and Gemini marks (Simple Icons) | CC0-1.0 | `assets/PROVENANCE.md` |

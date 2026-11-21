@@ -16,7 +16,7 @@ use gpui_kit::{
 };
 use subspace_framework::dashboard::{
     ChatInput, Tokens,
-    action::{Intent, action_button},
+    action::{Intent, action_button, icon_button},
     icon_button::IconButton,
     media::size_text,
 };
@@ -86,21 +86,31 @@ fn status_line(
     })
 }
 
-/// **Send as attachment…** and the muted visibility line.
+/// One quiet line above the composer: **Send as attachment…** behind its
+/// paperclip, then who can see files.
 fn send_row(disabled: bool, tokens: &Tokens, cx: &mut Context<Conversation>) -> gpui_kit::Div {
     h_flex()
+        .w_full()
+        .min_w_0()
         .gap_2()
         .child(
-            action_button(
+            icon_button(
                 "irc-send-attachment",
                 Intent::Quiet,
-                Some(IconName::Paperclip),
+                IconName::Paperclip,
                 "Send as attachment…",
             )
             .disabled(disabled)
             .on_click(cx.listener(|this, _, window, cx| super::text(this, window, cx))),
         )
-        .child(div().text_sm().text_color(tokens.muted).child(VISIBILITY))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(tokens.caption_size())
+                .text_color(tokens.muted)
+                .child(VISIBILITY),
+        )
 }
 
 /// What the tray is doing, while it is doing something.

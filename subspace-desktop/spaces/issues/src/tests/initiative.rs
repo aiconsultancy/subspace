@@ -3,9 +3,16 @@ use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use serde_json::json;
 use subspace_api_client::initiatives::Catalog;
 
-use super::{connected, mount, render, requests};
+use super::{connected, has, mount, render, requests};
+use crate::docks::Dock;
 use crate::fixtures::project;
 use crate::model::ProjectScope;
+
+fn selected_initiative(shared: &Entity<Catalog>, cx: &mut VisualTestContext) -> Option<String> {
+    shared.read_with(cx, |catalog, _| {
+        catalog.selected().map(|initiative| initiative.id.clone())
+    })
+}
 
 #[gpui_kit::test]
 fn shared_selection_limits_projects_and_the_issues_picker_updates_the_session(
@@ -20,26 +27,44 @@ fn shared_selection_limits_projects_and_the_issues_picker_updates_the_session(
         assert_eq!(board.project.key(), "RPT");
         assert_eq!(project_keys(board), ["OPS", "RPT"]);
     });
+    // The navigator lists the initiative's projects and every initiative.
+    for id in [
+        "issues-nav-project:OPS",
+        "issues-nav-project:RPT",
+        "issues-nav-initiative:ops",
+        "issues-nav-initiative:design",
+        "issues-nav-initiative:local",
+    ] {
+        assert!(has(cx, id), "{id}");
+    }
+    assert!(!has(cx, "issues-nav-project:SUB"));
+    assert!(!has(cx, "issues-nav-project:*"));
+    cx.update(|window, cx| window.click("issues-nav-initiative:design", cx));
+    render(cx);
+    assert_eq!(selected_initiative(&shared, cx).as_deref(), Some("design"));
+    board.read_with(cx, |board, _| {
+        assert_eq!(board.project.key(), "SUB");
+        assert_eq!(project_keys(board), ["SUB"]);
+    });
+
+    // With the navigator hidden, the toolbar's pickers stand in for it.
+    board.update(cx, |board, cx| board.toggle_dock(Dock::Navigator, cx));
+    render(cx);
+    assert!(!has(cx, "workspace-navigator"));
     cx.update(|window, cx| {
         let initiative = window.find("issues-initiative-button");
-        assert_eq!(initiative.label(), Some("Initiative: Operations"));
+        assert_eq!(initiative.label(), Some("Initiative: Design"));
         assert!(
             initiative.bounds().right() <= window.find("issues-project-button").bounds().left()
         );
         window.click("issues-initiative-button", cx);
     });
     render(cx);
-    cx.simulate_keystrokes("d e s i g n enter");
+    cx.simulate_keystrokes("o p e r a t i o n s enter");
     render(cx);
-    shared.read_with(cx, |catalog, _| {
-        assert_eq!(
-            catalog.selected().map(|initiative| initiative.id.as_str()),
-            Some("design")
-        );
-    });
+    assert_eq!(selected_initiative(&shared, cx).as_deref(), Some("ops"));
     board.read_with(cx, |board, _| {
-        assert_eq!(board.project.key(), "SUB");
-        assert_eq!(project_keys(board), ["SUB"]);
+        assert_eq!(project_keys(board), ["OPS", "RPT"]);
     });
 }
 

@@ -23,8 +23,8 @@ hooks = [
     { id = "check-json" },
     { id = "check-toml" },
     { id = "check-yaml" },
-    { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"], exclude = "^subspace-desktop/licenses/(charts/LICENSE-QUICKJS-NG$|onnxruntime/(LICENSE|ThirdPartyNotices\\.txt)$|rust-crates/|webview2/(LICENSE|NOTICE)\\.txt$)" },
-    { id = "end-of-file-fixer", exclude = "^subspace-desktop/licenses/(onnxruntime/(LICENSE|ThirdPartyNotices\\.txt)$|rust-crates/|webview2/(LICENSE|NOTICE)\\.txt$)" },
+    { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"], exclude = "^subspace-desktop/licenses/(charts/LICENSE-QUICKJS-NG$|fonts/LICENSE-|onnxruntime/(LICENSE|ThirdPartyNotices\\.txt)$|rust-crates/|webview2/(LICENSE|NOTICE)\\.txt$)" },
+    { id = "end-of-file-fixer", exclude = "^subspace-desktop/licenses/(fonts/LICENSE-|onnxruntime/(LICENSE|ThirdPartyNotices\\.txt)$|rust-crates/|webview2/(LICENSE|NOTICE)\\.txt$)" },
 ]
 
 # Run project checks once per push. The entry selects the projects and handles

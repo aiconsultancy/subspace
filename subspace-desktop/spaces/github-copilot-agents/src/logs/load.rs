@@ -39,8 +39,15 @@ impl CopilotAgents {
             say("Session logs are turned off", cx);
             return;
         }
-        let (Some(key), Some(detail)) = (self.detail_key.clone(), self.detail.as_ref()) else {
+        let Some(key) = self.detail_key.clone() else {
             say("Open a cloud task first", cx);
+            return;
+        };
+        let Some(detail) = self.detail.as_ref() else {
+            say(
+                "The task is still loading. Show the log again in a moment",
+                cx,
+            );
             return;
         };
         let Some(session) = detail.sessions.last() else {

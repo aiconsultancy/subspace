@@ -152,7 +152,8 @@ pub fn frame(
     resizable_left_edge(pane, "panel-resize", &tokens, window, cx)
         .anchored_context_menu(move |popup, window, cx| {
             let selected = row_menu::hold_selection(window, cx);
-            row_menu::popup(popup, row_menu::panel_menu_items(&facts, &selected), None)
+            let items = row_menu::panel_menu_items(&facts, &selected);
+            row_menu::build(popup, row_menu::grouped(items, None), window, cx)
         })
         .into_any_element()
 }

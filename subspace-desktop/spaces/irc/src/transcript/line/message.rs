@@ -28,14 +28,14 @@ pub(crate) fn message(
     let rendered = markup::rich(&entry.line.text, &context.mentions);
     let identifiers = identifiers(original, context, rendered.as_ref());
     let spoken = spoken(entry, rendered.as_ref());
-    let leading = message_gutter(entry, &nick, continues, &group, &tokens);
+    let leading = message_gutter(entry, &nick, continues, &group, cx);
     let column = v_flex()
         .relative()
         .flex_1()
         .min_w_0()
         .gap_0p5()
         .when(!continues, |column| {
-            column.child(header(entry, &nick, &tokens))
+            column.child(header(entry, &nick, &tokens, cx))
         })
         .when(!entry.line.text.is_empty(), |column| {
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))

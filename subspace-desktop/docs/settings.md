@@ -107,9 +107,21 @@ choosing **Save**: the tab goes at once and the config file's `boards` entry
 matches what Settings writes. Closing the current Space opens the tab before
 it, or the next tab when it was first. The last open Space can't be closed;
 its menu says so. Nor can the last Space the config file leaves on, if the
-file was edited outside the app. A notice says where to reopen it: open Settings, choose the
-Space, turn on **Enabled** and choose **Save**. **Space settings…** in the
-same menu opens that Space's Settings page.
+file was edited outside the app. A notice says where to add it again: the
+plus in the title bar. **Space settings…** in the same menu opens that
+Space's Settings page.
+
+To turn a Space back on without opening Settings, choose the plus after the
+last tab (**Add a Space**; in the navigation rail it is the last item). Its
+menu lists every Space that is switched off, with its description. Choosing
+one saves and applies the same choice as turning on its **Enabled** switch
+and choosing **Save**, then opens it. A notice confirms it ("Opened
+Actions."), or says that a restart is needed or why the choice could not be
+saved. When every Space is on, the menu says so. **Manage Spaces…** at the
+end of the menu opens Settings at the first Space that is off, or at the
+first Space when all are on. When the tabs run out of room, the plus moves
+into the chevron menu as **Add a Space…**. The command palette has the same
+**Add a Space…** command.
 
 Automatic board loading and refresh is on by default. Subspace warms boards
 after startup and refreshes them at staggered intervals around 60 seconds.
@@ -214,8 +226,9 @@ Reopen the dialog after an external edit.
 
 **Restart Subspace to apply saved service or credential changes.**
 Automatic refresh, the terminal's layout and fonts and board Enabled choices
-apply on Save. **Close Space** in a tab's right-click menu saves and applies
-one Space's Enabled choice at once.
+apply on Save. **Close Space** in a tab's right-click menu and the
+**Add a Space** plus in the title bar save and apply one Space's Enabled
+choice at once.
 Cancel, Escape, or the
 close button discards unsaved edits. Existing service tokens are stored as text
 in the private config file, not in Keychain, UI state, or theme files.

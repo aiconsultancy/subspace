@@ -45,8 +45,11 @@ Linux writes `state.json` under the fixture's `.local/state/subspace/` and
 `Library/Application Support/subspace/`. The fixture directories, servers and
 private display are removed when capture exits.
 
-`CAPTURE_THEME` selects a theme. `CAPTURE_STATE` and `CAPTURE_CONFIG` merge JSON
-keys into the fixture files. `CAPTURE_IRC_CONFIG` copies a configuration for a
+`CAPTURE_THEME` selects a theme; without it the build starts in Cupertino
+Dark, the app's default. Screenshots for pull requests and the README are
+taken in Twilight Two (`CAPTURE_THEME="Twilight Two"`), as
+[UI change evidence](../AGENTS.md#ui-change-evidence) says.
+`CAPTURE_STATE` and `CAPTURE_CONFIG` merge JSON keys into the fixture files. `CAPTURE_IRC_CONFIG` copies a configuration for a
 local IRC fixture. `CAPTURE_NO_UPDATES_STREAM=1` starts the Subspace API fixture
 without its live updates stream. `CAPTURE_CHANGE_AFTER=<seconds>` retitles
 SUB-1 that long after the first detail read to simulate a change made
@@ -60,6 +63,12 @@ decorations and text rasterisation can differ between operating systems.
 macOS reads the GPUI-rendered image. The pinned GPUI version does not implement
 native Linux image readback, so Linux reads pixels from the app's exact native
 X11 window after presenting its frame. It does not capture the entire display.
+
+The app embeds Inter and JetBrains Mono and registers them before it applies
+the theme, so screenshots in Twilight Two use those fonts on both platforms
+whether or not the machine has them installed, and start without a font
+notice. Themes that name no font still use the machine's own fonts. See
+[Embedded fonts](../../subspace-framework/docs/appearance.md#embedded-fonts).
 
 ## Decisions fixture
 

@@ -79,6 +79,16 @@ pub(crate) fn location(value: &str) -> Option<String> {
     })
 }
 
+/// The spoken name of [`location`]'s text where it stands alone, as in the
+/// Space's toolbar: a host is named as the page's site.
+pub(crate) fn spoken_location(place: &str) -> String {
+    if place == LOCAL_APP {
+        place.to_owned()
+    } else {
+        format!("Page on {place}")
+    }
+}
+
 /// The status line for a navigation the board refused.
 pub(crate) fn blocked_message(value: &str) -> String {
     let scheme = value.split_once(':').map_or(value, |(scheme, _)| scheme);
@@ -105,7 +115,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        blocked_message, browser_url, location, may_open_externally, navigation_allowed, page_title,
+        blocked_message, browser_url, location, may_open_externally, navigation_allowed,
+        page_title, spoken_location,
     };
 
     #[test]
@@ -211,6 +222,15 @@ mod tests {
             Some("localhost:5173")
         );
         assert_eq!(location("about:blank"), None);
+    }
+
+    #[test]
+    fn a_spoken_location_says_what_a_host_is() {
+        assert_eq!(
+            spoken_location("wiki.example.com"),
+            "Page on wiki.example.com"
+        );
+        assert_eq!(spoken_location("Local web app"), "Local web app");
     }
 
     #[test]

@@ -137,18 +137,54 @@ stale.
 Every UI change follows the [Design and Coding Guides](../AGENTS.md#canonical-design-and-coding-guides)
 and uses shared controls from the [UI component catalogue](ui-components.md).
 
-### List Space headers and spacing
+### Workspace layout
 
-Start a list Space with `list::header` inside its content area. Use the
-secondary line for service, account or status context that helps the user.
-Place the tabs and list controls underneath. Align the heading, controls
-and list to the same side inset. Use `ListDashboard::list_side_inset` to
-match the list to its header and `ListDashboard::comfortable_rows` to give
-rows and group headings more space while respecting the theme's density.
+Every Space uses the same layout, built from `subspace_dashboard::workspace`.
+Panels tile to the window's edges and to each other, separated by hairlines;
+the room is inside each panel. A Space draws no heading of its own: its name
+is the navigator's title. The [design guide](design-guide.md) is the full
+statement of the layout, its rules and how reviewers check it; this section
+is the summary.
 
-Use the shared overflow toolbar for controls that do not fit at narrow
-widths. Check the header and controls both at the normal window size and
-with reduced space, such as when a detail pane is open.
+| Zone | Build it with | It holds |
+| --- | --- | --- |
+| Navigator, the leading dock | `workspace::Navigator`, `workspace::nav_section` and `workspace::NavRow` | Where the person is looking: the Space's name in the header, then its views, projects, networks or repositories. |
+| Tab strip, at the top of the pane | `workspace::Pane::tabs` with a `tabs::pane_tab_bar` | What is open: the list, and an opened item beside it. A Space's views are navigator rows, not tabs. |
+| Toolbar, under the tab strip | `workspace::Toolbar` | Search and filters on the leading side, actions on the trailing side. |
+| Content | The children of `workspace::Pane` | Lists run the full width. Reading content, such as an issue's body or a conversation, is no wider than `workspace::READING_WIDTH_PX`. |
+| Inspector, the trailing dock | `workspace::Inspector`, `workspace::section` and `workspace::fact` | The detail of the selection, with the actions that act on it in the footer. |
+| Status bar, the shell's | `Dashboard::status`, `Dashboard::docks` and `Dashboard::toggle_dock` | Connection, account, counts and sync time; the navigator's switch at its leading end and the inspector's at its trailing end. |
+
+`workspace::Workspace::new(id).navigator(..).pane(..).inspector(..)` places
+the three columns and owns the docks' widths and drag handles. Leave a dock
+out to hide it. A shared list keeps its own detail panel as the trailing
+dock: draw it with `list::render_under`, passing `workspace::pane_head` for
+the tab strip and toolbar, so the panel's header lines up with the tab strip.
+
+- Put service, account and status context in `Dashboard::status`, not in a
+  line above the content.
+- Start text at `workspace::text_edge(&tokens)` in every panel, not at a
+  side inset of the Space's own. Dock headers, navigator rows, the toolbar
+  and shared list rows already start there.
+- Keep two stored choices in `prefs`, both shown by default: whether the
+  navigator shows and whether the inspector shows. Report them from
+  `Dashboard::docks` as a `workspace::SpaceDocks` (a dock is `None` where
+  the Space has none, such as an inspector with nothing to inspect), and
+  flip and store one in `Dashboard::toggle_dock`. The shell draws the
+  switches in the status bar (`workspace::dock_switch`) and redraws it after
+  a toggle. While the navigator is hidden, start the toolbar with an
+  `action::menu_button` that names the current view, so the views stay
+  reachable.
+- Show selection through the row's own fill, never a leading bar.
+- A toolbar has at most one primary action, the Space's main one, at its
+  trailing end, built with `action::main_action`; its other actions are
+  neutral or quiet. Use `fields::toolbar_search` for the toolbar's search.
+
+Check the Space at the normal window size and in a narrow window, with both
+docks shown. The toolbar's leading items wrap onto another line and its
+trailing items stay on the first. The Component gallery shows each part in
+its states: `workspace::Navigator`, `workspace::Toolbar`,
+`workspace::dock_switch`, `workspace::Pane` and `workspace::Inspector`.
 
 ### List boards
 
@@ -156,8 +192,9 @@ with reduced space, such as when a detail pane is open.
   keyboard selection, the detail panel, row menus and empty states. Hooks:
   `list`/`list_mut`, `detail`, `on_open` (start loading the panel's data here,
   never in `render`), `on_selection_changed`, `on_panel_toggled`,
-  `on_activate`, `row_menu`, `extend_row_menu`, `row_submenus`, `group_menu`,
-  `group_indicators`, `row_leading`, `row_emphasis`, `row_accessible_label`,
+  `on_activate`, `row_menu`, `row_commands` (the board's own menu commands,
+  each in its [group](design-guide.md#context-menus)), `extend_row_menu`,
+  `row_submenus`, `group_menu`, `group_indicators`, `row_leading`, `row_emphasis`, `row_accessible_label`,
   `empty_message`, `empty_actions`, `panel_extra`, `panel_footer`,
   `panel_scroll_handle`, `panel_content_owns_scroll`, `min_list_width` and
   `can_navigate`. Change selection from outside the list's keys with
@@ -171,9 +208,12 @@ with reduced space, such as when a detail pane is open.
 
 - **What**: `render_toolbar` draws controls after the switcher (use
   `overflow_toolbar` when they may not fit). `status` is the short text in the
-  bottom status bar, such as counts. `badge` marks the switcher tab, such as an
-  unread count. `busy` drives the reload button's spinner. `window_title` adds
-  context after the board title.
+  bottom status bar: the connection, the account, counts and sync time. A
+  Space shows none of these above its content. `docks` and `toggle_dock`
+  give the status bar its dock switches (see
+  [Workspace layout](#workspace-layout)); the defaults report none. `badge` marks the switcher
+  tab, such as an unread count. `busy` drives the reload button's spinner.
+  `window_title` adds context after the board title.
 - **Use it when**: status and busy for any board that loads data; badge only
   for something waiting for the person.
 - **Example**: `spaces/irc/src/lib.rs` (`status`, `badge`); `spaces/web/src/lib.rs`
@@ -229,9 +269,9 @@ terminal panel is an example.
 - **What**: `subspace_dashboard::tokens` maps the active theme, and its
   `ThemeId` global names the bundled theme file the active variant comes from
   (`one-dark`, `cupertino`, or `custom` for a user's theme); `Density`,
-  `Typography` and the shared widgets (`feedback`, `panel`, `menu`, `composer`,
-  `chat_input`, `rich`, `code`, `dates`, `toggle`, `icon_button`, `action`,
-  `chart`, `native_grid`) keep boards consistent.
+  `Typography` and the shared widgets (`workspace`, `feedback`, `panel`,
+  `menu`, `composer`, `chat_input`, `rich`, `code`, `dates`, `toggle`,
+  `icon_button`, `action`, `chart`, `native_grid`) keep boards consistent.
 - **Use it when**: always. No hard-coded colours; `Glyph::rgb` only for colours
   the service defines.
 - **Reference**: [UI component catalogue](ui-components.md),

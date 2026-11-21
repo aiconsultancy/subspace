@@ -6,7 +6,7 @@ use subspace_framework::client_github::model::PrState;
 use subspace_framework::dashboard::{Glyph, Group, Row, Tone};
 
 use crate::dates;
-use crate::model::{AgentRow, Kind, StateGroup, UNKNOWN, state_label};
+use crate::model::{AgentRow, StateGroup, UNKNOWN, state_label};
 
 /// The colour a state reads in: what waits for an answer stands out, what
 /// failed is red, what finished is green, what runs is blue.
@@ -75,16 +75,14 @@ fn trailing(row: &AgentRow, now: DateTime<Utc>) -> Vec<Glyph> {
     marks
 }
 
-/// One list row. A local chat has no repository, so it shows its kind there.
+/// One list row. It has no short id: the list draws the repository, or
+/// that a row is a local chat, in a lane after the title (`lanes.rs`), so
+/// the titles line up.
 pub fn list_row(row: &AgentRow, now: DateTime<Utc>) -> Row {
-    let id = match row.kind {
-        Kind::Cloud if !row.repo.is_empty() => row.repo.clone(),
-        _ => row.kind.id().to_owned(),
-    };
     Row {
         key: row.key.clone().into(),
         icon: Glyph::new(row.kind.mark(), state_tone(&row.state)),
-        id: Some(id.into()),
+        id: None,
         title: row.title.clone().into(),
         trailing: trailing(row, now),
         done: row.group() == StateGroup::Finished,
@@ -162,11 +160,11 @@ mod tests {
     }
 
     #[test]
-    fn a_row_shows_its_repository_state_and_age() {
+    fn a_row_shows_its_state_and_age_and_leaves_its_repository_to_a_lane() {
         let built = groups(&[row("a", "in_progress")], now());
         let listed = &built[0].rows[0];
         assert_eq!(listed.key, "cloud:a");
-        assert_eq!(listed.id.as_deref(), Some("Owner/one"));
+        assert!(listed.id.is_none(), "no id column before the title");
         assert_eq!(listed.title, "Fix a");
         assert!(!listed.done);
         let marks: Vec<&str> = listed.trailing.iter().map(|m| m.text.as_ref()).collect();
@@ -174,13 +172,13 @@ mod tests {
     }
 
     #[test]
-    fn a_local_row_names_its_kind_where_a_repository_would_be() {
+    fn a_local_row_is_finished_work_once_it_is_closed() {
         let mut local = row("s", "open");
         local.kind = Kind::Local;
         local.repo = String::new();
         local.key = "local:s".into();
         let built = groups(&[local], now());
-        assert_eq!(built[0].rows[0].id.as_deref(), Some("local"));
+        assert!(built[0].rows[0].id.is_none());
         assert!(built[0].rows[0].done, "a closed chat is finished work");
     }
 

@@ -155,6 +155,10 @@ fn main() -> ExitCode {
             "your-oauth-app-client-id",
             option_env!("HELLO_GITHUB_OAUTH_CLIENT_SECRET"),
         ),
+        // Font files to embed, such as
+        // `BundledFont::new("Inter", include_bytes!("fonts/Inter-Regular.ttf"))`;
+        // see Fonts in docs/appearance.md. `&[]` embeds none.
+        fonts: &[],
         // The repository Report issue files into; `None` hides Report issue.
         report_issue_repository: Some("example-org/hello"),
     };
@@ -232,6 +236,9 @@ gpui-pre-platform = { opt-level = 3 }
   your build script's environment, not in the Framework. Some text and the
   `SUBSPACE_*` environment variables still say Subspace; see
   [what publishing exposes](docs/publishing-audit.md).
+- **Fonts.** The Framework embeds no font files. An app lists the ones it
+  embeds in `ProductBuild::fonts`, with their licences in its own notices;
+  see [embedded fonts](docs/appearance.md#embedded-fonts).
 
 ## Accounts
 
@@ -320,6 +327,7 @@ implements `EventEmitter<DashboardEvent>` and:
 | `window_title` | The window title, such as the board's current scope |
 | `render_toolbar` | Controls after the switcher, such as filters |
 | `status`, `busy` | Toolbar text, and the reload button's busy mark |
+| `docks`, `toggle_dock` | The workspace docks the Space has and whether each shows, for the status bar's switches, and a switch's click |
 | `badge` | An optional mark on the switcher tab, such as a count of running work |
 | `subject` | The selected row, shown above the palette's commands |
 | `commands` | Palette commands: an action, a callback or a sub-list |
@@ -353,6 +361,7 @@ communicate status that is not present in the label.
 | --- | --- |
 | `list` | `ListState` and `list::render`: grouped rows, folding, selection that scrolls into view, row indent levels, the detail panel, optional right-aligned `GroupIndicator` marks; `ListDashboard` hooks `on_selection_changed`, `on_open`, `on_panel_toggled`, `on_activate`, `group_indicators`, and `row_leading`, `row_trailing` and `group_leading` for domain marks and lanes; `list::update` for changes made outside the list's keys |
 | `panel` | The detail panel frame: type and id, previous and next, service link, resizable edge |
+| `workspace` | The layout every Space uses (see the [design guide](docs/design-guide.md)): `Workspace` with a `Navigator` (`nav_section`, `NavRow`), a `Pane` with a tab strip and a `Toolbar`, and an `Inspector` (`section`, `fact`, a footer for actions); `Workspace::detail` for the shared detail panel, `pane_head` for a list drawn with `list::render_under`, `text_edge` and `READING_WIDTH_PX` |
 | `menu` | A popover menu: filter as you type, arrows, Enter, digits 1–9, Escape |
 | `composer` | Markdown input with Write and Preview: initial text, submit label, optional text, size limit |
 | `chat_input` | Reusable message input with Enter submission, busy/error state and bounded clipboard capture; shared by IRC and the host chat panel. IRC uses its plain-text and recall-key options |

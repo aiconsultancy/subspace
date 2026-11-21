@@ -17,9 +17,10 @@ mod controls;
 mod sizes;
 use sizes::{
     CHILD_INDENT_DEFAULT, CHROME_HEIGHT_DEFAULT, COLUMN_HEADER_HEIGHT_DEFAULT,
-    CONTROL_RADIUS_DEFAULT, DONE_FRACTION_DEFAULT, HORIZONTAL_PADDING_DEFAULT, LANE_WIDTH_DEFAULT,
-    MOTION_MILLIS_DEFAULT, NAV_ROUND_DEFAULT, PANEL_WIDTH_DEFAULT, ROW_HEIGHT_DEFAULT,
-    ROW_INSET_DEFAULT, SURFACE_RADIUS_DEFAULT, TOOLBAR_HEIGHT_DEFAULT, TREE_WIDTH_DEFAULT,
+    CONTROL_RADIUS_DEFAULT, DONE_FRACTION_DEFAULT, HORIZONTAL_PADDING_DEFAULT,
+    INSPECTOR_WIDTH_DEFAULT, LANE_WIDTH_DEFAULT, MOTION_MILLIS_DEFAULT, NAV_ROUND_DEFAULT,
+    NAVIGATOR_WIDTH_DEFAULT, PANEL_WIDTH_DEFAULT, ROW_HEIGHT_DEFAULT, ROW_INSET_DEFAULT,
+    STRIP_HEIGHT_DEFAULT, SURFACE_RADIUS_DEFAULT, TOOLBAR_HEIGHT_DEFAULT, TREE_WIDTH_DEFAULT,
 };
 mod tones;
 pub use controls::{ButtonFinish, ButtonMetrics, ButtonRole, Controls, ToolbarLook, rem};
@@ -41,27 +42,7 @@ pub struct ThemeId(pub String);
 
 impl Global for ThemeId {}
 
-/// The colours as `0xRRGGBB`, named after the CSS custom properties.
-pub mod hex {
-    pub const BG: u32 = 0x101115;
-    pub const PANE: u32 = 0x15171b;
-    pub const LINE: u32 = 0x313640;
-    pub const SELECT: u32 = 0x2c313a;
-    pub const FG: u32 = 0xabb2bf;
-    pub const MUTED: u32 = 0x8b919c;
-    pub const ACCENT: u32 = 0x7dd3fc;
-    pub const RED: u32 = 0xe06c75;
-    pub const ORANGE: u32 = 0xd19a66;
-    pub const YELLOW: u32 = 0xe5c07b;
-    pub const GREEN: u32 = 0x98c379;
-    pub const CYAN: u32 = 0x56b6c2;
-    pub const BLUE: u32 = 0x61afef;
-    pub const MAGENTA: u32 = 0xc678dd;
-    /// `--fg-strong`: `--fg` mixed 60% with white.
-    pub const FG_STRONG: u32 = 0xd1d5dc;
-    /// `--hair`: `--line` mixed 40% with `--bg`, for row separators.
-    pub const HAIR: u32 = 0x1d2026;
-}
+pub mod hex;
 
 /// A named colour. Dashboards pick tones; the tokens decide the colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -149,6 +130,12 @@ pub struct Tokens {
     pub done_fraction: f32,
     /// `--tree-w`: the diff view's file tree.
     pub tree_width: Pixels,
+    /// `--strip-h`: a workspace dock's header and the pane's tab strip.
+    pub strip_height: Pixels,
+    /// `--nav-w`: the workspace's navigator dock.
+    pub navigator_width: Pixels,
+    /// `--inspector-w`: the workspace's inspector dock.
+    pub inspector_width: Pixels,
     /// `--motion`
     pub motion: Duration,
     /// Controls such as buttons, rows, chips and inputs.
@@ -208,6 +195,9 @@ impl Tokens {
             lane_width: px(LANE_WIDTH_DEFAULT),
             done_fraction: DONE_FRACTION_DEFAULT,
             tree_width: px(TREE_WIDTH_DEFAULT),
+            strip_height: px(STRIP_HEIGHT_DEFAULT),
+            navigator_width: px(NAVIGATOR_WIDTH_DEFAULT),
+            inspector_width: px(INSPECTOR_WIDTH_DEFAULT),
             motion: Duration::from_millis(MOTION_MILLIS_DEFAULT),
             control_radius: px(CONTROL_RADIUS_DEFAULT),
             surface_radius: px(SURFACE_RADIUS_DEFAULT),
@@ -235,6 +225,9 @@ impl Tokens {
             lane_width: size("--lane-w"),
             done_fraction: density.get("--done-w"),
             tree_width: size("--tree-w"),
+            strip_height: size("--strip-h"),
+            navigator_width: size("--nav-w"),
+            inspector_width: size("--inspector-w"),
             motion: Duration::from_millis(density.get("--motion").max(0.0) as u64),
             control_radius: size("--radius"),
             surface_radius: size("--surface-radius"),

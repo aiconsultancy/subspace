@@ -1,0 +1,175 @@
+//! The Space's workspace around the issue list: the navigator, the pane
+//! with its tab strip and toolbar over the list (or the screen that stands
+//! in for it), and the inspector's peek of the selected issue. The issue
+//! page shares the navigator. The dock switches are the status bar's
+//! (`Dashboard::docks`).
+
+mod navigation;
+
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::{
+    AnyElement, Context, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
+    TestSupportExt as _, div, px,
+};
+use subspace_framework::dashboard::action::{Intent, action_button};
+use subspace_framework::dashboard::tabs::{self, TabSpec};
+use subspace_framework::dashboard::tokens::ButtonRole;
+use subspace_framework::dashboard::toolbar_label::{self, ToolbarLabel};
+use subspace_framework::dashboard::workspace::{Pane, Toolbar, Workspace};
+use subspace_framework::dashboard::{Tokens, fields};
+use subspace_framework::lucide::IconName;
+
+use crate::docks::Docks;
+use crate::filter_menu::{self, FilterMenu};
+use crate::model::SubIssues;
+use crate::navigator::View;
+use crate::{Issues, initiative, keys, pickers, view_menu};
+
+pub(crate) use navigation::navigator;
+
+/// The search field's width in the toolbar.
+const SEARCH_WIDTH_PX: f32 = 208.;
+/// How the list is grouped: always by workflow state, or by state type for
+/// All projects.
+const GROUPING: &str = "Grouped by state";
+
+/// What the pane shows above its content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Head {
+    /// The tab strip, and the list's search, filters and actions.
+    List,
+    /// The tab strip, and the activity feed's actions.
+    Activity,
+    /// Nothing: a screen stands in for the whole board, as while signing in.
+    Bare,
+}
+
+/// The list's workspace, with `content` in the pane under `head`.
+pub(super) fn list(
+    issues: &Issues,
+    content: AnyElement,
+    head: Head,
+    cx: &mut Context<Issues>,
+) -> AnyElement {
+    let shown = issues.shown_docks(&Tokens::current(cx));
+    let pane = Pane::new("issues-pane")
+        .when_some(toolbar(issues, head, shown, cx), |pane, toolbar| {
+            pane.tabs(view_tabs(issues)).toolbar(toolbar)
+        })
+        .child(content);
+    Workspace::new("issues-workspace")
+        .when(shown.navigator, |workspace| {
+            workspace.navigator(navigator(issues, cx))
+        })
+        .pane(pane)
+        .when(shown.inspector, |workspace| {
+            workspace.inspector(super::peek::inspector(issues, cx))
+        })
+        .into_any_element()
+}
+
+/// The tab strip names what is open: the list, as its view.
+fn view_tabs(issues: &Issues) -> AnyElement {
+    let view = View::current(issues.tab, issues.activity.visible);
+    let bar = tabs::pane_tab_bar("issues-tab-bar")
+        .selected_index(0)
+        .child(tabs::tab(TabSpec::new(view.label(), view.icon())));
+    div()
+        .id("issues-tabs")
+        .test_support()
+        .child(bar)
+        .into_any_element()
+}
+
+fn toolbar(issues: &Issues, head: Head, shown: Docks, cx: &mut Context<Issues>) -> Option<Toolbar> {
+    match head {
+        Head::List => Some(list_toolbar(issues, shown, cx)),
+        Head::Activity => Some(activity_toolbar(issues, shown, cx)),
+        Head::Bare => None,
+    }
+}
+
+/// Search and filters on the leading side; how the list is grouped, the
+/// Sub-issues switch and New issue… on the trailing side. The count is the
+/// status bar's.
+fn list_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Toolbar {
+    scoped_toolbar(issues, shown, cx)
+        .leading(search(issues, cx))
+        .leading(filter_menu::button(FilterMenu::Assignee, issues, cx))
+        .leading(filter_menu::button(FilterMenu::Priority, issues, cx))
+        .leading(filter_menu::button(FilterMenu::More, issues, cx))
+        .when(issues.listing.content.is_some(), |toolbar| {
+            toolbar.trailing(grouping(cx))
+        })
+        .trailing(sub_issues_button(issues, cx))
+        .when(issues.can_create_issue(), |toolbar| {
+            toolbar.trailing(crate::editing::view::new_button(cx))
+        })
+}
+
+/// The activity feed has no search or filters; New issue… stays.
+fn activity_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Toolbar {
+    scoped_toolbar(issues, shown, cx).when(issues.can_create_issue(), |toolbar| {
+        toolbar.trailing(crate::editing::view::new_button(cx))
+    })
+}
+
+/// The pane's toolbar, led by what the hidden navigator would hold.
+fn scoped_toolbar(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Toolbar {
+    scope_controls(issues, shown, cx)
+        .into_iter()
+        .fold(Toolbar::new("issues-toolbar"), |toolbar, control| {
+            toolbar.leading(control)
+        })
+}
+
+/// While the navigator is hidden, what it holds stays in reach: the view
+/// menu first, then the initiative, project and organisation pickers.
+fn scope_controls(issues: &Issues, shown: Docks, cx: &mut Context<Issues>) -> Vec<AnyElement> {
+    if shown.navigator {
+        return Vec::new();
+    }
+    let mut controls = vec![view_menu::button(issues, cx)];
+    controls.extend(initiative::button(issues, cx));
+    controls.push(pickers::project_button(issues, cx));
+    controls.extend(crate::organisation::button(issues, cx));
+    controls
+}
+
+fn search(issues: &Issues, cx: &Context<Issues>) -> impl IntoElement {
+    let search = fields::toolbar_search(&issues.search, "Search issues", cx);
+    div()
+        .key_context(keys::SEARCH_CONTEXT)
+        .w(px(SEARCH_WIDTH_PX))
+        .max_w_full()
+        .child(search.id("issues-search"))
+}
+
+/// Quiet text that says how the list is grouped.
+fn grouping(cx: &Context<Issues>) -> impl IntoElement + use<> {
+    let label = ToolbarLabel {
+        icon: None,
+        text: GROUPING.into(),
+        accessible: GROUPING.into(),
+    };
+    toolbar_label::label("issues-grouping", label, cx)
+}
+
+/// The switch that shows sub-issues in the list, pressed while they show.
+/// While they are hidden, its name and tooltip say how many are, as the
+/// status bar does.
+fn sub_issues_button(issues: &Issues, cx: &Context<Issues>) -> impl IntoElement {
+    let hidden = super::hidden_subissues(issues);
+    let (name, tooltip) = super::sub_issues_words(issues.sub_issues, hidden);
+    action_button(
+        "issues-sub-issues",
+        Intent::Quiet,
+        Some(IconName::ListTree),
+        "Sub-issues",
+    )
+    .role(ButtonRole::Toolbar)
+    .accessibility_label(name)
+    .tooltip(tooltip)
+    .latched(issues.sub_issues == SubIssues::Flat)
+    .on_click(cx.listener(|this, _, _, cx| this.toggle_sub_issues(cx)))
+}

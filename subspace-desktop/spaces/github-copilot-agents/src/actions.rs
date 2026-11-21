@@ -86,9 +86,17 @@ impl CopilotAgents {
         }
     }
 
+    /// The log shows in the task's opened tab, so the task opens first.
     pub(crate) fn show_log(&mut self, _: &ShowLog, _: &mut Window, cx: &mut Context<Self>) {
-        match self.target().filter(|row| row.kind == Kind::Cloud) {
-            Some(_) => self.toggle_log(cx),
+        let key = self
+            .target()
+            .filter(|row| row.kind == Kind::Cloud)
+            .map(|row| row.key.clone());
+        match key {
+            Some(key) => {
+                self.open_item(&key, cx);
+                self.toggle_log(cx);
+            }
             None => say("Select a cloud task first", cx),
         }
     }

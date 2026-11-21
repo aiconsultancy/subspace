@@ -286,17 +286,42 @@ pub(super) fn toolbar_labels(
     _: &mut Window,
     cx: &mut Context<ComponentGallery>,
 ) -> Vec<Sample> {
-    let label = ToolbarLabel {
-        icon: IconName::User.into(),
-        text: "octo-dev".into(),
-        accessible: "Signed in to GitHub as octo-dev".into(),
-    };
-    vec![sample(
-        "One account",
-        div().bg(tokens.bg).child(toolbar_label::label(
-            "gallery-sample:toolbar-label",
-            label,
-            cx,
-        )),
-    )]
+    let label = sample_label(
+        Some(IconName::User),
+        "octo-dev",
+        "Signed in to GitHub as octo-dev",
+    );
+    let plain = sample_label(None, "Grouped by state", "Grouped by state");
+    vec![
+        sample(
+            "One account",
+            div().bg(tokens.bg).child(toolbar_label::label(
+                "gallery-sample:toolbar-label",
+                label,
+                cx,
+            )),
+        ),
+        sample(
+            "Plain quiet text, without a glyph",
+            div().bg(tokens.bg).child(toolbar_label::label(
+                "gallery-sample:toolbar-label-plain",
+                plain,
+                cx,
+            )),
+        ),
+    ]
+}
+
+/// A toolbar label sample: `text`, after `icon` when it has one, spoken as
+/// `accessible`.
+fn sample_label(
+    icon: Option<IconName>,
+    text: &'static str,
+    accessible: &'static str,
+) -> ToolbarLabel {
+    ToolbarLabel {
+        icon: icon.map(Into::into),
+        text: text.into(),
+        accessible: accessible.into(),
+    }
 }

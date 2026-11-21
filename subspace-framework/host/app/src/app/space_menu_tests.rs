@@ -3,16 +3,11 @@
 use std::sync::Arc;
 
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{
-    AnyWindowHandle, App, AppContext as _, Context, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, Render, Styled as _, TestAppContext, Window,
-    div, px,
-};
+use gpui_kit::{AnyWindowHandle, AppContext as _, ElementId, Entity, TestAppContext, px};
 use serde_json::Value;
 use subspace_chat::OPEN_KEY;
 use subspace_core::config::Config;
-use subspace_dashboard::{CurrentProduct, Dashboard, DashboardEvent, Services, prefs};
-use subspace_product::{BoardDescriptor, ValidatedProduct, validate_product};
+use subspace_dashboard::{CurrentProduct, Services, prefs};
 
 use super::navigation::NAVIGATION_KEY;
 use super::space_menu::{CLOSE_SPACE, LAST_SPACE, SPACE_SETTINGS};
@@ -20,50 +15,14 @@ use super::{ACTIVE_KEY, SubspaceApp};
 use crate::settings::Settings;
 use crate::{BoardRegistration, registry};
 
+mod add_space;
+mod fixture;
 mod guards;
+
+use fixture::{Plain, product};
 
 const IDS: [&str; 3] = ["alpha", "beta", "gamma"];
 const TITLES: [&str; 3] = ["Alpha", "Beta", "Gamma"];
-
-/// One of three plain Spaces that can take focus.
-struct Plain<const N: usize> {
-    focus: FocusHandle,
-}
-impl<const N: usize> EventEmitter<DashboardEvent> for Plain<N> {}
-impl<const N: usize> Focusable for Plain<N> {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
-    }
-}
-impl<const N: usize> Render for Plain<N> {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().track_focus(&self.focus).size_full()
-    }
-}
-impl<const N: usize> Dashboard for Plain<N> {
-    const ID: &'static str = IDS[N];
-    const TITLE: &'static str = TITLES[N];
-    fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self {
-            focus: cx.focus_handle(),
-        }
-    }
-    fn reload(&mut self, _: &mut Window, _: &mut Context<Self>) {}
-}
-
-/// The product: Gamma is off by default, as some real Spaces are.
-fn product() -> ValidatedProduct {
-    let mut descriptor_set = subspace_product::fixture::descriptor();
-    descriptor_set.boards = IDS
-        .iter()
-        .map(|id| BoardDescriptor {
-            id: (*id).into(),
-            aliases: Vec::new(),
-            default_enabled: *id != "gamma",
-        })
-        .collect();
-    validate_product(&descriptor_set).unwrap()
-}
 
 /// The shell with Alpha, Beta and Gamma (turned on in the config file), in
 /// a rooted window so context menus can open.
@@ -164,6 +123,18 @@ fn menu_item(
     .unwrap()
 }
 
+/// The open menu's labels in order: its items and any reason line.
+fn menu_labels(window: AnyWindowHandle, cx: &mut TestAppContext) -> Vec<String> {
+    cx.update_window(window, |_, window, _| {
+        let menu = window.within("popup-menu");
+        (0usize..16)
+            .filter_map(|index| menu.try_find(index))
+            .filter_map(|item| item.label().map(str::to_owned))
+            .collect()
+    })
+    .unwrap()
+}
+
 /// Right-clicks Space `id`'s tab and chooses `label` from its menu.
 fn choose(window: AnyWindowHandle, id: &str, label: &str, cx: &mut TestAppContext) {
     let item = menu_item(window, id, label, cx);
@@ -203,7 +174,10 @@ fn closing_a_background_space_removes_its_tab_and_keeps_the_current_one(cx: &mut
     );
     app.read_with(cx, |app, _| {
         let toast = &app.toasts.last().unwrap().toast.text;
-        assert_eq!(toast, "Closed Beta. Turn it on in Settings to reopen it.");
+        assert_eq!(
+            toast,
+            "Closed Beta. Add it again from the plus in the title bar."
+        );
     });
 }
 
@@ -257,6 +231,11 @@ fn the_last_space_cannot_be_closed(cx: &mut TestAppContext) {
         assert!(reason.is_some(), "the menu says why");
     })
     .unwrap();
+    assert_eq!(
+        menu_labels(window, cx),
+        [CLOSE_SPACE, LAST_SPACE, SPACE_SETTINGS],
+        "the reason sits under the disabled item, before the Place group"
+    );
     // The disabled item does nothing, and neither does a direct call.
     choose(window, "alpha", CLOSE_SPACE, cx);
     assert!(app.read_with(cx, |app, _| !app.can_close_space()));
@@ -320,4 +299,12 @@ fn space_settings_opens_that_spaces_page(cx: &mut TestAppContext) {
     assert_eq!(active(&app, cx), "alpha");
     let settings = app.read_with(cx, |app, _| app.settings.clone()).unwrap();
     assert!(settings.read_with(cx, |settings, _| settings.shows_board_page("beta")));
+}
+
+#[gpui_kit::test]
+fn the_menu_puts_close_in_remove_before_settings_in_place(cx: &mut TestAppContext) {
+    let root = tempfile::tempdir().unwrap();
+    let (window, _app) = open(root.path(), cx);
+    menu_item(window, "beta", CLOSE_SPACE, cx);
+    assert_eq!(menu_labels(window, cx), [CLOSE_SPACE, SPACE_SETTINGS]);
 }

@@ -29,7 +29,9 @@ in the command palette.
 
 ## Before you start
 
-The gallery needs no account, credential or configuration. In a release build,
+The gallery needs no account, credential or configuration. An app includes it
+only if it enables the Framework's `component-gallery` feature, which an app
+may reserve for its developer builds. Where it is included it may start off:
 turn it on in **Settings > Boards** first.
 
 ## Main view
@@ -90,6 +92,12 @@ The gallery has no detail panel, and it does not show `panel::frame`: its
 resize handle saves the app-wide panel width. Open a detail panel in a list
 board to see it. The `list::render` sample opens no details for the same
 reason.
+
+It does not show `workspace::Workspace` either: dragging a dock's edge saves
+the app-wide navigator or inspector width. Its parts have cards under
+**Navigation and chrome**: `workspace::Navigator`, `workspace::Toolbar`,
+`workspace::Pane` and `workspace::Inspector`. Open any Space to see them
+together.
 
 ## Actions
 

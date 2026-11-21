@@ -2,12 +2,13 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::{AnyElement, App, Context, KeyBinding, SharedString, Window};
+use gpui_kit::{App, Context, KeyBinding, SharedString, Window};
 use subspace_framework::client_github::Client as GithubClient;
 use subspace_framework::core::copilot_agent_tasks::TaskStore;
 use subspace_framework::core::credentials::GITHUB_ACCOUNT_KEY;
 use subspace_framework::core::task_state::PollBackoff;
 use subspace_framework::dashboard::list::{self, ListState, Row};
+use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
 use subspace_framework::dashboard::{
     Dashboard, DashboardEvent, ItemSearch, KeyHelp, Modal, PaletteCommand, Search, chat_sessions,
     prefs, services, view_keys,
@@ -20,7 +21,7 @@ use crate::keys::{
     ToggleMonitor,
 };
 use crate::model::{Kind, StateGroup};
-use crate::{CopilotAgents, agent_tools, filters, load, search_index};
+use crate::{CopilotAgents, agent_tools, filters, load, search_index, shell};
 
 impl Dashboard for CopilotAgents {
     const ID: &'static str = "github-copilot-agents";
@@ -82,6 +83,7 @@ impl Dashboard for CopilotAgents {
             group: prefs::get(cx, GROUP_KEY).and_then(|id| StateGroup::from_id(&id)),
             repo: prefs::get(cx, REPO_KEY).filter(|repo| !repo.is_empty()),
         };
+        let (navigator_open, inspector_open) = shell::stored_docks(cx);
         Self {
             focus: cx.focus_handle(),
             client,
@@ -103,6 +105,10 @@ impl Dashboard for CopilotAgents {
             loading: false,
             error: None,
             loaded_at: None,
+            login: None,
+            navigator_open,
+            inspector_open,
+            item: Default::default(),
             previous: HashMap::new(),
             backoff: PollBackoff::new(),
             window_active: window.is_window_active(),
@@ -160,16 +166,16 @@ impl Dashboard for CopilotAgents {
         cx.notify();
     }
 
-    fn render_toolbar(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        Some(self.toolbar(cx))
-    }
-
     fn status(&self, _cx: &App) -> Option<SharedString> {
         Some(self.status_text().into())
+    }
+
+    fn docks(&self, _cx: &App) -> SpaceDocks {
+        self.space_docks()
+    }
+
+    fn toggle_dock(&mut self, dock: SpaceDock, _window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_space_dock(dock, cx);
     }
 
     fn badge(&self, _cx: &App) -> Option<SharedString> {
@@ -180,8 +186,10 @@ impl Dashboard for CopilotAgents {
         self.loading
     }
 
+    /// The opened row while its tab shows, else the selected row.
     fn subject(&self, _cx: &App) -> Option<Row> {
-        self.list.open_row().or(self.list.selected_row()).cloned()
+        self.target()
+            .map(|row| crate::rows::list_row(row, chrono::Utc::now()))
     }
 
     fn commands(&self, cx: &Context<Self>) -> Vec<PaletteCommand> {

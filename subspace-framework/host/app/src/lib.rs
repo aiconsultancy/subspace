@@ -16,6 +16,7 @@ mod account;
 pub(crate) mod app;
 mod assets;
 mod build_metadata;
+mod bundled_fonts;
 #[cfg(any(test, all(debug_assertions, feature = "capture")))]
 mod capture;
 #[cfg(windows)]
@@ -40,6 +41,7 @@ mod theme;
 pub(crate) mod toolbar_labels;
 
 pub use account::{AccountRegistration, AccountSession, AccountTokenSource, account_session};
+pub use bundled_fonts::BundledFont;
 pub use product::{config_file, prepare_context};
 pub use registry::reload_configured_boards;
 pub use registry::{BoardRegistration, ConfiguredBoards};
@@ -58,6 +60,7 @@ pub(crate) struct DesktopOptions {
     pub extensions: &'static [SettingsExtension],
     pub dock_panel: Option<DockPanelRegistration>,
     pub github_oauth: Option<OAuthClient>,
+    pub fonts: &'static [BundledFont],
     #[cfg(feature = "report-issue")]
     pub report_issue_repository: Option<&'static str>,
 }
@@ -112,7 +115,7 @@ fn run_desktop(
         prefs::init_file(Some(files.state.clone()), cx);
         let config_file = files.config.clone();
         cx.set_global(files);
-        let notices: Vec<String> = notices.into_iter().chain(theme::initialize(cx)).collect();
+        let notices = start_theme(notices, options.fonts, cx);
         install_services(environment, tools, config_file, options.github_oauth, cx);
         account::init(options.account, cx);
         #[cfg(feature = "report-issue")]
@@ -127,6 +130,12 @@ fn run_desktop(
         open_product_window(notices, &name, cx);
     });
     Ok(())
+}
+
+/// Registers the app's fonts, then starts the theme, so the theme resolves
+/// the families they add. The theme's notices follow `notices`.
+fn start_theme(notices: Vec<String>, fonts: &'static [BundledFont], cx: &mut App) -> Vec<String> {
+    notices.into_iter().chain(theme::start(fonts, cx)).collect()
 }
 
 /// The services every board and agent tool reads, and the one Sign in with

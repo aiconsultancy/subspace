@@ -19,6 +19,7 @@ const THEMES: &[&str] = &[
     DEFAULT_THEME_DOCUMENT,
     "subspace-channel",
     "macos-classic-dark-remix",
+    "twilight-two",
     "adventure",
     "alduin",
     "asciinema",

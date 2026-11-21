@@ -1,7 +1,7 @@
 //! A row's lanes in Subspace API's order: priority, identifier, state and tracker
-//! marks before the title; progress or sub-issue count, labels, milestone,
-//! project, event, due date, estimate and assignee after it. As the window
-//! narrows, project goes first, then labels, as in Subspace API.
+//! marks before the title; progress or sub-issue count, labels, due date,
+//! estimate and assignee after it. As the pane narrows, labels go first, as
+//! in Subspace API. The selected row ends with Open.
 
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -10,6 +10,7 @@ use gpui_kit::{
     StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div, px, rems,
 };
 use subspace_api_client::model::{IssueListItem, Label};
+use subspace_framework::dashboard::action::{Intent, action_button};
 use subspace_framework::dashboard::{Glyph, Group, Row, Tokens, Tone, avatar, feedback, truncated};
 use subspace_framework::lucide::{IconName, SvgIcon};
 
@@ -28,17 +29,19 @@ const LABEL_DOT_PX: f32 = 7.;
 /// The widest a chip grows before its name is cut, so one long label cannot
 /// push the row's other lanes aside. In rem, so it follows the text size.
 const CHIP_MAX_WIDTH_REM: f32 = 12.;
-/// Below these window widths, the project lane and then the labels go.
-const LABELS_MIN_WIDTH_PX: f32 = 960.;
-/// A window width before the first render, when every lane shows.
+/// Below this pane width, the labels go.
+const LABELS_MIN_WIDTH_PX: f32 = 720.;
+/// A pane width before the first render, when every lane shows.
 const UNKNOWN_WIDTH: f32 = 0.;
+/// The selected row's Open, which opens the issue page.
+pub(crate) const OPEN_ROW_ID: &str = "issues-open-row";
 /// `#RRGGBB`, without the `#`.
 const HEX_COLOUR_DIGITS: usize = 6;
 const HEX_RADIX: u32 = 16;
 /// `YYYY-MM-DD`, the date part of Subspace API's dates.
 const DATE_CHARS: usize = 10;
 
-/// Which optional lanes fit the window.
+/// Which optional lanes fit the pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Lanes {
     pub(crate) labels: bool,
@@ -127,14 +130,40 @@ pub(crate) fn group_mark(issues: &Issues, group: &Group, cx: &App) -> Option<Any
     Some(mark(state_icon(kind), &Tokens::current(cx)).into_any_element())
 }
 
-/// After the title: the lanes, or a failed *more* line's Retry.
+/// After the title: the lanes, then Open on the selected row; or a failed
+/// *more* line's Retry.
 pub(crate) fn trailing(issues: &Issues, row: &Row, cx: &App) -> Option<AnyElement> {
     let tokens = Tokens::current(cx);
     if let Some(Line::More(group)) = lines::line(&row.key) {
         return more_retry(issues, group);
     }
     let item = issues.issue(&row.key)?;
-    Some(item_lanes(item, Lanes::for_width(issues.width), &tokens).into_any_element())
+    let lanes = item_lanes(item, Lanes::for_width(issues.pane_width(&tokens)), &tokens);
+    let selected = issues.list.selected() == Some(&row.key);
+    Some(
+        lanes
+            .when(selected, |lanes| lanes.child(open_row(issues, &row.key)))
+            .into_any_element(),
+    )
+}
+
+/// Open on the selected row: the issue page, as a double click or Enter
+/// opens it. A click on it is not also a click on the row.
+fn open_row(issues: &Issues, key: &SharedString) -> AnyElement {
+    let entity = issues.weak.clone();
+    let key = key.clone();
+    action_button(
+        OPEN_ROW_ID,
+        Intent::Neutral,
+        Some(IconName::CornerDownLeft),
+        "Open",
+    )
+    .compact()
+    .on_click(move |_, _, cx| {
+        cx.stop_propagation();
+        _ = entity.update(cx, |this, cx| this.open_row(&key, cx));
+    })
+    .into_any_element()
 }
 
 fn more_retry(issues: &Issues, group: &str) -> Option<AnyElement> {

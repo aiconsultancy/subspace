@@ -35,7 +35,14 @@ run = "bash scripts/capture.sh"
 
 [tasks.test]
 description = "Run the tests"
-run = "cargo test --workspace --locked"
+# The workspace with the unreleased Spaces built in, so their registration,
+# descriptor and audit tests run; then the release configuration of the app
+# and its descriptor alone. The second run rebuilds what the feature change
+# touches: the Framework facade and the Spaces, clients and app above it.
+run = [
+    "cargo test --workspace --locked --features subspace/unreleased-spaces",
+    "cargo test --locked -p subspace -p subspace-descriptor",
+]
 
 [tasks.board-lab-examples]
 description = "Check live examples through Python, Node and Bun helpers; pass --python, --node and --bun executable paths"
@@ -86,7 +93,13 @@ run = "python3 scripts/format-workspace.py -- --check"
 
 [tasks.lint]
 # --keep-going reports every failing crate in one run, not only the first.
-run = ["cargo shear", "cargo clippy --workspace --all-targets --keep-going -- -D warnings"]
+# Clippy runs on the workspace with the unreleased Spaces built in, then on
+# the release configuration of the app and its descriptor (see `test`).
+run = [
+    "cargo shear",
+    "cargo clippy --workspace --all-targets --keep-going --features subspace/unreleased-spaces -- -D warnings",
+    "cargo clippy -p subspace -p subspace-descriptor --all-targets --keep-going -- -D warnings",
+]
 
 [tasks.quality]
 description = "Fail when the rustqual quality score drops below the baseline"

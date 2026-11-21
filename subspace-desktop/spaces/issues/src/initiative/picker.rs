@@ -6,7 +6,8 @@ use subspace_framework::dashboard::menu::MenuEvent;
 use crate::Issues;
 
 const ANCHOR: &str = "issues-initiative";
-const CLEAR_LABEL: &str = "All initiatives";
+/// The choice that clears the initiative, in the menu and the navigator.
+pub(crate) const CLEAR_LABEL: &str = "All initiatives";
 
 pub(crate) fn button(issues: &Issues, cx: &mut Context<Issues>) -> Option<AnyElement> {
     let catalog = issues.initiatives.read(cx);

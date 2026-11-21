@@ -2,6 +2,7 @@
 
 mod commands;
 mod creation;
+mod facts;
 mod observation;
 mod sync;
 mod view;
@@ -14,7 +15,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use gpui_kit::component::input::InputState;
 use gpui_kit::component::select::{SearchableVec, SelectState};
-use gpui_kit::{AppContext as _, Context, Entity, FocusHandle, Subscription, Task, Window};
+use gpui_kit::{
+    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Subscription, Task, Window,
+};
 use subspace_framework::dashboard::AgentContext;
 
 use crate::contracts::EnvironmentInfo;
@@ -23,12 +26,14 @@ use crate::project::LoadedProject;
 use crate::project_service::{ProjectPresentation, ProjectService};
 use crate::project_settings::ProjectSettings;
 use crate::project_view::{ProjectView, ProjectViewEvent};
+use crate::shell::{Shell, ShellRequest};
 
 const AGENT_CONTEXT_MAX_BYTES: usize = 16 * 1024;
 
 pub(crate) struct ProjectBrowser {
     root: PathBuf,
     focus: FocusHandle,
+    shell: Shell,
     projects: Vec<LoadedProject>,
     environments: Vec<EnvironmentInfo>,
     editors: Vec<InstalledEditor>,
@@ -60,6 +65,10 @@ pub(super) enum Outcome {
     Notice(String),
 }
 
+/// The owner of the shell facts hears what the browser's switch, view menu
+/// and navigator switch ask for.
+impl EventEmitter<ShellRequest> for ProjectBrowser {}
+
 impl ProjectBrowser {
     pub(crate) fn new(root: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let project_id = cx.new(|cx| InputState::new(window, cx).placeholder("my-dashboard"));
@@ -83,6 +92,7 @@ impl ProjectBrowser {
         Self {
             root,
             focus: cx.focus_handle(),
+            shell: Shell::default(),
             projects: Vec::new(),
             environments: Vec::new(),
             editors: Vec::new(),
@@ -122,8 +132,10 @@ impl ProjectBrowser {
         self.busy
     }
 
+    /// The line for the shell's status bar: the guidance, the worker's state
+    /// or the latest result, and `Working…` while an operation is pending.
     pub(crate) fn status(&self) -> String {
-        self.status.clone()
+        facts::status_line(self.busy, &self.status)
     }
 
     pub(crate) fn agent_context(&self) -> Option<AgentContext> {

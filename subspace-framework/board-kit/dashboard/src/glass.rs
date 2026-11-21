@@ -47,6 +47,10 @@ const SIDE_BLEED: f32 = LIFT_BLUR;
 /// Gradient direction: top to bottom.
 const DOWNWARD: f32 = 180.;
 const HALF: f32 = 0.5;
+/// The current destination in a theme without Liquid Glass: a faint accent
+/// fill inside an accent ring, relative to the accent.
+const ACCENT_FILL: f32 = 0.07;
+const ACCENT_RING: f32 = 0.45;
 /// `--nav-round` limits: square corners and a full capsule.
 const SQUARE: f32 = 0.;
 const CAPSULE: f32 = 1.;
@@ -81,17 +85,31 @@ pub fn material(selected: bool, tokens: &Tokens) -> Option<Material> {
     })
 }
 
-/// Label and glyph colour: the current destination reads stronger.
+/// The current destination's surface in a theme without Liquid Glass: a
+/// faint accent fill inside a one-pixel accent ring, with no shadow; `None`
+/// for every other one.
+pub fn accent_material(selected: bool, tokens: &Tokens) -> Option<Material> {
+    selected.then(|| Material {
+        fill: tokens.accent.opacity(ACCENT_FILL).into(),
+        edge: tokens.accent.opacity(ACCENT_RING),
+        shadows: Vec::new(),
+    })
+}
+
+/// Label and glyph colour: the current destination reads stronger, in the
+/// accent where the theme has no Liquid Glass.
 pub fn label_color(selected: bool, tokens: &Tokens) -> Hsla {
-    if selected {
-        tokens.fg_strong
-    } else {
-        tokens.fg
+    match (selected, tokens.controls.liquid_glass) {
+        (true, true) => tokens.fg_strong,
+        (true, false) => tokens.accent,
+        (false, _) => tokens.fg,
     }
 }
 
 /// One navigation destination: a capsule `height` tall that is glass when
-/// `selected`. Callers add the glyph, label, accessible label and click.
+/// `selected` and the theme sets `--liquid-glass`, and otherwise a faint
+/// accent fill in an accent ring. Callers add the glyph, label, accessible
+/// label and click.
 pub fn nav_button(
     id: impl Into<ElementId>,
     selected: bool,
@@ -105,7 +123,12 @@ pub fn nav_button(
         .selected(selected)
         .toggled(selected);
     let color = label_color(selected, tokens);
-    dress(button, material(selected, tokens)).text_color(color)
+    let surface = if tokens.controls.liquid_glass {
+        material(selected, tokens)
+    } else {
+        accent_material(selected, tokens)
+    };
+    dress(button, surface).text_color(color)
 }
 
 /// The bare capsule: no fill at rest, a faint glass fill on hover and press.
@@ -180,7 +203,7 @@ fn dress(button: Button, material: Option<Material>) -> Button {
 mod tests {
     use gpui_kit::px;
 
-    use super::{capsule_radius, label_color, material};
+    use super::{accent_material, capsule_radius, label_color, material};
     use crate::Tokens;
 
     #[test]
@@ -208,6 +231,22 @@ mod tests {
             "the rim is stronger at the top"
         );
         assert_ne!(label_color(true, &tokens), label_color(false, &tokens));
+    }
+
+    #[test]
+    fn without_liquid_glass_the_current_destination_takes_the_accent() {
+        let mut tokens = Tokens::one_dark();
+        tokens.controls.liquid_glass = false;
+        assert!(accent_material(false, &tokens).is_none());
+        let current = accent_material(true, &tokens).expect("the current item is marked");
+        assert!(
+            current.edge.a > 0. && current.edge.a < 1.,
+            "a faint accent ring"
+        );
+        assert!(current.shadows.is_empty(), "no glass shadow");
+        assert_eq!(label_color(true, &tokens), tokens.accent);
+        tokens.controls.liquid_glass = true;
+        assert_eq!(label_color(true, &tokens), tokens.fg_strong);
     }
 
     #[test]

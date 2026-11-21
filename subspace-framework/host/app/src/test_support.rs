@@ -28,3 +28,20 @@ pub fn check_help_image_cache(board: BoardDoc) -> Result<(), String> {
     cx.run_until_parked();
     result
 }
+
+/// Register an app's embedded fonts as startup does, and return the families
+/// that then count as installed, or the notice startup would show. The test
+/// text system loads no font data, so this checks the list, not the files.
+// qual:api (product crates check their embedded font list with the host's registration)
+pub fn registered_font_families(
+    fonts: &'static [crate::BundledFont],
+) -> Result<Vec<String>, String> {
+    let cx = TestAppContext::single();
+    let result = cx.update(|cx| {
+        crate::bundled_fonts::register(fonts, cx)
+            .map_or_else(|| Ok(crate::bundled_fonts::registered(cx)), Err)
+    });
+    cx.quit();
+    cx.run_until_parked();
+    result
+}

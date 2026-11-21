@@ -17,7 +17,8 @@ use super::{
 use crate::model::age;
 use crate::rows::{person_glyph, reviewer_badge};
 
-/// The activity events and the second action bar below them.
+/// The activity events and the second action bar below them, in the panel
+/// over the diff view.
 pub fn activity(
     body: Div,
     input: &PanelInput<'_>,
@@ -25,6 +26,18 @@ pub fn activity(
     key: &str,
     on: &OnAction,
 ) -> Div {
+    if input.detail.is_none() {
+        return body;
+    }
+    events(body, input, tokens, key).child(
+        div()
+            .mt(px(SECTION_GAP_PX))
+            .child(action_bar(input, "bottom", tokens, on)),
+    )
+}
+
+/// The activity events under their heading, once the details have loaded.
+pub fn events(body: Div, input: &PanelInput<'_>, tokens: &Tokens, key: &str) -> Div {
     let Some(detail) = input.detail else {
         return body;
     };
@@ -38,11 +51,6 @@ pub fn activity(
             .iter()
             .enumerate()
             .map(|(index, event)| event_row(index, event, input, tokens, key)),
-    )
-    .child(
-        div()
-            .mt(px(SECTION_GAP_PX))
-            .child(action_bar(input, "bottom", tokens, on)),
     )
 }
 

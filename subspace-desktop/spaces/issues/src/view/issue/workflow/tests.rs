@@ -1,4 +1,4 @@
-use super::{FlightPath, Layout};
+use super::{FlightPath, Layout, Segment};
 use serde_json::json;
 use subspace_api_client::model::WorkflowState;
 
@@ -43,17 +43,25 @@ fn flight_path_keeps_workflow_order_and_ends_in_one_slot() {
     );
 }
 
+fn segments(path: &FlightPath<'_>) -> Vec<(bool, bool)> {
+    (0..path.count())
+        .map(|ix| {
+            let Segment { filled, current } = path.segment(ix);
+            (filled, current)
+        })
+        .collect()
+}
+
 #[test]
-fn geometry_centres_waypoints_and_narrow_fallback_keeps_current_state() {
+fn the_bar_fills_up_to_the_current_stop_and_narrow_fallback_keeps_current_state() {
     let states = states();
     let path = FlightPath::new(&states, "started");
     let layout = path.layout(400., 1.);
+    assert_eq!(layout, Layout::Segments { filled: 3 });
     assert_eq!(
-        layout,
-        Layout::Course {
-            centres: vec![50., 150., 250., 350.],
-            travelled_to: Some(250.)
-        }
+        segments(&path),
+        [(true, false), (true, false), (true, true), (false, false)],
+        "filled through In Progress, which is the strong one"
     );
     assert_eq!(path.layout(180., 1.), Layout::Current);
     assert_eq!(
@@ -79,11 +87,12 @@ fn cancelled_and_duplicate_issues_take_the_end_slot_as_their_position() {
             "{}",
             path.description()
         );
+        assert_eq!(path.layout(400., 1.), Layout::Segments { filled: 4 });
         assert_eq!(
-            path.layout(400., 1.),
-            Layout::Course {
-                centres: vec![50., 150., 250., 350.],
-                travelled_to: Some(350.)
+            path.segment(3),
+            Segment {
+                filled: true,
+                current: true
             }
         );
     }
@@ -100,13 +109,13 @@ fn missing_current_never_fabricates_travelled_progress() {
             .description()
             .starts_with("Workflow: Current state unavailable.")
     );
-    assert!(matches!(
-        unknown.layout(400., 1.),
-        Layout::Course {
-            travelled_to: None,
-            ..
-        }
-    ));
+    assert_eq!(unknown.layout(400., 1.), Layout::Segments { filled: 0 });
+    assert!(
+        segments(&unknown)
+            .iter()
+            .all(|segment| *segment == (false, false)),
+        "nothing filled, nothing strong"
+    );
     assert_eq!(
         FlightPath::new(&[], "unknown").layout(400., 1.),
         Layout::Current
@@ -168,7 +177,7 @@ fn unmeasured_width_starts_with_the_full_course() {
     let states = states();
     assert!(matches!(
         FlightPath::new(&states, "started").layout(0., 1.),
-        Layout::Course { .. }
+        Layout::Segments { .. }
     ));
     assert_eq!(
         FlightPath::new(&[], "unknown").layout(0., 1.),

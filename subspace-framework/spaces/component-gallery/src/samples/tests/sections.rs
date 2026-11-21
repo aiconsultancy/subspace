@@ -20,6 +20,11 @@ fn messaging_and_navigation_builders_caption_every_state(cx: &mut TestAppContext
             navigation::glass_controls(g, t, w, cx),
             navigation::overflow_toolbars(g, t, w, cx),
             navigation::surface_headers(g, t, w, cx),
+            navigation::workspace::navigators(g, t, w, cx),
+            navigation::workspace::toolbars(g, t, w, cx),
+            navigation::workspace::dock_switches(g, t, w, cx),
+            navigation::workspace::panes(g, t, w, cx),
+            navigation::workspace::inspectors(g, t, w, cx),
             navigation::token_swatches(g, t, w, cx),
         ]
     });

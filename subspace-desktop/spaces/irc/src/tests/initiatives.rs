@@ -2,7 +2,7 @@ mod header;
 mod scope;
 
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{TestAppContext, VisualTestContext, px, size};
+use gpui_kit::{Entity, TestAppContext, VisualTestContext, px, size};
 use serde_json::json;
 use subspace_api_client::Error;
 use subspace_api_client::model::MemberInitiative;
@@ -10,6 +10,7 @@ use subspace_client_irc::{Command, Event};
 
 use super::{inject, mount, settings};
 use crate::fixtures::{channel, network_id};
+use crate::hub::Hub;
 use crate::view;
 
 fn catalogue() -> Vec<MemberInitiative> {
@@ -17,6 +18,15 @@ fn catalogue() -> Vec<MemberInitiative> {
         {"id":"dc94172e-aa0e-424a-8acd-8b7544b4ca0c","name":"Design Studio","channels":"#design, #releases"},
         {"id":"99469809-1f67-4f56-9d66-47a052e0e92b","name":"Observatory","channels":"#data, #forecast"}
     ])).unwrap()
+}
+
+/// The fixture user's memberships: the two initiatives in `catalogue`.
+fn member_of_the_catalogue(hub: &Entity<Hub>, cx: &mut VisualTestContext) {
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(catalogue()), cx)
+        })
+    });
 }
 
 fn settle(cx: &mut VisualTestContext) {
@@ -30,15 +40,12 @@ fn settle(cx: &mut VisualTestContext) {
 fn searchable_picker_switches_channels_and_survives_a_transient_api_error(cx: &mut TestAppContext) {
     let (board, hub, cx) = mount(cx, settings());
     cx.update(|_, cx| subspace_framework::dashboard::bind_keys(cx));
-    cx.simulate_resize(size(px(720.), px(520.)));
-    hub.update(cx, |hub, cx| {
-        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
-            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(catalogue()), cx)
-        })
-    });
+    // Wide enough for the pane between the navigator and the inspector.
+    cx.simulate_resize(size(px(1280.), px(520.)));
+    member_of_the_catalogue(&hub, cx);
     cx.update(|window, cx| {
         window.render_frame(cx);
-        assert!(window.find("irc-heading").visible());
+        assert!(window.find("workspace-navigator-title").visible());
         window.click("irc-initiative-button", cx);
     });
     cx.run_until_parked();

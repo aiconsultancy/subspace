@@ -1,14 +1,17 @@
 //! A Space's right-click menu, on its switcher tab and its navigation rail
-//! destination: close the Space, or open its Settings page. Closing saves
-//! and applies the same choice as turning the Space off in Settings.
+//! destination, built from the standard groups: Close Space in Remove, then
+//! Space settings… in Place. Closing saves and applies the same choice as
+//! turning the Space off in Settings.
 
-use gpui_kit::component::menu::{ContextMenu, PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::ContextMenu;
 use gpui_kit::{
     Context, InteractiveElement, ParentElement, SharedString, Styled, WeakEntity, Window,
 };
 use subspace_dashboard::Toast;
 use subspace_dashboard::anchored::AnchoredContextMenuExt as _;
 use subspace_dashboard::prefs;
+use subspace_dashboard::row_menu::{self, GroupedMenu, MenuCommand, MenuGroup};
+use subspace_lucide::IconName;
 
 use super::cover::cover_while_open;
 use super::{ACTIVE_KEY, SubspaceApp};
@@ -33,35 +36,33 @@ where
 {
     element.anchored_context_menu(move |menu, window, cx| {
         cover_while_open(&app, window, cx);
-        space_menu(menu, id, closable, &app)
+        row_menu::build(menu, space_commands(id, closable, &app), window, cx)
     })
 }
 
-fn space_menu(
-    menu: PopupMenu,
-    id: &'static str,
-    closable: bool,
-    app: &WeakEntity<SubspaceApp>,
-) -> PopupMenu {
+/// Close Space, disabled with the reason for the last open Space, and
+/// Space settings….
+fn space_commands(id: &'static str, closable: bool, app: &WeakEntity<SubspaceApp>) -> GroupedMenu {
     let close_app = app.clone();
     let settings_app = app.clone();
-    let menu = menu.item(
-        PopupMenuItem::new(CLOSE_SPACE)
-            .disabled(!closable)
-            .on_click(move |_, window, cx| {
-                _ = close_app.update(cx, |app, cx| app.close_space(id, window, cx));
-            }),
-    );
-    let menu = if closable {
-        menu
-    } else {
-        menu.label(LAST_SPACE)
-    };
-    menu.separator().item(
-        PopupMenuItem::new(SPACE_SETTINGS).on_click(move |_, window, cx| {
-            _ = settings_app.update(cx, |app, cx| app.open_board_settings(id, window, cx));
-        }),
+    let close = MenuCommand::new(
+        MenuGroup::Remove,
+        CLOSE_SPACE,
+        IconName::X,
+        move |window, cx| {
+            _ = close_app.update(cx, |app, cx| app.close_space(id, window, cx));
+        },
     )
+    .disabled(!closable, LAST_SPACE);
+    let settings = MenuCommand::new(
+        MenuGroup::Place,
+        SPACE_SETTINGS,
+        IconName::Settings,
+        move |window, cx| {
+            _ = settings_app.update(cx, |app, cx| app.open_board_settings(id, window, cx));
+        },
+    );
+    GroupedMenu::new().with(close).with(settings)
 }
 
 /// The tab that takes over from the tab at `index` when it closes: the one
@@ -76,10 +77,10 @@ pub(super) fn neighbour(index: usize, len: usize) -> Option<usize> {
     }
 }
 
-/// The toast after Space `title` closed, saying where to reopen it.
+/// The toast after Space `title` closed, saying where to add it again.
 fn closed_message(title: &str, applied: Applied) -> String {
     match applied {
-        Applied::Now => format!("Closed {title}. Turn it on in Settings to reopen it."),
+        Applied::Now => format!("Closed {title}. Add it again from the plus in the title bar."),
         Applied::AfterRestart => format!("Restart the app to close {title}."),
     }
 }
@@ -168,7 +169,7 @@ mod tests {
     fn the_closed_toast_says_where_to_reopen_the_space() {
         assert_eq!(
             closed_message("Actions", Applied::Now),
-            "Closed Actions. Turn it on in Settings to reopen it."
+            "Closed Actions. Add it again from the plus in the title bar."
         );
         assert_eq!(
             closed_message("Actions", Applied::AfterRestart),

@@ -1,7 +1,7 @@
 //! Quiet glyph buttons' finishes: flat or glass at rest and under the
 //! pointer, chosen per theme; the status bar always flat.
 
-use super::super::{Style, Surface, paint};
+use super::super::{Style, Surface, glyph_latch, paint};
 use super::IconButton;
 use crate::action::{Intent, action_button};
 use crate::density::Density;
@@ -155,6 +155,25 @@ fn flat_latched_buttons_keep_a_fill_and_an_accent_glyph() {
     assert_ne!(on.glyph, glyph(), "a second cue beside the fill");
     assert_ne!(on.glyph, tokens.accent, "tinted toward the strong text");
     assert_eq!(on.hover_glyph, on.glyph);
+}
+
+#[test]
+fn a_glyph_latch_shows_its_on_state_by_the_accent_glyph_alone() {
+    let tokens = Tokens::one_dark();
+    let off = paint(ToolbarLook::FLAT, false, &tokens, glyph());
+    assert_eq!(glyph_latch(ToolbarLook::FLAT, false, &tokens, glyph()), off);
+    let on = glyph_latch(ToolbarLook::FLAT, true, &tokens, glyph());
+    assert_eq!(on.rest, off.rest, "no fill while on");
+    assert_eq!(
+        on.hover, off.hover,
+        "the pointer finish of a button that is off"
+    );
+    assert_eq!(on.glyph, tokens.accent);
+    assert_eq!(on.hover_glyph, tokens.accent);
+    assert!(
+        !glyph_latch(GLASS, true, &tokens, glyph()).lit,
+        "never lit glass"
+    );
 }
 
 #[test]

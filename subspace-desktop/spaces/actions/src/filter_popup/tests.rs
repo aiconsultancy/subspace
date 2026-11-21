@@ -28,6 +28,34 @@ fn choose_next(field: &'static str, cx: &mut VisualTestContext) {
     draw(cx);
 }
 
+/// The Space's name and account sit in the navigator; the filters sit in
+/// the pane's toolbar beside it, with their pickers stacked.
+fn assert_filters_beside_the_navigator(cx: &mut VisualTestContext) {
+    cx.update(|window, _| {
+        let title = window.find("workspace-navigator-title");
+        let account = window.find("actions-account");
+        let navigator = window.find("workspace-navigator").bounds();
+        let filters = window.find("actions-filters-button").bounds();
+        let toolbar = window.find("actions-list-toolbar").bounds();
+        let status = window.find("actions-Status").bounds();
+        let branch = window.find("actions-Branch").bounds();
+        // The large heading that carried them is gone.
+        assert!(window.try_find("actions-heading").is_none());
+        assert!(window.try_find("actions-scope").is_none());
+        assert_eq!(title.label(), Some("Actions"));
+        assert_eq!(title.role(), Some(Role::Heading));
+        assert_eq!(account.label(), Some("Signed in to GitHub as ann"));
+        assert!(navigator.right() <= toolbar.left());
+        assert!(toolbar.left() < filters.left());
+        assert!(filters.right() < toolbar.right());
+        assert!(toolbar.top() <= filters.top());
+        assert!(filters.bottom() <= toolbar.bottom());
+        assert_eq!(status.left(), branch.left());
+        assert_eq!(status.right(), branch.right());
+        assert!(status.bottom() < branch.top());
+    });
+}
+
 #[gpui_kit::test]
 fn picking_two_filters_keeps_the_panel_open_and_updates_the_list(cx: &mut TestAppContext) {
     cx.update(|cx| prefs::init_file(None, cx));
@@ -50,28 +78,7 @@ fn picking_two_filters_keeps_the_panel_open_and_updates_the_list(cx: &mut TestAp
     draw(cx);
     cx.update(|window, cx| window.click("actions-filters-button", cx));
     draw(cx);
-    cx.update(|window, _| {
-        let heading = window.find("actions-heading");
-        let scope = window.find("actions-scope");
-        let filters = window.find("actions-filters-button").bounds();
-        let toolbar = window.find("actions-list-toolbar").bounds();
-        let status = window.find("actions-Status").bounds();
-        let branch = window.find("actions-Branch").bounds();
-        assert_eq!(
-            filters.left() - toolbar.left(),
-            crate::toolbar::LIST_SIDE_INSET
-        );
-        assert_eq!(heading.label(), Some("Actions"));
-        assert_eq!(heading.role(), Some(Role::Heading));
-        assert_eq!(scope.label(), Some("GitHub · Signed in as ann"));
-        assert_eq!(heading.bounds().left(), filters.left());
-        assert!(heading.bounds().right() <= scope.bounds().left());
-        assert!(scope.bounds().top() < heading.bounds().bottom());
-        assert!(scope.bounds().bottom() < filters.top());
-        assert_eq!(status.left(), branch.left());
-        assert_eq!(status.right(), branch.right());
-        assert!(status.bottom() < branch.top());
-    });
+    assert_filters_beside_the_navigator(cx);
 
     choose_next("actions-Status", cx);
     board.read_with(cx, |board, cx| {

@@ -41,6 +41,9 @@ If you want to build a Space or know what the Framework offers one, read
 
 ## Shared UI
 
+- [Design guide](design-guide.md): how every Space is laid out on the
+  workspace shell, the anatomy image reviewers compare screenshots with, and
+  how to build a new Space on it.
 - [UI component catalogue](ui-components.md): every component and style, which
   crate owns it and the component rules.
 - [Component gallery](../spaces/component-gallery/help.md): the in-app guide to
@@ -70,6 +73,9 @@ If you want to build a Space or know what the Framework offers one, read
 
 ## Change records
 
+- [Embedded fonts](changes/bundled-fonts/README.md): `ProductBuild::fonts`,
+  registration before the theme, and automatic choices that keep the
+  platform's fonts.
 - [Selectable text in find in page](changes/gpui-text-patch/README.md): native
   range highlights, reveal and Markdown link context actions.
 - [Restart after an update](changes/restart-after-update/README.md): About and Settings restart routing and regression coverage.

@@ -1,5 +1,6 @@
 //! Full Subspace composition. The shared shell owns all startup and window code.
 
+mod fonts;
 mod identity;
 mod launch;
 #[path = "../build/settings.rs"]
@@ -56,6 +57,7 @@ fn main() -> ExitCode {
             #[cfg(not(feature = "terminal"))]
             dock_panel: None,
             github_oauth: github_oauth(),
+            fonts: fonts::bundled(),
             #[cfg(feature = "report-issue")]
             report_issue_repository: Some(env!("SUBSPACE_BUILD_REPORT_ISSUE_REPOSITORY")),
         },
@@ -117,6 +119,9 @@ fn assets() -> &'static [(&'static str, &'static [u8])] {
     }
 }
 
+/// The Spaces this build includes, in product order. Board Lab and the
+/// Component gallery are not ready to ship: each is compiled in only with its
+/// Cargo feature, which also lists it in the descriptor.
 fn board_registrations() -> Vec<BoardRegistration> {
     vec![
         BoardRegistration::new::<subspace_github_board::Github>()
@@ -127,11 +132,14 @@ fn board_registrations() -> Vec<BoardRegistration> {
             .description("IRC networks, channels and private messages"),
         BoardRegistration::new::<subspace_issues_board::Issues>()
             .description("Subspace API issues and comments"),
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        BoardRegistration::new::<subspace_decisions_board::Decisions>()
+            .description("Subspace API decisions, searchable and read only"),
+        #[cfg(all(feature = "board-lab", target_os = "macos", target_arch = "aarch64"))]
         BoardRegistration::new::<subspace_board_lab_board::BoardLab>()
             .description("Native dashboards and managed runtimes (alpha)"),
         BoardRegistration::new::<subspace_actions_board::Actions>()
             .description("GitHub Actions runs, deployments and releases (experimental)"),
+        #[cfg(feature = "component-gallery")]
         BoardRegistration::new::<subspace_framework::component_gallery::ComponentGallery>()
             .description("Shared UI components in their states (developer)"),
     ]
@@ -236,10 +244,12 @@ mod tests {
             ("logos/irc.svg", 0xfeb1f97f6bd091e8),
             ("icons/issues.svg", 0x31ddc61a9106ee65),
             ("icons/workflow-16.svg", 0x1d2b94c6f8ab06c8),
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            #[cfg(all(feature = "board-lab", target_os = "macos", target_arch = "aarch64"))]
             ("icons/flask-16.svg", 0x70ddc57f19dcb72c),
             ("logos/github.svg", 0x24524f670fa8f1ff),
+            #[cfg(feature = "component-gallery")]
             ("icons/component.svg", 0xbc92e6d849ce1ea8),
+            ("icons/decisions.svg", 0x5942352d2116e424),
         ];
         for (path, fingerprint) in expected {
             let bytes = source.load(path).unwrap().unwrap();
@@ -285,7 +295,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(feature = "board-lab", target_os = "macos", target_arch = "aarch64"))]
     #[test]
     fn board_labs_registered_screenshot_reaches_the_native_help_image_cache() {
         let board = board_registrations()
@@ -297,29 +307,35 @@ mod tests {
             .unwrap();
     }
 
-    /// `docs/mcp.md` lists every tool and action full Subspace serves. The
-    /// shared search tools are documented but need a search index, which the
-    /// test environment does not have.
+    /// The shared search tools, documented but served only with a search
+    /// index, which the test environment does not have.
+    const SEARCH_TOOLS: [&str; 3] = ["search_content", "read_search_result", "related_items"];
+
+    /// Board Lab's tools, which the Spaces audit documents but only a build
+    /// with Board Lab compiles.
+    const BOARD_LAB_TOOLS: [&str; 6] = [
+        "board_lab_inspect",
+        "board_lab_edit",
+        "board_lab_run",
+        "board_lab_environment",
+        "board_lab_project_inspect",
+        "board_lab_project_edit",
+    ];
+
+    /// `docs/spaces-audit.md` lists every tool and action full Subspace
+    /// serves, less the absent search tools and, in a build without Board
+    /// Lab, Board Lab's.
     #[test]
     fn the_documented_tool_inventory_matches_the_compiled_catalog() {
         let registrations = board_registrations();
-        let absent = [
-            "search_content",
-            "read_search_result",
-            "related_items",
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            "board_lab_inspect",
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            "board_lab_edit",
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            "board_lab_run",
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            "board_lab_environment",
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            "board_lab_project_inspect",
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            "board_lab_project_edit",
-        ];
+        let mut absent = SEARCH_TOOLS.to_vec();
+        if !cfg!(all(
+            feature = "board-lab",
+            target_os = "macos",
+            target_arch = "aarch64"
+        )) {
+            absent.extend(BOARD_LAB_TOOLS);
+        }
         subspace_framework::agent_tools::test_support::check_documented_catalog(
             &registrations
                 .iter()
@@ -381,8 +397,12 @@ mod tests {
             .filter(|board| board.retain_when_disabled)
             .map(|board| board.id)
             .collect();
-        let expected =
-            cfg!(all(target_os = "macos", target_arch = "aarch64")).then_some("board-lab");
+        let expected = cfg!(all(
+            feature = "board-lab",
+            target_os = "macos",
+            target_arch = "aarch64"
+        ))
+        .then_some("board-lab");
         assert_eq!(retained, expected.into_iter().collect::<Vec<_>>());
     }
 
@@ -405,6 +425,47 @@ mod tests {
         assert_eq!(issues.icon, Some("icons/issues.svg"));
     }
 
+    /// The shell refuses a descriptor board without a registration, and a
+    /// registration the descriptor does not list never appears, so the
+    /// feature that adds a Space must add both.
+    #[test]
+    fn the_descriptor_lists_exactly_the_registered_boards_in_order() {
+        let registered: Vec<_> = board_registrations()
+            .iter()
+            .map(|registration| registration.id)
+            .collect();
+        let descriptor = subspace_descriptor::subspace_descriptor();
+        let described: Vec<_> = descriptor
+            .boards
+            .iter()
+            .map(|board| board.id.as_str())
+            .collect();
+        assert_eq!(described, registered);
+    }
+
+    /// Board Lab and the Component gallery are in the binary only with their
+    /// features, which release builds do not turn on.
+    #[test]
+    fn the_unreleased_spaces_follow_their_features() {
+        let ids: Vec<_> = board_registrations()
+            .iter()
+            .map(|registration| registration.id)
+            .collect();
+        assert_eq!(
+            ids.contains(&"board-lab"),
+            cfg!(all(
+                feature = "board-lab",
+                target_os = "macos",
+                target_arch = "aarch64"
+            ))
+        );
+        assert_eq!(
+            ids.contains(&"component-gallery"),
+            cfg!(feature = "component-gallery")
+        );
+    }
+
+    #[cfg(feature = "component-gallery")]
     #[test]
     fn the_component_gallery_is_registered_last() {
         let boards = board_registrations();

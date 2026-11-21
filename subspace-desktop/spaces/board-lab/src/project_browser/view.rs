@@ -1,249 +1,170 @@
-use gpui_kit::component::menu::PopupMenuItem;
-use gpui_kit::component::{Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex};
+//! The project browser's workspace: the shared navigator with the project
+//! list, and a pane whose tab, toolbar and content follow what is open.
+
+mod content;
+mod toolbar;
+
+use std::rc::Rc;
+
+use gpui_kit::component::{Disableable as _, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, Render, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Window, div,
+    App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, Render, Stateful,
+    Styled as _, Window, div,
 };
+use subspace_framework::dashboard::Tokens;
 use subspace_framework::dashboard::action::{Intent, action_button};
-use subspace_framework::dashboard::fields::{self, InputRole};
+use subspace_framework::dashboard::icon_button::IconButton;
 use subspace_framework::dashboard::panel::IconName;
-use subspace_framework::dashboard::{Tokens, anchored};
+use subspace_framework::dashboard::tabs::{self as dashboard_tabs, TabBar, TabSpec};
+use subspace_framework::dashboard::workspace::{self, NavRow, Navigator, Pane, Workspace};
 
 use super::ProjectBrowser;
-use crate::project_runtime::SessionStatus;
+use super::facts::{Opened, WorkerFacts};
+use crate::project::LoadedProject;
+use crate::project_service::ProjectPresentation;
+use crate::shell::{self, OnShow, Shell, ShellRequest, ViewTab};
 
 impl Render for ProjectBrowser {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tokens = Tokens::current(cx);
-        let body = if self.creating {
-            self.creation_form(cx, &tokens).into_any_element()
-        } else if self.presentation.is_some() {
-            self.project_content(cx, &tokens).into_any_element()
+        let pane = self.pane(cx, &tokens);
+        let workspace = Workspace::new("board-lab-workspace").pane(pane);
+        let workspace = if self.shell.navigator {
+            workspace.navigator(self.navigator(cx, &tokens))
         } else {
-            v_flex().p_4().gap_2()
-                .child("Your native dashboards")
-                .child("Open a project or choose New project. Source stays in ordinary files, and no worker starts until you choose Start.")
-                .child("Environment installation is separate. Use the Environments tab to configure and explicitly provision Python, Node or Bun.")
-                .into_any_element()
+            workspace
         };
-        h_flex()
-            .items_stretch()
+        div()
             .size_full()
             .min_h_0()
             .track_focus(&self.focus)
-            .child(self.sidebar(cx, &tokens))
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
-                    .child(div().flex_1().min_h_0().child(body))
-                    .children(self.error.as_ref().map(|error| {
-                        div()
-                            .id("project-errors")
-                            .max_h_32()
-                            .overflow_y_scroll()
-                            .p_3()
-                            .text_color(tokens.red)
-                            .child(error.clone())
-                    }))
-                    .child(
-                        div()
-                            .p_3()
-                            .border_t_1()
-                            .border_color(tokens.line)
-                            .text_color(tokens.muted)
-                            .child(if self.busy {
-                                "Working…".into()
-                            } else {
-                                self.status.clone()
-                            }),
-                    ),
-            )
+            .child(workspace)
     }
 }
 
 impl ProjectBrowser {
-    fn sidebar(&self, cx: &mut Context<Self>, tokens: &Tokens) -> Div {
-        v_flex()
-            .w_56()
-            .min_w_40()
-            .max_w_72()
-            .flex_shrink_0()
-            .min_h_0()
-            .border_r_1()
-            .border_color(tokens.line)
-            .child(
-                v_flex().p_3().gap_2().child("Projects").child(
-                    action_button(
-                        "project-new",
-                        Intent::Neutral,
-                        Some(IconName::Plus),
-                        "New project",
-                    )
-                    .disabled(self.busy)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.creating = true;
-                        this.project_id
-                            .update(cx, |input, cx| input.focus(window, cx));
-                        cx.notify();
-                    })),
-                ),
-            )
-            .child(self.project_list(cx))
-            .child(
-                div().p_3().child(
-                    action_button(
-                        "projects-refresh",
-                        Intent::Quiet,
-                        Some(IconName::RefreshCw),
-                        "Refresh projects",
-                    )
-                    .disabled(self.busy)
-                    .on_click(cx.listener(|this, _, window, cx| this.refresh_catalog(window, cx))),
-                ),
-            )
+    /// Takes the owner's shell facts: the views the switch offers and
+    /// whether the navigator shows.
+    pub(crate) fn set_shell(&mut self, shell: Shell, cx: &mut Context<Self>) {
+        self.shell = shell;
+        cx.notify();
     }
 
-    fn project_list(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        v_flex()
-            .id("projects-list")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .p_3()
-            .gap_2()
-            .when(self.projects.is_empty() && !self.busy, |list| {
-                list.child("No projects yet")
-            })
-            .children(self.projects.iter().map(|project| {
-                let id = project.definition.id.clone();
-                let selected = !self.creating && self.selected_id().as_deref() == Some(id.as_str());
-                action_button(
-                    format!("open-project-{id}"),
-                    Intent::Quiet,
-                    Some(IconName::LayoutDashboard),
-                    project.definition.title.clone(),
-                )
-                .selected(selected)
-                .disabled(self.busy)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.creating = false;
-                    this.open(id.clone(), window, cx);
-                }))
+    /// What is open in the pane.
+    fn opened(&self) -> Opened {
+        let project = self
+            .presentation
+            .as_ref()
+            .map(|project| project.working.definition.title.as_str());
+        Opened::of(self.creating, project)
+    }
+
+    /// Opens a listed project and leaves the New project form. A pending
+    /// operation keeps what is open.
+    fn open_listed(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
+        self.creating = false;
+        self.open(id, window, cx);
+    }
+
+    fn navigator(&self, cx: &mut Context<Self>, tokens: &Tokens) -> Navigator {
+        let on_show = on_show(cx);
+        shell::navigator(self.shell, ViewTab::Projects, on_show, cx)
+            .action(
+                shell::new_project_action()
+                    .disabled(self.busy)
+                    .on_click(cx.listener(|this, _, window, cx| this.begin_creating(window, cx))),
+            )
+            .child(self.project_list(cx, tokens))
+            .footer(self.refresh_action(cx))
+    }
+
+    /// The projects, or a quiet line while there are none.
+    fn project_list(&self, cx: &mut Context<Self>, tokens: &Tokens) -> Stateful<Div> {
+        let list = v_flex().id("projects-list").w_full().flex_shrink_0();
+        if self.projects.is_empty() {
+            return list.when(!self.busy, |list| list.child(no_projects(tokens)));
+        }
+        let rows = self
+            .projects
+            .iter()
+            .map(|project| self.project_row(project, cx))
+            .collect::<Vec<_>>();
+        list.children(rows)
+    }
+
+    fn project_row(&self, project: &LoadedProject, cx: &mut Context<Self>) -> NavRow {
+        let id = project.definition.id.clone();
+        let title = project.definition.title.clone();
+        let open = !self.creating && self.selected_id().as_deref() == Some(id.as_str());
+        NavRow::new(format!("open-project-{id}"), title)
+            .icon(IconName::LayoutDashboard)
+            .selected(open)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_listed(id.clone(), window, cx);
             }))
     }
 
-    fn creation_form(&self, cx: &mut Context<Self>, _: &Tokens) -> Stateful<Div> {
-        v_flex().id("project-create-form").min_h_0().overflow_y_scroll().p_4().gap_4()
-            .child("New project")
-            .child(v_flex().gap_1().child("Project ID").child(fields::input(&self.project_id, InputRole::Configuration, "Project ID").id("project-create-id").disabled(self.busy)))
-            .child(v_flex().gap_1().child("Configured environment")
-                .child(anchored::select(&self.environment).small().accessibility_label("Project environment").disabled(self.busy)))
-            .child("Creates a readable native dashboard example and source files. It does not provision packages, contact services or start code.")
-            .when(self.environments.is_empty(), |form| form.child("No configured Python, Node or Bun environments. Open Environments to configure one."))
-            .child(h_flex().gap_2()
-                .child(action_button("project-create-cancel", Intent::Neutral, Some(IconName::X), "Cancel")
-                    .disabled(self.busy).on_click(cx.listener(|this, _, _, cx| { this.creating = false; cx.notify(); })))
-                .child(action_button("project-create", Intent::Primary, Some(IconName::Plus), "Create")
-                    .disabled(self.busy || self.environments.is_empty())
-                    .on_click(cx.listener(|this, _, window, cx| this.create(window, cx)))))
-    }
-
-    fn project_content(&self, cx: &mut Context<Self>, tokens: &Tokens) -> Div {
-        let Some(project) = &self.presentation else {
-            return div();
-        };
-        let running = matches!(
-            project.status,
-            SessionStatus::Starting | SessionStatus::Running
-        );
-        let failed = project.status == SessionStatus::Failed;
-        let changed = project
-            .applied_revision
-            .as_ref()
-            .is_some_and(|revision| revision != &project.working.revision);
-        v_flex().size_full().min_h_0().gap_2()
-            .child(h_flex().p_3().gap_3().flex_wrap()
-                .child(div().flex_1().min_w_0().child(project.working.definition.title.clone()))
-                .child(action_button("project-start", Intent::Neutral, Some(IconName::Play), if failed { "Restart…" } else { "Start…" })
-                    .disabled(self.busy || running).on_click(cx.listener(|this, _, window, cx| this.confirm_launch(false, window, cx))))
-                .when(running || changed, |header| header.child(action_button("project-apply", Intent::Neutral, Some(IconName::RefreshCw), "Apply & Restart…")
-                    .disabled(self.busy).on_click(cx.listener(|this, _, window, cx| this.confirm_launch(true, window, cx)))))
-                .child(action_button("project-stop", Intent::Neutral, Some(IconName::Square), "Stop")
-                    .disabled(self.busy || !running).on_click(cx.listener(|this, _, window, cx| this.stop(window, cx))))
-                .child(self.project_menu(cx))
-                .child(action_button("project-close", Intent::Quiet, Some(IconName::X), "Close")
-                    .disabled(self.busy).on_click(cx.listener(|this, _, window, cx| this.close(window, cx)))))
-            .child(v_flex().px_3().gap_1().text_color(tokens.muted)
-                .child(format!("Working · definition {} · source {}", short(&project.working.revision.definition), short(&project.working.revision.source)))
-                .child(project.applied_revision.as_ref().map_or_else(|| "Running · none (not started)".into(), |revision| format!("Running · definition {} · source {} · {:?}", short(&revision.definition), short(&revision.source), project.status)))
-                .when(changed, |region| region.child("Working changes are not running. Apply & Restart explicitly."))
-                .when(failed, |region| region.child("Worker failed. Last valid results remain visible; choose Restart to run again.")))
-            .child(div().flex_1().min_h_0().children(self.dashboard.clone()))
-            .when(!project.diagnostics.is_empty(), |content| content.child(div().px_3().text_color(tokens.muted).child(project.diagnostics.clone())))
-    }
-
-    fn project_menu(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let owner = cx.weak_entity();
-        let editors = self.editors.clone();
-        let button = action_button(
-            "project-menu",
+    fn refresh_action(&self, cx: &mut Context<Self>) -> IconButton {
+        action_button(
+            "projects-refresh",
             Intent::Quiet,
-            Some(IconName::Ellipsis),
-            "Project",
+            Some(IconName::RefreshCw),
+            "Refresh projects",
         )
         .disabled(self.busy)
-        .dropdown_caret(true);
-        anchored::dropdown_menu(button, move |menu, _, _| {
-            let settings_owner = owner.clone();
-            let export_owner = owner.clone();
-            let refresh_owner = owner.clone();
-            let mut menu = menu.item(
-                PopupMenuItem::new("Settings…")
-                    .icon(IconName::Settings)
-                    .on_click(move |_, window, cx| {
-                        _ = settings_owner.update(cx, |this, cx| this.show_settings(window, cx));
-                    }),
-            );
-            for editor in &editors {
-                let editor_owner = owner.clone();
-                let editor = editor.clone();
-                menu = menu.item(
-                    PopupMenuItem::new(format!("Open in {}", editor.title))
-                        .icon(IconName::FileCode)
-                        .on_click(move |_, window, cx| {
-                            _ = editor_owner
-                                .update(cx, |this, cx| this.edit(editor.clone(), window, cx));
-                        }),
-                );
-            }
-            if editors.is_empty() {
-                menu = menu.item(PopupMenuItem::new("VS Code and Zed not detected").disabled(true));
-            }
-            menu.item(
-                PopupMenuItem::new("Refresh working files")
-                    .icon(IconName::RefreshCw)
-                    .on_click(move |_, window, cx| {
-                        _ = refresh_owner.update(cx, |this, cx| {
-                            if let Some(id) = this.selected_id() {
-                                this.open(id, window, cx);
-                            }
-                        });
-                    }),
-            )
-            .item(
-                PopupMenuItem::new("Export…")
-                    .icon(IconName::Download)
-                    .on_click(move |_, window, cx| {
-                        _ = export_owner.update(cx, |this, cx| this.confirm_export(window, cx));
-                    }),
-            )
-        })
+        .on_click(cx.listener(|this, _, window, cx| this.refresh_catalog(window, cx)))
+    }
+
+    fn pane(&self, cx: &mut Context<Self>, tokens: &Tokens) -> Pane {
+        let opened = self.opened();
+        let content = self.content(cx, tokens);
+        let errors = self
+            .error
+            .as_deref()
+            .map(|error| content::error_band(error, tokens));
+        Pane::new("board-lab-pane")
+            .tabs(open_tab(&opened))
+            .toolbar(self.toolbar(&opened, cx))
+            .child(div().flex_1().min_h_0().child(content))
+            .children(errors)
     }
 }
 
-fn short(revision: &str) -> String {
-    revision.chars().take(12).collect()
+/// Asks the owner of the shell facts to show another view.
+fn on_show(cx: &mut Context<ProjectBrowser>) -> OnShow {
+    let owner = cx.weak_entity();
+    Rc::new(move |view: ViewTab, _: &mut Window, cx: &mut App| {
+        _ = owner.update(cx, |_, cx| cx.emit(ShellRequest::Show(view)));
+    })
+}
+
+/// What the open project's worker allows.
+fn worker_facts(project: &ProjectPresentation) -> WorkerFacts {
+    WorkerFacts::new(
+        project.status,
+        project.applied_revision.as_ref(),
+        &project.working.revision,
+    )
+}
+
+/// The pane's one tab, which names what is open in it.
+fn open_tab(opened: &Opened) -> TabBar {
+    let tab = TabSpec::new(opened.tab_title().to_owned(), opened.icon());
+    dashboard_tabs::pane_tab_bar("board-lab-open")
+        .selected_index(0)
+        .child(dashboard_tabs::tab(tab))
+}
+
+/// The navigator's line while there are no projects.
+fn no_projects(tokens: &Tokens) -> Div {
+    div()
+        .px(workspace::text_edge(tokens))
+        .py_1()
+        .text_size(tokens.secondary_size())
+        .text_color(tokens.muted)
+        .child("No projects yet")
 }

@@ -58,6 +58,8 @@ impl TabStatus {
 /// the visible label plus any status text.
 pub struct TabSpec {
     label: SharedString,
+    /// An opened item's key, such as `SUB-12`, shown before the label.
+    key: Option<SharedString>,
     icon: Option<Icon>,
     status: Option<TabStatus>,
     disabled: bool,
@@ -70,6 +72,7 @@ impl TabSpec {
     pub fn new(label: impl Into<SharedString>, icon: impl Into<Icon>) -> Self {
         Self {
             label: label.into(),
+            key: None,
             icon: Some(icon.into()),
             status: None,
             disabled: false,
@@ -82,12 +85,22 @@ impl TabSpec {
     pub fn plain(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
+            key: None,
             icon: None,
             status: None,
             disabled: false,
             unread: false,
             content: None,
         }
+    }
+
+    /// An opened item's key, such as `SUB-12` or `#42`, shown after the
+    /// glyph in the monospace family and the muted colour, before the
+    /// label, which is then the item's title. The accessible name starts
+    /// with it.
+    pub fn key(mut self, key: impl Into<SharedString>) -> Self {
+        self.key = Some(key.into());
+        self
     }
 
     /// Unread state is independent of selection and optional status text.
@@ -113,9 +126,13 @@ impl TabSpec {
     }
 
     fn accessible_label(&self) -> SharedString {
+        let name: SharedString = match &self.key {
+            Some(key) => format!("{key} {}", self.label).into(),
+            None => self.label.clone(),
+        };
         let label = self.status.as_ref().map_or_else(
-            || self.label.clone(),
-            |status| format!("{}, {}", self.label, status.accessible).into(),
+            || name.clone(),
+            |status| format!("{name}, {}", status.accessible).into(),
         );
         if self.unread {
             format!("{label}, unread items").into()
@@ -148,6 +165,16 @@ pub fn tab_bar(id: impl Into<ElementId>) -> TabBar {
     TabBar::new(id)
 }
 
+/// Build the tab bar of a workspace pane's tab strip
+/// (`workspace::Pane::tabs`), which names what is open. Each tab is as tall
+/// as the strip, on the strip's surface. The open tab takes the content's
+/// surface over the strip's bottom hairline and the native hairline on its
+/// trailing side, with no accent line along its top, so it reads as part of
+/// the content below.
+pub fn pane_tab_bar(id: impl Into<ElementId>) -> TabBar {
+    TabBar::new(id).pane()
+}
+
 #[cfg(test)]
 mod tests {
     use gpui_kit::hsla;
@@ -172,5 +199,8 @@ mod tests {
         let disabled = TabSpec::new("Open", IconName::CircleDot).disabled(true);
         assert!(disabled.disabled);
         assert_eq!(disabled.accessible_label(), "Open");
+
+        let item = TabSpec::new("Course correction", IconName::CircleDot).key("SUB-12");
+        assert_eq!(item.accessible_label(), "SUB-12 Course correction");
     }
 }

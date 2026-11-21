@@ -2,8 +2,9 @@
 
 **Cupertino Dark** is the framework default for Subspace and products that
 do not declare another default. **Subspace One Dark**, **Cupertino Light**,
-[Subspace Channel](#subspace-channel) Light and Dark, and
-[macOS Classic Dark Remix](#macos-classic-dark-remix) remain available.
+[Subspace Channel](#subspace-channel) Light and Dark,
+[macOS Classic Dark Remix](#macos-classic-dark-remix) and
+[Twilight Two](#twilight-two) remain available.
 Existing saved theme choices still win when available. If a saved theme has
 been removed, the default is used. Subspace does not switch
 themes with the system appearance; choose **Cupertino Light** for a light
@@ -13,7 +14,8 @@ The backtick shortcut and the eye toolbar button also open the designer.
 
 Three independent font choices control headings and tabs, body text, and code
 and logs. Automatic choices use the selected theme's defaults and installed
-fonts. The app does not download fonts.
+fonts. The app does not download fonts; it can embed some, as
+[Embedded fonts](#embedded-fonts) describes.
 
 The theme designer also has a separate **Group headings** section for titles
 that fold or unfold dashboard row groups. It controls the installed font
@@ -35,6 +37,32 @@ Changes preview in the live window. **Save** keeps the sizes for the next launch
 without a restart. **Cancel**, Esc or closing Settings restores the previous
 appearance. Sizes also appear under Typography in the theme designer and are
 included in its exported theme JSON.
+
+## Embedded fonts
+
+An app can embed font files and list them in `ProductBuild::fonts`, each a
+`BundledFont` with its family name and bytes. The shell registers them with
+the text system when the app starts, before it applies the saved theme, so
+the window, Settings and every screenshot from the capture build draw them on
+macOS, Windows and Linux without the fonts being installed. Embed static
+files, one per weight and style: the macOS text system registers a variable
+font as a single face at its default weight.
+
+An embedded family counts as installed when a theme, Settings or the theme
+designer names it, and appears in their font lists. Automatic choices never
+take a family only the app provides, so a theme that names no font keeps the
+platform's fonts. A family the machine also has installed stays an automatic
+choice, as before. If the platform refuses the files, the app shows a notice
+and themes fall back as they do for any family that is not installed.
+
+The Framework embeds no fonts. In an app that embeds none, a theme naming a
+family the machine lacks still starts with a notice naming the role and the
+fallback, which **Settings > Appearance** repeats. The app carries the
+fonts' licences in its own notices.
+
+The Subspace App embeds **Inter** (400, 500, 600 and 700, with 400 and 700
+italic) and **JetBrains Mono** (the same weights and italics), both under
+the SIL Open Font License 1.1.
 
 ## Cupertino
 
@@ -78,6 +106,32 @@ no light variant. Three values differ from the remix as supplied, so it
 passes the bundled-theme accessibility checks: the off switch track is
 `#808080`, strong text (`caret`) matches body text (`#dedede`), and it uses
 Cupertino Dark's glass tones.
+
+## Twilight Two
+
+**Twilight Two** is the look of the workspace shell's approved mock-ups, and
+the theme screenshots of the app are taken in. It has one dark variant: a
+warm near-black canvas (`#131312`); one warm dark surface (`#1a1a18`) for
+the docks, the tab strip, the title bar and the status bar; warm hairlines
+(`#2b2a27`); and Twilight's gold (`#cfa95e`) for the accent, primary
+actions, links and focus. A selected row and a latched button take a warm
+dark gold fill. It asks for Inter for headings and body text and JetBrains
+Mono for code. The Subspace App embeds both (see
+[Embedded fonts](#embedded-fonts)), so it starts in them, with no font
+notice, whether or not they are installed. In an app that embeds neither,
+the automatic fonts are used where they are not installed, and the app and
+Settings say so.
+
+It also sets the mock-ups' sizes: 13 px body text and 11.5 px code, 32 px
+rows whose selection is inset 8 px with 6 px corners, text 16 px in from
+every panel's edge, 34 px tab strip and dock headers, a 36 px toolbar whose
+buttons are 24 px high with 12.5 px text and 6 px corners, a 38 px title bar
+with 26 px Space tabs and 13 px tab labels, and flat buttons without Liquid
+Glass. Other themes keep their own sizes and colours.
+
+Its syntax colours, and other colours the mock-ups do not set, come from
+Twilight in the GPUI Kit catalogue (Apache 2.0; notice in
+`licenses/themes/`).
 
 ## Buttons
 
@@ -168,7 +222,8 @@ theme, interface zoom and display rounding determine the resolved dimensions.
    - **Typography**: the heading, body and code font families and sizes,
      and group headings. Body text size is the interface base.
    - **Spacing and density**: rows, board columns, the window's bars and
-     panel, motion, and the control, surface and tab radii.
+     panel, the pane strip height, the navigator and inspector widths,
+     motion, and the control, surface and tab radii.
    - **Controls**: each button kind's height, padding, text size and radius
      (see [Buttons](#buttons)), dialog padding and spacing, board-tab height,
      the **Liquid glass** switch, **Flat** or **Glass** toolbar buttons at

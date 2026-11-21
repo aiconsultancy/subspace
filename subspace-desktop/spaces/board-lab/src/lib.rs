@@ -20,6 +20,7 @@ pub mod project_service;
 pub mod project_settings;
 pub mod project_tools;
 pub mod project_view;
+mod shell;
 pub mod studio;
 mod workbench;
 
@@ -33,6 +34,7 @@ use gpui_kit::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
+use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
 use subspace_framework::dashboard::{Dashboard, DashboardEvent, ToolEnvironment};
 
 const PROTOTYPE_VIEWS: subspace_framework::core::features::FeatureSpec =
@@ -152,6 +154,19 @@ impl Dashboard for BoardLab {
 
     fn busy(&self, cx: &App) -> bool {
         matches!(self, Self::Ready(board) if board.read(cx).busy(cx))
+    }
+
+    fn docks(&self, cx: &App) -> SpaceDocks {
+        match self {
+            Self::Ready(board) => board.read(cx).space_docks(),
+            Self::Unavailable { .. } => SpaceDocks::NONE,
+        }
+    }
+
+    fn toggle_dock(&mut self, dock: SpaceDock, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Self::Ready(board) = self {
+            board.update(cx, |board, cx| board.toggle_space_dock(dock, cx));
+        }
     }
 
     fn agent_context(&self, cx: &App) -> Option<subspace_framework::dashboard::AgentContext> {

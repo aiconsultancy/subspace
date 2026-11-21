@@ -1,10 +1,13 @@
 # Board Lab (alpha)
 
 Board Lab is an opt-in alpha managed-runtime workbench in the Subspace app on
-macOS ARM64. Release builds of every channel (stable, nightly, alpha and
-beta) turn it off by default. Debug builds turn it on, like the other preview
-boards. A saved `boards."board-lab"` choice in `config.json` always wins. Linux and
-Windows do not include it.
+macOS ARM64. It is not ready to ship: release builds of every channel
+(stable, nightly, alpha and beta) do not include it. The app includes it only
+when built with its `board-lab` Cargo feature, or `unreleased-spaces`, which
+`make run-unreleased` uses. In such a build it is off by default in debug and
+release profiles alike, and a saved `boards."board-lab"` choice in
+`config.json` always wins. Linux and Windows do not include it, even with the
+feature.
 
 ## Bundled guide
 
@@ -18,7 +21,8 @@ the same guide with `board_help` and can request a bundled screenshot by ID.
 
 ## Enable it
 
-Open **Settings > General > Boards**, enable **Board Lab** and save. The tab
+In a build that includes Board Lab, open **Settings > General > Boards**,
+enable **Board Lab** and save, or choose it from **Add a Space**. The tab
 appears without a restart. Disabling Board Lab hides its tab; open project
 workers keep running until you quit Subspace. The same setting can be written in Subspace's configuration file:
 
@@ -34,6 +38,38 @@ Enabling or opening the board does not download tools, install packages or
 provision an environment. The first view is **Projects**. Open **Environments**
 to inspect configured profiles and their readiness. On an unsupported platform, this configuration cannot add the
 board to the product.
+
+## Layout
+
+Every view uses the Framework's workspace shell
+(`subspace_framework::dashboard::workspace`):
+
+- **Navigator.** Titled **Board Lab** with the badge **Alpha** and a **New
+  project** action in its header. Its body holds the view switch
+  (**Projects** and **Environments**, plus **Canvas** and **Dashboard** with
+  prototype views on), then the project list with **Refresh projects** at its
+  foot, or the environments list.
+- **Tab strip.** One tab for what is open in the pane: the open project's
+  title, **Welcome** when no project is open, **New project** while the form
+  shows, or the view's name in the other views.
+- **Toolbar.** The open project's title and its actions (**Start**, **Apply &
+  Restart**, **Stop**, the **Project** menu and **Close**), or **Projects**
+  and **New project** when nothing is open. The switch at its leading end
+  hides the navigator, and a view menu then offers what the navigator holds.
+  The choice is stored under `board-lab.navigator`. Board Lab has no
+  inspector.
+- **Content.** The empty state, the New project form, or the open project
+  under its two revision lines. The other views draw their existing content.
+- **Status bar.** `Dashboard::status` returns the guidance, the worker's
+  state, the latest result, or `Working…` while a project operation is
+  pending. The shell shows it; the content has no status line of its own.
+
+`src/shell.rs` holds what the views share: the view list, the stored
+navigator choice, and the navigator header, view switch and view menu. The
+project browser draws the shell around Projects
+(`src/project_browser/view.rs`) and asks the Workbench for changes with a
+`ShellRequest`. The Workbench draws it around the other views
+(`src/workbench/view/frame.rs`).
 
 ## Provision and run
 

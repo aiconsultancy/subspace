@@ -16,6 +16,7 @@ fn main() -> ExitCode {
             search_reranker: None,
             configured_boards: None,
             settings_extensions: &[],
+            fonts: &[],
         },
         spaces(),
         assets(),

@@ -66,7 +66,7 @@ fn an_unjoined_channel_is_greyed_and_its_menu_joins_and_opens_it(cx: &mut TestAp
     });
 
     let labels = menu_labels(row_id(&rust), cx);
-    assert_eq!(labels, ["Copy title", "Join"]);
+    assert_eq!(labels, ["Join", "Copy title"]);
     choose("Join", cx);
     assert_eq!(joins(&hub, cx), ["#rust"]);
     board.read_with(cx, |board, _| {
@@ -116,7 +116,7 @@ fn a_click_selects_an_unjoined_channel_and_a_double_click_joins_it(cx: &mut Test
     cx.update(|_, cx| {
         let board = board.read(cx);
         assert!(
-            crate::listing::menu_item(board, cx).is_some(),
+            crate::listing::menu_command(board, cx).is_some(),
             "the selected unjoined channel offers Join"
         );
         let menu = crate::listing::group_menu(&board.list().groups()[0]);
@@ -151,7 +151,7 @@ fn the_network_header_refreshes_the_channel_list(cx: &mut TestAppContext) {
     let (_, hub, cx) = board(cx);
     let header = format!("list-group-count:{}", rows::group_key(&network_id()));
     let labels = menu_labels(header.into(), cx);
-    assert_eq!(labels, ["Copy title", "Refresh channel list"]);
+    assert_eq!(labels, ["Refresh channel list", "Copy title", "Fold group"]);
     choose("Refresh channel list", cx);
     hub.read_with(cx, |hub, _| {
         assert!(hub.sent().contains(&Command::ListChannels {
