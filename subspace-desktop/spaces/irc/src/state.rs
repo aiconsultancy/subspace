@@ -10,6 +10,8 @@ use subspace_client_irc::{
     NetworkId, SendResult, Target, Typing,
 };
 
+use crate::thread_status::Kept;
+
 mod apply;
 mod counts;
 mod directory;
@@ -110,8 +112,8 @@ pub(crate) struct Buffer {
     /// never count as unread. A line stays folded while it and its request
     /// are held.
     pub folded: HashSet<i64>,
-    /// Each request's pinned account and ending, kept apart from the lines
-    /// and never stored.
+    /// Each request's bound account and ending, kept apart from the lines
+    /// and in the store.
     pub requests: crate::thread_status::Requests,
 }
 
@@ -340,14 +342,44 @@ impl IrcState {
     /// configured network, unless the user removed it. They count as
     /// nothing: no unread, no mention, no notification.
     pub fn restore(&mut self, key: &BufferKey, lines: Vec<Line>) {
-        if self.network(&key.network).is_none()
-            || key.target == Target::Server
-            || self.removed.get(key).is_some()
-        {
+        if !self.restorable(key) {
             return;
         }
         merge::merge(self, key, lines, false);
         folding::refold(self, &folding::Scope::Buffer(key.clone()));
+    }
+
+    /// Loads the request bindings and endings the store kept for buffer
+    /// `key`, before its lines are restored, so a stored binding wins over
+    /// anything the lines would bind.
+    pub fn restore_requests(&mut self, key: &BufferKey, kept: &[Kept]) {
+        if self.restorable(key) {
+            self.buffers
+                .entry(key.clone())
+                .or_default()
+                .requests
+                .load(kept);
+        }
+    }
+
+    /// Whether the store may restore buffer `key`: a channel or private
+    /// conversation of a configured network that the user did not remove.
+    fn restorable(&self, key: &BufferKey) -> bool {
+        self.network(&key.network).is_some()
+            && key.target != Target::Server
+            && self.removed.get(key).is_none()
+    }
+
+    /// The request bindings and endings that changed in each buffer since
+    /// the last call, for the store.
+    pub fn take_kept(&mut self) -> Vec<(BufferKey, Vec<Kept>)> {
+        self.buffers
+            .iter_mut()
+            .filter_map(|(key, buffer)| {
+                let kept = buffer.requests.take_changes();
+                (!kept.is_empty()).then(|| (key.clone(), kept))
+            })
+            .collect()
     }
 
     /// The newest message each channel and private conversation of

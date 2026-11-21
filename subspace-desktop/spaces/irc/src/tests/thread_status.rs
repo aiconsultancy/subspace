@@ -280,11 +280,14 @@ fn untrusted_progress_stays_a_notice_without_a_status_line(cx: &mut TestAppConte
     let room = channel("#subspace");
     let mut events = channel_events();
     events.push(joined("nova", "nova"));
+    let mut unvouched = progress(&room, "first", "tool", 6);
+    unvouched.account = None;
     events.extend(
         [
             request(&room, "first", None, 4),
             notice(("nova", "nova"), &room, "first", "tool", 5),
-            progress(&room, "first", "tool", 6),
+            unvouched,
+            progress(&room, "first", "reply", 7),
         ]
         .map(Event::Line),
     );
@@ -296,10 +299,11 @@ fn untrusted_progress_stays_a_notice_without_a_status_line(cx: &mut TestAppConte
         assert_eq!(
             status(window, "first"),
             None,
-            "astra's account is not reported"
+            "astra's first answer carries no account, so nothing binds"
         );
         let held = hub.read(cx).state.buffer(&room).unwrap();
         assert!(has_row(window, held, "nova-first-5"));
         assert!(has_row(window, held, "astra-first-6"));
+        assert!(has_row(window, held, "astra-first-7"));
     });
 }

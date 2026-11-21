@@ -15,12 +15,15 @@ pub(crate) mod tests;
 
 use chrono::{DateTime, Utc};
 use subspace_client_irc::{BufferKey, Line};
-use subspace_framework::dashboard::full_text::{Filters, Policy, RecordQuery, Scope, Service};
+use subspace_framework::dashboard::full_text::{
+    Document, Filters, Policy, RecordQuery, Scope, Service,
+};
 use subspace_framework::dashboard::search_adapter::inactive_scope;
 
 pub(crate) use mapping::{Navigation, document_id, navigation, scope, stored};
 
 use crate::state::LINE_CAP;
+use crate::thread_status::{Kept, REMEMBERED};
 
 /// The most records one write publishes, as the store allows.
 const BATCH: usize = 100;
@@ -34,6 +37,8 @@ const PAGE: usize = 1000;
 pub(crate) enum Op {
     /// Stores these lines; lines that are not stored are skipped.
     Publish(Vec<Line>),
+    /// Stores the bindings and endings of these requests of a buffer.
+    Requests(BufferKey, Vec<Kept>),
     /// Deletes every record of this buffer.
     Forget(BufferKey),
 }
@@ -93,6 +98,7 @@ impl Link {
     fn apply(&self, op: &Op, now: DateTime<Utc>) -> Result<(), String> {
         match op {
             Op::Publish(lines) => self.publish(lines, now),
+            Op::Requests(buffer, kept) => self.keep_requests(buffer, kept, now),
             Op::Forget(buffer) => self.forget(buffer),
         }
     }
@@ -114,6 +120,21 @@ impl Link {
         Ok(())
     }
 
+    fn keep_requests(
+        &self,
+        buffer: &BufferKey,
+        kept: &[Kept],
+        now: DateTime<Utc>,
+    ) -> Result<(), String> {
+        let documents: Vec<_> = kept
+            .iter()
+            .filter_map(|kept| mapping::request_document(buffer, kept, now))
+            .collect();
+        documents
+            .chunks(BATCH)
+            .try_for_each(|batch| self.service.upsert(&self.scope, batch))
+    }
+
     fn forget(&self, buffer: &BufferKey) -> Result<(), String> {
         let filters = Filters {
             parent_id: Some(mapping::parent_id(buffer)),
@@ -124,48 +145,77 @@ impl Link {
             .map(|_| ())
     }
 
-    /// Each stored buffer's newest `LINE_CAP` lines, oldest first. `None`
-    /// when the store is off.
-    pub fn restore(&self) -> Result<Option<Vec<(BufferKey, Vec<Line>)>>, String> {
+    /// Each stored buffer's newest `LINE_CAP` lines, oldest first, with its
+    /// newest `REMEMBERED` request bindings and endings, oldest first.
+    /// `None` when the store is off.
+    pub fn restore(&self) -> Result<Option<Vec<Restored>>, String> {
         self.scoped(Self::read_all)
     }
 
-    fn read_all(&self) -> Result<Vec<(BufferKey, Vec<Line>)>, String> {
+    fn read_all(&self) -> Result<Vec<Restored>, String> {
         let groups = self
             .service
             .groups(&self.scope, &Filters::default(), MAX_BUFFERS)?;
         let mut buffers = Vec::new();
         for group in groups {
-            let lines = self.read_buffer(&group.parent_id)?;
+            let lines =
+                ordered(self.read_records(&group.parent_id, None, LINE_CAP, mapping::line)?);
             if let Some(first) = lines.first() {
-                buffers.push((first.buffer.clone(), lines));
+                let kind = Some(mapping::REQUEST_KIND);
+                let mut requests =
+                    self.read_records(&group.parent_id, kind, REMEMBERED, mapping::kept)?;
+                requests.reverse();
+                let buffer = first.buffer.clone();
+                buffers.push(Restored {
+                    buffer,
+                    lines,
+                    requests,
+                });
             }
         }
         Ok(buffers)
     }
 
-    /// The newest `LINE_CAP` lines of the buffer with record parent
-    /// `parent`, oldest first, all under one buffer key.
-    fn read_buffer(&self, parent: &str) -> Result<Vec<Line>, String> {
+    /// The newest `cap` records of record parent `parent`, of `kind` when
+    /// given, as `map` reads them, newest first.
+    fn read_records<T>(
+        &self,
+        parent: &str,
+        kind: Option<&str>,
+        cap: usize,
+        map: impl Fn(&Document) -> Option<T>,
+    ) -> Result<Vec<T>, String> {
         let mut query = RecordQuery {
             filters: Filters {
                 parent_id: Some(parent.to_owned()),
+                kind: kind.map(str::to_owned),
                 ..Default::default()
             },
             before: None,
-            limit: PAGE.min(LINE_CAP),
+            limit: PAGE.min(cap),
         };
-        let mut lines = Vec::new();
-        while lines.len() < LINE_CAP {
+        let mut found = Vec::new();
+        while found.len() < cap {
             let page = self.service.records(&self.scope, &query)?;
-            lines.extend(page.documents.iter().filter_map(mapping::line));
+            found.extend(page.documents.iter().filter_map(&map));
             match page.next {
                 Some(next) => query.before = Some(next),
                 None => break,
             }
         }
-        Ok(ordered(lines))
+        found.truncate(cap);
+        Ok(found)
     }
+}
+
+/// One stored buffer as it restores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Restored {
+    pub buffer: BufferKey,
+    /// Its newest lines, oldest first.
+    pub lines: Vec<Line>,
+    /// Its newest request bindings and endings, oldest first.
+    pub requests: Vec<Kept>,
 }
 
 /// Restored lines, oldest first by their exact time, all filed under the

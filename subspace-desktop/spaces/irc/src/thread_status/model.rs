@@ -102,18 +102,36 @@ fn observation(entry: &Entry) -> Option<(&str, Observation)> {
     ))
 }
 
-/// `nick` as one short line of plain text: without control characters or
-/// whitespace, and cut to [`AGENT_CHARS`] with an ellipsis.
+/// `nick` as one short line of plain text: cleaned as status text is
+/// ([`subspace_client_irc::status_text`]: IRC formatting, controls and bidi
+/// overrides removed), without whitespace or invisible format characters,
+/// and cut to [`AGENT_CHARS`] with an ellipsis.
 pub(super) fn agent_name(nick: &str) -> String {
-    let mut plain = nick
+    let clean = subspace_client_irc::status_text(nick).unwrap_or_default();
+    let mut plain = clean
         .chars()
-        .filter(|c| !c.is_control() && !c.is_whitespace());
+        .filter(|c| !c.is_whitespace() && !invisible(*c));
     let mut name: String = plain.by_ref().take(AGENT_CHARS).collect();
     if plain.next().is_some() {
         name.pop();
         name.push('…');
     }
     name
+}
+
+/// Zero-width, joining, direction and other format characters, which would
+/// let a nick hide text or read as another.
+fn invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{ad}'
+            | '\u{61c}'
+            | '\u{180e}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{206f}'
+            | '\u{feff}'
+    )
 }
 
 /// Keeps each request's newest observation by server time, so an older

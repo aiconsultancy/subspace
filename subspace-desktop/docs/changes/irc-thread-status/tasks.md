@@ -9,9 +9,9 @@
       `+draft/reply` naming the individual request.
 - [x] Keep client-only tags on lines in the IRC client, live, in history and
       from the opening multiline batch.
-- [x] Trust only the addressed ship's server-authenticated account, pinned
-      per request, on a request Channels holds; record the rule and its
-      sources in `spec.md`.
+- [x] Trust only the addressed ship's server-authenticated account, bound
+      once per request, on a request Channels holds; record the rule and
+      its sources in `spec.md`.
 - [x] Keep one status per request message ID: every stage, endings that stay
       final, staleness on a disconnect, reopening.
 - [x] Fold trusted notices out of rows, reply counts, unread counts and
@@ -46,10 +46,22 @@
       fixture's config file. Leave case mapping and history age open, with
       reasons.
 - [x] Add pinning, retention, marker and client tests for those fixes.
-- [ ] Build and test the fixes: `cargo test` and `make check`.
+- [x] Build and test the round-1 fixes: `cargo test` and `make check` pass;
+      commit them (`06cf1a6`).
+- [x] Address both model reviews of `06cf1a6` (see Review findings, round
+      2, in `delivery.md`): bind each request only as it arrives live or by
+      its agent's first answer, never from later member lists; store
+      bindings and endings beside the buffer and load them before the
+      lines fold; refuse the requester's own account; count notices
+      unfolded by eviction at once; drop format characters from the
+      agent's name; replace the fixture's config atomically. Leave case
+      mapping open, with the reason.
+- [x] Add binding, storage, eviction-counting and agent-name tests.
+- [ ] Build and test the round-2 fixes: `cargo test` and `make check`.
+- [ ] Run the fixture against a fresh local Ergo server again.
 - [ ] Owner: commit (signed), push and open the pull request, with the
       captures embedded by commit-pinned URLs.
-- [ ] Both model reviews clear the final head.
+- [ ] Both model reviews (round 3) clear the final head.
 
 ### Board checklist: irc
 
@@ -69,8 +81,9 @@ Settings and configuration
 - [x] No new setting or feature flag.
 
 Data caching and refresh
-- [x] Stored lines keep their client tags; folding and statuses rebuild
-      from held lines and member lists, with no I/O in render.
+- [x] Stored lines keep their client tags; request bindings and endings
+      are stored beside them and load before the lines fold; folding and
+      statuses rebuild from held lines, with no I/O in render.
 
 Search
 - [x] Folded progress stays searchable; opening it shows its request.

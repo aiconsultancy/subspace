@@ -5,6 +5,7 @@ use super::{PROGRESS_TAG, Shown, statuses};
 use crate::fixtures::{at, channel, config, line, member, message, network_id};
 use crate::state::IrcState;
 
+mod binding;
 mod lifecycle;
 mod markers;
 mod pinning;

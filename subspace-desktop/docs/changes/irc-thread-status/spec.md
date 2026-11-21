@@ -113,19 +113,30 @@ when the server vouches for its sender. Every condition must hold:
    expected ship. Nor does a request that addresses its own sender (compared
    case-insensitively in ASCII): it is not a request, so a member cannot
    fold their own tagged notices.
-3. **The account the request is pinned to.** The account the IRC server
-   reports for that nick in the member lists: the channel's own, or, for a
-   private conversation, those of the network's channels. The client fills
-   them from `WHOX` after each join, `extended-join` and `account-notify`
-   (`Member::account`); only the server sets them. Channels pins each
-   request to the account its ship holds when Channels first sees the
-   request with one reported: for a live request, when the line is
-   appended; for a request first held from history, backfill or the store,
-   when it is first evaluated with an account reported, such as when `WHOX`
-   answers after the history page. Until then the request waits, and
-   nothing on it folds.
-4. **The notice comes from the pinned account.** The notice's `account`
-   tag, which only the server sets (`account-tag`), names the pinned
+3. **The account the request is bound to.** Each request has at most one
+   binding, set once, from the first of these that applies:
+   1. **As it arrives live:** the account the IRC server reports for that
+      nick in the member lists: the channel's own, or, for a private
+      conversation, those of the network's channels. The client fills them
+      from `WHOX` after each join, `extended-join` and `account-notify`
+      (`Member::account`); only the server sets them.
+   2. **Otherwise, the agent's first answer:** the server `account` tag on
+      the earliest progress notice on that request (by server time; of two
+      at the same time, the earlier held) whose sender nick is the nick the
+      request asks, compared case-insensitively in ASCII. It is the server's
+      own record of who held the nick when the agent first answered, so it
+      is as strong as the first source, and it works for a request first
+      seen from history or backfill, such as one sent before Channels
+      joined. If that notice carries no `account` tag, the request stays
+      unbound; a later notice does not bind it.
+
+   An account equal to the requester's own (the request line's `account`
+   tag, when it has one) is never a binding, from either source. The member
+   lists are never read after a request arrives: a request without a
+   binding from these two sources stays unbound, and its notices stay
+   ordinary notices.
+4. **The notice comes from the bound account.** The notice's `account`
+   tag, which only the server sets (`account-tag`), names the bound
    account, compared case-insensitively in ASCII, whoever holds the nick by
    then.
 
@@ -143,41 +154,49 @@ each agent's IRC account, the rule can also require the account to belong to
 the initiative's fleet.
 
 **When there is no trustworthy source, nothing folds.** Examples: the
-server does not offer `account-tag`, the ship is not in the channel (or, for
-a private conversation, in any channel we share), `WHOX` has not answered
-yet, the request addresses no one, or the request is not loaded.
+server does not offer `account-tag`, the ship was not in the channel (or,
+for a private conversation, in any channel we share) when the request
+arrived and its first answer carries no account, the request addresses no
+one or its sender, or the request is not loaded.
 
-**Pins.** The pins are held in the Space's state, per buffer
+**Bindings and endings.** They are held in the Space's state, per buffer
 (`thread_status::Requests`, in `Buffer::requests`), so folding again from
-the held lines uses them, and member events cannot change a pinned
-request's trust: a ship leaving, or another account taking its nick, changes
-nothing about requests already pinned. A pin outlives its request line, so
-a request that loads again keeps it; each buffer remembers up to twice
-`HISTORY_MAX` pins, the oldest forgotten first.
+the held lines uses them, and member events cannot change them: a ship
+leaving, or another account taking its nick, changes nothing about requests
+already bound. A binding outlives its request line, so a request that loads
+again keeps it; each buffer remembers up to twice `HISTORY_MAX` bindings
+and endings, the oldest forgotten first.
 
-**Pins do not survive a store round trip.** They are not stored. After a
-restart, a request restored from the store waits until the member list
-first reports an account for its ship, and is pinned to whoever holds the
-nick at that moment, usually when `WHOX` answers after joining. In that
-window, a different account holding the ship's nick would be pinned
-instead. Servers that tie nicks to accounts, as Subspace's Ergo does with
-`force-nick-equals-account`, rule this out.
+**They are stored.** Each request whose binding or ending changes is
+written to the Channels store as one record (kind `Channels request`, id
+`request:<network>:<msgid>`, payload `{"request", "pin", "ended"}`) under
+its buffer's record parent, so removing the buffer deletes them with its
+lines. The record has no title, body or metadata, so no search finds it.
+On start, each buffer's newest twice-`HISTORY_MAX` request records load
+into `Requests` before its lines fold, so a stored binding wins over
+anything the lines would bind, and a stored ending keeps a finished request
+finished, also when a partial reload or a Search reload brings back its
+earlier progress without its ending. An older store without these records,
+or a record without `pin` or `ended`, loads with none (`serde(default)`);
+Subspace has no users or installs yet, so there is no migration. With
+**Cache Channels** off nothing is stored, and bindings and endings last
+only while Channels runs. Request records follow the store's retention
+like lines, counted from their last write.
 
-**Stability.** A live line is taken in by itself: a request is pinned or
-waits, and a notice folds or not, without reading the buffer again. A
-history page, backfill or restore folds its buffer again from the held
-lines. A member list change only pins requests still waiting for an
-account, in the buffers its list speaks for, and folds a buffer again only
-when held progress answers one of them (`state/folding.rs`). A notice stays
-folded while it and its request are held: when the line cap drops the
-request, its notices stop folding and show, and can be found from Search,
-as ordinary notices; they fold again if the request loads again.
+**Stability.** A live line is taken in by itself: a request is bound as it
+arrives or by its agent's first answer, and a notice folds or not, without
+reading the buffer again. A history page, backfill or restore folds its
+buffer again from the held lines (`state/folding.rs`). Member list changes
+fold nothing again. A notice stays folded while it and its request are
+held: when the line cap drops the request, its notices stop folding, show,
+can be found from Search, and count against the read marker at once as
+ordinary notices, unread and highlighted as a read-marker recount would
+count them; they fold again if the request loads again.
 
 **Counting.** A trusted notice never counts as unread and never notifies,
 live or from history. A live notice is checked before it is counted. History
 and backfill count as before and then take any notice that turns out to be
-trusted back out of the unread count once folding runs, including when the
-member list arrives after the history page. Untrusted, unrecognised and
+trusted back out of the unread count once folding runs. Untrusted, unrecognised and
 uncorrelated notices stay ordinary notices, counted and notified exactly as
 before.
 
@@ -212,11 +231,10 @@ characters with an ellipsis (`thread_status::model::agent_name`).
   stage. An update to one request never changes another.
 - **Endings are final.** `completed` or `failed` clears only the matching
   request, and no other notice, later or loaded from older history, reopens
-  it. The ending is kept apart from the notice (`thread_status::Requests`),
-  so it holds after the notice is dropped by the line cap or is missing
-  from a reloaded page, for as long as Channels runs. After a restart it
-  comes back from the restored notice: the store restores each buffer's
-  newest lines, and a request's ending is newer than its progress. A final
+  it. The ending is kept apart from the notice (`thread_status::Requests`)
+  and stored (see **They are stored** under Trust), so it holds after the
+  notice is dropped by the line cap, after a restart, and when a partial
+  or Search reload brings back earlier progress without it. A final
   reply without a reply tag in the main room, or any untagged or `PRIVMSG`
   reply, clears nothing.
 - **Stale.** The line shows the last known stage with `Last update HH:MM`
@@ -253,10 +271,13 @@ characters with an ellipsis (`thread_status::model::agent_name`).
 - Requests that do not address the ship in their first word, such as
   messages in a channel where Stargate wakes on every human message, fold
   nothing: Channels has no expected account for them.
-- A request is pinned when Channels first sees it with an account
-  reported, not when it was sent. A request held from history, or restored
-  from the store after a restart, is pinned to whoever holds the nick when
-  the member list first reports an account (see **Pins** under Trust).
+- A request first seen without a reported account binds to the account on
+  its agent's first answer. On a server that lets another account take a
+  nick, a different account holding the nick when the agent first answers
+  binds instead; that answer is still the server's record of who held the
+  nick. A stored binding is never replaced.
+- With **Cache Channels** off, bindings and endings are not stored: after a
+  restart a request binds again by its agent's earliest held answer.
 - A progress notice for a request that is not loaded stays a notice until
   the request loads and folding runs again.
 - Nicks are compared in ASCII, not by the network's `CASEMAPPING`: the

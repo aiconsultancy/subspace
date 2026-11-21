@@ -7,6 +7,7 @@ use subspace_framework::dashboard::full_text::{Filters, Policy, RecordQuery, Ser
 use super::mapping::{self, CHANNEL_KIND, PRIVATE_KIND};
 use super::{Link, Op};
 use crate::fixtures::{at, channel, line, message, query};
+use crate::thread_status::Kept;
 
 /// A store in a temporary folder with IRC's source on, as IRC declares.
 pub(crate) fn service() -> (tempfile::TempDir, Service) {
@@ -166,17 +167,57 @@ fn stored_lines_restore_in_order_per_buffer_and_forget_deletes_one_buffer() {
     assert!(link.run(vec![Op::Publish(lines)], now).is_empty());
     assert_eq!(count(&link, None), 151, "membership lines are not stored");
     let restored = link.restore().unwrap().unwrap();
-    let room_lines = &restored
+    let held = restored
         .iter()
-        .find(|(buffer, _)| *buffer == room)
-        .unwrap()
-        .1;
+        .find(|restored| restored.buffer == room)
+        .unwrap();
+    assert!(
+        held.requests.is_empty(),
+        "a store without requests loads none"
+    );
+    let room_lines = &held.lines;
     assert_eq!(room_lines.len(), 150);
     assert_eq!(room_lines[0].text, "line 0");
     assert_eq!(room_lines[149].text, "line 149");
     assert!(link.run(vec![Op::Forget(room.clone())], now).is_empty());
     assert_eq!(count(&link, None), 1);
     assert_eq!(count(&link, Some(mapping::parent_id(&carol))), 1);
+}
+
+#[test]
+fn request_bindings_and_endings_round_trip_with_their_buffer() {
+    let (_root, service) = service();
+    let link = Link::new(service);
+    let room = channel("#subspace");
+    let now = chrono::Utc::now();
+    let kept = vec![
+        Kept {
+            request: "first".into(),
+            pin: Some("fleet-astra".into()),
+            ended: false,
+        },
+        Kept {
+            request: "second".into(),
+            pin: Some("fleet-astra".into()),
+            ended: true,
+        },
+    ];
+    let ops = vec![
+        Op::Publish(vec![recent_message(&room, "alice", "hi", 1)]),
+        Op::Requests(room.clone(), kept.clone()),
+    ];
+    assert!(link.run(ops, now).is_empty());
+    let restored = link.restore().unwrap().unwrap();
+    let held = restored
+        .iter()
+        .find(|restored| restored.buffer == room)
+        .unwrap();
+    assert_eq!(held.lines.len(), 1, "a request record is not a line");
+    for one in &kept {
+        assert!(held.requests.contains(one), "{one:?}");
+    }
+    assert!(link.run(vec![Op::Forget(room.clone())], now).is_empty());
+    assert_eq!(count(&link, None), 0, "the buffer's requests go with it");
 }
 
 #[test]
@@ -216,7 +257,7 @@ fn a_cleared_store_takes_new_messages_again() {
     );
     let restored = link.restore().unwrap().unwrap();
     let texts: Vec<&str> = restored[0]
-        .1
+        .lines
         .iter()
         .map(|line| line.text.as_str())
         .collect();

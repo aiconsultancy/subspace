@@ -12,20 +12,27 @@
 - `spaces/irc/src/thread_status.rs`: the agreed marker (`PROGRESS_TAG`), its
   values and their labels.
 - `thread_status/trust.rs`: the trust rule. `arrival` reads one live line
-  before it is counted; `asked` and `notices` read a buffer's requests and
-  progress when it folds again; `reported` finds the waiting requests a
-  member list change reports an account for.
+  before it is counted, with the account the member lists report for a
+  live request's agent; `asked` and `notices` read a buffer's requests and
+  its progress, oldest first by server time, when it folds again.
 - `thread_status/requests.rs`: `Requests`, held per buffer in
-  `Buffer::requests`: each request's pinned account, the requests waiting
-  for one, the endings, and the folded notices of each held request.
+  `Buffer::requests`: each request's binding (the account reported as it
+  arrives live, else the account on its agent's first answer, never the
+  requester's own), the endings, the folded notices of each held request,
+  and which bindings and endings changed, for the store (`Kept`).
+- `store.rs`, `store/mapping.rs`, `hub/persist.rs`, `hub.rs`: each request
+  whose binding or ending changed is written as one `Channels request`
+  record under its buffer; the restore loads them into `Requests`
+  (`IrcState::restore_requests`) before the buffer's lines fold.
 - `thread_status/model.rs`: one status per request message ID from the
   folded notices, the newest by server time, with endings that stay final,
   staleness, and the Search mapping (`shown_entry`).
 - `state.rs`, `state/folding.rs`, `state/apply.rs`, `state/counts.rs`:
   `Buffer::folded` is kept current in proportion to each event: a live line
-  by itself, history, backfill and restore by folding their buffer again,
-  and a member list change only for requests waiting for an account.
-  Dropping a request at the line cap stops folding its notices. Folded
+  by itself, history, backfill and restore by folding their buffer again;
+  member list changes fold nothing. Dropping a request at the line cap
+  stops folding its notices and counts them against the read marker at
+  once (`counts::unfolded`). Folded
   lines never count as unread or notify, and lines counted from history
   before the server vouched are taken back out.
   `Network::held_at_connect` decides staleness.
@@ -78,12 +85,27 @@
   `retention.rs`, added for the review findings): a nick taken over by
   another account neither folds, changes nor ends a pinned request, also
   after the buffer folds again, while the pinned account still can; a
-  request that addresses its own sender folds nothing; a member event does
-  not change a pinned request, and a waiting request is pinned when the
-  server first reports an account; an ending survives the eviction of its
-  notice and a reload without it; an older replayed stage does not replace
-  a newer one; a notice whose request is dropped by the line cap shows, and
-  Search reveals it. `markers.rs` also refuses `completed,` and `tool,`.
+  request that addresses its own sender folds nothing; an ending survives
+  the eviction of its notice and a reload without it; an older replayed
+  stage does not replace a newer one; a notice whose request is dropped by
+  the line cap shows, and Search reveals it. `markers.rs` also refuses
+  `completed,` and `tool,`.
+- Binding and storage (round 2; `thread_status/tests/binding.rs`,
+  `pinning.rs`, `retention.rs`, `store/tests.rs`): a request first seen
+  from history binds to the account on the earliest answer of the nick it
+  asks, by server time; a notice from another nick, or a later one from
+  another account, neither binds nor folds; a request whose agent's first
+  answer carries no account stays unfolded; member events neither bind
+  nor change a binding; a request to another nick of the requester's own
+  account folds nothing; a stored binding and ending survive a restart
+  through JSON, so a nick taken over by another account cannot fold, spoof
+  or end the request, and a request whose completed notice did not
+  restore stays ended; request records round trip through the store
+  beside their buffer's lines and go when it is removed; an older store,
+  or a record without `pin` or `ended`, loads with none; a notice unfolded
+  by its request's eviction counts as unread and highlighted at once; and
+  `agent_name` drops IRC formatting, bidi, zero-width and format
+  characters.
 - Client (`session/tests/client_tags.rs`): the allow-listed client-only tag
   kept live, from the opening batch only and in history; server tags, the
   reply reference, tags outside the allow-list and over-long values left
@@ -329,8 +351,53 @@ Checks after the review fixes, on 21 November 2026:
       `nova`'s lookalike stay notices. That run's window opened at the
       app's default 1280 x 800 rather than 1440 x 900, so its images were
       not added; the UI is unchanged, and the images below still show it.
-- [ ] Both model reviews of the new head: not yet run; required before
-      merging.
+- [x] Both model reviews of that head (`06cf1a6`): Claude Opus 5.5 clear
+      (two low findings), GPT-6.2 Sol not clear (one high finding); see
+      [Review findings, round 2](#review-findings-round-2).
+
+## Review findings, round 2
+
+Both models reviewed `06cf1a6`, the head with the round-1 fixes: Claude
+Opus 5.5 (high effort, verdict clear) and GPT-6.2 Sol (high effort, verdict
+not clear). The owner decided the remaining trust gap: bind each request
+from two sources only, and store bindings and endings. Every finding, and
+what was done:
+
+| Reviewer | Severity | Finding | Done |
+| --- | --- | --- | --- |
+| Sol; Opus | High; low | A request without a pin was pinned to whoever held the nick when an account was first reported: after a restart (pins were not stored) and when the agent's account was not reported at arrival. The guide overstated the guarantee. | **Fixed.** A request binds once, from the account the member lists report as it arrives live (`trust.rs` `arrival`, `Requests::hold`), else from the server `account` tag on the earliest progress notice by server time from the nick it asks (`Requests::note` and `answer`; `trust.rs` `notices` sorts by server time). Member lists are not read after arrival: `pin_waiting`, `reported`, `repin` and the member-event scope are gone. Without a binding nothing folds. Bindings and endings are stored (next row). The guide, `docs/irc.md` and the spec now claim exactly this. |
+| Sol | Medium | Endings lived in memory only, so after a restart a partial or Search reload could revive a finished request. | **Fixed.** Each changed binding or ending is written as one `Channels request` record (id `request:<network>:<msgid>`, payload `Kept { request, pin, ended }`) under its buffer's record parent (`store/mapping.rs` `request_document`, `store.rs` `Op::Requests` and `keep_requests`, `hub/persist.rs` `keep_requests`). The restore reads each buffer's newest twice-`HISTORY_MAX` of them (`store.rs` `read_all` and `read_records`) and loads them before the lines fold (`IrcState::restore_requests`, `Requests::load`), so a stored binding wins and a stored ending holds. The records have no searchable text and are deleted with their buffer. An older store without them loads with none (`serde(default)`); with no users or installs yet there is no migration. |
+| Sol | Medium | Unfolding a dropped request's notices left their unread and highlight state stale. | **Fixed.** `folding.rs` `dropped` counts them at once with `counts::unfolded`, against the current read marker as `recount` does, so a later recount changes nothing. |
+| Sol | Low | Two nicks on one account could bypass the self-address check. | **Fixed.** An account equal to the request line's own `account` tag never binds, from either source (`requests.rs` `own`, used by `hold` and `binding`). The nick check stays. |
+| Sol | Low | Nicks compare in ASCII, not by the network's `CASEMAPPING`. | **Left open,** as in round 1: the Space has no case mapping, and the agent status change made the same decision. Recorded under Limits in the spec. |
+| Sol | Low | The fixture kept an existing config file's mode. | **Fixed.** It writes a fresh owner-only file beside the target with `tempfile.mkstemp`, then `os.replace`s it onto the target, still refusing a symbolic link there and still only after the server has answered. |
+| Sol | Low | A single-nick member event scanned every waiting nick. | **Gone.** Member events no longer bind, so nothing waits and nothing is scanned. |
+| Opus | Low | `agent_name` let bidi overrides and zero-width or format characters through. | **Fixed.** `model.rs` `agent_name` cleans the nick with the client's `status_text` (IRC formatting, controls and bidi overrides), then drops whitespace and the remaining zero-width, joining and format characters (`invisible`). |
+| Opus | Note | `tasks.md` and `delivery.md` disagreed on whether the round-1 fixes were built. | **Fixed.** Both now say the round-1 build, tests and `make check` passed. |
+
+Checks after the round-2 fixes, on 21 November 2026:
+
+- [x] `cargo test -p subspace-client-irc -p subspace-irc-board`: compiled
+      first time; all pass (Channels 489 passed, 4 ignored as on `main`;
+      the IRC client 241 passed).
+- [x] `make check` in `subspace-desktop/`: exit 0 (2,408 tests passed, none
+      failed; clippy clean). Its first run stopped on the timing-sensitive
+      `subspace-api-client` test under machine load, which this change does
+      not touch; the rerun on a quiet machine passed.
+- [x] `mise run quality` (`rustqual . --findings`): no new finding; the one
+      finding is the stale suppression in `products/subspace/build.rs`
+      reported on `main` too.
+- [x] `rustfmt --edition 2024` on every changed Rust file;
+      `python3 -I -m py_compile` on the fixture.
+- [x] `scripts/check-docs-index.py` and `scripts/check-board-docs.py`.
+- [x] The fixture against a fresh local Ergo 2.19.1 server, captured from
+      this build: its requests arrive from history and bind by `astra`'s
+      first answer, then fold as in the evidence below; `nova`'s lookalike
+      and the untagged notice stay notices, the first request goes stale,
+      the second clears on `completed` and the third stays queued. The
+      window again opened at 1280 x 800, so those images were not added.
+- [ ] The round-3 model reviews of the new head: not yet run; required
+      before merging.
 
 ## Evidence
 

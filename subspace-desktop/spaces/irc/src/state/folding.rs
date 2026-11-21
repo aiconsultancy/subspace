@@ -1,19 +1,19 @@
-//! Keeps each buffer's folded request progress and its requests' pins
-//! current ([`crate::thread_status`]) after the events that can change
-//! them, in proportion to what they change:
+//! Keeps each buffer's folded request progress and its requests'
+//! bindings current ([`crate::thread_status`]) after the events that can
+//! change them, in proportion to what they change:
 //!
-//! - a live line is taken in by itself: a request is pinned or waits for
-//!   an account, and progress folds or not, without reading the buffer
-//!   again ([`arrived`]); dropping the oldest lines stops folding the
-//!   notices of a request no longer held ([`make_room`]);
+//! - a live line is taken in by itself: a request is bound to the account
+//!   reported for its agent as it arrives, a notice binds an unbound
+//!   request when it is the agent's first answer, and progress folds or
+//!   not, without reading the buffer again ([`arrived`]); dropping the
+//!   oldest lines stops folding the notices of a request no longer held,
+//!   and counts them as any notice ([`make_room`]);
 //! - history, backfill and lines restored from the store fold their buffer
-//!   again from its held lines ([`Scope::Buffer`]);
-//! - a member list change only pins requests still waiting for their
-//!   agent's account, in the buffers that list speaks for, and folds a
-//!   buffer again only when held progress answers one of them
-//!   ([`Scope::Members`]). A pinned request never changes.
-
-use std::collections::BTreeSet;
+//!   again from its held lines ([`Scope::Buffer`]).
+//!
+//! Member list changes change nothing: a request is bound only as it
+//! arrives live or by its agent's first answer, never later from the
+//! member lists.
 
 use subspace_client_irc::{BufferKey, Event};
 
@@ -25,32 +25,14 @@ use crate::thread_status::{self, Arrival};
 pub(super) enum Scope {
     /// One buffer's lines, all read again.
     Buffer(BufferKey),
-    /// The requests waiting for an account in the buffers whose people the
-    /// member list of `buffer` speaks for: for `nick` alone (ASCII lower
-    /// case), or for every nick.
-    Members {
-        buffer: BufferKey,
-        nick: Option<String>,
-    },
 }
 
-/// What `event` may change: the buffer it adds older lines to, or, for a
-/// member list change that can report an account, the waiting requests.
-/// A live line is taken in as it is appended instead.
+/// What `event` may change: the buffer it adds older lines to. A live line
+/// is taken in as it is appended instead.
 pub(super) fn scope(event: &Event) -> Option<Scope> {
     match event {
         Event::History { buffer, .. } | Event::Backfill { buffer, .. } => {
             Some(Scope::Buffer(buffer.clone()))
-        }
-        Event::Members { buffer, .. } => Some(Scope::Members {
-            buffer: buffer.clone(),
-            nick: None,
-        }),
-        Event::MemberJoined { buffer, member } | Event::MemberChanged { buffer, member, .. } => {
-            member.account.as_ref().map(|_| Scope::Members {
-                buffer: buffer.clone(),
-                nick: Some(member.nick.to_ascii_lowercase()),
-            })
         }
         _ => None,
     }
@@ -60,40 +42,21 @@ pub(super) fn scope(event: &Event) -> Option<Scope> {
 pub(super) fn refold(state: &mut IrcState, scope: &Scope) {
     match scope {
         Scope::Buffer(key) => rebuild(state, key),
-        Scope::Members { buffer, nick } => repin(state, buffer, nick.as_deref()),
     }
 }
 
-/// Pins each request buffer `key` holds that has no pin and whose agent's
-/// account the server reports now, folds what is trusted, and takes folded
+/// Folds what is trusted in buffer `key` from its held lines, binding each
+/// unbound request its agent's earliest notice answers, and takes folded
 /// lines out of the unread count.
 fn rebuild(state: &mut IrcState, key: &BufferKey) {
-    let asked = thread_status::asked(state, key);
     let Some(buffer) = state.buffers.get_mut(key) else {
         return;
     };
+    let asked = thread_status::asked(buffer);
     buffer.requests.rehold(&asked);
     let notices = thread_status::notices(buffer);
     buffer.requests.refold(&notices, &mut buffer.folded);
     counts::forget_folded(buffer);
-}
-
-/// Pins the waiting requests a member list change in `changed` reported an
-/// account for, and folds again each buffer where held progress answers
-/// one of them.
-fn repin(state: &mut IrcState, changed: &BufferKey, nick: Option<&str>) {
-    let found = thread_status::reported(state, changed, nick);
-    let again: BTreeSet<BufferKey> = found
-        .into_iter()
-        .filter(|(key, nick, account)| {
-            state
-                .buffers
-                .get_mut(key)
-                .is_some_and(|held| held.requests.pin_waiting(nick, account))
-        })
-        .map(|(key, _, _)| key)
-        .collect();
-    again.iter().for_each(|key| rebuild(state, key));
 }
 
 /// Makes room for one more live line in buffer `key`, dropping its oldest
@@ -112,7 +75,8 @@ pub(super) fn make_room(state: &mut IrcState, key: &BufferKey) {
 
 /// Forgets line `entry`, no longer held: it is no longer unread or folded,
 /// and when it was a request, its progress notices no longer fold, so they
-/// show, and can be found, as ordinary notices.
+/// show, can be found and count against the read marker as ordinary
+/// notices.
 fn dropped(buffer: &mut Buffer, entry: &Entry) {
     buffer.unread_entries.remove(&entry.seq);
     buffer.folded.remove(&entry.seq);
@@ -125,10 +89,12 @@ fn dropped(buffer: &mut Buffer, entry: &Entry) {
     unfolded
         .iter()
         .for_each(|seq| _ = buffer.folded.remove(seq));
+    counts::unfolded(buffer, &unfolded);
 }
 
 /// Takes in the live line buffer `key` now holds last, as `arrival` says,
-/// and folds the buffer again when a request it pinned has held progress.
+/// and folds the buffer again when a request it holds anew has held
+/// progress.
 pub(super) fn arrived(state: &mut IrcState, key: &BufferKey, arrival: &Arrival) {
     let again = state
         .buffers

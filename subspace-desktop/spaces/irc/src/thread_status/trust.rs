@@ -6,117 +6,82 @@
 //! message or action, and in a private conversation our own. The request
 //! names the agent it asks: a channel request's first word is `nick:`,
 //! `nick,` or `@nick`, and a private conversation's is its partner; a
-//! request that asks its own sender is none. The server reports that nick's
-//! account in the member lists (`WHOX`, `extended-join` and
-//! `account-notify`): the channel's own, or, for a private conversation,
-//! those of the network's channels. The request is pinned to the account
-//! reported when Channels first sees it with one ([`Requests`]), and the
+//! request that asks its own sender is none. The request is bound to an
+//! account ([`Requests`]): the one the member lists (`WHOX`,
+//! `extended-join` and `account-notify`) report for that nick when the
+//! request arrives live, or else the server `account` tag on the earliest
+//! progress notice that nick sends on it, never the requester's own. The
 //! notice's `account` tag, which only the server sets, must name that
-//! account, whoever holds the nick by then. Without any of these the notice
-//! is not trusted.
+//! account, whoever holds the nick by then. Without a binding nothing
+//! folds.
 
-use std::collections::HashMap;
-
+use chrono::{DateTime, Utc};
 use subspace_client_irc::{BufferKey, Line, LineKind, Target};
 
-use super::requests::{Arrival, Asked, Notice, Requests};
+use super::requests::{Arrival, Asked, Notice};
 use super::{Phase, marker};
 use crate::state::{Buffer, IrcState};
 
 /// What live `line`, to be held as `seq`, brings to its buffer's requests:
-/// progress, trusted or not, or a request with the account its agent holds
-/// now.
+/// progress, trusted or not, or a request with the account the member
+/// lists report now for the agent it asks.
 pub(crate) fn arrival(state: &IrcState, line: &Line, seq: i64) -> Arrival {
-    let requests = state.buffer(&line.buffer).map(|held| &held.requests);
-    if let Some(notice) = notice(line, seq, requests) {
-        return Arrival::Progress(notice);
+    if let Some(notice) = notice(line, seq) {
+        let trusted = state
+            .buffer(&line.buffer)
+            .is_some_and(|held| held.requests.trusts(&notice));
+        return Arrival::Progress { notice, trusted };
     }
     request(line).map_or(Arrival::Other, |(id, nick)| {
         let account = reported_account(state, &line.buffer, &nick).map(str::to_owned);
         Arrival::Request(Asked {
             id: id.to_owned(),
             nick,
+            requester: line.account.clone(),
             account,
         })
     })
 }
 
-/// Every request buffer `key` holds, with the account the server reports
-/// now for each one not yet pinned.
-pub(crate) fn asked(state: &IrcState, key: &BufferKey) -> Vec<Asked> {
-    let Some(held) = state.buffer(key) else {
-        return Vec::new();
-    };
-    let mut accounts: HashMap<String, Option<String>> = HashMap::new();
+/// Every request `held` holds. Only a live arrival reads the member lists,
+/// so none carries a reported account.
+pub(crate) fn asked(held: &Buffer) -> Vec<Asked> {
     held.entries
         .iter()
-        .filter_map(|entry| request(&entry.line))
-        .map(|(id, nick)| {
-            let account = match held.requests.pin(id) {
-                Some(_) => None,
-                None => accounts
-                    .entry(nick.clone())
-                    .or_insert_with(|| reported_account(state, key, &nick).map(str::to_owned))
-                    .clone(),
-            };
-            Asked {
+        .filter_map(|entry| {
+            let (id, nick) = request(&entry.line)?;
+            Some(Asked {
                 id: id.to_owned(),
                 nick,
-                account,
-            }
+                requester: entry.line.account.clone(),
+                account: None,
+            })
         })
         .collect()
 }
 
-/// Every progress notice `held` holds, trusted against its requests.
+/// Every progress notice `held` holds, oldest first by server time; of two
+/// at the same time, the earlier held.
 pub(crate) fn notices(held: &Buffer) -> Vec<Notice> {
-    held.entries
+    let mut found: Vec<(DateTime<Utc>, Notice)> = held
+        .entries
         .iter()
-        .filter_map(|entry| notice(&entry.line, entry.seq, Some(&held.requests)))
-        .collect()
+        .filter_map(|entry| Some((entry.line.time, notice(&entry.line, entry.seq)?)))
+        .collect();
+    found.sort_by_key(|(time, _)| *time);
+    found.into_iter().map(|(_, notice)| notice).collect()
 }
 
-/// After a member list change in buffer `changed`, the waiting requests'
-/// agents the server now reports an account for: in each buffer whose
-/// people that list speaks for, each waiting nick (only `nick` when given)
-/// with its account.
-pub(crate) fn reported(
-    state: &IrcState,
-    changed: &BufferKey,
-    nick: Option<&str>,
-) -> Vec<(BufferKey, String, String)> {
-    let mut found = Vec::new();
-    for (key, held) in state.buffers() {
-        if !shares_members(changed, key) {
-            continue;
-        }
-        for waiting in held.requests.waiting() {
-            let account = nick
-                .is_none_or(|nick| nick == waiting)
-                .then(|| reported_account(state, key, waiting))
-                .flatten();
-            if let Some(account) = account {
-                found.push((key.clone(), waiting.to_owned(), account.to_owned()));
-            }
-        }
-    }
-    found
-}
-
-/// `line` as progress on the request it answers: trusted when `requests`
-/// holds that request, pinned, and the notice comes from the pinned
-/// account. `None` when it is no progress notice.
-fn notice(line: &Line, seq: i64, requests: Option<&Requests>) -> Option<Notice> {
+/// `line` as progress on the request it answers. `None` when it is no
+/// progress notice.
+fn notice(line: &Line, seq: i64) -> Option<Notice> {
     let marker = marker(line)?;
-    let request = line.reply_to.clone()?;
-    let pinned = requests
-        .filter(|requests| requests.held(&request))
-        .and_then(|requests| requests.pin(&request));
     Some(Notice {
         seq,
-        trusted: sent_by(line, pinned),
+        request: line.reply_to.clone()?,
         ended: marker.phase == Phase::Finished,
-        request,
+        from: line.from.as_deref().map(str::to_ascii_lowercase),
+        account: line.account.clone(),
     })
 }
 
@@ -171,12 +136,4 @@ fn shares_members(key: &BufferKey, buffer: &BufferKey) -> bool {
         Target::Channel(_) => key == buffer,
         _ => key.network == buffer.network && matches!(key.target, Target::Channel(_)),
     }
-}
-
-/// The server's `account` tag on `line` names `expected`.
-fn sent_by(line: &Line, expected: Option<&str>) -> bool {
-    matches!(
-        (line.account.as_deref(), expected),
-        (Some(sent), Some(expected)) if sent.eq_ignore_ascii_case(expected)
-    )
 }

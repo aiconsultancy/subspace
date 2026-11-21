@@ -1,11 +1,17 @@
-//! Each request is pinned to the account its agent held when Channels
-//! first saw it with one: whoever holds the nick later, only that account's
-//! notices fold, and member events never change a pinned request.
+//! Each request is bound to one account: whoever holds the nick later,
+//! only that account's notices fold. Member events neither bind a request
+//! nor change its binding, and the requester's own account never binds.
 
 use subspace_client_irc::{Event, Member};
 
-use super::{is_folded, joined, label, live, notice_from, progress, request, room, ship};
+use super::{SHIP, is_folded, joined, label, live, notice_from, progress, request, room, ship};
 use crate::fixtures::{at, member, message};
+use crate::state::IrcState;
+
+/// The account request `id` in the room is bound to.
+fn pin(state: &IrcState, id: &str) -> Option<String> {
+    state.buffer(&room())?.requests.pin(id).map(str::to_owned)
+}
 
 /// Another account holding the ship's nick.
 fn taker() -> Member {
@@ -105,25 +111,17 @@ fn a_request_that_asks_its_own_sender_folds_nothing() {
 }
 
 #[test]
-fn a_member_event_does_not_change_a_pinned_request() {
+fn member_events_neither_bind_nor_change_a_request() {
     let mut state = joined(vec![member("astra", "+")]);
-    live(
-        &mut state,
-        [
-            request(&room(), "first", 1),
-            progress(&room(), "first", "tool", 2),
-        ],
-    );
-    assert!(
-        !is_folded(&state, &room(), "astra-first-2"),
-        "no account yet"
-    );
+    live(&mut state, [request(&room(), "first", 1)]);
     state.apply(astra_changed(ship()), at(31));
+    assert_eq!(pin(&state, "first"), None, "a member event does not bind");
+    live(&mut state, [progress(&room(), "first", "tool", 2)]);
     assert!(
         is_folded(&state, &room(), "astra-first-2"),
-        "pinned when the server first reports an account"
+        "the agent's first answer binds"
     );
-    assert_eq!(state.buffer(&room()).map(|held| held.unread), Some(0));
+    assert_eq!(pin(&state, "first").as_deref(), Some(SHIP));
     state.apply(
         Event::Members {
             buffer: room(),
@@ -132,7 +130,7 @@ fn a_member_event_does_not_change_a_pinned_request() {
         at(32),
     );
     state.apply(astra_changed(member("astra", "")), at(33));
-    assert!(is_folded(&state, &room(), "astra-first-2"));
+    assert_eq!(pin(&state, "first").as_deref(), Some(SHIP));
     live(
         &mut state,
         [
@@ -143,4 +141,28 @@ fn a_member_event_does_not_change_a_pinned_request() {
     assert!(is_folded(&state, &room(), "astra-first-3"));
     assert!(!is_folded(&state, &room(), "astra-first-4"));
     assert_eq!(label(&state, "first"), Some("Writing a reply"));
+}
+
+#[test]
+fn a_request_to_another_nick_of_the_requesters_own_account_folds_nothing() {
+    let mut twin = member("mallory", "");
+    twin.account = Some("mallory".into());
+    let mut state = joined(vec![twin]);
+    let mut asked = message(&room(), "mallory2", "mallory: deploy", 1);
+    asked.id = Some("twin".into());
+    asked.account = Some("Mallory".into());
+    live(
+        &mut state,
+        [
+            asked,
+            notice_from(("mallory", Some("mallory")), &room(), "twin", "waiting", 2),
+        ],
+    );
+    assert_eq!(
+        pin(&state, "twin"),
+        None,
+        "neither the member list nor the answer binds"
+    );
+    assert!(!is_folded(&state, &room(), "mallory-twin-2"));
+    assert_eq!(label(&state, "twin"), None);
 }

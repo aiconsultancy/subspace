@@ -7,8 +7,8 @@ Usage, with a fresh local Ergo server from scripts/irc-test-server.sh running:
 
 It plays requests to the fictional ship `astra` in `#thread-status`, then,
 once the server has answered, writes a Channels configuration for
-CAPTURE_IRC_CONFIG to <file> (owner-only, never through a symbolic link)
-and prints `ready`. `astra` and a second fictional client, `nova`, register
+CAPTURE_IRC_CONFIG to <file> (a fresh owner-only file renamed onto it;
+a symbolic link there is refused) and prints `ready`. `astra` and a second fictional client, `nova`, register
 throwaway accounts on the local server, so their messages carry the
 server's `account` tag:
 
@@ -39,6 +39,7 @@ import re
 import secrets
 import socket
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -193,9 +194,19 @@ def write_config(path, host, port, nick, channel):
         "highlights": [],
     }
     # Never through a symbolic link: the config goes only where it was asked to.
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(descriptor, "w") as file:
-        json.dump(config, file, indent=2)
+    if os.path.islink(path):
+        raise FixtureError(f"--config must not be a symbolic link: {path}")
+    # A fresh owner-only file beside the target, renamed onto it, so an
+    # existing file's mode is never kept.
+    descriptor, fresh = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)), prefix=".irc-thread-status-")
+    try:
+        with os.fdopen(descriptor, "w") as file:
+            json.dump(config, file, indent=2)
+        os.chmod(fresh, 0o600)
+        os.replace(fresh, path)
+    except BaseException:
+        os.unlink(fresh)
+        raise
 
 
 def connect(host, port, nick, channel, account=False):

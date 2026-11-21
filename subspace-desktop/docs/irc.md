@@ -340,19 +340,20 @@ are in the [change record](changes/irc-thread-status/spec.md).
 
 - **Trust.** A notice folds only when it replies to a message or action
   this buffer holds (in a private conversation, our own), and its
-  server-set `account` tag names the account that request is pinned to.
+  server-set `account` tag names the account that request is bound to.
   The request asks a ship: the nick its first word addresses (`nick:`,
   `nick,` or `@nick`), or a private conversation's partner; a request that
-  addresses its own sender asks no one. Its pin is the account the server
-  reports for that nick in the member lists (`WHOX`, `extended-join`,
-  `account-notify`) when Channels first sees the request with one: as a
-  live request arrives, or, for one held from history, backfill or the
-  store, when it is first evaluated with an account reported. From then
-  on only that account's notices fold, whoever holds the nick later, and
-  member events no longer change it. Without a pin, nothing folds. Pins
-  are kept in the Space's state (`thread_status::Requests`), not in the
-  store: after a restart, a restored request is pinned to whoever holds
-  the nick when the member list first reports an account for it.
+  addresses its own sender asks no one. Its binding is set once, from the
+  first source that applies: the account the member lists (`WHOX`,
+  `extended-join`, `account-notify`) report for that nick when the request
+  arrives live; otherwise the server `account` tag on the earliest progress
+  notice (by server time) that nick sends on the request, which also binds
+  a request first seen from history or backfill. An account equal to the
+  requester's own `account` tag is never a binding. Member lists are not
+  read after a request arrives, and without a binding nothing folds. From
+  then on only that account's notices fold, whoever holds the nick later.
+  Bindings and endings (`thread_status::Requests`) are stored: see
+  [Message history and search](#message-history-and-search).
   Untrusted, unrecognised and uncorrelated notices, questions, answer
   instructions and final replies stay ordinary messages, counted and
   notified as before.
@@ -367,9 +368,10 @@ are in the [change record](changes/irc-thread-status/spec.md).
   text on one line and cut to 32 characters.
 - **Endings.** `completed` or `failed` removes only its request's line, and
   no later or older notice brings it back. The ending is kept apart from
-  the notice, so it holds after the notice is dropped by the line cap or
-  missing from a reloaded page. A main-room final reply without a reply tag
-  clears nothing.
+  the notice, and stored, so it holds after the notice is dropped by the
+  line cap, after a restart, and when a partial or Search reload brings
+  back earlier progress without it. A main-room final reply without a
+  reply tag clears nothing.
 - **Stale.** The line shows the last stage, its time and a **Stale** pill
   when the notice carried `,disconnected`, while the network is not
   connected, or when the notice was already held when the network's current
@@ -379,10 +381,10 @@ are in the [change record](changes/irc-thread-status/spec.md).
 - **Counting.** `Buffer::folded` holds the trusted notices
   (`state/folding.rs`). A live line is taken in by itself, without reading
   the buffer again; a history page, backfill or restore folds its buffer
-  again; a member list change only pins requests still waiting for an
-  account, and folds a buffer again only when held progress answers one.
-  A line stays folded while it and its request are held: when the line cap
-  drops the request, its notices show as ordinary notices again. Folded
+  again; member list changes fold nothing again. A line stays folded while
+  it and its request are held: when the line cap drops the request, its
+  notices show as ordinary notices again, counted unread and highlighted at
+  once against the read marker. Folded
   notices make no row, are not replies, never count as unread and never
   notify, live or from history. They are stored and searchable; opening one
   from Search shows its request.
@@ -411,7 +413,11 @@ is the [change record](changes/irc-search-history/spec.md).
   network as the `project` filter; and an exact `ReferenceIdentity::github`
   (`mentioned-pull-request` or `mentioned-issue`) for each GitHub pull
   request or issue URL in it, so `related_items` for that item lists the
-  message.
+  message. Beside them, each agent request whose binding or ending changed
+  is one record of kind `Channels request` under the same buffer, holding
+  only its message ID, bound account and whether it ended, with no
+  searchable text (see [Request status lines](#request-status-lines)). The
+  restore loads each buffer's newest 20,000 of them before its lines fold.
 - **When it is written**: in order on the background executor, in batches of
   at most 100, about a second after new lines arrive and when the board stops
   (`hub/persist.rs`).

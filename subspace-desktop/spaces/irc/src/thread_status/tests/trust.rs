@@ -51,7 +51,7 @@ fn only_the_addressed_ships_server_account_is_trusted() {
 }
 
 #[test]
-fn a_request_without_an_addressee_or_a_reported_account_folds_nothing() {
+fn a_request_without_an_addressee_or_a_binding_folds_nothing() {
     let mut unaddressed = joined(vec![ship()]);
     let mut plain = request(&room(), "first", 1);
     plain.text = "please handle first".into();
@@ -62,15 +62,24 @@ fn a_request_without_an_addressee_or_a_reported_account_folds_nothing() {
     assert!(!is_folded(&unaddressed, &room(), "astra-first-2"));
     assert_eq!(label(&unaddressed, "first"), None);
 
-    let mut unknown_account = joined(vec![member("astra", "+")]);
+    let mut unbound = joined(vec![member("astra", "+")]);
     live(
-        &mut unknown_account,
+        &mut unbound,
         [
             request(&room(), "first", 1),
-            progress(&room(), "first", "tool", 2),
+            notice_from(("astra", None), &room(), "first", "tool", 2),
+            progress(&room(), "first", "reply", 3),
         ],
     );
-    assert!(!is_folded(&unknown_account, &room(), "astra-first-2"));
+    assert!(
+        !is_folded(&unbound, &room(), "astra-first-2"),
+        "the agent's first answer carries no account"
+    );
+    assert!(
+        !is_folded(&unbound, &room(), "astra-first-3"),
+        "a later account does not bind"
+    );
+    assert_eq!(label(&unbound, "first"), None);
 
     let mut mentioned = joined(vec![ship()]);
     let mut at_mention = request(&room(), "first", 1);
@@ -115,7 +124,7 @@ fn label_in(state: &IrcState, buffer: &BufferKey, request: &str) -> Option<&'sta
 }
 
 #[test]
-fn replayed_progress_is_taken_out_of_unread_once_the_server_vouches() {
+fn history_progress_is_taken_out_of_unread_once_it_binds() {
     let mut state = joined(vec![member("astra", "+")]);
     state.apply(
         Event::ReadMarker {
@@ -138,9 +147,11 @@ fn replayed_progress_is_taken_out_of_unread_once_the_server_vouches() {
     );
     assert_eq!(
         state.buffer(&room()).map(|held| held.unread),
-        Some(2),
-        "before the member list reports astra's account"
+        Some(1),
+        "the agent's first answer binds the request; the lookalike counts"
     );
+    assert!(is_folded(&state, &room(), "astra-first-2"));
+    assert!(!is_folded(&state, &room(), "nova-first-3"));
     state.apply(
         Event::Members {
             buffer: room(),
@@ -149,7 +160,5 @@ fn replayed_progress_is_taken_out_of_unread_once_the_server_vouches() {
         at(31),
     );
     assert_eq!(state.buffer(&room()).map(|held| held.unread), Some(1));
-    assert!(is_folded(&state, &room(), "astra-first-2"));
-    assert!(!is_folded(&state, &room(), "nova-first-3"));
     assert_eq!(label(&state, "first"), Some("Using a tool"));
 }

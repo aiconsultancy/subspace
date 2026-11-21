@@ -11,7 +11,8 @@ use subspace_framework::core::log::{Level, Logger};
 
 use super::Hub;
 use crate::state::IrcState;
-use crate::store::{self, Op};
+use crate::store::{self, Op, Restored};
+use crate::thread_status::Kept;
 
 /// How long new lines wait, so a burst is written as one batch.
 const DEBOUNCE: Duration = Duration::from_secs(1);
@@ -54,10 +55,26 @@ impl Recall {
         }
     }
 
-    /// Deletes `buffer`'s stored lines, and drops those still waiting.
+    /// Keeps the request bindings and endings that changed in `state` for
+    /// the next write. Without the store they are dropped, and stay in
+    /// memory only.
+    pub fn keep_requests(&mut self, state: &mut IrcState) {
+        let kept = state.take_kept();
+        let Some(persist) = self.persist.as_mut() else {
+            return;
+        };
+        if !kept.is_empty() {
+            persist.since.get_or_insert_with(Instant::now);
+            persist.requests.extend(kept);
+        }
+    }
+
+    /// Deletes `buffer`'s stored lines and requests, and drops those still
+    /// waiting.
     pub fn forget(&mut self, buffer: &BufferKey) {
         if let Some(persist) = self.persist.as_mut() {
             persist.waiting.retain(|line| &line.buffer != buffer);
+            persist.requests.retain(|(held, _)| held != buffer);
             persist.queue.push(Op::Forget(buffer.clone()));
         }
     }
@@ -89,7 +106,9 @@ pub(crate) struct Persist {
     link: store::Link,
     /// Lines waiting for the next write, oldest first.
     waiting: Vec<Line>,
-    /// When the oldest waiting line arrived.
+    /// Request bindings and endings waiting for the next write, by buffer.
+    requests: Vec<(BufferKey, Vec<Kept>)>,
+    /// When the oldest waiting line or request arrived.
     since: Option<Instant>,
     queue: Vec<Op>,
     /// A batch of operations is running.
@@ -101,15 +120,16 @@ impl Persist {
         Self {
             link,
             waiting: Vec::new(),
+            requests: Vec::new(),
             since: None,
             queue: Vec::new(),
             busy: false,
         }
     }
 
-    /// Whether the waiting lines are due at `now`.
+    /// Whether the waiting lines and requests are due at `now`.
     fn due(&self, now: Instant, force: bool) -> bool {
-        !self.waiting.is_empty()
+        (!self.waiting.is_empty() || !self.requests.is_empty())
             && (force
                 || self.waiting.len() >= FULL
                 || self
@@ -117,13 +137,23 @@ impl Persist {
                     .is_some_and(|since| now.duration_since(since) >= DEBOUNCE))
     }
 
-    /// Queues the waiting lines as one write when they are due.
+    /// Queues the waiting lines as one write, then the waiting requests,
+    /// when they are due.
     fn queue_due(&mut self, now: Instant, force: bool) {
-        if self.due(now, force) {
-            self.since = None;
-            let lines = std::mem::take(&mut self.waiting);
+        if !self.due(now, force) {
+            return;
+        }
+        self.since = None;
+        let lines = std::mem::take(&mut self.waiting);
+        if !lines.is_empty() {
             self.queue.push(Op::Publish(lines));
         }
+        let requests = std::mem::take(&mut self.requests);
+        self.queue.extend(
+            requests
+                .into_iter()
+                .map(|(buffer, kept)| Op::Requests(buffer, kept)),
+        );
     }
 }
 
@@ -219,12 +249,16 @@ impl Hub {
         .detach();
     }
 
-    /// Applies the restored buffers, configures the runtime with the
-    /// networks it waited for, and tells it each buffer's newest line.
-    fn resume(&mut self, restored: Vec<(BufferKey, Vec<Line>)>) {
-        for (buffer, lines) in restored {
-            self.state.restore(&buffer, lines);
+    /// Applies the restored buffers, each request binding and ending before
+    /// the lines, configures the runtime with the networks it waited for,
+    /// and tells it each buffer's newest line.
+    fn resume(&mut self, restored: Vec<Restored>) {
+        for buffer in restored {
+            self.state
+                .restore_requests(&buffer.buffer, &buffer.requests);
+            self.state.restore(&buffer.buffer, buffer.lines);
         }
+        self.recall.keep_requests(&mut self.state);
         if let Some(networks) = self.recall.waiting.take() {
             self.run(networks);
         }

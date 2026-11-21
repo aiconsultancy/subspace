@@ -98,7 +98,16 @@ fn every_stage_maps_to_one_compact_label() {
 #[test]
 fn the_agent_name_is_one_bounded_line_of_plain_text() {
     assert_eq!(agent_name("astra"), "astra");
-    assert_eq!(agent_name("as\u{3}4tra\n"), "as4tra");
+    assert_eq!(
+        agent_name("as\u{3}4tra\n"),
+        "astra",
+        "IRC formatting goes, as in status text"
+    );
+    assert_eq!(
+        agent_name("\u{202e}as\u{200b}tr\u{200d}a\u{2066}\u{feff}"),
+        "astra",
+        "bidi, zero-width and format characters go"
+    );
     let long = "a".repeat(40);
     let shown = agent_name(&long);
     assert_eq!(shown.chars().count(), 32);
