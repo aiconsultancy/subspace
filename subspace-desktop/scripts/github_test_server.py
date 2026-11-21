@@ -953,6 +953,12 @@ def actions(repo, parts):
         if parts[2] == "jobs":
             jobs = jobs_json(run)
             return 200, {"total_count": len(jobs), "jobs": jobs}
+        if len(parts) == 5 and parts[2] == "attempts" and parts[4] == "jobs":
+            # Every fixture run is at attempt 1, as run_json says.
+            if parts[3] != "1":
+                return 404, {"message": "Not Found"}
+            jobs = jobs_json(run)
+            return 200, {"total_count": len(jobs), "jobs": jobs}
         if parts[2] == "pending_deployments":
             if run[3] != "waiting":
                 return 200, []
