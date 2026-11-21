@@ -1,5 +1,13 @@
 # Two-model pull request review clearance
 
+This record describes the original review helper. The
+[current review rules](../../../../AGENTS.md#pull-request-review-clearance)
+require both model verdicts and allow read-only subagents. The script is optional.
+
+The [pre-push checks](../../ways-of-working.md#gates) also use the pushed diff
+to select checks by project. Markdown-only changes run documentation checks
+where configured.
+
 ## Intent
 
 Several pull requests were merged without an independent code review; the reviews run afterwards found a high-severity defect and more than twenty smaller ones. Every pull request should now be cleared by two different models before it merges.

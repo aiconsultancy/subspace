@@ -75,8 +75,9 @@ Use the make targets. Plain `make` lists them.
 - In non-interactive shells, run Cargo through mise (`mise exec -- cargo ...`)
   so builds use the Mr Boxington cache.
 - prek runs the hooks (`make hooks` installs them). Commits run the format
-  check; pushes run `make check` and `mise run quality`. Vendored files and
-  `.agents/skills` keep their upstream bytes.
+  check. The pre-push hook selects checks by project and file type. See
+  [Gates](../subspace-desktop/docs/ways-of-working.md#gates). Vendored files
+  and `.agents/skills` keep their upstream bytes.
 - There is no app in this folder. To see a Framework change in an app, build
   the app that depends on this folder (in this repository, the Subspace App
   in `../subspace-desktop`, which depends on it by path).
@@ -238,7 +239,7 @@ breaking change to a public API bumps the minor version while below 1.0.
 
 ## Code Quality Rules
 
-- Run `mise run quality` after making changes. It compares the workspace with
+- Run `mise run quality` after changing Rust code. It compares the workspace with
   `rustqual-baseline.json` and fails only when the quality score drops below
   the baseline. The prek pre-push hook runs the same task.
 - The check compares the overall score only. A new finding that leaves the

@@ -80,8 +80,7 @@ it. The repository's pull request template
 
 - [ ] Commits are conventional (`type(scope)!: summary`), one logical change
   each, rebased with no merge noise. See [Commits](#commits).
-- [ ] `make check` and `mise run quality` pass. The prek pre-push hook runs
-  both; do not bypass it. See [Gates](#gates).
+- [ ] Pre-push checks pass for the changed projects. See [Gates](#gates).
 - [ ] The change has a record under `docs/changes/<slug>/` with intent, spec,
   delivery and tasks. See [change records](changes/README.md).
 - [ ] New or moved pages under `docs/` are linked from the
@@ -94,11 +93,11 @@ it. The repository's pull request template
   change's key images or link the pull requests that carry them. Without
   them a pull request is not ready to merge. `gh pr create --body` skips the
   template, so copy its sections into the body.
-- [ ] Before merging: `scripts/review-pr.sh` reported both Claude Opus 5.5
-  (high) and GPT-6.2 Sol (high) clear for the final head. Both review
-  checkboxes are ticked and both reviews are recorded under **Reviews**. See
-  [Pull request review clearance](../../AGENTS.md#pull-request-review-clearance)
-  for how to run it and for the Release Please and integration exceptions.
+- [ ] Before merging, independent reviews from Claude Opus 5.5 (high) and
+  GPT-6.2 Sol (high) clear the final head. Record each review and its method
+  under **Reviews**. Read-only subagents and restricted CLI reviewers count.
+  See [Pull request review clearance](../../AGENTS.md#pull-request-review-clearance)
+  for the requirements and exceptions.
 - [ ] UI follows the [component rules](../../subspace-framework/docs/ui-components.md#rules): a GPUI Kit
   component first, then a shared component built from GPUI Kit components,
   custom drawing last with its reason in the catalogue. Every new or changed
@@ -123,7 +122,18 @@ No CI builds or tests the code. The GitHub workflows release and sign (see
 | Hook | Runs |
 | --- | --- |
 | pre-commit | File hygiene, `mise run fmt-check` and gitleaks |
-| pre-push | `make check` (architecture, board guides, documentation index, format, cargo-shear, clippy with warnings denied, tests and script fixtures) and `mise run quality` (rustqual, no regression from the baseline); at the repository root, `make release-check` when release tooling, a manifest or a lockfile changes |
+| pre-push | The checks below, selected from the pushed diff |
+
+- Framework and desktop source or build input changes run `mise run check` in
+  the affected project. Rust changes and changes to its quality configuration
+  also run `mise run quality`.
+- Markdown changes run the Framework or desktop board guide and documentation
+  index checks for the affected project. A Markdown-only push skips code tests
+  and builds.
+- API code changes run Bun type checking, lint and tests. Database-backed API
+  tests use the [local Compose stack](../../subspace-api/README.md).
+- Added or modified release tooling, workflows, Cargo manifests and Cargo
+  lockfiles run the root `make release-check`.
 
 Do not bypass the hooks with `--no-verify`. If a hook fails, fix the cause.
 See [Commands](../AGENTS.md#commands) and

@@ -34,10 +34,9 @@ this skill only routes to them.
 
 ## 2. Gates
 
-- [ ] `make check` passes.
-- [ ] `mise run quality` passes and `rustqual . --findings` shows no new
-  findings in code you touched.
-- [ ] Apps built on the Framework in the same repository still pass their own
-  `make check` (in this repository: `../subspace-desktop`).
+- [ ] Run `make check` for Framework code or build input changes. For a
+  Markdown-only Framework change, run `mise run --skip-tools board-docs ::: docs-index`.
+- [ ] For Rust changes, `mise run quality` passes and `rustqual . --findings`
+  shows no new findings in code you touched.
 - [ ] Commit only when the owner asks; push with the hook, never
   `--no-verify`.

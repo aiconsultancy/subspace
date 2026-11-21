@@ -21,7 +21,7 @@ linked documents; this skill only routes to them. Start from the
   your tree is clean. Never check out another branch in a shared checkout.
 - [ ] Hooks installed: `make hooks` (prek). `.git/hooks/pre-commit` and
   `pre-push` must exist. Commits run hygiene, the format check and gitleaks;
-  pushes run `make check` and `mise run quality`.
+  pushes run the [checks for changed projects](../../../docs/ways-of-working.md#gates).
 
 ## 2. Classify the change and read its rules
 
@@ -47,8 +47,8 @@ Tick every kind that applies, then read the linked rules before finishing.
   [docs/spaces-audit.md](../../../docs/spaces-audit.md).
 - [ ] **Framework change** (anything in `../subspace-framework`): follow the
   Framework's [AGENTS.md](../../../../subspace-framework/AGENTS.md) and its
-  `framework-checklist` skill, and run `make check` there first; then
-  `make check` here. Commit the Framework change separately, first
+  `framework-checklist` skill. Run the desktop code checks if the desktop also
+  has code or build input changes. Commit the Framework change separately, first
   ([AGENTS.md › Structure](../../../AGENTS.md#structure)).
 - [ ] **Desktop crate or dependency change** (`spaces/**`, `clients/**`,
   `products/**`, `terminal/**`): the one-import and layer rules in
@@ -81,15 +81,14 @@ Tick every kind that applies, then read the linked rules before finishing.
 
 ## 4. Gates before pushing
 
-- [ ] `make check` passes (architecture, board-guide and docs-index checks,
-  format, cargo-shear, clippy with warnings denied, tests, script fixtures);
-  after a Framework change, `make check` at the repository root (both).
+- [ ] Run `make check` for desktop code or build input changes. For a
+  Markdown-only desktop change, run `mise run --skip-tools board-docs ::: docs-index`.
 - [ ] `MISE_ENV=terminal make check-terminal` passes when the terminal crates
   or a Framework API they use changed.
 - [ ] `make interfaces` passes when the product interface, tools, MCP or CLI
   changed.
-- [ ] `mise run quality` passes and `rustqual . --findings` shows no new
-  findings in code you touched (IOSP, functions under 60 lines, at most 5
+- [ ] For Rust changes, `mise run quality` passes and `rustqual . --findings`
+  shows no new findings in code you touched (IOSP, functions under 60 lines, at most 5
   parameters, no `unwrap` outside tests).
 - [ ] Push with the hook; never `--no-verify`.
 
