@@ -45,6 +45,10 @@ on:
       tag:
         description: Stable release tag, such as subspace-desktop-v0.10.0
         required: true
+      commit:
+        description: The commit the tag must point at (release.yml passes the release's commit)
+        required: false
+        default: ""
       mode:
         description: publish attaches the signed archive; sign-only and build-only attach nothing
         type: choice
@@ -62,6 +66,12 @@ env:
   # https://github.com/ebourg/jsign/releases; the digest GitHub lists for the JAR.
   JSIGN_VERSION: "7.6"
   JSIGN_SHA256: 6cf58aa080e7ff82656f320cff8d4a3bff30408df8766806dcba3740dd839fa5
+  # https://github.com/adoptium/temurin21-binaries/releases; the digests GitHub
+  # lists for the Linux JRE archives. Java runs jsign with the signing token.
+  TEMURIN_RELEASE: jdk-21.0.13+9
+  TEMURIN_FILE: OpenJDK21U-jre_ARCH_linux_hotspot_21.0.13_9.tar.gz
+  TEMURIN_SHA256_AARCH64: b1734db7ade49c3f6acc6ae06233b8c2dd90e3e2f00f67000ae1c972aaa64d8c
+  TEMURIN_SHA256_X64: a535a1df9c6284d9618872984e026ae0352d1f7e9e0605425c0e6114f47351dd
 
 jobs:
   resolve:
@@ -89,6 +99,7 @@ jobs:
         id: release
         env:
           TAG: ${{ inputs.tag }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
         run: |
           set -euo pipefail
           if [[ ! "$TAG" =~ ^subspace-desktop-v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$ ]]; then
@@ -97,8 +108,18 @@ jobs:
           fi
           version="${BASH_REMATCH[1]}"
           commit="$(git rev-parse --verify "refs/tags/$TAG^{commit}")"
+          if [[ -n "$EXPECTED_COMMIT" && "$commit" != "$EXPECTED_COMMIT" ]]; then
+            echo "$TAG points at $commit, not $EXPECTED_COMMIT, the release's commit" >&2
+            exit 1
+          fi
           if ! git merge-base --is-ancestor "$commit" HEAD; then
             echo "$TAG points at $commit, which is not on main; only commits on main are built and signed" >&2
+            exit 1
+          fi
+          # Older releases run the built app to check it, and it cannot start
+          # on the Windows runner; refuse them before a long build.
+          if ! git show "$commit:subspace-desktop/scripts/package-release.sh" | grep -q SUBSPACE_PACKAGE_SKIP_RUN_CHECK; then
+            echo "$TAG predates Windows release builds: its package-release.sh cannot skip running the app" >&2
             exit 1
           fi
           {
@@ -150,8 +171,13 @@ jobs:
             echo 'This release does not use cargo-about.'
             exit 0
           fi
-          version="$(awk -v section="$section" '$0 == section { found = 1; next } /^\[/ { found = 0 } found && $1 == "version" { gsub(/"/, "", $3); print $3 }' "$toml")"
-          checksum="$(sed -n 's/^windows-x64 = { checksum = "sha256:\([0-9a-f]\{64\}\)" }$/\1/p' "$toml")"
+          # Each value from its own table: the tool's, then its platforms'.
+          read_toml() {
+            awk -v section="$1" -v key="$2" '$0 == section { found = 1; next } /^\[/ { found = 0 } found && $1 == key { print }' "$toml"
+          }
+          version="$(read_toml "$section" version | sed -n 's/^version = "\([^"]*\)"$/\1/p')"
+          checksum="$(read_toml '[tools."github:EmbarkStudios/cargo-about".platforms]' windows-x64 |
+            sed -n 's/^windows-x64 = { checksum = "sha256:\([0-9a-f]\{64\}\)" }$/\1/p')"
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$checksum" =~ ^[0-9a-f]{64}$ ]]
           name="cargo-about-$version-x86_64-pc-windows-msvc"
           # GNU tar reads C:\... as a remote host, so use the POSIX path.
@@ -208,13 +234,22 @@ jobs:
         with:
           name: windows-unsigned
           path: ${{ runner.temp }}/windows
-      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
-        with:
-          distribution: temurin
-          java-version: "21.0.13+9"
-      - name: Install jsign
+      - name: Install Java and jsign
         run: |
           set -euo pipefail
+          case "$(uname -m)" in
+            aarch64 | arm64) arch=aarch64; java_sha256="$TEMURIN_SHA256_AARCH64" ;;
+            x86_64) arch=x64; java_sha256="$TEMURIN_SHA256_X64" ;;
+            *) echo "no pinned Temurin build for $(uname -m)" >&2; exit 1 ;;
+          esac
+          file="${TEMURIN_FILE/ARCH/$arch}"
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/$file" \
+            "https://github.com/adoptium/temurin21-binaries/releases/download/${TEMURIN_RELEASE/+/%2B}/$file"
+          echo "$java_sha256  $RUNNER_TEMP/$file" | sha256sum --check --strict -
+          mkdir "$RUNNER_TEMP/java"
+          tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP/java" --strip-components 1
+          "$RUNNER_TEMP/java/bin/java" -version
+          echo "$RUNNER_TEMP/java/bin" >>"$GITHUB_PATH"
           jar="$RUNNER_TEMP/jsign-$JSIGN_VERSION.jar"
           curl --fail --silent --show-error --location --retry 3 --output "$jar" \
             "https://github.com/ebourg/jsign/releases/download/$JSIGN_VERSION/jsign-$JSIGN_VERSION.jar"
@@ -318,5 +353,15 @@ jobs:
             echo "$TAG now points at $current, not $COMMIT, which was built" >&2
             exit 1
           fi
-          gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+          # A draft's files are replaced; a published release only gains files
+          # it lacks, so installers never see one missing or mismatched.
+          release="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets)"
+          if [[ "$(jq -r .isDraft <<<"$release")" == true ]]; then
+            gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+          elif jq -e --arg a "$ARCHIVE" '[.assets[].name] | any(. == $a or . == $a + ".sha256")' <<<"$release" >/dev/null; then
+            echo "$TAG is published and already has $ARCHIVE; not replacing a published release's files" >&2
+            exit 1
+          else
+            gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" --repo "$GITHUB_REPOSITORY"
+          fi
           echo "Attached $ARCHIVE to $TAG." >>"$GITHUB_STEP_SUMMARY"
