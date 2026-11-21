@@ -223,6 +223,8 @@ the referenced issue for its flag.
 The flag marks an unassigned, open issue as available for a fleet's captains
 to take. Anyone who may edit an issue can set it on create with
 `POST /api/v1/issues` or on edit with `PATCH /api/v1/issues/{reference}`.
+An agent registered to a fleet can set it only on issues its fleet may
+dispatch. See [Fleet ownership](#fleet-ownership).
 
 - A write that would leave the issue with an assignee and asks for
   `readyForAgents: true` fails with 400. An edit that clears the assignee and
@@ -257,6 +259,51 @@ also accepts an agent's user ID and combines with `updatedSince`. The MCP
 tools `subspace_create_issue`, `subspace_update_issue` and
 `subspace_list_issues` accept the same field and filter, and every MCP issue
 result carries the field.
+
+## Fleet ownership
+
+A project belongs to its initiative's fleet, or else to the fleet of that
+initiative's nearest ancestor with one. A project without an initiative, or
+with no fleet anywhere on its initiative path, belongs to no fleet.
+
+An agent registered to a fleet, shown by `kind: "agent"` and a non-null
+`fleetId` on `GET /api/v1/me`, may dispatch issues only in its own fleet's
+projects and in projects that belong to no fleet. Dispatching means sending a
+non-null `assigneeId`, or `readyForAgents` with either value, to
+`POST /api/v1/issues` or `PATCH /api/v1/issues/{reference}`. When the issue's
+project belongs to another fleet, the API refuses the write with 403 and the
+usual problem document, and changes nothing: no issue is created, and the
+issue's fields, version and activity stay as they were. On edit, the archive,
+version and empty-change checks come first, so a stale version still
+receives 409.
+
+Moves follow the same ownership. When such an agent calls
+`POST /api/v1/issues/{reference}/move`, the API refuses the move with 403 if
+the source or the destination project belongs to another fleet, and moves
+nothing. Moves between the agent's own fleet's projects and projects without
+a fleet are allowed. The checks on the projects, the issue version and the
+moved issues come first, and `POST /api/v1/issues/{reference}/move-preview`
+does not apply the ownership check.
+
+- Humans and agents without a fleet are not restricted.
+- Clearing the assignee with `assigneeId: null` is allowed, as are edits that
+  send neither field. The server clearing the flag as a side effect of
+  another change, such as a terminal state, is not a dispatch.
+- Comments are not restricted. They change no ownership or dispatch state,
+  and fleets legitimately discuss each other's work.
+- The MCP tools `subspace_create_issue`, `subspace_update_issue` and
+  `subspace_move_issue` apply the same rules and return the same problems as
+  tool errors.
+
+The check runs inside the write's transaction. It reads the agent's
+registration, the project and each initiative on the path up to the first one
+with a fleet, holding a share lock on each row until the write commits. A
+move checks its source and destination in project ID order, the order in
+which it already locks the two project rows. A concurrent project move,
+initiative reparenting, fleet assignment or agent re-registration therefore
+either commits first and is enforced, or waits until the write has committed.
+A dispatcher that read an issue before its project moved to another fleet
+receives 403 even though the issue version is unchanged.
 
 ## Planning and stakeholders
 
@@ -319,7 +366,10 @@ The repository's pre-push hook runs type checking, lint and `bun test` on API
 code changes. Install the API dependencies before pushing code.
 
 The HTTP tests require a clean loopback Compose stack and create synthetic
-organisations. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`. For signed pull request and deployment tests, sign in first as
+organisations. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`.
+The fleet ownership race test holds a row lock in the API's own database while
+an agent writes, so when both variables are set, `TEST_DATABASE_URL` must name
+the database that `TEST_API_URL` serves, as in the example above. For signed pull request and deployment tests, sign in first as
 `admin@example.com` to a dedicated dev organisation. Start the API with that
 organisation's internal UUID in `GITHUB_ORGANISATION_ID` and a local
 `GITHUB_WEBHOOK_SECRET`. Set `TEST_GITHUB_ORGANISATION` to its dev sign-in slug
