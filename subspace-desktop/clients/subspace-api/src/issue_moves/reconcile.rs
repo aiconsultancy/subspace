@@ -163,20 +163,23 @@ impl Client {
         if self.backend != crate::Backend::Nett {
             return Err(IssueSaveError::Unavailable);
         }
-        if self.replays(preview) {
-            return self.replay_move(preview);
-        }
-        self.nett_verify_move(preview, None)
+        self.check_issue_move(preview, self.replays(preview))
     }
 
-    /// Checks a NETT move by reading it back, never sending it: for a
-    /// caller that may not write the move again.
-    pub(crate) fn read_back_issue_move(
+    /// Checks a NETT move as the caller decided, once: replaying its
+    /// confirmation when `replay` is true, otherwise reading it back and
+    /// sending nothing. Nothing here decides again, so a capability list
+    /// read meanwhile cannot turn a read back into a write.
+    pub(crate) fn check_issue_move(
         &self,
         preview: &MovePreview,
+        replay: bool,
     ) -> Result<MoveResult, IssueSaveError> {
         if self.backend != crate::Backend::Nett {
             return Err(IssueSaveError::Unavailable);
+        }
+        if replay {
+            return self.replay_move(preview);
         }
         self.nett_verify_move(preview, None)
     }
