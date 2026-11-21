@@ -29,16 +29,17 @@ enum Phase {
     Preview(MovePreview),
     Sending,
     Unconfirmed(MovePreview),
-    /// The move committed as the issue now numbered so, but these
-    /// sub-issues could not be confirmed in the destination: they are
-    /// listed for the person to check.
-    Moved(String, Vec<Unreconciled>),
+    /// The move committed, but some sub-issues could not be confirmed in
+    /// the destination: they are listed for the person to check.
+    Moved(Committed),
     Failed(IssueSaveError),
 }
 
-/// A move that committed: the root's number after it, and the sub-issues
-/// not confirmed in the destination.
+/// A move that committed: the root's stable ID, which opens it wherever it
+/// is now, its number after the move, and the sub-issues not confirmed in
+/// the destination.
 pub(crate) struct Committed {
+    pub(crate) id: String,
     pub(crate) identifier: String,
     pub(crate) unreconciled: Vec<Unreconciled>,
 }
@@ -66,6 +67,7 @@ fn committed(preview: &MovePreview, result: MoveResult) -> MoveOutcome {
         None => moved_root(preview, &result.issue)?,
     };
     Ok(Committed {
+        id: result.issue.fields.id,
         identifier,
         unreconciled: result.unreconciled,
     })
@@ -104,6 +106,7 @@ fn confirm(
         hub.latest_issue(scope, id).and_then(|issue| {
             Ok(Committed {
                 identifier: moved_root(preview, &issue)?,
+                id: issue.fields.id,
                 unreconciled: Vec::new(),
             })
         })
@@ -256,15 +259,12 @@ impl Issues {
         cx: &mut Context<Self>,
     ) {
         let phase = match result {
-            Ok(Committed {
-                identifier,
-                unreconciled,
-            }) => {
-                if unreconciled.is_empty() {
-                    return self.finish_project_move(identifier, window, cx);
+            Ok(committed) => {
+                if committed.unreconciled.is_empty() {
+                    return self.finish_project_move(committed.id, window, cx);
                 }
                 self.reload_list(cx);
-                Phase::Moved(identifier, unreconciled)
+                Phase::Moved(committed)
             }
             Err(IssueSaveError::Conflict) => Phase::Failed(IssueSaveError::Conflict),
             Err(IssueSaveError::Unconfirmed) => Phase::Unconfirmed(preview.clone()),
@@ -275,18 +275,15 @@ impl Issues {
         }
         cx.notify();
     }
-    fn finish_project_move(
-        &mut self,
-        identifier: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Closes the move and opens the moved root by its stable ID: the number
+    /// it was given may be gone if it has moved again since.
+    fn finish_project_move(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(state) = &mut self.project_move {
             state.phase = Phase::Choosing;
         }
         self.close_project_move(window, cx);
         self.reload_list(cx);
-        self.open_detail(identifier, cx);
+        self.open_detail(id, cx);
     }
 }
 
@@ -424,6 +421,7 @@ mod tests {
         settle_board(&board, cx, |b| preview(b).is_some());
         let preview = board.read_with(cx, |b, _| preview(b)).unwrap();
         let moved = super::Committed {
+            id: "2".into(),
             identifier: "OPS-8".into(),
             unreconciled,
         };
@@ -481,14 +479,30 @@ mod tests {
         board.update(cx, |b, cx| b.load_move_preview(cx));
         assert!(board.read_with(cx, |b, _| matches!(
             &b.project_move.as_ref().unwrap().phase,
-            Phase::Moved(identifier, items) if identifier == "OPS-8" && items.len() == 2
+            Phase::Moved(moved) if moved.identifier == "OPS-8" && moved.unreconciled.len() == 2
         )));
         cx.update(|window, cx| {
-            board.update(cx, |b, cx| {
-                b.finish_project_move("OPS-8".into(), window, cx)
-            })
+            board.update(cx, |b, cx| b.finish_project_move("2".into(), window, cx))
         });
         assert!(board.read_with(cx, |b, _| b.project_move.is_none()));
+    }
+
+    /// A move that committed opens its root by the root's stable ID, not by
+    /// the number it was given, which is gone once the root moves again.
+    #[gpui_kit::test]
+    fn a_committed_move_opens_the_root_by_its_id(cx: &mut TestAppContext) {
+        // NETT recorded OPS-8, but the root may have moved on since.
+        let fixture = fixture();
+        let (board, cx) = moved_with(&fixture, cx, Vec::new());
+        let opened = board.read_with(cx, |b, _| {
+            assert!(b.project_move.is_none(), "the move panel closed");
+            b.hub.as_ref().and_then(|hub| {
+                hub.snapshot()
+                    .issue()
+                    .map(|issue| issue.identifier().to_owned())
+            })
+        });
+        assert_eq!(opened.as_deref(), Some("2"));
     }
 
     /// However many sub-issues a large move could not confirm, the list
