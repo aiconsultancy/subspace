@@ -8,6 +8,7 @@ relative to this NOTICE, including in Subspace.app/Contents/Resources/.
 - Release archives include THIRD_PARTY_LICENSES for the linked Rust crates.
 - licenses/canvas/ covers the Mermaid renderer.
 - licenses/charts/ covers the bundled chart renderer and JavaScript engine.
+- licenses/fonts/ covers the embedded Inter and JetBrains Mono fonts.
 - licenses/icons/ covers embedded icons and includes the Octicons MIT licence.
 - licenses/markdown/ covers the patched Markdown parser.
 - licenses/onnxruntime/ contains the ONNX Runtime licence and third-party notices.
