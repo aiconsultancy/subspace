@@ -14,6 +14,8 @@ mod page_bridge;
 mod policy;
 mod source;
 mod state;
+#[cfg(test)]
+mod tests;
 mod toolbar;
 
 use std::time::{Duration, Instant};
@@ -25,7 +27,7 @@ use gpui_kit::{
 };
 use subspace_framework::core::config::web_boards::{WebBoard as WebBoardConfig, WebBoardSource};
 use subspace_framework::dashboard::{
-    Dashboard, DashboardEvent, DashboardHandle, KeyHelp, Tokens, contracts, feedback,
+    Dashboard, DashboardEvent, DashboardHandle, KeyHelp, Tokens, contracts, feedback, workspace,
 };
 
 use page::{Page, Profile, Start};
@@ -200,6 +202,8 @@ impl WebBoard {
         self.sync_shown(cx);
     }
 
+    /// What the pane shows under its toolbar: the page, or why there is
+    /// none yet.
     fn body(&self, cx: &mut Context<Self>) -> AnyElement {
         let tokens = Tokens::current(cx);
         if let Some(page) = &self.page {
@@ -215,7 +219,8 @@ impl WebBoard {
             )
             .into_any_element(),
             None => feedback::loading_line(&tokens, "web-board-opening", "Opening the page…")
-                .p(tokens.pad_x)
+                .px(workspace::text_edge(&tokens))
+                .py(tokens.pad_x)
                 .into_any_element(),
         }
     }
@@ -230,13 +235,22 @@ impl Focusable for WebBoard {
 }
 
 impl Render for WebBoard {
+    /// The pane's toolbar, then the page. The native web view takes the
+    /// bounds GPUI lays its element out at and draws above everything GPUI
+    /// draws there, so the toolbar is a sibling above the pane's content,
+    /// never inside the page's element.
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let page_toolbar = toolbar::render(self, cx);
         div()
             .id(SharedString::from(format!("{INSTANCE}-{}", self.config.id)))
             .track_focus(&self.focus)
             .size_full()
             .flex()
-            .child(self.body(cx))
+            .child(
+                workspace::Pane::new("web-pane")
+                    .toolbar(page_toolbar)
+                    .child(self.body(cx)),
+            )
     }
 }
 
@@ -310,18 +324,6 @@ impl Dashboard for WebBoard {
 
     fn window_title(&self, _cx: &App) -> Option<SharedString> {
         self.state.title.clone().map(SharedString::from)
-    }
-
-    fn render_toolbar(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        Some(toolbar::render(
-            self.page.is_some(),
-            self.start.app.is_none(),
-            cx,
-        ))
     }
 
     fn status(&self, _cx: &App) -> Option<SharedString> {

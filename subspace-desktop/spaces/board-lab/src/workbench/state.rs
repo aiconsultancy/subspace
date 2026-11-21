@@ -10,23 +10,8 @@ use gpui_kit::{App, Entity, SharedString, Task, Window};
 
 use super::Workbench;
 
-/// Draft canvas (authoring) vs the saved-preset gallery.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ViewTab {
-    Projects,
-    Canvas,
-    Gallery,
-    Environments,
-}
-
-impl ViewTab {
-    pub(super) fn visible(self, prototypes: bool) -> Self {
-        match (self, prototypes) {
-            (Self::Canvas | Self::Gallery, false) => Self::Projects,
-            _ => self,
-        }
-    }
-}
+// The Space's views live with the shell that every view shares.
+pub(super) use crate::shell::ViewTab;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ResultTab {
@@ -105,21 +90,25 @@ impl Profile {
     }
 }
 
-/// Which tab, layout and profile the person is currently looking at.
+/// Which tab, layout and profile the person is currently looking at, and
+/// whether the navigator shows beside it.
 pub(super) struct ViewState {
     pub(super) tab: ViewTab,
     pub(super) layout: CanvasLayout,
     pub(super) profile: Profile,
     pub(super) result_tab: ResultTab,
+    pub(super) navigator: bool,
 }
 
 impl ViewState {
-    pub(super) fn new() -> Self {
+    /// `navigator` is the stored choice; it shows unless the person hid it.
+    pub(super) fn new(navigator: bool) -> Self {
         Self {
             tab: ViewTab::Projects,
             layout: CanvasLayout::Composer,
             profile: Profile::Market,
             result_tab: ResultTab::Chart,
+            navigator,
         }
     }
 }

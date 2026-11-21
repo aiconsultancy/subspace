@@ -17,11 +17,13 @@ mod watch;
 
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
-    Window,
+    Subscription, Window,
 };
-use subspace_framework::dashboard::DashboardEvent;
+use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
+use subspace_framework::dashboard::{DashboardEvent, prefs};
 
 use crate::environments::EnvironmentManager;
+use crate::shell::{self, Shell, ShellRequest};
 use crate::studio::Studio;
 
 use state::{DraftInputs, JobState, ViewState};
@@ -56,6 +58,7 @@ pub struct Workbench {
     recipe_source: String,
     networked: bool,
     projects: Entity<crate::project_browser::ProjectBrowser>,
+    _shell_requests: Subscription,
 }
 
 impl EventEmitter<DashboardEvent> for Workbench {}
@@ -74,13 +77,21 @@ impl Workbench {
     ) -> Self {
         let projects =
             cx.new(|cx| crate::project_browser::ProjectBrowser::new(root.clone(), window, cx));
+        let shell_requests = cx.subscribe_in(
+            &projects,
+            window,
+            |this: &mut Self, _, request: &ShellRequest, window, cx| {
+                this.apply_shell_request(*request, window, cx);
+            },
+        );
+        let navigator = shell::dock_shown(prefs::get(cx, shell::NAVIGATOR_KEY).as_deref());
         let loaded = bootstrap::load(root);
         let inputs = DraftInputs::new(&loaded.draft.title, window, cx);
         let mut workbench = Self {
             focus: cx.focus_handle(),
             studio: loaded.studio,
             environments: loaded.environments,
-            view: ViewState::new(),
+            view: ViewState::new(navigator),
             prototype_views: subspace_framework::dashboard::services(cx)
                 .is_some_and(|services| services.config.feature_enabled(&crate::PROTOTYPE_VIEWS)),
             inputs,
@@ -96,9 +107,85 @@ impl Workbench {
             recipe_source: loaded.recipe_source,
             networked: loaded.networked,
             projects,
+            _shell_requests: shell_requests,
         };
         workbench.rebuild_param_inputs(window, cx);
+        workbench.sync_shell(cx);
         workbench
+    }
+
+    /// The shell facts every view draws from.
+    fn shell(&self) -> Shell {
+        Shell {
+            views: shell::view_tab_order(self.prototype_views),
+            navigator: self.view.navigator,
+        }
+    }
+
+    /// Gives the project browser the shell facts it draws its own copy from.
+    fn sync_shell(&mut self, cx: &mut Context<Self>) {
+        let shell = self.shell();
+        self.projects
+            .update(cx, |projects, cx| projects.set_shell(shell, cx));
+    }
+
+    fn apply_shell_request(
+        &mut self,
+        request: ShellRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ShellRequest::Show(view) = request;
+        self.show_view(view, window, cx);
+    }
+
+    /// Shows a view. The project browser observes its service only while it
+    /// is the view in front.
+    fn show_view(&mut self, view: state::ViewTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.view.tab = view;
+        self.projects.update(cx, |projects, cx| {
+            if view == state::ViewTab::Projects {
+                projects.activate(window, cx);
+            } else {
+                projects.deactivate();
+            }
+        });
+        cx.notify();
+    }
+
+    /// The status bar's switches: the navigator's, as it shows. Board Lab
+    /// has no inspector.
+    pub(crate) fn space_docks(&self) -> SpaceDocks {
+        SpaceDocks {
+            navigator: Some(self.view.navigator),
+            inspector: None,
+        }
+    }
+
+    /// A dock's status bar switch was used.
+    pub(crate) fn toggle_space_dock(&mut self, dock: SpaceDock, cx: &mut Context<Self>) {
+        if dock == SpaceDock::Navigator {
+            self.toggle_navigator(cx);
+        }
+    }
+
+    /// Shows or hides the navigator in every view, and stores the choice.
+    fn toggle_navigator(&mut self, cx: &mut Context<Self>) {
+        self.view.navigator = !self.view.navigator;
+        prefs::set(
+            cx,
+            shell::NAVIGATOR_KEY,
+            shell::dock_value(self.view.navigator),
+        );
+        self.sync_shell(cx);
+        cx.notify();
+    }
+
+    /// Opens the New project form from another view.
+    fn new_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_view(state::ViewTab::Projects, window, cx);
+        self.projects
+            .update(cx, |projects, cx| projects.begin_creating(window, cx));
     }
 
     pub(crate) fn busy(&self, cx: &App) -> bool {

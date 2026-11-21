@@ -2,8 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use subspace_framework::dashboard::list::{Detail, Group, Row, Section, ServiceLink};
+use subspace_framework::dashboard::list::{Group, Row};
 use subspace_framework::dashboard::{Glyph, Tone};
+use subspace_framework::lucide::IconName;
 
 use crate::model::{self, Filters, Record, View};
 
@@ -15,6 +16,56 @@ pub(crate) fn tone(status: &str) -> Tone {
         "waiting" | "queued" | "pending" | "requested" => Tone::Yellow,
         _ => Tone::Muted,
     }
+}
+
+/// A status's glyph and tone. Each kind of state has its own shape, so the
+/// glyph reads without its colour.
+pub(crate) fn status_look(status: &str) -> (IconName, Tone) {
+    let icon = match status {
+        "success" | "approved" | "active" | "published" => IconName::CircleCheck,
+        "failure" | "timed_out" | "rejected" | "error" | "startup_failure" => IconName::CircleX,
+        "in_progress" => IconName::LoaderCircle,
+        "waiting" | "queued" | "pending" | "requested" | "action_required" => IconName::Clock,
+        "cancelled" => IconName::CircleSlash,
+        "skipped" | "neutral" | "stale" | "draft" => IconName::CircleDashed,
+        _ => IconName::Circle,
+    };
+    (icon, tone(status))
+}
+
+/// A status as words, such as "in progress" for `in_progress`.
+pub(crate) fn status_word(status: &str) -> String {
+    status.replace('_', " ")
+}
+
+/// What item search matches beyond the title: the run's branch, actor,
+/// event and status, which the title no longer carries.
+pub(crate) fn search_meta(record: &Record) -> String {
+    let mut words = vec![status_word(&record.status)];
+    if let Some(run) = &record.run {
+        words.extend([run.branch.clone(), run.actor.clone(), run.workflow.clone()]);
+    }
+    if let Some(facts) = &record.facts {
+        words.push(facts.event.clone());
+    }
+    words.retain(|word| !word.is_empty());
+    words.join(" ")
+}
+
+/// A row's accessible name: the title and status and, for a run, the
+/// branch, actor, event and age its lanes show.
+pub(crate) fn accessible_label(record: &Record) -> String {
+    let mut parts = vec![record.title.clone(), status_word(&record.status)];
+    if let (Some(run), Some(facts)) = (&record.run, &record.facts) {
+        parts.extend([
+            run.branch.clone(),
+            run.actor.clone(),
+            facts.event.clone(),
+            facts.age.clone(),
+        ]);
+    }
+    parts.retain(|part| !part.is_empty());
+    parts.join(", ")
 }
 
 pub(crate) fn row(record: &Record) -> Row {
@@ -30,25 +81,6 @@ pub(crate) fn row(record: &Record) -> Row {
         trailing,
         done: false,
         indent: 0,
-    }
-}
-
-pub(crate) fn detail(record: &Record) -> Detail {
-    Detail {
-        kind: "GitHub Actions".into(),
-        id: record.key.clone().into(),
-        title: record.title.clone().into(),
-        link: (!record.link.is_empty()).then(|| ServiceLink::new("GitHub", record.link.clone())),
-        props: record
-            .properties
-            .iter()
-            .map(|(key, value)| (key.clone().into(), value.clone().into()))
-            .collect(),
-        sections: record
-            .sections
-            .iter()
-            .map(|(title, text)| Section::text(title.clone(), text.clone()))
-            .collect(),
     }
 }
 
@@ -93,9 +125,41 @@ fn repo_groups(records: &[Record], repo: &str, filters: &Filters, view: View) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{groups, tone};
+    use super::{accessible_label, groups, search_meta, status_look, status_word, tone};
     use crate::model::{Filters, View};
     use subspace_framework::dashboard::Tone;
+    use subspace_framework::lucide::IconName;
+
+    #[test]
+    fn each_kind_of_status_has_its_own_glyph_and_words() {
+        let shapes = [
+            "success",
+            "failure",
+            "in_progress",
+            "waiting",
+            "cancelled",
+            "skipped",
+        ]
+        .map(|status| status_look(status).0);
+        for (at, shape) in shapes.iter().enumerate() {
+            assert!(!shapes[at + 1..].contains(shape), "{at} shares a glyph");
+        }
+        assert_eq!(status_look("timed_out"), (IconName::CircleX, Tone::Red));
+        assert_eq!(status_look("queued"), (IconName::Clock, Tone::Yellow));
+        assert_eq!(status_look("anything"), (IconName::Circle, Tone::Muted));
+        assert_eq!(status_word("in_progress"), "in progress");
+        assert_eq!(status_word("success"), "success");
+    }
+
+    #[test]
+    fn search_finds_a_run_by_its_branch_actor_and_event() {
+        let run = crate::test_support::run("octo/app");
+        assert_eq!(search_meta(&run), "success main ann CI push");
+        let notice = crate::load::mapping::notice("octo/app", "gone", "Gone");
+        assert_eq!(search_meta(&notice), "notice");
+        assert_eq!(accessible_label(&run), "CI, success, main, ann, push, 4h");
+        assert_eq!(accessible_label(&notice), "Gone, notice");
+    }
 
     #[test]
     fn empty_repositories_keep_configured_order() {

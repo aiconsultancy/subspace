@@ -5,7 +5,7 @@ use subspace_framework::client_github::actions::{
 };
 use subspace_framework::dashboard::dates;
 
-use crate::model::{Record, RunTarget, active};
+use crate::model::{Record, Review, RunFacts, RunTarget, active};
 
 pub(crate) fn run(repo: &str, run: &WorkflowRun) -> Record {
     let status = run.conclusion.as_deref().unwrap_or(&run.status).to_owned();
@@ -15,18 +15,21 @@ pub(crate) fn run(repo: &str, run: &WorkflowRun) -> Record {
         .as_ref()
         .map(|actor| actor.login.clone())
         .unwrap_or_default();
-    let age = dates::age(&run.updated_at, chrono::Utc::now());
+    let name = format!("{} #{}", run.name, run.run_number);
     Record {
         key: format!("{repo}#run#{}", run.id),
         repo: repo.into(),
-        title: format!(
-            "{} #{} · {branch} · {actor} · {} · {age}",
-            run.name, run.run_number, run.event
-        ),
+        title: name,
         status,
         active: active(&run.status),
         link: run.html_url.clone(),
         approval: None,
+        facts: Some(RunFacts {
+            event: run.event.clone(),
+            age: dates::age(&run.updated_at, chrono::Utc::now()),
+            started: run.run_started_at.clone(),
+            review: None,
+        }),
         properties: vec![
             ("Event".into(), run.event.clone()),
             ("SHA".into(), run.head_sha.clone()),
@@ -61,6 +64,23 @@ pub(crate) fn approval(repo: &str, run: &WorkflowRun, pending: &PendingDeploymen
     );
     record.status = "waiting".into();
     record.approval = Some((pending.environment.id, pending.current_user_can_approve));
+    let reviewers = pending
+        .reviewers
+        .iter()
+        .filter_map(|reviewer| reviewer.reviewer.as_ref())
+        .filter_map(|who| {
+            who.login
+                .clone()
+                .or_else(|| who.name.clone())
+                .or_else(|| who.slug.clone())
+        })
+        .collect();
+    if let Some(facts) = &mut record.facts {
+        facts.review = Some(Review {
+            environment: pending.environment.name.clone(),
+            reviewers,
+        });
+    }
     record.properties.extend([
         ("Environment".into(), pending.environment.name.clone()),
         (
@@ -108,6 +128,7 @@ pub(super) fn environment(
         link: environment.html_url.clone(),
         run: None,
         approval: None,
+        facts: None,
         properties: vec![
             ("Environment".into(), environment.name.clone()),
             ("Ref".into(), reference),
@@ -154,6 +175,7 @@ pub(super) fn release(repo: &str, release: &Release, completed: bool) -> Record 
         link: release.html_url.clone(),
         run: None,
         approval: None,
+        facts: None,
         properties: vec![
             ("Tag".into(), release.tag_name.clone()),
             (
@@ -176,6 +198,15 @@ pub(super) fn release(repo: &str, release: &Release, completed: bool) -> Record 
     }
 }
 
+/// The notice key of a repository whose run history was cut at the client's
+/// page limit.
+pub(crate) const RUNS_TRUNCATED: &str = "runs-truncated";
+
+/// Whether `record` is some repository's notice `key`.
+pub(crate) fn is_notice(record: &Record, key: &str) -> bool {
+    record.run.is_none() && record.key.ends_with(&format!("#notice#{key}"))
+}
+
 pub(crate) fn notice(repo: &str, key: &str, message: &str) -> Record {
     Record {
         key: format!("{repo}#notice#{key}"),
@@ -188,5 +219,52 @@ pub(crate) fn notice(repo: &str, key: &str, message: &str) -> Record {
         sections: Vec::new(),
         run: None,
         approval: None,
+        facts: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use subspace_framework::client_github::actions::{PendingDeployment, WorkflowRun};
+
+    use super::{RUNS_TRUNCATED, approval, is_notice, notice, run};
+    use crate::model::Review;
+
+    #[test]
+    fn a_run_is_named_briefly_and_a_review_carries_its_reviewers() {
+        let source: WorkflowRun = serde_json::from_str(
+            r#"{"id":7,"name":"Deploy","run_number":12,"event":"push","status":"waiting",
+                "head_branch":"main","actor":{"login":"ann"}}"#,
+        )
+        .unwrap();
+        let pending: PendingDeployment = serde_json::from_str(
+            r#"{"environment":{"id":3,"name":"production"},"current_user_can_approve":true,
+                "reviewers":[{"type":"User","reviewer":{"login":"bob"}},
+                             {"type":"Team","reviewer":{"slug":"ops"}}]}"#,
+        )
+        .unwrap();
+        let record = run("octo/app", &source);
+        assert_eq!(record.title, "Deploy #12", "branch and actor have lanes");
+        let facts = record.facts.unwrap();
+        assert_eq!(facts.event, "push");
+        assert_eq!(facts.review, None, "a run alone waits on no known review");
+        let review = approval("octo/app", &source, &pending)
+            .facts
+            .and_then(|facts| facts.review);
+        let expected = Review {
+            environment: "production".into(),
+            reviewers: vec!["bob".into(), "ops".into()],
+        };
+        assert_eq!(review, Some(expected));
+    }
+
+    #[test]
+    fn a_truncation_notice_is_told_from_runs_and_other_notices() {
+        let cut = notice("octo/app", RUNS_TRUNCATED, "Run history is truncated");
+        assert!(is_notice(&cut, RUNS_TRUNCATED));
+        let other = notice("octo/app", "no-environments", "No environments");
+        assert!(!is_notice(&other, RUNS_TRUNCATED));
+        let run = crate::test_support::run("octo/app");
+        assert!(!is_notice(&run, "run-1"), "a record with a run is a run");
     }
 }

@@ -37,7 +37,9 @@ pub(super) fn open(
     if board.row(&task_key).is_none() {
         return;
     }
-    board.detail_key = Some(task_key.clone());
+    // The hit opens its task as a tab, as any opened row does, then shows
+    // the indexed log there.
+    board.open_item(&task_key, cx);
     board.log = Some(logs::OpenLog {
         task_key,
         session_id: session_id.clone(),

@@ -22,6 +22,11 @@ impl View {
         self.presentation().1
     }
 
+    /// The view with this title, as the view menu and a saved choice name it.
+    pub(crate) fn named(title: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|view| view.title() == title)
+    }
+
     fn presentation(self) -> (&'static str, subspace_framework::lucide::IconName) {
         use subspace_framework::lucide::IconName;
         match self {
@@ -105,6 +110,26 @@ pub(crate) struct RunTarget {
     pub attempt: u64,
 }
 
+/// The environment a review waits on, and who may give it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Review {
+    pub environment: String,
+    pub reviewers: Vec<String>,
+}
+
+/// What a run's row and inspector show beyond its target. Kept apart from
+/// [`RunTarget`], which identifies the run: the age changes on every read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RunFacts {
+    pub event: String,
+    /// The compact age of the last update, such as `4h`, as of the read.
+    pub age: String,
+    /// When the run started, as the service gives it.
+    pub started: String,
+    /// The review the run waits on, for a pending deployment.
+    pub review: Option<Review>,
+}
+
 /// A record carries service facts; shared row and detail controls render it.
 #[derive(Clone, Debug)]
 pub(crate) struct Record {
@@ -118,6 +143,8 @@ pub(crate) struct Record {
     pub sections: Vec<(String, String)>,
     pub run: Option<RunTarget>,
     pub approval: Option<(u64, bool)>,
+    /// A run's row and inspector facts; none for a release or environment.
+    pub facts: Option<RunFacts>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -201,6 +228,7 @@ mod tests {
             properties: Vec::new(),
             sections: Vec::new(),
             approval: None,
+            facts: None,
             run: Some(RunTarget {
                 repo: "octo/app".into(),
                 id: 1,
@@ -269,6 +297,11 @@ mod tests {
             View::ALL.map(View::title),
             ["Runs", "Deployments", "Releases", "Flow"]
         );
+        assert_eq!(
+            View::ALL.map(|view| View::named(view.title())),
+            View::ALL.map(Some)
+        );
+        assert_eq!(View::named("Workflows"), None);
         assert_eq!(
             StatusFilter::ALL.map(StatusFilter::title),
             ["All", "Active", "Failed", "Success"]

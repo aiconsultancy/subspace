@@ -5,6 +5,14 @@ use gpui_kit::component::select::SearchableVec;
 use gpui_kit::{Context, Window};
 
 impl ProjectBrowser {
+    /// Opens the New project form with its Project ID field focused.
+    pub(crate) fn begin_creating(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.creating = true;
+        self.project_id
+            .update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
     pub(super) fn refresh_catalog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(window, cx, |service| {
             let manager = EnvironmentManager::new(service.root().join("environments"));
