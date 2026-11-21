@@ -212,6 +212,32 @@ they explicitly unsubscribe. A member can change their subscription under
 `/api/v1/notifications`. The API sends in-app notices for comments, linked
 Markdown mentions and state changes.
 
+## Ready for agents
+
+Every issue representation includes `readyForAgents`, a boolean that defaults
+to `false`. It marks an unassigned issue as open for a fleet's captains to
+take. Anyone who may edit an issue can set it on create with
+`POST /api/v1/issues` or on edit with `PATCH /api/v1/issues/{reference}`.
+
+- A write that would leave the issue with an assignee and asks for
+  `readyForAgents: true` fails with 400. An edit that clears the assignee and
+  sets the flag in the same request is allowed.
+- Any write that leaves the issue with an assignee sets `readyForAgents` to
+  `false` in the same write and version. Accepting an offer is therefore one
+  versioned assignment, and a second writer with the same version receives 409.
+- Removing the assignee does not set the flag again.
+- The issue's activity lists `readyForAgents` among the changed fields
+  whenever the flag changes, including when an assignment clears it.
+
+`GET /api/v1/issues` and `GET /api/v1/issues/groups` take
+`readyForAgents=true` or `readyForAgents=false`, validated like the other
+boolean filters. Ask for unassigned issues with the existing `assignee=none`,
+so a poller reads `readyForAgents=true&assignee=none`. The `assignee` filter
+also accepts an agent's user ID and combines with `updatedSince`. The MCP
+tools `subspace_create_issue`, `subspace_update_issue` and
+`subspace_list_issues` accept the same field and filter, and every MCP issue
+result carries the field.
+
 ## Planning and stakeholders
 
 Initiative responses include `stakeholders`, a list of names, roles and Slack

@@ -407,6 +407,7 @@ export const issues = pgTable(
     description: text(),
     stateId: uuid("state_id").notNull(),
     assigneeId: uuid("assignee_id"),
+    readyForAgents: boolean("ready_for_agents").default(false).notNull(),
     ownerId: uuid("owner_id"),
     createdById: uuid("created_by_id").notNull(),
     parentId: uuid("parent_id"),

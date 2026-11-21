@@ -308,6 +308,7 @@ function issueDto(row: Joined, snapshot: Snapshot) {
     summary: issue.summary,
     state: stateSummary(row.state),
     assignee: person(issue.assigneeId ? snapshot.membersById.get(issue.assigneeId) : null),
+    readyForAgents: issue.readyForAgents,
     owner: person(issue.ownerId ? snapshot.membersById.get(issue.ownerId) : null),
     priority: issue.priority,
     estimate: issue.estimate,
@@ -668,6 +669,28 @@ function activePeople(
   });
 }
 
+/**
+ * Works out the ready-for-agents flag a write leaves on an issue. Only an unassigned issue may be
+ * marked ready, and any write that leaves an assignee clears the flag in the same write.
+ */
+export function readyForAgentsAfter(
+  current: Pick<IssueRow, "assigneeId" | "readyForAgents"> | null,
+  input: { assigneeId?: string | null; readyForAgents?: boolean },
+) {
+  const assigneeId =
+    input.assigneeId === undefined ? (current?.assigneeId ?? null) : input.assigneeId;
+  if (assigneeId !== null && input.readyForAgents === true)
+    return Effect.fail(
+      problem(400, "Remove the assignee before marking the issue ready for agents."),
+    );
+  const readyForAgents =
+    assigneeId === null ? (input.readyForAgents ?? current?.readyForAgents ?? false) : false;
+  return Effect.succeed({
+    readyForAgents,
+    changed: current !== null && current.readyForAgents !== readyForAgents,
+  });
+}
+
 function planningRefs(
   db: Db,
   member: Member,
@@ -834,6 +857,7 @@ export const createIssue = (member: Member, payload: typeof NewIssue.Type) =>
           !estimatePoints[project.estimateScale].includes(editable.estimate)
         )
           return yield* Effect.fail(problem(400, "Choose an estimate on the project scale."));
+        const ready = yield* readyForAgentsAfter(null, editable);
         yield* activePeople(tx, member, editable);
         yield* planningRefs(tx, member, project.id, editable);
         const parent = yield* linkParent(tx, member, parentId);
@@ -846,6 +870,7 @@ export const createIssue = (member: Member, payload: typeof NewIssue.Type) =>
           .values({
             ...editable,
             ...datesForState(state),
+            readyForAgents: ready.readyForAgents,
             organisationId: member.organisationId,
             projectId: project.id,
             identifier: `${project.key}-${number}`,
@@ -909,6 +934,7 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
           !estimatePoints[project.estimateScale].includes(editable.estimate)
         )
           return yield* Effect.fail(problem(400, "Choose an estimate on the project scale."));
+        const ready = yield* readyForAgentsAfter(issue, editable);
         yield* activePeople(tx, member, editable);
         yield* planningRefs(tx, member, issue.projectId, editable);
         const parent = yield* linkParent(tx, member, parentId, issue.id);
@@ -920,6 +946,7 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
               ? { cycleJoinedAt: editable.cycleId ? new Date() : null }
               : {}),
             ...(state ? datesForState(state, issue) : {}),
+            readyForAgents: ready.readyForAgents,
             parentId: parent,
             updatedAt: sql`now()`,
             lastActivityAt: sql`now()`,
@@ -942,8 +969,11 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
             relations.remove,
             relations.duplicateOf,
           );
+        const fields = Object.keys(payload).filter((field) => field !== "version");
+        // An assignment that clears the flag records it as changed although the caller did not send it.
+        if (ready.changed && !fields.includes("readyForAgents")) fields.push("readyForAgents");
         yield* addActivity(tx, actor, issue.id, "issue.changed", {
-          fields: Object.keys(payload).filter((field) => field !== "version"),
+          fields,
           mentionUserIds: yield* validatedMentions(
             tx,
             member,

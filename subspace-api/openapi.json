@@ -9615,6 +9615,9 @@
                               }
                             ]
                           },
+                          "readyForAgents": {
+                            "type": "boolean"
+                          },
                           "owner": {
                             "anyOf": [
                               {
@@ -9978,6 +9981,7 @@
                           "summary",
                           "state",
                           "assignee",
+                          "readyForAgents",
                           "owner",
                           "priority",
                           "estimate",
@@ -10221,6 +10225,9 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "readyForAgents": {
+                            "type": "boolean"
                           },
                           "owner": {
                             "anyOf": [
@@ -10550,6 +10557,7 @@
                           "summary",
                           "state",
                           "assignee",
+                          "readyForAgents",
                           "owner",
                           "priority",
                           "estimate",
@@ -16629,6 +16637,18 @@
             "required": false
           },
           {
+            "name": "readyForAgents",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "required": false
+          },
+          {
             "name": "updatedSince",
             "in": "query",
             "schema": {
@@ -17136,6 +17156,16 @@
                       }
                     ]
                   },
+                  "readyForAgents": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "ownerId": {
                     "anyOf": [
                       {
@@ -17453,6 +17483,18 @@
           },
           {
             "name": "subscribed",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "required": false
+          },
+          {
+            "name": "readyForAgents",
             "in": "query",
             "schema": {
               "type": "string",
@@ -18154,6 +18196,16 @@
                       },
                       {
                         "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "readyForAgents": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
                       },
                       {
                         "type": "null"
@@ -37504,6 +37556,9 @@
               }
             ]
           },
+          "readyForAgents": {
+            "type": "boolean"
+          },
           "owner": {
             "anyOf": [
               {
@@ -38002,6 +38057,7 @@
           "summary",
           "state",
           "assignee",
+          "readyForAgents",
           "owner",
           "priority",
           "estimate",
@@ -38098,6 +38154,9 @@
                 "type": "null"
               }
             ]
+          },
+          "readyForAgents": {
+            "type": "boolean"
           },
           "owner": {
             "anyOf": [
@@ -38417,6 +38476,7 @@
           "summary",
           "state",
           "assignee",
+          "readyForAgents",
           "owner",
           "priority",
           "estimate",
@@ -38672,6 +38732,9 @@
                 "type": "null"
               }
             ]
+          },
+          "readyForAgents": {
+            "type": "boolean"
           },
           "owner": {
             "anyOf": [
@@ -39001,6 +39064,7 @@
           "summary",
           "state",
           "assignee",
+          "readyForAgents",
           "owner",
           "priority",
           "estimate",
