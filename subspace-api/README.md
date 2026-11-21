@@ -269,6 +269,9 @@ TEST_API_URL=http://127.0.0.1:3000 TEST_DATABASE_URL=postgresql://subspace:subsp
 bun run openapi
 ```
 
+The repository's pre-push hook runs type checking, lint and `bun test` on API
+code changes. Install the API dependencies before pushing code.
+
 The HTTP tests require a clean loopback Compose stack and create synthetic
 organisations. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`. For signed pull request and deployment tests, sign in first as
 `admin@example.com` to a dedicated dev organisation. Start the API with that

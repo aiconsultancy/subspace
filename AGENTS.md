@@ -67,7 +67,9 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
   edit a release changelog or tag a release by hand.
   [Release Please configuration](release-please-config.json)
 - Keep prek hooks installed and passing. Never use `--no-verify`. Review the
-  staged diff before committing. [Repository hook configuration](prek.toml)
+  staged diff before committing. The pre-push hook runs code checks only for
+  changed projects. Markdown changes run the applicable documentation checks.
+  [Repository hook configuration](prek.toml)
 - Write prose in British English. Keep existing code and API identifiers.
 - Keep this public repository free of secrets, tokens, real tenant or client
   IDs, internal hostnames, personal data, and organisation-specific branding

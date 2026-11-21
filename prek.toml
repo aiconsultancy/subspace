@@ -1,6 +1,6 @@
 # Repository-wide hooks. prek runs in workspace mode: each project keeps its
-# own prek.toml (subspace-framework/prek.toml and subspace-desktop/prek.toml),
-# and its hooks see only that project's files and run in its folder.
+# own prek.toml for commit hooks. The root push hook routes checks by the
+# paths in the pushed diff, including deletions.
 #
 # Install once with `prek install`; run by hand with `prek run --all-files`.
 
@@ -27,10 +27,12 @@ hooks = [
     { id = "end-of-file-fixer", exclude = "^subspace-desktop/licenses/(onnxruntime/(LICENSE|ThirdPartyNotices\\.txt)$|rust-crates/|webview2/(LICENSE|NOTICE)\\.txt$)" },
 ]
 
-# Release tooling at the root: Release Please's config, the lockfile sync and
-# the release workflows (`make release-check`).
+# Run project checks once per push. The entry selects the projects and handles
+# deletions even when prek has no existing paths to pass.
 [[repos]]
 repo = "local"
 hooks = [
-    { id = "release-check", name = "release: make release-check", entry = "make release-check", language = "system", stages = ["pre-push"], files = "^(scripts/|\\.github/|release-please-config\\.json$|\\.release-please-manifest\\.json$|.*Cargo\\.(toml|lock)$)", pass_filenames = false },
+    { id = "check-push", name = "check changed projects", entry = "python3 scripts/check-push.py", language = "system", stages = ["pre-push"], always_run = true, require_serial = true, verbose = true },
+    { id = "check-push-tests", name = "test project check routing", entry = "python3 -B scripts/test-check-push.py", language = "system", stages = ["pre-push"], files = "^(prek\\.toml|scripts/(test-)?check-push\\.py)$", pass_filenames = false },
+    { id = "release-check", name = "release: make release-check", entry = "make release-check", language = "system", stages = ["pre-push"], files = "^(scripts/|\\.github/|release-please-config\\.json$|\\.release-please-manifest\\.json$|.*Cargo\\.(toml|lock)$)", exclude = "(?i)\\.md$", pass_filenames = false },
 ]
