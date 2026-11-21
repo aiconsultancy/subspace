@@ -21,8 +21,9 @@ the same guide with `board_help` and can request a bundled screenshot by ID.
 
 ## Enable it
 
-In a build that includes Space Lab, open **Settings > General > Boards**,
-enable **Space Lab** and save, or choose it from **Add a Space**. The tab
+In a build that includes Space Lab, turn on **Enabled** in
+**Settings > Spaces > Space Lab** and save, or choose it from
+**Add a Space**. The tab
 appears without a restart. Disabling Space Lab hides its tab; open project
 workers keep running until you quit Subspace. The same setting can be written in Subspace's configuration file:
 
@@ -127,7 +128,7 @@ when the app has no bundled copy. Python projects use uv; Node projects use
 pnpm; TypeScript projects use Bun and its package manager.
 
 Board data is stored beside Subspace's state file, under
-`spaces/space-lab/`. On macOS this is normally
+`boards/space-lab/`. On macOS this is normally
 `~/Library/Application Support/subspace/boards/space-lab/`. Runtime revisions,
 projects, dependencies, presets and dashboard layout stay there, not in the
 installed application or source checkout. The trusted development override

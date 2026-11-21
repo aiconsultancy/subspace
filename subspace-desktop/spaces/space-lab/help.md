@@ -53,8 +53,9 @@ Space Lab has two parts:
 - **Availability.** Space Lab is not ready to ship, so released builds of
   Subspace do not include it. Developer builds made with its `space-lab`
   feature include it, off by default. A saved `boards."space-lab"` choice in
-  `config.json` always wins. Open **Settings > General > Boards**, enable
-  **Space Lab** and save, or choose it from **Add a Space**. The board appears
+  `config.json` always wins. Turn on **Enabled** in
+  **Settings > Spaces > Space Lab** and save, or choose it from
+  **Add a Space**. The board appears
   without a restart. Disabling it hides it, but open project
   workers keep running until you quit Subspace.
 - **No automatic installs.** Enabling or opening the board does not download
@@ -74,7 +75,7 @@ Space Lab has two parts:
 - **Credentials.** The starter needs none. Add private values only through
   [Project settings](#store-credentials-outside-source), never in source.
 - **Data location.** Board data is stored beside Subspace's state file under
-  `spaces/space-lab/`. On macOS this is normally
+  `boards/space-lab/`. On macOS this is normally
   `~/Library/Application Support/subspace/boards/space-lab/`. Projects are in
   `projects/`, shareable exports in `project-exports/`, and environments in
   `environments/`. The development override `SUBSPACE_WORKBENCH_ROOT` selects a

@@ -133,7 +133,9 @@ subspace board_help image --board_id space-lab --image_id dashboard --json
 Space Lab's legacy single-argument tools have separate full-name CLI commands,
 such as `subspace space-lab-inspect --action environments --json`. Project action
 tools retain the `space-lab` group, for example `subspace space-lab list`. Agent
-tool names are unchanged.
+and MCP callers use the underscore tool names, such as `space_lab_inspect` and
+`space_lab_project_inspect`; before the rename to Space Lab these were
+`board_lab_*`.
 
 ## Protocol
 
