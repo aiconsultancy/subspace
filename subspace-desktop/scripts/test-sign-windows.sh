@@ -149,6 +149,23 @@ PY
 expect_failure 'unsafe entry in' sign "$fixture/work/escape.zip"
 expect_failure 'duplicate entries in' sign "$fixture/work/twice.zip"
 
+# Names that Windows treats as one file are refused, and an executable is
+# signed whatever the case of its extension.
+python3 - "$fixture/work" <<'PY'
+import sys, zipfile
+work = sys.argv[1]
+with zipfile.ZipFile(f"{work}/cased.zip", "w") as z:
+    z.writestr("subspace.exe", "exe")
+    z.writestr("Subspace.EXE", "other")
+with zipfile.ZipFile(f"{work}/mixed.zip", "w") as z:
+    z.writestr("Subspace.Exe", "exe")
+    z.writestr("helper.Dll", "dll")
+PY
+expect_failure 'duplicate entries in' sign "$fixture/work/cased.zip"
+sign "$fixture/work/mixed.zip" >/dev/null
+test "$(unzip -p "$fixture/work/mixed.zip" Subspace.Exe)" = exeSIGNED
+test "$(unzip -p "$fixture/work/mixed.zip" helper.Dll)" = dllSIGNED
+
 # In GitHub Actions, the values read from Key Vault are masked in the log.
 printf 'exe' >"$fixture/app.exe"
 GITHUB_ACTIONS=true sign "$fixture/app.exe" >"$fixture/out"

@@ -570,7 +570,8 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
 
 1. **resolve**, on `subspace-signing`, a Linux runner in the trusted
    deployment subnet, refuses the tag unless it is a stable release whose
-   commit is on `main`, so only reviewed code is signed, whoever pushed the
+   commit is on `main` (and, when `release.yml` starts the run, is the
+   release's commit), so only reviewed code is signed, whoever pushed the
    tag. It fixes that commit and the archive's name for the rest of the run.
 2. **build**, on `subspace-windows`, checks out that commit, installs
    `cargo-about` at the version and SHA-256 its `mise.toml` pins, and runs
@@ -586,8 +587,8 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
 3. **sign**, on `subspace-signing`, runs in the `windows-signing`
    environment. The build's scripts could have tampered with anything the
    build job produced, so this job uses nothing from it but the archive. It
-   installs a pinned Temurin build and the pinned jsign JAR (checked against
-   its SHA-256 digest), signs in to Azure with GitHub OIDC as the signing
+   installs a Temurin JRE and the jsign JAR, each checked against its pinned
+   SHA-256 digest, signs in to Azure with GitHub OIDC as the signing
    identity and runs `scripts/sign-windows.sh` on the archive, which refuses
    links, unsafe paths and duplicate entries. It reads the three secrets above
    through the platform Key Vault's private endpoint, masks their values in
@@ -597,7 +598,9 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
    with a timestamp.
 5. **attach**, back on `subspace-signing`, checks the archive again against
    the recorded SHA-256 and that the tag still points at the resolved commit,
-   then attaches the archive and its `.sha256` file to the release. Publish
+   then attaches the archive and its `.sha256` file to the release. It
+   replaces a draft's files, but adds to a published release only files it
+   lacks. Publish
    the release only after this, as
    [Publish a macOS release](#publish-a-macos-release) says.
 
@@ -606,13 +609,14 @@ a token for the signing identity. They can still change what the build
 produces, including `subspace.exe` itself, and the sign job signs that
 binary: only commits on `main`, built with `--locked` against the reviewed
 `Cargo.lock`, limit which build scripts run. The runner group admits only this
-workflow on `main`. To build an older release, or to try the build or the signing
-without attaching anything:
+workflow on `main`. Releases from before this workflow can't be built: their
+`package-release.sh` can't skip running the app. To try the build or the
+signing without attaching anything, or to attach a missing archive:
 
 ```bash
-gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=subspace-desktop-v0.10.0
-gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=subspace-desktop-v0.10.0 -f mode=sign-only
-gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=subspace-desktop-v0.10.0 -f mode=build-only
+gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=subspace-desktop-v<version>
+gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=subspace-desktop-v<version> -f mode=sign-only
+gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=subspace-desktop-v<version> -f mode=build-only
 ```
 
 The `windows-signing` environment's deployment rule admits only `main`, where

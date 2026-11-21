@@ -116,7 +116,8 @@ for path in "$@"; do
 			'' | /* | *\\* | *:* | .. | ../* | */.. | */../*) fail "unsafe entry in $path: $member" ;;
 			esac
 		done <"$stage/$index.entries"
-		[[ -z "$(sort "$stage/$index.entries" | uniq -d)" ]] || fail "duplicate entries in $path"
+		# Windows treats names that differ only in case as the same file.
+		[[ -z "$(sort -f "$stage/$index.entries" | uniq -di)" ]] || fail "duplicate entries in $path"
 		listing="$(unzip -Z "$path")"
 		if grep -q '^l' <<<"$listing"; then fail "symbolic link in $path"; fi
 		unzip -q "$path" -d "$stage/$index/tree"
@@ -124,8 +125,9 @@ for path in "$@"; do
 			fail "symbolic link or special file in $path"
 		found=0
 		while IFS= read -r member; do
-			case "$member" in
-			*.exe | *.dll | *.EXE | *.DLL) files+=("$stage/$index/tree/$member"); found=1 ;;
+			# Windows matches extensions in any case, so sign Subspace.Exe too.
+			case "$(printf '%s' "$member" | tr '[:upper:]' '[:lower:]')" in
+			*.exe | *.dll) files+=("$stage/$index/tree/$member"); found=1 ;;
 			esac
 		done <"$stage/$index.entries"
 		[[ "$found" = 1 ]] || fail "no .exe or .dll to sign in $path"

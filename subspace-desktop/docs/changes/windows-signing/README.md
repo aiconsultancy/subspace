@@ -37,7 +37,8 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
   `sign-only` or `build-only`.
   - A first job on the signing runner refuses a tag whose commit is not on
     `main`, so pushing a tag cannot get unreviewed code signed, and fixes
-    that commit and the archive's name for the run.
+    that commit and the archive's name for the run. It also refuses a release
+    from before this workflow, whose packaging would run the app and fail.
   - It builds that commit on `subspace-windows` with no secrets.
   - `package-release.sh` normally runs the built app to read its version
     back. The app cannot start in a Windows Server container, so the job sets
@@ -53,7 +54,8 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
     on Windows, with read access only.
   - Back on the signing runner, it checks the hash again and that the tag
     still points at the resolved commit, then attaches the archive and its
-    `.sha256` to the draft release. The owner waits for it before
+    `.sha256` to the draft release. It never replaces a published release's
+    files, only adds ones it lacks. The owner waits for it before
     `make release-macos` publishes the release.
   - A compromised build dependency in a reviewed commit could still swap
     `subspace.exe` before it is signed. Only commits on `main` and the
@@ -72,7 +74,9 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
   - archive rewriting with a valid checksum;
   - a jsign failure leaving the archive untouched;
   - an archive with nothing to sign;
-  - an archive with a symbolic link, an unsafe path or a duplicate entry;
+  - an archive with a symbolic link, an unsafe path or a duplicate entry,
+    including names that differ only in case;
+  - signing an executable whatever the case of its extension;
   - masking the Key Vault values in GitHub Actions.
 
   It passes under macOS's bash 3.2 and under bash 5.

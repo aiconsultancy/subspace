@@ -134,24 +134,27 @@ jobs:
             echo "Kept $app as the latest release." >>"$GITHUB_STEP_SUMMARY"
           fi
       - name: Note a new app release
-        if: steps.release.outputs['subspace-desktop--release_created'] == 'true'
+        if: ${{ !cancelled() && (steps.release.outputs['subspace-desktop--release_created'] == 'true' || steps.after-merge.outputs['subspace-desktop--release_created'] == 'true') }}
         env:
-          TAG: ${{ steps.release.outputs['subspace-desktop--tag_name'] }}
+          TAG: ${{ steps.release.outputs['subspace-desktop--tag_name'] || steps.after-merge.outputs['subspace-desktop--tag_name'] }}
         run: |
           {
             echo "Created the draft release $TAG. When windows-release has attached the"
             echo "Windows archive to it, publish it from the owner's Mac: check out $TAG"
             echo "in subspace-desktop/ and run \`make release-macos\`."
           } >>"$GITHUB_STEP_SUMMARY"
+      # Whichever Release Please pass made the app release, and even if a
+      # Framework step before this failed.
       - name: Build, sign and attach the app's Windows archive
         id: windows-release
-        if: steps.release.outputs['subspace-desktop--release_created'] == 'true'
+        if: ${{ !cancelled() && (steps.release.outputs['subspace-desktop--release_created'] == 'true' || steps.after-merge.outputs['subspace-desktop--release_created'] == 'true') }}
         # A failed start must not stop the steps after it; the next step says
         # how to start the workflow by hand.
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.release.outputs['subspace-desktop--tag_name'] }}
+          TAG: ${{ steps.release.outputs['subspace-desktop--tag_name'] || steps.after-merge.outputs['subspace-desktop--tag_name'] }}
+          COMMIT: ${{ steps.release.outputs['subspace-desktop--sha'] || steps.after-merge.outputs['subspace-desktop--sha'] }}
         # windows-release runs on the Subspace ARC runners, which admit only
         # that workflow on main, and attaches the archive to the draft.
         run: |
@@ -160,12 +163,12 @@ jobs:
             subspace-desktop-v*) ;;
             *) echo "unexpected app tag: $TAG" >&2; exit 1 ;;
           esac
-          gh workflow run windows-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG"
+          gh workflow run windows-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG" -f commit="$COMMIT"
           echo "Started windows-release for $TAG." >>"$GITHUB_STEP_SUMMARY"
       - name: Say how to start windows-release by hand
-        if: steps.windows-release.outcome == 'failure'
+        if: ${{ !cancelled() && steps.windows-release.outcome == 'failure' }}
         env:
-          TAG: ${{ steps.release.outputs['subspace-desktop--tag_name'] }}
+          TAG: ${{ steps.release.outputs['subspace-desktop--tag_name'] || steps.after-merge.outputs['subspace-desktop--tag_name'] }}
         run: |
           {
             echo "Could not start windows-release for $TAG. Start it by hand before publishing:"
