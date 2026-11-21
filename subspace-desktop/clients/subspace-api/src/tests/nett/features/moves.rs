@@ -159,7 +159,7 @@ pub(super) fn move_inputs_for(client: &Client, issue: &str) -> (String, String, 
     (destination.id, root.fields.id, version)
 }
 
-fn preview_move(client: &Client) -> (MovePreview, String, String, u32) {
+pub(super) fn preview_move(client: &Client) -> (MovePreview, String, String, u32) {
     let (destination, issue, version) = move_inputs(client);
     let preview = client
         .preview_issue_move(&issue, &destination, version)

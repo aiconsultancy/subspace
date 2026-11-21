@@ -5,6 +5,7 @@ mod attachments;
 mod chat;
 mod comment_media;
 mod flow;
+mod move_replay;
 mod moves;
 mod todos;
 
