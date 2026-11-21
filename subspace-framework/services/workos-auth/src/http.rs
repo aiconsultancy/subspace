@@ -6,14 +6,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use subspace_account::Error;
 use subspace_core::Secret;
+use subspace_core::http::status::{BAD_REQUEST, FORBIDDEN, UNAUTHORIZED, is_success};
 use ureq::tls::{RootCerts, TlsConfig};
 
 /// The longest a token request may take.
 pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const RESPONSE_LIMIT: u64 = 1024 * 1024;
-const BAD_REQUEST: u16 = 400;
-const UNAUTHORIZED: u16 = 401;
-const FORBIDDEN: u16 = 403;
 
 /// The parts of WorkOS's authentication reply the session keeps.
 #[derive(Deserialize)]
@@ -131,7 +129,7 @@ impl Transport for Live {
 
 /// A successful reply's JSON, or the fixed error for a failure.
 fn parse<T: serde::de::DeserializeOwned>(status: u16, bytes: &[u8]) -> Result<T, Error> {
-    if (200..300).contains(&status) {
+    if is_success(status) {
         return serde_json::from_slice(bytes).map_err(|_| Error::InvalidReply);
     }
     let failure = serde_json::from_slice::<Failure>(bytes).ok();
@@ -162,7 +160,7 @@ fn send_form(url: &str, form: &[(&str, &str)], timeout: Duration) -> Result<(u16
 
 /// A poll reply: tokens, keep waiting, slow down, or a fixed error.
 pub(crate) fn device_poll(status: u16, bytes: &[u8]) -> Result<DevicePoll, Error> {
-    if (200..300).contains(&status) {
+    if is_success(status) {
         let reply: Reply = serde_json::from_slice(bytes).map_err(|_| Error::InvalidReply)?;
         return Ok(DevicePoll::Granted(Box::new(reply)));
     }

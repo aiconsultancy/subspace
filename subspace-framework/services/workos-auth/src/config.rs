@@ -90,7 +90,7 @@ impl Config {
     /// Label the organisation in the app's sign-in settings.
     // qual:api — Consumed by app crates through the Framework facade.
     pub fn with_organization(mut self, name: &str) -> Self {
-        self.organization = name.into();
+        name.clone_into(&mut self.organization);
         self
     }
 
