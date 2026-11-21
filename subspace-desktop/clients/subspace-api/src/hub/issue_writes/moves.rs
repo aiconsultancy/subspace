@@ -33,15 +33,26 @@ impl Hub {
         self.require_issue_scope(scope)?;
         result
     }
-    /// Checks a NETT move whose confirmation went unanswered, reading every
-    /// previewed issue again without sending the move.
+    /// Checks a NETT move whose confirmation went unanswered: replaying the
+    /// identical confirmation when NETT records moves and it was sent within
+    /// the last 24 hours, otherwise reading every previewed issue again
+    /// without sending the move. A replay can commit a move whose first
+    /// send never arrived, so it needs both teams writable, as confirming
+    /// does; without that the move is read back instead.
     pub fn verify_issue_move(
         &self,
         scope: &IssueWriteScope,
         preview: &MovePreview,
     ) -> Result<MoveResult, IssueSaveError> {
         self.require_issue_scope(scope)?;
-        let result = self.0.client.verify_issue_move(preview);
+        let client = &self.0.client;
+        let writable = self.writable_project(scope, &preview.source.id).is_ok()
+            && self
+                .writable_project(scope, &preview.destination.id)
+                .is_ok();
+        // Decided once, here: the client does not decide again.
+        let replay = writable && client.replays(preview);
+        let result = client.check_issue_move(preview, replay);
         self.require_issue_scope(scope)?;
         result
     }

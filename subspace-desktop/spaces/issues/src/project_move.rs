@@ -8,7 +8,7 @@ use crate::Issues;
 use gpui_kit::{AppContext as _, Context, FocusHandle, Window};
 use subspace_api_client::{
     hub::{Hub, IssueWriteScope},
-    issue_moves::{MovePreview, Unreconciled},
+    issue_moves::{MovePreview, MoveResult, Unreconciled},
     issue_writes::IssueSaveError,
     model::IssueDetail,
 };
@@ -29,20 +29,65 @@ enum Phase {
     Preview(MovePreview),
     Sending,
     Unconfirmed(MovePreview),
-    /// The move committed as the issue now numbered so, but these
-    /// sub-issues could not be confirmed in the destination: they are
-    /// listed for the person to check.
-    Moved(String, Vec<Unreconciled>),
+    /// The move committed, but some sub-issues could not be confirmed in
+    /// the destination: they are listed for the person to check.
+    Moved(Committed),
     Failed(IssueSaveError),
 }
 
-/// What confirming or checking a move found: the root as it is now, and
-/// the sub-issues not confirmed in the destination.
-type MoveOutcome = Result<(IssueDetail, Vec<Unreconciled>), IssueSaveError>;
+/// A move that committed: the root's stable ID, which opens it wherever it
+/// is now, its number after the move, and the sub-issues not confirmed in
+/// the destination.
+pub(crate) struct Committed {
+    pub(crate) id: String,
+    pub(crate) identifier: String,
+    pub(crate) unreconciled: Vec<Unreconciled>,
+}
 
-/// Confirms `preview`, or checks a move that went unanswered without
-/// sending it again. A check that fails for any reason but a conflict
-/// leaves the move to be checked again.
+/// What confirming or checking a move found.
+type MoveOutcome = Result<Committed, IssueSaveError>;
+
+/// Whether `issue` is the previewed root moved into the destination.
+fn moved_root(preview: &MovePreview, issue: &IssueDetail) -> Result<String, IssueSaveError> {
+    if preview.root_moved_to(&issue.fields.identifier)
+        && issue.fields.project_id == preview.destination.id
+    {
+        Ok(issue.fields.identifier.clone())
+    } else {
+        Err(IssueSaveError::Conflict)
+    }
+}
+
+/// The committed move a result shows: the root's number as NETT recorded
+/// it for this plan, which stays right even if the root moved again since,
+/// or else the root read in the destination.
+fn committed(preview: &MovePreview, result: MoveResult) -> MoveOutcome {
+    let identifier = match result.recorded_root() {
+        Some(recorded) => recorded.to_owned(),
+        None => moved_root(preview, &result.issue)?,
+    };
+    Ok(Committed {
+        id: result.issue.fields.id,
+        identifier,
+        unreconciled: result.unreconciled,
+    })
+}
+
+/// A confirmed move's result, with the debug capture's invented
+/// sub-issues when it asks for them.
+#[cfg(debug_assertions)]
+fn captured(preview: &MovePreview, mut result: MoveResult) -> MoveResult {
+    result.unreconciled = capture::unreconciled(preview, std::mem::take(&mut result.unreconciled));
+    result
+}
+
+#[cfg(not(debug_assertions))]
+fn captured(_: &MovePreview, result: MoveResult) -> MoveResult {
+    result
+}
+
+/// Confirms `preview`, or checks a move that went unanswered. A check that
+/// fails for any reason but a conflict leaves the move to be checked again.
 fn confirm(
     hub: &Hub,
     scope: &IssueWriteScope,
@@ -52,19 +97,22 @@ fn confirm(
 ) -> MoveOutcome {
     let result = if checking && subspace_api_client::backend() == subspace_api_client::Backend::Nett
     {
-        // Every previewed issue is read again; nothing is resent.
+        // NETT replays the identical confirmation when it records moves;
+        // otherwise every previewed issue is read again and nothing is
+        // resent.
         hub.verify_issue_move(scope, preview)
-            .map(|result| (result.issue, result.unreconciled))
+            .and_then(|result| committed(preview, result))
     } else if checking {
-        hub.latest_issue(scope, id).map(|issue| (issue, Vec::new()))
-    } else {
-        hub.move_issue(scope, preview).map(|result| {
-            #[cfg(debug_assertions)]
-            let unreconciled = capture::unreconciled(preview, result.unreconciled);
-            #[cfg(not(debug_assertions))]
-            let unreconciled = result.unreconciled;
-            (result.issue, unreconciled)
+        hub.latest_issue(scope, id).and_then(|issue| {
+            Ok(Committed {
+                identifier: moved_root(preview, &issue)?,
+                id: issue.fields.id,
+                unreconciled: Vec::new(),
+            })
         })
+    } else {
+        hub.move_issue(scope, preview)
+            .and_then(|result| committed(preview, captured(preview, result)))
     };
     result.map_err(|error| match error {
         IssueSaveError::Conflict => error,
@@ -211,17 +259,14 @@ impl Issues {
         cx: &mut Context<Self>,
     ) {
         let phase = match result {
-            Ok((issue, unreconciled))
-                if preview.root_moved_to(&issue.fields.identifier)
-                    && issue.fields.project_id == preview.destination.id =>
-            {
-                if unreconciled.is_empty() {
-                    return self.finish_project_move(issue.fields.identifier, window, cx);
+            Ok(committed) => {
+                if committed.unreconciled.is_empty() {
+                    return self.finish_project_move(committed.id, window, cx);
                 }
                 self.reload_list(cx);
-                Phase::Moved(issue.fields.identifier, unreconciled)
+                Phase::Moved(committed)
             }
-            Ok(_) | Err(IssueSaveError::Conflict) => Phase::Failed(IssueSaveError::Conflict),
+            Err(IssueSaveError::Conflict) => Phase::Failed(IssueSaveError::Conflict),
             Err(IssueSaveError::Unconfirmed) => Phase::Unconfirmed(preview.clone()),
             Err(error) => Phase::Failed(error),
         };
@@ -230,18 +275,15 @@ impl Issues {
         }
         cx.notify();
     }
-    fn finish_project_move(
-        &mut self,
-        identifier: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Closes the move and opens the moved root by its stable ID: the number
+    /// it was given may be gone if it has moved again since.
+    fn finish_project_move(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(state) = &mut self.project_move {
             state.phase = Phase::Choosing;
         }
         self.close_project_move(window, cx);
         self.reload_list(cx);
-        self.open_detail(identifier, cx);
+        self.open_detail(id, cx);
     }
 }
 
@@ -378,18 +420,16 @@ mod tests {
         };
         settle_board(&board, cx, |b| preview(b).is_some());
         let preview = board.read_with(cx, |b, _| preview(b)).unwrap();
-        let mut moved = crate::tests::offline::row("2", "Fixture");
-        moved["identifier"] = json!("OPS-8");
-        moved["projectId"] = json!("project-OPS");
-        moved["projectKey"] = json!("OPS");
-        moved["description"] = json!("");
-        moved["todos"] = json!([]);
-        let moved = serde_json::from_value(moved).unwrap();
+        let moved = super::Committed {
+            id: "2".into(),
+            identifier: "OPS-8".into(),
+            unreconciled,
+        };
         cx.update(|window, cx| {
             board.update(cx, |b, cx| {
                 b.menu = None;
                 b.review_project_move(window, cx);
-                b.settle_project_move(&preview, Ok((moved, unreconciled)), window, cx);
+                b.settle_project_move(&preview, Ok(moved), window, cx);
             })
         });
         render(cx);
@@ -439,14 +479,30 @@ mod tests {
         board.update(cx, |b, cx| b.load_move_preview(cx));
         assert!(board.read_with(cx, |b, _| matches!(
             &b.project_move.as_ref().unwrap().phase,
-            Phase::Moved(identifier, items) if identifier == "OPS-8" && items.len() == 2
+            Phase::Moved(moved) if moved.identifier == "OPS-8" && moved.unreconciled.len() == 2
         )));
         cx.update(|window, cx| {
-            board.update(cx, |b, cx| {
-                b.finish_project_move("OPS-8".into(), window, cx)
-            })
+            board.update(cx, |b, cx| b.finish_project_move("2".into(), window, cx))
         });
         assert!(board.read_with(cx, |b, _| b.project_move.is_none()));
+    }
+
+    /// A move that committed opens its root by the root's stable ID, not by
+    /// the number it was given, which is gone once the root moves again.
+    #[gpui_kit::test]
+    fn a_committed_move_opens_the_root_by_its_id(cx: &mut TestAppContext) {
+        // NETT recorded OPS-8, but the root may have moved on since.
+        let fixture = fixture();
+        let (board, cx) = moved_with(&fixture, cx, Vec::new());
+        let opened = board.read_with(cx, |b, _| {
+            assert!(b.project_move.is_none(), "the move panel closed");
+            b.hub.as_ref().and_then(|hub| {
+                hub.snapshot()
+                    .issue()
+                    .map(|issue| issue.identifier().to_owned())
+            })
+        });
+        assert_eq!(opened.as_deref(), Some("2"));
     }
 
     /// However many sub-issues a large move could not confirm, the list

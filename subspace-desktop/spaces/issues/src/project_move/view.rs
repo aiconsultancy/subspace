@@ -62,7 +62,7 @@ fn body(board: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) -> Div {
                     cx.listener(|this, _, window, cx| this.check_project_move(window, cx)),
                 ),
             ),
-        Phase::Moved(identifier, unreconciled) => moved(identifier, unreconciled, tokens, cx),
+        Phase::Moved(committed) => moved(committed, tokens, cx),
         Phase::Failed(error) => v_flex().gap_3().child(error.to_string()).child(
             action_button(
                 "issue-move-refresh",
@@ -79,13 +79,10 @@ fn body(board: &Issues, tokens: &Tokens, cx: &mut Context<Issues>) -> Div {
 /// A move that committed with sub-issues it could not confirm in the
 /// destination: each is listed with what reading it back found, so the
 /// person checks them before relying on the move.
-fn moved(
-    identifier: &str,
-    unreconciled: &[Unreconciled],
-    tokens: &Tokens,
-    cx: &mut Context<Issues>,
-) -> Div {
-    let open = identifier.to_owned();
+fn moved(committed: &super::Committed, tokens: &Tokens, cx: &mut Context<Issues>) -> Div {
+    let (identifier, unreconciled) = (&committed.identifier, &committed.unreconciled);
+    // The root opens by its stable ID, wherever it is now.
+    let open = committed.id.clone();
     // The list takes what room there is and scrolls, however long, so Open
     // stays in view below it.
     v_flex()
