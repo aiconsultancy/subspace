@@ -568,32 +568,35 @@ When the release workflow creates an app release, it starts
 runs on the Subspace self-hosted ARC scale sets in the platform's Kubernetes
 cluster (runner group `subspace-release`), never on GitHub-hosted runners:
 
-1. **build**, on `subspace-windows`, checks out the tag, refuses it unless its
-   commit is on `main`, and runs
+1. **resolve**, on `subspace-signing`, a Linux runner in the trusted
+   deployment subnet, refuses the tag unless it is a stable release whose
+   commit is on `main`, so only reviewed code is signed, whoever pushed the
+   tag. It fixes that commit and the archive's name for the rest of the run.
+2. **build**, on `subspace-windows`, checks out that commit and runs
    `scripts/package-release.sh x86_64-pc-windows-msvc <version>` with no
-   secrets. So only reviewed code is signed, whoever pushed the tag. The app
-   cannot start in a Windows Server container, so the job sets
-   `SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1` and the script does not run the app to
-   read its version back. The runner is a Windows Server 2022 container on a node pool that
-   scales from zero to one, so a run may wait a few minutes for the node. A
-   GPUI release build for Windows must run on Windows, because the renderer
-   compiles its shaders with the Windows SDK's `fxc.exe` in a build script.
-2. **sign**, on `subspace-signing`, a Linux runner in the trusted deployment
-   subnet, runs in the `windows-signing` environment. The build's scripts
-   could have tampered with anything the build job produced, so this job
-   takes the tag from the workflow's input, checks again that its commit is
-   on `main` and names the archive itself. It installs a pinned Temurin
-   build and the pinned jsign JAR (checked against its SHA-256 digest), signs
-   in to Azure with GitHub OIDC as the signing identity and runs
-   `scripts/sign-windows.sh` on the archive, which refuses links, unsafe
-   paths and duplicate entries. It reads the three secrets above through the
-   platform Key Vault's private endpoint, and masks their values in the log.
-3. **verify**, on `subspace-windows` with read access only, checks the
-   archive's `.sha256` and that Windows reports the signature `Valid` with a
-   timestamp.
-4. **attach**, back on `subspace-signing`, checks that the tag still points
-   at the commit that was built, then attaches the archive and its `.sha256`
-   file to the release. Publish the release only after this, as
+   secrets. The app cannot start in a Windows Server container, so the job
+   sets `SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1` and the script does not run the
+   app to read its version back. The runner is a Windows Server 2022
+   container on a node pool that scales from zero to one, so a run may wait a
+   few minutes for the node. A GPUI release build for Windows must run on
+   Windows, because the renderer compiles its shaders with the Windows SDK's
+   `fxc.exe` in a build script.
+3. **sign**, on `subspace-signing`, runs in the `windows-signing`
+   environment. The build's scripts could have tampered with anything the
+   build job produced, so this job uses nothing from it but the archive. It
+   installs a pinned Temurin build and the pinned jsign JAR (checked against
+   its SHA-256 digest), signs in to Azure with GitHub OIDC as the signing
+   identity and runs `scripts/sign-windows.sh` on the archive, which refuses
+   links, unsafe paths and duplicate entries. It reads the three secrets above
+   through the platform Key Vault's private endpoint, masks their values in
+   the log, and records the signed archive's SHA-256.
+4. **verify**, on `subspace-windows` with read access only, checks the
+   archive has that SHA-256 and that Windows reports the signature `Valid`
+   with a timestamp.
+5. **attach**, back on `subspace-signing`, checks the archive again against
+   the recorded SHA-256 and that the tag still points at the resolved commit,
+   then attaches the archive and its `.sha256` file to the release. Publish
+   the release only after this, as
    [Publish a macOS release](#publish-a-macos-release) says.
 
 The build job never holds the OIDC permission, so build scripts cannot request

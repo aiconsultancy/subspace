@@ -7,24 +7,29 @@
 # Kubernetes cluster (runner group `subspace-release`), never on GitHub-hosted
 # runners:
 #
+# - resolve: `subspace-signing`, a Linux runner in the trusted deployment
+#   subnet. Checks the tag is a stable release on main and fixes its commit
+#   and the archive's name for the rest of the run, as job outputs, which no
+#   later job can change.
 # - build: `subspace-windows`, a Windows Server 2022 runner on a node pool
-#   that scales from zero to one. A GPUI release build for Windows must run on
-#   Windows, because the renderer compiles its shaders with the Windows SDK's
-#   fxc.exe in a build script. The job holds no secrets and no OIDC
-#   permission. Its third-party build scripts could tamper with anything it
-#   produces, so later jobs trust nothing from it but the archive's bytes.
-# - sign: `subspace-signing`, a Linux runner in the trusted deployment subnet,
-#   which reaches the platform Key Vault through its private endpoint. It
-#   resolves the tag and the archive's name itself, checks the tag is on main
-#   again, then signs in with GitHub OIDC in the `windows-signing`
+#   that scales from zero to one, builds that commit. A GPUI release build for
+#   Windows must run on Windows, because the renderer compiles its shaders
+#   with the Windows SDK's fxc.exe in a build script. The job holds no secrets
+#   and no OIDC permission. Its third-party build scripts could tamper with
+#   anything it produces, so later jobs trust nothing from it but the
+#   archive's bytes.
+# - sign: `subspace-signing`, which reaches the platform Key Vault through its
+#   private endpoint, signs in with GitHub OIDC in the `windows-signing`
 #   environment, which holds the Azure identity and the vault name as
 #   secrets. scripts/sign-windows.sh (jsign) refuses an archive with links or
 #   unsafe paths, reads the signing account and certificate profile from Key
-#   Vault and signs. The signing key never leaves Artifact Signing.
+#   Vault and signs. The signing key never leaves Artifact Signing. The signed
+#   archive's SHA-256 becomes a job output.
 # - verify: on `subspace-windows`, with read access only, Windows' own
 #   verifier checks the signature and its timestamp.
-# - attach: back on `subspace-signing`, checks the tag still points at the
-#   commit that was built, then attaches the archive and its .sha256 file.
+# - attach: back on `subspace-signing`, checks the archive still has the hash
+#   the sign job recorded and the tag still points at the built commit, then
+#   attaches the archive and its .sha256 file.
 #
 # The release workflow starts it on main when it creates an app release; wait
 # for it to attach the archive to the draft before `make release-macos`
@@ -59,105 +64,27 @@ env:
   JSIGN_SHA256: 6cf58aa080e7ff82656f320cff8d4a3bff30408df8766806dcba3740dd839fa5
 
 jobs:
-  build:
+  resolve:
     if: github.ref == 'refs/heads/main'
     runs-on:
       group: subspace-release
-      labels: subspace-windows
-    timeout-minutes: 150
-    permissions:
-      contents: read
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Resolve the release
-        id: release
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          if [[ ! "$TAG" =~ ^subspace-desktop-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "not a stable Subspace desktop release tag: $TAG" >&2
-            exit 1
-          fi
-          {
-            echo "tag=$TAG"
-            echo "version=${TAG#subspace-desktop-v}"
-          } >>"$GITHUB_OUTPUT"
-      # The full history, so the next step can tell whether the tag is on main.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: refs/tags/${{ steps.release.outputs.tag }}
-          fetch-depth: 0
-          persist-credentials: false
-      # Anyone who can push a tag could otherwise get any commit signed. Only
-      # a commit that reached main through review is built, before any of the
-      # tag's code runs.
-      - name: Require the tag's commit to be on main
-        env:
-          TAG: ${{ steps.release.outputs.tag }}
-        run: |
-          set -euo pipefail
-          commit="$(git rev-parse HEAD)"
-          test "$commit" = "$(git rev-parse "refs/tags/$TAG^{commit}")"
-          if ! git merge-base --is-ancestor "$commit" refs/remotes/origin/main; then
-            echo "$TAG points at $commit, which is not on main; only commits on main are built and signed" >&2
-            exit 1
-          fi
-          echo "$TAG is $commit, on main."
-      - name: Use the Rust toolchain mise.toml names
-        run: |
-          set -euo pipefail
-          version="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' subspace-desktop/mise.toml)"
-          test -n "$version"
-          # The runner image carries the current toolchain; an older tag may name another.
-          rustup toolchain install "$version" --profile minimal --target "$TARGET"
-          rustup default "$version"
-          rustc --version
-      - name: Build the Windows archive
-        working-directory: subspace-desktop
-        env:
-          VERSION: ${{ steps.release.outputs.version }}
-          # The app cannot start in a Windows Server container, which lacks
-          # desktop libraries such as DirectComposition, so the script does
-          # not run it to read its version back.
-          SUBSPACE_PACKAGE_SKIP_RUN_CHECK: "1"
-        run: |
-          set -euo pipefail
-          bash scripts/package-release.sh "$TARGET" "$VERSION"
-          test -s "dist/subspace-$VERSION-$TARGET.zip"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-unsigned
-          path: subspace-desktop/dist/subspace-${{ steps.release.outputs.version }}-${{ env.TARGET }}.zip
-          if-no-files-found: error
-          retention-days: 7
-
-  sign:
-    needs: build
-    if: inputs.mode != 'build-only'
-    runs-on:
-      group: subspace-release
       labels: subspace-signing
-    timeout-minutes: 20
-    environment: windows-signing
+    timeout-minutes: 5
     permissions:
       contents: read
-      id-token: write # Sign in to Azure as the signing identity.
     outputs:
       tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
       commit: ${{ steps.release.outputs.commit }}
       archive: ${{ steps.release.outputs.archive }}
     steps:
-      # The signing tools come from main; the build job built the tag. The
-      # full history holds the tags, to check the tag is on main.
+      # The full history holds the tags, to check the tag is on main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      # From the workflow's input, never from the build job's outputs, which
-      # its build scripts could have rewritten.
+      # Anyone who can push a tag could otherwise get any commit signed. Only
+      # a commit that reached main through review is built and signed.
       - name: Resolve the release
         id: release
         env:
@@ -171,14 +98,86 @@ jobs:
           version="${BASH_REMATCH[1]}"
           commit="$(git rev-parse --verify "refs/tags/$TAG^{commit}")"
           if ! git merge-base --is-ancestor "$commit" HEAD; then
-            echo "$TAG points at $commit, which is not on main" >&2
+            echo "$TAG points at $commit, which is not on main; only commits on main are built and signed" >&2
             exit 1
           fi
           {
             echo "tag=$TAG"
+            echo "version=$version"
             echo "commit=$commit"
             echo "archive=subspace-$version-$TARGET.zip"
           } >>"$GITHUB_OUTPUT"
+          echo "$TAG is $commit, on main." >>"$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: resolve
+    runs-on:
+      group: subspace-release
+      labels: subspace-windows
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The resolved commit, not the tag, which could move during the run.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.commit }}
+          persist-credentials: false
+      - name: Check the checkout
+        env:
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+      - name: Use the Rust toolchain mise.toml names
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' subspace-desktop/mise.toml)"
+          test -n "$version"
+          # The runner image carries the current toolchain; an older tag may name another.
+          rustup toolchain install "$version" --profile minimal --target "$TARGET"
+          rustup default "$version"
+          rustc --version
+      - name: Build the Windows archive
+        working-directory: subspace-desktop
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          ARCHIVE: ${{ needs.resolve.outputs.archive }}
+          # The app cannot start in a Windows Server container, which lacks
+          # desktop libraries such as DirectComposition, so the script does
+          # not run it to read its version back. It still checks Cargo.toml's
+          # version against the tag's.
+          SUBSPACE_PACKAGE_SKIP_RUN_CHECK: "1"
+        run: |
+          set -euo pipefail
+          bash scripts/package-release.sh "$TARGET" "$VERSION"
+          test -s "dist/$ARCHIVE"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-unsigned
+          path: subspace-desktop/dist/${{ needs.resolve.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: [resolve, build]
+    if: inputs.mode != 'build-only'
+    runs-on:
+      group: subspace-release
+      labels: subspace-signing
+    timeout-minutes: 20
+    environment: windows-signing
+    permissions:
+      contents: read
+      id-token: write # Sign in to Azure as the signing identity.
+    outputs:
+      sha256: ${{ steps.sign.outputs.sha256 }}
+    steps:
+      # The signing tools come from main; the build job built the release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: windows-unsigned
@@ -201,15 +200,17 @@ jobs:
           tenant-id: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SIGNING_SUBSCRIPTION_ID }}
       # The script itself, with a quoted path: make would expand a $(...) in
-      # the file name.
+      # the file name. The name comes from the resolve job, never the build.
       - name: Sign subspace.exe in the archive
+        id: sign
         env:
           SUBSPACE_SIGNING_KEY_VAULT: ${{ secrets.SUBSPACE_SIGNING_KEY_VAULT }}
-          ARCHIVE: ${{ runner.temp }}/windows/${{ steps.release.outputs.archive }}
+          ARCHIVE: ${{ runner.temp }}/windows/${{ needs.resolve.outputs.archive }}
         run: |
           set -euo pipefail
           test -f "$ARCHIVE"
           bash subspace-desktop/scripts/sign-windows.sh "$ARCHIVE"
+          echo "sha256=$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
       - name: Sign out of Azure
         if: always()
         run: az logout || true
@@ -217,13 +218,13 @@ jobs:
         with:
           name: windows-signed
           path: |
-            ${{ runner.temp }}/windows/${{ steps.release.outputs.archive }}
-            ${{ runner.temp }}/windows/${{ steps.release.outputs.archive }}.sha256
+            ${{ runner.temp }}/windows/${{ needs.resolve.outputs.archive }}
+            ${{ runner.temp }}/windows/${{ needs.resolve.outputs.archive }}.sha256
           if-no-files-found: error
           retention-days: 30
 
   verify:
-    needs: sign
+    needs: [resolve, sign]
     runs-on:
       group: subspace-release
       labels: subspace-windows
@@ -235,16 +236,16 @@ jobs:
         with:
           name: windows-signed
           path: dist
-      - name: Verify the checksum and the Authenticode signature
+      - name: Verify the hash and the Authenticode signature
         shell: powershell
         env:
-          ARCHIVE: ${{ needs.sign.outputs.archive }}
+          ARCHIVE: ${{ needs.resolve.outputs.archive }}
+          SHA256: ${{ needs.sign.outputs.sha256 }}
         run: |
           $ErrorActionPreference = 'Stop'
           Set-Location dist
-          $expected = (Get-Content "$env:ARCHIVE.sha256" -Raw).Split(' ')[0].Trim()
           $actual = (Get-FileHash $env:ARCHIVE -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($expected -ne $actual) { throw "checksum mismatch: $expected != $actual" }
+          if ($env:SHA256 -ne $actual) { throw "hash mismatch: signed $env:SHA256, downloaded $actual" }
           Expand-Archive $env:ARCHIVE -DestinationPath extracted
           $signature = Get-AuthenticodeSignature extracted/subspace.exe
           if ($signature.Status -ne 'Valid') {
@@ -254,7 +255,7 @@ jobs:
           "Signed subspace.exe as $($signature.SignerCertificate.Subject)." >> $env:GITHUB_STEP_SUMMARY
 
   attach:
-    needs: [sign, verify]
+    needs: [resolve, sign, verify]
     if: inputs.mode == 'publish'
     runs-on:
       group: subspace-release
@@ -271,14 +272,22 @@ jobs:
         working-directory: ${{ runner.temp }}/windows
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.sign.outputs.tag }}
-          COMMIT: ${{ needs.sign.outputs.commit }}
-          ARCHIVE: ${{ needs.sign.outputs.archive }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+          ARCHIVE: ${{ needs.resolve.outputs.archive }}
+          SHA256: ${{ needs.sign.outputs.sha256 }}
         run: |
           set -euo pipefail
-          sha256sum --check --strict "$ARCHIVE.sha256"
-          # A tag moved since the build would get another commit's archive.
-          current="$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)"
+          # The artifact passed through the Windows pool; only the sign job's
+          # recorded hash shows it is the archive that was signed.
+          actual="$(sha256sum "$ARCHIVE" | cut -d' ' -f1)"
+          if [[ "$actual" != "$SHA256" ]]; then
+            echo "hash mismatch: signed $SHA256, downloaded $actual" >&2
+            exit 1
+          fi
+          echo "$SHA256  $ARCHIVE" >"$ARCHIVE.sha256"
+          # A tag moved since the run started would get another commit's archive.
+          current="$(gh api "repos/$GITHUB_REPOSITORY/commits/tags/$TAG" --jq .sha)"
           if [[ "$current" != "$COMMIT" ]]; then
             echo "$TAG now points at $current, not $COMMIT, which was built" >&2
             exit 1

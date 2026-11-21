@@ -35,23 +35,26 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
 - `.github/workflows/windows-release.yml` runs when `release.yml` creates an
   app release, or by hand on `main` with a tag and a mode: `publish`,
   `sign-only` or `build-only`.
-  - It builds on `subspace-windows` with no secrets, and only a tag whose
-    commit is on `main`, so pushing a tag cannot get unreviewed code signed.
+  - A first job on the signing runner refuses a tag whose commit is not on
+    `main`, so pushing a tag cannot get unreviewed code signed, and fixes
+    that commit and the archive's name for the run.
+  - It builds that commit on `subspace-windows` with no secrets.
   - `package-release.sh` normally runs the built app to read its version
     back. The app cannot start in a Windows Server container, so the job sets
     `SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1` to skip that.
   - It signs on `subspace-signing` in the `windows-signing` environment, using
     GitHub OIDC. The environment's deployment rule allows only `main`. The
-    sign job takes the tag from the workflow's input, checks again that it
-    is on `main` and names the archive itself, because the build's scripts
-    could rewrite the build job's outputs. The script refuses an archive with
+    build's scripts could rewrite the build job's outputs, so the sign job
+    uses nothing from it but the archive. The script refuses an archive with
     links, unsafe paths or duplicate entries, so a tampered archive can't
-    copy the signer's credentials into the release.
-  - It verifies the signature with `Get-AuthenticodeSignature` on Windows,
-    with read access only.
-  - Back on the signing runner, it checks the tag still points at the built
-    commit and attaches the archive and its `.sha256` to the draft release.
-    The owner waits for it before `make release-macos` publishes the release.
+    copy the signer's credentials into the release. The sign job records the
+    signed archive's SHA-256 as a job output.
+  - It verifies that hash and the signature with `Get-AuthenticodeSignature`
+    on Windows, with read access only.
+  - Back on the signing runner, it checks the hash again and that the tag
+    still points at the resolved commit, then attaches the archive and its
+    `.sha256` to the draft release. The owner waits for it before
+    `make release-macos` publishes the release.
   - A compromised build dependency in a reviewed commit could still swap
     `subspace.exe` before it is signed. Only commits on `main` and the
     reviewed `Cargo.lock` limit that.
