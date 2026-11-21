@@ -4,12 +4,34 @@ set -euo pipefail
 export CARGO_NET_OFFLINE=true
 root="$(cd "$(dirname "$0")/.." && pwd)"
 scratch="$(mktemp -d)"
+scratch="$(cd "$scratch" && pwd -P)"
 trap 'rm -rf "$scratch"' EXIT
 desktop="$scratch/desktop"
 framework="$scratch/resolved-framework"
 product="$desktop/products/subspace"
 mkdir -p "$desktop/scripts" "$desktop/spaces/actions/assets" "$product/src" "$framework/src" "$scratch/bin"
 cp "$root/scripts/"{check-licences.sh,product.sh,prerelease-common.sh,resolve-licence-notices.py} "$desktop/scripts/"
+mkdir "$scratch/intel-bin"
+cat >"$scratch/intel-bin/uname" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in -s) echo Darwin ;; -m) echo x86_64 ;; esac
+EOF
+chmod +x "$scratch/intel-bin/uname"
+PATH="$scratch/intel-bin:/usr/bin:/bin" bash "$desktop/scripts/check-licences.sh" \
+    | grep -F 'Skipping desktop release licence policy on Intel macOS'
+if PATH="$scratch/intel-bin:/usr/bin:/bin" bash -c '
+    source "$1/scripts/product.sh"
+    scan_rust_licences "$1"
+' fixture "$desktop" >"$scratch/check.log" 2>&1; then
+    echo 'expected packaging to require cargo-about' >&2
+    exit 1
+fi
+grep -F 'cargo-about is required' "$scratch/check.log"
+if [[ "$(uname -s)" = Darwin && "$(uname -m)" = x86_64 ]] &&
+   ! command -v cargo-about >/dev/null 2>&1; then
+    echo 'Skipping Cargo graph fixtures on Intel macOS without cargo-about'
+    exit 0
+fi
 cp "$root/about.toml" "$desktop/"
 cp "$root/../LICENSE" "$scratch/LICENSE"
 printf '[]\n' >"$desktop/about-notices.json"
@@ -27,11 +49,22 @@ copy_notice vendor/markdown/license licenses/markdown/LICENSE
 copy_notice host/app/themes/gpui-kit/LICENSE-APACHE licenses/themes/gpui-kit/LICENSE-APACHE
 copy_notice host/app/themes/gpui-kit/PROVENANCE.md licenses/themes/gpui-kit/PROVENANCE.md
 copy_notice host/chat/assets/LICENSE-OCTICONS spaces/actions/assets/OCTICONS-LICENSE.txt
+markdown="$desktop/vendor/markdown"
+mkdir -p "$markdown/src"
+cp "$desktop/licenses/markdown/LICENSE" "$markdown/license"
+cat >"$markdown/Cargo.toml" <<'EOF'
+[package]
+name = "markdown"
+version = "1.0.0"
+license = "MIT"
+EOF
 
 cat >"$desktop/Cargo.toml" <<'EOF'
 [workspace]
 members = ["products/subspace"]
 resolver = "2"
+[patch.crates-io]
+markdown = { path = "vendor/markdown" }
 EOF
 cat >"$product/Cargo.toml" <<'EOF'
 [package]
@@ -40,6 +73,7 @@ version = "1.0.0"
 license = "Apache-2.0"
 [dependencies]
 subspace-framework = { path = "../../../resolved-framework" }
+markdown = "1.0.0"
 [features]
 terminal = []
 EOF
@@ -54,7 +88,7 @@ EOF
     fi
 }
 write_framework_manifest MIT
-touch "$product/src/lib.rs" "$framework/src/lib.rs"
+touch "$product/src/lib.rs" "$framework/src/lib.rs" "$markdown/src/lib.rs"
 (cd "$desktop"; cargo generate-lockfile --offline)
 bash "$desktop/scripts/check-licences.sh"
 
@@ -65,6 +99,10 @@ check_failure() {
     fi
     grep -F -- "$1" "$scratch/check.log" || { cat "$scratch/check.log" >&2; return 1; }
 }
+
+echo 'fixture drift in the selected patch' >>"$markdown/license"
+check_failure "licenses/markdown/LICENSE must match $markdown/license"
+cp "$desktop/licenses/markdown/LICENSE" "$markdown/license"
 
 echo 'fixture drift' >>"$framework/host/chat/assets/LICENSE-OCTICONS"
 check_failure 'OCTICONS-LICENSE.txt must match'
