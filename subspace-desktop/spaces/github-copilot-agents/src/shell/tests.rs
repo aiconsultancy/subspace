@@ -45,6 +45,7 @@ fn board(_: &mut Window, cx: &mut Context<CopilotAgents>) -> CopilotAgents {
         error: None,
         loaded_at: Some(Instant::now()),
         login: None,
+        identity: None,
         navigator_open,
         inspector_open,
         item: Default::default(),

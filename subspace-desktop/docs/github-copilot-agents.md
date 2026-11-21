@@ -81,14 +81,17 @@ whether each dock shows. Both show unless the value is `0`
   its session log, so the watcher stops reading that log.
 - The inspector switch and the inspector's **Close** only show or hide the
   inspector; they open and close nothing.
-- The account line needs the work login. Every list load asks
-  `Client::work_login` for it in the same background job, before the list and
-  again after it, and keeps the list and its login only when the two agree
-  (`load::as_one_account`), so the line never names another account than the
-  list's own. A list read while the work account changed is refused, and the
-  list on show stays with the account it was read as. Until a load succeeds
-  the line reads **Checking account…**, **Account unavailable** after a
-  failed load, or **GitHub** alone.
+- The account line needs the work login. Every list load pins the work
+  credential once (`Client::pin_work`): it resolves the credential and asks
+  GitHub's `viewer` with that same credential whose it is, then sends the list
+  and every lookup the list needs with that credential and no other. The line
+  names the login verified for it, so it never names another account than the
+  list's own, even when the credential changes during the load. The Space
+  keeps that account (`load::WorkIdentity`: the login and the account's node
+  ID) as the one it shows; a list read as another account closes the open
+  session log. A failed load keeps the account the list on show was read as.
+  Until a load succeeds the line reads **Checking account…**, **Account
+  unavailable** after a failed load, or **GitHub** alone.
 
 `navigator.rs` holds the pure logic: the views, the repositories, their counts
 and the row ids. `peek.rs` holds what the inspector, the lanes and the tab say
@@ -141,11 +144,27 @@ nothing is read. The read takes the cache file's copy when it holds that
 session, and otherwise calls the Copilot API. The log goes only into the
 search index: it is not shown, and it is not written to the cache file.
 
-Every log read, shown or for the index, is bound to one work account: the
-work login is resolved before the read and again after it, the cache lookup
-uses that login, and the log is cached and indexed under that login's search
-scope only when the two agree. A log read while the work account changed is
-neither cached nor indexed, and shows as **Log unavailable**.
+Every log read, shown or for the index, pins the work credential once
+(`Client::pin_work`), and the cache lookup, the API read and the account the
+log is cached and indexed under are all that credential's. The pin looks the
+account up only for a credential not verified earlier in the run, so a log the
+cache file holds shows without any request, offline included. A read refuses
+to run when its credential belongs to another account than the one the Space
+shows; such a log, or one that arrives after a list read as another account,
+is neither cached, indexed nor shown: it reads as **Log unavailable**, and the
+list is read again.
+
+When the search index takes this Space's logs, a read takes its search
+activation ticket before it pins the credential. A read that another overtook
+in the meantime activates no search scope and indexes nothing; one whose scope
+another read replaced after it took its lease has its write refused. The
+search scope and the cache entry are keyed by the account's node ID, never by
+its login, under the scope tenant `github-account-id`. Earlier builds keyed
+both by login under the tenant `github`, and one of them could index a log
+under the wrong account, so nothing they stored is used again: their cache
+entries never match, and their search scopes are never activated. Their search
+entries stay on disk until the search cache's retention or size limit drops
+them, or the Space's search data is cleared.
 
 ## Open a cloud session in the browser
 
@@ -180,7 +199,7 @@ uses:
 
 | Step | Request |
 | --- | --- |
-| Find the host | GraphQL `viewer { copilotEndpoints { api } }` as the work login, once per run. No host is hardcoded. |
+| Find the host | GraphQL `viewer { copilotEndpoints { api } }` with the pinned work credential, once per run. No host is hardcoded. |
 | Read the log | `GET {api}/agents/sessions/{session id}/logs`, with `Copilot-Integration-Id: copilot-4-cli` and `X-GitHub-Api-Version: 2026-01-09` |
 
 The endpoint accepts the `gh` CLI OAuth token only. With `GH_TOKEN`,
@@ -201,8 +220,8 @@ the tool's name, each tool answer collapsed to one line with its length, and
 the entry's `created` time as the stamp the other panels use. A log over 400
 entries says how many it left out.
 
-The panel holds one log at a time. Each shown log is cached by the work
-login it was read as, session id and last update in `github-copilot-agents-session-log.json` beside the state
+The panel holds one log at a time. Each shown log is cached by the node ID
+of the work account it was read as, session id and last update in `github-copilot-agents-session-log.json` beside the state
 file (`prefs::write_cache`), never in `state.json`. The file keeps up to 8
 logs and at most 4 MB in all (`MAX_CACHED_LOGS`, `MAX_CACHE_BYTES` in
 `logs.rs`), dropping the oldest first but always keeping at least one. While the open task is still running, the watcher's round
