@@ -139,6 +139,32 @@ jobs:
           rustup toolchain install "$version" --profile minimal --target "$TARGET"
           rustup default "$version"
           rustc --version
+      # Packaging scans the dependencies' licences with cargo-about, at the
+      # version and SHA-256 the commit's mise.toml pins.
+      - name: Install cargo-about
+        run: |
+          set -euo pipefail
+          toml=subspace-desktop/mise.toml
+          section='[tools."github:EmbarkStudios/cargo-about"]'
+          if ! grep -qxF "$section" "$toml"; then
+            echo 'This release does not use cargo-about.'
+            exit 0
+          fi
+          version="$(awk -v section="$section" '$0 == section { found = 1; next } /^\[/ { found = 0 } found && $1 == "version" { gsub(/"/, "", $3); print $3 }' "$toml")"
+          checksum="$(sed -n 's/^windows-x64 = { checksum = "sha256:\([0-9a-f]\{64\}\)" }$/\1/p' "$toml")"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$checksum" =~ ^[0-9a-f]{64}$ ]]
+          name="cargo-about-$version-x86_64-pc-windows-msvc"
+          # GNU tar reads C:\... as a remote host, so use the POSIX path.
+          dir="$(cygpath -u "$RUNNER_TEMP")/cargo-about"
+          mkdir -p "$dir"
+          curl --fail --silent --show-error --location --retry 3 --output "$dir/$name.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-about/releases/download/$version/$name.tar.gz"
+          echo "$checksum  $dir/$name.tar.gz" | sha256sum --check --strict -
+          tar -xzf "$dir/$name.tar.gz" -C "$dir"
+          exe="$(find "$dir" -name cargo-about.exe -print -quit)"
+          test -n "$exe"
+          "$exe" --version
+          cygpath -w "$(dirname "$exe")" >>"$GITHUB_PATH"
       - name: Build the Windows archive
         working-directory: subspace-desktop
         env:
