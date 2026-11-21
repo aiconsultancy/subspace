@@ -4,6 +4,56 @@ Release Please adds an entry for each release of the Subspace App, from the
 conventional commits that touch `subspace-desktop/`. See
 [Releases](docs/ways-of-working.md#releases).
 
+## [0.11.0](https://github.com/aiconsultancy/subspace/compare/subspace-desktop-v0.10.0...subspace-desktop-v0.11.0) (2026-11-21)
+
+
+### Features
+
+* **client-subspace-api:** replay a NETT move confirmation after a lost reply ([6b21058](https://github.com/aiconsultancy/subspace/commit/6b21058ba2c60ad51172e41f7d65dbb8f73dd71b))
+* **decisions:** add the Decisions Space ([8e5700b](https://github.com/aiconsultancy/subspace/commit/8e5700bb43f3c9c623e60abf8c9ed9e28e1f61d2))
+* **desktop:** embed Inter and JetBrains Mono ([e729220](https://github.com/aiconsultancy/subspace/commit/e729220a983a74185c63a6ccf38d910d1d811159))
+* **desktop:** move Actions, Copilot Agents, Board Lab and web Spaces onto the workspace shell ([1bf206d](https://github.com/aiconsultancy/subspace/commit/1bf206d71a79dd6e9ffb748492240549883917d8))
+* **desktop:** put every Space in one workspace shell, with Twilight Two and embedded fonts ([e9c7dd3](https://github.com/aiconsultancy/subspace/commit/e9c7dd36a02cf86447307b647ee0afd0537a487d))
+* **desktop:** register Decisions and leave unreleased Spaces out of default builds ([9aa581f](https://github.com/aiconsultancy/subspace/commit/9aa581f21520af34e8ace409612c9542b539dbd0))
+* **github:** move Pull requests onto the workspace shell ([2950787](https://github.com/aiconsultancy/subspace/commit/2950787096c6a0fc369f2ba985ed50ba0aae8985))
+* **irc:** move Channels onto the workspace shell ([6e80af2](https://github.com/aiconsultancy/subspace/commit/6e80af25ec6f7c3c108c216406d3a70e4d1745d8))
+* **issues:** move Issues onto the workspace shell ([becc0c6](https://github.com/aiconsultancy/subspace/commit/becc0c6e018dc52d1771059647aa28bac8edd8df))
+* **issues:** open a replayed move under the number NETT recorded ([d290519](https://github.com/aiconsultancy/subspace/commit/d2905192e85a34f69cd0a10d742ba25c62e9d0ad))
+* **nett:** settle a lost move reply by replaying the confirmation ([ce6574f](https://github.com/aiconsultancy/subspace/commit/ce6574fe2f490e60b2eca592947a2a5329fd485c))
+
+
+### Bug Fixes
+
+* **client-subspace-api:** back off reading an unreadable capability list ([4664777](https://github.com/aiconsultancy/subspace/commit/4664777e0f342a9930918e4598cde43449907195))
+* **client-subspace-api:** bound a move read-back's wait for a request slot and check each reply's issue ([3389a58](https://github.com/aiconsultancy/subspace/commit/3389a58533240fc74b7d4563574084b90026eeb2))
+* **client-subspace-api:** bound the upload store and keep in-flight bytes ([c5a837f](https://github.com/aiconsultancy/subspace/commit/c5a837f55766524448abc59f79a29ba8926eca35))
+* **client-subspace-api:** bring a refused stream back when another read finds access changed ([9259d41](https://github.com/aiconsultancy/subspace/commit/9259d4158ae8bb02c4019a46ed8806ba8a0b8a4f))
+* **client-subspace-api:** count only bytes letting go frees, and expire before reopening ([810ad75](https://github.com/aiconsultancy/subspace/commit/810ad753a6cf637a5bc9519747a34c4463a595db))
+* **client-subspace-api:** decide once, in the hub, whether a move check replays ([af995bf](https://github.com/aiconsultancy/subspace/commit/af995bf4c62b103bc43b4826efc4af7e0a1058e5))
+* **client-subspace-api:** finish a move's Check once its root reads back moved ([91c518f](https://github.com/aiconsultancy/subspace/commit/91c518f0c0269ec7206a0bd667373abbd8f32c57))
+* **client-subspace-api:** judge a refused stream's restart against the list before its own read ([217b236](https://github.com/aiconsultancy/subspace/commit/217b23665d4e2da90e411ef6cd065d11386ae8ce))
+* **client-subspace-api:** keep an upload that may be stored until its outcome is known ([963ea63](https://github.com/aiconsultancy/subspace/commit/963ea6307b8844a3f8dd9337a30345f5028014fc))
+* **client-subspace-api:** name an upload's issue by its ID and cancel what a let-go job holds ([4d087ce](https://github.com/aiconsultancy/subspace/commit/4d087ced1076183cb3513637e8f92359d1716cdb))
+* **client-subspace-api:** never record a replayable confirmation without an account ([1c6e619](https://github.com/aiconsultancy/subspace/commit/1c6e619318d4b9f2c92884e539519990c6eb8716))
+* **client-subspace-api:** replay only what this account sent with replay on, and only to writable teams ([00efa00](https://github.com/aiconsultancy/subspace/commit/00efa00b0f23e4cd2eda8287fa56ac4d740f317b))
+* **client-subspace-api:** take an empty upload ID as naming no transfer ([916323c](https://github.com/aiconsultancy/subspace/commit/916323c86e84a7c445899d0d6253dbe52e9820da))
+* **client-subspace-api:** tie a Check's moved root to the plan by its sub-issues ([0f06cb0](https://github.com/aiconsultancy/subspace/commit/0f06cb04cfc1710e1a0d81bda436df891a27009e))
+* **desktop:** check licences against resolved sources ([1728ca2](https://github.com/aiconsultancy/subspace/commit/1728ca2be648970e984e07c5409e5e8f9c02e1f0))
+* **desktop:** reap Cargo after process group cleanup ([28c513b](https://github.com/aiconsultancy/subspace/commit/28c513b5a7baf631ae728793c93ca5f9e73691fc))
+* **desktop:** ship the embedded fonts' licences in release packages ([8e76e21](https://github.com/aiconsultancy/subspace/commit/8e76e21d822e465a344010d00fe1d702910f0344))
+* **desktop:** simplify release packaging safeguards ([4fce7c4](https://github.com/aiconsultancy/subspace/commit/4fce7c4412112df1081e43edd1223c7da6488672))
+* **desktop:** treat EPERM from a finished Cargo group as stopped on macOS ([22f437e](https://github.com/aiconsultancy/subspace/commit/22f437ee4b80da46e6a1b77ff32ed44b2c30a3ab))
+* **desktop:** verify native release inputs before packaging ([5eb25ff](https://github.com/aiconsultancy/subspace/commit/5eb25fff943ae93d8ad22a7b1e56602981e6e5e9))
+* **desktop:** verify ONNX Runtime linker inputs and finish the notices review ([40b9ebd](https://github.com/aiconsultancy/subspace/commit/40b9ebdf67b0aed3401b4bc6773a73aa97c2e1af))
+* **issues:** offer Send again with a warning when checks cannot tell ([637e99e](https://github.com/aiconsultancy/subspace/commit/637e99e5229e477e34e1fc48a97f10c0de66bddb))
+* **issues:** open a committed move's root by its stable ID ([caf430b](https://github.com/aiconsultancy/subspace/commit/caf430b8feea9ce19b55e746369b3632f2fffcf1))
+* **issues:** scroll a long list of unconfirmed sub-issues and keep Open in view ([e82971e](https://github.com/aiconsultancy/subspace/commit/e82971e8fdc7e9f8e315ccad110cfc72f14f8550))
+* **issues:** wrap an upload's status within the Attachments column ([9a4afe0](https://github.com/aiconsultancy/subspace/commit/9a4afe0bc08b592f7c6b838db04f68aad7ffaea3))
+* **nett:** address the deferred review findings and restore the quality gate ([b2fb38b](https://github.com/aiconsultancy/subspace/commit/b2fb38b99ff449f2a11ef98d4127ecc362932cfd))
+* **nett:** resolve [#17](https://github.com/aiconsultancy/subspace/issues/17)'s full review findings ([1325eb6](https://github.com/aiconsultancy/subspace/commit/1325eb622719d8eafaaa50fcb9e4b6cac155cbf2))
+* scope pre-push checks and clarify PR reviews ([14ac1cb](https://github.com/aiconsultancy/subspace/commit/14ac1cbe95b98e4af796ab316c2dba20d8b05287))
+* scope pre-push checks by changed project ([ae84f32](https://github.com/aiconsultancy/subspace/commit/ae84f328dde791cff4be765ed98a7b3905cbe01c))
+
 ## [0.10.0](https://github.com/aiconsultancy/subspace/compare/subspace-desktop-v0.9.0...subspace-desktop-v0.10.0) (2026-11-20)
 
 
