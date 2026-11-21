@@ -69,18 +69,7 @@ fn issue_properties_record_workflow_and_copy_keys_use_the_loaded_issue(cx: &mut 
     assert!(!has(cx, "issue-property:Estimate"));
     assert!(!has(cx, "issue-property:Cycle"));
     assert!(has(cx, "issue-more"));
-    for key in ["y", "ctrl-.", "cmd-."] {
-        cx.update(|_, cx| {
-            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("before".into()))
-        });
-        press(cx, key);
-        cx.update(|_, cx| {
-            assert_eq!(
-                cx.read_from_clipboard().and_then(|i| i.text()).as_deref(),
-                Some("SUB-1")
-            )
-        });
-    }
+    assert_copy_keys_copy(cx, "SUB-1");
     cx.update(|window, cx| window.click("issue-more", cx));
     press(cx, "escape");
     assert!(
@@ -88,6 +77,7 @@ fn issue_properties_record_workflow_and_copy_keys_use_the_loaded_issue(cx: &mut 
         "Escape closes More before leaving the issue"
     );
     cx.update(|_, cx| assert!(board.read(cx).menu.is_none()));
+    // More ends the toolbar; the dock switches are the status bar's.
     for field in ["issue-summary-edit", "issue-description-edit"] {
         press(cx, "tab");
         cx.update(|window, _| assert_eq!(window.find(field).focused(), Some(true)));
@@ -106,6 +96,23 @@ fn issue_properties_record_workflow_and_copy_keys_use_the_loaded_issue(cx: &mut 
     assert!(!has(cx, "issue-tracker-explanation"));
     assert!(has(cx, "issues-detail"));
     cx.update(|window, _| assert_eq!(window.find("issue-tracker-help").focused(), Some(true)));
+}
+
+/// Each copy key puts `identifier` on the clipboard.
+fn assert_copy_keys_copy(cx: &mut VisualTestContext, identifier: &str) {
+    for key in ["y", "ctrl-.", "cmd-."] {
+        cx.update(|_, cx| {
+            cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string("before".into()))
+        });
+        press(cx, key);
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard().and_then(|i| i.text()).as_deref(),
+                Some(identifier),
+                "{key} copies the issue's key"
+            )
+        });
+    }
 }
 
 fn paging_fixture(switch: Arc<AtomicBool>) -> Offline {

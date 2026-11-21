@@ -1,8 +1,80 @@
+use std::time::Instant;
+
+use subspace_api_client::hub::LiveStatus;
+
 use super::{
-    Access, Body, NoOrganisation, Screen, ScreenAction, body, scope_line, screen_actions,
-    screen_text,
+    Access, Body, NoOrganisation, Screen, ScreenAction, body, context_line, scope_line,
+    screen_actions, screen_text, status_line, with_hidden,
 };
+use crate::listing::tests::group;
 use crate::listing::{Failure, Listing};
+use crate::model::StateKind;
+
+fn ada() -> Access {
+    Access::Ready {
+        display_name: "Ada Fixture".into(),
+    }
+}
+
+#[test]
+fn the_status_bar_carries_the_old_headings_context() {
+    assert_eq!(
+        context_line("Subspace API", &ada(), LiveStatus::Live),
+        "Subspace API · Signed in as Ada Fixture · Live"
+    );
+    assert_eq!(
+        context_line("Subspace API", &Access::Starting, LiveStatus::Live),
+        "Subspace API",
+        "no live word before signing in"
+    );
+    let now = Instant::now();
+    let mut listing = Listing::default();
+    listing.loaded(
+        vec![
+            group("s1", "In Progress", StateKind::Started, 4),
+            group("s2", "Todo", StateKind::Unstarted, 40),
+        ],
+        now,
+    );
+    assert_eq!(
+        status_line("Subspace API", &ada(), LiveStatus::Live, &listing, now),
+        "Subspace API · Signed in as Ada Fixture · Live · 44 issues · updated just now"
+    );
+    listing.start_read();
+    listing.failed(Failure::Offline);
+    assert_eq!(
+        status_line(
+            "Subspace API",
+            &ada(),
+            LiveStatus::Reconnecting,
+            &listing,
+            now
+        ),
+        "Subspace API · Signed in as Ada Fixture · Offline"
+    );
+    let mut loading = Listing::default();
+    loading.start_read();
+    assert_eq!(
+        status_line(
+            "Subspace API",
+            &ada(),
+            LiveStatus::Connecting,
+            &loading,
+            now
+        ),
+        "Subspace API · Signed in as Ada Fixture · Connecting… · Loading issues…"
+    );
+    assert_eq!(
+        status_line(
+            "Subspace API",
+            &Access::Failed(Failure::Edge),
+            LiveStatus::Live,
+            &Listing::default(),
+            now
+        ),
+        "Subspace API · Sign-in required"
+    );
+}
 #[test]
 fn edge_and_network_failures_give_the_required_recovery_copy() {
     let edge = Screen::Failed(Failure::Edge);
@@ -55,5 +127,20 @@ fn an_organisation_to_choose_and_none_to_use_read_differently() {
     assert_eq!(
         scope_line("NETT", &Access::Failed(Failure::Organisation)),
         "NETT · Choose an organisation"
+    );
+}
+
+#[test]
+fn the_status_bar_says_how_many_sub_issues_the_list_hides() {
+    assert_eq!(
+        with_hidden(
+            "Subspace API · 3 issues · updated just now".into(),
+            Some(12)
+        ),
+        "Subspace API · 3 issues · updated just now · 12 sub-issues hidden"
+    );
+    assert_eq!(
+        with_hidden("Subspace API · 3 issues".into(), None),
+        "Subspace API · 3 issues"
     );
 }

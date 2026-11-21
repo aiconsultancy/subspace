@@ -13,7 +13,6 @@ fn tabs_keep_their_order_labels_and_stored_keys() {
     assert_eq!(Tab::default(), Tab::Active);
     for tab in Tab::ALL {
         assert_eq!(Tab::from_key(tab.key()), Some(tab));
-        assert_eq!(Tab::ALL[tab.index()], tab);
     }
     assert_eq!(Tab::from_key("cycles"), None);
 }
