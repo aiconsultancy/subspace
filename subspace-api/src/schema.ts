@@ -37,6 +37,52 @@ export const organisations = pgTable(
   (table) => [unique().on(table.provider, table.externalId)],
 );
 
+export const fleets = pgTable(
+  "fleets",
+  {
+    id: id(),
+    organisationId: organisationId(),
+    slug: text().notNull(),
+    name: text().notNull(),
+    ircHost: text("irc_host"),
+    ircPort: integer("irc_port"),
+    ircTls: boolean("irc_tls"),
+    ircWebsocketUrl: text("irc_websocket_url"),
+    legacyRearAdmiralName: text("rear_admiral_name"),
+    legacyCaptainNames: jsonb("captain_names").$type<readonly string[]>(),
+    vmHost: text("vm_host"),
+    version: integer().notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    unique("fleets_organisation_slug").on(table.organisationId, table.slug),
+    unique().on(table.organisationId, table.id),
+    check("fleets_irc_port", sql`${table.ircPort} between 1 and 65535`),
+  ],
+);
+
+export const ships = pgTable(
+  "ships",
+  {
+    id: id(),
+    organisationId: organisationId(),
+    fleetId: uuid("fleet_id").notNull(),
+    name: text().notNull(),
+    version: integer().notNull().default(1),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    unique("ships_scope_id").on(table.organisationId, table.fleetId, table.id),
+    uniqueIndex("ships_fleet_name").on(table.fleetId, sql`lower(${table.name})`),
+    foreignKey({
+      columns: [table.organisationId, table.fleetId],
+      foreignColumns: [fleets.organisationId, fleets.id],
+    }),
+  ],
+);
+
 export const users = pgTable(
   "users",
   {
@@ -52,6 +98,8 @@ export const users = pgTable(
     agentRank: text("agent_rank", { enum: ["rearAdmiral", "captain", "crew"] }),
     agentFleet: text("agent_fleet"),
     agentShip: text("agent_ship"),
+    agentFleetId: uuid("agent_fleet_id"),
+    agentShipId: uuid("agent_ship_id"),
     agentModel: text("agent_model"),
     registeredById: uuid("registered_by_id"),
     deactivatedById: uuid("deactivated_by_id"),
@@ -71,6 +119,19 @@ export const users = pgTable(
       ${table.agentFleet} is not null and ${table.agentModel} is not null and ${table.registeredById} is not null
     )`,
     ),
+    check(
+      "agent_ship_requires_fleet",
+      sql`${table.agentShipId} is null or ${table.agentFleetId} is not null`,
+    ),
+    foreignKey({
+      columns: [table.organisationId, table.agentFleetId],
+      foreignColumns: [fleets.organisationId, fleets.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.agentFleetId, table.agentShipId],
+      foreignColumns: [ships.organisationId, ships.fleetId, ships.id],
+    }),
+    index("users_agent_fleet").on(table.agentFleetId),
     uniqueIndex("user_agent_name")
       .on(table.organisationId, sql`lower(${table.displayName})`)
       .where(sql`${table.agentRank} is not null`),
@@ -82,31 +143,6 @@ export const users = pgTable(
       columns: [table.organisationId, table.deactivatedById],
       foreignColumns: [table.organisationId, table.id],
     }),
-  ],
-);
-
-export const fleets = pgTable(
-  "fleets",
-  {
-    id: id(),
-    organisationId: organisationId(),
-    slug: text().notNull(),
-    name: text().notNull(),
-    ircHost: text("irc_host").notNull(),
-    ircPort: integer("irc_port").notNull(),
-    ircTls: boolean("irc_tls").notNull(),
-    ircWebsocketUrl: text("irc_websocket_url"),
-    rearAdmiralName: text("rear_admiral_name").notNull(),
-    captainNames: jsonb("captain_names").$type<readonly string[]>().notNull(),
-    vmHost: text("vm_host"),
-    createdAt: createdAt(),
-    updatedAt: updatedAt(),
-  },
-  (table) => [
-    unique("fleets_organisation_slug").on(table.organisationId, table.slug),
-    unique().on(table.organisationId, table.id),
-    check("fleets_irc_port", sql`${table.ircPort} between 1 and 65535`),
-    check("fleets_captain_names", sql`jsonb_typeof(${table.captainNames}) = 'array'`),
   ],
 );
 
@@ -634,6 +670,7 @@ export const evidenceKinds = [
   "subspaceComment",
   "documentOrUrl",
   "meeting",
+  "other",
 ] as const;
 
 export const decisions = pgTable(
@@ -654,6 +691,11 @@ export const decisions = pgTable(
     implications: text().notNull().default(""),
     alternatives: text().notNull().default(""),
     tags: jsonb().$type<readonly string[]>().notNull().default([]),
+    madeByType: text("made_by_type", { enum: ["human", "agent"] }).notNull(),
+    madeByUserId: uuid("made_by_user_id"),
+    madeByAgentName: text("made_by_agent_name"),
+    madeByAgentRank: text("made_by_agent_rank", { enum: ["rearAdmiral", "captain", "crew"] }),
+    madeByAgentModel: text("made_by_agent_model"),
     evidenceKind: text("evidence_kind", { enum: evidenceKinds }),
     evidenceReference: text("evidence_reference"),
     evidenceExcerpt: text("evidence_excerpt"),
@@ -679,6 +721,10 @@ export const decisions = pgTable(
     foreignKey({
       columns: [table.organisationId, table.projectId],
       foreignColumns: [projects.organisationId, projects.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.madeByUserId],
+      foreignColumns: [users.organisationId, users.id],
     }),
     foreignKey({
       columns: [table.organisationId, table.recordedById],

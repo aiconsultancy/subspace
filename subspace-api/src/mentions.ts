@@ -4,7 +4,7 @@ import { marked, type Token } from "marked";
 import { type Database } from "./db";
 import { memberKind, type Member } from "./identity";
 import { problem } from "./problems";
-import { users } from "./schema";
+import { fleets, ships, users } from "./schema";
 import { isUuid } from "./validation";
 
 export function markdownMentions(body: string | null | undefined) {
@@ -53,10 +53,20 @@ export function mentionStatuses(body: string | null, people: ReadonlyMap<string,
 
 export function mentionPeople(db: Db, member: Member, ids: string[]) {
   return ids.length
-    ? db
-        .select()
-        .from(users)
-        .where(and(eq(users.organisationId, member.organisationId), inArray(users.id, ids)))
+    ? Effect.map(
+        db
+          .select({ member: users, fleet: fleets.slug, ship: ships.name })
+          .from(users)
+          .leftJoin(fleets, eq(users.agentFleetId, fleets.id))
+          .leftJoin(ships, eq(users.agentShipId, ships.id))
+          .where(and(eq(users.organisationId, member.organisationId), inArray(users.id, ids))),
+        (rows) =>
+          rows.map(({ member, fleet, ship }) => ({
+            ...member,
+            agentFleet: fleet ?? member.agentFleet,
+            agentShip: ship ?? member.agentShip,
+          })),
+      )
     : Effect.succeed([] as Member[]);
 }
 

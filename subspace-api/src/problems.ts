@@ -21,8 +21,10 @@ const problemSchema = <Status extends ProblemStatus>(status: Status) =>
     title: Schema.Literal(titles[status]),
     status: Schema.Literal(status),
     detail: Schema.String,
-    currentVersion: Schema.optional(Schema.Int),
+    instance: Schema.optional(Schema.String),
+    correlationId: Schema.optional(Schema.String),
     errors: Schema.optional(Schema.Record(Schema.String, Schema.Array(Schema.String))),
+    currentVersion: Schema.optional(Schema.Int),
   })
     .annotate({ identifier: `Problem${status}` })
     .pipe(
@@ -56,4 +58,11 @@ export function problem<Status extends ProblemStatus>(
   currentVersion?: number,
 ) {
   return { type: "about:blank", title: titles[status], status, detail, currentVersion, errors: {} };
+}
+
+export function validationProblem(field: string, message: string) {
+  return {
+    ...problem(400, "One or more validation errors occurred. Correct the listed fields."),
+    errors: { [field]: [message] },
+  };
 }

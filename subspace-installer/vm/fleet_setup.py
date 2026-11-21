@@ -756,10 +756,7 @@ def register_fleet(registration):
     port = registration.get("ircPort")
     require(isinstance(registration.get("ircHost"), str) and isinstance(port, int) and 1 <= port <= 65535,
             "The registration has an invalid IRC server.")
-    names = [registration.get("rearAdmiralName"), *registration.get("captainNames", [])]
-    require(all(isinstance(value, str) and 0 < len(value) <= 100 and "\n" not in value for value in names),
-            "The registration has invalid agent names.")
-    fields = {key: registration[key] for key in ("slug", "name", "ircHost", "ircPort", "rearAdmiralName", "captainNames")}
+    fields = {key: registration[key] for key in ("slug", "name", "ircHost", "ircPort")}
     fields["ircTls"] = bool(registration.get("ircTls"))
     token = api_token(answers)
     try:

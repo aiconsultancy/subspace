@@ -59,8 +59,6 @@ def register(cfg):
     fields = {
         "slug": cfg["slug"], "name": cfg["name"], "ircHost": irc["host"], "ircPort": irc["port"],
         "ircTls": irc["tls"], "ircWebsocketUrl": irc.get("websocketUrl"),
-        "rearAdmiralName": cfg["members"][0]["name"],
-        "captainNames": [person["name"] for person in cfg["members"] if person["role"] == "captain"],
         "vmHost": cfg["api"].get("vmHost"),
     }
     path = f"/fleets/{cfg['slug']}"
