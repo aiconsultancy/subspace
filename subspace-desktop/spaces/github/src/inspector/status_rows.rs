@@ -103,7 +103,14 @@ pub(crate) fn link_label(name: &str, url: &str) -> String {
     let host = authority
         .rsplit_once('@')
         .map_or(authority, |(_, host)| host);
-    let host = host.split(':').next().unwrap_or_default().to_lowercase();
+    // A bracketed IPv6 host holds colons of its own: the port follows the
+    // closing bracket.
+    let host = if host.starts_with('[') {
+        host.find(']').map_or(host, |end| &host[..=end])
+    } else {
+        host.split(':').next().unwrap_or_default()
+    }
+    .to_lowercase();
     if host.is_empty() {
         return format!("Open the {name} check's page");
     }
@@ -129,6 +136,18 @@ mod tests {
         assert_eq!(
             link_label("lint", "https://bot@CI.Example.org/run/3"),
             "Open the lint check on ci.example.org"
+        );
+    }
+
+    #[test]
+    fn a_check_link_on_an_ipv6_host_names_the_whole_address() {
+        assert_eq!(
+            link_label("build", "http://[2001:DB8::7]:8080/runs/7"),
+            "Open the build check on [2001:db8::7]"
+        );
+        assert_eq!(
+            link_label("lint", "https://bot@[::1]/run/3"),
+            "Open the lint check on [::1]"
         );
     }
 }
