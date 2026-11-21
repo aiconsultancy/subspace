@@ -894,7 +894,7 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
   test.skipIf(!webhookSecret || !fixtureOrg)(
     "GitHub merge closes linked issues once and streams the committed result",
     async () => {
-      const closed = await createIssue("Closes fixture");
+      const closed = await createIssue("Closes fixture", "admin", { readyForAgents: true });
       const mentioned = await createIssue("Mention fixture");
       const project = await call<Versioned>(200, "/projects/PAR");
       const repository = `example/round-two-${suffix}`;
@@ -935,8 +935,14 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
         expect(update).toContain('"actorType":"integration"');
         expect(await call(200, `/issues/${closed.id}`)).toMatchObject({
           state: { type: "completed" },
+          readyForAgents: false,
           version: closed.version + 1,
         });
+        const completion = await call<Page<{ kind: string; data: { fields?: string[] } }>>(
+          200,
+          `/issues/${closed.id}/activity?limit=1`,
+        );
+        expect(completion.items[0]?.data.fields).toEqual(["stateId", "readyForAgents"]);
         expect(await call(200, `/issues/${mentioned.id}`)).toMatchObject({
           version: mentioned.version,
         });
@@ -1227,7 +1233,10 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
     const list = await call<Page<{ id: string; type: string; name: string }>>(200, path);
     const extra = list.items.find(({ name }) => name === added.name)!;
     const done = list.items.find(({ type }) => type === "completed")!;
-    const issue = await createIssue("Workflow removal fixture", "admin", { stateId: extra.id });
+    const issue = await createIssue("Workflow removal fixture", "admin", {
+      stateId: extra.id,
+      readyForAgents: true,
+    });
     await call(409, `${path}/${extra.id}?version=${saved.version}`, "admin", "DELETE");
     await call(
       200,
@@ -1237,8 +1246,14 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
     );
     expect(await call(200, `/issues/${issue.id}`)).toMatchObject({
       state: { type: "completed" },
+      readyForAgents: false,
       version: issue.version + 1,
     });
+    const remap = await call<Page<{ data: { fields?: string[] } }>>(
+      200,
+      `/issues/${issue.id}/activity?limit=1`,
+    );
+    expect(remap.items[0]?.data.fields).toEqual(["stateId", "readyForAgents"]);
   });
 
   test("estimate-scale preview and update perform the same nearest-point mapping", async () => {
@@ -1493,6 +1508,123 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       "admin",
     );
     expect(latest.items[0]?.data.fields).toEqual(["title"]);
+  });
+
+  test("trackers, terminal states, duplicates and archiving clear the flag and refuse it", async () => {
+    type Ready = Issue & { readyForAgents: boolean; type: string };
+    type Activity = Page<{ kind: string; data: { fields?: string[] } }>;
+    // Tracker refreshes can add a derived-state event in the same write, so find the change itself.
+    const latestFields = async (id: string) =>
+      (await call<Activity>(200, `/issues/${id}/activity?limit=5`)).items.find(
+        ({ kind }) => kind === "issue.changed",
+      )?.data.fields;
+    const states = await call<Page<{ id: string; type: string }>>(
+      200,
+      "/projects/PAR/workflow-states",
+    );
+    const completed = states.items.find(({ type }) => type === "completed")!;
+    const canceled = states.items.find(({ type }) => type === "canceled")!;
+    const unstarted = states.items.find(({ type }) => type === "unstarted")!;
+
+    await call(400, "/issues", "admin", "POST", {
+      projectId,
+      title: "Ready tracker fixture",
+      summary: "Fixture issue",
+      type: "tracker",
+      readyForAgents: true,
+    });
+    await call(400, "/issues", "admin", "POST", {
+      projectId,
+      title: "Ready closed fixture",
+      summary: "Fixture issue",
+      stateId: completed.id,
+      readyForAgents: true,
+    });
+
+    const retyped = await createIssue("Ready retype fixture", "admin", { readyForAgents: true });
+    const tracker = await call<Ready>(200, `/issues/${retyped.id}`, "admin", "PATCH", {
+      version: retyped.version,
+      type: "tracker",
+    });
+    expect(tracker).toMatchObject({ type: "tracker", readyForAgents: false });
+    expect(await latestFields(retyped.id)).toEqual(["type", "readyForAgents"]);
+    await call(400, `/issues/${retyped.id}`, "admin", "PATCH", {
+      version: tracker.version,
+      readyForAgents: true,
+    });
+
+    const finished = await createIssue("Ready completion fixture", "admin", {
+      readyForAgents: true,
+    });
+    const done = await call<Ready>(200, `/issues/${finished.id}`, "admin", "PATCH", {
+      version: finished.version,
+      stateId: completed.id,
+    });
+    expect(done).toMatchObject({ readyForAgents: false, version: finished.version + 1 });
+    expect(await latestFields(finished.id)).toEqual(["stateId", "readyForAgents"]);
+    await call(400, `/issues/${finished.id}`, "admin", "PATCH", {
+      version: done.version,
+      readyForAgents: true,
+    });
+    await call(400, `/issues/${finished.id}`, "admin", "PATCH", {
+      version: done.version,
+      stateId: canceled.id,
+      readyForAgents: true,
+    });
+    const reopened = await call<Ready>(200, `/issues/${finished.id}`, "admin", "PATCH", {
+      version: done.version,
+      stateId: unstarted.id,
+    });
+    expect(reopened.readyForAgents).toBe(false);
+    const reflagged = await call<Ready>(200, `/issues/${finished.id}`, "admin", "PATCH", {
+      version: reopened.version,
+      stateId: unstarted.id,
+      readyForAgents: true,
+    });
+    expect(reflagged.readyForAgents).toBe(true);
+
+    const original = await createIssue("Ready duplicate target fixture");
+    const copy = await createIssue("Ready duplicate fixture", "admin", { readyForAgents: true });
+    const duplicate = await call<Ready & { state: { type: string } }>(
+      200,
+      `/issues/${copy.id}`,
+      "admin",
+      "PATCH",
+      { version: copy.version, relations: { duplicateOf: original.id } },
+    );
+    expect(duplicate).toMatchObject({
+      state: { type: "duplicate" },
+      readyForAgents: false,
+      version: copy.version + 1,
+    });
+    expect(await latestFields(copy.id)).toEqual(["relations", "readyForAgents"]);
+    await call(400, `/issues/${original.id}`, "admin", "PATCH", {
+      version: original.version,
+      relations: { duplicateOf: copy.id },
+      readyForAgents: true,
+    });
+    const restored = await call<Ready & { state: { type: string } }>(
+      200,
+      `/issues/${copy.id}`,
+      "admin",
+      "PATCH",
+      { version: duplicate.version, relations: { duplicateOf: null }, readyForAgents: true },
+    );
+    expect(restored).toMatchObject({ readyForAgents: true });
+    expect(restored.state.type).not.toBe("duplicate");
+
+    const shelved = await createIssue("Ready archive fixture", "admin", { readyForAgents: true });
+    const archived = await call<Ready>(200, `/issues/${shelved.id}/archive`, "admin", "POST", {
+      version: shelved.version,
+    });
+    expect(archived).toMatchObject({ readyForAgents: false, version: shelved.version + 1 });
+    expect(
+      (await call<Activity>(200, `/issues/${shelved.id}/activity?limit=1`)).items[0],
+    ).toMatchObject({ kind: "issue.archived", data: { fields: ["readyForAgents"] } });
+    const unarchived = await call<Ready>(200, `/issues/${shelved.id}/unarchive`, "admin", "POST", {
+      version: archived.version,
+    });
+    expect(unarchived.readyForAgents).toBe(false);
   });
 
   test("assignee and updatedSince filters combine for an agent assignee", async () => {

@@ -6,7 +6,14 @@ import { Database } from "./db";
 import { EstimateScale, nearestEstimate } from "./estimates";
 import { CurrentMember, type Member } from "./identity";
 import { Version } from "./initiative-contract";
-import { addActivity, datesForState, lockIssues, refreshTrackers } from "./issues";
+import {
+  addActivity,
+  clearReadyForAgents,
+  datesForState,
+  isTerminalState,
+  lockIssues,
+  refreshTrackers,
+} from "./issues";
 import { BearerAuth, handleDb, ValidationErrors, versionedApi } from "./middleware";
 import { endpointErrors, problem } from "./problems";
 import { Project, projectDto, readProject, StateType, stateTypes } from "./projects";
@@ -218,10 +225,12 @@ export function deleteState(
             issue.type === "tracker" && replacement!.type !== state.type
               ? siblings[0]!
               : replacement!;
+          const cleared = clearReadyForAgents(issue, isTerminalState(next.type));
           yield* tx
             .update(issues)
             .set({
               ...datesForState(next.type, issue),
+              ...cleared.set,
               stateId: next.id,
               version: issue.version + 1,
               updatedAt: sql`now()`,
@@ -229,6 +238,7 @@ export function deleteState(
             })
             .where(and(issueScope(member, project.id), eq(issues.id, issue.id)));
           yield* addActivity(tx, member, issue.id, "issue.changed", {
+            ...(cleared.fields.length ? { fields: ["stateId", ...cleared.fields] } : {}),
             previousStateId: stateId,
             stateId: next.id,
           });

@@ -2,13 +2,42 @@ import { expect, test } from "bun:test";
 import { mkdtemp, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { migrate } from "drizzle-orm/effect-postgres/migrator";
 import { Effect } from "effect";
 import pg from "pg";
 import { Database, databaseLayer } from "../src/db";
 
 const testDatabase = process.env.TEST_DATABASE_URL;
-const folder = new URL("../drizzle", import.meta.url).pathname;
+const folder = fileURLToPath(new URL("../drizzle", import.meta.url));
+
+/**
+ * Parses the test database URL once into explicit settings. `pg` would also honour host
+ * overrides in the query string or the environment, so the URL may carry no options, its host
+ * must be loopback, and every client below connects with these settings alone.
+ */
+function localServer(raw: string) {
+  const url = new URL(raw);
+  if (!["postgres:", "postgresql:"].includes(url.protocol))
+    throw new Error("TEST_DATABASE_URL must be a postgresql:// URL.");
+  if (url.search || url.hash)
+    throw new Error("TEST_DATABASE_URL must not carry connection options.");
+  if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
+    throw new Error("TEST_DATABASE_URL must point to a local test database.");
+  const host = url.hostname === "[::1]" ? "::1" : url.hostname;
+  const port = Number(url.port || "5432");
+  const user = decodeURIComponent(url.username);
+  const password = decodeURIComponent(url.password);
+  const settings = (database: string) => ({ host, port, user, password, database });
+  const urlFor = (database: string) => {
+    const clean = new URL(`${url.protocol}//${url.host}`);
+    clean.username = url.username;
+    clean.password = url.password;
+    clean.pathname = `/${encodeURIComponent(database)}`;
+    return clean.toString();
+  };
+  return { settings, urlFor, database: decodeURIComponent(url.pathname.slice(1)) || user };
+}
 
 function applyMigrations(url: string, migrationsFolder: string) {
   return Effect.runPromise(
@@ -20,18 +49,15 @@ function applyMigrations(url: string, migrationsFolder: string) {
 }
 
 test.skipIf(!testDatabase)(
-  "ready-for-agents migration defaults existing issues to false and is safe to run twice",
+  "ready-for-agents migrations default existing issues to false, index the poll, clear assigned flags and are safe to run twice",
   async () => {
-    const connection = new URL(testDatabase!);
-    if (!["localhost", "127.0.0.1", "[::1]"].includes(connection.hostname))
-      throw new Error("TEST_DATABASE_URL must point to a local test database.");
+    const server = localServer(testDatabase!);
     const databaseName = `ready_migration_${crypto.randomUUID().replaceAll("-", "")}`;
-    const admin = new pg.Client(testDatabase);
+    const admin = new pg.Client(server.settings(server.database));
     await admin.connect();
     try {
       await admin.query(`CREATE DATABASE "${databaseName}"`);
-      connection.pathname = databaseName;
-      const url = connection.toString();
+      const url = server.urlFor(databaseName);
       const previous = await mkdtemp(join(tmpdir(), "subspace-drizzle-"));
       const directories = (await readdir(folder)).sort();
       const readyMigration = directories.find((name) => name.endsWith("_issue_ready_for_agents"))!;
@@ -44,7 +70,7 @@ test.skipIf(!testDatabase)(
         await rm(previous, { recursive: true });
       }
 
-      const client = new pg.Client(url);
+      const client = new pg.Client(server.settings(databaseName));
       await client.connect();
       try {
         const org = "00000000-0000-4000-8000-000000000001";
@@ -96,11 +122,54 @@ test.skipIf(!testDatabase)(
         );
         expect(column).toEqual({ is_nullable: "NO", column_default: "false" });
 
+        const index = async () =>
+          (
+            await client.query(
+              "SELECT indexdef FROM pg_indexes WHERE tablename = 'issues' AND indexname = 'issues_ready_for_agents_idx'",
+            )
+          ).rows.map(({ indexdef }) => String(indexdef));
+        const [definition] = await index();
+        expect(definition).toContain("(organisation_id)");
+        expect(definition).toContain("ready_for_agents");
+        expect(definition).toContain("assignee_id IS NULL");
+        expect(definition).toContain("archived_at IS NULL");
+
         await applyMigrations(url, folder);
         expect(await inspect()).toEqual(migrated);
-        // Run the statement again outside the journal, as a hand-applied rerun would.
-        await client.query(await Bun.file(join(folder, readyMigration, "migration.sql")).text());
+        // Run the statements again outside the journal, as a hand-applied rerun would.
+        const indexMigration = directories.find((name) =>
+          name.endsWith("_issue_ready_for_agents_index"),
+        )!;
+        for (const name of [readyMigration, indexMigration])
+          await client.query(await Bun.file(join(folder, name, "migration.sql")).text());
         expect(await inspect()).toEqual(migrated);
+        expect(await index()).toEqual([definition!]);
+
+        // An older writer that assigns a flagged issue, or inserts one assigned and flagged,
+        // still leaves it not ready.
+        await client.query("UPDATE issues SET ready_for_agents = true WHERE identifier = 'OLD-1'");
+        expect((await inspect())[0]).toMatchObject({ ready_for_agents: true });
+        await client.query("UPDATE issues SET title = 'Renamed' WHERE identifier = 'OLD-1'");
+        expect((await inspect())[0]).toMatchObject({ ready_for_agents: true });
+        await client.query("UPDATE issues SET assignee_id = $1 WHERE identifier = 'OLD-1'", [
+          owner,
+        ]);
+        expect((await inspect())[0]).toMatchObject({ ready_for_agents: false });
+        await client.query("UPDATE issues SET ready_for_agents = true WHERE identifier = 'OLD-2'");
+        expect((await inspect())[1]).toMatchObject({ ready_for_agents: false });
+        await client.query(
+          `INSERT INTO issues (organisation_id, project_id, number, identifier, title, summary, state_id, assignee_id, ready_for_agents, created_by_id)
+        VALUES ($1, $2, 3, 'OLD-3', 'Inserted', 'Older writer', $3, $4, true, $4)`,
+          [org, project, state, owner],
+        );
+        expect((await inspect())[2]).toMatchObject({
+          identifier: "OLD-3",
+          ready_for_agents: false,
+        });
+        await client.query(
+          "UPDATE issues SET assignee_id = NULL, ready_for_agents = true WHERE identifier = 'OLD-3'",
+        );
+        expect((await inspect())[2]).toMatchObject({ ready_for_agents: true });
       } finally {
         await client.end();
       }
@@ -110,3 +179,25 @@ test.skipIf(!testDatabase)(
     }
   },
 );
+
+test("the migration test only reaches a loopback server named by the URL itself", () => {
+  for (const raw of [
+    "postgresql://subspace@127.0.0.1:5432/subspace?host=db.example.com",
+    "postgresql://subspace@localhost/subspace?hostaddr=192.0.2.10",
+    "postgresql://subspace@localhost/subspace?sslmode=disable",
+    "postgresql://subspace@db.example.com:5432/subspace",
+    "postgresql:///subspace",
+    "mysql://subspace@localhost/subspace",
+  ])
+    expect(() => localServer(raw)).toThrow();
+  const server = localServer("postgresql://sub%40space:p%2Fss@[::1]:5433/sub%20space");
+  expect(server.database).toBe("sub space");
+  expect(server.settings("other")).toEqual({
+    host: "::1",
+    port: 5433,
+    user: "sub@space",
+    password: "p/ss",
+    database: "other",
+  });
+  expect(server.urlFor("other")).toBe("postgresql://sub%40space:p%2Fss@[::1]:5433/other");
+});
