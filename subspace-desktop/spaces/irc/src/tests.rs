@@ -28,6 +28,7 @@ mod remove;
 mod replies;
 mod selection;
 mod settings;
+mod statuses;
 mod stored;
 mod uploads;
 

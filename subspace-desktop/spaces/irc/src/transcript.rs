@@ -1,8 +1,10 @@
 //! A conversation's transcript: its rows in Kit's `MessageScroller` (the
 //! older-history control, day dividers, messages grouped by sender, compact
-//! server lines and membership runs) and the typing line. Hosted by
+//! server lines and membership runs) and the line above the composer
+//! ([`activity`]: agents' status lines and who is typing). Hosted by
 //! [`crate::conversation::Conversation`].
 
+pub(crate) mod activity;
 mod fill;
 pub(crate) mod focus;
 mod line;
@@ -237,29 +239,6 @@ fn history_control(origin: (&Entity<Hub>, &BufferKey), loading: bool) -> AnyElem
                 }),
         )
         .into_any_element()
-}
-
-/// Who is typing, with its line kept so the transcript does not jump.
-pub(crate) fn typing_line(buffer: &Buffer, tokens: &Tokens) -> AnyElement {
-    let nicks: Vec<&str> = buffer.typing.keys().map(String::as_str).collect();
-    div()
-        .flex_shrink_0()
-        .h(tokens.row_height)
-        .px_2()
-        .text_size(tokens.caption_size())
-        .text_color(tokens.muted)
-        .children(typing_text(&nicks))
-        .into_any_element()
-}
-
-/// `alice is typing…`, `alice and bob are typing…`, `3 people are typing…`.
-pub(crate) fn typing_text(nicks: &[&str]) -> Option<String> {
-    match nicks {
-        [] => None,
-        [one] => Some(format!("{one} is typing…")),
-        [one, two] => Some(format!("{one} and {two} are typing…")),
-        many => Some(format!("{} people are typing…", many.len())),
-    }
 }
 
 #[cfg(test)]
