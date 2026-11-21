@@ -77,7 +77,9 @@ version once in `MACOS_MINIMUM_VERSION`.
 Each archive has a checksum file with the same name and a `.sha256` suffix.
 The archive holds the selected binary, `README.md` and validated `product.json`
 at its root. Windows ZIP archives contain `subspace.exe`; the updater selects
-that exact entry, including the `.exe` extension.
+that exact entry, including the `.exe` extension. In a published release,
+`subspace.exe` is Authenticode-signed with Azure Artifact Signing (see
+[Sign Windows releases](#sign-windows-releases)).
 
 The archives also include `LICENSE`, `NOTICE` and `THIRD_PARTY_LICENSES`,
 with asset notices under `licenses/`. In the macOS app archive these files
@@ -259,10 +261,15 @@ fixtures without real signing or notarization.
 A stable release starts as a draft. Merging the app's Release Please pull
 request (see [Releases](ways-of-working.md#releases)) makes the release
 workflow tag the merge commit `subspace-desktop-v<version>` and create a
-draft GitHub release with the changelog's entry as its notes. Then, on the
-owner's Mac:
+draft GitHub release with the changelog's entry as its notes. It also starts
+the [windows-release workflow](#the-windows-release-workflow), which attaches
+the signed Windows archive to the draft and can take a couple of hours.
+`make release-macos` publishes the release without checking for that archive,
+so wait until the draft lists `subspace-<version>-x86_64-pc-windows-msvc.zip`
+and its `.sha256`. Then, on the owner's Mac:
 
 ```bash
+gh release view subspace-desktop-v<version> -R aiconsultancy/subspace --json assets --jq '.assets[].name'
 git fetch --tags origin
 git switch --detach subspace-desktop-v<version>
 make release-macos
@@ -510,6 +517,163 @@ command line or shell history, for example
 `az keyvault secret set --vault-name your-signing-vault --name Subspace--MacosCertificateBase64 --file certificate.p12.b64 --output none`.
 Set `MACOS_SIGNING_IDENTITY` to the certificate's SHA-1 fingerprint or its
 full `Developer ID Application: <team> (<team ID>)` name.
+
+### Sign Windows releases
+
+`subspace.exe` is signed with [Azure Artifact Signing](https://learn.microsoft.com/azure/artifact-signing/)
+(formerly Trusted Signing). There is no certificate file: Microsoft keeps the
+key in its HSMs, issues a short-lived certificate for the account's
+certificate profile and signs a digest that the client sends. The client is
+[jsign](https://github.com/ebourg/jsign), which runs on macOS, Linux and
+Windows, so signing needs no Windows machine. It needs HTTPS to the
+Artifact Signing endpoint and to the Key Vault, and HTTP to Microsoft's
+timestamp server.
+
+`make sign-windows FILES="<file> ..."` (`scripts/sign-windows.sh`) signs a
+`.exe`, `.dll`, `.msi` or `.msix` in place. Given a release `.zip`, it signs
+every `.exe` and `.dll` inside, rewrites the archive with the same entries in
+the same order, and writes a fresh `.sha256` file beside it. Each file is
+timestamped by Microsoft's RFC 3161 service, so its signature outlives the
+certificate. The account comes from the environment, and anything missing
+from the Key Vault named by `SUBSPACE_SIGNING_KEY_VAULT`:
+
+| Environment variable | Key Vault secret |
+| --- | --- |
+| `SUBSPACE_WINDOWS_SIGNING_ENDPOINT` | `Subspace--WindowsSigningEndpoint`, the account's regional endpoint, such as `https://weu.codesigning.azure.net/` |
+| `SUBSPACE_WINDOWS_SIGNING_ACCOUNT` | `Subspace--WindowsSigningAccount` |
+| `SUBSPACE_WINDOWS_SIGNING_PROFILE` | `Subspace--WindowsSigningCertificateProfile` |
+
+The script refuses an endpoint that is not `*.codesigning.azure.net`, so a
+wrong value never receives the token. It asks `az` for an access token for
+`https://codesigning.azure.net` (or uses `SUBSPACE_WINDOWS_SIGNING_TOKEN`) and
+hands it to jsign through the environment, never on the command line. The
+signer needs **Artifact Signing Certificate Profile Signer** on the account
+or profile, and **Key Vault Secrets User** on each of the three secrets. To
+sign from a Mac:
+
+```bash
+brew install jsign
+az login --tenant <signing tenant>
+SUBSPACE_SIGNING_KEY_VAULT=<vault> make sign-windows FILES=dist/subspace-0.10.0-x86_64-pc-windows-msvc.zip
+```
+
+Set `SUBSPACE_JSIGN_JAR` to a downloaded jsign JAR to run it with `java`
+instead. `bash scripts/test-sign-windows.sh` checks the script with a fake
+`az` and jsign.
+
+#### The windows-release workflow
+
+When the release workflow creates an app release, it starts
+`.github/workflows/windows-release.yml` on `main` with the new tag. Every job
+runs on the Subspace self-hosted ARC scale sets in the platform's Kubernetes
+cluster (runner group `subspace-release`), never on GitHub-hosted runners:
+
+1. **resolve**, on `subspace-signing`, a Linux runner in the trusted
+   deployment subnet, refuses the tag unless it is a stable release whose
+   commit is the merge commit of a merged Release Please pull request for the
+   desktop, as GitHub records it, in `main`'s first-parent history, and
+   changes only the manifest, the changelog and the `Cargo.toml` and
+   `Cargo.lock` files Release Please updates (and, when `release.yml` starts
+   the run, is the release's commit), so only reviewed code is signed, whoever pushed the
+   tag. It fixes that commit and the archive's name for the rest of the run.
+2. **build**, on `subspace-windows`, checks out that commit, installs
+   `cargo-about` at the version and SHA-256 its `mise.toml` pins, and runs
+   `scripts/package-release.sh x86_64-pc-windows-msvc <version>` with no
+   secrets. The runner image provides Python 3 as `python3`, which packaging
+   also needs. The app cannot start in a Windows Server container, so the job
+   sets `SUBSPACE_PACKAGE_SKIP_RUN_CHECK=1` and the script does not run the
+   app to read its version back. The runner is a Windows Server 2022
+   container on a node pool that scales from zero to one, so a run may wait a
+   few minutes for the node. A GPUI release build for Windows must run on
+   Windows, because the renderer compiles its shaders with the Windows SDK's
+   `fxc.exe` in a build script.
+3. **sign**, on `subspace-signing`, runs in the `windows-signing`
+   environment. The build's scripts could have tampered with anything the
+   build job produced, so this job uses nothing from it but the archive. It
+   installs a Temurin JRE and the jsign JAR, each checked against its pinned
+   SHA-256 digest, signs in to Azure with GitHub OIDC as the signing
+   identity and runs `scripts/sign-windows.sh` on the archive, which refuses
+   links, unsafe paths (including names Windows would rewrite, such as a
+   trailing dot, forbids, or treats as devices) and duplicate entries. It first
+   refuses an archive holding any Windows binary other than `subspace.exe`. It reads the three
+   secrets above through the platform Key Vault's private endpoint, masks
+   their values in the log, and records the signed archive's SHA-256.
+4. **verify**, on `subspace-windows` with read access only, checks the
+   archive has that SHA-256 and that Windows reports the signature `Valid`
+   with a timestamp.
+5. **attach**, back on `subspace-signing`, checks the archive again against
+   the recorded SHA-256 and that the tag still points at the resolved commit,
+   then attaches the archive and its `.sha256` file to the release. It
+   replaces a draft's files. To a published release it adds only files it
+   lacks, replaces an upload that never finished, and stops if a finished one
+   differs. Re-run a failed attach job to complete a half-finished upload: a
+   new run signs again with a new timestamp, so its archive differs.
+   Publishing a draft at the moment attach replaces its files could still
+   leave it briefly without them. Publish
+   the release only after this, as
+   [Publish a macOS release](#publish-a-macos-release) says.
+
+The build job never holds the OIDC permission, so build scripts cannot request
+a token for the signing identity. They can still change what the build
+produces, including `subspace.exe` itself, and the sign job signs that
+binary: only commits on `main`, built with `--locked` against the reviewed
+`Cargo.lock`, limit which build scripts run. The runner group admits only this
+workflow on `main`. Releases from before this workflow can't be built: their
+`package-release.sh` can't skip running the app. To try the build or the
+signing without attaching anything, or to attach a missing archive:
+
+```bash
+gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=subspace-desktop-v<version>
+gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=subspace-desktop-v<version> -f mode=sign-only
+gh workflow run windows-release.yml -R aiconsultancy/subspace --ref main -f tag=subspace-desktop-v<version> -f mode=build-only
+```
+
+The `windows-signing` environment's deployment rule admits only `main`, where
+this workflow runs. It must not admit tags: a workflow committed on a tag
+could then use the signing identity without this workflow's checks. The
+environment holds these secrets, so neither the identity nor the vault is
+written in the repository:
+
+| Secret | Value |
+| --- | --- |
+| `AZURE_SIGNING_CLIENT_ID` | Client ID of the signing managed identity |
+| `AZURE_SIGNING_TENANT_ID` | Its tenant |
+| `AZURE_SIGNING_SUBSCRIPTION_ID` | The subscription that holds the signing account |
+| `SUBSPACE_SIGNING_KEY_VAULT` | The Key Vault holding the three secrets above |
+
+The managed identity trusts one federated credential: issuer
+`https://token.actions.githubusercontent.com`, audience
+`api://AzureADTokenExchange`, subject
+`repo:aiconsultancy@<owner id>/subspace@<repository id>:environment:windows-signing`.
+This repository uses GitHub's immutable OIDC subjects (owner and repository
+IDs), which
+`gh api repos/aiconsultancy/subspace/actions/oidc/customization/sub` shows.
+
+#### Set up Artifact Signing
+
+An Azure administrator does this once:
+
+1. Register the `Microsoft.CodeSigning` resource provider and create an
+   Artifact Signing account (Basic SKU) in a supported region; its endpoint
+   is shown on the account.
+2. Give whoever validates the organisation's identity **Artifact Signing
+   Identity Verifier** on the account. In the Azure portal, open the account,
+   then **Identity validations**, and request a **Public** validation for the
+   organisation that publishes Subspace. Microsoft checks the organisation's
+   documents, which can take days.
+3. When the validation is **Completed**, create a **Public Trust** certificate
+   profile named as `Subspace--WindowsSigningCertificateProfile` says, from
+   **Certificate profiles** in the portal or with
+   `az artifact-signing certificate-profile create` (the `artifact-signing`
+   CLI extension), choosing the completed validation.
+4. Store the three Key Vault secrets, give the signing identity its two
+   roles, and add the federated credential and environment secrets above.
+
+Until step 3 is done, the sign job fails with an error that the certificate
+profile does not exist; a `build-only` run still checks the build.
+
+If the vault accepts only private traffic, `make sign-windows` needs a network
+path to its private endpoint.
 
 ## Install a release
 

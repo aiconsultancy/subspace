@@ -1,0 +1,430 @@
+# Builds the Windows archive of a Subspace desktop release, signs
+# subspace.exe with Azure Artifact Signing and attaches the archive and its
+# .sha256 file to the release. See "Sign Windows releases" in
+# subspace-desktop/docs/installation.md.
+#
+# Every job runs on the Subspace self-hosted ARC scale sets in the platform's
+# Kubernetes cluster (runner group `subspace-release`), never on GitHub-hosted
+# runners:
+#
+# - resolve: `subspace-signing`, a Linux runner in the trusted deployment
+#   subnet. Checks the tag is a stable release on main and fixes its commit
+#   and the archive's name for the rest of the run, as job outputs, which no
+#   later job can change.
+# - build: `subspace-windows`, a Windows Server 2022 runner on a node pool
+#   that scales from zero to one, builds that commit. A GPUI release build for
+#   Windows must run on Windows, because the renderer compiles its shaders
+#   with the Windows SDK's fxc.exe in a build script. The job holds no secrets
+#   and no OIDC permission. Its third-party build scripts could tamper with
+#   anything it produces, so later jobs trust nothing from it but the
+#   archive's bytes.
+# - sign: `subspace-signing`, which reaches the platform Key Vault through its
+#   private endpoint, signs in with GitHub OIDC in the `windows-signing`
+#   environment, which holds the Azure identity and the vault name as
+#   secrets. scripts/sign-windows.sh (jsign) refuses an archive with links or
+#   unsafe paths, reads the signing account and certificate profile from Key
+#   Vault and signs. The signing key never leaves Artifact Signing. The signed
+#   archive's SHA-256 becomes a job output.
+# - verify: on `subspace-windows`, with read access only, Windows' own
+#   verifier checks the signature and its timestamp.
+# - attach: back on `subspace-signing`, checks the archive still has the hash
+#   the sign job recorded and the tag still points at the built commit, then
+#   attaches the archive and its .sha256 file.
+#
+# The release workflow starts it on main when it creates an app release; wait
+# for it to attach the archive to the draft before `make release-macos`
+# publishes the release. It builds only a tag on a commit in main's
+# first-parent history, from a release that can skip running the app. The
+# runner group admits only this file on main. To try the build or the
+# signing without attaching anything:
+#   gh workflow run windows-release.yml --ref main -f tag=subspace-desktop-v<version> -f mode=sign-only
+# To attach a missing archive (re-run a failed attach job instead when its
+# run still has the signed artifact):
+#   gh workflow run windows-release.yml --ref main -f tag=subspace-desktop-v<version>
+name: windows-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable release tag, such as subspace-desktop-v0.10.0
+        required: true
+      commit:
+        description: The commit the tag must point at (release.yml passes the release's commit)
+        required: false
+        default: ""
+      mode:
+        description: publish attaches the signed archive; sign-only and build-only attach nothing
+        type: choice
+        options: [publish, sign-only, build-only]
+        default: publish
+
+permissions: {}
+
+concurrency:
+  group: windows-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  TARGET: x86_64-pc-windows-msvc
+  # https://github.com/ebourg/jsign/releases; the digest GitHub lists for the JAR.
+  JSIGN_VERSION: "7.6"
+  JSIGN_SHA256: 6cf58aa080e7ff82656f320cff8d4a3bff30408df8766806dcba3740dd839fa5
+  # https://github.com/adoptium/temurin21-binaries/releases; the digests GitHub
+  # lists for the Linux JRE archives. Java runs jsign with the signing token.
+  TEMURIN_RELEASE: jdk-21.0.13+9
+  TEMURIN_FILE: OpenJDK21U-jre_ARCH_linux_hotspot_21.0.13_9.tar.gz
+  TEMURIN_SHA256_AARCH64: b1734db7ade49c3f6acc6ae06233b8c2dd90e3e2f00f67000ae1c972aaa64d8c
+  TEMURIN_SHA256_X64: a535a1df9c6284d9618872984e026ae0352d1f7e9e0605425c0e6114f47351dd
+
+jobs:
+  resolve:
+    if: github.ref == 'refs/heads/main'
+    runs-on:
+      group: subspace-release
+      labels: subspace-signing
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # Find the pull request that made the release commit.
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      commit: ${{ steps.release.outputs.commit }}
+      archive: ${{ steps.release.outputs.archive }}
+    steps:
+      # The full history holds the tags, to check the tag is on main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Anyone who can push a tag could otherwise get any commit signed. Only
+      # a commit that reached main through review is built and signed.
+      - name: Resolve the release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^subspace-desktop-v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$ ]]; then
+            echo "not a stable Subspace desktop release tag: $TAG" >&2
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+          commit="$(git rev-parse --verify "refs/tags/$TAG^{commit}")"
+          if [[ -n "$EXPECTED_COMMIT" && "$commit" != "$EXPECTED_COMMIT" ]]; then
+            echo "$TAG points at $commit, not $EXPECTED_COMMIT, the release's commit" >&2
+            exit 1
+          fi
+          # main's own history, not a commit from inside a merged pull request
+          # that review may never have seen as it stands. Release Please tags
+          # the merge commit of each release pull request, which is there.
+          # grep reads the whole list: stopping early would kill git with
+          # SIGPIPE and fail the pipeline under pipefail.
+          if ! git rev-list --first-parent HEAD | grep -xF "$commit" >/dev/null; then
+            echo "$TAG points at $commit, which is not in main's first-parent history; only those commits are built and signed" >&2
+            exit 1
+          fi
+          # The merge commit of a merged Release Please pull request into main,
+          # never a commit from inside another pull request, however that was
+          # merged: after a rebase merge, GitHub records only the last commit.
+          prs="$(gh api "repos/$GITHUB_REPOSITORY/commits/$commit/pulls")"
+          if ! jq -e --arg c "$commit" --arg repo "$GITHUB_REPOSITORY" '
+            [.[] | select(.merge_commit_sha == $c and .merged_at != null
+              and .base.ref == "main" and .head.repo.full_name == $repo
+              and .head.ref == "release-please--branches--main--components--subspace-desktop"
+              and .user.login == "github-actions[bot]")] | length == 1' <<<"$prs" >/dev/null; then
+            echo "$commit is not the merge commit of a merged Release Please pull request for the desktop" >&2
+            exit 1
+          fi
+          # And it changes only the files Release Please changes.
+          allowed='^(\.release-please-manifest\.json|subspace-desktop/(CHANGELOG\.md|Cargo\.(toml|lock)|terminal/(panel|runtime)/Cargo\.(toml|lock)))$'
+          changed="$(git diff --no-ext-diff --no-textconv --no-renames --name-only "$commit^1" "$commit")"
+          if [[ -z "$changed" ]] || grep -vE "$allowed" <<<"$changed" >/dev/null; then
+            printf '%s is not a Release Please release commit; it changes:\n%s\n' "$commit" "$changed" >&2
+            exit 1
+          fi
+          # Older releases run the built app to check it, and it cannot start
+          # on the Windows runner; refuse them before a long build.
+          if ! git grep -qF SUBSPACE_PACKAGE_SKIP_RUN_CHECK "$commit" -- subspace-desktop/scripts/package-release.sh; then
+            echo "$TAG predates Windows release builds: its package-release.sh cannot skip running the app" >&2
+            exit 1
+          fi
+          {
+            echo "tag=$TAG"
+            echo "version=$version"
+            echo "commit=$commit"
+            echo "archive=subspace-$version-$TARGET.zip"
+          } >>"$GITHUB_OUTPUT"
+          echo "$TAG is $commit, a release commit in main's first-parent history." >>"$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: resolve
+    runs-on:
+      group: subspace-release
+      labels: subspace-windows
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The resolved commit, not the tag, which could move during the run.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.commit }}
+          persist-credentials: false
+      - name: Check the checkout
+        env:
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+        run: test "$(git rev-parse HEAD)" = "$COMMIT"
+      - name: Use the Rust toolchain mise.toml names
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' subspace-desktop/mise.toml)"
+          test -n "$version"
+          # The runner image carries the current toolchain; an older tag may name another.
+          rustup toolchain install "$version" --profile minimal --target "$TARGET"
+          rustup default "$version"
+          rustc --version
+      # Packaging scans the dependencies' licences with cargo-about, at the
+      # version and SHA-256 the commit's mise.toml pins.
+      - name: Install cargo-about
+        run: |
+          set -euo pipefail
+          toml=subspace-desktop/mise.toml
+          section='[tools."github:EmbarkStudios/cargo-about"]'
+          if ! grep -qxF "$section" "$toml"; then
+            echo 'This release does not use cargo-about.'
+            exit 0
+          fi
+          # Each value from its own table: the tool's, then its platforms'.
+          read_toml() {
+            awk -v section="$1" -v key="$2" '$0 == section { found = 1; next } /^\[/ { found = 0 } found && $1 == key { print }' "$toml"
+          }
+          version="$(read_toml "$section" version | sed -n 's/^version = "\([^"]*\)"$/\1/p')"
+          checksum="$(read_toml '[tools."github:EmbarkStudios/cargo-about".platforms]' windows-x64 |
+            sed -n 's/^windows-x64 = { checksum = "sha256:\([0-9a-f]\{64\}\)" }$/\1/p')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$checksum" =~ ^[0-9a-f]{64}$ ]]
+          name="cargo-about-$version-x86_64-pc-windows-msvc"
+          # GNU tar reads C:\... as a remote host, so use the POSIX path.
+          dir="$(cygpath -u "$RUNNER_TEMP")/cargo-about"
+          mkdir -p "$dir"
+          curl --fail --silent --show-error --location --retry 3 --output "$dir/$name.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-about/releases/download/$version/$name.tar.gz"
+          echo "$checksum  $dir/$name.tar.gz" | sha256sum --check --strict -
+          tar -xzf "$dir/$name.tar.gz" -C "$dir"
+          exe="$(find "$dir" -name cargo-about.exe -print -quit)"
+          test -n "$exe"
+          "$exe" --version
+          cygpath -w "$(dirname "$exe")" >>"$GITHUB_PATH"
+      - name: Build the Windows archive
+        working-directory: subspace-desktop
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          ARCHIVE: ${{ needs.resolve.outputs.archive }}
+          # The app cannot start in a Windows Server container, which lacks
+          # desktop libraries such as DirectComposition, so the script does
+          # not run it to read its version back. It still checks Cargo.toml's
+          # version against the tag's.
+          SUBSPACE_PACKAGE_SKIP_RUN_CHECK: "1"
+        run: |
+          set -euo pipefail
+          bash scripts/package-release.sh "$TARGET" "$VERSION"
+          test -s "dist/$ARCHIVE"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-unsigned
+          path: subspace-desktop/dist/${{ needs.resolve.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: [resolve, build]
+    if: inputs.mode != 'build-only'
+    runs-on:
+      group: subspace-release
+      labels: subspace-signing
+    timeout-minutes: 20
+    environment: windows-signing
+    permissions:
+      contents: read
+      id-token: write # Sign in to Azure as the signing identity.
+    outputs:
+      sha256: ${{ steps.sign.outputs.sha256 }}
+    steps:
+      # The signing tools come from main; the build job built the release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-unsigned
+          path: ${{ runner.temp }}/windows
+      - name: Install Java and jsign
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            aarch64 | arm64) arch=aarch64; java_sha256="$TEMURIN_SHA256_AARCH64" ;;
+            x86_64) arch=x64; java_sha256="$TEMURIN_SHA256_X64" ;;
+            *) echo "no pinned Temurin build for $(uname -m)" >&2; exit 1 ;;
+          esac
+          file="${TEMURIN_FILE/ARCH/$arch}"
+          curl --fail --silent --show-error --location --retry 3 --output "$RUNNER_TEMP/$file" \
+            "https://github.com/adoptium/temurin21-binaries/releases/download/${TEMURIN_RELEASE/+/%2B}/$file"
+          echo "$java_sha256  $RUNNER_TEMP/$file" | sha256sum --check --strict -
+          mkdir "$RUNNER_TEMP/java"
+          tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP/java" --strip-components 1
+          "$RUNNER_TEMP/java/bin/java" -version
+          echo "$RUNNER_TEMP/java/bin" >>"$GITHUB_PATH"
+          jar="$RUNNER_TEMP/jsign-$JSIGN_VERSION.jar"
+          curl --fail --silent --show-error --location --retry 3 --output "$jar" \
+            "https://github.com/ebourg/jsign/releases/download/$JSIGN_VERSION/jsign-$JSIGN_VERSION.jar"
+          echo "$JSIGN_SHA256  $jar" | sha256sum --check --strict -
+          echo "SUBSPACE_JSIGN_JAR=$jar" >>"$GITHUB_ENV"
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SIGNING_SUBSCRIPTION_ID }}
+      # The script itself, with a quoted path: make would expand a $(...) in
+      # the file name. The name comes from the resolve job, never the build.
+      - name: Sign subspace.exe in the archive
+        id: sign
+        env:
+          SUBSPACE_SIGNING_KEY_VAULT: ${{ secrets.SUBSPACE_SIGNING_KEY_VAULT }}
+          ARCHIVE: ${{ runner.temp }}/windows/${{ needs.resolve.outputs.archive }}
+        run: |
+          set -euo pipefail
+          test -f "$ARCHIVE"
+          # The release has one program, subspace.exe at the root. Refuse any
+          # other Windows binary a tampered build might add for signing,
+          # reading names as Windows does, without trailing dots and spaces;
+          # sign-windows.sh refuses such names outright.
+          entries="$(unzip -Z1 "$ARCHIVE")"
+          binaries="$(sed -E 's#[. ]+(/|$)#\1#g' <<<"$entries" | grep -iE '\.(exe|dll|sys|ocx|cpl|scr|msi|msix)$' || true)"
+          if [[ "$binaries" != subspace.exe ]]; then
+            printf 'expected subspace.exe as the only Windows binary in the archive, found:\n%s\n' "$binaries" >&2
+            exit 1
+          fi
+          bash subspace-desktop/scripts/sign-windows.sh "$ARCHIVE"
+          echo "sha256=$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+      - name: Sign out of Azure
+        if: always()
+        run: az logout || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-signed
+          path: |
+            ${{ runner.temp }}/windows/${{ needs.resolve.outputs.archive }}
+            ${{ runner.temp }}/windows/${{ needs.resolve.outputs.archive }}.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  verify:
+    needs: [resolve, sign]
+    runs-on:
+      group: subspace-release
+      labels: subspace-windows
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-signed
+          path: dist
+      - name: Verify the hash and the Authenticode signature
+        shell: powershell
+        env:
+          ARCHIVE: ${{ needs.resolve.outputs.archive }}
+          SHA256: ${{ needs.sign.outputs.sha256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location dist
+          $actual = (Get-FileHash $env:ARCHIVE -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($env:SHA256 -ne $actual) { throw "hash mismatch: signed $env:SHA256, downloaded $actual" }
+          Expand-Archive $env:ARCHIVE -DestinationPath extracted
+          $signature = Get-AuthenticodeSignature extracted/subspace.exe
+          if ($signature.Status -ne 'Valid') {
+            throw "subspace.exe signature is $($signature.Status): $($signature.StatusMessage)"
+          }
+          if ($null -eq $signature.TimeStamperCertificate) { throw 'subspace.exe has no timestamp' }
+          "Signed subspace.exe as $($signature.SignerCertificate.Subject)." >> $env:GITHUB_STEP_SUMMARY
+
+  attach:
+    needs: [resolve, sign, verify]
+    if: inputs.mode == 'publish'
+    runs-on:
+      group: subspace-release
+      labels: subspace-signing
+    timeout-minutes: 10
+    permissions:
+      contents: write # Attach the archive to the release.
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-signed
+          path: ${{ runner.temp }}/windows
+      - name: Attach the archive to the release
+        working-directory: ${{ runner.temp }}/windows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          COMMIT: ${{ needs.resolve.outputs.commit }}
+          ARCHIVE: ${{ needs.resolve.outputs.archive }}
+          SHA256: ${{ needs.sign.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          # The artifact passed through the Windows pool; only the sign job's
+          # recorded hash shows it is the archive that was signed.
+          actual="$(sha256sum "$ARCHIVE" | cut -d' ' -f1)"
+          if [[ "$actual" != "$SHA256" ]]; then
+            echo "hash mismatch: signed $SHA256, downloaded $actual" >&2
+            exit 1
+          fi
+          echo "$SHA256  $ARCHIVE" >"$ARCHIVE.sha256"
+          # A tag moved since the run started would get another commit's archive.
+          current="$(gh api "repos/$GITHUB_REPOSITORY/commits/tags/$TAG" --jq .sha)"
+          if [[ "$current" != "$COMMIT" ]]; then
+            echo "$TAG now points at $current, not $COMMIT, which was built" >&2
+            exit 1
+          fi
+          # A draft's files are replaced. A published release only gains the
+          # files it lacks, and keeps any it has only if they match this
+          # run's archive, so re-running this job after a half-finished upload
+          # completes it and installers never see a mismatched pair. A new run
+          # signs again with a new timestamp, so it can't complete one.
+          release="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft)"
+          if [[ "$(jq -r .isDraft <<<"$release")" == true ]]; then
+            gh release upload "$TAG" "$ARCHIVE" "$ARCHIVE.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            assets="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets')"
+            missing=()
+            for file in "$ARCHIVE" "$ARCHIVE.sha256"; do
+              asset="$(jq -c --arg f "$file" 'map(select(.name == $f)) | first // empty' <<<"$assets")"
+              if [[ -z "$asset" ]]; then
+                missing+=("$file")
+                continue
+              fi
+              # A failed upload can leave an empty asset that never finished.
+              if [[ "$(jq -r .state <<<"$asset")" != uploaded ]]; then
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$(jq -r .id <<<"$asset")"
+                missing+=("$file")
+                continue
+              fi
+              mkdir -p published
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$file" --dir published --clobber
+              if ! cmp -s "$file" "published/$file"; then
+                echo "$TAG is published with a different $file; not replacing a published release's files" >&2
+                exit 1
+              fi
+            done
+            if [[ "${#missing[@]}" -gt 0 ]]; then
+              gh release upload "$TAG" "${missing[@]}" --repo "$GITHUB_REPOSITORY"
+            fi
+          fi
+          echo "Attached $ARCHIVE to $TAG." >>"$GITHUB_STEP_SUMMARY"
