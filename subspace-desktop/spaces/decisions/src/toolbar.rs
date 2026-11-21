@@ -1,0 +1,74 @@
+//! The pane's tab strip and toolbar. The tab strip names what is open: the
+//! current view and, beside it, an opened decision. The toolbar leads with
+//! the view menu while the navigator is hidden, then the search and the Tag
+//! filter, and ends with the count. The dock switches are the status bar's
+//! (`Dashboard::docks`).
+
+use gpui_kit::component::Icon;
+use gpui_kit::{
+    ClickEvent, Context, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
+    div, px,
+};
+use subspace_framework::dashboard::fields;
+use subspace_framework::dashboard::tabs::{self, TabBar, TabSpec};
+use subspace_framework::dashboard::toolbar_label::{self, ToolbarLabel};
+use subspace_framework::dashboard::workspace;
+use subspace_framework::lucide::IconName;
+
+use crate::{Decisions, keys, menus, state};
+
+/// The search field's width, as the Issues Space's toolbar has it.
+const SEARCH_WIDTH_PX: f32 = 260.;
+
+/// The list's tab, then the open decision's, which closes.
+pub(crate) fn open_tabs(this: &Decisions, cx: &mut Context<Decisions>) -> TabBar {
+    let view = this.choice.view;
+    let bar = tabs::pane_tab_bar("decisions-open-tabs")
+        .selected_index(usize::from(this.shown_page().is_some()))
+        .child(tabs::tab(TabSpec::new(view.label(), view.icon())))
+        .on_click(cx.listener(|this, index: &usize, _, cx| this.show_tab(*index, cx)));
+    match &this.page {
+        Some(page) => bar.child(
+            tabs::tab(TabSpec::new(page.title.clone(), IconName::Scale))
+                .aria_label(format!("Decision: {}", page.title))
+                .on_close(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.close_page(window, cx);
+                })),
+        ),
+        None => bar,
+    }
+}
+
+pub(crate) fn render(this: &Decisions, cx: &mut Context<Decisions>) -> workspace::Toolbar {
+    let mut toolbar = workspace::Toolbar::new("decisions-toolbar");
+    // The navigator holds the views; hidden, they stay one menu away.
+    if !this.docks.navigator {
+        toolbar = toolbar.leading(menus::view_button(this, cx));
+    }
+    toolbar = toolbar.leading(search_field(this, cx));
+    if let Some(tag) = menus::tag_button(this, cx) {
+        toolbar = toolbar.leading(tag);
+    }
+    match state::count_line(&this.listing) {
+        Some(count) => toolbar.trailing(toolbar_label::label(
+            "decisions-count",
+            ToolbarLabel {
+                icon: Some(Icon::from(IconName::Scale)),
+                accessible: count.clone().into(),
+                text: count.into(),
+            },
+            cx,
+        )),
+        None => toolbar,
+    }
+}
+
+/// Typing searches the titles and text after a short pause; Enter or Escape
+/// returns to the list.
+fn search_field(this: &Decisions, cx: &Context<Decisions>) -> impl IntoElement {
+    let search = fields::toolbar_search(&this.search, "Search decisions", cx);
+    div()
+        .key_context(keys::SEARCH_CONTEXT)
+        .w(px(SEARCH_WIDTH_PX))
+        .child(search.id("decisions-search"))
+}
