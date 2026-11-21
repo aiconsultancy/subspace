@@ -9,6 +9,7 @@ use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::{Context, WeakEntity};
 use subspace_client_irc::{BufferKey, Command, ConnectionStatus, Target};
 use subspace_framework::dashboard::panel::IconName;
+use subspace_framework::dashboard::row_menu::{MenuCommand, MenuGroup};
 
 use crate::dock::Where;
 use crate::state::{IrcState, server_key};
@@ -90,6 +91,27 @@ pub(crate) fn item(
                 _ = owner.update(cx, |board, cx| remove(board, &buffer, cx));
             }
         })
+}
+
+/// The row menu's command that removes `buffer`, in the Remove group, as
+/// `state` holds it now; none for the server buffer. Leaving a channel
+/// waits for its network to be connected.
+pub(crate) fn command(
+    owner: WeakEntity<Irc>,
+    state: &IrcState,
+    buffer: &BufferKey,
+) -> Option<MenuCommand> {
+    let removal = Removal::now(state, buffer)?;
+    let target = buffer.clone();
+    let command = MenuCommand::new(
+        MenuGroup::Remove,
+        removal.label(),
+        removal.icon(),
+        move |_, cx| {
+            _ = owner.update(cx, |board, cx| remove(board, &target, cx));
+        },
+    );
+    Some(command.disabled(!available(state, buffer), crate::listing::NOT_CONNECTED))
 }
 
 /// Parts `buffer` when it is a joined channel, tells the runtime to forget

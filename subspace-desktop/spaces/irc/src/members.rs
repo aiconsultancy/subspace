@@ -1,20 +1,22 @@
-//! A channel's member list, self-contained so any host can show it beside
-//! the conversation: a header with the count, then operators, voiced and
-//! other members, each with a small avatar and dimmed while away, in its own
-//! scrolling region. Choosing a member asks the host to open a private
-//! conversation ([`MemberListEvent`]).
+//! A channel's member list, for a host that shows it beside the
+//! conversation, as the workspace's inspector does: operators, voiced and
+//! other members, each with a small avatar, the nick and a quiet note of
+//! the role the Space knows (`you`, `owner`, `admin`, `half-operator`), and
+//! dimmed while away. The host
+//! supplies the heading, with the count ([`MemberList::count`]), and the
+//! scrolling. Choosing a member asks the host to open a private conversation
+//! ([`MemberListEvent`]).
 
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, Context, Entity, EventEmitter, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, TestSupportExt as _, WeakEntity, Window, div, px,
+    AnyElement, App, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, TestSupportExt as _,
+    WeakEntity, Window, div,
 };
 use subspace_client_irc::{BufferKey, Member};
-use subspace_framework::dashboard::action::{Intent, icon_button, row_button};
-use subspace_framework::dashboard::panel::IconName;
-use subspace_framework::dashboard::{Tokens, avatar};
+use subspace_framework::dashboard::action::row_button;
+use subspace_framework::dashboard::{Tokens, avatar, workspace};
 
 use crate::hub::Hub;
 
@@ -60,13 +62,30 @@ pub(crate) fn groups(members: &[Member]) -> Vec<(Rank, Vec<&Member>)> {
     groups
 }
 
+/// The quiet note after a member's nick: `you` for our own nick, then the
+/// prefix's role where it says more than the section heading does (an
+/// owner, admin or half-operator among the operators). `None` when there
+/// is nothing to add.
+pub(crate) fn note(member: &Member, own_nick: Option<&str>) -> Option<String> {
+    let you = own_nick.is_some_and(|nick| nick.eq_ignore_ascii_case(&member.nick));
+    let role = match member.prefixes.chars().next() {
+        Some('~') => Some("owner"),
+        Some('&') => Some("admin"),
+        Some('%') => Some("half-operator"),
+        _ => None,
+    };
+    match (you, role) {
+        (true, Some(role)) => Some(format!("you · {role}")),
+        (true, None) => Some("you".to_owned()),
+        (false, role) => role.map(str::to_owned),
+    }
+}
+
 /// What a member list asks its host to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MemberListEvent {
     /// Open a private conversation with this member.
     OpenQuery(String),
-    /// Close the list.
-    Close,
 }
 
 /// One channel's member list.
@@ -93,116 +112,77 @@ impl MemberList {
             _subscription: subscription,
         }
     }
+
+    /// How many members the channel has, for the host's heading.
+    pub fn count(&self, cx: &App) -> usize {
+        self.hub
+            .read(cx)
+            .state
+            .buffer(&self.buffer)
+            .map_or(0, |held| held.members.len())
+    }
 }
 
 impl Render for MemberList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tokens = Tokens::current(cx);
-        let members = self
-            .hub
-            .read(cx)
-            .state
+        let state = &self.hub.read(cx).state;
+        let members = state
             .buffer(&self.buffer)
             .map(|held| held.members.clone())
             .unwrap_or_default();
-        let owner = self.me.clone();
-        // As wide as its host: the dock owns the width, which the user
-        // resizes and the saved layout restores.
+        let own = state
+            .network(&self.buffer.network)
+            .map(|network| network.nick.clone());
+        let ours = Ours {
+            owner: &self.me,
+            nick: own.as_deref(),
+            tokens: &tokens,
+        };
+        let sections: Vec<AnyElement> = groups(&members)
+            .into_iter()
+            .map(|(rank, list)| section(&ours, rank, &list, cx))
+            .collect();
+        // As wide as its host, which owns the width, the heading and the
+        // scrolling. The rank groups are spaced as the inspector spaces its
+        // own sections.
         v_flex()
             .id("irc-members")
             .test_support()
-            .size_full()
-            .min_h_0()
-            .bg(tokens.surface)
-            .border_l_1()
-            .border_color(tokens.line)
-            .child(header(owner, members.len(), &tokens))
-            .child(
-                v_flex()
-                    .id("irc-members-list")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .px_2()
-                    .pb_2()
-                    .gap_0p5()
-                    .children(
-                        groups(&members)
-                            .into_iter()
-                            .map(|(rank, list)| section(&self.me, rank, &list, &tokens)),
-                    ),
-            )
+            .w_full()
+            .min_w_0()
+            .gap_6()
+            .children(sections)
     }
 }
 
-/// `Members · N` and the button that hides the list.
-fn header(owner: WeakEntity<MemberList>, count: usize, tokens: &Tokens) -> AnyElement {
-    // The shared dock's medium tab row is 32 px tall.
-    const TAB_HEIGHT: gpui_kit::Pixels = px(32.);
-    h_flex()
-        .id("irc-members-heading")
-        .test_support()
-        .flex_shrink_0()
-        .min_h(TAB_HEIGHT)
-        .px_3()
-        .gap_2()
-        .border_b_1()
-        .border_color(tokens.line)
+/// What every row of one list shares: the list, our own nick on its
+/// network, and the tokens.
+struct Ours<'a> {
+    owner: &'a WeakEntity<MemberList>,
+    nick: Option<&'a str>,
+    tokens: &'a Tokens,
+}
+
+/// One rank's members under the inspector's section heading, such as
+/// `Operators · 2`.
+fn section(ours: &Ours<'_>, rank: Rank, list: &[&Member], cx: &App) -> AnyElement {
+    workspace::section(format!("{} · {}", rank.heading(), list.len()), cx)
         .child(
-            div()
-                .flex_1()
+            v_flex()
+                .w_full()
                 .min_w_0()
-                .text_size(tokens.secondary_size())
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(tokens.fg_strong)
-                .child(format!("Members · {count}")),
-        )
-        .child(
-            icon_button(
-                "irc-members-close",
-                Intent::Quiet,
-                IconName::X,
-                "Hide members",
-            )
-            .compact()
-            .on_click(move |_, _, cx| {
-                _ = owner.update(cx, |_, cx| cx.emit(MemberListEvent::Close));
-            }),
+                .gap_0p5()
+                .children(list.iter().map(|member| entry(ours, member))),
         )
         .into_any_element()
 }
 
-fn section(
-    owner: &WeakEntity<MemberList>,
-    rank: Rank,
-    list: &[&Member],
-    tokens: &Tokens,
-) -> AnyElement {
-    v_flex()
-        .w_full()
-        .min_w_0()
-        .child(
-            div()
-                .px_1()
-                .pt_2()
-                .pb_0p5()
-                .text_size(tokens.caption_size())
-                .text_color(tokens.muted)
-                .child(format!("{} · {}", rank.heading(), list.len())),
-        )
-        .children(list.iter().map(|member| entry(owner, member, tokens)))
-        .into_any_element()
-}
-
-fn entry(owner: &WeakEntity<MemberList>, member: &Member, tokens: &Tokens) -> AnyElement {
-    let owner = owner.clone();
+fn entry(ours: &Ours<'_>, member: &Member) -> AnyElement {
+    let tokens = ours.tokens;
+    let owner = ours.owner.clone();
     let nick = member.nick.clone();
-    let prefix = member
-        .prefixes
-        .chars()
-        .next()
-        .map(String::from)
-        .unwrap_or_default();
+    let role = note(member, ours.nick);
     let spoken = if member.away {
         format!("Open private messages with {}, away", member.nick)
     } else {
@@ -223,8 +203,15 @@ fn entry(owner: &WeakEntity<MemberList>, member: &Member, tokens: &Tokens) -> An
                 .text_color(tokens.fg)
                 .child(member.nick.clone()),
         )
-        .when(!prefix.is_empty(), |row| {
-            row.child(div().flex_shrink_0().text_color(tokens.muted).child(prefix))
+        .when_some(role, |row, role| {
+            row.child(
+                div()
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
+                    .text_size(tokens.caption_size())
+                    .text_color(tokens.muted)
+                    .child(role),
+            )
         });
     row_button(
         SharedString::from(format!("irc-member:{}", member.nick)),
@@ -240,3 +227,41 @@ fn entry(owner: &WeakEntity<MemberList>, member: &Member, tokens: &Tokens) -> An
 
 /// Away members are dimmed, and their accessible name says so.
 const AWAY_OPACITY: f32 = 0.55;
+
+#[cfg(test)]
+mod tests {
+    use subspace_client_irc::Member;
+
+    use super::note;
+
+    fn member(nick: &str, prefixes: &str) -> Member {
+        Member {
+            nick: nick.into(),
+            prefixes: prefixes.into(),
+            away: false,
+            account: None,
+        }
+    }
+
+    #[test]
+    fn a_member_s_note_says_you_and_a_role_the_section_does_not() {
+        let own = Some("Local-Operator");
+        assert_eq!(
+            note(&member("local-operator", "@"), own).as_deref(),
+            Some("you"),
+            "our own nick, matched ignoring case; the section says operator"
+        );
+        assert_eq!(
+            note(&member("local-operator", "~@"), own).as_deref(),
+            Some("you · owner")
+        );
+        assert_eq!(note(&member("alice", "&"), own).as_deref(), Some("admin"));
+        assert_eq!(
+            note(&member("bob", "%"), own).as_deref(),
+            Some("half-operator")
+        );
+        assert_eq!(note(&member("carol", "@"), own), None);
+        assert_eq!(note(&member("dave", "+"), own), None);
+        assert_eq!(note(&member("erin", ""), None), None);
+    }
+}

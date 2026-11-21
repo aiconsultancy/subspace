@@ -1,15 +1,16 @@
 //! The dock on the real board: opening buffers from the list, tabs and
-//! splits, closing, the member list following focus, and the layout saved
-//! and restored in buffer terms.
+//! splits, closing, the member list following focus, the navigator and the
+//! inspector shown and hidden, and the layout saved and restored in buffer
+//! terms.
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use subspace_client_irc::{BufferKey, Event};
 use subspace_framework::dashboard::{ListDashboard as _, list};
 
-use super::layout::{Axis, KEY, Layout, Pane, decode};
+use super::layout::{Axis, KEY, Layout, Pane, Side, decode};
 use super::persist::layout_of;
-use super::{Where, close, request};
+use super::{Where, close, request, toggle_buffers, toggle_members};
 use crate::Irc;
 use crate::fixtures::{channel, message, query};
 use crate::hub::Hub;
@@ -133,49 +134,76 @@ fn closing_a_panel_forgets_it_and_the_member_list_follows_focus(cx: &mut TestApp
     assert!(!layout(&board, cx).buffers().contains(&query("mira")));
 }
 
-/// The member list's bounds, and its Space's inset right edge.
-fn member_list_bounds(
-    cx: &mut VisualTestContext,
-) -> (gpui_kit::Bounds<gpui_kit::Pixels>, gpui_kit::Pixels) {
+#[gpui_kit::test]
+fn the_member_list_sits_in_the_inspector_at_the_window_edge(cx: &mut TestAppContext) {
+    let (board, _, cx) = board_with_buffers(cx);
+    open(&board, &channel("#subspace"), Where::Tab, cx);
     cx.update(|window, _| {
-        (
-            window.find("irc-members").bounds(),
-            window.viewport_size().width - crate::initiatives::SPACE_INSET,
-        )
-    })
+        let list = window.find("irc-members").bounds();
+        let inspector = window.find("irc-inspector").bounds();
+        let pane = window.find("irc-pane").bounds();
+        let edge = window.viewport_size().width;
+        assert!(
+            (f32::from(inspector.right()) - f32::from(edge)).abs() < 1.,
+            "no inset: the inspector {inspector:?} reaches the window's edge {edge:?}"
+        );
+        assert!(
+            inspector.left() >= pane.right(),
+            "the inspector {inspector:?} is beside the pane {pane:?}"
+        );
+        assert!(
+            list.left() >= inspector.left() && list.right() <= inspector.right(),
+            "the list {list:?} lies inside the inspector {inspector:?}"
+        );
+        assert_eq!(
+            window.find("workspace-inspector-title").label(),
+            Some("Members · 2"),
+            "the inspector's title counts the channel's members"
+        );
+    });
 }
 
 #[gpui_kit::test]
-fn the_member_list_fills_its_dock_to_the_space_edge(cx: &mut TestAppContext) {
+fn hiding_the_navigator_and_the_inspector_is_saved_and_restored(cx: &mut TestAppContext) {
     let (board, _, cx) = board_with_buffers(cx);
     open(&board, &channel("#subspace"), Where::Tab, cx);
-    let (list, edge) = member_list_bounds(cx);
-    let dock = layout(&board, cx).members.width;
-    assert!(
-        (f32::from(list.right()) - f32::from(edge)).abs() < 1.,
-        "the list {list:?} reaches the Space's right edge {edge:?}"
-    );
-    assert!(
-        (f32::from(list.size.width) - dock).abs() < 1.,
-        "the list {list:?} is as wide as its dock ({dock})"
-    );
-
-    let mut wide = layout(&board, cx);
-    wide.members.width = 360.;
-    cx.update(|_, cx| {
-        subspace_framework::dashboard::prefs::set(cx, KEY, super::layout::encode(&wide))
+    cx.update(|window, _| {
+        assert!(window.try_find("workspace-navigator").is_some());
+        assert!(window.try_find("irc-inspector").is_some());
+        assert!(window.try_find("irc-conversation-menu").is_none());
     });
     board.update(cx, |board, cx| {
+        toggle_buffers(board, cx);
+        toggle_members(board, cx);
+    });
+    settle(cx);
+    cx.update(|window, _| {
+        assert!(window.try_find("workspace-navigator").is_none());
+        assert!(window.try_find("irc-inspector").is_none());
+        assert_eq!(
+            window.find("irc-conversation-menu").label(),
+            Some("Conversation: #subspace"),
+            "the toolbar's menu keeps the conversations reachable"
+        );
+    });
+    let stored = cx.update(|_, cx| subspace_framework::dashboard::prefs::get(cx, KEY));
+    let stored = decode(stored.as_deref()).expect("the layout was saved");
+    assert_eq!(
+        (stored.buffers, stored.members),
+        (Side { open: false }, Side { open: false })
+    );
+
+    board.update(cx, |board, cx| {
         board.dock.reset();
+        // As a board starts, before its stored layout is read.
+        board.dock.buffers = Side::default();
+        board.dock.members = Side::default();
         super::restore(board, cx);
     });
     settle(cx);
-    let (list, edge) = member_list_bounds(cx);
-    assert!(
-        (f32::from(list.size.width) - 360.).abs() < 1.,
-        "a wider saved dock {list:?} is filled"
-    );
-    assert!((f32::from(list.right()) - f32::from(edge)).abs() < 1.);
+    board.read_with(cx, |board, _| {
+        assert!(!board.dock.buffers_open() && !board.dock.members_open());
+    });
 }
 
 #[gpui_kit::test]

@@ -1,22 +1,18 @@
+use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{TestAppContext, px, size};
 use subspace_client_irc::{Command, ConnectionStatus, Event};
 use subspace_framework::dashboard::Dashboard as _;
 
 use super::super::{inject, mount, settings};
-use super::{catalogue, settle};
+use super::{member_of_the_catalogue, settle};
 use crate::fixtures::network_id;
 
 #[gpui_kit::test]
-fn local_network_actions_live_in_the_channels_header(cx: &mut TestAppContext) {
+fn local_network_actions_live_in_the_pane_toolbar(cx: &mut TestAppContext) {
     let mut config = settings();
     config.networks[0].host = "irc.example.test".into();
     let (board, hub, cx) = mount(cx, config);
-    hub.update(cx, |hub, cx| {
-        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
-            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(catalogue()), cx)
-        })
-    });
+    member_of_the_catalogue(&hub, cx);
     settle(cx);
     cx.update(|window, cx| {
         assert!(
@@ -25,23 +21,25 @@ fn local_network_actions_live_in_the_channels_header(cx: &mut TestAppContext) {
                 .is_none()
         );
         assert!(window.try_find("irc-initiative-button").is_none());
-        let heading = window.find("irc-heading").bounds();
-        let controls = window.find("irc-controls").bounds();
+        assert!(window.try_find("irc-heading").is_none());
+        let toolbar = window.find("irc-toolbar").bounds();
         let dock = window.find("dock-area").bounds();
-        assert!(heading.bottom() <= controls.top());
-        assert!(controls.bottom() <= dock.top());
-        let row = window.within("irc-controls");
-        for id in [
-            "irc-connection",
-            "irc-join",
-            "irc-members-toggle",
-            "irc-more",
-        ] {
+        assert!(toolbar.bottom() <= dock.top());
+        let row = window.within("irc-toolbar");
+        for id in ["irc-connection", "irc-join", "irc-more"] {
             assert!(row.find(id).visible(), "missing {id}");
         }
-        assert_eq!(
-            row.find("irc-more").bounds().right(),
-            controls.right() - px(24.)
+        assert!(
+            row.try_find("irc-members-toggle").is_none(),
+            "the status bar's inspector switch shows and hides the members"
+        );
+        assert!(
+            row.try_find("workspace-inspector-toggle").is_none(),
+            "the dock switches are the status bar's"
+        );
+        assert!(
+            window.find("irc-navigator-join").visible(),
+            "the navigator's header repeats Join"
         );
         window.click("irc-connection", cx);
     });
@@ -51,13 +49,9 @@ fn local_network_actions_live_in_the_channels_header(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn narrow_header_keeps_picker_and_action_overflow_on_the_same_row(cx: &mut TestAppContext) {
+fn the_toolbar_leads_with_the_picker_and_trails_with_the_actions(cx: &mut TestAppContext) {
     let (board, hub, cx) = mount(cx, settings());
-    hub.update(cx, |hub, cx| {
-        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
-            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(catalogue()), cx)
-        })
-    });
+    member_of_the_catalogue(&hub, cx);
     inject(
         &hub,
         vec![Event::Status {
@@ -68,23 +62,17 @@ fn narrow_header_keeps_picker_and_action_overflow_on_the_same_row(cx: &mut TestA
         }],
         cx,
     );
-    cx.simulate_resize(size(px(250.), px(520.)));
     settle(cx);
     cx.update(|window, cx| {
-        let row = window.within("irc-controls");
+        let row = window.within("irc-toolbar");
         let picker = row.find("irc-initiative-button").bounds();
-        let more = row.find("overflow-toolbar-button").bounds();
-        assert!(picker.right() < more.left());
-        assert_eq!(picker.center().y, more.center().y);
-        assert!(row.try_find("irc-join").is_none());
-        assert!(row.try_find("irc-more").is_none());
-        window.click("overflow-toolbar-button", cx);
-    });
-    cx.run_until_parked();
-    cx.update(|window, cx| {
-        window.render_frame(cx);
-        // At this width all four units use More. Join is the second native item.
-        window.click(1usize, cx);
+        let heading = row.find("irc-header").bounds();
+        let join = row.find("irc-join").bounds();
+        assert!(
+            picker.right() <= heading.left() && heading.right() <= join.left(),
+            "the picker {picker:?}, the heading {heading:?}, then Join {join:?}"
+        );
+        window.click("irc-join", cx);
     });
     board.read_with(cx, |board, _| assert!(board.join.is_some()));
 }

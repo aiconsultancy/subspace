@@ -1,5 +1,6 @@
-//! Opening, focusing, splitting and closing conversation panels, and the
-//! member list following the focused channel.
+//! Opening, focusing, splitting and closing conversation panels, the member
+//! list following the focused channel, and showing or hiding the workspace's
+//! side docks.
 
 use gpui_kit::base::Placement;
 use gpui_kit::component::dock::{DockPlacement, InsertTarget, PanelId, panel_handle};
@@ -161,11 +162,16 @@ pub(crate) fn close(
         .update(cx, |area, cx| area.remove_panel(entity, window, cx));
 }
 
-/// Opens or closes the member list dock.
-pub(crate) fn toggle_members(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc>) {
-    board.dock.area.update(cx, |area, cx| {
-        area.toggle_dock(DockPlacement::Right, window, cx)
-    });
+/// Shows or hides the navigator's buffer list.
+pub(crate) fn toggle_buffers(board: &mut Irc, cx: &mut Context<Irc>) {
+    board.dock.buffers.open = !board.dock.buffers.open;
+    super::persist::docks_changed(board, cx);
+}
+
+/// Shows or hides the inspector's member list.
+pub(crate) fn toggle_members(board: &mut Irc, cx: &mut Context<Irc>) {
+    board.dock.members.open = !board.dock.members.open;
+    super::persist::docks_changed(board, cx);
 }
 
 /// The centre's placeholder goes once a conversation is open.
@@ -243,10 +249,6 @@ fn closed(
         board.dock.focused = None;
         board.find_revision = board.find_revision.wrapping_add(1);
         cx.notify();
-        board
-            .dock
-            .members
-            .update(cx, |panel, cx| panel.set_list(None, cx));
         view::publish_visible(board, cx);
     }
     show_placeholder(board, window, cx);

@@ -250,7 +250,8 @@ fn status_and_badge_summarise_networks_and_attention(cx: &mut TestAppContext) {
     cx.update(|_, cx| {
         assert_eq!(
             board.read(cx).status(cx).as_deref(),
-            Some("1 network · 1 connected")
+            Some("IRC · 1 network · 1 connected"),
+            "the status bar carries what the heading said"
         );
         assert_eq!(board.read(cx).badge(cx).as_deref(), Some("1"));
     });
