@@ -162,14 +162,15 @@ pub(super) fn render(
             .children(edit)
             .into_any_element()
     });
+    // Plain compact rows: the inspector's title, or the caption above them
+    // at the end of the reading column, names them.
     gpui_kit::div()
         .id("issue-properties")
         .aria_label("Properties")
         .test_support()
-        .child(
-            panel::group("Properties", IconName::SlidersHorizontal, tokens)
-                .child(panel::grid().children(rows)),
-        )
+        .w_full()
+        .min_w_0()
+        .child(panel::grid().children(rows))
         .into_any_element()
 }
 
@@ -189,17 +190,20 @@ fn edit_action(
         return None;
     }
     let target = EditTarget::property(fact.label, detail.fields.kind == "tracker")?;
+    // Quiet until the row is under the pointer or the pencil has keyboard
+    // focus; Edit issue… in the toolbar is the path that always shows.
+    let button = icon_button(
+        SharedString::from(format!("issue-property-edit:{}", fact.label)),
+        Intent::Quiet,
+        IconName::Pencil,
+        format!("Edit {}…", fact.label.to_lowercase()),
+    )
+    .compact()
+    .disabled(issues.inline_field_active())
+    .on_click(cx.listener(move |this, _, window, cx| this.edit_issue_field(target, window, cx)));
     Some(
-        icon_button(
-            SharedString::from(format!("issue-property-edit:{}", fact.label)),
-            Intent::Quiet,
-            IconName::Pencil,
-            format!("Edit {}…", fact.label.to_lowercase()),
-        )
-        .compact()
-        .disabled(issues.inline_field_active())
-        .on_click(cx.listener(move |this, _, window, cx| this.edit_issue_field(target, window, cx)))
-        .into_any_element(),
+        panel::quiet_until_hover(button, panel::hover_group("property", fact.label))
+            .into_any_element(),
     )
 }
 

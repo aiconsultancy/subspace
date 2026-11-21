@@ -1,5 +1,5 @@
-//! The board's own changes: choices from the tabs, toolbar and keys, the
-//! reads they ask for, and the list lines drawn from the listing.
+//! The board's own changes: choices from the navigator, toolbar and keys,
+//! the reads they ask for, and the list lines drawn from the listing.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -50,12 +50,8 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Issues>) -> Issues {
         projects: Vec::new(),
         initiatives,
         initiative_id,
-        tab: prefs::get(cx, TAB_PREF)
-            .and_then(|key| Tab::from_key(&key))
-            .unwrap_or_default(),
-        sub_issues: prefs::get(cx, SUB_ISSUES_PREF)
-            .map(|key| SubIssues::from_key(&key))
-            .unwrap_or_default(),
+        tab: saved_tab(cx),
+        sub_issues: saved_sub_issues(cx),
         filters: Default::default(),
         search,
         query: String::new(),
@@ -82,10 +78,28 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Issues>) -> Issues {
         hub_changes: None,
         menu_anchors: Default::default(),
         menu: None,
+        docks: crate::docks::saved(cx),
         width: f32::default(),
+        text_edge: subspace_framework::dashboard::workspace::text_edge(
+            &subspace_framework::dashboard::Tokens::current(cx),
+        ),
         _search_task: None,
         _subscriptions: vec![typing, initiative_changes],
     }
+}
+
+/// The view kept from the last run, or the default one.
+fn saved_tab(cx: &gpui_kit::App) -> Tab {
+    prefs::get(cx, TAB_PREF)
+        .and_then(|key| Tab::from_key(&key))
+        .unwrap_or_default()
+}
+
+/// How sub-issues showed in the last run, or the default.
+fn saved_sub_issues(cx: &gpui_kit::App) -> SubIssues {
+    prefs::get(cx, SUB_ISSUES_PREF)
+        .map(|key| SubIssues::from_key(&key))
+        .unwrap_or_default()
 }
 
 fn initial_project(initiative: Option<&str>, cx: &gpui_kit::App) -> ProjectScope {

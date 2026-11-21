@@ -1,7 +1,9 @@
 //! Assignee, Priority and Filters use the shared anchored, searchable menu.
+//! Assignee and Priority are named by their labels alone; Filters wears the
+//! funnel glyph.
 
 use gpui_kit::{AnyElement, Context, Window};
-use subspace_framework::dashboard::action::menu_button;
+use subspace_framework::dashboard::action::{filter_button, menu_button};
 use subspace_framework::dashboard::menu::{MenuContents, MenuEvent, MenuOption};
 use subspace_framework::lucide::{IconName, SvgIcon};
 
@@ -19,12 +21,11 @@ pub(crate) enum FilterMenu {
 }
 
 impl FilterMenu {
-    // qual:allow(dry, repeated_matches) reason: "This enum has one mapping of its own; rustqual groups unrelated enums only because their three-arm variant matches share one shape."
-    fn facts(self) -> (&'static str, &'static str, SvgIcon) {
+    fn facts(self) -> (&'static str, &'static str, Option<SvgIcon>) {
         match self {
-            Self::Assignee => ("issues-assignee-button", "Assignee", IconName::UserRound),
-            Self::Priority => ("issues-priority-button", "Priority", IconName::SignalHigh),
-            Self::More => ("issues-filters-button", "Filters", IconName::ListFilter),
+            Self::Assignee => ("issues-assignee-button", "Assignee", None),
+            Self::Priority => ("issues-priority-button", "Priority", None),
+            Self::More => ("issues-filters-button", "Filters", Some(IconName::Funnel)),
         }
     }
 
@@ -44,8 +45,11 @@ pub(crate) fn button(menu: FilterMenu, issues: &Issues, cx: &mut Context<Issues>
         FilterMenu::Priority => !issues.filters.priorities.is_empty(),
         FilterMenu::More => issues.filters.has_more(),
     };
-    let button = menu_button(id, icon, label, active)
-        .on_click(cx.listener(move |this, _, window, cx| open(menu, this, window, cx)));
+    let button = match icon {
+        Some(icon) => menu_button(id, icon, label, active),
+        None => filter_button(id, label, active),
+    }
+    .on_click(cx.listener(move |this, _, window, cx| open(menu, this, window, cx)));
     issues.menu_anchors.trigger(id, button, cx)
 }
 

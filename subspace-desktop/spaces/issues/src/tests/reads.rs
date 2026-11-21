@@ -133,11 +133,11 @@ fn loaded_projects_name_the_project_and_an_archived_choice_gives_way(cx: &mut Te
     assert!(requests(&board, cx).is_empty(), "the project stands");
     assert_eq!(
         cx.update(|window, _| window
-            .find("issues-project-button")
+            .find("issues-nav-project:SUB")
             .label()
             .map(str::to_owned))
             .as_deref(),
-        Some("Project: SUB · Subspace API")
+        Some("SUB · Subspace API")
     );
     board.update(cx, |board, cx| {
         board.set_project(ProjectScope::Project("OPS".into()), cx)

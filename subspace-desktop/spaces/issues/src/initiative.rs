@@ -7,7 +7,7 @@ use subspace_api_client::model::Project;
 use crate::{Issues, model::ProjectScope};
 
 mod picker;
-pub(crate) use picker::{button, command};
+pub(crate) use picker::{CLEAR_LABEL, button, command};
 
 pub(crate) fn connect(
     window: &Window,

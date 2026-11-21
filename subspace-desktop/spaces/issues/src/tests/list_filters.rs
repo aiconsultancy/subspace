@@ -1,12 +1,13 @@
 //! Slice 5 exercises the real toolbar controls and their hub query.
 
-use std::sync::atomic::Ordering;
+mod counts;
 
-use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext, px};
+use subspace_framework::dashboard::Tokens;
+use subspace_framework::dashboard::workspace::text_edge;
 
-use super::offline::{board_with_hub, offline, settle_board};
-use super::{has, label, labelled, listed, press, render};
+use super::{docks, has, labelled, listed, press, render};
 use crate::Issues;
 
 fn click(cx: &mut VisualTestContext, id: &'static str) {
@@ -114,77 +115,21 @@ fn filters_menu_combines_status_type_due_and_archived(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn real_hub_counts_show_in_the_tab_and_hidden_summary(cx: &mut TestAppContext) {
-    let fixture = offline();
-    let (board, cx) = board_with_hub(&fixture, cx);
-    settle_board(&board, cx, |board| {
-        board.listing.hidden_subissues_count.is_some() && board.listing.my_issues_count.is_some()
-    });
-    render(cx);
-    assert_eq!(
-        label(cx, "issues-summary").as_deref(),
-        Some("3 issues · 12 sub-issues hidden")
-    );
-    assert!(labelled(cx, "My issues, 3 open issues"));
-    click(cx, "issues-show-sub-issues");
-    assert_eq!(
-        cx.update(|_, cx| board.read(cx).sub_issues),
-        crate::model::SubIssues::Flat
-    );
-    assert!(!has(cx, "issues-show-sub-issues"));
-}
+fn group_counts_follow_the_name_and_the_list_fills_the_pane(cx: &mut TestAppContext) {
+    use subspace_framework::dashboard::ListDashboard as _;
 
-#[gpui_kit::test]
-fn failed_counts_are_omitted_without_hiding_the_list(cx: &mut TestAppContext) {
-    let fixture = offline();
-    fixture.switches.fail_counts.store(true, Ordering::Relaxed);
-    let (board, cx) = board_with_hub(&fixture, cx);
-    settle_board(&board, cx, |board| {
-        board.listing.content.is_some()
-            && fixture
-                .mock
-                .requests()
-                .iter()
-                .filter(|read| read.path.contains("limitPerGroup=0"))
-                .count()
-                >= 2
-    });
-    render(cx);
-    assert_eq!(label(cx, "issues-summary").as_deref(), Some("3 issues"));
-    assert!(labelled(cx, "My issues"));
-    assert!(!has(cx, "issues-show-sub-issues"));
-}
-
-#[gpui_kit::test]
-fn changing_the_list_clears_old_counts_and_status_filters(cx: &mut TestAppContext) {
     let (board, cx) = listed(cx);
-    board.update(cx, |board, cx| {
-        board.listing.my_issues_count = Some(8);
-        board.listing.hidden_subissues_count = Some(12);
-        board.filters.states = vec!["state-started".into()];
-        board.set_tab(crate::model::Tab::Backlog, cx);
-    });
-    render(cx);
-    assert!(labelled(cx, "My issues"));
-    assert!(!has(cx, "issues-show-sub-issues"));
-    assert!(!parameters(&board, cx).iter().any(|(key, _)| key == "state"));
-}
-
-#[gpui_kit::test]
-fn group_counts_follow_the_name_and_the_list_uses_its_own_inset(cx: &mut TestAppContext) {
-    let (_, cx) = listed(cx);
-    cx.update(|window, _| {
+    cx.update(|window, cx| {
+        let pane = window.find("workspace-pane").bounds();
+        let navigator = window.find("workspace-navigator").bounds();
+        let peek = window.find("issues-peek").bounds();
+        assert!(navigator.right() <= pane.left() && pane.right() <= peek.left());
         let count = window.find("list-group-count:group:state-started").bounds();
-        assert!(count.right() < px(300.));
-        let heading = window.find("issues-heading").bounds();
-        assert_eq!(heading.left(), px(24.));
-        // Resource tabs keep their natural widths with medium selected text.
-        // Different title lengths must not become equal-width segments.
-        let active = window.find_by_label("Active").bounds();
-        let backlog = window.find_by_label("Backlog").bounds();
-        assert!(
-            active.size.width > px(80.) && active.size.width < backlog.size.width,
-            "natural-width tabs: active {active:?}, backlog {backlog:?}"
+        assert!(count.left() > pane.left() && count.right() < pane.left() + px(300.));
+        assert_eq!(
+            board.read(cx).list_side_inset(),
+            Some(text_edge(&Tokens::current(cx))),
+            "rows use the shared text edge, not an inset of the Space's own"
         );
     });
 }
@@ -194,24 +139,28 @@ fn list_fidelity_options_preserve_the_activity_layout(cx: &mut TestAppContext) {
     use subspace_framework::dashboard::ListDashboard as _;
 
     let (board, cx) = listed(cx);
+    let edge = cx.update(|_, cx| text_edge(&Tokens::current(cx)));
     cx.update(|_, cx| {
-        assert_eq!(board.read(cx).list_side_inset(), Some(px(24.)));
+        assert_eq!(board.read(cx).list_side_inset(), Some(edge));
         assert!(board.read(cx).group_count_after_name());
         assert!(board.read(cx).comfortable_rows());
     });
     board.update(cx, |board, _| board.activity.visible = true);
     cx.update(|_, cx| {
-        assert_eq!(board.read(cx).list_side_inset(), None);
+        assert_eq!(board.read(cx).list_side_inset(), Some(edge));
         assert!(!board.read(cx).group_count_after_name());
         assert!(!board.read(cx).comfortable_rows());
     });
     render(cx);
-    cx.update(|window, cx| {
-        assert_eq!(
-            window.find("issues-heading").bounds().left(),
-            subspace_framework::dashboard::Tokens::current(cx).pad_x
-        );
-    });
+    assert!(has(cx, "issues-tabs"));
+    assert!(has(cx, "workspace-navigator"));
+    assert!(!has(cx, "issues-search"), "the feed has no search");
+    assert!(!has(cx, "issues-peek"), "the feed has no peek");
+    assert_eq!(
+        docks(&board, cx).inspector,
+        None,
+        "no inspector switch in the status bar"
+    );
 }
 
 #[gpui_kit::test]
@@ -282,21 +231,4 @@ fn empty_filtered_lists_describe_the_filters(cx: &mut TestAppContext) {
             "No active issues"
         );
     });
-}
-
-#[gpui_kit::test]
-fn my_issues_count_uses_singular_for_one(cx: &mut TestAppContext) {
-    let (board, cx) = listed(cx);
-    for (count, label) in [
-        (0, "My issues, 0 open issues"),
-        (1, "My issues, 1 open issue"),
-        (2, "My issues, 2 open issues"),
-    ] {
-        board.update(cx, |board, cx| {
-            board.listing.my_issues_count = Some(count);
-            cx.notify();
-        });
-        render(cx);
-        assert!(labelled(cx, label), "{label}");
-    }
 }

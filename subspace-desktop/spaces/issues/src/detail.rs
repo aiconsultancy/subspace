@@ -65,14 +65,25 @@ impl Issues {
         subspace_framework::dashboard::list::update(self, cx, |_| {});
     }
 
+    /// The status bar's line: the connection, account and how changes
+    /// arrive, then what shows and when it was read, and how many
+    /// sub-issues the list hides, while it hides some.
     pub(crate) fn status_line(&self, now: Instant) -> String {
+        let context = crate::scope::context_line(self.profile_name(), &self.access, self.live);
         if let Some(issue) = &self.issue_view.snapshot {
-            return status_line(issue, self.profile_name(), now);
+            return status_line(issue, &context, now);
         }
         if self.activity.visible && self.is_ready() {
-            return self.activity.status(self.profile_name(), now);
+            return self.activity.status(&context, now);
         }
-        crate::scope::status_line(self.profile_name(), &self.access, &self.listing, now)
+        let line = crate::scope::status_line(
+            self.profile_name(),
+            &self.access,
+            self.live,
+            &self.listing,
+            now,
+        );
+        crate::scope::with_hidden(line, crate::view::hidden_subissues(self))
     }
 
     pub(crate) fn inline_navigation_blocked(&self, cx: &mut Context<Self>) -> bool {
@@ -243,15 +254,16 @@ fn adjacent<'a>(
     }
 }
 
-pub(crate) fn status_line(issue: &IssueSnapshot, profile: &str, now: Instant) -> String {
+/// The open issue's status bar line after `context`, the connection.
+pub(crate) fn status_line(issue: &IssueSnapshot, context: &str, now: Instant) -> String {
     match issue.status() {
-        IssueStatus::Loading => format!("{profile} · Loading {}", issue.identifier()),
+        IssueStatus::Loading => format!("{context} · Loading {}", issue.identifier()),
         IssueStatus::Loaded => issue.updated_at().map_or_else(
-            || profile.to_owned(),
-            |at| format!("{profile} · {}", updated(at, now)),
+            || context.to_owned(),
+            |at| format!("{context} · {}", updated(at, now)),
         ),
-        IssueStatus::Error(ReadError::Network) => format!("{profile} · Offline"),
-        _ => profile.to_owned(),
+        IssueStatus::Error(ReadError::Network) => format!("{context} · Offline"),
+        _ => context.to_owned(),
     }
 }
 

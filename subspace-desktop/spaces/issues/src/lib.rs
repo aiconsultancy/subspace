@@ -5,6 +5,7 @@ mod authoring;
 mod back;
 mod board;
 mod detail;
+mod docks;
 mod editing;
 mod filter_menu;
 mod filters;
@@ -19,8 +20,10 @@ pub mod markdown;
 mod media;
 mod model;
 mod navigation;
+mod navigator;
 mod organisation;
 mod palette;
+mod peek;
 mod pickers;
 mod project_move;
 mod requests;
@@ -30,6 +33,7 @@ mod seam;
 mod settings;
 mod sync;
 mod view;
+mod view_menu;
 
 #[cfg(test)]
 mod fixtures;
@@ -48,6 +52,7 @@ use subspace_api_client::model::Project;
 use subspace_framework::dashboard::menu::{Menu, MenuAnchors};
 use subspace_framework::dashboard::row_menu::MenuChat;
 use subspace_framework::dashboard::settings::{BoardSettings, SettingsEditorFactory};
+use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
 use subspace_framework::dashboard::{
     AgentContext, BoardArtwork, Dashboard, DashboardEvent, Detail, Group, KeyHelp, ListDashboard,
     ListState, Modal, Row, RowMenu,
@@ -124,8 +129,14 @@ pub struct Issues {
     hub_changes: Option<Subscription>,
     menu_anchors: MenuAnchors,
     menu: Option<Entity<Menu>>,
-    /// The window's width at the last render, which decides the lanes.
+    /// Whether the navigator and the inspector are chosen to show.
+    docks: docks::Docks,
+    /// The window's width at the last render, which decides which docks
+    /// fit, and so the pane's width.
     width: f32,
+    /// The workspace's text edge at the last render. The shared list asks
+    /// for its inset without the tokens, so it reads this.
+    text_edge: gpui_kit::Pixels,
     _search_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -281,6 +292,14 @@ impl Dashboard for Issues {
         Some(self.status_line(std::time::Instant::now()).into())
     }
 
+    fn docks(&self, cx: &App) -> SpaceDocks {
+        self.space_docks(cx)
+    }
+
+    fn toggle_dock(&mut self, dock: SpaceDock, _window: &mut Window, cx: &mut Context<Self>) {
+        Issues::toggle_dock(self, dock.into(), cx);
+    }
+
     fn busy(&self, _cx: &App) -> bool {
         if self.issue_editor_busy() {
             return true;
@@ -349,8 +368,9 @@ impl Dashboard for Issues {
 }
 
 impl ListDashboard for Issues {
+    /// Rows start on the workspace's one text edge.
     fn list_side_inset(&self) -> Option<gpui_kit::Pixels> {
-        (!self.activity.visible).then(|| gpui_kit::px(view::SIDE_INSET_PX))
+        Some(self.text_edge)
     }
 
     fn group_count_after_name(&self) -> bool {
@@ -441,6 +461,13 @@ impl ListDashboard for Issues {
             return true;
         }
         self.activate_line(key, cx)
+    }
+
+    /// One click on an issue row only selects it, which fills the
+    /// inspector's peek; a double click, Enter or the row's Open opens the
+    /// page. Group headers, "more" lines and activity rows act on one click.
+    fn activates_on_click(&self, row: &Row) -> bool {
+        self.activity.visible || !matches!(lines::line(&row.key), Some(lines::Line::Issue(_)))
     }
 
     fn on_selection_changed(&mut self, selected: Option<SharedString>, cx: &mut Context<Self>) {

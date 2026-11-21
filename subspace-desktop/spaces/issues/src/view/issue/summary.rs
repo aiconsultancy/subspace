@@ -24,25 +24,28 @@ pub(super) fn section(
     tokens: &Tokens,
     cx: &mut Context<Issues>,
 ) -> Div {
+    let hover = panel::hover_group("section", "Summary");
+    // Quiet until the section is under the pointer or the pencil has
+    // keyboard focus.
+    let edit = panel::quiet_until_hover(
+        icon_button(
+            "issue-summary-edit",
+            Intent::Quiet,
+            IconName::Pencil,
+            "Edit summary",
+        )
+        .compact()
+        .on_click(cx.listener(|board, _, window, cx| {
+            board.edit_issue_field(EditTarget::Summary, window, cx);
+        })),
+        hover.clone(),
+    );
     let heading = h_flex()
         .justify_between()
         .child(section_heading("Summary", IconName::FileText, tokens))
         .when(
             board.can_edit_issue() && !board.inline_field_active(),
-            |row| {
-                row.child(
-                    icon_button(
-                        "issue-summary-edit",
-                        Intent::Quiet,
-                        IconName::Pencil,
-                        "Edit summary",
-                    )
-                    .compact()
-                    .on_click(cx.listener(|board, _, window, cx| {
-                        board.edit_issue_field(EditTarget::Summary, window, cx);
-                    })),
-                )
-            },
+            |row| row.child(edit),
         );
     let content = editing::view::inline_row(board, "Summary", tokens, cx).unwrap_or_else(|| {
         match detail.fields.summary.as_deref() {
@@ -51,7 +54,7 @@ pub(super) fn section(
             None => panel::empty("No summary yet", tokens).into_any_element(),
         }
     });
-    v_flex().min_w_0().child(
+    v_flex().min_w_0().group(hover).child(
         panel::section("Summary", IconName::FileText, false, tokens)
             .title(heading)
             .child(

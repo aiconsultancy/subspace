@@ -1,5 +1,8 @@
-//! A project's ordered flight path. The trail means position, never a calculated
-//! issue status. Subspace API remains the sole authority for the current state.
+//! A project's ordered flight path, drawn as a slim bar: one equal segment
+//! per stop, each a thin rule with its state's name beneath. Segments up to
+//! and including the current stop are filled. The bar means position, never
+//! a calculated issue status. Subspace API remains the sole authority for
+//! the current state.
 //!
 //! States group by type, so custom workflows keep their shape: triage, backlog,
 //! unstarted, started and unknown types are path steps in workflow order, and
@@ -13,8 +16,9 @@ use subspace_api_client::model::{IssueDetail, Project, WorkflowState};
 
 pub(super) use drawing::render;
 
-const MIN_WAYPOINT: f32 = 96.;
-const CELL_CENTRE: f32 = 0.5;
+/// The narrowest a stop's segment may be before the bar gives way to the
+/// current state alone, at the default text size.
+const MIN_SEGMENT: f32 = 96.;
 const UNMEASURED: f32 = 0.;
 
 struct FlightPath<'a> {
@@ -31,11 +35,18 @@ struct FlightPath<'a> {
 
 #[derive(Debug, PartialEq)]
 enum Layout {
+    /// Too narrow for every stop: the current state and its place alone.
     Current,
-    Course {
-        centres: Vec<f32>,
-        travelled_to: Option<f32>,
-    },
+    /// One equal segment per stop; the first `filled` are filled.
+    Segments { filled: usize },
+}
+
+/// One stop's segment: whether its rule is filled, and whether it is the
+/// current stop, whose name is strong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Segment {
+    filled: bool,
+    current: bool,
 }
 
 fn path<'a>(detail: &'a IssueDetail, projects: &'a [Project]) -> Option<FlightPath<'a>> {
@@ -120,16 +131,20 @@ impl<'a> FlightPath<'a> {
 
     fn layout(&self, width: f32, scale: f32) -> Layout {
         let count = self.count();
-        match count == 0 || (width > UNMEASURED && width < count as f32 * MIN_WAYPOINT * scale) {
-            true => Layout::Current,
-            false => {
-                let centres = centres(count, width);
-                let travelled_to = self.current.map(|ix| centres[ix]);
-                Layout::Course {
-                    centres,
-                    travelled_to,
-                }
-            }
+        if count == 0 || (width > UNMEASURED && width < count as f32 * MIN_SEGMENT * scale) {
+            return Layout::Current;
+        }
+        Layout::Segments {
+            filled: self.current.map_or(0, |ix| ix + 1),
+        }
+    }
+
+    /// Stop `ix`'s segment, counting the end slot last. Without a current
+    /// stop nothing is filled: the bar never makes up progress.
+    fn segment(&self, ix: usize) -> Segment {
+        Segment {
+            filled: self.current.is_some_and(|current| ix <= current),
+            current: self.current == Some(ix),
         }
     }
 }
@@ -139,13 +154,6 @@ fn names<'a>(states: impl Iterator<Item = &'a WorkflowState>, separator: &str) -
         .map(|state| state.name.as_str())
         .collect::<Vec<_>>()
         .join(separator)
-}
-
-fn centres(count: usize, width: f32) -> Vec<f32> {
-    let step = width / count as f32;
-    (0..count)
-        .map(|ix| (ix as f32 + CELL_CENTRE) * step)
-        .collect()
 }
 
 #[cfg(test)]

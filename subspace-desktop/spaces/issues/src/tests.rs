@@ -19,6 +19,7 @@ mod reads;
 mod search;
 mod storage;
 mod timeline;
+mod workspace;
 
 use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
 use gpui_kit::{
@@ -26,6 +27,7 @@ use gpui_kit::{
     WindowOptions, px, size,
 };
 use serde_json::json;
+use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
 use subspace_framework::dashboard::{Dashboard as _, ListDashboard as _};
 
 use crate::Issues;
@@ -83,6 +85,22 @@ pub(crate) fn mount_at(
 pub(crate) fn render(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.render_frame(cx));
+}
+
+/// Uses a dock's switch as the shell's status bar does: through the Space's
+/// dock contract.
+pub(crate) fn use_dock_switch(board: &Entity<Issues>, cx: &mut VisualTestContext, dock: SpaceDock) {
+    cx.update(|window, cx| {
+        board.update(cx, |board, cx| {
+            subspace_framework::dashboard::Dashboard::toggle_dock(board, dock, window, cx)
+        })
+    });
+    render(cx);
+}
+
+/// What the Space reports for the status bar's dock switches.
+pub(crate) fn docks(board: &Entity<Issues>, cx: &mut VisualTestContext) -> SpaceDocks {
+    cx.update(|_, cx| board.read(cx).docks(cx))
 }
 
 /// A synthetic connected identity.
