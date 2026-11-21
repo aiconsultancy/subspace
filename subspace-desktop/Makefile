@@ -98,9 +98,11 @@ package-macos-ci: ## Build a signed release app from CI secrets, reading missing
 	mise run package-macos-ci -- "$(TARGET)" "$(VERSION)"
 
 .PHONY: sign-windows
-# make never expands FILES: each name is globbed with $(wildcard) and passed
-# single-quoted, so a file name can't run as a command. Names with spaces
+# The recipe never expands FILES: each name is globbed with $(wildcard) and
+# passed single-quoted, so a file name can't run as a command. unexport stops
+# make expanding it into the recipe's environment too. Names with spaces
 # aren't supported.
+unexport FILES
 sign-windows: ## Sign Windows files or release ZIPs with Azure Artifact Signing (FILES="dist/*.zip"; needs jsign and az)
 	@test -n '$(if $(value FILES),set)' || { echo 'usage: make sign-windows FILES="<file.exe|file.dll|file.msi|archive.zip> ..."' >&2; exit 2; }
 	bash scripts/sign-windows.sh $(foreach file,$(foreach name,$(value FILES),$(or $(wildcard $(name)),$(name))),'$(subst ','\'',$(file))')

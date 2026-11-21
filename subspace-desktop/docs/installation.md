@@ -570,8 +570,9 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
 
 1. **resolve**, on `subspace-signing`, a Linux runner in the trusted
    deployment subnet, refuses the tag unless it is a stable release whose
-   commit is on `main` (and, when `release.yml` starts the run, is the
-   release's commit), so only reviewed code is signed, whoever pushed the
+   commit is in `main`'s first-parent history, where Release Please's merge
+   commits are (and, when `release.yml` starts the run, is the release's
+   commit), so only reviewed code is signed, whoever pushed the
    tag. It fixes that commit and the archive's name for the rest of the run.
 2. **build**, on `subspace-windows`, checks out that commit, installs
    `cargo-about` at the version and SHA-256 its `mise.toml` pins, and runs
@@ -590,17 +591,20 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
    installs a Temurin JRE and the jsign JAR, each checked against its pinned
    SHA-256 digest, signs in to Azure with GitHub OIDC as the signing
    identity and runs `scripts/sign-windows.sh` on the archive, which refuses
-   links, unsafe paths and duplicate entries. It reads the three secrets above
-   through the platform Key Vault's private endpoint, masks their values in
-   the log, and records the signed archive's SHA-256.
+   links, unsafe paths and duplicate entries. It first refuses an archive
+   holding any Windows binary other than `subspace.exe`. It reads the three
+   secrets above through the platform Key Vault's private endpoint, masks
+   their values in the log, and records the signed archive's SHA-256.
 4. **verify**, on `subspace-windows` with read access only, checks the
    archive has that SHA-256 and that Windows reports the signature `Valid`
    with a timestamp.
 5. **attach**, back on `subspace-signing`, checks the archive again against
    the recorded SHA-256 and that the tag still points at the resolved commit,
    then attaches the archive and its `.sha256` file to the release. It
-   replaces a draft's files, but adds to a published release only files it
-   lacks. Publish
+   replaces a draft's files. To a published release it adds only files it
+   lacks, and stops if one it has differs, so a repeat run completes a
+   half-finished upload. Publishing a draft at the moment attach replaces its
+   files could still leave it briefly without them. Publish
    the release only after this, as
    [Publish a macOS release](#publish-a-macos-release) says.
 

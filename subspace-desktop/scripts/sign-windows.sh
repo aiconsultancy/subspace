@@ -30,7 +30,7 @@ fail() {
 
 for path in "$@"; do
 	[[ -f "$path" ]] || fail "no such file: $path"
-	case "$path" in
+	case "$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')" in
 	*.exe | *.dll | *.msi | *.msix | *.zip) ;;
 	*) echo "unsupported file type, expected .exe, .dll, .msi, .msix or .zip: $path" >&2; exit 2 ;;
 	esac
@@ -101,7 +101,7 @@ trap 'rm -rf "$stage"' EXIT
 files=()
 archives=()
 for path in "$@"; do
-	case "$path" in
+	case "$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')" in
 	*.zip)
 		if ! command -v unzip >/dev/null || ! command -v zip >/dev/null; then fail 'signing a .zip needs zip and unzip'; fi
 		index="${#archives[@]}"
@@ -155,5 +155,5 @@ for index in "${!archives[@]}"; do
 	echo "signed $archive"
 done
 for path in "$@"; do
-	case "$path" in *.zip) ;; *) echo "signed $path" ;; esac
+	case "$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')" in *.zip) ;; *) echo "signed $path" ;; esac
 done

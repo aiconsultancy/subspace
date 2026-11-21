@@ -166,6 +166,14 @@ sign "$fixture/work/mixed.zip" >/dev/null
 test "$(unzip -p "$fixture/work/mixed.zip" Subspace.Exe)" = exeSIGNED
 test "$(unzip -p "$fixture/work/mixed.zip" helper.Dll)" = dllSIGNED
 
+# A file given directly is matched whatever the case of its extension.
+printf 'exe' >"$fixture/App.EXE"
+sign "$fixture/App.EXE" >/dev/null
+test "$(cat "$fixture/App.EXE")" = exeSIGNED
+cp "$fixture/work/mixed.zip" "$fixture/work/Release.ZIP"
+sign "$fixture/work/Release.ZIP" >/dev/null
+test -f "$fixture/work/Release.ZIP.sha256"
+
 # In GitHub Actions, the values read from Key Vault are masked in the log.
 printf 'exe' >"$fixture/app.exe"
 GITHUB_ACTIONS=true sign "$fixture/app.exe" >"$fixture/out"
