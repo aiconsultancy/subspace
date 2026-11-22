@@ -17,8 +17,9 @@ use crate::{Irc, view};
 
 const SHIP: &str = "#aurora-lyra";
 
-/// One initiative whose fleet, `aurora`, has captain Lyra (`aurora-lyra`)
-/// and rear admiral Vance (`aurora-admiral`), by the nicks the API records.
+/// One initiative whose fleet, `aurora`, has the captain of the ship Lyra
+/// (`aurora-lyra`) and rear admiral `admiral-vance` (`aurora-admiral`), by
+/// the nicks the API records.
 /// The test hub reads any fleet's server as its loopback network.
 pub(crate) fn aurora() -> Vec<MemberInitiative> {
     serde_json::from_value(json!([{
@@ -26,14 +27,14 @@ pub(crate) fn aurora() -> Vec<MemberInitiative> {
         "fleetId": "aurora",
         "fleet": {"id": "aurora", "slug": "aurora", "name": "Aurora", "ircHost": "irc.example.test",
                   "ircPort": 6697, "ircTls": true, "rearAdmiralName": "admiral-vance",
-                  "captainNames": ["Lyra"],
+                  "captainNames": ["aurora-lyra"],
                   "agents": [
                       {"userId": "u-vance", "name": "admiral-vance", "rank": "rearAdmiral",
                        "ircNick": "aurora-admiral", "available": true},
-                      {"userId": "u-lyra", "name": "Lyra", "rank": "captain", "shipId": "s-lattice",
-                       "ship": "Lattice", "ircNick": "aurora-lyra", "available": true}
+                      {"userId": "u-lyra", "name": "aurora-lyra", "rank": "captain", "shipId": "s-lyra",
+                       "ship": "Lyra", "ircNick": "aurora-lyra", "available": true}
                   ],
-                  "ships": [{"id": "s-lattice", "name": "Lattice", "channel": null}]}
+                  "ships": [{"id": "s-lyra", "name": "Lyra", "channel": null}]}
     }]))
     .unwrap()
 }

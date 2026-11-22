@@ -286,22 +286,23 @@ FLEET_CAPTAINS = {'lyra': ('aurora-lyra', 'aurora'), 'orion': ('aurora-orion', '
 # fleet's connection (any loopback one in a capture) the API's agents give
 # each rank by IRC nick: aurora-admiral is the rear admiral (named
 # admiral-vance, so no name rule could guess it), aurora-lyra, aurora-orion,
-# aurora-castor and aurora-vega are captains, and aurora-wren is Lyra's crew.
+# aurora-castor and aurora-vega are the captains of the ships Lyra, Orion,
+# Castor and Vega (a captain is named by its ship), and Wren is Lyra's crew.
 # The fleet records #aurora-starbase and #aurora-command; each captain's ship
 # channel is the standard #<nick>. Never selected, so it joins nothing.
 FLEET_AGENTS = [dict(userId='fixture-agent-admiral', name='admiral-vance', rank='rearAdmiral', shipId=None,
                      ship=None, ircNick='aurora-admiral', shipChannel=None, available=True)] + [
-    dict(userId=f'fixture-agent-{code}', name=code.title(), rank='captain', shipId=f'fixture-ship-{code}',
-         ship=ship, ircNick=nick, shipChannel=None, available=True)
-    for code, ship, nick in (('castor', 'Comet', 'aurora-castor'), ('lyra', 'Lattice', 'aurora-lyra'),
-                             ('orion', 'Plover', 'aurora-orion'), ('vega', 'Vane', 'aurora-vega'))] + [
-    dict(userId='fixture-agent-wren', name='Wren', rank='crew', shipId='fixture-ship-lyra', ship='Lattice',
-         ircNick='aurora-wren', shipChannel=None, available=True)]
+    dict(userId=f'fixture-agent-{code}', name=f'aurora-{code}', rank='captain', shipId=f'fixture-ship-{code}',
+         ship=code.title(), ircNick=f'aurora-{code}', shipChannel=None, available=True)
+    for code in ('castor', 'lyra', 'orion', 'vega')] + [
+    dict(userId='fixture-agent-wren', name='Wren', rank='crew', shipId='fixture-ship-lyra', ship='Lyra',
+         ircNick=None, shipChannel=None, available=True)]
 FLEET_INITIATIVE = dict(
     id='5d1f0c2e-5b7a-4f0e-9a51-2a8f3c6d7e10', name='Fallow Reach', channels='#aurora-starbase, #aurora-lyra',
     fleetId='aurora', fleet=dict(id='aurora', slug='aurora', name='Aurora', ircHost='irc.example.test', ircPort=6697,
                                  ircTls=True, ircWebsocketUrl=None, rearAdmiralName='admiral-vance',
-                                 captainNames=['Castor', 'Lyra', 'Orion', 'Vega'], vmHost=None,
+                                 captainNames=['aurora-castor', 'aurora-lyra', 'aurora-orion', 'aurora-vega'],
+                                 vmHost=None,
                                  starbaseChannel='#aurora-starbase', commandChannel='#aurora-command',
                                  agents=FLEET_AGENTS,
                                  ships=[dict(id=agent['shipId'], name=agent['ship'], channel=None)
@@ -451,7 +452,8 @@ def fleet_person(code):
     if code in FLEET_PEOPLE:
         return person(FLEET_PEOPLE[code])
     name, fleet = FLEET_CAPTAINS[code]
-    return dict(person(name), kind='agent', agent=dict(rank='captain', fleet=fleet, ship=name))
+    # A captain is its ship: nick aurora-lyra is the captain of the ship Lyra.
+    return dict(person(name), kind='agent', agent=dict(rank='captain', fleet=fleet, ship=code.title()))
 
 
 def fleet_pull_requests(row, open_count, merged, now):

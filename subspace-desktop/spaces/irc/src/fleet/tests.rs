@@ -30,22 +30,24 @@ pub(crate) fn fleet_with(slug: &str, agents: Vec<Value>, extra: Value) -> Fleet 
     serde_json::from_value(value).unwrap()
 }
 
-/// The aurora fleet: rear admiral Vega, captains Lyra and Orion, Lyra's
-/// crew member Wren, and captain Castor, whose nick the API does not know.
+/// The aurora fleet: rear admiral `admiral-vance` (nick `aurora-admiral`),
+/// the captains of the ships Lyra and Orion (a captain is named by its
+/// ship), crew member Wren on Lyra, and the captain of the ship Castor,
+/// whose nick the API does not record.
 pub(crate) fn aurora() -> Fleet {
     fleet(
         "aurora",
         vec![
             agent("admiral-vance", "rearAdmiral", Some("aurora-admiral"), None),
+            agent("aurora-lyra", "captain", Some("aurora-lyra"), Some("Lyra")),
             agent(
-                "Captain-Lyra",
+                "aurora-orion",
                 "captain",
-                Some("aurora-lyra"),
-                Some("Lattice"),
+                Some("aurora-orion"),
+                Some("Orion"),
             ),
-            agent("Orion", "captain", Some("aurora-orion"), Some("Plover")),
-            agent("Wren", "crew", Some("aurora-wren"), Some("Lattice")),
-            agent("Castor", "captain", None, Some("Comet")),
+            agent("Wren", "crew", Some("aurora-wren"), Some("Lyra")),
+            agent("aurora-castor", "captain", None, Some("Castor")),
         ],
     )
 }
@@ -67,8 +69,6 @@ fn ranks_come_from_the_api_s_nicks_and_never_from_names() {
     for name in [
         "admiral-vance",
         "aurora-admiral-vance",
-        "captain-lyra",
-        "aurora-captain-lyra",
         "lyra",
         "castor",
         "aurora-castor",

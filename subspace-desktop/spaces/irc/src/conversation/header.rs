@@ -5,7 +5,7 @@
 use gpui_kit::component::{Icon, Sizable as _, h_flex};
 use gpui_kit::{
     AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    Role, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
+    Role, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div, px,
 };
 use subspace_client_irc::{Member, Target};
 use subspace_framework::dashboard::avatar::AgentRank;
@@ -32,6 +32,9 @@ pub(super) struct HeaderFacts {
 /// The most characters of a status the live pill shows; a longer one ends
 /// in an ellipsis, and its accessible name keeps the whole status.
 const LIVE_MAX_CHARS: usize = 40;
+/// The least of the live pill a narrow heading keeps in view, so the
+/// status's start still shows once the topic has given way.
+const LIVE_MIN_PX: f32 = 96.;
 
 /// A ship's captain's current status, for the header's live pill.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,7 +206,7 @@ fn title(target: &Target, facts: &HeaderFacts, named: bool, cx: &App) -> AnyElem
             // first, then the pill is clipped rather than pushing the row.
             div()
                 .flex()
-                .min_w_0()
+                .min_w(px(LIVE_MIN_PX))
                 .overflow_hidden()
                 .child(live_pill(live))
         }))

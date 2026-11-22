@@ -117,8 +117,10 @@ was checked against the code and fixed on this branch:
   button) and `tests/initiatives/direct.rs` (each private message entry
   point), `tests/issues.rs` and `tests/selection/links.rs`.
 - Fixtures: `scripts/subspace_api_test_server.py --fleet` serves the aurora
-  fleet's agents with their nicks (the rear admiral named `admiral-vance`),
-  recorded Starbase and command channels; `scripts/irc-history-fixture.py`
+  fleet's agents with their nicks (the rear admiral named `admiral-vance`;
+  each captain named by its ship, `aurora-lyra` for the ship Lyra, so the
+  captain notification route still matches `#aurora-lyra`), recorded
+  Starbase and command channels; `scripts/irc-history-fixture.py`
   signs its agents in to their own accounts and names the command channel
   `#aurora-command`.
 - Documentation: [Channels](../../irc.md#fleet-roles) and the Channels guide.
