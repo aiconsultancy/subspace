@@ -1,7 +1,7 @@
 //! Applies the desktop initiative selection to the verified IRC runtime.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::{Context, Entity, Subscription};
@@ -13,10 +13,10 @@ use crate::Irc;
 use crate::fleet::Roster;
 use crate::hub::Hub;
 
-const MAX_CHANNEL_BYTES: usize = 200;
-
+mod channels;
 mod endpoint;
 mod picker;
+pub(crate) use channels::{channel_names, initiative_channels};
 pub(crate) use endpoint::Endpoint;
 pub(crate) use picker::{Picker, button, command, dismiss_stale_picker, hint};
 
@@ -223,7 +223,7 @@ impl Hub {
             .filter(|_| subspace_api_client::capabilities().initiative_channels)
             .zip(self.configured_initiative_network());
         let intent =
-            selection.map(|(initiative, network)| (network, channel_names(&initiative.channels)));
+            selection.map(|(initiative, network)| (network, initiative_channels(initiative)));
         let new_network = intent.as_ref().map(|(network, _)| network.clone());
         let old_network = std::mem::replace(&mut self.initiatives.network, new_network.clone());
         let changed_network = old_network != new_network;
@@ -318,35 +318,6 @@ pub(crate) fn refresh(board: &Irc, cx: &mut Context<Irc>) {
             hub.initiatives.catalog.clone().update(cx, Catalog::refresh);
         }
     }
-}
-
-/// A JOIN accepts a single channel token. Store and show the first spelling,
-/// with the same ASCII case-insensitive comparison as registration.
-pub(crate) fn channel_names(text: &str) -> Vec<String> {
-    let mut seen = HashSet::new();
-    text.split(',')
-        .flat_map(|entry| {
-            let names = entry
-                .trim()
-                .split([' ', '\t'])
-                .filter(|name| !name.is_empty());
-            names
-                .clone()
-                .all(valid_channel)
-                .then_some(names)
-                .into_iter()
-                .flatten()
-        })
-        .filter(|name| seen.insert(name.to_ascii_lowercase()))
-        .map(str::to_owned)
-        .collect()
-}
-
-fn valid_channel(name: &str) -> bool {
-    // Leave room on the 512-byte IRC line for the JOIN command.
-    (2..=MAX_CHANNEL_BYTES).contains(&name.len())
-        && name.starts_with(['#', '&', '+', '!'])
-        && !name.contains(|c: char| c.is_whitespace() || c.is_control() || c == ':')
 }
 
 #[cfg(test)]
@@ -457,6 +428,44 @@ mod tests {
             roster.rank("aurora-lyra"),
             Some(crate::fleet::Rank::Captain),
             "the shared fleet is no clash with itself"
+        );
+    }
+
+    #[test]
+    fn an_initiative_joins_its_fleet_s_recorded_channels_then_its_own() {
+        let initiative: subspace_api_client::model::MemberInitiative =
+            serde_json::from_value(serde_json::json!({
+                "id": "one", "name": "One", "channels": "#aurora-nav, #Aurora-Starbase",
+                "fleetId": "aurora",
+                "fleet": {"id": "aurora", "slug": "aurora",
+                          "starbaseChannel": "#aurora-starbase", "commandChannel": "#aurora-command",
+                          "agents": [{"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra",
+                                      "shipChannel": "#aurora-lyra"}],
+                          "ships": [{"id": "s1", "name": "Lattice", "channel": "#aurora-lyra"},
+                                    {"id": "s2", "name": "Plover", "channel": null}]}
+            }))
+            .unwrap();
+        assert_eq!(
+            super::initiative_channels(&initiative),
+            [
+                "#aurora-starbase",
+                "#aurora-command",
+                "#aurora-lyra",
+                "#aurora-nav"
+            ],
+            "the fleet's first, each once ignoring case, then the initiative's own"
+        );
+        let unrecorded: subspace_api_client::model::MemberInitiative =
+            serde_json::from_value(serde_json::json!({
+                "id": "two", "name": "Two", "channels": "#local", "fleetId": "aurora",
+                "fleet": {"id": "aurora", "slug": "aurora",
+                          "agents": [{"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra"}]}
+            }))
+            .unwrap();
+        assert_eq!(
+            super::initiative_channels(&unrecorded),
+            ["#local"],
+            "no guessed standard names are joined"
         );
     }
 
