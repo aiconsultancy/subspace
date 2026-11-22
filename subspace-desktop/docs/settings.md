@@ -85,6 +85,15 @@ restart. **Notify ship captains** is on by default and applies on Save. It
 posts PR merge and deployment updates to matching initiative channels on
 the initiative's IRC connection while automatic board refresh is enabled. See [Channels](../spaces/irc/help.md#notify-ship-captains).
 
+**Settings > Application > Fleets** lists each fleet your initiatives belong
+to, with the Fleet API address the Subspace API records for it and its state
+(no token, address changed, live, token refused, unreachable and so on).
+Paste the fleet's token and choose **Save token**; **Test connection** reads
+the fleet once; **Clear token** forgets it. These apply at once, outside Save
+and Cancel. The token is kept in the system keychain with the address it was
+saved for and only sent there: when the recorded address changes, paste the
+token again. See [Fleets and the Fleet API](fleet-api.md).
+
 In a build with the terminal, **Settings > Terminal** (under Application) sets
 the terminal's font family and size for open and new sessions on Save, as
 `fontFamily` and `fontSize` in the config file's `terminal` object. See

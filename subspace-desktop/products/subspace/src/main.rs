@@ -16,8 +16,8 @@ use subspace_framework::github_auth::OAuthClient;
 use subspace_framework::product::{BuildInfo, BuildKind};
 use subspace_framework::shell::BoardRegistration;
 
-const SETTINGS_EXTENSIONS: &[subspace_framework::shell::SettingsExtension] =
-    &[subspace_framework::shell::SettingsExtension::new(
+const SETTINGS_EXTENSIONS: &[subspace_framework::shell::SettingsExtension] = &[
+    subspace_framework::shell::SettingsExtension::new(
         "web-boards",
         "Web Spaces",
         subspace_framework::lucide::IconName::Globe,
@@ -29,7 +29,15 @@ const SETTINGS_EXTENSIONS: &[subspace_framework::shell::SettingsExtension] =
             )
         },
     )
-    .with_github_credentials()];
+    .with_github_credentials(),
+    // Each fleet's Fleet API token, shared by every Space that shows fleets.
+    subspace_framework::shell::SettingsExtension::new(
+        "fleets",
+        "Fleets",
+        subspace_framework::lucide::IconName::Ship,
+        subspace_client_fleet::settings::create,
+    ),
+];
 
 fn main() -> ExitCode {
     if let Err(message) = identity::configure_backend(identity::variables()) {

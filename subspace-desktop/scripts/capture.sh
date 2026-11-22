@@ -28,7 +28,9 @@
 #   CAPTURE_FLEET=1            the fixture adds the neutral FLT project and the demo world's NAV, MAP,
 #                              WARP and RELAY issues for web Space evidence
 #   CAPTURE_FLEET_API=1        a fictional Stargate Fleet API (the aurora fleet) on loopback, with the
-#                              built-in Fleet Console's address and token set to it
+#                              built-in Fleet Console's address and token set to it; with
+#                              CAPTURE_FLEET=1 the API's aurora fleet records it as its fleetApiUrl, and
+#                              its token is saved for that address (Settings > Fleets)
 #   CAPTURE_MOVE_UNCONFIRMED=1  a committed move lists its sub-issues as not confirmed, as a NETT move can
 #   CAPTURE_UPLOAD_SCENARIO=<unknown|absent>  the first issue opened shows an upload NETT left unresolved
 #   CAPTURE_KEEP_LOG=1         copy the app's logs into <out-dir>
@@ -130,16 +132,18 @@ if [ -n "${CAPTURE_NO_UPDATES_STREAM:-}" ]; then api_args+=(--no-updates-stream)
 if [ -n "${CAPTURE_CHANGE_AFTER:-}" ]; then api_args+=(--change-after "$CAPTURE_CHANGE_AFTER"); fi
 if [ -n "${CAPTURE_DECISION_SCENARIO:-}" ]; then api_args+=(--decision-scenario "$CAPTURE_DECISION_SCENARIO"); fi
 if [ -n "${CAPTURE_FLEET:-}" ]; then api_args+=(--fleet); fi
-python3 -u "$root/scripts/subspace_api_test_server.py" "${api_args[@]}" >"$fixture/subspace-api.log" 2>&1 &
-servers+=("$!")
+fleet_api=""
 if [ -n "${CAPTURE_FLEET_API:-}" ]; then
     python3 -u "$root/scripts/fleet_api_test_server.py" --port 0 --token fixture-fleet >"$fixture/fleet-api.log" 2>&1 &
     servers+=("$!")
+    fleet_api="$(server_address "$fixture/fleet-api.log")"
+    # The Subspace API fixture's aurora fleet records this address.
+    api_args+=(--fleet-api-url "$fleet_api")
 fi
+python3 -u "$root/scripts/subspace_api_test_server.py" "${api_args[@]}" >"$fixture/subspace-api.log" 2>&1 &
+servers+=("$!")
 github="$(server_address "$fixture/github.log")"
 subspace_api="$(server_address "$fixture/subspace-api.log")"
-fleet_api=""
-if [ -n "${CAPTURE_FLEET_API:-}" ]; then fleet_api="$(server_address "$fixture/fleet-api.log")"; fi
 
 if [ -z "${CAPTURE_NO_GH:-}" ]; then
     cat >"$fixture/gh/hosts.yml" <<'EOF'
@@ -185,7 +189,13 @@ boards.update(extra.pop("webBoards", None) or {})
 config.update(extra)
 if boards:
     config["webBoards"] = boards
-for directory, name, value in ((state_dir, "state.json", state), (config_dir, "config.json", config)):
+files = [(state_dir, "state.json", state), (config_dir, "config.json", config)]
+if fleet_api:
+    # The aurora fleet's token in Settings > Fleets, saved for the Fleet API
+    # fixture's address, as a debug build keeps it beside state.json.
+    token = json.dumps({"v": 1, "endpoint": fleet_api, "token": "fixture-fleet"})
+    files.append((state_dir, "fleet-api-tokens.json", {"fleet-api:aurora": token}))
+for directory, name, value in files:
     path = os.path.join(directory, name)
     with open(path, "w") as file:
         json.dump(value, file)

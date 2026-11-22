@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 subspace-framework.workspace = true
+# The fleets and tokens the built-in Fleet Console reads (`fleets.get`).
+subspace-client-fleet.workspace = true
 gpui-kit.workspace = true
 hex.workspace = true
 percent-encoding.workspace = true

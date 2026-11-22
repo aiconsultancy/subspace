@@ -102,7 +102,7 @@ export function fleetSection({ fleet, total, sample, confirming, now }) {
   const origin = ORIGIN[fleet.entry.origin] ?? fleet.entry.origin;
   const problem =
     fleet.connection.reason === "no-token"
-      ? `<p class="prog warn-text"><b>${esc(tokenProblem(fleet.entry.problem).title)}.</b> ${esc(tokenProblem(fleet.entry.problem).body)}</p>`
+      ? `<p class="prog warn-text"><b>${esc(tokenProblem(fleet.entry.problem, fleet.entry.origin).title)}.</b> ${esc(tokenProblem(fleet.entry.problem, fleet.entry.origin).body)}</p>`
       : description.banner && !sample
         ? `<p class="prog${status.bad ? " warn-text" : ""}"><b>${esc(description.banner.title)}.</b> ${esc(description.banner.body)}</p>`
         : "";
@@ -113,6 +113,8 @@ export function fleetSection({ fleet, total, sample, confirming, now }) {
     actions = `<div class="actions"><button class="btn" type="button" data-fleet-edit="${esc(fleet.id)}">Edit</button><button class="btn" type="button" data-fleet-remove="${esc(fleet.id)}">Remove</button></div>`;
   } else if (fleet.entry.origin === "settings") {
     actions = `<p class="prog">This fleet's address and token come from ${SETTINGS_PATH}.</p>`;
+  } else if (fleet.entry.origin === "api") {
+    actions = `<p class="prog">This fleet is assigned to your initiatives in Subspace, which records its address. Its token is set in Subspace Settings › Fleets.</p>`;
   }
   return `<section class="sec"><h3>Connection</h3><dl class="kv"><dt>Address</dt><dd class="mono">${esc(fleet.entry.endpoint)}</dd><dt>State</dt><dd>${esc(sample ? "Sample data" : description.label)}${status.bad ? "" : fleet.streaming ? " · live stream" : fleet.lastReadAt ? " · read every 30 s" : ""}</dd><dt>From</dt><dd>${esc(origin)}</dd></dl>${problem}${actions}</section>`;
 }

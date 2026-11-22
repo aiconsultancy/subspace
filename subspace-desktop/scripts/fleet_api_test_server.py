@@ -10,6 +10,7 @@ ten seconds and `heartbeat` every fifteen. Every name, host, repository and
 token is invented. Never calls upstream services.
 
   python3 scripts/fleet_api_test_server.py --port 0 --token fixture-fleet
+  python3 scripts/fleet_api_test_server.py --port 0 --refuse-events  # 503, as with eight streams open
   python3 scripts/fleet_api_test_server.py --snapshot   # one JSON document
 """
 
@@ -605,9 +606,24 @@ class Handler(BaseHTTPRequestHandler):
             if len(route) == 4 and route[0] == 'ships' and route[2] == 'crew':
                 value = fleet.crew(route[1], route[3])
                 return self.reply(200 if value else 404, value or dict(error='Unknown crew member.'), head)
+        if route == ['events'] and not head and self.server.refuse_events:
+            # Stargate serves at most eight streams and answers 503 beyond.
+            return self.busy()
         if route == ['events'] and not head:
             return self.stream()
         return self.reply(404, dict(error='Not found.'), head)
+
+    def busy(self):
+        body = json.dumps(dict(error='Too many event streams.')).encode()
+        self.send_response(503)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Retry-After', '5')
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Connection', 'close')
+        self.cors()
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True
 
     def stream(self):
         self.send_response(200)
@@ -640,7 +656,7 @@ class Handler(BaseHTTPRequestHandler):
 class FleetServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, token, tick=5.0, now=None):
+    def __init__(self, port, token, tick=5.0, now=None, refuse_events=False):
         if not token:
             raise ValueError('A non-empty fixture token is required.')
         self.token = token
@@ -649,6 +665,7 @@ class FleetServer(ThreadingHTTPServer):
         self.subscribers = set()
         self.closing = threading.Event()
         self.tick = tick
+        self.refuse_events = refuse_events
         super().__init__(('127.0.0.1', port), Handler)
         self.origin = f'http://127.0.0.1:{self.server_address[1]}'
         threading.Thread(target=self.simulate, daemon=True).start()
@@ -701,13 +718,15 @@ def main():
     parser.add_argument('--token', default='fixture-fleet', help='The fictional bearer token every request needs.')
     parser.add_argument('--tick', type=float, default=5.0, metavar='SECONDS',
                         help='Seconds between simulated crew changes; 0 keeps the fleet still.')
+    parser.add_argument('--refuse-events', action='store_true',
+                        help='Answer the event stream with 503, as Stargate does with eight streams open.')
     parser.add_argument('--snapshot', action='store_true',
                         help='Print the fleet, every ship and every crew member as one JSON document and exit.')
     options = parser.parse_args()
     if options.snapshot:
         print(json.dumps(Fleet().snapshot(), indent=2))
         return
-    server = FleetServer(options.port, options.token, options.tick)
+    server = FleetServer(options.port, options.token, options.tick, refuse_events=options.refuse_events)
     try:
         print(f'Stargate Fleet API fixture on {server.origin}', flush=True)
         server.serve_forever()

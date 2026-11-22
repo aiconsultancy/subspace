@@ -47,6 +47,23 @@ class FleetFixtureTests(unittest.TestCase):
         with self.open(path, **options) as response:
             return response.status, json.loads(response.read() or b'null'), response.headers
 
+    def test_a_server_refusing_streams_still_serves_reads(self):
+        busy = FIXTURE.FleetServer(0, TOKEN, tick=0, refuse_events=True)
+        worker = threading.Thread(target=busy.serve_forever, daemon=True)
+        worker.start()
+        try:
+            request = Request(busy.origin + '/api/v1/events', headers={'Authorization': f'Bearer {TOKEN}'})
+            with self.assertRaises(HTTPError) as refused:
+                urlopen(request, timeout=3)
+            self.assertEqual((refused.exception.code, refused.exception.headers['Retry-After']), (503, '5'))
+            request = Request(busy.origin + '/api/v1/fleet', headers={'Authorization': f'Bearer {TOKEN}'})
+            with urlopen(request, timeout=3) as response:
+                self.assertEqual(response.status, 200)
+        finally:
+            busy.shutdown()
+            busy.server_close()
+            worker.join()
+
     def test_every_route_needs_the_token_and_is_not_cached(self):
         for token in (None, 'wrong'):
             status, _, headers = self.get('/api/v1/fleet', token=token)

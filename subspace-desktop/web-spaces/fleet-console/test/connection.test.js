@@ -109,3 +109,12 @@ test("every state says what it is and what to do", () => {
     assert.equal(sample.banner.retry, reason !== "no-bridge");
   }
 });
+
+test("a fleet from the Subspace API says to set its token in Subspace Settings", async () => {
+  const { tokenProblem } = await import("../src/connection.js");
+  assert.match(tokenProblem("no-token", "api").body, /Subspace Settings › Fleets/);
+  assert.match(tokenProblem("token-address", "api").title, /address changed/);
+  assert.match(tokenProblem("token-store", "api").body, /keychain/);
+  assert.match(tokenProblem("token-checking", "api").title, /reading/);
+  assert.match(tokenProblem("token-address").body, /Edit the fleet/);
+});

@@ -1,8 +1,9 @@
-// Where fleets come from, merged into one list. Today there are two sources:
-// the Settings page (the default fleet: `endpoint` and `token`) and the
-// fleets added in the page (localStorage plus `fleet_<id>` secrets). The
-// Subspace API, which will assign a fleet to each initiative, is a third
-// source: pass its entries as `api` and nothing else changes.
+// Where fleets come from, merged into one list, from three sources: the
+// Settings page (the default fleet: `endpoint` and `token`), the fleets the
+// Subspace API assigns to the person's initiatives (`subspace.fleets.get`,
+// with the address the API records and the token saved for it in Subspace
+// Settings › Fleets, given only for that address), and the fleets added in
+// the page (localStorage plus `fleet_<id>` secrets).
 //
 // A fleet entry: {id, name|null, endpoint, origin: "settings"|"api"|"local",
 // tokenKey, token|null, problem|null}. A null name means "use the name
@@ -42,12 +43,23 @@ export function localFleets({ list, secrets, allowed, normalizeEndpoint }) {
   });
 }
 
-/** Fleets from the Subspace API (not merged yet): [{id, name, endpoint, token}]. */
+/**
+ * Fleets from the Subspace API, as `subspace.fleets.get` gives them:
+ * [{id, name, endpoint|null, token|null, problem|null}]. Subspace gives a
+ * token only for the address it was saved for; a fleet without a usable
+ * address is left out, and one without a token keeps Subspace's reason
+ * ("no-token", "token-address", "token-checking" or "token-store").
+ */
 export function apiFleets(list = [], normalizeEndpoint) {
+  if (!Array.isArray(list)) return [];
   return list.flatMap((item) => {
+    if (!item || typeof item.id !== "string" || !item.id || typeof item.endpoint !== "string") return [];
     const endpoint = normalizeEndpoint(item.endpoint);
-    if (!endpoint.ok || !item.id) return [];
-    return [{ id: `api_${item.id}`, name: item.name ?? null, endpoint: endpoint.url, origin: "api", tokenKey: null, token: item.token ?? null, problem: item.token ? null : "no-token" }];
+    if (!endpoint.ok) return [];
+    const token = typeof item.token === "string" && item.token.trim() ? item.token.trim() : null;
+    const problem = token ? null : typeof item.problem === "string" && item.problem ? item.problem : "no-token";
+    const name = typeof item.name === "string" && item.name.trim() ? item.name.trim() : null;
+    return [{ id: `api_${item.id}`, name, endpoint: endpoint.url, origin: "api", tokenKey: null, token, problem }];
   });
 }
 

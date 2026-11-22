@@ -53,10 +53,22 @@ export async function connectBridge(host = globalThis) {
         secrets: fn(api.secrets?.get),
         secretsSet: fn(api.secrets?.set),
         issues: fn(api.issues?.scope) && fn(api.issues?.resolve),
+        fleets: fn(api.fleets?.get),
       };
     },
     settings: () => (allowed("settings") && fn(api.settings?.get) ? attempt(() => api.settings.get()) : Promise.resolve(null)),
     secrets: () => (allowed("secrets") && fn(api.secrets?.get) ? attempt(() => api.secrets.get()) : Promise.resolve(null)),
+    /**
+     * The fleets the Subspace API assigns, each with its token only for the
+     * address it was saved for. Subspace answers only its built-in Fleet
+     * Console, with the secrets permission; anywhere else this is null.
+     */
+    fleets: () => (allowed("secrets") && fn(api.fleets?.get) ? attempt(() => api.fleets.get()) : Promise.resolve(null)),
+    /** Calls `listener` when a fleet, its address or its token changes in Subspace. */
+    onFleetsChanged(listener) {
+      host.addEventListener?.("subspace:fleets-changed", listener);
+      return () => host.removeEventListener?.("subspace:fleets-changed", listener);
+    },
     /**
      * Keep (or, with null, delete) one of the page's own secrets. Needs the
      * save-secrets permission (secrets alone only reads) and never touches a
@@ -97,9 +109,11 @@ function createAbsentBridge() {
     present: false,
     refresh: async () => new Set(),
     has: () => false,
-    capabilities: () => ({ theme: false, secrets: false, secretsSet: false, issues: false }),
+    capabilities: () => ({ theme: false, secrets: false, secretsSet: false, issues: false, fleets: false }),
     settings: none,
     secrets: none,
+    fleets: none,
+    onFleetsChanged: () => () => {},
     setSecret: () => Promise.reject(new Error("Fleets can be added only inside Subspace.")),
     theme: none,
     onTheme: () => () => {},
