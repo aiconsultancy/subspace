@@ -7,7 +7,7 @@ use subspace_client_fleet::{FleetState, Link};
 use subspace_framework::contracts::github::PullRequestStatus;
 use subspace_framework::contracts::issues::{IssueState, StateType};
 
-use super::play::{Mark, PlayLine};
+use super::play::{Answer, Mark, PlayLine};
 use super::reason::{SETTINGS, WAITING, reason};
 use super::ship::{age, figures, here_line, subtitle, work};
 use super::{InspectorTab, Subject, tabs};
@@ -128,12 +128,21 @@ fn here_now_names_four_then_counts_the_rest() {
     assert_eq!(here_line(&names(7)), "p0, p1, p2, p3 and 3 others");
 }
 
-/// A reference in play, untitled.
+/// A reference in play, untitled, answered when its mark has a state.
 fn in_play(key: &str, mark: Mark) -> PlayLine {
+    let known = match &mark {
+        Mark::Issue(state) => state.is_some(),
+        Mark::PullRequest(status) => status.is_some(),
+    };
     PlayLine {
         key: key.into(),
         title: None,
         mark,
+        answer: if known {
+            Answer::Known
+        } else {
+            Answer::Loading
+        },
     }
 }
 
@@ -147,9 +156,17 @@ fn a_reference_in_play_says_its_state_once_answered() {
         Some("In Review")
     );
     assert_eq!(
-        in_play("acme/web#492", Mark::PullRequest(None)).state(),
-        None
+        in_play("acme/web#492", Mark::PullRequest(None))
+            .state()
+            .as_deref(),
+        Some("Loading"),
+        "never a bare key"
     );
+    let unavailable = PlayLine {
+        answer: Answer::Unavailable,
+        ..in_play("NAV-6", Mark::Issue(None))
+    };
+    assert_eq!(unavailable.state().as_deref(), Some("Unavailable"));
     let merged = Mark::PullRequest(Some(PullRequestStatus::Merged));
     assert_eq!(
         in_play("acme/web#492", merged).state().as_deref(),
@@ -202,4 +219,18 @@ fn a_kept_crew_detail_says_so_rather_than_not_arrived() {
         ..lyra()
     };
     assert_eq!(crew_note(&none), "This ship has no crew.");
+}
+
+#[test]
+fn an_unanswered_reference_says_loading_and_a_refused_one_unavailable() {
+    use super::play::standing;
+    let none: Option<&()> = None;
+    assert_eq!(
+        standing(none, false, false),
+        Answer::Loading,
+        "not asked yet"
+    );
+    assert_eq!(standing(Some(&()), false, true), Answer::Loading, "pending");
+    assert_eq!(standing(Some(&()), false, false), Answer::Unavailable);
+    assert_eq!(standing(Some(&()), true, false), Answer::Known);
 }

@@ -132,6 +132,7 @@ pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
     crate::reveal::settle(board, cx);
     crate::live::watch::sync(board, cx);
     crate::thread::refresh(board, cx);
+    inspector::want_in_play(board, cx);
     cx.notify();
 }
 

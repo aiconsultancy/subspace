@@ -137,6 +137,11 @@ fn front(board: &Irc, cx: &App) -> Option<Front> {
 /// The inspector: a fleet channel's ship or Starbase and its people under
 /// tabs; else the focused channel's members under their count, or a hint
 /// for a buffer that has none.
+/// Asks for the answers of what the Ship tab's **In play here** lists.
+pub(crate) fn want_in_play(board: &Irc, cx: &mut Context<Irc>) {
+    play::want(board, cx);
+}
+
 pub(super) fn inspector(board: &Irc, cx: &mut Context<Irc>) -> workspace::Inspector {
     tabbed(board, cx).unwrap_or_else(|| members_only(board, cx))
 }
