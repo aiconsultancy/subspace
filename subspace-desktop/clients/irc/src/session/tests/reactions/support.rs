@@ -50,7 +50,19 @@ fn clienttagdeny_turns_reactions_off_and_reports_it() {
             ":ergo.test 005 subspace CLIENTTAGDENY=*,-draft/react,-draft/unreact :are supported by this server",
         ],
     );
-    assert_eq!(support(&exempt), [true]);
+    assert!(
+        support(&exempt).is_empty(),
+        "still off: the reply tag is denied"
+    );
+    let out = command(&mut session, react(channel("#c"), "m1", "👍"));
+    assert_eq!(refusal(&out), Some(&ReactionError::Unsupported));
+    let replies = feed(
+        &mut session,
+        &[
+            ":ergo.test 005 subspace CLIENTTAGDENY=*,-draft/react,-draft/unreact,-draft/reply :are supported by this server",
+        ],
+    );
+    assert_eq!(support(&replies), [true]);
     let unchanged = feed(
         &mut session,
         &[":ergo.test 005 subspace NICKLEN=32 :are supported"],

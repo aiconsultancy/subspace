@@ -128,3 +128,18 @@ clear of P0 and P1) raised these; each was checked against the code.
 - **`CLIENTTAGDENY`** (Sol): fixed. Honoured for sending and reported
   through `Update::ReactionSupport`.
 - **`Runtime::drain` clones** (Sol): fixed. Events are moved.
+
+The second Opus pass confirmed the findings above resolved and found three
+more in the fixes, each checked against the code:
+
+- **An older addition rewound the newest operation's time** (P2): fixed.
+  Each person's record keeps two times: when their newest operation
+  happened, which alone decides what is newer, and when their current
+  addition started, for display. An older replayed addition can only move
+  a shown person's place earlier, so a live addition at 5 survives a
+  replayed addition at 1 and removal at 3.
+- **Removal-only groups blocked new reactions** (P3): fixed. When a
+  message's group places are full, the group holding only removals with
+  the oldest newest operation is dropped before a new group is refused.
+- **`CLIENTTAGDENY` ignored `draft/reply`** (P3): fixed. Support needs the
+  reply tag allowed too.

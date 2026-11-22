@@ -3,13 +3,18 @@
 use super::{
     MAX_REACTIONS_PER_MESSAGE, MAX_REACTORS_PER_REACTION, REMOVALS_FACTOR, ReactionSummary, Reactor,
 };
+use chrono::{DateTime, Utc};
+
 use crate::model::{Casemapping, Reaction, ReactionChange};
 use crate::reactions::agent_stop::is_agent_stop_reaction;
 
-/// The latest operation one person made with one reaction.
+/// The latest operation one person made with one reaction. `reactor.time`
+/// is when their current addition started, for display; `latest` is when
+/// their newest operation happened, for telling newer from older.
 #[derive(Debug)]
 pub(super) struct Record {
     pub(super) reactor: Reactor,
+    latest: DateTime<Utc>,
     /// `reactor.nick` folded with the network's case mapping.
     pub(super) folded: String,
     pub(super) added: bool,
@@ -24,6 +29,11 @@ pub(super) struct Group {
 impl Group {
     fn shown(&self) -> usize {
         self.records.iter().filter(|record| record.added).count()
+    }
+
+    /// The newest operation in the group, for dropping the oldest group.
+    fn latest(&self) -> Option<DateTime<Utc>> {
+        self.records.iter().map(|record| record.latest).max()
     }
 }
 
@@ -51,10 +61,24 @@ pub(super) fn record(groups: &mut Vec<Group>, reaction: &Reaction) -> bool {
     changed
 }
 
-fn room_for_group(groups: &[Group], added: bool) -> bool {
-    let shown = groups.iter().filter(|group| group.shown() > 0).count();
+/// Whether a new group fits, dropping the oldest group that only remembers
+/// removals when every place is taken.
+fn room_for_group(groups: &mut Vec<Group>, added: bool) -> bool {
     let limit = MAX_REACTIONS_PER_MESSAGE;
-    groups.len() < limit * REMOVALS_FACTOR && (!added || shown < limit)
+    if groups.len() >= limit * REMOVALS_FACTOR {
+        let oldest = groups
+            .iter()
+            .enumerate()
+            .filter(|(_, group)| group.shown() == 0)
+            .min_by_key(|(_, group)| group.latest())
+            .map(|(index, _)| index);
+        match oldest {
+            Some(index) => groups.remove(index),
+            None => return false,
+        };
+    }
+    let shown = groups.iter().filter(|group| group.shown() > 0).count();
+    !added || shown < limit
 }
 
 /// Brings one person's record up to `reaction` unless it is older than
@@ -67,6 +91,7 @@ fn upsert(group: &mut Group, reaction: &Reaction) -> bool {
             own: reaction.own,
             time: reaction.time,
         },
+        latest: reaction.time,
         folded: reaction.casemapping.fold(&reaction.nick),
         added: reaction.change == ReactionChange::Added,
     };
@@ -81,21 +106,24 @@ fn upsert(group: &mut Group, reaction: &Reaction) -> bool {
     }
 }
 
-/// A later operation by someone already held. Two additions keep the
-/// earlier time, so a person's place stays where they first reacted.
+/// Another operation by someone already held. One older than their newest
+/// changes nothing, except that an older addition may move a shown
+/// person's place back to when they first reacted.
 fn merge(held: &mut Record, incoming: Record) -> bool {
     let own = held.reactor.own || incoming.reactor.own;
+    let time = incoming.reactor.time;
     let changed = match (held.added, incoming.added) {
-        (true, true) => {
-            let time = held.reactor.time.min(incoming.reactor.time);
-            let moved = time != held.reactor.time;
+        (true, true) if time < held.reactor.time => {
             held.reactor.time = time;
-            moved
+            true
         }
-        _ if incoming.reactor.time < held.reactor.time => false,
+        _ if time < held.latest => false,
         (was, now) => {
+            held.latest = time;
+            if now && !was {
+                held.reactor.time = time;
+            }
             held.added = now;
-            held.reactor.time = incoming.reactor.time;
             was != now
         }
     };

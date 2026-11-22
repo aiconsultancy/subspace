@@ -72,10 +72,10 @@ fn refused(request: &Request, error: ReactionError) -> Update {
 }
 
 /// Whether this connection can send reactions: `message-tags` and no
-/// `CLIENTTAGDENY` for either reaction tag.
+/// `CLIENTTAGDENY` for either reaction tag or the reply tag they need.
 pub(super) fn supported(session: &Session) -> bool {
     session.has_cap(reactions::CAPABILITY)
-        && [REACT_TAG, UNREACT_TAG]
+        && [REACT_TAG, UNREACT_TAG, REPLY]
             .iter()
             .all(|tag| session.isupport.allows_tag(tag.trim_start_matches('+')))
 }

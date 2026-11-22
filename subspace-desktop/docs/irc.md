@@ -396,8 +396,8 @@ to the conversation with `+draft/react=<reaction>` or
 The Space does not show them yet; this is the client layer only.
 
 - **Support.** Reactions need `message-tags`, which the runtime already
-  requests, and no `CLIENTTAGDENY` that blocks `draft/react` or
-  `draft/unreact`. The runtime reports `Update::ReactionSupport { network,
+  requests, and no `CLIENTTAGDENY` that blocks `draft/react`,
+  `draft/unreact` or `draft/reply`. The runtime reports `Update::ReactionSupport { network,
   supported }` with every capability report and when `CLIENTTAGDENY`
   changes, so a UI can hide reactions. `reactions::reactions_supported`
   answers from the capability list alone.
@@ -432,7 +432,10 @@ The Space does not show them yet; this is the client layer only.
   first-reacted order: `reactions(&buffer, msgid)` and `reacted(&buffer,
   msgid, reaction)`. It keeps the latest operation per message, reaction
   and person by time, so an older replay never overwrites a newer change,
-  and remembers removals for that. It follows nick changes through
+  and remembers removals for that. Each person's place is when their
+  current addition started; an older replayed addition can only move a
+  shown person's place earlier. When a message's places for remembered
+  removals run out, the oldest group holding only removals is dropped. It follows nick changes through
   `observe` (`Event::MemberChanged`) or `rename`, skipping entries with
   another known account and merging nobody, and keeps reactions to
   messages not loaded yet. Each reaction's `stops_agent` marks Stargate's

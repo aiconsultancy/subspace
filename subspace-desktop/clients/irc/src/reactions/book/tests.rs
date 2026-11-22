@@ -1,10 +1,12 @@
 use chrono::{DateTime, TimeDelta, Utc};
 
-use super::{MAX_MESSAGES, MAX_REACTIONS_PER_MESSAGE, MAX_REACTORS_PER_REACTION, ReactionBook};
+use super::ReactionBook;
 use crate::model::{
     BufferKey, Casemapping, Event, Member, NetworkId, Reaction, ReactionChange, Target,
 };
 use crate::test_support;
+
+mod limits;
 
 fn network() -> NetworkId {
     NetworkId("local".into())
@@ -269,55 +271,18 @@ fn invalid_values_from_the_network_are_ignored() {
 }
 
 #[test]
-fn what_is_shown_per_message_is_bounded() {
+fn older_operations_replayed_after_a_newer_addition_change_nothing() {
     let mut book = ReactionBook::new();
-    for index in 0..MAX_REACTIONS_PER_MESSAGE + 5 {
-        book.apply(&reaction("m1", &format!("r{index}"), "alice", 1));
-    }
-    assert_eq!(
-        book.reactions(&room(), "m1").len(),
-        MAX_REACTIONS_PER_MESSAGE
-    );
-    for index in 0..MAX_REACTORS_PER_REACTION + 5 {
-        book.apply(&reaction("m2", "👍", &format!("n{index}"), 1));
-    }
-    assert_eq!(
-        book.reactions(&room(), "m2")[0].count(),
-        MAX_REACTORS_PER_REACTION
-    );
-}
-
-#[test]
-fn eviction_drops_the_least_recently_changed_message() {
-    let mut book = ReactionBook::new();
+    book.apply(&reaction("m1", "👍", "alice", 5));
     book.apply(&reaction("m1", "👍", "alice", 1));
-    book.apply(&reaction("m2", "👍", "alice", 1));
-    book.apply(&reaction("m1", "👍", "bob", 2));
-    book.apply(&reaction("m2", "👍", "alice", 1));
-    for index in 0..MAX_MESSAGES - 1 {
-        book.apply(&reaction(&format!("x{index}"), "👍", "alice", 1));
-    }
-    assert_eq!(book.len(), MAX_MESSAGES);
-    assert!(
-        shown(&book, "m2").is_empty(),
-        "a duplicate does not refresh m2"
+    book.apply(&removed(reaction("m1", "👍", "alice", 3)));
+    assert_eq!(
+        shown(&book, "m1"),
+        ["👍:alice"],
+        "the live addition at 5 stands"
     );
-    assert!(!shown(&book, "m1").is_empty());
-    book.apply(&reaction("last", "👍", "alice", 1));
-    assert!(shown(&book, "m1").is_empty());
-    assert_eq!(book.len(), MAX_MESSAGES);
-}
-
-#[test]
-fn a_removal_that_leaves_reactions_refreshes_the_message() {
-    let mut book = ReactionBook::new();
-    book.apply(&reaction("m1", "👍", "alice", 1));
-    book.apply(&reaction("m1", "👍", "bob", 1));
-    book.apply(&reaction("m2", "👍", "alice", 1));
-    book.apply(&removed(reaction("m1", "👍", "bob", 2)));
-    for index in 0..MAX_MESSAGES - 1 {
-        book.apply(&reaction(&format!("x{index}"), "👍", "alice", 1));
-    }
-    assert!(shown(&book, "m2").is_empty());
-    assert_eq!(shown(&book, "m1"), ["👍:alice"]);
+    book.apply(&removed(reaction("m1", "👍", "alice", 7)));
+    book.apply(&removed(reaction("m1", "👍", "alice", 6)));
+    book.apply(&reaction("m1", "👍", "alice", 4));
+    assert!(shown(&book, "m1").is_empty(), "the removal at 7 stands");
 }
