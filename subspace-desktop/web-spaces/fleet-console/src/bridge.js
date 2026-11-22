@@ -62,8 +62,10 @@ export async function connectBridge(host = globalThis) {
      * The fleets the Subspace API assigns, each with its token only for the
      * address it was saved for. Subspace answers only its built-in Fleet
      * Console, with the secrets permission; anywhere else this is null.
+     * `retry` is for the person's Retry only: Subspace then reads again a
+     * token its keychain could not read, which may ask to unlock it.
      */
-    fleets: () => (allowed("secrets") && fn(api.fleets?.get) ? attempt(() => api.fleets.get()) : Promise.resolve(null)),
+    fleets: (retry = false) => (allowed("secrets") && fn(api.fleets?.get) ? attempt(() => (retry === true && fn(api.fleets.retry) ? api.fleets.retry() : api.fleets.get())) : Promise.resolve(null)),
     /** Calls `listener` when a fleet, its address or its token changes in Subspace. */
     onFleetsChanged(listener) {
       host.addEventListener?.("subspace:fleets-changed", listener);

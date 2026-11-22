@@ -75,7 +75,7 @@ fn finish(
         Effect::SaveSecret(write) => {
             secrets::save(bridge, &config.id, &write, cx).map(|()| Value::Null)
         }
-        Effect::Fleets => Ok(fleets::current(cx)),
+        Effect::Fleets { retry } => Ok(fleets::current(retry, cx)),
     }
 }
 

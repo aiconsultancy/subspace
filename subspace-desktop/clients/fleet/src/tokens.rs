@@ -40,7 +40,7 @@ pub enum StoreError {
 
 /// A saved token and the address it was saved for. Deliberately has no
 /// `Debug` that could print the token.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct SavedToken {
     address: String,
     token: Secret,

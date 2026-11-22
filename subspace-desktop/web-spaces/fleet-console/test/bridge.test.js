@@ -175,3 +175,34 @@ test("the app's fleets are read only with the secrets permission, and changes ar
   assert.equal(await (await connectBridge(refused)).fleets(), null);
   assert.equal(await (await connectBridge({})).fleets(), null);
 });
+
+test("only a Retry asks Subspace to read its keychain again", async () => {
+  const host = fakeHost({ permissions: ["secrets"] });
+  const asked = [];
+  host.subspace.fleets = { get: async () => (asked.push("get"), []), retry: async () => (asked.push("retry"), []) };
+  const bridge = await connectBridge(host);
+  await bridge.fleets();
+  await bridge.fleets(false);
+  await bridge.fleets("yes");
+  assert.deepEqual(asked, ["get", "get", "get"]);
+  await bridge.fleets(true);
+  assert.deepEqual(asked, ["get", "get", "get", "retry"]);
+  // An older Subspace without retry is asked plainly.
+  const older = fakeHost({ permissions: ["secrets"] });
+  older.subspace.fleets = { get: async () => (asked.push("older"), []) };
+  await (await connectBridge(older)).fleets(true);
+  assert.equal(asked.at(-1), "older");
+});
+
+test("the page asks for a re-read only from its Retry button", async () => {
+  const { readFileSync } = await import("node:fs");
+  const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+  // Every reconfigure but the Retry button's is a plain one, so a
+  // subspace:fleets-changed, a focus or a visibility change never reads
+  // the keychain again.
+  const calls = [...main.matchAll(/\breconfigure\(([^)]*)\)/g)].map((match) => match[1]);
+  assert.deepEqual(calls.filter((argument) => argument !== "" && argument !== "retry = false"), ["true"]);
+  assert.match(main, /retry\.addEventListener\("click", \(\) => \{\s*reconfigure\(true\);/);
+  assert.match(main, /onFleetsChanged\(\(\) => reconfigure\(\)\)/);
+  assert.match(main, /bridge\.fleets\(retry\)/);
+});

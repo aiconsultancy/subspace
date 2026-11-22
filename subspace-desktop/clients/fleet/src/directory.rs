@@ -3,6 +3,7 @@
 //! follows. Pure, so the address rule is tested on its own.
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use subspace_api_client::model::MemberInitiative;
 use subspace_framework::core::Secret;
@@ -53,7 +54,7 @@ pub fn fleets_of(initiatives: &[MemberInitiative]) -> Vec<FleetRecord> {
 }
 
 /// Where a fleet's saved token stands on this computer.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub(crate) enum TokenLoad {
     /// Not read from the secret store yet.
     #[default]
@@ -242,6 +243,32 @@ pub(crate) fn retain_tokens(
         tokens.insert(id.clone(), TokenLoad::Loading);
     }
     new
+}
+
+/// The fleets whose token the store could not read and that may be read
+/// again at `now`: none read again within `interval`. Marks them read at
+/// `now` and forgets fleets no longer known.
+pub(crate) fn due_rereads(
+    tokens: &BTreeMap<String, TokenLoad>,
+    last: &mut BTreeMap<String, Instant>,
+    now: Instant,
+    interval: Duration,
+) -> Vec<String> {
+    last.retain(|fleet, _| tokens.contains_key(fleet));
+    let due: Vec<String> = tokens
+        .iter()
+        .filter(|(fleet, token)| {
+            **token == TokenLoad::Unavailable
+                && last
+                    .get(*fleet)
+                    .is_none_or(|at| now.saturating_duration_since(*at) >= interval)
+        })
+        .map(|(fleet, _)| fleet.clone())
+        .collect();
+    for fleet in &due {
+        last.insert(fleet.clone(), now);
+    }
+    due
 }
 
 #[cfg(test)]
