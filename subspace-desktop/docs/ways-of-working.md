@@ -182,7 +182,12 @@ pull request per project against `main`:
 Each pull request also updates its project's `CHANGELOG.md` and carries the
 four lockfiles: Release Please cannot run Cargo, so the workflow commits
 what `scripts/sync-lockfiles.py` changes (only local packages' versions)
-to the pull request's branch after Cargo accepts it with `--locked`. When
+to the pull request's branch after Cargo accepts it with `--locked`, then
+starts the `lockfiles` check (`.github/workflows/lockfiles.yml`, which runs
+`scripts/sync-lockfiles.py --check`) on that branch. Every other pull request
+gets the check from its own `pull_request` run; a release pull request does
+not, because the release workflow's token starts no other workflow. Do not
+merge a release pull request without a passing `lockfiles` check. When
 one release merges, the other's pull request falls behind `main` and the
 workflow has Release Please rebuild it (`scripts/release-rebuild.sh`).
 
