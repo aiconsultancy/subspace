@@ -17,7 +17,7 @@ use subspace_framework::dashboard::{Tokens, Tone};
 use crate::hub::Hub;
 
 /// Names the tracker when the answering board gave no profile name.
-const TRACKER: &str = "the issue tracker";
+pub(super) const TRACKER: &str = "the issue tracker";
 /// A note wraps rather than stretching the tooltip.
 const NOTE_WIDTH_REM: f32 = 20.;
 
