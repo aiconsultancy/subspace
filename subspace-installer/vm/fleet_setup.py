@@ -14,7 +14,10 @@ over SSH. It:
 4. starts the Subspace API and PostgreSQL on loopback, signs the admin in
    first so they become the organisation administrator, seeds demo data on
    request, creates an initiative for the fleet and registers the fleet;
-5. enables Stargate's Fleet API when the pinned Stargate has it;
+5. enables Stargate's Fleet API when the pinned Stargate has it, and agent
+   dispatch when asked (off by default): it registers the rear admiral and
+   captains as API agents of this fleet and gives the rear admiral's gateway
+   a token for its own agent identity;
 6. locks the VM down (see lockdown.sh) and writes a non-secret summary that
    the host reads.
 
@@ -23,6 +26,7 @@ after a failure or to change a setting.
 """
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -34,6 +38,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
@@ -73,6 +78,11 @@ LINUX_USER = re.compile(r"[a-z_][a-z0-9_.-]{0,31}")
 # Development sign-in is only the default: an operator who switches the API to WorkOS or Entra keeps it.
 DEV_AUTH = {"AUTH_PROVIDERS": "dev", "ENABLE_DEV_AUTH": "true", "NODE_ENV": "development"}
 CIDR = re.compile(r"[0-9a-fA-F:.]+(?:/[0-9]{1,3})?")
+# Agent dispatch: what switching it on does, in the words the prompt and the summary use.
+DISPATCH_SUMMARY = ("issues flagged Ready for agents are offered to the captains in fleet command, and issues "
+                    "assigned to a captain are announced to it there")
+# Fleet agents sign in to the development API as these fictional addresses (the API's agent subjects).
+AGENT_EMAIL_DOMAIN = "agents.example.com"
 # The fleet installer's repository IDs (also Stargate crew project keys) and its crew limit of nine repositories.
 REPO_ID = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 MAX_REPOSITORIES = 9
@@ -162,6 +172,9 @@ def parse_args(argv):
                         help="enable Stargate's Fleet API (default auto: when the pinned Stargate has it)")
     parser.add_argument("--stargate-ref", help="'latest' (the default: Stargate's newest release, looked up on "
                         "every run) or a full commit SHA to pin")
+    parser.add_argument("--agent-dispatch", dest="agent_dispatch", action="store_true", default=None,
+                        help="switch on Stargate's agent dispatch: " + DISPATCH_SUMMARY + " (default off; needs the API)")
+    parser.add_argument("--no-agent-dispatch", dest="agent_dispatch", action="store_false")
     parser.add_argument("--operator", help="Linux login that may SSH in and tunnel (default: the sudo user)")
     parser.add_argument("--access", choices=["ssh", "tailscale", "cloudflare"],
                         help="how you reach the VM; tailscale limits SSH to the tailnet, cloudflare to cloudflared")
@@ -251,6 +264,12 @@ def gather(args, saved):
         answers["demo"] = args.demo
     elif "demo" not in answers:
         answers["demo"] = yes_no("Seed fictional demo data so you can look around straight away?", True, interactive)
+    if args.agent_dispatch is not None:
+        answers["agentDispatch"] = args.agent_dispatch
+    elif "agentDispatch" not in answers:
+        # Off unless asked: an unattended run never switches it on.
+        answers["agentDispatch"] = yes_no(f"Switch on agent dispatch? ({DISPATCH_SUMMARY[0].upper()}"
+                                          f"{DISPATCH_SUMMARY[1:]}.)", False, interactive)
     answers["stargateApi"] = args.stargate_api or answers.get("stargateApi", "auto")
     if args.stargate_ref == "latest":
         answers.pop("stargateRef", None)
@@ -346,6 +365,10 @@ def check_answers(answers):
     check_repositories(answers.get("repositories", []))
     if answers.get("stargateRef"):
         require(SHA.fullmatch(answers["stargateRef"]), "--stargate-ref must be a full 40-character commit SHA.")
+    require(isinstance(answers.get("agentDispatch", False), bool), "Agent dispatch is on or off.")
+    require(not answers.get("agentDispatch") or answers["api"],
+            "Agent dispatch polls the Subspace API, so it needs the API on this VM: drop --no-api, or pass "
+            "--no-agent-dispatch.")
     require(answers["operator"] and answers["operator"] != "root",
             "Run setup with sudo from your own login, or pass --operator with the Linux user that SSHes in.")
     try:
@@ -542,10 +565,14 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         config["stargate"] = stargate
     if api_block:
         config["api"] = api_block
+    # Timings someone set by hand stay; the answer switches dispatch on or off. It needs the API block.
+    dispatch = previous.get("agentDispatch") if isinstance(previous.get("agentDispatch"), dict) else {}
+    if dispatch or answers.get("agentDispatch"):
+        config["agentDispatch"] = {**dispatch, "enabled": bool(answers.get("agentDispatch") and api_block)}
     return config
 
 
-def fleet_secrets(secret_store, members, admin, token="", local_irc=True):
+def fleet_secrets(secret_store, members, admin, token="", local_irc=True, dispatch_token=""):
     # A shared IRC server owns the human accounts; a local one is seeded with the admin's.
     humans = [admin] if local_irc else []
     passwords = {account: secret_store.password(f"irc-{account}")
@@ -558,6 +585,8 @@ def fleet_secrets(secret_store, members, admin, token="", local_irc=True):
         result["ircOperatorPassword"] = secret_store.password("irc-operator")
     if token:
         result["apiToken"] = token
+    if dispatch_token:
+        result["rearAdmiralApiToken"] = dispatch_token
     return result
 
 
@@ -703,9 +732,9 @@ def history_database(secret_store):
             "network": f"{API_PROJECT}_default"}
 
 
-def api_token(answers):
+def api_token(answers, email=None):
     token = compose("exec", "-T", "api", "bun", "run", "--silent", "auth:dev",
-                    answers["adminEmail"], answers["organisation"], capture=True).splitlines()[-1].strip()
+                    email or answers["adminEmail"], answers["organisation"], capture=True).splitlines()[-1].strip()
     require(JWT.fullmatch(token), "The API did not return a development token.")
     return token
 
@@ -723,6 +752,73 @@ def api_call(token, method, path, body=None):
     except (URLError, OSError):
         raise SetupError(f"Could not reach the Subspace API for {method} {path}.") from None
     return json.loads(text) if text else {}
+
+
+def agent_subject(account):
+    """The development sign-in address of a fleet agent: its API identity's account subject."""
+    return f"{account}@{AGENT_EMAIL_DOMAIN}"
+
+
+def own_fleet(answers, token):
+    """This VM's fleet in the API, registered now if need be; the installer completes its details later."""
+    try:
+        return api_call(token, "GET", f"/fleets/{answers['slug']}")["id"]
+    except ApiError as error:
+        if error.status != 404:
+            raise
+    host, port = irc_endpoint(answers)
+    return api_call(token, "POST", "/fleets", {"slug": answers["slug"], "name": answers["name"], "ircHost": host,
+                                               "ircPort": port, "ircTls": answers["irc"] != "local"})["id"]
+
+
+def dispatch_agents(answers, members, token):
+    """Register the rear admiral and captains as this fleet's API agents; return the rear admiral's token.
+
+    Stargate's dispatcher calls the API as the rear admiral (rank rearAdmiral, linked to this fleet) and
+    offers issues to the fleet's agents of rank captain. Each agent is named after its IRC account, which
+    is how the dispatcher finds a captain's account in chat.
+    """
+    fleet_id = own_fleet(answers, token)
+    model = read_json(INPUTS / "fleet.json", {}).get("harness", {}).get("model", "gpt-5.4")
+    known, cursor = {}, ""
+    while True:
+        page = api_call(token, "GET", "/agents?limit=100" + (f"&cursor={quote(cursor)}" if cursor else ""))
+        known.update({row.get("serviceTokenClientId"): row for row in page.get("items", [])})
+        cursor = page.get("nextCursor") or ""
+        if not cursor:
+            break
+    for index, person in enumerate(members):
+        rank = "captain" if index else "rearAdmiral"
+        subject = agent_subject(person["account"])
+        row = known.get(subject)
+        if row is None:
+            body = {"name": person["account"], "rank": rank, "fleetId": fleet_id, "defaultModel": model,
+                    "serviceTokenClientId": subject}
+            if index:
+                body["ship"] = person["name"]
+            api_call(token, "POST", "/agents", body)
+            say(f"registered {person['name']} as this fleet's {'captain' if index else 'rear admiral'} in the API")
+            continue
+        require(row.get("isActive") and row.get("rank") == rank and row.get("fleetId") == fleet_id,
+                f"The API agent {person['account']} is deactivated, has another rank or belongs to another fleet. "
+                "Fix it in the API as an administrator, or pass --no-agent-dispatch.")
+    # A development token expires after eight hours, so dispatch stops until setup runs again or the API moves
+    # to WorkOS or Entra with a long-lived token (installer README, 'Agent dispatch'). Keep the current one
+    # while it has more than half its life left, so a rerun does not restart the gateway for a new token.
+    current = read_json(INPUTS / "fleet.secrets.json", {}).get("rearAdmiralApiToken", "")
+    if token_seconds_left(current) > 4 * 3600:
+        return current
+    return api_token(answers, agent_subject(members[0]["account"]))
+
+
+def token_seconds_left(token, now=None):
+    """Seconds until a bearer JWT's exp claim, read without verifying it; 0 when unknown or expired."""
+    try:
+        payload = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        return max(0, int(claims["exp"]) - int(time.time() if now is None else now))
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        return 0
 
 
 def seed_demo(answers):
@@ -933,9 +1029,12 @@ def setup(args):
         stargate_tag, stargate_ref = latest_stargate()
     say(f"installing Stargate {stargate_tag} ({stargate_ref[:12]})")
 
+    dispatch_token = ""
+
     def write_inputs(irc_ref, api_block=None, stargate_api=False, token="", history=None):
         write_json(config_path, fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history))
-        private = fleet_secrets(secret_store, members, answers["admin"], token, local_irc)
+        private = fleet_secrets(secret_store, members, answers["admin"], token, local_irc,
+                                dispatch_token if api_block else "")
         if history:
             private["ircHistoryPassword"] = secret_store.password("ergo-history")
         write_json(secrets_path, private)
@@ -944,6 +1043,8 @@ def setup(args):
         irc_bundle(answers, members, secret_store)
     if args.dry_run:
         write_inputs(hashlib.sha1(b"dry-run").hexdigest())
+        if answers["agentDispatch"]:
+            say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
         installer(config_path, dry_run=True)
         say(f"dry run complete; inputs are in {INPUTS}")
         return
@@ -976,14 +1077,25 @@ def setup(args):
             answers.update(initiativeId=initiative, managedChannels=channels)
             save_answers(answers)
             api_block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": [initiative]}
+            if answers["agentDispatch"]:
+                dispatch_token = dispatch_agents(answers, members, token)
         else:
             say("the API no longer offers development sign-in, so setup leaves its fleet registration, "
                 "initiative and demo data as they are")
+            # Without development sign-in, setup writes no API settings, which dispatch needs.
+            require(not answers["agentDispatch"],
+                    "Agent dispatch needs the API's registration in the fleet's inputs, which setup writes only while "
+                    "the API offers development sign-in. Pass --no-agent-dispatch, and configure api, agentDispatch "
+                    "and rearAdmiralApiToken for the fleet installer by hand (subspace-installer/README.md, "
+                    "'Agent dispatch').")
 
     write_inputs(irc_ref, api_block, bool(stargate_api), token, history)
     installer(config_path)
     if not answers["api"]:
         api_down()
+    if answers["agentDispatch"]:
+        # The installer has created Stargate's gateway user: let it, and only it, reach the API's port.
+        run(HERE / "lockdown.sh", "isolate", *isolation_args(answers))
     if stargate_api is None:
         source = installed_stargate_source()
         stargate_api = bool(source and (source / "src/api/v1/server.ts").is_file())
@@ -1016,6 +1128,14 @@ def setup(args):
     print()
     say(f"fleet {values['SUBSPACE_FLEET_NAME']} ({values['SUBSPACE_FLEET_SLUG']}) is set up.")
     say(f"Starbase is {channels[0]}; fleet command is {channels[1]}; ship channels: {' '.join(channels[2:])}.")
+    if answers["agentDispatch"]:
+        say(f"agent dispatch is on: {DISPATCH_SUMMARY}.")
+        if api_block:
+            say("WARNING: the rear admiral's development sign-in token lasts eight hours. Run setup again to renew "
+                "it, or move the API to WorkOS or Entra and give the rear admiral a long-lived token "
+                "(installer README, 'Agent dispatch').")
+    else:
+        say("agent dispatch is off; 'subspace-setup --agent-dispatch' switches it on.")
     if not local_irc:
         say(f"add this fleet to the shared IRC server: copy {INPUTS / 'irc-bundle.json'} there and run "
             "'sudo subspace-setup irc-server add <file>' (the host installer does this with --irc-server).")
@@ -1032,6 +1152,14 @@ def isolation_args(answers):
         # The API (development sign-in) and PostgreSQL, also through their container addresses,
         # and still after a switch to --no-api in case stopping them failed.
         args += ["--operator-only-port", str(API_PORT), "--operator-only-port", "5432"]
+        try:
+            pwd.getpwnam(GATEWAY_USER)
+            gateway = answers.get("agentDispatch")
+        except KeyError:
+            gateway = False  # Not yet created: setup isolates again once the installer has run.
+        if gateway:
+            # Agent dispatch: Stargate's gateway polls the API as the rear admiral. Agents never reach it.
+            args += ["--port-user", f"{API_PORT}:{GATEWAY_USER}"]
     for user in metadata_users(answers):
         args += ["--metadata-user", user]
     return args
