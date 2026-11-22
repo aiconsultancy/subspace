@@ -673,6 +673,10 @@ class Handler(BaseHTTPRequestHandler):
 
 class FleetServer(ThreadingHTTPServer):
     daemon_threads = True
+    # socketserver's default listen queue of 5 overflows when a client's
+    # burst arrives while the accept loop is behind, and macOS resets each
+    # connection past it. Hold a burst instead (capped at somaxconn).
+    request_queue_size = 128
 
     def __init__(self, port, token, tick=5.0, now=None, refuse_events=False, log_requests=False):
         if not token:

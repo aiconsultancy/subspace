@@ -204,6 +204,31 @@ class CommandLineTests(unittest.TestCase):
         self.assertNotIn('cli', err)
 
 
+class ListenQueueTests(unittest.TestCase):
+    def test_a_burst_of_connections_waiting_to_be_accepted_is_served_not_reset(self):
+        # A Rust test polls a hook while the client under test opens several
+        # connections, and a loaded machine can starve the accept loop. When
+        # the listen queue is full, macOS resets each further connection.
+        server = NETT.FixtureServer(port=0)
+        self.addCleanup(server.server_close)
+        request = (f'GET /api/v1/me HTTP/1.1\r\nHost: {urlsplit(server.origin).netloc}\r\n'
+                   f'Authorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n').encode()
+        connections = []
+        # Nothing accepts yet: every connection waits in the listen queue.
+        for _ in range(32):
+            connection = socket.create_connection(server.server_address[:2], timeout=10)
+            self.addCleanup(connection.close)
+            connection.sendall(request)
+            connections.append(connection)
+        worker = threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True)
+        worker.start()
+        self.addCleanup(worker.join)
+        self.addCleanup(server.shutdown)
+        for connection in connections:
+            with connection.makefile('rb') as reply:
+                self.assertEqual(reply.readline().split()[1:2], [b'200'])
+
+
 class DeviceFlowTests(FixtureCase):
     def test_device_flow_issues_tokens_the_api_accepts_and_refresh_rotates(self):
         device = self.start_device()

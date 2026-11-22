@@ -3167,6 +3167,13 @@ def loopback_host(value):
 
 class FixtureServer(ThreadingHTTPServer):
     daemon_threads = True
+    # socketserver listens with a queue of 5, which half-open connections
+    # count against too. The client opens up to six requests and a stream
+    # while a test polls a hook, and when that burst finds the queue full,
+    # macOS resets a waiting connection: a request is lost before it is
+    # logged, or a hook call fails with ECONNRESET. Hold a burst instead
+    # (the kernel caps this at somaxconn).
+    request_queue_size = 128
 
     def __init__(self, host='127.0.0.1', port=DEFAULT_PORT, access_token=DEFAULT_ACCESS_TOKEN, single_org=False,
                  auto_approve=False, stream_seconds=STREAM_SECONDS, keepalive_seconds=KEEPALIVE_SECONDS,
