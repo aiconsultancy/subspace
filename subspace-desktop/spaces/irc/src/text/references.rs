@@ -18,7 +18,7 @@ use gpui_kit::{
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, rich};
 
-use super::{Opens, RefHandlers, targets};
+use super::{Opens, RefHandlers, look, targets};
 use crate::markup::{self, Ref};
 use crate::style::RunStyle;
 
@@ -112,10 +112,16 @@ impl MarkdownPlugin for References {
             .clone();
         let tokens = Tokens::current(cx);
         let run = self.style(&found, occurrence);
+        let look = match &found {
+            Opens::Ref(found) => (self.handlers.look)(found, cx),
+            _ => None,
+        };
         // Copy keeps the text as written; a pull request shows `repo#n`.
         let text = node.as_text().to_owned();
         let (label, styled) = self.label(node, shown, reference_style(run, &tokens), cx);
         let id: SharedString = format!("irc-reference:{:?}", node.source_range()).into();
+        let state_id: SharedString =
+            format!("irc-reference-state:{:?}", node.source_range()).into();
         let trigger = div()
             .id(id)
             .test_support()
@@ -126,8 +132,20 @@ impl MarkdownPlugin for References {
                 trigger.bg(fill)
             })
             .when_some(pull_request_glyph(&found), |trigger, glyph| {
+                let tint = look::tint(look).map(|tone| tokens.tone(tone));
+                let glyph = div()
+                    .flex()
+                    .when_some(tint, |glyph, tint| glyph.text_color(tint))
+                    .child(glyph);
                 trigger.flex().items_center().gap_0p5().child(glyph)
             })
+            .when_some(
+                look.and_then(|look| look::dot(look, &tokens)),
+                |trigger, dot| {
+                    let dot = div().id(state_id).test_support().flex().child(dot);
+                    trigger.flex().items_center().gap_1().child(dot)
+                },
+            )
             .child(div().child(self.hover(&found, styled)).test_text(label))
             .on_mouse_down(MouseButton::Right, self.mark_link(copied_link(&found, url)))
             .on_click(self.activation(found.clone()));
@@ -483,6 +501,7 @@ mod tests {
                 let refs = References::new(RefHandlers {
                     open: Arc::new(|_, _, _| {}),
                     tooltip: Arc::new(|_, _, _| None),
+                    look: Arc::new(|_, _| None),
                     styled: Some(styled),
                 });
                 let url = subspace_framework::dashboard::links::safe_url(raw).unwrap();
@@ -516,6 +535,7 @@ mod tests {
         let refs = References::new(RefHandlers {
             open: Arc::new(|_, _, _| {}),
             tooltip: Arc::new(|_, _, _| None),
+            look: Arc::new(|_, _| None),
             styled: Some(styled),
         });
         let found = Opens::Url(url);

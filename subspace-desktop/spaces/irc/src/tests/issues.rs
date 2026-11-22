@@ -236,3 +236,46 @@ fn the_tracker_stopping_stops_recognition(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// The ids of the state dots drawn before inline issue references.
+fn state_dots(cx: &mut VisualTestContext) -> Vec<String> {
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        gpui_kit::base::test_support::snapshots(window)
+            .into_iter()
+            .filter_map(|node| {
+                let id = node.path().last()?.to_string();
+                id.starts_with("irc-reference-state:").then_some(id)
+            })
+            .collect()
+    })
+}
+
+#[gpui_kit::test]
+fn an_answered_issue_reference_leads_with_its_state_dot_and_a_loading_one_keeps_its_look(
+    cx: &mut TestAppContext,
+) {
+    let (_, tracker, cx) = open_room(cx, true, "TST-12 blocks TST-13");
+    let tracker = tracker.expect("a tracker");
+    assert_eq!(
+        state_dots(cx).len(),
+        1,
+        "TST-12 is answered; TST-13 is still pending and has no dot"
+    );
+    cx.update(|_, cx| {
+        tracker.update(cx, |tracker, _| {
+            tracker
+                .answers
+                .insert("TST-13".into(), ResolutionState::Unavailable);
+        });
+        assert!(contracts::publish(TRACKER, Changed, cx).is_ok());
+    });
+    cx.run_until_parked();
+    assert_eq!(state_dots(cx).len(), 1, "an unavailable reference has none");
+}
+
+#[gpui_kit::test]
+fn with_no_answering_board_no_reference_has_a_state_dot(cx: &mut TestAppContext) {
+    let (_, _, cx) = open_room(cx, false, "TST-12 blocks TST-13");
+    assert!(state_dots(cx).is_empty());
+}
