@@ -672,6 +672,21 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "fleetApiUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 2048,
+                        "pattern": "^[Hh][Tt][Tt][Pp][Ss]?:\\/\\/[^\\s/?#@\\\\]+(?:\\/[^\\s?#\\\\]*)?$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -1033,6 +1048,21 @@
                         "type": "string",
                         "maxLength": 64,
                         "pattern": "^#[^\\s,\\p{Cc}]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "fleetApiUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 2048,
+                        "pattern": "^[Hh][Tt][Tt][Pp][Ss]?:\\/\\/[^\\s/?#@\\\\]+(?:\\/[^\\s?#\\\\]*)?$"
                       },
                       {
                         "type": "null"
@@ -40032,6 +40062,16 @@
               }
             ]
           },
+          "fleetApiUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "rearAdmiralName": {
             "anyOf": [
               {
@@ -40240,6 +40280,7 @@
           "vmHost",
           "starbaseChannel",
           "commandChannel",
+          "fleetApiUrl",
           "rearAdmiralName",
           "captainNames",
           "irc",

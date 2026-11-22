@@ -186,6 +186,9 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       });
       await call(403, "/agents", rank, "POST", agentInput(rank));
       await call(403, `/initiatives/${initiativeId}/fleet`, rank, "PUT", { fleetId });
+      await call(403, `/fleets/${fleetId}`, rank, "PATCH", {
+        fleetApiUrl: "https://elsewhere.example.com",
+      });
     },
   );
 
