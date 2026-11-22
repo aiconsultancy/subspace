@@ -1,6 +1,6 @@
 import { Version } from "./initiative-contract";
 import { Effect, Schema } from "effect";
-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
+import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
 import {
   ActivityPage,
   ActivityQuery,
@@ -62,6 +62,8 @@ import { CurrentMember } from "./identity";
 import { versionedApi } from "./middleware";
 
 const params = { reference: Ref };
+const fleetOwnership =
+  "An agent registered to a fleet that sets a non-null assigneeId, or sends readyForAgents, receives 403 when the issue's project belongs to another fleet. A project belongs to its initiative's fleet, or else to the fleet of that initiative's nearest ancestor with one.";
 const optionalVersion = Schema.Struct({ version: Schema.optional(Version) });
 
 export const projectGroup = HttpApiGroup.make("projects")
@@ -178,13 +180,13 @@ export const issueGroup = HttpApiGroup.make("issues")
       payload: NewIssue,
       success: IssueDetail.pipe(HttpApiSchema.status(201)),
       error: endpointErrors,
-    }),
+    }).annotate(OpenApi.Description, fleetOwnership),
     HttpApiEndpoint.patch("editIssue", "/issues/:reference", {
       params,
       payload: EditIssue,
       success: IssueDetail,
       error: endpointErrors,
-    }),
+    }).annotate(OpenApi.Description, fleetOwnership),
     HttpApiEndpoint.post("archiveIssue", "/issues/:reference/archive", {
       params,
       payload: optionalVersion,
@@ -232,7 +234,10 @@ export const issueGroup = HttpApiGroup.make("issues")
       payload: MoveRequest,
       success: MoveResult,
       error: endpointErrors,
-    }),
+    }).annotate(
+      OpenApi.Description,
+      "An agent registered to a fleet receives 403 when the source or destination project belongs to another fleet. The preview does not apply this check.",
+    ),
     HttpApiEndpoint.get("activity", "/issues/:reference/activity", {
       params,
       query: ActivityQuery,
