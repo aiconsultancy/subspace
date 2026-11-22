@@ -5,12 +5,18 @@
 
 use std::sync::Arc;
 
+use gpui_kit::component::{Icon, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::{AnyElement, App, IntoElement as _, Styled as _, div};
+use gpui_kit::{
+    AnyElement, App, InteractiveElement as _, IntoElement as _, ParentElement as _, SharedString,
+    Styled as _, TestSupportExt as _, div,
+};
 use subspace_framework::contracts::github::PullRequestStatus;
 use subspace_framework::contracts::issues::{IssueState, StateType};
+use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, Tone};
 
+use super::Opens;
 use crate::markup::Ref;
 
 /// The dot's width as a share of the caption size, so it scales with the
@@ -56,8 +62,47 @@ pub(crate) fn pull_request(status: PullRequestStatus) -> Look {
     }
 }
 
+/// What `found` shows of its answer, read through `look`.
+pub(super) fn of(look: &RefLook, found: &Opens, cx: &App) -> Option<Look> {
+    match found {
+        Opens::Ref(found) => look(found, cx),
+        _ => None,
+    }
+}
+
+/// A pull request chip's leading glyph, in its status's tone once known.
+pub(super) fn glyph(found: &Opens, look: Option<Look>, tokens: &Tokens) -> Option<AnyElement> {
+    let tint = tint(look).map(|tone| tokens.tone(tone));
+    matches!(found, Opens::Ref(Ref::PullRequest(_))).then(|| {
+        div()
+            .flex()
+            .when_some(tint, |glyph, tint| glyph.text_color(tint))
+            .child(Icon::from(IconName::GitPullRequest).xsmall())
+            .into_any_element()
+    })
+}
+
+/// An answered issue reference's dot, identified by the reference's source
+/// `range` for tests.
+pub(super) fn state(
+    look: Option<Look>,
+    range: Option<std::ops::Range<usize>>,
+    tokens: &Tokens,
+) -> Option<AnyElement> {
+    let dot = look.and_then(|look| dot(look, tokens))?;
+    let id = SharedString::from(format!("irc-reference-state:{range:?}"));
+    Some(
+        div()
+            .id(id)
+            .test_support()
+            .flex()
+            .child(dot)
+            .into_any_element(),
+    )
+}
+
 /// The dot or ring an issue reference leads with.
-pub(super) fn dot(look: Look, tokens: &Tokens) -> Option<AnyElement> {
+fn dot(look: Look, tokens: &Tokens) -> Option<AnyElement> {
     let (tone, filled) = match look {
         Look::Dot(tone) => (tone, true),
         Look::Ring(tone) => (tone, false),
@@ -76,7 +121,7 @@ pub(super) fn dot(look: Look, tokens: &Tokens) -> Option<AnyElement> {
 }
 
 /// The tone a pull request's glyph takes, when its status is known.
-pub(super) fn tint(look: Option<Look>) -> Option<Tone> {
+fn tint(look: Option<Look>) -> Option<Tone> {
     match look {
         Some(Look::Tint(tone)) => Some(tone),
         _ => None,
@@ -89,7 +134,9 @@ mod tests {
     use subspace_framework::contracts::issues::{IssueState, StateType};
     use subspace_framework::dashboard::{Tokens, Tone};
 
-    use super::{Look, dot, issue, pull_request, tint};
+    use super::{Look, dot, glyph, issue, pull_request, state, tint};
+    use crate::markup::{PrRef, Ref};
+    use crate::text::Opens;
 
     #[test]
     fn an_issue_s_state_category_picks_its_dot() {
@@ -135,6 +182,23 @@ mod tests {
             tint(None),
             None,
             "an unanswered pull request keeps its look"
+        );
+    }
+
+    #[test]
+    fn only_a_pull_request_chip_leads_with_the_pull_request_glyph() {
+        let tokens = Tokens::one_dark();
+        let pull_request = Opens::Ref(Ref::PullRequest(
+            PrRef::from_url("https://github.com/octo-org/api/pull/421").unwrap(),
+        ));
+        assert!(glyph(&pull_request, None, &tokens).is_some());
+        let issue = Opens::Ref(Ref::Issue("TST-12".into()));
+        assert!(glyph(&issue, Some(Look::Dot(Tone::Green)), &tokens).is_none());
+        assert!(glyph(&Opens::Url("https://example.org".into()), None, &tokens).is_none());
+        assert!(state(Some(Look::Dot(Tone::Green)), Some(0..6), &tokens).is_some());
+        assert!(
+            state(None, Some(0..6), &tokens).is_none(),
+            "loading: no dot"
         );
     }
 }

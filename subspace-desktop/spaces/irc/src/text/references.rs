@@ -8,14 +8,12 @@ use gpui_kit::component::text::{
     InlineElement, InlineRenderContext, MarkdownNode, MarkdownParseContext, MarkdownPlugin,
     markdown_ast,
 };
-use gpui_kit::component::{Icon, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, ClickEvent, FontWeight, HighlightStyle, Hsla, InteractiveElement as _, InteractiveText,
     MouseButton, MouseDownEvent, ParentElement as _, SharedString, StatefulInteractiveElement as _,
     Styled as _, StyledText, UnderlineStyle, Window, div, px,
 };
-use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, rich};
 
 use super::{Opens, RefHandlers, look, targets};
@@ -112,16 +110,11 @@ impl MarkdownPlugin for References {
             .clone();
         let tokens = Tokens::current(cx);
         let run = self.style(&found, occurrence);
-        let look = match &found {
-            Opens::Ref(found) => (self.handlers.look)(found, cx),
-            _ => None,
-        };
+        let look = look::of(&self.handlers.look, &found, cx);
         // Copy keeps the text as written; a pull request shows `repo#n`.
         let text = node.as_text().to_owned();
         let (label, styled) = self.label(node, shown, reference_style(run, &tokens), cx);
         let id: SharedString = format!("irc-reference:{:?}", node.source_range()).into();
-        let state_id: SharedString =
-            format!("irc-reference-state:{:?}", node.source_range()).into();
         let trigger = div()
             .id(id)
             .test_support()
@@ -131,20 +124,12 @@ impl MarkdownPlugin for References {
             .when_some(reference_fill(run, &tokens), |trigger, fill| {
                 trigger.bg(fill)
             })
-            .when_some(pull_request_glyph(&found), |trigger, glyph| {
-                let tint = look::tint(look).map(|tone| tokens.tone(tone));
-                let glyph = div()
-                    .flex()
-                    .when_some(tint, |glyph, tint| glyph.text_color(tint))
-                    .child(glyph);
+            .when_some(look::glyph(&found, look, &tokens), |trigger, glyph| {
                 trigger.flex().items_center().gap_0p5().child(glyph)
             })
             .when_some(
-                look.and_then(|look| look::dot(look, &tokens)),
-                |trigger, dot| {
-                    let dot = div().id(state_id).test_support().flex().child(dot);
-                    trigger.flex().items_center().gap_1().child(dot)
-                },
+                look::state(look, node.source_range(), &tokens),
+                |trigger, dot| trigger.flex().items_center().gap_1().child(dot),
             )
             .child(div().child(self.hover(&found, styled)).test_text(label))
             .on_mouse_down(MouseButton::Right, self.mark_link(copied_link(&found, url)))
@@ -177,12 +162,6 @@ fn copied_link(found: &Opens, url: String) -> String {
         Opens::Ref(Ref::PullRequest(found)) => found.url.clone(),
         _ => url,
     }
-}
-
-/// A pull request chip leads with the pull request glyph.
-fn pull_request_glyph(found: &Opens) -> Option<Icon> {
-    matches!(found, Opens::Ref(Ref::PullRequest(_)))
-        .then(|| Icon::from(IconName::GitPullRequest).xsmall())
 }
 
 impl References {
@@ -365,7 +344,7 @@ fn reference_style(style: RunStyle, tokens: &Tokens) -> HighlightStyle {
 mod tests {
     use subspace_framework::dashboard::Tokens;
 
-    use super::{copied_link, pull_request_glyph, reference_fill, reference_style};
+    use super::{copied_link, reference_fill, reference_style};
     use crate::markup::{PrRef, Ref};
     use crate::style::RunStyle;
     use crate::text::Opens;
@@ -392,13 +371,6 @@ mod tests {
             copied_link(&url, "https://example.org".into()),
             "https://example.org"
         );
-    }
-
-    #[test]
-    fn only_a_pull_request_chip_leads_with_the_pull_request_glyph() {
-        assert!(pull_request_glyph(&pull_request()).is_some());
-        assert!(pull_request_glyph(&Opens::Ref(Ref::Issue("TST-12".into()))).is_none());
-        assert!(pull_request_glyph(&Opens::Url("https://example.org".into())).is_none());
     }
 
     #[test]

@@ -9,8 +9,8 @@ use serde_json::json;
 use subspace_api_client::model::MemberInitiative;
 use subspace_client_irc::{Command, ConnectionStatus, Event};
 
-use super::remove::{choose, settle};
-use super::{inject, mount, settings};
+use super::super::remove::{choose, settle};
+use super::super::{inject, mount, settings};
 use crate::fixtures::{channel, member, message, network_id};
 use crate::hub::Hub;
 use crate::{Irc, view};
