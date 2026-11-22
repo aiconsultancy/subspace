@@ -242,6 +242,21 @@ fn search_finds_a_fleet_channel_by_its_full_name() {
 }
 
 #[test]
+fn search_still_finds_a_fleet_channel_and_a_person_by_their_network() {
+    let state = joined([channel("#aurora-lyra"), query("mira")]);
+    let layout = super::super::layout(&state, &aurora());
+    let index = super::super::search(&layout);
+    for (query, title) in [("Local Ergo lyra", "lyra"), ("Local Ergo mira", "mira")] {
+        let found = index.search(query, 5);
+        assert_eq!(
+            found.first().map(|(_, row)| row.title.as_ref()),
+            Some(title),
+            "{query}"
+        );
+    }
+}
+
+#[test]
 fn channels_whose_short_names_clash_keep_their_full_names() {
     // The initiative names `#lyra`, which would read as the ship `#aurora-lyra`.
     let rosters = rosters(json!([initiative(

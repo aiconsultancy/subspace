@@ -108,21 +108,51 @@ pub(crate) fn unjoined<'a>(state: &'a IrcState, network: &NetworkId) -> Vec<&'a 
 }
 
 /// What `/` and the palette search: every buffer by its full name, under
-/// its group, with its kind, so `#rust`, `libera carol` or `aurora lyra`
-/// finds it.
+/// its group and its network, with its kind, so `#rust`, `libera carol` or
+/// `aurora lyra` finds it, also once it moved into a fleet's group or
+/// `People`.
 pub(crate) fn search(layout: &Layout) -> ItemSearch {
-    ItemSearch::new(layout.groups.iter().flat_map(|group| {
+    let networks = network_names(layout);
+    ItemSearch::new(layout.groups.iter().flat_map(move |group| {
+        let parent = search_parent(
+            &group.name,
+            layout
+                .networks
+                .get(&group.key)
+                .and_then(|id| networks.get(id)),
+        );
         group.rows.iter().map(move |row| {
             let name = layout
                 .buffers
                 .get(&row.key)
                 .map_or_else(|| row.title.to_string(), |key| title(key).to_owned());
             let doc = SearchDoc::new(row.key.to_string(), name)
-                .parent(group.name.to_string())
+                .parent(parent.clone())
                 .meta(kind_name(&row.key));
             (doc, row.clone())
         })
     }))
+}
+
+/// Each network's name, from its own group, which every network has.
+fn network_names(layout: &Layout) -> HashMap<NetworkId, SharedString> {
+    layout
+        .groups
+        .iter()
+        .filter_map(|group| {
+            let network = layout.networks.get(&group.key)?;
+            (group.key == group_key(network)).then(|| (network.clone(), group.name.clone()))
+        })
+        .collect()
+}
+
+/// A search document's parent: its group, and its network when the group
+/// is a fleet's or `People`.
+fn search_parent(group: &str, network: Option<&SharedString>) -> String {
+    match network {
+        Some(network) if network.as_ref() != group => format!("{group} · {network}"),
+        _ => group.to_owned(),
+    }
 }
 
 /// `channel`, `conversation` or `server`, from a row key.
