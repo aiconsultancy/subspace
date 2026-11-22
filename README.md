@@ -28,7 +28,7 @@ are an agent acting for you, for example
 `[on behalf of George (Claude Opus 5.5)]`. See
 [agent-skills/](agent-skills/README.md) and `./install.sh skills`.
 
-<a href="docs/assets/screenshots/desktop-issues-twilight-two.png"><img src="docs/assets/screenshots/desktop-issues-twilight-two.png" width="800" alt="The Issues Space, with views and projects in the navigator on the left, issues grouped by workflow state in the middle and the selected issue in the inspector on the right"></a>
+<a href="docs/assets/screenshots/desktop-channels-twilight-two.png"><img src="docs/assets/screenshots/desktop-channels-twilight-two.png" width="800" alt="The Channels Space in a ship channel: the fleet's Starbase, fleet-command and ship channels in the navigator, people and a captain discussing issues with a tile under each message, and the live tile for one issue open under the pointer"></a>
 
 ## What is Subspace
 
