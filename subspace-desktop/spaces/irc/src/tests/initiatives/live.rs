@@ -19,7 +19,7 @@ use crate::live::tests::aurora;
 use crate::{Irc, rows, view};
 
 /// The hub told the aurora fleet is in `state`, with the fixture's ships.
-fn set_fleet(hub: &Entity<Hub>, state: FleetState, cx: &mut VisualTestContext) {
+pub(super) fn set_fleet(hub: &Entity<Hub>, state: FleetState, cx: &mut VisualTestContext) {
     hub.update(cx, |hub, cx| {
         hub.fleets = [("aurora".to_owned(), aurora(state))].into();
         cx.notify();
@@ -41,7 +41,7 @@ pub(super) fn ship_people(
     (board, hub, cx)
 }
 
-fn live() -> FleetState {
+pub(super) fn live() -> FleetState {
     FleetState::Followed(Link::Live)
 }
 

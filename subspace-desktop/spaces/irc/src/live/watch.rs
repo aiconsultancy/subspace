@@ -5,11 +5,17 @@
 //! navigator and changing the conversation in front sync again. The service opens at most one stream per fleet
 //! however many Spaces follow it, and closes it with the last handle.
 //!
-//! What the service then reports of each shown fleet goes to the hub
-//! ([`crate::hub::Hub::fleets`]), where the navigator, the headers and the
-//! inspector read it. A fleet with no address, no token, a changed address
-//! or no answer is still listed, with its state, so each surface can say
-//! why it shows what it showed before.
+//! What the service then reports of each shown fleet goes to the hub, as
+//! this view's share ([`crate::hub::Hub::fleet_views`]); the hub's
+//! [`crate::hub::Hub::fleets`], where the navigator, the headers and the
+//! inspector read it, is the union of every view's, so a hidden view never
+//! empties what a shown one publishes. A view gives its share back when it
+//! closes. A fleet with no address, no token, a changed address or no
+//! answer is still listed, with its state, so each surface can say why it
+//! shows what it showed before.
+//!
+//! The service is reached only once a fleet is on show: a view that shows
+//! none never starts it, and so never reads a token or asks the keychain.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -29,7 +35,9 @@ pub(crate) struct Watch {
     service: Option<Entity<FleetApi>>,
     /// The service's revision and the fleets shown at the last sync.
     seen: Option<(u64, BTreeSet<String>)>,
-    _observe: Option<Subscription>,
+    /// Syncs again on the service's news, and gives this view's share
+    /// back to the hub when the view closes.
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Watch {
@@ -44,6 +52,12 @@ impl Watch {
     pub(crate) fn following(&self) -> Vec<String> {
         self.follows.keys().cloned().collect()
     }
+}
+
+/// Whether the view's `watch` has reached the fleet service.
+#[cfg(test)]
+pub(crate) fn bound(watch: &Watch) -> bool {
+    watch.service.is_some()
 }
 
 /// The fleet service as this build reaches it: the process's one in the
@@ -66,11 +80,14 @@ pub(crate) fn wanted(state: &FleetState) -> bool {
 /// Follows the fleets the board shows, lets go of the rest, and gives the
 /// hub what the service says of each shown fleet.
 pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
-    bind(board, cx);
+    let shown = shown(board, cx);
+    if !shown.is_empty() {
+        bind(board, cx);
+    }
     let Some(fleets) = board.watch.service.clone() else {
+        publish(board, Lives::default(), cx);
         return;
     };
-    let shown = shown(board, cx);
     let seen = Some((fleets.read(cx).revision(), shown.clone()));
     if board.watch.seen == seen {
         return;
@@ -81,7 +98,9 @@ pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
     publish(board, lives, cx);
 }
 
-/// Finds the service once, and syncs again whenever it has news.
+/// Finds the service once a fleet is on show, syncs again whenever it has
+/// news, and gives the view's share back when the view closes: only a
+/// view that reached the service ever has a share.
 fn bind(board: &mut Irc, cx: &mut Context<Irc>) {
     if board.watch.service.is_some() {
         return;
@@ -89,7 +108,15 @@ fn bind(board: &mut Irc, cx: &mut Context<Irc>) {
     let Some(fleets) = service(cx) else {
         return;
     };
-    board.watch._observe = Some(cx.observe(&fleets, |board, _, cx| sync(board, cx)));
+    let view = cx.entity_id().as_u64();
+    board.watch._subscriptions = vec![
+        cx.observe(&fleets, |board, _, cx| sync(board, cx)),
+        cx.on_release(move |board, cx| {
+            if let Some(hub) = board.hub.clone() {
+                hub.update(cx, |hub, cx| share(hub, view, Lives::default(), cx));
+            }
+        }),
+    ];
     board.watch.service = Some(fleets);
 }
 
@@ -152,18 +179,28 @@ fn lives(fleets: &FleetApi, shown: &BTreeSet<String>) -> Lives {
         .collect()
 }
 
-/// Gives the hub `lives` when they differ from what it holds, so the
-/// conversations and the navigator draw again only on news they draw: a
-/// new activity line or sample time leaves `lives` equal.
+/// Gives the hub `lives` as this view's share when they differ from what
+/// it holds, so the conversations and the navigator draw again only on
+/// news they draw: a new activity line or sample time leaves `lives`
+/// equal.
 fn publish(board: &Irc, lives: Lives, cx: &mut Context<Irc>) {
     let Some(hub) = board.hub.clone() else {
         return;
     };
-    if hub.read(cx).fleets == lives {
-        return;
-    }
-    hub.update(cx, |hub, cx| {
-        hub.fleets = lives;
+    let view = cx.entity_id().as_u64();
+    hub.update(cx, |hub, cx| share(hub, view, lives, cx));
+}
+
+/// Sets `view`'s share of the hub's fleets to `lives` and announces the
+/// union when it changed.
+pub(crate) fn share(
+    hub: &mut crate::hub::Hub,
+    view: u64,
+    lives: Lives,
+    cx: &mut Context<crate::hub::Hub>,
+) {
+    if super::set_share(&mut hub.fleet_views, view, lives) {
+        hub.fleets = super::union(&hub.fleet_views);
         cx.notify();
-    });
+    }
 }

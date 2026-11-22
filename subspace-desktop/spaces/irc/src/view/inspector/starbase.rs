@@ -29,7 +29,10 @@ pub(super) fn body(front: &Front, cx: &App) -> AnyElement {
     match (ships, reason::reason(&state)) {
         (Some(ships), _) => ships_section(&ships, cx),
         (None, Some((title, sentence))) => reason::view(title, sentence, cx),
-        (None, None) => reason::view("Waiting", reason::WAITING.to_owned(), cx),
+        (None, None) => {
+            let (title, sentence) = reason::unshown(front.fleet.as_ref());
+            reason::view(title, sentence.to_owned(), cx)
+        }
     }
 }
 

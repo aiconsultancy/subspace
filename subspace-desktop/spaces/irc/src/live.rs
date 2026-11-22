@@ -16,7 +16,7 @@
 //! (`<slug>-<id>`). Every name and task from the Fleet API is untrusted
 //! text: [`ship`] bounds it before anything draws it, as text.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use subspace_client_fleet::{FleetSnapshot, FleetState};
@@ -42,20 +42,68 @@ pub(crate) struct FleetLive {
     /// live; `None` while it is not, or before its first overview, so a
     /// stale ship never shows once the stream is down.
     ships: Option<Rc<[ShipLive]>>,
+    /// Whether the fleet is live but its latest overview is one Stargate
+    /// kept after a failed read: data kept, not current, so no ship shows.
+    kept: bool,
 }
 
 /// Each fleet the board shows, by its Subspace API id.
 pub(crate) type Lives = HashMap<String, FleetLive>;
 
+/// Each Channels view's [`Lives`], by the view's entity id.
+pub(crate) type Shares = BTreeMap<u64, Lives>;
+
+/// Sets `view`'s share to `lives`, forgetting an empty one; whether it
+/// changed.
+pub(crate) fn set_share(shares: &mut Shares, view: u64, lives: Lives) -> bool {
+    if shares
+        .get(&view)
+        .map_or(lives.is_empty(), |held| *held == lives)
+    {
+        return false;
+    }
+    if lives.is_empty() {
+        shares.remove(&view);
+    } else {
+        shares.insert(view, lives);
+    }
+    true
+}
+
+/// Every view's fleets together. Views that show the same fleet read it
+/// from the same service, so either's copy will do.
+pub(crate) fn union(shares: &Shares) -> Lives {
+    shares
+        .values()
+        .flat_map(|lives| lives.iter())
+        .map(|(id, live)| (id.clone(), live.clone()))
+        .collect()
+}
+
 impl FleetLive {
     /// The fleet in `state` with what its stream delivered, `snapshot`,
     /// reduced to what Channels draws.
     pub(crate) fn new(state: FleetState, snapshot: Option<&FleetSnapshot>) -> Self {
-        let ships = snapshot
-            .filter(|_| state.is_live())
+        let live = snapshot.filter(|_| state.is_live());
+        let ships = live
             .and_then(|snapshot| ship::all(snapshot, |_| true))
             .map(Rc::from);
-        Self { state, ships }
+        let kept = live
+            .and_then(|snapshot| snapshot.overview.as_ref())
+            .is_some_and(|overview| overview.overview_stale);
+        Self { state, ships, kept }
+    }
+
+    /// Whether the fleet is live but shows no ship because its latest
+    /// overview is one Stargate kept, not a current one.
+    pub(crate) fn kept(&self) -> bool {
+        self.kept
+    }
+
+    /// Whether a ship's absence means the Fleet API does not list it: the
+    /// fleet's current overview arrived.
+    pub(crate) fn listed(&self) -> bool {
+        self.ships.is_some()
     }
 
     /// The ship whose captain has the roster nick `captain`, matched to its

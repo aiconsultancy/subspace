@@ -299,3 +299,26 @@ fn bidirectional_controls_are_stripped_from_untrusted_text() {
     let ship = ship::of(&snapshot, "aurora-lyra").unwrap();
     assert_eq!(ship.members[0].name, "nerW");
 }
+
+#[test]
+fn the_hub_shows_every_view_s_fleets_and_a_hidden_view_takes_none_away() {
+    use super::{Lives, Shares, set_share, union};
+    let mut shares = Shares::default();
+    let shown: Lives = [("aurora".to_owned(), live())].into();
+    assert!(set_share(&mut shares, 1, shown.clone()));
+    assert!(
+        !set_share(&mut shares, 2, Lives::default()),
+        "a hidden view adds nothing"
+    );
+    assert_eq!(union(&shares), shown, "nor takes anything away");
+    assert!(
+        !set_share(&mut shares, 1, shown.clone()),
+        "no news, no change"
+    );
+    assert!(
+        set_share(&mut shares, 1, Lives::default()),
+        "the shown view closes"
+    );
+    assert!(union(&shares).is_empty());
+    assert!(shares.is_empty());
+}

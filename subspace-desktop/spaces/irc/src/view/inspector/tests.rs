@@ -156,3 +156,50 @@ fn a_reference_in_play_says_its_state_once_answered() {
         Some("Merged")
     );
 }
+
+#[test]
+fn a_live_fleet_with_no_current_overview_never_says_not_listed() {
+    use super::reason::{FIRST, KEPT, NOT_LISTED, unshown};
+    use crate::live::FleetLive;
+    let live = FleetState::Followed(Link::Live);
+    let first = FleetLive::new(live.clone(), None);
+    assert_eq!(unshown(Some(&first)), FIRST, "before the first overview");
+    let mut kept = crate::live::tests::snapshot();
+    kept.overview.as_mut().unwrap().overview_stale = true;
+    let kept = FleetLive::new(live.clone(), Some(&kept));
+    assert_eq!(unshown(Some(&kept)), KEPT, "data kept, not current");
+    let current = FleetLive::new(live, Some(&crate::live::tests::snapshot()));
+    assert!(current.ship("aurora-ghost").is_none());
+    assert_eq!(
+        unshown(Some(&current)),
+        NOT_LISTED,
+        "a current overview without it"
+    );
+    assert_eq!(unshown(None), FIRST);
+}
+
+#[test]
+fn a_kept_crew_detail_says_so_rather_than_not_arrived() {
+    use super::ship::crew_note;
+    let mut kept = crate::live::tests::snapshot();
+    kept.ships.get_mut("aurora-lyra").unwrap().detail_stale = true;
+    let lyra_kept = crate::live::ship::of(&kept, "aurora-lyra").unwrap();
+    assert!(lyra_kept.members.is_empty());
+    assert_eq!(
+        crew_note(&lyra_kept),
+        "The crew's detail is kept from an earlier read and not current, so it is not shown."
+    );
+    let mut pending = crate::live::tests::snapshot();
+    pending.ships.remove("aurora-lyra");
+    let lyra_pending = crate::live::ship::of(&pending, "aurora-lyra").unwrap();
+    assert_eq!(
+        crew_note(&lyra_pending),
+        "The crew's detail has not arrived yet."
+    );
+    let none = crate::live::ShipLive {
+        crew: None,
+        members: Vec::new(),
+        ..lyra()
+    };
+    assert_eq!(crew_note(&none), "This ship has no crew.");
+}

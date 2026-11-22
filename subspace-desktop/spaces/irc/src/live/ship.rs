@@ -37,6 +37,9 @@ pub(crate) struct ShipLive {
     pub members: Vec<CrewLine>,
     /// Why the API could not read the ship's crew, when it could not.
     pub unavailable: Option<String>,
+    /// Whether the crew's detail is one Stargate kept after a failed read,
+    /// so it is not current and its lines are not shown.
+    pub crew_kept: bool,
 }
 
 /// One crew member and what they are on.
@@ -123,6 +126,8 @@ fn live(ship: &Ship, detail: Option<&ShipDetail>) -> ShipLive {
             present(ship.error.as_deref(), MAX_TASK_CHARS)
                 .unwrap_or_else(|| "Crew status unavailable.".to_owned())
         }),
+        crew_kept: detail
+            .is_some_and(|detail| readable && detail.ship.available && detail.detail_stale),
     }
 }
 
