@@ -289,3 +289,40 @@ fn the_find_button_opens_find_in_the_conversation(cx: &mut TestAppContext) {
         "the search button asks for find, as Command-F does"
     );
 }
+
+#[gpui_kit::test]
+fn captains_and_the_rear_admiral_have_agent_avatars_and_people_keep_theirs(
+    cx: &mut TestAppContext,
+) {
+    let (_, hub, cx) = ship(cx);
+    let [mira, lyra, admiral] =
+        ["mira", "aurora-lyra", "aurora-admiral"].map(|nick| seq_of(&hub, nick, cx));
+    cx.update(|window, _| {
+        let agent = |seq: i64| {
+            window
+                .try_find(format!("irc-line:{seq}:agent"))
+                .and_then(|found| found.label().map(str::to_owned))
+        };
+        assert_eq!(agent(mira), None, "a person keeps the square initials");
+        assert_eq!(agent(lyra).as_deref(), Some("aurora-lyra, captain"));
+        assert_eq!(
+            agent(admiral).as_deref(),
+            Some("aurora-admiral, rear admiral")
+        );
+        let member = |nick: &str| {
+            window
+                .try_find(format!("irc-member-agent:{nick}"))
+                .and_then(|found| found.label().map(str::to_owned))
+        };
+        assert_eq!(
+            member("aurora-lyra").as_deref(),
+            Some("aurora-lyra, captain")
+        );
+        assert_eq!(member("mira"), None);
+        assert_eq!(
+            window.within("irc-toolbar").find("irc-header-kind").label(),
+            Some("aurora-lyra, captain"),
+            "the ship's heading leads with its captain"
+        );
+    });
+}

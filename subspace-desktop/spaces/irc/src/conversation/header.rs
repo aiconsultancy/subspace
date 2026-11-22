@@ -8,6 +8,7 @@ use gpui_kit::{
     Role, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
 };
 use subspace_client_irc::{Member, Target};
+use subspace_framework::dashboard::avatar::AgentRank;
 use subspace_framework::dashboard::badge::{Pill, PillTone};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, Tone, avatar, truncated};
@@ -136,8 +137,14 @@ impl Conversation {
     }
 }
 
-/// A fleet channel's glyph in its tone, before the name.
+/// A fleet channel's mark before the name: a ship channel's captain's agent
+/// avatar, or the Starbase's or command channel's glyph in its tone.
 fn glyph(kind: &ChannelKind, tokens: &Tokens) -> AnyElement {
+    if let ChannelKind::Ship { captain } = kind {
+        return avatar::agent("irc-header-kind", AgentRank::Captain, captain.clone())
+            .small()
+            .into_any_element();
+    }
     let (icon, tone, _) = kind_glyph(kind);
     div()
         .id("irc-header-kind")

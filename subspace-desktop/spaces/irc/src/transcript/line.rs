@@ -155,14 +155,18 @@ fn header(entry: &Entry, nick: &str, rank: Option<Rank>, tokens: &Tokens, cx: &A
         .into_any_element()
 }
 
-/// The shared pill after a fleet agent's name, such as `CAPTAIN`.
+/// The shared pill after a fleet agent's name, such as `CAPTAIN`, in its
+/// rank's tone: captains blue, the rear admiral the accent, crew muted.
 fn rank_mark(entry: &Entry, rank: Rank) -> Pill {
-    Pill::new(
+    let pill = Pill::new(
         SharedString::from(format!("irc-line:{}:rank", entry.seq)),
         rank.mark(),
     )
-    .tone(PillTone::Muted)
-    .aria_label(rank.note())
+    .aria_label(rank.note());
+    match rank.tone() {
+        Some(tone) => pill.hue(tone),
+        None => pill.tone(PillTone::Muted),
+    }
 }
 
 /// The message text as one selectable text view: formatted text rewritten
@@ -205,20 +209,30 @@ fn body(
         .into_any_element()
 }
 
+/// The gutter of a message: the time on hover when it continues its
+/// sender's group, else the sender's avatar, a captain's or the rear
+/// admiral's agent avatar by `rank`.
 fn message_gutter(
     entry: &Entry,
-    nick: &str,
+    (nick, rank): (&str, Option<Rank>),
     continues: bool,
     group: &SharedString,
     cx: &App,
 ) -> AnyElement {
     let tokens = &Tokens::current(cx);
     if continues {
-        gutter_time(entry, Some(group), tokens, cx)
-    } else {
-        avatar::sender(nick.to_owned(), tokens)
+        return gutter_time(entry, Some(group), tokens, cx);
+    }
+    match rank.and_then(Rank::avatar) {
+        Some(agent) => avatar::agent(
+            SharedString::from(format!("irc-line:{}:agent", entry.seq)),
+            agent,
+            nick.to_owned(),
+        )
+        .into_any_element(),
+        None => avatar::sender(nick.to_owned(), tokens)
             .flex_shrink_0()
-            .into_any_element()
+            .into_any_element(),
     }
 }
 

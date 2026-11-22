@@ -268,8 +268,23 @@ fn content(ours: &Ours<'_>, member: &Member, status: Option<&str>) -> Div {
         .min_w_0()
         .gap_2()
         .when(member.away, |row| row.opacity(AWAY_OPACITY))
-        .child(avatar::member(member.nick.clone(), tokens))
+        .child(face(member, rank, tokens))
         .child(v_flex().flex_1().min_w_0().child(name).children(status))
+}
+
+/// A member's avatar: a captain's or the rear admiral's agent avatar, or a
+/// person's (and a crew member's) square initials.
+fn face(member: &Member, rank: Option<fleet::Rank>, tokens: &Tokens) -> AnyElement {
+    match rank.and_then(fleet::Rank::avatar) {
+        Some(agent) => avatar::agent(
+            SharedString::from(format!("irc-member-agent:{}", member.nick)),
+            agent,
+            member.nick.clone(),
+        )
+        .small()
+        .into_any_element(),
+        None => avatar::member(member.nick.clone(), tokens).into_any_element(),
+    }
 }
 
 /// Away members are dimmed, and their accessible name says so.
