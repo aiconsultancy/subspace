@@ -6,6 +6,7 @@ import datetime
 import importlib.util
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -135,6 +136,27 @@ class StargatePinCheckTests(unittest.TestCase):
         for text in (recipe, hooks):
             self.assertNotIn("stargate-pin.py --check", text)
             self.assertNotIn("stargate-pin.py --json", text)
+
+    def test_the_bump_workflow_tests_read_only_and_proposes_with_narrow_rights(self) -> None:
+        workflow = (WORKFLOWS / "stargate-bump.yml").read_text()
+        for line in ("  schedule:\n", "  workflow_dispatch:\n", "permissions: {}\n",
+                     "          python3 scripts/stargate-pin.py --json >",
+                     '          bash scripts/stargate-bump.sh test "$TAG"',
+                     '          bash scripts/stargate-bump.sh propose "$RUNNER_TEMP/status.json"',
+                     "    if: needs.test.outputs.state == 'behind'\n"):
+            self.assertIn(line, workflow)
+        test, propose = workflow.split("\n  propose:\n")
+        permission = re.compile(r"^      ([a-z-]+): (read|write|none)\b", re.M)
+        self.assertEqual(permission.findall(test), [("contents", "read")])
+        self.assertEqual(permission.findall(propose), [("contents", "write"), ("pull-requests", "write")])
+        for text in ("pr merge", "secrets.", "--no-verify", "pull_request_target"):
+            self.assertNotIn(text, workflow)
+        bump = (SCRIPTS / "stargate-bump.sh").read_text()
+        for test_file in ("policy_test.py", "sessions_test.py", "setup_test.py", "medical_test.py"):
+            self.assertIn(f"python3 -B subspace-installer/tests/{test_file}", bump)
+        self.assertIn("\nbash -n install.sh subspace-installer/*.sh", bump)
+        self.assertIn("\nshellcheck install.sh subspace-installer/*.sh", bump)
+        self.assertNotIn("pr merge", bump)
 
     def test_every_action_is_pinned_to_a_commit(self) -> None:
         for workflow in sorted(WORKFLOWS.glob("*.yml")):

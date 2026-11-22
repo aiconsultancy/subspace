@@ -295,61 +295,54 @@ def pr_body(result: dict, tests: str, stale: list[str], run_url: str | None,
             repository: str = "aiconsultancy/subspace") -> str:
     pinned, latest = result["pinned"], result["latest"]
     guide = f"https://github.com/{repository}/blob/main/subspace-installer/README.md#stargate-pin"
-    source = pinned["tag"] or "not a release"
     notes = "\n".join(f"- [{release['tag']}]({release['url']})" for release in result["between"])
-    stale_files = ("These files still name the old commit; move each link to the new one, or keep it "
+    stale_files = ("these files still name the old commit; move each link to the new one, or keep it "
                    "with a reason:\n" + "\n".join(f"  - `{name}`" for name in stale)
-                   if stale else "No other file names the old commit.")
+                   if stale else "no other file names the old commit.")
     made = f"by the [stargate-bump workflow]({run_url})" if run_url else "by the stargate-bump workflow"
-    hold = ("\n- [ ] Remove `subspace-installer/stargate-hold.json`: it held the old release."
-            if result["hold"] else "")
-    return f"""Stargate has a newer release than the fleet installer's pin. This moves `STARGATE_RELEASE` and
-`STARGATE_REF` in `subspace-installer/lib/runtime.py` and nothing else. It was opened {made}, which
-never merges anything. Every Subspace release carries Stargate's latest release; see
-[Stargate pin]({guide}).
-
-| | Release | Commit |
-| --- | --- | --- |
-| From | {source} | `{pinned['sha']}` |
-| To | [{latest['tag']}]({latest['url']}) | `{latest['sha']}` |
-
-## Release notes
-
-Read each release's notes for changes the installer has to follow:
-
-{notes}
-
-## Installer tests on this pull request's commit
-
-{tests.strip() or "No results were recorded."}
-
-The workflow ran these. A pull request opened or pushed with the workflow's token starts no
-`pull_request` checks: push a commit to this branch, or close and reopen the pull request, to start them.
-
-## Before merging
-
-The installer generates Stargate's configuration, units and plugin options, so each must match the
-new release. Check, against the release notes and Stargate's source at the new commit:
-
-- [ ] **Generated configuration keys**: every key `runtime.py` writes into Stargate's configuration is
-  still accepted, and none it now requires is missing.
-- [ ] **Service and path names**: the entrypoints (`src/main.ts`, `src/fleet`), unit names, state
-  directories and sockets the installer refers to still exist.
-- [ ] **The crew plugin's options**: the options the installer passes to Stargate's crew plugin still
-  have the same names and meanings.
-- [ ] **The Fleet API's CORS origins**: `FLEET_API_ORIGINS` and `stargate.api.corsOrigins` are still
-  allowed by the new release, and the API's defaults have not changed under them.
-- [ ] **Mesij**: the Mesij version this Stargate release expects matches the `mesij` rows in
-  `subspace-installer/lib/releases.tsv`.
-- [ ] **Docs links that name the pin**: {stale_files}{hold}
-- [ ] Run the installer's tests (`python3 -B subspace-installer/tests/policy_test.py`, the other
-  `*_test.py` there, `bash -n` and `shellcheck`, and `subspace-installer/tests/smoke.sh`), then install
-  a test fleet on a VM with this branch (`sudo ./install.sh upgrade`) and check the gateways, crew mail
-  and the Fleet API.
-
-If this release cannot be adopted yet, close this pull request and add a hold instead: see
-[Stargate pin]({guide}).
-"""
+    checklist = [
+        "**Generated configuration keys**: every key `runtime.py` writes into Stargate's configuration is "
+        "still accepted, and none it now requires is missing.",
+        "**Service and path names**: the entrypoints (`src/main.ts`, `src/fleet`), unit names, state "
+        "directories and sockets the installer refers to still exist.",
+        "**The crew plugin's options**: the options the installer passes to Stargate's crew plugin keep "
+        "their names and meanings.",
+        "**The Fleet API's CORS origins**: `FLEET_API_ORIGINS` and `stargate.api.corsOrigins` are still "
+        "allowed, and the API's defaults have not changed under them.",
+        "**Mesij**: the Mesij version this Stargate release expects matches the `mesij` rows in "
+        "`subspace-installer/lib/releases.tsv`.",
+        f"**Docs links that name the pin**: {stale_files}",
+        *(["Remove `subspace-installer/stargate-hold.json`: it held the old release."] if result["hold"] else []),
+        "Run the installer's tests (`python3 -B subspace-installer/tests/policy_test.py`, the other "
+        "`*_test.py` there, `bash -n` and `shellcheck`, and `subspace-installer/tests/smoke.sh`), then install "
+        "a test fleet on a VM from this branch (`sudo ./install.sh upgrade`) and check the gateways, crew "
+        "mail and the Fleet API.",
+    ]
+    # One line a paragraph: GitHub shows each line break in a pull request's description.
+    sections = [
+        f"Stargate has a newer release than the fleet installer's pin. This moves `STARGATE_RELEASE` and "
+        f"`STARGATE_REF` in `subspace-installer/lib/runtime.py` and nothing else. It was opened {made}, which "
+        f"never merges anything. Every Subspace release carries Stargate's latest release; see "
+        f"[Stargate pin]({guide}).",
+        "| | Release | Commit |\n| --- | --- | --- |\n"
+        f"| From | {pinned['tag'] or 'not a release'} | `{pinned['sha']}` |\n"
+        f"| To | [{latest['tag']}]({latest['url']}) | `{latest['sha']}` |",
+        "## Release notes",
+        "Read each release's notes for changes the installer has to follow:",
+        notes,
+        "## Installer tests on this pull request's commit",
+        tests.strip() or "No results were recorded.",
+        "The workflow ran these. A pull request opened or pushed with the workflow's token starts no "
+        "`pull_request` checks: push a commit to this branch, or close and reopen the pull request, to start "
+        "them.",
+        "## Before merging",
+        "The installer generates Stargate's configuration, units and plugin options, so each must match the "
+        "new release. Check, against the release notes and Stargate's source at the new commit:",
+        "\n".join(f"- [ ] {item}" for item in checklist),
+        "If this release cannot be adopted yet, close this pull request and add a hold instead: see "
+        f"[Stargate pin]({guide}).",
+    ]
+    return "\n\n".join(sections) + "\n"
 
 
 def stale_files(sha: str) -> list[str]:
