@@ -224,6 +224,14 @@ and message is fictional.
   and `#lounge` and the highlight word `nav-2`. No initiative is selected,
   so Aurora starts open. Steps:
   `wait:13000;shot:…;click:75,187;wait:3000;click:600,772;type:/;wait:1500;shot:…`.
+- **Plain rows and the Icons setting**: the same set-up, once per mode with
+  `CAPTURE_STATE` adding `"app.agent-icons"` as `large`, `small` or `off`
+  and `app.window` at 1440 x 900, each against a restarted server. Steps:
+  `wait:13000;click:75,187;wait:3000;shot:…`, which opens the ship channel
+  `#aurora-lyra`; the Small run then adds
+  `move:217,187;wait:2000;shot:…` for the dot's tooltip, and clicks the
+  status bar's navigator switch (`click:21,886`) and, after showing it
+  again, the inspector's (`click:1418,886`), with a shot after each.
 - **Request lines**: `scripts/irc-thread-status-fixture.py` and its
   `#thread-status` layout, as in the
   [thread status delivery](../irc-thread-status/delivery.md), with
@@ -238,7 +246,17 @@ completed request from the [thread status change](../irc-thread-status/delivery.
 
 ![Before: one group per network, every channel by its full name behind a hash glyph, no hint row, and the retention notice beside the paperclip](../channels-agent-identity/evidence/after-ship-channel.png)
 
-![After: the Aurora group with the Starbase and command glyphs, ships led by their captains' avatars, lyra working with an @ mark and 3 unread, People holding nadia, and the network's group with its server, #lounge and a listed channel](evidence/after-navigator.png)
+![After, Icons Small (the default), in #aurora-lyra: every channel led by a #, the ships by their captains' small icons, lyra's dot filled green beside its @ mark and 3 unread, orion and vega idle rings, nadia under People with a ring (in no shared channel)](evidence/after-navigator.png)
+
+![After, Icons Large: the ships led by the 16 px captain avatars; everything else as Small](evidence/after-navigator-large.png)
+
+![After, Icons Off: every row led by a #, the ship dots unchanged](evidence/after-navigator-off.png)
+
+![After: hovering lyra's dot shows the captain's status in Kit's tooltip](evidence/after-ship-dot-hover.png)
+
+![After: the navigator hidden from the status bar's leading switch](evidence/after-navigator-hidden.png)
+
+![After: the inspector hidden from the status bar's trailing switch](evidence/after-inspector-hidden.png)
 
 ![After: in #aurora-lyra, typing / offers /ask first, Ask aurora-lyra and track the answer, above the IRC client's commands; the hint row under the composer names @, /, ↑ and ⇧⏎ and ends with the shorter retention notice](evidence/after-ask-popover.png)
 
@@ -250,6 +268,14 @@ completed request from the [thread status change](../irc-thread-status/delivery.
 
 Not captured: a light theme, a narrow window, two fleets on one network
 (folded or not), a failed request, and a refused `/ask`; tests cover each.
+A request status line carries no agent icon, so the Icons setting does not
+change one, and the request captures above stand for every mode.
+
+The status bar's navigator and inspector switches were already Channels'
+(`view/frame.rs`, `space_docks` and `toggle_space_dock`, the inspector's
+close button on the same toggle, tested in `tests/conversation.rs`); this
+change adds no dock code. They appear only once a network is configured:
+before that, Channels reports no docks and the status bar shows neither.
 
 ## Tasks
 
