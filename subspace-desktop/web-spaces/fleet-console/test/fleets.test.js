@@ -150,6 +150,16 @@ test("resolving: sample without a usable fleet, live with any fleet that has a t
   const both = resolveFleets({ ...base, settings: { endpoint: "https://s.example.com", motion: "Reduced" }, secrets: { token: "t" }, list: [{ id: "fpage00001", name: "Page", endpoint: "https://p.example.com" }] });
   assert.deepEqual(both.fleets.map((fleet) => [fleet.origin, Boolean(fleet.token)]), [["settings", true], ["local", false]]);
   assert.equal(both.motion, "Reduced");
+  // A fleet the Subspace API assigns, without its token: the banner says
+  // what that fleet needs, not that Fleet Console has no address.
+  const apiNoToken = resolveFleets({ ...base, api: [{ id: "aurora", name: "Aurora", endpoint: "https://a.example.com", token: null, problem: "no-token" }] });
+  assert.deepEqual([apiNoToken.mode, apiNoToken.reason], ["sample", "api-no-token"]);
+  const apiMoved = resolveFleets({ ...base, api: [{ id: "aurora", endpoint: "https://a.example.com", problem: "token-address" }] });
+  assert.equal(apiMoved.reason, "api-token-address");
+  const ownFirst = resolveFleets({ ...base, settings: { endpoint: "https://s.example.com" }, api: [{ id: "aurora", endpoint: "https://a.example.com", problem: "no-token" }] });
+  assert.equal(ownFirst.reason, "no-token", "a Settings fleet's own problem comes first");
+  const apiLive = resolveFleets({ ...base, api: [{ id: "aurora", endpoint: "https://a.example.com", token: "k" }] });
+  assert.deepEqual([apiLive.mode, apiLive.fleets.map((fleet) => fleet.origin)], ["live", ["api"]]);
   assert.equal(resolveFleets({ ...base, capabilities: { secrets: true, secretsSet: false } }).canStore, false);
   assert.equal(resolveFleets({ ...base, allowed: { ...allowedAll, saveSecrets: false } }).canStore, false, "storing needs save-secrets");
 });
