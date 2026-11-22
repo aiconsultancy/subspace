@@ -47,7 +47,11 @@ TOOL_ENV = {"MISE_DATA_DIR": str(TOOL_HOME), "MISE_GLOBAL_CONFIG_FILE": str(ETC 
             "MISE_SYSTEM_CONFIG_DIR": str(TOOL_HOME / "system-config")}
 FLEET_PATH = f"{APP}/bin:{TOOL_HOME}/shims:/usr/local/bin:/usr/bin:/bin"
 STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
-STARGATE_REF = "df03d10b039c126a2fc0b5522bf7841ef07bc799"
+# Stargate v0.43.0, the first release with agent dispatch on the rear admiral's gateway.
+STARGATE_REF = "fcf6ac75d9c780878c06c8b49fb160e4a27832ff"
+# Fleet API browser origins: macOS Spaces, and the built-in Fleet Console's WebView2 origin on
+# Windows, which Stargate stopped allowing by default in v0.41.0.
+FLEET_API_ORIGINS = ["subspace://*", "https://subspace.fleet-console"]
 SUBSPACE_REPO = "https://github.com/aiconsultancy/subspace.git"
 LOOPBACK = "127.0.0.1"
 # Matches the Ergo container's service group in subspace-irc/Dockerfile.
@@ -587,7 +591,14 @@ def validate(config, credentials, check_files=True):
     stargate_api = None
     if "api" in stargate:
         # Stargate's private Fleet API, on loopback for operators and their tunnels or proxies.
-        stargate_api = {"port": port(fields(stargate["api"], "stargate.api", "port").get("port", 8484))}
+        options = fields(stargate["api"], "stargate.api", "port corsOrigins")
+        origins = options.get("corsOrigins", FLEET_API_ORIGINS)
+        require(isinstance(origins, list) and len(origins) <= 20, "stargate.api.corsOrigins must be an array.")
+        for origin in origins:
+            # Exact serialised origins, or Stargate's whole-label * patterns, such as subspace://*.
+            pattern(origin, r"[a-z][a-z0-9+.-]*://[a-z0-9*](?:[a-z0-9*.-]*[a-z0-9*])?(?::[0-9]{1,5})?",
+                    "Fleet API CORS origin")
+        stargate_api = {"port": port(options.get("port", 8484)), "corsOrigins": origins}
     listeners = [dashboard["port"], proxy_port, view["port"]]
     if stargate_api:
         listeners.append(stargate_api["port"])
@@ -1532,6 +1543,7 @@ def render(cfg, extra, prune=False):
                 settings["api"] = {
                     "listen": f"{LOOPBACK}:{cfg['stargate']['api']['port']}",
                     "allowedNetworks": ["127.0.0.0/8", "::1/128"], "fleetName": cfg["name"],
+                    "corsOrigins": cfg["stargate"]["api"]["corsOrigins"],
                 }
         name = "stargate" if is_primary else f"stargate-{group}"
         config_path = save_settings(name, settings, user)

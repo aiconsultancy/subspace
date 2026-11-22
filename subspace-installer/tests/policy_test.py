@@ -345,8 +345,15 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertIsNone(validate(config, secrets)["stargate"]["api"])
         config["stargate"] = {"api": {}}
         cfg = validate(config, secrets)
-        self.assertEqual(cfg["stargate"]["api"], {"port": 8484})
+        # Stargate allows only subspace://* by default; the Windows Fleet Console needs its own origin.
+        self.assertEqual(cfg["stargate"]["api"],
+                         {"port": 8484, "corsOrigins": ["subspace://*", "https://subspace.fleet-console"]})
         self.assertIn(8484, cfg["listeners"])
+        config["stargate"] = {"api": {"corsOrigins": ["subspace://*", "https://subspace.console-two"]}}
+        self.assertEqual(validate(config, secrets)["stargate"]["api"]["corsOrigins"][1], "https://subspace.console-two")
+        config["stargate"] = {"api": {"corsOrigins": ["https://user@subspace.example"]}}
+        with self.assertRaisesRegex(Invalid, "CORS origin"):
+            validate(config, secrets)
         config["stargate"] = {"api": {"port": 8070}}
         with self.assertRaisesRegex(Invalid, "distinct ports"):
             validate(config, secrets)
@@ -355,6 +362,12 @@ class FleetPolicyTests(unittest.TestCase):
             validate(config, secrets)
         result = rules({"dashboard": 8070, "agentsview": 8080, "proxy": 8317, "stargate-api": 8484}, [1700], [701])
         self.assertIn('oifname "lo" tcp dport 8484 meta skuid != { 0, 1700 } reject', result)
+
+    def test_stargate_is_pinned_to_a_release_with_agent_dispatch(self):
+        # v0.43.0's commit; the installer fetches its tag so the Fleet API reports the version.
+        self.assertEqual(runtime.STARGATE_REF, "fcf6ac75d9c780878c06c8b49fb160e4a27832ff")
+        cfg = validate(example_config(), officer_secrets())
+        self.assertEqual(cfg["stargate"]["ref"], runtime.STARGATE_REF)
 
     def test_toolchain_versions_are_data(self):
         self.assertEqual(toolchain_config({"node": False, "go": "1.26.1"}), {"go": "1.26.1"})

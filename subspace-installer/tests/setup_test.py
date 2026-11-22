@@ -94,7 +94,7 @@ class SetupInputsTests(unittest.TestCase):
         argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
         _, _, config, secrets, _ = self.generate(argv, stargate_api=True)
         cfg = validate(config, secrets, check_files=False)
-        self.assertEqual(cfg["stargate"]["api"], {"port": 8484})
+        self.assertEqual(cfg["stargate"]["api"]["port"], 8484)
         self.assertEqual(cfg["stargate"]["ref"], "b" * 40)
         _, _, _, again, _ = self.generate(argv)
         self.assertEqual(secrets["ircPasswords"], again["ircPasswords"])

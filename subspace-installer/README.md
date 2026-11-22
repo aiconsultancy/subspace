@@ -442,14 +442,14 @@ Step-by-step guides: [Slack](../docs/slack.md) and [Teams](../docs/teams.md).
   `channels` arrays of Slack IDs. Supply Socket Mode app and bot tokens
   as `<secrets-dir>/<rear-admiral-id>/slack-app-token` and
   `slack-bot-token`, both mode `0600`. See
-  [Stargate's Slack scope list](https://github.com/aiconsultancy/stargate/blob/df03d10b039c126a2fc0b5522bf7841ef07bc799/docs/slack-scopes.md).
+  [Stargate's Slack scope list](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/slack-scopes.md).
 - Set `stakeholders.teams` to an Azure Bot `botClientId` and `tenantId`
   plus an explicit `users` array of Entra object IDs and optional
   `channels`. The supported Bot Framework backend uses an Azure
   user-assigned managed identity at runtime. Route the bot's HTTPS
   `/api/messages` callback to `/var/lib/subspace-fleet/teams/bot.sock`.
   Set `socketGroup` to an existing Linux group for the trusted reverse
-  proxy. Follow [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/df03d10b039c126a2fc0b5522bf7841ef07bc799/docs/teams.md).
+  proxy. Follow [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/teams.md).
 
 ## Medical ship
 
@@ -547,7 +547,7 @@ their crew's assignments through `stargate_crew`.
 - Above 25% after a warning, Stargate posts “Quota restored.” and the rear
   admiral tells captains to resume normal staffing.
 
-[Stargate's quota guide](https://github.com/aiconsultancy/stargate/blob/df03d10b039c126a2fc0b5522bf7841ef07bc799/docs/usage.md).
+[Stargate's quota guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/usage.md).
 
 ## Configuration reference
 
@@ -563,7 +563,7 @@ their crew's assignments through `stargate_crew`.
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<slug>-<id>` for a captain. Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
-| `stargate` | Optional `repo` and `ref`. Defaults to the [pinned upstream Stargate revision](https://github.com/aiconsultancy/stargate/commit/df03d10b039c126a2fc0b5522bf7841ef07bc799). `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. |
+| `stargate` | Optional `repo` and `ref`. Defaults to the [pinned upstream Stargate release, v0.43.0](https://github.com/aiconsultancy/stargate/commit/fcf6ac75d9c780878c06c8b49fb160e4a27832ff), the first with agent dispatch. `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
 | `dashboard` | `bind` defaults to `127.0.0.1`. `port` defaults to 8070. The listener proxies only the Stargate read-only dashboard socket. |
 | `proxy`, `agentsview` | Loopback-only by default. Proxy `port` defaults to 8317 and `requestRetries` to 2. AgentsView `port` defaults to 8080. |
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
