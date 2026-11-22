@@ -42,8 +42,9 @@ git init -q --bare "$fixture/origin.git"
 git clone -q "$fixture/origin.git" "$fixture/work" 2>/dev/null
 cd "$fixture/work"
 git -c user.name=fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m base
-mkdir -p subspace-framework scripts
+mkdir -p subspace-framework scripts .github/workflows
 printf 'version = "0.1.0"\n' >subspace-framework/Cargo.lock
+printf 'name: stargate-pin\n' >.github/workflows/stargate-pin.yml
 printf 'notes\n' >README.md
 git add -A
 git -c user.name=fixture -c user.email=fixture@example.invalid commit -qm lockfile
@@ -104,7 +105,20 @@ test "$(git --git-dir="$fixture/origin.git" rev-parse "$desktop")" = "$(git --gi
 
 # The app's release branch, which carries the installer, gets both checks.
 printf '#!/usr/bin/env bash\n' >"$fixture/sync"
+start="$(git rev-parse HEAD)"
 FAKE_BRANCHES="$desktop" bash scripts/release-lockfiles.sh
 grep -Fqx "workflow run lockfiles.yml --repo fixture/repository --ref $desktop" "$fixture/gh.log"
 grep -Fqx "workflow run stargate-pin.yml --repo fixture/repository --ref $desktop" "$fixture/gh.log"
+
+# A branch built before the pin check existed cannot start it, and says so.
+git fetch -q origin "refs/heads/$desktop"
+git checkout -q --detach FETCH_HEAD
+git rm -q .github/workflows/stargate-pin.yml
+git -c user.name=fixture -c user.email=fixture@example.invalid commit -qm 'before the pin check'
+git push -q origin "HEAD:refs/heads/$desktop" 2>/dev/null
+git checkout -q --detach "$start"
+runs="$(grep -c "^workflow run stargate-pin.yml --repo fixture/repository --ref $desktop\$" "$fixture/gh.log")"
+FAKE_BRANCHES="$desktop" bash scripts/release-lockfiles.sh
+test "$(grep -c "^workflow run stargate-pin.yml --repo fixture/repository --ref $desktop\$" "$fixture/gh.log")" = "$runs"
+grep -Fq "$desktop: has no stargate-pin workflow yet" "$GITHUB_STEP_SUMMARY"
 echo "release-lockfiles fixtures passed"

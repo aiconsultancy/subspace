@@ -29,10 +29,16 @@ verify_locked() {
 # Checks the branch's head as it is when the run starts: refreshed, or
 # rewritten since by Release Please, whose next run refreshes and checks it.
 # The Stargate pin check skips the Framework's branch itself; starting it there
-# too gives every release pull request the same checks.
+# too gives every release pull request the same checks. A branch Release
+# Please built before the check existed cannot start it; its rebuild on main
+# can.
 check() {
 	gh workflow run lockfiles.yml --repo "$repo" --ref "$1"
-	gh workflow run stargate-pin.yml --repo "$repo" --ref "$1"
+	if [[ -f .github/workflows/stargate-pin.yml ]]; then
+		gh workflow run stargate-pin.yml --repo "$repo" --ref "$1"
+	else
+		echo "$1: has no stargate-pin workflow yet, so its Stargate pin was not checked." >>"$summary"
+	fi
 }
 
 git config user.name 'github-actions[bot]'
