@@ -200,9 +200,10 @@ fn entry(ours: &Ours<'_>, member: &Member) -> AnyElement {
     let owner = ours.owner.clone();
     let nick = member.nick.clone();
     let status = ours.statuses.get(&member.nick);
+    let agent = ours.roster.agent(&member.nick).is_some();
     row_button(
         SharedString::from(format!("irc-member:{}", member.nick)),
-        spoken(member, status),
+        spoken(member, status, agent),
         content(ours, member, status),
     )
     .when(status.is_some(), |row| row.h_auto().py_1())
@@ -213,12 +214,18 @@ fn entry(ours: &Ours<'_>, member: &Member) -> AnyElement {
     .into_any_element()
 }
 
-/// A member row's accessible name: what choosing it does, the member's
-/// status, then whether they are away.
-fn spoken(member: &Member, status: Option<&str>) -> String {
+/// A member row's accessible name: what choosing it does (for a fleet
+/// `agent`, which has no private messages, showing where it talks), the
+/// member's status, then whether they are away.
+fn spoken(member: &Member, status: Option<&str>, agent: bool) -> String {
     let status = status.map(|text| format!(", {text}")).unwrap_or_default();
     let away = if member.away { ", away" } else { "" };
-    format!("Open private messages with {}{status}{away}", member.nick)
+    let action = if agent {
+        "Show where to talk with"
+    } else {
+        "Open private messages with"
+    };
+    format!("{action} {}{status}{away}", member.nick)
 }
 
 /// The avatar, then the nick with its quiet note and, under them, the
@@ -354,23 +361,31 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_s_row_offers_where_it_talks_not_private_messages() {
+        assert_eq!(
+            spoken(&member("aurora-lyra", ""), None, true),
+            "Show where to talk with aurora-lyra"
+        );
+    }
+
+    #[test]
     fn a_member_s_spoken_name_says_their_status_then_away() {
         let mut galactica = member("galactica", "");
         assert_eq!(
-            spoken(&galactica, None),
+            spoken(&galactica, None, false),
             "Open private messages with galactica"
         );
         assert_eq!(
-            spoken(&galactica, Some("Galactica is thinking…")),
+            spoken(&galactica, Some("Galactica is thinking…"), false),
             "Open private messages with galactica, Galactica is thinking…"
         );
         galactica.away = true;
         assert_eq!(
-            spoken(&galactica, Some("Galactica is thinking…")),
+            spoken(&galactica, Some("Galactica is thinking…"), false),
             "Open private messages with galactica, Galactica is thinking…, away"
         );
         assert_eq!(
-            spoken(&galactica, None),
+            spoken(&galactica, None, false),
             "Open private messages with galactica, away"
         );
     }

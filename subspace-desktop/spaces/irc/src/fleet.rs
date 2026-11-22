@@ -297,4 +297,4 @@ fn slug(slug: &str) -> Option<&str> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

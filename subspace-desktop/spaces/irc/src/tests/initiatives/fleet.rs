@@ -40,7 +40,7 @@ pub(crate) fn aurora() -> Vec<MemberInitiative> {
 
 /// `#aurora-lyra` open, with a line each from mira (a person), the captain
 /// and the rear admiral.
-fn ship(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestContext) {
+pub(super) fn ship(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestContext) {
     let (board, hub, cx) = mount(cx, settings());
     hub.update(cx, |hub, cx| {
         hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
