@@ -35,7 +35,8 @@ your own computer is the quickest way, and it stays fully supported.
 > 4. **The fleet VM must stay private.** Never open its services to the
 >    internet, never bind them to `0.0.0.0`, and never pass `--no-lockdown`
 >    unless the user asks for it after you have explained the risk. Agents'
->    keys and model logins live on that VM.
+>    keys and model logins live on that VM. A shared IRC server stays just as
+>    private: reachable over the private network only.
 > 5. Never print, paste or log passwords, tokens or private keys. The
 >    installer saves them as owner-only files and tells you where.
 > 6. Finish by running the [privacy audit](#check-that-the-fleet-is-private)
@@ -61,7 +62,7 @@ flowchart LR
     C[Captains + crew]
     P[CLIProxyAPI]
     API[Subspace API + PostgreSQL]
-    IRC[Ergo IRC]
+    IRC["Ergo IRC (or one shared server for all fleets)"]
   end
   D -- "SSH tunnel, over Tailscale or Cloudflare Zero Trust for a cloud VM" --> VM
   SG --- RA & C
@@ -90,9 +91,13 @@ flowchart LR
   through the **Claude Agent SDK** or the **OpenAI Codex SDK**, but OpenCode is
   the most tested and the recommended choice. The Stargate dashboard and
   **AgentsView** show what the agents are doing.
-- **Ergo IRC** carries conversations between you and the agents: a
-  **Starbase** channel for talking to the rear admiral, and a channel per
-  captain (ship).
+- **Ergo IRC** carries conversations between you and the agents. Every fleet
+  has the same [standard channels](subspace-installer/README.md#channels):
+  **Starbase** for talking to the rear admiral, **fleet command** where the
+  rear admiral and the captains coordinate, and a channel per captain
+  (ship). It runs on the fleet VM for a trial or a single fleet; for
+  real use with several fleets, one shared server in a container serves them
+  all ([One fleet or several](#one-fleet-or-several-shared-irc)).
 - **The Subspace API** (with PostgreSQL) holds issues, initiatives and fleets.
   The desktop app uses it, and so can your local coding agents through its MCP
   server ([Use your local agents](#use-your-local-agents-with-the-fleet)).
@@ -148,27 +153,45 @@ answer it now.
      host key fingerprint from a trusted channel. Ask whether you may use
      their cloud account to read that fingerprint (for example
      `az vm run-command`); if not, they give it to you. Never run without it.
-2. **Do you intend to run more than one fleet?** Ask this directly, and explain
-   [the difference](#one-fleet-or-several-shared-irc).
-   - **No, one fleet:** everything runs on the fleet VM: IRC, the API and
-     one PostgreSQL holding two databases (the API's and IRC's history).
-     There is nothing to choose.
-   - **Yes, or maybe later:** we recommend running IRC on a separate host
-     that all fleets share: another VM (`./install.sh irc-server`), Azure
-     Container Apps or another container host. Switching fleet in the desktop
-     then loads that fleet's IRC channels, so they can work across fleets
-     while seeing only the channels and captains of the fleet they are in.
-     IRC's history goes in PostgreSQL by default there too; on its own VM they
-     may choose SQLite instead (`--history sqlite`). Collect that host's
-     details as in question 1. For an IRC server the installer does not
-     manage, they must add the fleet's accounts there themselves and give you
-     its host name and CA certificate.
+2. **Where should the IRC server run?** Ask whether they intend to run more
+   than one fleet, and explain [the difference](#one-fleet-or-several-shared-irc).
+   For real use we recommend **one IRC server (Ergo) for the whole setup,
+   however many fleets there are, running in a container** on the private
+   network. Every fleet and every desktop shares it, and it is never
+   reachable from the internet.
+   - **A local VM to try Subspace out (question 1):** Ergo runs on the fleet
+     VM, beside the API and one PostgreSQL that holds the API's database and
+     IRC's history. That is the installer's default; there is nothing to
+     choose.
+   - **A cloud fleet that will only ever be one fleet:** Ergo on the same VM
+     is fine, exactly as for a local VM.
+   - **A cloud install of more than one fleet, or one that may grow:** run one
+     shared IRC server first, then point every fleet at it. On Azure we
+     recommend [Azure Container Apps](#example-azure-container-apps), which
+     you set up with the Azure CLI by following
+     [Run the shared IRC server in a container](#run-the-shared-irc-server-in-a-container);
+     the installer does not deploy it. Ask for the subscription, region and
+     virtual network (the fleet VMs' network, or permission to create one),
+     and confirm that the cost of the environment, its PostgreSQL server for
+     history and its storage is theirs to accept. On any cloud, the installer
+     can instead set up a small dedicated VM that runs Ergo in Docker
+     (`./install.sh irc-server`); collect that VM's details as in question 1.
+     Switching fleet in the desktop then loads that fleet's IRC channels, so
+     they work across fleets while seeing only the channels and captains of
+     the fleet they are in.
+   - **An IRC server they already run:** collect its DNS name, TLS port and
+     CA certificate, and who can add the fleets' accounts to it.
+
+   **If the user cannot answer, put Ergo on the fleet VM**: it creates no
+   extra cloud resources and costs nothing more. Tell them that moving to a
+   shared server later keeps the fleet but not its IRC history.
 3. **Names.** A name for the fleet (for example "Example Fleet"), a name for
    the rear admiral (for example "Atlas") and one or more captain or ship
    names (for example "Orion, Vega"). Names become IRC channels, IRC accounts
    and Linux users, so keep them short: the fleet ID (the fleet name in lower
    case, or `--slug`) plus a hyphen and an agent's name must fit 32
-   characters, as in `example-fleet-orion`.
+   characters, as in `example-fleet-orion`. A captain cannot be called
+   Starbase or Command, the names of two of the fleet's standard channels.
 4. **Which GitHub repositories should the captains have checked out?** List
    them in order, as HTTPS URLs; the first is where each captain starts. Every
    captain gets every repository in the list (`--repositories`, at most
@@ -419,21 +442,24 @@ work already on the VM.
 
 ## One fleet or several: shared IRC
 
-The user's answer to whether they intend to run more than one fleet decides
-where IRC runs and where its history is stored.
+Run one IRC server for the whole setup, however many fleets there are. The
+user's answer to whether they intend to run more than one fleet decides
+where that server runs and where its history is stored.
 
-| | One fleet | Several fleets |
+| | One fleet (or a local trial) | Several fleets, or may grow |
 | --- | --- | --- |
-| IRC (Ergo) | On the fleet VM | On a separate host shared by all fleets: another VM, Azure Container Apps or another container host |
+| IRC (Ergo) | On the fleet VM | One shared server in a container for all fleets: [Azure Container Apps](#example-azure-container-apps) or another container host, or a dedicated VM the installer sets up (`./install.sh irc-server`) |
 | IRC history | PostgreSQL, always (unless you pass `--no-api`, which leaves SQLite): the same instance as the API, in its own `ergo_history` database with its own role | PostgreSQL by default; SQLite is fine on a dedicated IRC VM if the user prefers |
 | Subspace API | On the fleet VM, in the same PostgreSQL (`subspace` database) | See below |
 
 - **One fleet.** Simplest. One PostgreSQL holds two databases, `subspace`
   for the API and `ergo_history` for Ergo, with separate roles and generated
   passwords, so there is a single database service to back up. The desktop
-  reaches everything through the same tunnel.
+  reaches everything through the same tunnel. This is the installer's
+  default, and the right choice for a local trial or a fleet that will stay
+  the only one.
 - **Several fleets.** One Ergo server for all your fleets. Each fleet keeps
-  its own Starbase and ship channels, named after the fleet, and its agents
+  its own standard channels, named after the fleet, and its agents
   have their own accounts. The desktop stays connected to that one network.
   When you change fleet, by picking an initiative of another fleet in
   **Channels**, it loads that fleet's channels, so you work across fleets while
@@ -450,18 +476,34 @@ installer registers each one, with an initiative listing its channels, on the
 first fleet's API. That uses the first fleet's development sign-in, which the
 installer checks before changing anything; once that API uses WorkOS or Entra,
 register further fleets through its `/api/v1/fleets` and initiative endpoints
-as an administrator instead. Further fleets need the shared IRC server
-(`--irc-server`), because IRC on their own VM is unreachable from the first
-fleet's API. The desktop needs the first fleet's tunnel, which carries the API.
+as an administrator instead. Further fleets need the shared IRC server,
+because IRC on their own VM is unreachable from the first fleet's API.
+`--api-target` works only with a shared server the installer manages
+(`--irc-server`); with one in a container, register further fleets as
+[Point the fleets and desktops at it](#point-the-fleets-and-desktops-at-it)
+shows. The desktop needs the first fleet's tunnel, which carries the API.
 Every fleet's tunnel uses the same local ports for its dashboard, AgentsView
 and Fleet API, so to look at another fleet's dashboard, stop the first fleet's
 tunnel and start that fleet's for a while.
 
 The shared server and every fleet must reach each other over a private
 network such as a tailnet or a cloud virtual network, and the desktop must be
-on it too. The server needs a DNS name that matches its TLS certificate: a
-Tailscale MagicDNS name works well. Set the server up once, then point each
-fleet at it:
+on it too. The server needs a DNS name that matches its TLS certificate.
+There are two ways to run it:
+
+- **In a container on a container platform**, such as Azure Container Apps.
+  This is what we run. You set it up with the platform's own CLI by following
+  [Run the shared IRC server in a container](#run-the-shared-irc-server-in-a-container);
+  the installer does not deploy to container platforms.
+- **On a dedicated VM that the installer manages**, on any cloud. It runs
+  the same Ergo container under Docker Compose, adds each fleet's accounts
+  for you and fills in the desktop's IRC settings. See below.
+
+### Shared IRC on a dedicated VM
+
+Create the VM as in [Create a cloud VM](#create-a-cloud-vm), with a
+Tailscale MagicDNS name, which works well as the server name. Set the server
+up once, then point each fleet at it:
 
 ```sh
 ./install.sh irc-server --remote ops@irc.example.ts.net --host-key SHA256:... --yes \
@@ -481,17 +523,311 @@ to each fleet and to the desktop's IRC settings. With Tailscale, `tailscale
 cert` gives a trusted certificate for the MagicDNS name instead. Adding a
 fleet restarts Ergo for a moment; agents reconnect on their own.
 
-An existing Subspace IRC server works too, including one you run as a
-container app: pass `--irc remote --irc-host <name>` (and `--irc-ca <path on
-the VM>` for a private CA) instead of `--irc-server`. Then run
-`sudo subspace-setup irc-bundle` on the fleet VM and add the SASL accounts and
-channels it lists to that server, for example through its `IRC_ACCOUNTS_FILE`
-and `IRC_CHANNELS_FILE` ([Subspace IRC](subspace-irc/README.md#accounts-and-channel-access)).
-The bundle holds the agents' IRC passwords: move it privately and delete
-copies afterwards. The installer cannot fetch your own IRC password from a
-server it does not manage, so add that network to the desktop yourself
-(Settings > Channels > Add network) with the account and password from that
-server's operator.
+An IRC server the installer does not manage works too, such as one in a
+container; see the next section.
+
+## Run the shared IRC server in a container
+
+This runs one Ergo server for every fleet and desktop on a container
+platform. The repository provides the image's source
+([`subspace-irc/`](subspace-irc/README.md)) and, on each fleet VM, the
+`--irc remote` mode and the accounts that fleet needs. It does not build or
+publish an image, and it does not deploy to container platforms: you do that
+with the platform's official CLI by following this section, as for
+[Create a cloud VM](#create-a-cloud-vm), and the same rules apply. Use only
+the subscription, region, network and cost the user accepted, under their
+existing sign-in; create no credentials (service principals, access keys or
+API tokens) and change no account-level settings; tag and record everything
+you create; and delete nothing without asking.
+
+### Rules for any container host
+
+- **Image.** Build it from `subspace-irc/`, whose Dockerfile pins Ergo by
+  digest, and push it to a private registry in the user's account, tagged
+  with the commit you built (`git rev-parse --short=12 HEAD`). There is no
+  published image to pull.
+- **One replica.** Run exactly one instance, with its data volume at `/ircd`.
+  That volume holds the accounts and channel registrations (`ircd.db`), any
+  SQLite history and a generated certificate if you supply none. The image
+  locks `/ircd/instance.lock`, so a second instance on the same volume stops
+  with "The IRC data volume is already in use".
+- **History in PostgreSQL.** On a platform whose persistent volumes are
+  network file shares, keep history out of SQLite, which SQLite's authors
+  advise against running on network file systems: set
+  `IRC_HISTORY_DATABASE=postgresql` and point Ergo at a private PostgreSQL
+  database (`IRC_POSTGRES_HOST`, `IRC_POSTGRES_USER`,
+  `IRC_POSTGRES_DATABASE`, `IRC_POSTGRES_SSL_MODE=require` or stricter,
+  `IRC_POSTGRES_PASSWORD_FILE`). Ergo creates its own tables.
+- **One listener, raw TCP, TLS by Ergo.** Fleets and desktops use the TLS
+  listener, port `6697`; `--irc remote` always uses TLS. Turn the others off
+  (`IRC_ENABLE_PLAIN=false`, `IRC_ENABLE_WS=false`). Publish `6697` as plain
+  TCP, never through an HTTP ingress, and let Ergo terminate TLS.
+- **A private DNS name and its certificate.** Pick the name fleets and
+  desktops will use (here `irc.example.com`), resolvable only on the private
+  network, and set `IRC_SERVER_NAME` to it. Supply the certificate and key
+  yourself (`IRC_TLS_CERT` and `IRC_TLS_KEY`, which may name the same PEM
+  file) rather than relying on the one Ergo generates. A self-signed one is
+  fine; renew it before it expires, then restart the server and give fleets
+  and desktops the new copy:
+
+  ```sh
+  umask 077
+  openssl req -x509 -newkey rsa:2048 -nodes -days 365 -sha256 \
+    -subj "/CN=irc.example.com" -addext "subjectAltName=DNS:irc.example.com" \
+    -keyout irc-tls.key -out irc-ca.pem
+  cat irc-ca.pem irc-tls.key > irc-tls.pem && rm irc-tls.key
+  ```
+
+  `irc-ca.pem` is the public half that fleets (`--irc-ca`) and desktops (the
+  network's **CA certificate**) trust.
+- **Secrets as mounted files.** Generate the operator password and a
+  password for each human account (`openssl rand -hex 24`), and the history
+  database password, into owner-only files on this computer. Give them, the
+  TLS bundle and the account and channel seeds to the platform's secret
+  store, and mount them as files for the `*_FILE` variables, readable by UID
+  10001. Never put them in plain environment variables, print them or leave
+  copies behind. Use `ircop` as the operator name (`IRC_OPER_NAME`), as the
+  installer-managed server does.
+- **Private only.** No public address, and ingress only from the fleet VMs
+  and the desktops' private network. Every fleet VM and every desktop must
+  resolve the name to the server's private address and route to it.
+
+### Seed the accounts and channels
+
+The server's accounts are the humans' accounts (at least the user's own,
+from question 6) plus every fleet's agents; its channels are every fleet's
+channels. Each fleet needs at least its
+[standard channels](subspace-installer/README.md#channels):
+`#<fleet>-starbase`, `#<fleet>-command` and `#<fleet>-<captain>` for each
+captain, as in `#fleet-one-starbase`, `#fleet-one-command` and
+`#fleet-one-orion`. Add any initiative channels beside them. Each fleet VM
+prints what it needs as an IRC bundle (see the next section), with its
+standard channels already in it. Keep the bundles in an owner-only folder on this computer, because
+they hold the agents' IRC passwords, and build the seeds from them:
+
+```sh
+umask 077
+jq -n --rawfile pw admiral.password '[{name: "admiral", password: ($pw | rtrimstr("\n"))}]' > humans.json
+jq -cs '.[0] + [.[1:][].accounts[]]' humans.json bundles/*.json > accounts.json
+jq -cs '[.[].channels[]]' bundles/*.json > channels.json
+```
+
+Before the first fleet, the seeds are `humans.json` and `[]`. Ergo reads them
+at start, adds missing accounts, checks existing ones and registers missing
+channels with `ircop` as founder ([Subspace IRC](subspace-irc/README.md#accounts-and-channel-access)).
+To add a fleet, rebuild the seeds, update the two secrets and restart the
+server; agents reconnect on their own. Removing a fleet's entries leaves its
+accounts in Ergo.
+
+### Point the fleets and desktops at it
+
+1. **Each fleet.** Copy `irc-ca.pem` to the fleet VM first (for example
+   `scp irc-ca.pem azureuser@fleet-one.example.ts.net:`) and install with
+   `--irc remote --irc-host irc.example.com --irc-ca /home/azureuser/irc-ca.pem`
+   (add `--irc-port` for a port other than 6697). Then fetch its bundle over
+   the same SSH route the installer uses, add it to the seeds as above and
+   restart the server:
+
+   ```sh
+   ssh azureuser@fleet-one.example.ts.net sudo -n subspace-setup irc-bundle > bundles/fleet-one.json
+   ```
+
+2. **Further fleets.** `--api-target` refuses a server the installer does not
+   manage, so install each further fleet with `--no-api` and the same
+   `--irc remote` options and its own `--target`, then register it with the
+   first fleet's API. The registration holds no secrets:
+
+   ```sh
+   ssh azureuser@fleet-two.example.ts.net sudo -n subspace-setup fleet-registration > fleet-two.json
+   ssh azureuser@fleet-one.example.ts.net sudo -n subspace-setup register-fleet - < fleet-two.json
+   ```
+
+   That uses the first fleet's development sign-in, as `--api-target` does;
+   `register-fleet --check` tests it first without changing anything.
+3. **Each desktop.** The installer fills in the desktop's IRC settings only
+   for a server it manages, so add the network under **Settings > Channels >
+   Add network**: host `irc.example.com`, port `6697`, TLS on, the path to
+   `irc-ca.pem` as **CA certificate**, and the user's account as nickname and
+   SASL username with its password from the owner-only file. The desktop must
+   resolve and reach that name over the private network (see the example
+   below).
+
+### When the simpler choice is right
+
+For one fleet that will stay the only one, or for a local trial, keep Ergo on
+the fleet VM: it is the installer's default and needs none of this. When a
+container platform cannot meet the rules above, use the installer-managed
+[dedicated VM](#shared-irc-on-a-dedicated-vm) instead: it runs the same
+container on the VM's own disk.
+
+### Example: Azure Container Apps
+
+This is the arrangement we run, written as an example to adapt: the
+commands have not been run as written here, so check each against
+`az <command> --help` and stop on the first error. Ask the user for the
+subscription, region and virtual network (the fleet VMs' network, so they
+reach the server directly), or permission to create one, and confirm the
+cost first: a Container Apps environment and app, a container registry, a
+storage account, an Azure Database for PostgreSQL flexible server and, unless
+you pass `--logs-destination`, the Log Analytics workspace the environment
+creates. What the platform does and does not give the server:
+
+- **Private TCP ingress.** Use an *internal* environment
+  (`--internal-only true`) on a subnet of the user's virtual network: it has
+  no public endpoint. Give the app TCP ingress (`transport: tcp`), which
+  needs such a virtual network, with `external: true`. On an internal
+  environment, *external* means reachable from the virtual network through
+  the environment's internal load balancer; *internal* would limit the app to
+  other apps in the same environment, so the fleets could not reach it.
+- **Persistent storage.** `/ircd` is an Azure Files (SMB) share, so history
+  goes in a PostgreSQL flexible server with private access in the same
+  network. Whether the image's lock on `/ircd/instance.lock` holds across an
+  SMB mount has not been verified. Container Apps starts a new revision
+  before it stops the old one, so if Ergo fails to start on the share, or
+  two replicas ever run at once, use the [dedicated VM](#shared-irc-on-a-dedicated-vm)
+  instead.
+- **Reaching it.** Fleet VMs in the same virtual network resolve the name
+  through a private DNS zone linked to it. Desktops need a route to the
+  environment's static IP and a DNS answer for the name: on Tailscale, a
+  subnet router in that network (a small VM of its own, not a fleet VM)
+  advertising the IP as a `/32`, which the user approves in the admin
+  console and allows on port 6697 in the tailnet policy; on Cloudflare Zero
+  Trust, a tunnel route to it for WARP clients. Resolve the name with split
+  DNS, a resolver policy or a hosts-file entry.
+
+Create the network pieces, the environment and the private DNS record:
+
+```sh
+az group create --name subspace-irc-rg --location <region> --tags app=subspace
+az network vnet subnet create --resource-group <vnet-rg> --vnet-name <vnet> \
+  --name subspace-irc --address-prefixes 10.0.8.0/27 \
+  --delegations Microsoft.App/environments --service-endpoints Microsoft.Storage
+az containerapp env create --resource-group subspace-irc-rg --name subspace-irc-env \
+  --location <region> --internal-only true --tags app=subspace \
+  --infrastructure-subnet-resource-id <subnet-id>
+ip=$(az containerapp env show -g subspace-irc-rg -n subspace-irc-env --query properties.staticIp -o tsv)
+az network private-dns zone create -g subspace-irc-rg -n example.com
+az network private-dns link vnet create -g subspace-irc-rg -z example.com -n subspace \
+  --virtual-network <vnet-id> --registration-enabled false
+az network private-dns record-set a add-record -g subspace-irc-rg -z example.com -n irc -a "$ip"
+```
+
+Build and push the image, and give the app an identity that may only pull
+it. The registry's endpoint needs an Entra sign-in to pull, and the image
+holds no secrets:
+
+```sh
+az acr create -g subspace-irc-rg -n <registry> --sku Basic --tags app=subspace
+az acr login -n <registry>
+tag=$(git rev-parse --short=12 HEAD)
+docker build --platform linux/amd64 -t "<registry>.azurecr.io/subspace-irc:$tag" subspace-irc
+docker push "<registry>.azurecr.io/subspace-irc:$tag"
+az identity create -g subspace-irc-rg -n subspace-irc-pull --tags app=subspace
+az role assignment create --assignee-object-id <identity-principal-id> \
+  --assignee-principal-type ServicePrincipal --role AcrPull --scope <registry-id>
+```
+
+Create the share for `/ircd`, open to the environment's subnet only, and the
+history database. This server holds nothing but IRC history, so Ergo signs
+in with its administrator login, `ergo`; on a shared server, create a
+dedicated role instead:
+
+```sh
+az storage account create -g subspace-irc-rg -n <storage> --location <region> \
+  --sku Standard_LRS --kind StorageV2 --min-tls-version TLS1_2 \
+  --allow-blob-public-access false --default-action Deny --tags app=subspace
+az storage account network-rule add -g subspace-irc-rg --account-name <storage> --subnet <subnet-id>
+az storage share-rm create -g subspace-irc-rg --storage-account <storage> --name irc-data --quota 5
+az containerapp env storage set -g subspace-irc-rg -n subspace-irc-env --storage-name irc-data \
+  --storage-type AzureFile --azure-file-account-name <storage> --azure-file-share-name irc-data \
+  --azure-file-account-key "$(az storage account keys list -g subspace-irc-rg -n <storage> --query '[0].value' -o tsv)" \
+  --access-mode ReadWrite
+az postgres flexible-server create -g subspace-irc-rg -n <pg-server> --location <region> \
+  --vnet <vnet-id> --subnet <pg-subnet-id> \
+  --private-dns-zone <pg-server>.private.postgres.database.azure.com \
+  --tier Burstable --sku-name Standard_B1ms --storage-size 32 --version 17 \
+  --admin-user ergo --admin-password "$(cat ergo-history.password)" \
+  --database-name ergo_history --tags app=subspace --yes
+```
+
+The PostgreSQL subnet is a separate one, delegated to
+`Microsoft.DBforPostgreSQL/flexibleServers`. Then write the app's
+specification as an owner-only file, `subspace-irc.yaml`, filling each secret
+from its file without printing it, create the app and delete the file:
+
+```yaml
+location: <region>
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    <identity-id>: {}
+properties:
+  managedEnvironmentId: <environment-id>
+  configuration:
+    activeRevisionsMode: Single
+    ingress:
+      external: true  # internal environment: the virtual network only
+      transport: tcp
+      targetPort: 6697
+      exposedPort: 6697
+    registries:
+      - server: <registry>.azurecr.io
+        identity: <identity-id>
+    secrets:
+      - { name: irc-tls, value: <irc-tls.pem> }
+      - { name: irc-operator-password, value: <operator password> }
+      - { name: irc-accounts, value: <accounts.json> }
+      - { name: irc-channels, value: <channels.json> }
+      - { name: irc-history-password, value: <ergo-history.password> }
+  template:
+    containers:
+      - name: irc
+        image: <registry>.azurecr.io/subspace-irc:<tag>
+        resources: { cpu: 0.5, memory: 1Gi }
+        env:
+          - { name: IRC_SERVER_NAME, value: irc.example.com }
+          - { name: IRC_ENABLE_PLAIN, value: "false" }
+          - { name: IRC_ENABLE_WS, value: "false" }
+          - { name: IRC_TLS_CERT, value: /run/subspace/irc-tls }
+          - { name: IRC_TLS_KEY, value: /run/subspace/irc-tls }
+          - { name: IRC_OPER_NAME, value: ircop }
+          - { name: IRC_OPER_PASSWORD_FILE, value: /run/subspace/irc-operator-password }
+          - { name: IRC_ACCOUNTS_FILE, value: /run/subspace/irc-accounts }
+          - { name: IRC_CHANNELS_FILE, value: /run/subspace/irc-channels }
+          - { name: IRC_HISTORY_DATABASE, value: postgresql }
+          - { name: IRC_POSTGRES_HOST, value: <pg-server>.postgres.database.azure.com }
+          - { name: IRC_POSTGRES_SSL_MODE, value: require }
+          - { name: IRC_POSTGRES_PASSWORD_FILE, value: /run/subspace/irc-history-password }
+        volumeMounts:
+          - { volumeName: secrets, mountPath: /run/subspace }
+          - { volumeName: data, mountPath: /ircd }
+    scale: { minReplicas: 1, maxReplicas: 1 }
+    volumes:
+      - { name: secrets, storageType: Secret }
+      - name: data
+        storageType: AzureFile
+        storageName: irc-data
+        mountOptions: uid=10001,gid=10001,dir_mode=0700,file_mode=0600
+```
+
+```sh
+az containerapp create -g subspace-irc-rg -n subspace-irc --yaml subspace-irc.yaml
+rm subspace-irc.yaml
+az containerapp logs show -g subspace-irc-rg -n subspace-irc --tail 50
+```
+
+Each secret is mounted as a file named after it. To add a fleet, rebuild the
+seeds, then update the two secrets and restart the revision:
+
+```sh
+az containerapp secret set -g subspace-irc-rg -n subspace-irc \
+  --secrets "irc-accounts=$(cat accounts.json)" "irc-channels=$(cat channels.json)"
+az containerapp revision restart -g subspace-irc-rg -n subspace-irc \
+  --revision "$(az containerapp show -g subspace-irc-rg -n subspace-irc --query properties.latestRevisionName -o tsv)"
+```
+
+`az group delete --name subspace-irc-rg` deletes all of this except the
+subnets in the user's virtual network. Run it only when the user asks.
 
 ## What the installer does
 
@@ -581,8 +917,8 @@ does the same as `./install.sh providers`.
    source for this setup.
 3. **Channels.** The installer already added the fleet's IRC network, signed in
    as your account with the password file it saved. Pick the fleet's
-   initiative in **Channels** to join its Starbase and ship channels. Say hello
-   to the rear admiral in Starbase. If the desktop's settings file could not
+   initiative in **Channels** to join its Starbase, fleet command and ship
+   channels. Say hello to the rear admiral in Starbase. If the desktop's settings file could not
    be updated automatically, the installer printed the network to add under
    **Settings > Channels > Add network**; `./install.sh desktop` writes it
    again.
@@ -679,6 +1015,7 @@ permissions, Slack and Teams.
 | Installed copies the services read | `/etc/subspace-fleet/` (root-only), and each agent's files in its own home with mode 0600 |
 | Model provider logins | `/var/lib/subspace-fleet/proxy/auth` on the VM, owned by the proxy user |
 | Your IRC password and Stargate API token | `~/.subspace/targets/<target>/` on your computer, owner-only |
+| A shared IRC server's secrets, in a container | Owner-only files on your computer and the platform's secret store ([Run the shared IRC server in a container](#run-the-shared-irc-server-in-a-container)) |
 | Local VM SSH keys | Lima: `~/.lima/_config/`; Multipass on Windows: `~\.subspace\targets\<target>\` |
 
 ## If you get locked out

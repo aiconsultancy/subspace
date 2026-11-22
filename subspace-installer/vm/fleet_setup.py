@@ -41,6 +41,9 @@ from urllib.request import Request, urlopen
 HERE = Path(__file__).resolve().parent
 PAYLOAD = HERE.parents[1]
 INSTALLER = PAYLOAD / "subspace-installer"
+# The standard fleet channels are defined once, beside the fleet installer that enforces them.
+sys.path.insert(0, str(HERE.parent / "lib"))
+import standard_channels  # noqa: E402
 INPUTS = Path("/root/fleet")
 API_DIR = Path("/opt/subspace/api")
 FLEET_APP = Path("/opt/subspace-fleet")
@@ -324,8 +327,10 @@ def check_answers(answers):
             and not any(admin.startswith(f"{account}-") for account in agent_accounts[1:]),
             "Your IRC account must differ from the agents' names and accounts.")
     for agent in ids:
-        require(len(f"{answers['slug']}-{agent}") <= 32,
+        require(len(f"{answers['slug']}-{agent}") <= standard_channels.MAX_ACCOUNT,
                 f"'{answers['slug']}-{agent}' is too long for its IRC account. Use a shorter fleet ID or name.")
+    trouble = standard_channels.problem(answers["slug"], ids[1:])
+    require(trouble is None, trouble)
     require(EMAIL.fullmatch(answers["adminEmail"]), "Use a valid sign-in email address.")
     if answers["irc"] == "remote":
         host = answers.get("ircHost") or ""
@@ -479,8 +484,8 @@ def latest_stargate():
 
 
 def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, stargate_ref=None, history=None):
+    # The fleet installer names Starbase, the command channel and the ship channels itself (standard_channels).
     slug = answers["slug"]
-    starbase = f"#{slug}-starbase"
     extra_channels = demo_channels() if answers["demo"] else []
     config = {
         "slug": slug,
@@ -492,8 +497,6 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         "toolchains": {"node": "24"},
         "irc": {
             "mode": "local",
-            "commandChannel": starbase,
-            "starbaseChannel": starbase,
             "allowedAccounts": [answers["admin"]],
             "advertise": {"host": LOOPBACK, "port": IRC_PLAIN, "tls": False},
             "compose": {"ref": irc_ref, "operator": OPERATOR_ACCOUNT, "channels": extra_channels},
@@ -504,7 +507,7 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     if answers["irc"] == "remote":
         config["irc"] = {
             "mode": "remote", "host": answers["ircHost"], "port": answers["ircPort"], "tls": True,
-            "commandChannel": starbase, "starbaseChannel": starbase, "allowedAccounts": [answers["admin"]],
+            "allowedAccounts": [answers["admin"]],
         }
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
@@ -812,6 +815,11 @@ def register_fleet(registration):
     require(isinstance(channels, list) and channels
             and all(isinstance(c, str) and re.fullmatch(rf"#{re.escape(slug)}-[a-z0-9-]{{1,40}}", c) for c in channels),
             "The registration's channels must be the fleet's own (#<fleet>-...).")
+    captains = registration.get("captainNames")
+    require(channels[:2] == standard_channels.standard(slug, []) and isinstance(captains, list)
+            and len(channels) == len(set(channels)) == 2 + len(captains),
+            f"The registration must list the fleet's standard channels: {standard_channels.summary(slug)}. "
+            "Set the fleet up again with this version of the installer.")
     require(registration.get("ircHost") not in ("127.0.0.1", "localhost", "::1"),
             "A further fleet needs a shared IRC server (--irc-server): IRC on its own VM is unreachable from here.")
     port = registration.get("ircPort")
@@ -844,14 +852,15 @@ def register_fleet(registration):
 # Summary ---------------------------------------------------------------------
 
 def fleet_channels(answers, members):
-    slug = answers["slug"]
-    return [f"#{slug}-starbase"] + [f"#{slug}-{person['id']}" for person in members[1:]]
+    """The fleet's standard channels: Starbase, the command channel, then one ship channel per captain."""
+    return standard_channels.standard(answers["slug"], [person["id"] for person in members[1:]])
 
 
 def irc_bundle(answers, members, secret_store):
     """What a shared IRC server needs for this fleet: its SASL accounts and channels."""
     channels = fleet_channels(answers, members)
-    topics = [f"{answers['name']} Starbase: admirals and the rear admiral"] + [
+    topics = [f"{answers['name']} Starbase: admirals and the rear admiral",
+              f"{answers['name']} fleet command: the rear admiral and the captains, and agent dispatch"] + [
         f"{answers['name']}: {person['name']}'s ship" for person in members[1:]]
     bundle = {
         "fleet": answers["slug"],
@@ -1006,7 +1015,7 @@ def setup(args):
     channels = values["SUBSPACE_CHANNELS"].split()
     print()
     say(f"fleet {values['SUBSPACE_FLEET_NAME']} ({values['SUBSPACE_FLEET_SLUG']}) is set up.")
-    say(f"Starbase is {channels[0]}; ship channels: {' '.join(channels[1:])}.")
+    say(f"Starbase is {channels[0]}; fleet command is {channels[1]}; ship channels: {' '.join(channels[2:])}.")
     if not local_irc:
         say(f"add this fleet to the shared IRC server: copy {INPUTS / 'irc-bundle.json'} there and run "
             "'sudo subspace-setup irc-server add <file>' (the host installer does this with --irc-server).")

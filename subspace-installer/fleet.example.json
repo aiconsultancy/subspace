@@ -41,8 +41,6 @@
   "irc": {
     "mode": "remote",
     "host": "irc.example.com",
-    "commandChannel": "#example-fleet-starbase",
-    "starbaseChannel": "#example-fleet-starbase",
     "allowedAccounts": ["operator"]
   }
 }

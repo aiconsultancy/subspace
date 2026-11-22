@@ -4,6 +4,14 @@ Release Please adds an entry for each release of the Subspace App, from the
 conventional commits that touch `subspace-desktop/`. See
 [Releases](docs/ways-of-working.md#releases).
 
+## [0.12.1](https://github.com/aiconsultancy/subspace/compare/subspace-desktop-v0.12.0...subspace-desktop-v0.12.1) (2026-11-22)
+
+
+### Bug Fixes
+
+* **desktop:** harden the built-in Fleet Console's start-up ([4bbba18](https://github.com/aiconsultancy/subspace/commit/4bbba1801aa078e92f22c51b623760bca1f9131d))
+* **desktop:** harden the built-in Fleet Console's start-up ([addab69](https://github.com/aiconsultancy/subspace/commit/addab69b94456716b053a41e3c0a19e6be2703cd))
+
 ## [0.12.0](https://github.com/aiconsultancy/subspace/compare/subspace-desktop-v0.11.0...subspace-desktop-v0.12.0) (2026-11-22)
 
 

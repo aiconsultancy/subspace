@@ -13,7 +13,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
 import fleet_setup  # noqa: E402
-from runtime import validate  # noqa: E402
+from runtime import irc_officer, validate  # noqa: E402
+from standard_channels import COMMAND_SUFFIX  # noqa: E402
 
 
 def answers_for(argv):
@@ -54,7 +55,18 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual(set(secrets["ircPasswords"]), {"example-fleet-atlas", "example-fleet-orion", "example-fleet-vega", "admiral"})
         self.assertEqual(config["crew"], {"claude": {"count": 2}, "codex": {"count": 2}})
         self.assertEqual(config["repositories"], [])
+        # Setup names no channels: the installer makes the standard set, with a separate command channel.
+        self.assertNotIn("starbaseChannel", config["irc"])
+        self.assertNotIn("commandChannel", config["irc"])
+        command = f"#example-fleet-{COMMAND_SUFFIX}"
         self.assertEqual(cfg["irc"]["starbaseChannel"], "#example-fleet-starbase")
+        self.assertEqual(cfg["irc"]["commandChannel"], command)
+        standard = ["#example-fleet-starbase", command, "#example-fleet-orion", "#example-fleet-vega"]
+        self.assertEqual(cfg["irc"]["channels"], standard)
+        self.assertEqual(fleet_setup.fleet_channels(answers, members), standard)
+        rear = irc_officer(cfg, cfg["members"][0], {"account": "example-fleet-atlas", "backend": {"directory": "/w"}})
+        self.assertEqual(rear["channels"], standard)
+        self.assertEqual(rear["access"]["humanWakeChannels"], [{"channel": "#example-fleet-starbase", "replies": "all"}])
         self.assertIn("#aurora-nav", config["irc"]["compose"]["channels"])
         self.assertIn("admiral", secrets["ircPasswords"])
         self.assertEqual(cfg["operators"], ["operator"])
@@ -72,7 +84,10 @@ class SetupInputsTests(unittest.TestCase):
         bundle = fleet_setup.irc_bundle(answers, members, store)
         self.assertEqual({row["name"] for row in bundle["accounts"]}, {"fleet-one-atlas", "fleet-one-orion"})
         self.assertEqual({row["name"] for row in bundle["accounts"]}, set(secrets["ircPasswords"]))
-        self.assertEqual([row["name"] for row in bundle["channels"]], ["#fleet-one-starbase", "#fleet-one-orion"])
+        self.assertEqual([row["name"] for row in bundle["channels"]],
+                         ["#fleet-one-starbase", f"#fleet-one-{COMMAND_SUFFIX}", "#fleet-one-orion"])
+        self.assertEqual(cfg["irc"]["channels"], [row["name"] for row in bundle["channels"]])
+        self.assertIn("dispatch", bundle["channels"][1]["topic"])
         self.assertEqual(bundle["humans"], ["admiral"])
 
     def test_stargate_api_and_secrets_are_stable(self):
@@ -150,6 +165,8 @@ class SetupInputsTests(unittest.TestCase):
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Atlas"],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--admin", "x-orion"],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--admin", "NickServ"],
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", f"Orion, {COMMAND_SUFFIX.title()}"],
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Starbase"],
             ["--name", "A very long fleet name indeed", "--rear-admiral", "Atlas", "--captains", "Andromeda Galaxy"],
             ["--name", "X", "--rear-admiral", "9lives", "--captains", "Orion"],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--irc", "remote", "--irc-host", "localhost"],
@@ -195,7 +212,7 @@ class SetupInputsTests(unittest.TestCase):
                                                "--irc", "remote", "--irc-host", "irc.example.com", "--no-api"])
         members = fleet_setup.roster(answers, rear, captains)
         registration = fleet_setup.fleet_registration(answers, members)
-        self.assertEqual(registration["channels"], ["#fleet-two-starbase", "#fleet-two-lyra"])
+        self.assertEqual(registration["channels"], ["#fleet-two-starbase", f"#fleet-two-{COMMAND_SUFFIX}", "#fleet-two-lyra"])
         self.assertEqual((registration["ircHost"], registration["ircPort"], registration["ircTls"]),
                          ("irc.example.com", 6697, True))
         self.assertEqual(registration["captainNames"], ["Lyra"])
@@ -204,6 +221,10 @@ class SetupInputsTests(unittest.TestCase):
         bad = [
             {**registration, "slug": "fleet-one"},
             {**registration, "channels": ["#fleet-one-starbase"]},
+            # Each standard channel is required: no command channel, or a captain without a ship channel.
+            {**registration, "channels": ["#fleet-two-starbase", "#fleet-two-lyra"]},
+            {**registration, "channels": registration["channels"][:2]},
+            {**registration, "captainNames": "Lyra"},
             {**registration, "slug": "Fleet Two"},
             {**registration, "ircPort": "6697"},
         ]
@@ -287,6 +308,20 @@ class IrcServerTests(unittest.TestCase):
                     irc_server.conflicts("one", {"accounts": [{"name": "one-atlas", "password": "changed"}]})
                 with self.assertRaises(fleet_setup.SetupError):
                     irc_server.conflicts("two", {"accounts": [{"name": "one-atlas", "password": "p1"}]})
+
+    def test_fleet_bundles_carry_the_standard_channels(self):
+        import irc_server
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            fleet_setup.write_json(state / "answers.json", {"humans": ["admiral"]})
+            bundle = {"fleet": "two", "accounts": [{"name": "two-nova", "password": "p1"}],
+                      "channels": [{"name": "#two-starbase"}, {"name": "#two-lyra"}], "humans": ["admiral"]}
+            with patch.object(irc_server, "STATE", state), patch.object(irc_server, "render") as render, \
+                    patch("sys.stdin") as stdin:
+                stdin.read.return_value = fleet_setup.json.dumps(bundle)
+                with self.assertRaisesRegex(fleet_setup.SetupError, f"#two-{COMMAND_SUFFIX}"):
+                    irc_server.add("-")
+                render.assert_not_called()
 
 
 if __name__ == "__main__":

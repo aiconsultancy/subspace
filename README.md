@@ -51,7 +51,10 @@ same room.
   documents on issues, plus initiatives, the decision log and the fleets, and
   gives agents an MCP endpoint.
 - **An IRC server**, [Ergo](https://ergo.chat/) in a container. Yes, IRC. It
-  is great to be back.
+  is great to be back. Run one for your whole setup, however many fleets:
+  we run it on Azure Container Apps, reachable only over the private
+  network. A trial or a single fleet keeps it on the fleet VM
+  ([where to run it](INSTALL.md#one-fleet-or-several-shared-irc)).
 - **Fleets.** A fleet is one VM, run by Stargate on OpenCode. Stargate also
   drives the Claude and Codex SDKs, and its OpenCode integration goes
   furthest.
@@ -164,8 +167,8 @@ out:
 - **Assigned to a captain.** Assign an issue to a captain and the rear
   admiral asks that captain in chat to pick it up, assign it to a crew
   member and get it done.
-- **In the open.** Offers, answers and requests go to the fleet's channel,
-  so people watch them in the Channels Space and can step in.
+- **In the open.** Offers, answers and requests go to the fleet's command
+  channel, so people watch them in the Channels Space and can step in.
 - **Own fleet only.** The API refuses a fleet agent's assignment or *Ready
   for agents* change on an issue whose project belongs to another fleet,
   even when the project moved after the dispatcher last read it. It also
@@ -232,7 +235,9 @@ per fleet.
   development provider.
 - **IRC** ([`subspace-irc/`](subspace-irc/README.md)). Ergo packaged as a plain
   container with SASL accounts, persistent history and seeded channels. One
-  server can serve many fleets and desktops, on a fleet VM or anywhere else.
+  server serves every fleet and desktop: we recommend running it in a
+  container on your private network, and on the fleet VM only for a trial or
+  a single fleet.
 - **Fleet installer** ([`subspace-installer/`](subspace-installer/README.md)).
   Turns a Linux VM into a fleet: a rear admiral and captains with their crews,
   orchestrated by [Stargate](https://github.com/aiconsultancy/stargate), with
@@ -325,15 +330,34 @@ in the local database. Use `DEMO=0` to skip the rehearsal.
 Everything binds to `127.0.0.1` only. The `local` organisation has the
 `developer@example.com` account, the bootstrap Local workspace, and IRC
 accounts for the developer and fleet agents. The two demo fleets share Ergo:
-`aurora` uses the plain listener and `borealis` uses TLS.
+`aurora` uses the plain listener and `borealis` uses TLS. An agent's IRC
+nick, SASL account and API agent name are the same: `<fleet>-admiral` for
+the rear admiral and `<fleet>-<captain-id>` for a captain. Aurora has
+`aurora-admiral` and the captains `aurora-lyra`, `aurora-orion`,
+`aurora-vega` and `aurora-castor`. Borealis has `borealis-admiral` and
+`borealis-rigel`.
+
+Ergo registers the Local workspace's `#subspace` and each fleet's
+[standard channels](subspace-installer/README.md#channels):
+
+| Channel | Aurora's | What the demo shows there |
+| --- | --- | --- |
+| Starbase | `#aurora-starbase` | People and the rear admiral talk. |
+| Fleet command | `#aurora-command` | The rear admiral and the captains coordinate. |
+| Ship, one per captain | `#aurora-lyra` and so on | People talk to the captain about its work. |
 
 The default seed adds the fictional Fallow Reach rehearsal. Navigation console,
 Warp diagnostics and Relay reliability span four projects (`NAV`, `MAP`,
 `WARP` and `RELAY`) with 48 issues, decision records, threaded comments, todos,
 review screenshots and local simulated pull requests and deployments. The
-Channels Space has conversation history in six channels, including a screenshot
-in `#aurora-nav`. The same screenshot is kept on the issue for when the IRC
-upload expires. No agent processes or GitHub credentials are needed.
+Channels Space has conversation history in `#subspace`, both fleets'
+Starbase and command channels, and the ship channels `#aurora-lyra`
+(navigation, including a screenshot), `#aurora-orion` (the relay rollout)
+and `#borealis-rigel` (warp diagnostics). `#aurora-vega` and
+`#aurora-castor` start empty. The same screenshot is kept on the issue for
+when the IRC upload expires. Each initiative lists its fleet's Starbase and
+command channels and the ship channels of the captains on its projects. No
+agent processes or GitHub credentials are needed.
 
 To start with the developer account, fleet records, IRC accounts and just the
 bootstrap workspace, use either command on a fresh stack:
@@ -413,8 +437,9 @@ the other fleet switches connection.
 use a fresh checkout with a distinct `COMPOSE_PROJECT_NAME` and spare ports
 for all five bindings. Set `SUBSPACE_STACK_DESKTOP_CONFIG=0` to skip the
 desktop config write, start that stack with `DEMO=0`, then run
-`make stack-check STACK_LIVE=1` with the same environment. It adds the demo
-and checks that a second seed preserves the API and IRC data.
+`make stack-check STACK_LIVE=1` with the same environment. It adds the demo,
+checks that the agents and channels follow the standard, and checks that a
+second seed preserves the API and IRC data.
 
 ## How we run it
 
@@ -427,10 +452,13 @@ configurable.
   of the work, and it assigns work to the captains so things keep moving.
   **Captains** are Opus 5.5, each with a **crew** of two Claude and two Codex
   workers.
-- **Channels.** Each captain has its own channel. The other captains are in it
-  too, but only the owning captain is woken by its messages; the others wake
-  only when tagged. The **Starbase** channel is where admirals talk to the rear
-  admiral and to each other.
+- **Channels.** Every fleet has the same
+  [standard channels](subspace-installer/README.md#channels). Each captain
+  has its own ship channel. The other captains are in it too, but only the
+  owning captain is woken by its messages; the others wake only when tagged.
+  The **Starbase** channel is where admirals talk to the rear admiral and to
+  each other. In the **fleet command** channel the rear admiral and the
+  captains coordinate.
 - **Checkouts.** Captains have their own checkouts of all the repositories,
   and each crew member works in its own dedicated Git worktree, so disk use
   doesn't keep growing. Stargate manages all of this; it is the glue.

@@ -1,14 +1,19 @@
 """Verify an isolated stack's fixture content through the development API."""
 
 import json
+import re
 import sys
 from collections import Counter
 from datetime import date, timedelta
 from hashlib import sha256
+from pathlib import Path
 from urllib.request import Request, urlopen
 
 PORT, MODE = sys.argv[1:3]
 ROOT = f"http://127.0.0.1:{int(PORT)}/api/v1"
+# The channels Ergo registers, and each demo fleet's captain IDs.
+CHANNELS = {row["name"] for row in json.loads(Path(__file__).with_name("irc-channels.json").read_text())}
+CAPTAINS = {"aurora": ["lyra", "orion", "vega", "castor"], "borealis": ["rigel"]}
 
 
 def fetch(path, *, headers=None, data=None):
@@ -43,6 +48,27 @@ def check_empty():
     print("Empty workspace: 3 fleets, 1 bootstrap initiative, 1 user, 0 demo issues or decisions")
 
 
+def check_crews(fleets, initiatives):
+    """Agent names are their IRC nicks, and initiatives list standard channels Ergo has."""
+    by_slug = {fleet["slug"]: fleet for fleet in fleets}
+    for slug, captains in CAPTAINS.items():
+        fleet = by_slug[slug]
+        assert fleet["rearAdmiralName"] == f"{slug}-admiral", fleet
+        assert sorted(fleet["captainNames"]) == sorted(f"{slug}-{captain}" for captain in captains), fleet
+        for agent in fleet["agents"]:
+            # A captain's ship is named after it, so the desktop finds its ship
+            # channel #<fleet>-<ship> in the initiative's channels.
+            if agent["rank"] == "captain":
+                assert agent["ship"].lower() == agent["name"].removeprefix(f"{slug}-"), agent
+    for row in initiatives.values():
+        listed = re.split(r"[\s,]+", row["channels"].strip())
+        assert set(listed) <= CHANNELS, row
+        slug = row["fleet"]["slug"]
+        if slug in CAPTAINS:
+            assert {f"#{slug}-starbase", f"#{slug}-command"} <= set(listed), row
+            assert all(name.startswith(f"#{slug}-") for name in listed), row
+
+
 def check_demo():
     fleets = items("/fleets")
     assert {fleet["slug"] for fleet in fleets} == {"aurora", "borealis", "local"}
@@ -54,13 +80,14 @@ def check_demo():
         "Relay reliability": "aurora",
     }
     assert sum(len(row["stakeholders"]) for row in initiatives.values()) == 6
+    check_crews(fleets, initiatives)
     navigation = get(f"/initiatives/{initiatives['Navigation console']['id']}")
     target = date.fromisoformat(navigation["targetDate"])
     week = target - timedelta(days=14)
     assert week.weekday() == 0, week
     users = items("/users")
-    assert len(items("/agents")) == 5
-    assert Counter(row["kind"] for row in users) == {"human": 4, "agent": 5}
+    assert len(items("/agents")) == 7
+    assert Counter(row["kind"] for row in users) == {"human": 4, "agent": 7}
     labels = items("/labels")
     assert len(labels) == 6
     projects = items("/projects")

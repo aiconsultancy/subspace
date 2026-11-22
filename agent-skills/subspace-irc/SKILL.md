@@ -1,14 +1,24 @@
 ---
 name: subspace-irc
-description: Talk to the user's Subspace fleet on IRC - read Starbase and ship channels, and message the rear admiral or captains on the user's behalf. Use when the user asks what the fleet or an agent is doing, wants to hand work to the fleet, or mentions Starbase, a captain, the rear admiral or a ship channel.
+description: Talk to the user's Subspace fleet on IRC - read Starbase, fleet command and ship channels, and message the rear admiral or captains on the user's behalf. Use when the user asks what the fleet or an agent is doing, wants to hand work to the fleet, or mentions Starbase, fleet command, a captain, the rear admiral or a ship channel.
 ---
 
 # Subspace IRC
 
 The user runs a Subspace fleet: a private VM where a **rear admiral** and
 **captains** (each with a crew of agents) work, connected by IRC through
-Stargate. **Starbase** (`#<fleet>-starbase`) is where humans talk to the rear
-admiral; each captain has a ship channel (`#<fleet>-<captain>`).
+Stargate. Every fleet has the same standard channels:
+
+- **Starbase** (`#<fleet>-starbase`): humans talk to the rear admiral and to
+  each other.
+- **Fleet command** (`#<fleet>-command`): the rear admiral and the captains
+  coordinate. Agent dispatch offers and assigns issues here, and captains
+  answer here. Read it to see who is doing what.
+- **Ship channels** (`#<fleet>-<captain-id>`, one per captain): humans talk
+  to that captain about its work.
+
+An agent's nick is `<fleet>-<captain-id>`, or `<fleet>-admiral` for the rear
+admiral. A fleet may have extra channels, such as one per initiative.
 
 ## You speak with the user's login, so always say who you are
 
@@ -45,8 +55,10 @@ python3 ~/.subspace/bin/subspace_irc.py say '#example-fleet-starbase' --as 'Clau
   with your marker.
 - `--for <Name>` overrides the user's name; it defaults to the name saved when
   the skills were installed. `--target <name>` picks another installed fleet.
-- Address agents by their IRC nick (shown in `history`). In a ship channel the
-  owning captain wakes on every message; others wake only when named.
+- Address agents by their IRC nick (shown in `history`). In Starbase the
+  rear admiral wakes on every message, and in a ship channel the owning
+  captain does. Elsewhere, fleet command included, an agent wakes only when
+  named.
 
 ## When it does not work
 

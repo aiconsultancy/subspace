@@ -41,7 +41,7 @@ jobs:
       contents: write # Tags, releases, release branches and the integration branch.
       pull-requests: write # Open, update, label and merge the release pull requests.
       issues: write # Create the autorelease labels.
-      actions: write # Start publish-framework.yml on a new Framework tag.
+      actions: write # Start publish-framework.yml on a new Framework tag, and lockfiles.yml on each release branch.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the Rust toolchain the Framework names
@@ -75,9 +75,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Not --label: gh would query the lagging search index, and get the
+          # head from before the lockfile refresh just pushed.
           pr="$(gh pr list --repo "$GITHUB_REPOSITORY" --base main --state open \
-            --head "$FRAMEWORK_BRANCH" --label 'autorelease: pending' \
-            --json number,headRefOid --jq '.[0] // empty | "\(.number) \(.headRefOid)"')"
+            --head "$FRAMEWORK_BRANCH" --json number,headRefOid,labels \
+            --jq '[.[] | select(any(.labels[]; .name == "autorelease: pending"))][0] // empty
+              | "\(.number) \(.headRefOid)"')"
           if [[ -z "$pr" ]]; then
             echo "No Framework release pull request is open." >>"$GITHUB_STEP_SUMMARY"
             exit 0

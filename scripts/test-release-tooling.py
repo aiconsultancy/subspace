@@ -88,6 +88,21 @@ class SyncTests(unittest.TestCase):
                 SYNC.local_versions(root)
 
 
+class LockfilesCheckTests(unittest.TestCase):
+    """The workflow release-lockfiles.sh starts on each release branch, which
+    has no pull_request run, exists, can be started, and runs the check."""
+
+    def test_the_release_branches_get_the_lockfiles_check(self) -> None:
+        refresh = (SCRIPTS / "release-lockfiles.sh").read_text()
+        self.assertIn('gh workflow run lockfiles.yml --repo "$repo" --ref "$1"', refresh)
+        workflow = (SCRIPTS.parent / ".github/workflows/lockfiles.yml").read_text()
+        for line in ("  pull_request:\n", "  workflow_dispatch:\n",
+                     "        run: python3 scripts/sync-lockfiles.py --check\n"):
+            self.assertIn(line, workflow)
+        release = (SCRIPTS.parent / ".github/workflows/release.yml").read_text()
+        self.assertRegex(release, r"actions: write\b")
+
+
 class ConfigTests(unittest.TestCase):
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
