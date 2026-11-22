@@ -124,9 +124,10 @@ impl MarkdownPlugin for References {
             .when_some(reference_fill(run, &tokens), |trigger, fill| {
                 trigger.bg(fill)
             })
-            .when_some(look::glyph(&found, look, &tokens), |trigger, glyph| {
-                trigger.flex().items_center().gap_0p5().child(glyph)
-            })
+            .when_some(
+                look::glyph(&found, look.clone(), &tokens),
+                |trigger, glyph| trigger.flex().items_center().gap_0p5().child(glyph),
+            )
             .when_some(
                 look::state(look, node.source_range(), &tokens),
                 |trigger, dot| trigger.flex().items_center().gap_1().child(dot),
