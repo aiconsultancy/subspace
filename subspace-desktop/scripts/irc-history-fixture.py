@@ -22,6 +22,7 @@ as an agent does while it works.
 """
 
 import argparse
+import re
 import socket
 import threading
 import time
@@ -66,6 +67,28 @@ LATE_REPEATS = (
     ('aurora-lyra', 'Juniper opened https://github.com/acme/web/pull/491 for the worker pool.'),
 )
 STATUS = 'Lyra is delegating NAV-2 to Juniper'
+# With --thread: two requests to the captain, the steps it reports on each
+# (seconds before each), and the replies in each thread. A reply to `reply`
+# answers the earlier reply of that index instead of the request.
+PROGRESS = '+stargate/progress'
+THREADS = (
+    {
+        'ask': 'aurora-lyra: capture a chart-pan baseline on the pilot laptop before the review.',
+        'steps': (('accepted', 1), ('reasoning', 2), ('tool', 3), ('reply', 3), ('completed', 2)),
+        'replies': (
+            ('aurora-lyra', 'Baseline captured: 41 ms warm, 87 ms on the first seam crossing. Wren closed NAV-6.', None),
+            ('tavi', 'Matches what I saw on the pilot laptop this morning.', None),
+            ('mira', 'Thanks. Then NAV-6 is settled for the review.', 0),
+        ),
+    },
+    {
+        'ask': 'aurora-lyra: can you take NAV-2 next, once NAV-7 merges? The preview still ignores relay drift.',
+        'steps': (('accepted', 1), ('model', 2), ('tool', 3)),
+        'replies': (
+            ('aurora-lyra', 'Accepted. Juniper starts on NAV-2 once the drift overlay lands.', None),
+        ),
+    },
+)
 
 SPEAKERS = ('mira', 'tavi', 'sela', 'aurora-lyra', 'aurora-admiral', 'aurora-orion', 'aurora-vega', 'aurora-castor')
 
@@ -145,6 +168,44 @@ def late_lines(sock, socks, nick, delay, late):
         pass
 
 
+def await_msgid(sock, text):
+    """Reads `sock` until the server echoes `text` back, and returns the
+    message ID it gave it. Needs `echo-message` and `message-tags`."""
+    buffer = b''
+    while True:
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise SystemExit('the server closed the connection before echoing the request')
+        buffer += chunk
+        lines = buffer.split(b'\r\n')
+        buffer = lines.pop()
+        for line in lines:
+            if line.startswith(b'PING'):
+                sock.sendall(b'PONG' + line[4:] + b'\r\n')
+                continue
+            decoded = line.decode(errors='replace')
+            if f'PRIVMSG {CHANNEL} :{text}' in decoded and (found := re.search(r'msgid=([^; ]+)', decoded)):
+                return found.group(1)
+
+
+def play_threads(socks):
+    """Each request in THREADS, the captain's progress on it and its replies."""
+    for thread in THREADS:
+        socks['mira'].sendall(f'PRIVMSG {CHANNEL} :{thread["ask"]}\r\n'.encode())
+        request = await_msgid(socks['mira'], thread['ask'])
+        for stage, wait in thread['steps']:
+            time.sleep(wait)
+            tags = f'@{PROGRESS}={stage};+draft/reply={request}'
+            socks['aurora-lyra'].sendall(f'{tags} NOTICE {CHANNEL} :Progress: {stage}\r\n'.encode())
+        replies = []
+        for speaker, text, parent in thread['replies']:
+            time.sleep(1.2)
+            to = replies[parent] if parent is not None else request
+            socks[speaker].sendall(f'@+draft/reply={to} PRIVMSG {CHANNEL} :{text}\r\n'.encode())
+            replies.append(await_msgid(socks[speaker], text))
+    print(f'played {len(THREADS)} threads in {CHANNEL}', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--server', default='127.0.0.1:16667')
@@ -152,10 +213,15 @@ def main():
     parser.add_argument('--late-after', type=float, help='seconds after the capture build joins')
     parser.add_argument('--status', action='store_true', help="set aurora-lyra's status")
     parser.add_argument('--repeats', action='store_true', help='name NAV-1 and pull request 492 again')
+    parser.add_argument('--thread', action='store_true', help='play two requests with progress and replies')
     options = parser.parse_args()
     if not options.server.startswith('127.0.0.1:'):
         raise SystemExit('Use a loopback server, 127.0.0.1:<port>.')
     caps = {'aurora-lyra': ('draft/metadata-2',)} if options.status else {}
+    if options.thread:
+        tagged = ('message-tags', 'echo-message')
+        for nick in ('mira', 'tavi', 'aurora-lyra'):
+            caps[nick] = tuple(caps.get(nick, ())) + tagged
     socks = {nick: connect(options.server, nick, caps.get(nick, ())) for nick in SPEAKERS}
     if options.status:
         socks['aurora-lyra'].sendall(f'METADATA * SET status :{STATUS}\r\n'.encode())
@@ -168,6 +234,8 @@ def main():
         socks[nick].sendall(f'PRIVMSG {CHANNEL} :{text}\r\n'.encode())
         time.sleep(1.2)
     print(f'posted the lines to {CHANNEL}', flush=True)
+    if options.thread:
+        play_threads(socks)
     watcher = 'mira' if options.late_after is not None else None
     threads = [threading.Thread(target=keep_alive, args=(sock,), daemon=True)
                for nick, sock in socks.items() if nick != watcher]
