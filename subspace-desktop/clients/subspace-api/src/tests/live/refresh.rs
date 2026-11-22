@@ -1,10 +1,10 @@
 //! Hints refresh what is shown even when the issue's version did not move:
 //! the API keeps the version for comments, threads, attachments, links,
 //! summaries, documents and reviews.
-use super::{DETAIL, GROUPS, UPDATES, hub, sse, version, wait};
+use super::{DETAIL, GROUPS, PULL_REQUESTS, UPDATES, hub, ready_and_caught_up, sse, version, wait};
 use super::{Server, server::Seen};
 use crate::{
-    hub::{Hub, LiveStatus},
+    hub::Hub,
     tests::{
         comment, common_path, detail, media::descriptor, page, pull_requests::pull_request, row,
     },
@@ -20,7 +20,6 @@ use std::{
 
 const ACTIVITY: &str = "/api/v1/issues/SUB-1/activity";
 const ATTACHMENTS: &str = "/api/v1/issues/SUB-1/attachments";
-const PULL_REQUESTS: &str = "/api/v1/issues/SUB-1/pull-requests";
 
 /// What the loopback API serves; the test moves it as another person would.
 #[derive(Default)]
@@ -131,9 +130,7 @@ fn live(shown: &Arc<Shown>) -> (Server, Hub, super::server::Peer) {
     let server = Server::new(move |seen| answer.answer(seen));
     let hub = hub(&server);
     let mut peer = server.peer();
-    peer.ready();
-    wait(&hub, |snapshot| snapshot.live() == LiveStatus::Live);
-    std::thread::sleep(Duration::from_millis(1000));
+    ready_and_caught_up(&server, &hub, &mut peer);
     (server, hub, peer)
 }
 

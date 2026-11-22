@@ -5,9 +5,10 @@ mod backoff;
 mod issue;
 mod updates;
 
-use super::{TOKEN, organisation, server::NettMock, wait_for};
+use super::{TOKEN, organisation, server::NettMock, wait, wait_for};
 use crate::hub::{Hub, LiveStatus};
 use crate::{Client, ListQuery, ListTab};
+use std::time::Duration;
 use subspace_framework::core::Secret;
 
 const STREAM: &str = "/api/v1/updates";
@@ -35,19 +36,47 @@ fn arrivals(mock: &NettMock, method: &str, suffix: &str) -> Vec<f64> {
         .collect()
 }
 
+/// Whether the mock has answered a request to `suffix` that arrived after
+/// `since`, in its seconds.
+fn answered_after(mock: &NettMock, suffix: &str, since: f64) -> bool {
+    mock.requests().iter().any(|r| {
+        r["answered"] == true
+            && r["at"].as_f64().is_some_and(|at| at > since)
+            && r["path"].as_str().is_some_and(|p| p.ends_with(suffix))
+    })
+}
+
+/// About a second after the stream turns live, the hub reads the list head
+/// and the open issue once more. A test that acts in that window races
+/// those reads, and a slow machine widens it: a landing issue read starts
+/// the attachment list again, and a list read takes a slow answer meant for
+/// the test's own. Waits until they are back: the list head answered and,
+/// with an issue open, the reads its landing sends.
+fn wait_for_ready_catch_up(mock: &NettMock, issue: bool) {
+    let opened = arrivals(mock, "GET", STREAM)
+        .last()
+        .copied()
+        .unwrap_or_default();
+    wait("the catch-up after ready", Duration::from_secs(10), &|| {
+        answered_after(mock, "/issues/groups", opened)
+            && (!issue || answered_after(mock, "/issues/OPS-1/pull-requests", opened))
+    });
+}
+
 fn works_hub(mock: &NettMock) -> (String, Hub) {
     let org = organisation(mock, "Fixture Works");
     let hub = hub(mock, &org);
     (org, hub)
 }
 
-fn wait_for_live_list(hub: &Hub) {
+fn wait_for_live_list(mock: &NettMock, hub: &Hub) {
     wait_for("a live stream", &|| {
         hub.snapshot().list().is_some() && hub.snapshot().live() == LiveStatus::Live
     });
+    wait_for_ready_catch_up(mock, false);
 }
 
-fn open_live_issue(hub: &Hub) {
+fn open_live_issue(mock: &NettMock, hub: &Hub) {
     hub.open_issue("OPS-1", crate::PROFILE_ID).unwrap();
     wait_for("a live stream and the issue", &|| {
         let snapshot = hub.snapshot();
@@ -56,4 +85,5 @@ fn open_live_issue(hub: &Hub) {
                 .issue()
                 .is_some_and(|issue| issue.detail().is_some())
     });
+    wait_for_ready_catch_up(mock, true);
 }

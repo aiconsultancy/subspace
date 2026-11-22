@@ -63,7 +63,7 @@ fn a_capability_read_elsewhere_that_enables_updates_turns_the_stream_on() {
 fn a_server_close_catches_up_through_rest_and_reads_capabilities_again() {
     let mock = NettMock::serving(&["updates"]);
     let (_, hub) = works_hub(&mock);
-    wait_for_live_list(&hub);
+    wait_for_live_list(&mock, &hub);
     let epoch = hub.snapshot().scope_epoch();
     mock.clear_requests();
     // As on queue overflow or lost authority.
@@ -99,7 +99,7 @@ fn a_server_close_catches_up_through_rest_and_reads_capabilities_again() {
 fn a_404_stops_streaming_for_the_session_and_refreshes_the_feature_list() {
     let mock = NettMock::serving(&["updates"]);
     let (org, hub) = works_hub(&mock);
-    wait_for_live_list(&hub);
+    wait_for_live_list(&mock, &hub);
     mock.clear_requests();
     // The followed team goes: the stream closes, and reopening it is 404.
     mock.archive_team(&org, "OPS");
@@ -124,7 +124,7 @@ fn a_404_stops_streaming_for_the_session_and_refreshes_the_feature_list() {
 fn a_broken_stream_catches_up_through_rest_before_it_reconnects() {
     let mock = NettMock::serving(&["updates"]);
     let (org, hub) = works_hub(&mock);
-    open_live_issue(&hub);
+    open_live_issue(&mock, &hub);
     // The catch-up's issue read is slow: the stream must wait for it.
     mock.config(
         &json!({"slowBody": {"path": format!("/api/v1/orgs/{org}/issues/OPS-1"),

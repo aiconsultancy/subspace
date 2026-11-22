@@ -14,7 +14,7 @@ use crate::{
     live::{self, LiveError, Record},
 };
 use serde_json::json;
-use server::{Seen, Server, route};
+use server::{Peer, Seen, Server, route};
 use std::{
     collections::BTreeSet,
     sync::{
@@ -29,6 +29,7 @@ const JWT: &str = "fixture-access";
 const UPDATES: &str = "/api/v1/updates";
 const DETAIL: &str = "/api/v1/issues/SUB-1";
 const GROUPS: &str = "/api/v1/issues/groups";
+const PULL_REQUESTS: &str = "/api/v1/issues/SUB-1/pull-requests";
 
 fn sse(_: &Seen) -> (u16, String) {
     (200, String::new())
@@ -83,6 +84,25 @@ fn hub(server: &Server) -> Hub {
                 .is_some_and(|issue| issue.detail().is_some())
     });
     hub
+}
+
+/// Sends `ready` and waits until the hub has caught up after it. A few
+/// tenths of a second after `ready` the hub reads the open issue and the
+/// list head again, and once the issue read is back it reads the issue's
+/// pull requests and starts its media lists again. A test that acts before
+/// that has landed races it, and a busy machine delays it further, so wait
+/// for those reads rather than a fixed time.
+fn ready_and_caught_up(server: &Server, hub: &Hub, peer: &mut Peer) {
+    let reads = [DETAIL, GROUPS, PULL_REQUESTS];
+    let before = reads.map(|path| server.count("GET", path));
+    peer.ready();
+    wait(hub, |snapshot| snapshot.live() == LiveStatus::Live);
+    wait(hub, |_| {
+        reads
+            .iter()
+            .zip(before)
+            .all(|(path, seen)| server.count("GET", path) > seen)
+    });
 }
 
 fn version(hub: &Hub) -> i64 {
@@ -182,9 +202,7 @@ fn ready_stream_resyncs_and_reads_again_after_a_hint() {
     let server = Server::new(api(current.clone()));
     let hub = hub(&server);
     let mut peer = server.peer();
-    peer.ready();
-    wait(&hub, |snapshot| snapshot.live() == LiveStatus::Live);
-    std::thread::sleep(Duration::from_millis(700));
+    ready_and_caught_up(&server, &hub, &mut peer);
     let details = server.count("GET", DETAIL);
     // Collaboration writes keep the version: a hint still reads once.
     peer.changed("SUB-1", 1);

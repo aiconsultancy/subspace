@@ -1371,6 +1371,8 @@ def hook_touch(ctx):
 
 
 def hook_requests(ctx):
+    """The request log, oldest first. An entry gains answered: true once
+    its whole answer has been written."""
     return 200, [dict(request) for request in ctx.server.requests]
 
 
@@ -3422,6 +3424,11 @@ class Handler(BaseHTTPRequestHandler):
             with subscriber.delivery:
                 pass
         self.respond(status, value)
+        if self.request_log is not None and not isinstance(value, Drop):
+            # The whole answer is written, so a test can tell a read that
+            # is still out from one that is back.
+            with self.server.lock:
+                self.request_log['answered'] = True
 
     def dispatch(self, path, query):
         api = path == '/api/v1' or path.startswith('/api/v1/')

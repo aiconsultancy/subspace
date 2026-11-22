@@ -1,5 +1,5 @@
 use super::super::{TOKEN, organisation, server::NettMock, wait};
-use super::{open_live_issue, streams, wait_for_live_list, works_hub};
+use super::{open_live_issue, streams, wait_for_live_list, wait_for_ready_catch_up, works_hub};
 use crate::hub::{Hub, LiveStatus};
 use crate::{Client, ListQuery, ListTab};
 use serde_json::json;
@@ -81,7 +81,7 @@ fn lost_access_closes_the_stream_and_retires_the_open_issue() {
 fn a_lasting_403_on_the_stream_stops_it_instead_of_polling() {
     let mock = NettMock::serving(&["updates"]);
     let (_, hub) = works_hub(&mock);
-    wait_for_live_list(&hub);
+    wait_for_live_list(&mock, &hub);
     mock.config(&json!({"streamRefusal": {"status": 403, "retryAfter": 0, "times": 50}}));
     mock.clear_requests();
     mock.close_streams();
@@ -104,7 +104,7 @@ fn a_lasting_403_on_the_stream_stops_it_instead_of_polling() {
 fn a_stream_stopped_by_refusals_comes_back_when_another_read_finds_access_changed() {
     let mock = NettMock::serving(&["updates"]);
     let (org, hub) = works_hub(&mock);
-    wait_for_live_list(&hub);
+    wait_for_live_list(&mock, &hub);
     mock.config(&json!({"streamRefusal": {"status": 403, "retryAfter": 0, "times": 50}}));
     mock.close_streams();
     wait("the stream off", Duration::from_secs(20), &|| {
@@ -127,7 +127,7 @@ fn a_stream_stopped_by_refusals_comes_back_when_another_read_finds_access_change
 fn a_change_the_last_refusals_own_read_finds_brings_the_stream_back() {
     let mock = NettMock::serving(&["updates"]);
     let (org, hub) = works_hub(&mock);
-    wait_for_live_list(&hub);
+    wait_for_live_list(&mock, &hub);
     mock.config(&json!({"streamRefusal": {"status": 403, "retryAfter": 0, "times": 2}}));
     mock.clear_requests();
     mock.close_streams();
@@ -155,6 +155,7 @@ fn a_count_already_out_when_access_went_does_not_come_back() {
             && snapshot.list().is_some()
             && snapshot.my_issues_count().is_some()
     });
+    wait_for_ready_catch_up(&mock, false);
     // The list is read again; it and the two counts after it are slow.
     // Access goes once NETT has answered the last count, while its body is
     // still on the way, and the stream's catch-up finds the list refused.
@@ -184,7 +185,7 @@ fn a_count_already_out_when_access_went_does_not_come_back() {
 fn an_attachment_list_already_out_when_access_went_does_not_come_back() {
     let mock = NettMock::with_args(&["updates", "attachments"], &["--keepalive-seconds", "1"]);
     let (org, hub) = works_hub(&mock);
-    open_live_issue(&hub);
+    open_live_issue(&mock, &hub);
     let list = format!("/api/v1/orgs/{org}/issues/OPS-1/attachments");
     mock.config(&json!({"slowBody": {"path": list, "seconds": 3.0, "times": 1}}));
     hub.load_attachments().unwrap();
