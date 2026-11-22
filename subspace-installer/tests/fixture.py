@@ -320,6 +320,8 @@ def check_shape():
     assert rear["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-starbase", "replies": "all"}]
     assert captain["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-orion", "replies": "all"}]
     assert captain["access"]["channelRequests"] == "nick-mention"
+    # A direct message starts no turn: Stargate points the sender at the agent's first channel.
+    assert rear["dmPolicy"] == captain["dmPolicy"] == "redirect"
     # Crew have no IRC registration of their own: they are reached through the captain.
     assert not rear.get("crew") and not captain.get("crew")
     assert captain["access"]["peerCaptains"] == ["example-atlas"]

@@ -404,6 +404,14 @@ class StandardChannelTests(unittest.TestCase):
         self.assertTrue(all(entry["access"]["channelRequests"] == "nick-mention" for entry in (rear, orion, lyra)))
         self.assertIn("example-atlas", orion["access"]["peerCaptains"])
 
+    def test_direct_messages_point_people_to_the_agents_own_channel(self):
+        cfg = validate(self.config, self.secrets)
+        rear, orion, lyra = self.officers(cfg)
+        # Stargate's redirect answers a direct message with the registration's first channel and starts no turn.
+        self.assertTrue(all(entry["dmPolicy"] == "redirect" for entry in (rear, orion, lyra)))
+        self.assertEqual([entry["channels"][0] for entry in (rear, orion, lyra)],
+                         ["#example-fleet-starbase", "#example-fleet-orion", "#example-fleet-lyra"])
+
     def test_the_standard_names_may_be_stated(self):
         self.config["irc"].update(starbaseChannel="#example-fleet-starbase",
                                   commandChannel=standard_channels.command("example-fleet"))

@@ -297,7 +297,11 @@ The rear admiral joins every standard channel. Each captain joins its own
 ship channel, fleet command and the other ship channels. Allowlisted humans
 wake the rear admiral in Starbase and the owning captain in its ship channel.
 Elsewhere, fleet command included, tag an agent by its current IRC nick to
-wake it; the rear admiral tags a captain the same way. Stargate verifies the
+wake it; the rear admiral tags a captain the same way. Direct messages are
+for people only: the installer sets Stargate's `dmPolicy` to `redirect`, so a
+direct message to the rear admiral or a captain starts no turn, and the agent
+answers a signed-in sender with a notice pointing at its own channel
+(Starbase for the rear admiral, the ship channel for a captain). Stargate verifies the
 sender's SASL account and keeps human authority separate from agent
 requests. Crew are not on IRC: ask the captain, who relays to its crew
 through Stargate's crew tools. Stargate uses IRC message IDs for strict wake

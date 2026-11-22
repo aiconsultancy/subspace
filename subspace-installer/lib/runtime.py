@@ -1112,6 +1112,9 @@ def irc_officer(cfg, person, registration):
     return {
         # Crew have no IRC registrations: their captain reaches them through Stargate's crew plugin.
         **registration, "server": server, "channels": channels, "access": access,
+        # Direct messages are for people only: an agent answers one with a notice naming its first
+        # channel, Starbase for the rear admiral and its ship for a captain, and starts no turn.
+        "dmPolicy": "redirect",
         # Route by authenticated account in strict mode.
         "features": {"botMode": False},
         "fleetPolicy": {"role": role, "humanAccounts": cfg["irc"]["allowedAccounts"],
