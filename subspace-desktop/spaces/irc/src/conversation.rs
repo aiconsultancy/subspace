@@ -30,6 +30,7 @@ use subspace_framework::dashboard::ChatInput;
 use subspace_framework::dashboard::Tokens;
 
 use crate::compose::{self, Draft};
+use crate::fleet::Roster;
 use crate::hub::Hub;
 use crate::markup::{Mentions, Ref};
 use crate::thread_status;
@@ -56,6 +57,8 @@ pub(crate) struct Conversation {
     pub(crate) summaries: summaries::Summaries,
     replies: Rc<transcript::replies::Counts>,
     statuses: Rc<thread_status::Statuses>,
+    /// The fleet roles on the buffer's network.
+    pub(crate) roster: Rc<Roster>,
     pub(crate) draft: Draft,
     pub(crate) tray: crate::uploads::outgoing::Tray,
     pub(crate) upload_viewer: Option<crate::uploads::viewer::Viewer>,
@@ -108,6 +111,7 @@ impl Conversation {
             summaries: Default::default(),
             replies: Rc::default(),
             statuses: Rc::default(),
+            roster: Rc::default(),
             draft,
             tray: crate::uploads::outgoing::Tray::default(),
             upload_viewer: None,
@@ -161,6 +165,7 @@ impl Conversation {
 
     /// Shows the buffer from its latest line.
     fn show_latest(&mut self, cx: &mut Context<Self>) {
+        self.refresh_roster(cx);
         self.refresh_replies(cx);
         self.refresh_statuses(cx);
         self.prune_summaries(cx);
@@ -201,11 +206,16 @@ impl Conversation {
     /// Re-reads the buffer after the hub changed, keeping the reader's place.
     fn sync(&mut self, cx: &mut Context<Self>) {
         let previous = (self.replies.clone(), self.statuses.clone());
+        let ranks_changed = self.refresh_roster(cx);
         self.refresh_replies(cx);
         self.refresh_statuses(cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
-        let changed = self.changed_reply_rows(&rows, (&*previous.0, &*previous.1), cx);
+        let changed = if ranks_changed {
+            (0..rows.len()).collect()
+        } else {
+            self.changed_reply_rows(&rows, (&*previous.0, &*previous.1), cx)
+        };
         let revision = self.find_active.then(|| find::revision(self, cx));
         let find_changed = self.scroll.rows() != rows || self.find_source != revision;
         self.find_source = revision;
@@ -247,6 +257,18 @@ impl Conversation {
                 changed
             })
             .unwrap_or_default()
+    }
+
+    /// Reads the fleet roles again, keeping the shared one while they are
+    /// unchanged. True when they changed, so rows that show a rank are
+    /// measured again.
+    fn refresh_roster(&mut self, cx: &App) -> bool {
+        let roster = self.hub.read(cx).roster(&self.buffer.network, cx);
+        let changed = *self.roster != *roster;
+        if changed {
+            self.roster = roster;
+        }
+        changed
     }
 
     fn refresh_replies(&mut self, cx: &App) {
@@ -291,6 +313,7 @@ impl Conversation {
             // Shared counts, not copies: each row takes a reference.
             replies: Rc::clone(&self.replies),
             statuses: Rc::clone(&self.statuses),
+            roster: Rc::clone(&self.roster),
         }
     }
 
@@ -317,10 +340,18 @@ impl Conversation {
             Target::Server => (network.name.clone(), crate::view::server_summary(network)),
             Target::Query(name) | Target::Channel(name) => (name.clone(), network.name.clone()),
         };
+        let kind = match &self.buffer.target {
+            Target::Channel(name) => self.roster.channel(name).cloned(),
+            _ => None,
+        };
+        let members = held.map(|held| held.members.as_slice()).unwrap_or_default();
+        let live = header::live(kind.as_ref(), &network.statuses, members);
         Some(header::HeaderFacts {
             title,
             network: context,
             topic,
+            kind,
+            live,
         })
     }
 

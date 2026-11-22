@@ -11,12 +11,15 @@ use gpui_kit::{AnyElement, App, IntoElement as _, ParentElement as _, Styled as 
 use subspace_framework::dashboard::{Tokens, anchored};
 
 use super::RowContext;
+use crate::hub::Hub;
 use crate::issues;
 use crate::markup::{Ref, Rendered};
 use crate::pull_requests;
 use crate::state::Entry;
 use crate::style::{self, Styled};
-use crate::text::RefHandlers;
+use crate::text::{Look, RefHandlers, look};
+use subspace_framework::contracts::github::ResolutionState as PullRequestAnswer;
+use subspace_framework::contracts::issues::ResolutionState as IssueAnswer;
 
 /// `styled` with unavailable issue references and the focused reference
 /// marked.
@@ -85,11 +88,16 @@ pub(super) fn focus_card(entry: &Entry, context: &RowContext) -> Option<AnyEleme
 }
 
 /// Reference handlers for styled text: opening through the thread-safe
-/// claim, and an issue reference's tooltip.
+/// claim, an issue reference's tooltip, and the state a chip shows.
 pub(super) fn handlers(context: &RowContext, styled: Option<Styled>) -> RefHandlers {
     let claim = context.claim.clone();
     let hub = context.hub.clone();
+    let answers = context.hub.clone();
     RefHandlers {
+        look: Arc::new(move |found, cx| {
+            let hub = answers.upgrade()?;
+            look_of(hub.read(cx), found)
+        }),
         open: claim,
         tooltip: Arc::new(move |found, window, cx| match found {
             Ref::Issue(identifier) => Some(issues::tooltip(identifier, hub.clone(), window, cx)),
@@ -97,5 +105,21 @@ pub(super) fn handlers(context: &RowContext, styled: Option<Styled>) -> RefHandl
             _ => None,
         }),
         styled,
+    }
+}
+
+/// The look of `found` from the answers `hub` holds: an available issue's
+/// state or pull request's status; nothing while it loads or is unresolved.
+fn look_of(hub: &Hub, found: &Ref) -> Option<Look> {
+    match found {
+        Ref::Issue(identifier) => match hub.issues.state(identifier)? {
+            IssueAnswer::Available(summary) => Some(look::issue(&summary.state)),
+            _ => None,
+        },
+        Ref::PullRequest(found) => match hub.pull_requests.state(&found.key)? {
+            PullRequestAnswer::Available(details) => Some(look::pull_request(details.status)),
+            _ => None,
+        },
+        _ => None,
     }
 }

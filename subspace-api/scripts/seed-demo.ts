@@ -34,6 +34,7 @@ const fleets = [
     ircHost,
     ircPort: port("SEED_IRC_PLAIN_PORT", 6667),
     ircTls: false,
+    commandChannel: "#aurora-command",
     agents: [
       { handle: "aurora-admiral", name: "aurora-admiral", rank: "rearAdmiral", ship: null },
       { handle: "aurora-lyra", name: "aurora-lyra", rank: "captain", ship: "Lyra" },
@@ -48,6 +49,7 @@ const fleets = [
     ircHost,
     ircPort: port("SEED_IRC_TLS_PORT", 6697),
     ircTls: true,
+    commandChannel: "#borealis-command",
     agents: [
       { handle: "borealis-admiral", name: "borealis-admiral", rank: "rearAdmiral", ship: null },
       { handle: "borealis-rigel", name: "borealis-rigel", rank: "captain", ship: "Rigel" },
@@ -115,6 +117,7 @@ async function seedActors(developer: Actor) {
       if (!existing.some((row) => row.serviceTokenClientId === email)) {
         await api.write("POST", "/agents", {
           ...agent,
+          ircNick: handle,
           fleet: fleet.slug,
           defaultModel: "rehearsal-model",
           serviceTokenClientId: email,

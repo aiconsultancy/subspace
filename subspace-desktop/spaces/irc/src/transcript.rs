@@ -15,6 +15,7 @@ mod targets;
 mod viewport;
 
 use chrono::{NaiveDate, TimeZone};
+use gpui_kit::base::TestTextExt as _;
 use gpui_kit::component::h_flex;
 use gpui_kit::{
     AnyElement, App, Entity, FontWeight, InteractiveElement as _, IntoElement as _,
@@ -147,7 +148,7 @@ pub(crate) fn row(
     let unread = |entry: &Entry| held.shown_unread().contains(&entry.seq);
     let element = match row {
         Row::History => history_control(origin, held.history.state == HistoryState::Loading),
-        Row::UnreadDivider(seq) => unread_divider(seq, &tokens),
+        Row::UnreadDivider(seq) => unread_divider(seq, held.shown_unread().len(), &tokens),
         Row::Item(Item::Day(date)) => day_separator(date, context.today, &tokens),
         Row::Item(Item::Message { at, continues }) => {
             return entry(at)
@@ -186,11 +187,25 @@ fn day_separator(date: NaiveDate, today: NaiveDate, tokens: &Tokens) -> AnyEleme
         .into_any_element()
 }
 
-fn unread_divider(seq: i64, tokens: &Tokens) -> AnyElement {
+/// The divider's words, in capitals as section labels are, with how many
+/// messages arrived since the conversation was last read, and its
+/// accessible name.
+fn unread_label(count: usize) -> (String, String) {
+    let noun = if count == 1 { "message" } else { "messages" };
+    (
+        format!("NEW SINCE YOU LEFT · {count}"),
+        format!("{count} new {noun} since you left"),
+    )
+}
+
+/// The rule and label above the first message that arrived since the
+/// conversation was last read.
+fn unread_divider(seq: i64, count: usize, tokens: &Tokens) -> AnyElement {
+    let (label, spoken) = unread_label(count);
     h_flex()
         .id(gpui_kit::SharedString::from(format!("irc-unread:{seq}")))
         .role(Role::Label)
-        .aria_label("New messages")
+        .aria_label(spoken)
         .test_support()
         .w_full()
         .gap_2()
@@ -198,13 +213,13 @@ fn unread_divider(seq: i64, tokens: &Tokens) -> AnyElement {
         .pt_2()
         .text_size(tokens.caption_size())
         .text_color(tokens.accent)
-        .child(div().flex_1().h(px(RULE_PX)).bg(tokens.accent))
         .child(
             div()
                 .flex_shrink_0()
                 .font_weight(FontWeight::MEDIUM)
-                .child("New"),
+                .child(label.clone().test_text(label)),
         )
+        .child(div().flex_1().h(px(RULE_PX)).bg(tokens.accent))
         .into_any_element()
 }
 
@@ -244,10 +259,22 @@ fn history_control(origin: (&Entity<Hub>, &BufferKey), loading: bool) -> AnyElem
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_unread_divider_says_how_many_arrived_since_you_left() {
+        assert_eq!(
+            unread_label(3),
+            (
+                "NEW SINCE YOU LEFT · 3".to_owned(),
+                "3 new messages since you left".to_owned()
+            )
+        );
+        assert_eq!(unread_label(1).1, "1 new message since you left");
+    }
+
     use chrono::Utc;
     use subspace_client_irc::{Event, LineKind};
 
-    use super::{Row, rows};
+    use super::{Row, rows, unread_label};
     use crate::fixtures::{at, channel, config, line, message};
     use crate::lines::Item;
     use crate::state::IrcState;

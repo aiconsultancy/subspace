@@ -20,12 +20,14 @@ use subspace_framework::dashboard::{ChatInput, ChatInputEvent};
 
 use crate::conversation::Conversation;
 
+mod agents;
 mod complete;
 mod offer;
 mod paste;
 mod recall;
 mod suggest;
 
+pub(crate) use agents::AgentNotice;
 pub(crate) use recall::Recall;
 
 /// While typing continues, an active notice is repeated at most this often.
@@ -43,6 +45,8 @@ pub(crate) struct Draft {
     list: Entity<CompletionList>,
     /// What the list offers now; `None` while it is closed.
     offer: Option<suggest::Offer>,
+    /// Why a private message to a fleet agent was not sent or opened.
+    pub agent_notice: Option<AgentNotice>,
     _subscription: Subscription,
 }
 
@@ -75,6 +79,7 @@ impl Draft {
             saving: false,
             list,
             offer: None,
+            agent_notice: None,
             _subscription: subscription,
         }
     }
@@ -98,6 +103,11 @@ impl Draft {
     ) -> AnyElement {
         v_flex()
             .w_full()
+            .children(
+                self.agent_notice
+                    .as_ref()
+                    .map(|notice| agents::notice(notice, cx)),
+            )
             .children(self.oversized.then(|| paste::notice(self.saving, cx)))
             .children(uploads.then(|| crate::uploads::outgoing::controls(&self.entity, tray, cx)))
             .child(self.list.clone())
@@ -207,6 +217,9 @@ fn submit(
     if text.is_empty() {
         return;
     }
+    if refuse_agent(conversation, &text, cx) {
+        return;
+    }
     conversation.send(
         Command::Input {
             buffer: conversation.buffer.clone(),
@@ -218,6 +231,23 @@ fn submit(
     draft.typing_since = None;
     draft.recall.push(text);
     draft.entity.update(cx, |input, cx| input.clear(window, cx));
+}
+
+/// Keeps a draft that would message a fleet agent privately, and shows why.
+/// True when it was kept.
+fn refuse_agent(
+    conversation: &mut Conversation,
+    text: &str,
+    cx: &mut Context<Conversation>,
+) -> bool {
+    let notice = agents::direct_target(text, &conversation.buffer.target)
+        .and_then(|nick| AgentNotice::refusing(&conversation.roster, &nick));
+    let refused = notice.is_some();
+    if refused {
+        conversation.draft.agent_notice = notice;
+        cx.notify();
+    }
+    refused
 }
 
 /// What to tell the channel after the draft changed, if anything.

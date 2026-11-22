@@ -9,7 +9,7 @@
 mod follow;
 mod preview;
 mod tile;
-mod tooltip;
+pub(crate) mod tooltip;
 
 use std::collections::HashMap;
 

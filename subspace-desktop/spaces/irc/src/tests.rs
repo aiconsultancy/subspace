@@ -196,7 +196,8 @@ fn opening_a_channel_shows_its_lines_members_and_reads_it(cx: &mut TestAppContex
             Some("alice: hello there"),
             "first message"
         );
-        assert_eq!(window.find("irc-unread:0").label(), Some("New messages"));
+        let unread = window.find("irc-unread:0").label().map(str::to_owned);
+        assert_eq!(unread.as_deref(), Some("2 new messages since you left"));
         assert!(
             window.try_find("irc-history").is_some(),
             "older history control"

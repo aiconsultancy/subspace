@@ -1,8 +1,8 @@
 //! Status pills and count badges.
 
 use gpui_kit::{Context, Window};
-use subspace_dashboard::Tokens;
 use subspace_dashboard::badge::{self, Pill, PillTone};
+use subspace_dashboard::{Tokens, Tone};
 
 use crate::ComponentGallery;
 use crate::samples::{Sample, sample};
@@ -27,6 +27,23 @@ pub(crate) fn pills(
             Pill::new(format!("gallery-sample:pill:{state}"), text).tone(tone),
         )
     })
+    .chain(
+        [
+            ("Hue: blue, a captain", "CAPTAIN", Tone::Blue),
+            (
+                "Hue: accent, the rear admiral",
+                "REAR ADMIRAL",
+                Tone::Accent,
+            ),
+        ]
+        .into_iter()
+        .map(|(state, text, hue)| {
+            sample(
+                state,
+                Pill::new(format!("gallery-sample:pill:{state}"), text).hue(hue),
+            )
+        }),
+    )
     .collect()
 }
 
