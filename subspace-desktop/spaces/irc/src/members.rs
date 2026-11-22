@@ -1,7 +1,8 @@
 //! A channel's member list, for a host that shows it beside the
 //! conversation, as the workspace's inspector does: operators, voiced and
 //! other members, each with a small avatar, the nick and a quiet note of
-//! the role the Space knows (`you`, `owner`, `admin`, `half-operator`), the
+//! the roles the Space knows (`you`, a fleet's `captain` or `rear admiral`,
+//! `owner`, `admin`, `half-operator`), the
 //! member's status line, if any, quietly under the nick, and dimmed while
 //! away. The host
 //! supplies the heading, with the count ([`MemberList::count`]), and the
@@ -20,6 +21,7 @@ use subspace_client_irc::{BufferKey, Member};
 use subspace_framework::dashboard::action::row_button;
 use subspace_framework::dashboard::{Tokens, avatar, truncated, workspace};
 
+use crate::fleet::{self, Roster};
 use crate::hub::Hub;
 use crate::state::Statuses;
 
@@ -65,11 +67,15 @@ pub(crate) fn groups(members: &[Member]) -> Vec<(Rank, Vec<&Member>)> {
     groups
 }
 
-/// The quiet note after a member's nick: `you` for our own nick, then the
-/// prefix's role where it says more than the section heading does (an
-/// owner, admin or half-operator among the operators). `None` when there
-/// is nothing to add.
-pub(crate) fn note(member: &Member, own_nick: Option<&str>) -> Option<String> {
+/// The quiet note after a member's nick: `you` for our own nick, the
+/// fleet `rank` the Space knows for it, then the prefix's role where it
+/// says more than the section heading does (an owner, admin or
+/// half-operator among the operators). `None` when there is nothing to add.
+pub(crate) fn note(
+    member: &Member,
+    own_nick: Option<&str>,
+    rank: Option<fleet::Rank>,
+) -> Option<String> {
     let you = own_nick.is_some_and(|nick| nick.eq_ignore_ascii_case(&member.nick));
     let role = match member.prefixes.chars().next() {
         Some('~') => Some("owner"),
@@ -77,11 +83,11 @@ pub(crate) fn note(member: &Member, own_nick: Option<&str>) -> Option<String> {
         Some('%') => Some("half-operator"),
         _ => None,
     };
-    match (you, role) {
-        (true, Some(role)) => Some(format!("you · {role}")),
-        (true, None) => Some("you".to_owned()),
-        (false, role) => role.map(str::to_owned),
-    }
+    let parts: Vec<&str> = [you.then_some("you"), rank.map(fleet::Rank::note), role]
+        .into_iter()
+        .flatten()
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 /// What a member list asks its host to do.
@@ -139,10 +145,12 @@ impl Render for MemberList {
         let statuses = network
             .map(|network| network.statuses.clone())
             .unwrap_or_default();
+        let roster = self.hub.read(cx).roster(&self.buffer.network, cx);
         let ours = Ours {
             owner: &self.me,
             nick: own.as_deref(),
             statuses: &statuses,
+            roster: &roster,
             tokens: &tokens,
         };
         let sections: Vec<AnyElement> = groups(&members)
@@ -163,11 +171,12 @@ impl Render for MemberList {
 }
 
 /// What every row of one list shares: the list, our own nick on its
-/// network, the network's nick statuses, and the tokens.
+/// network, the network's nick statuses and fleet roles, and the tokens.
 struct Ours<'a> {
     owner: &'a WeakEntity<MemberList>,
     nick: Option<&'a str>,
     statuses: &'a Statuses,
+    roster: &'a Roster,
     tokens: &'a Tokens,
 }
 
@@ -217,7 +226,7 @@ fn spoken(member: &Member, status: Option<&str>) -> String {
 /// away.
 fn content(ours: &Ours<'_>, member: &Member, status: Option<&str>) -> Div {
     let tokens = ours.tokens;
-    let role = note(member, ours.nick);
+    let role = note(member, ours.nick, ours.roster.rank(&member.nick));
     let name = h_flex()
         .w_full()
         .min_w_0()
@@ -238,7 +247,7 @@ fn content(ours: &Ours<'_>, member: &Member, status: Option<&str>) -> Div {
                     .whitespace_nowrap()
                     .text_size(tokens.caption_size())
                     .text_color(tokens.muted)
-                    .child(role),
+                    .child(role.clone().test_text(role)),
             )
         });
     let status = status.map(|text| {
@@ -268,6 +277,7 @@ mod tests {
     use subspace_client_irc::Member;
 
     use super::{note, spoken};
+    use crate::fleet::Rank;
 
     fn member(nick: &str, prefixes: &str) -> Member {
         Member {
@@ -282,22 +292,47 @@ mod tests {
     fn a_member_s_note_says_you_and_a_role_the_section_does_not() {
         let own = Some("Local-Operator");
         assert_eq!(
-            note(&member("local-operator", "@"), own).as_deref(),
+            note(&member("local-operator", "@"), own, None).as_deref(),
             Some("you"),
             "our own nick, matched ignoring case; the section says operator"
         );
         assert_eq!(
-            note(&member("local-operator", "~@"), own).as_deref(),
+            note(&member("local-operator", "~@"), own, None).as_deref(),
             Some("you · owner")
         );
-        assert_eq!(note(&member("alice", "&"), own).as_deref(), Some("admin"));
         assert_eq!(
-            note(&member("bob", "%"), own).as_deref(),
+            note(&member("alice", "&"), own, None).as_deref(),
+            Some("admin")
+        );
+        assert_eq!(
+            note(&member("bob", "%"), own, None).as_deref(),
             Some("half-operator")
         );
-        assert_eq!(note(&member("carol", "@"), own), None);
-        assert_eq!(note(&member("dave", "+"), own), None);
-        assert_eq!(note(&member("erin", ""), None), None);
+        assert_eq!(note(&member("carol", "@"), own, None), None);
+        assert_eq!(note(&member("dave", "+"), own, None), None);
+        assert_eq!(note(&member("erin", ""), None, None), None);
+    }
+
+    #[test]
+    fn a_fleet_agent_s_note_says_its_rank() {
+        let own = Some("mira");
+        assert_eq!(
+            note(&member("aurora-lyra", ""), own, Some(Rank::Captain)).as_deref(),
+            Some("captain")
+        );
+        assert_eq!(
+            note(
+                &member("aurora-admiral", "~@"),
+                own,
+                Some(Rank::RearAdmiral)
+            )
+            .as_deref(),
+            Some("rear admiral · owner")
+        );
+        assert_eq!(
+            note(&member("Mira", ""), own, Some(Rank::Captain)).as_deref(),
+            Some("you · captain")
+        );
     }
 
     #[test]

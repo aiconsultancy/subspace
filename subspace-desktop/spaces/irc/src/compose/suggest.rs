@@ -8,6 +8,7 @@ use std::ops::Range;
 use subspace_client_irc::{BufferKey, COMMANDS, CommandHelp, FirstArgument, Member, Target};
 use subspace_framework::dashboard::chat_input::completion::{CompletionItem, word_before};
 
+use crate::fleet::{Rank, Roster};
 use crate::state::{IrcState, is_message};
 
 /// Lines read back for who spoke recently.
@@ -22,6 +23,8 @@ pub(crate) struct Person {
     /// The highest channel prefix, such as `@`.
     pub prefix: Option<char>,
     pub away: bool,
+    /// The fleet rank the Space knows for the nick.
+    pub rank: Option<Rank>,
 }
 
 impl Person {
@@ -30,6 +33,7 @@ impl Person {
             nick: nick.to_owned(),
             prefix: None,
             away: false,
+            rank: None,
         }
     }
 
@@ -38,6 +42,7 @@ impl Person {
             nick: member.nick.clone(),
             prefix: member.prefixes.chars().next(),
             away: member.away,
+            rank: None,
         }
     }
 }
@@ -177,16 +182,26 @@ fn people(people: &[Person], query: &str, sigil: &str) -> Vec<Suggestion> {
         .collect()
 }
 
+/// A person's row: the channel prefix and the fleet rank as the trailing
+/// mark, as the member list notes them, such as `@ · captain`.
 fn person_item(person: &Person) -> CompletionItem {
     let rank = match person.prefix {
         Some('~' | '&' | '@' | '%') => ", operator",
         Some('+') => ", voiced",
         _ => "",
     };
+    let fleet = person
+        .rank
+        .map(|rank| format!(", {}", rank.note()))
+        .unwrap_or_default();
     let away = if person.away { ", away" } else { "" };
-    let mark = person.prefix.map(String::from).unwrap_or_default();
-    CompletionItem::person(person.nick.clone(), mark, person.away)
-        .spoken(format!("{}{rank}{away}", person.nick))
+    let prefix = person.prefix.map(String::from);
+    let mark: Vec<String> = prefix
+        .into_iter()
+        .chain(person.rank.map(|rank| rank.note().to_owned()))
+        .collect();
+    CompletionItem::person(person.nick.clone(), mark.join(" · "), person.away)
+        .spoken(format!("{}{rank}{fleet}{away}", person.nick))
 }
 
 /// Channels whose name starts with `query`, with or without its `#`.
@@ -217,6 +232,14 @@ impl Facts {
             channels,
             joined,
         }
+    }
+
+    /// The same facts with each person's fleet rank from `roster`.
+    pub fn ranked(mut self, roster: &Roster) -> Self {
+        for person in self.people.iter_mut().chain(self.everyone.iter_mut()) {
+            person.rank = roster.rank(&person.nick);
+        }
+        self
     }
 }
 

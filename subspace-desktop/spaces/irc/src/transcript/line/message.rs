@@ -36,7 +36,13 @@ pub(crate) fn message(
         .min_w_0()
         .gap_0p5()
         .when(!continues, |column| {
-            column.child(header(entry, &nick, &tokens, cx))
+            column.child(header(
+                entry,
+                &nick,
+                context.roster.rank(&nick),
+                &tokens,
+                cx,
+            ))
         })
         .when(!entry.line.text.is_empty(), |column| {
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))

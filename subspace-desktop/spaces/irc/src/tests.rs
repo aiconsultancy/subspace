@@ -15,6 +15,7 @@ mod back;
 mod completion;
 mod conversation;
 mod counter;
+mod fleet;
 mod focus;
 mod formatting;
 mod hidden_navigator;

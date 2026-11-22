@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription, Task};
 use subspace_api_client::initiatives::Catalog;
-use subspace_client_irc::{BufferKey, Command, Event, NetworkConfig, Runtime};
+use subspace_client_irc::{BufferKey, Command, Event, NetworkConfig, NetworkId, Runtime};
 use subspace_framework::dashboard::{Services, full_text_service, notifications, prefs};
 
 use crate::config::{self, Settings};
@@ -72,6 +72,13 @@ pub(crate) struct Hub {
     captain_notifications: captain_notifications::Monitor,
     _timer: Option<Task<()>>,
     _settings: Option<Subscription>,
+}
+
+impl Hub {
+    /// The fleet roles on `network`, from the initiatives catalogue.
+    pub(crate) fn roster(&self, network: &NetworkId, cx: &App) -> crate::fleet::Roster {
+        self.initiatives.roster(&self.applied.networks, network, cx)
+    }
 }
 
 /// Starts the runtime with the configured networks; once per process.

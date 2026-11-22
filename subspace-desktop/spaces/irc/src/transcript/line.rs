@@ -15,6 +15,7 @@ use gpui_kit::{
     ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
     TestSupportExt as _, WeakEntity, Window, div, px,
 };
+use subspace_framework::dashboard::badge::{Pill, PillTone};
 use subspace_framework::dashboard::workspace::READING_WIDTH_PX;
 use subspace_framework::dashboard::{Tokens, Tone, avatar, chat_bubble};
 
@@ -23,6 +24,7 @@ mod message;
 pub(crate) use message::{displayed, message};
 
 use super::fill::{RowFill, filled};
+use crate::fleet::Rank;
 use crate::hub::Hub;
 use crate::markup::{self, Mentions, Ref, Rendered};
 use crate::state::Entry;
@@ -63,6 +65,8 @@ pub(crate) struct RowContext {
     pub replies: Rc<super::replies::Counts>,
     /// Request status lines from the same sync, shared the same way.
     pub statuses: Rc<crate::thread_status::Statuses>,
+    /// The fleet roles on the buffer's network, which mark agents' names.
+    pub roster: Rc<crate::fleet::Roster>,
 }
 
 fn time(entry: &Entry) -> String {
@@ -114,10 +118,12 @@ fn gutter_time(
         .into_any_element()
 }
 
-/// The sender's name in strong text in their tone, a notice mark, and the
-/// time in quiet monospace.
-fn header(entry: &Entry, nick: &str, tokens: &Tokens, cx: &App) -> AnyElement {
+/// The sender's name in strong text in their tone, a fleet agent's rank
+/// mark, a notice mark, and the time in quiet monospace. A captain's or the
+/// rear admiral's name takes its rank's tone.
+fn header(entry: &Entry, nick: &str, rank: Option<Rank>, tokens: &Tokens, cx: &App) -> AnyElement {
     let notice = entry.line.kind == subspace_client_irc::LineKind::Notice;
+    let tone = rank.map_or_else(|| style::sender_tone(nick, entry.line.own), Rank::tone);
     h_flex()
         .id(SharedString::from(format!("irc-line:{}:sender", entry.seq)))
         .test_support()
@@ -131,9 +137,10 @@ fn header(entry: &Entry, nick: &str, tokens: &Tokens, cx: &App) -> AnyElement {
                 .whitespace_nowrap()
                 .text_size(tokens.row_font)
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(tokens.tone(style::sender_tone(nick, entry.line.own)))
+                .text_color(tokens.tone(tone))
                 .child(nick.to_owned()),
         )
+        .children(rank.map(|rank| rank_mark(entry, rank)))
         .when(notice, |header| {
             header.child(
                 div()
@@ -144,6 +151,16 @@ fn header(entry: &Entry, nick: &str, tokens: &Tokens, cx: &App) -> AnyElement {
         })
         .child(time_text(entry, tokens, cx))
         .into_any_element()
+}
+
+/// The shared pill after a fleet agent's name, such as `CAPTAIN`.
+fn rank_mark(entry: &Entry, rank: Rank) -> Pill {
+    Pill::new(
+        SharedString::from(format!("irc-line:{}:rank", entry.seq)),
+        rank.mark(),
+    )
+    .tone(PillTone::Muted)
+    .aria_label(rank.note())
 }
 
 /// The message text as one selectable text view: formatted text rewritten

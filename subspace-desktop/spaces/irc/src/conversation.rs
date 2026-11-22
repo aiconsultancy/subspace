@@ -30,6 +30,7 @@ use subspace_framework::dashboard::ChatInput;
 use subspace_framework::dashboard::Tokens;
 
 use crate::compose::{self, Draft};
+use crate::fleet::Roster;
 use crate::hub::Hub;
 use crate::markup::{Mentions, Ref};
 use crate::thread_status;
@@ -56,6 +57,8 @@ pub(crate) struct Conversation {
     pub(crate) summaries: summaries::Summaries,
     replies: Rc<transcript::replies::Counts>,
     statuses: Rc<thread_status::Statuses>,
+    /// The fleet roles on the buffer's network.
+    pub(crate) roster: Rc<Roster>,
     pub(crate) draft: Draft,
     pub(crate) tray: crate::uploads::outgoing::Tray,
     pub(crate) upload_viewer: Option<crate::uploads::viewer::Viewer>,
@@ -108,6 +111,7 @@ impl Conversation {
             summaries: Default::default(),
             replies: Rc::default(),
             statuses: Rc::default(),
+            roster: Rc::default(),
             draft,
             tray: crate::uploads::outgoing::Tray::default(),
             upload_viewer: None,
@@ -161,6 +165,7 @@ impl Conversation {
 
     /// Shows the buffer from its latest line.
     fn show_latest(&mut self, cx: &mut Context<Self>) {
+        self.refresh_roster(cx);
         self.refresh_replies(cx);
         self.refresh_statuses(cx);
         self.prune_summaries(cx);
@@ -201,6 +206,7 @@ impl Conversation {
     /// Re-reads the buffer after the hub changed, keeping the reader's place.
     fn sync(&mut self, cx: &mut Context<Self>) {
         let previous = (self.replies.clone(), self.statuses.clone());
+        self.refresh_roster(cx);
         self.refresh_replies(cx);
         self.refresh_statuses(cx);
         self.prune_summaries(cx);
@@ -249,6 +255,15 @@ impl Conversation {
             .unwrap_or_default()
     }
 
+    /// Reads the fleet roles again, keeping the shared one while they are
+    /// unchanged.
+    fn refresh_roster(&mut self, cx: &App) {
+        let roster = self.hub.read(cx).roster(&self.buffer.network, cx);
+        if *self.roster != roster {
+            self.roster = Rc::new(roster);
+        }
+    }
+
     fn refresh_replies(&mut self, cx: &App) {
         let counts = self
             .hub
@@ -291,6 +306,7 @@ impl Conversation {
             // Shared counts, not copies: each row takes a reference.
             replies: Rc::clone(&self.replies),
             statuses: Rc::clone(&self.statuses),
+            roster: Rc::clone(&self.roster),
         }
     }
 

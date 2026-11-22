@@ -14,6 +14,7 @@ mod context;
 mod conversation;
 mod dock;
 mod editor;
+mod fleet;
 mod hub;
 mod initiatives;
 mod issues;

@@ -8,6 +8,7 @@ use subspace_api_client::model::{Fleet, MemberInitiative};
 use subspace_client_irc::{BufferKey, Command, NetworkConfig, NetworkId, Target};
 
 use crate::Irc;
+use crate::fleet::Roster;
 use crate::hub::Hub;
 
 const MAX_CHANNEL_BYTES: usize = 200;
@@ -107,6 +108,44 @@ impl InitiativeIrc {
     ) -> bool {
         endpoint.unwrap_or(&self.default).matches(network)
     }
+
+    /// The fleet roles on `network`: those of the catalogue's fleets whose
+    /// IRC server it is, as an initiative of that fleet would pick it among
+    /// `networks`. None for a network that serves no fleet.
+    pub(crate) fn roster(
+        &self,
+        networks: &[NetworkConfig],
+        network: &NetworkId,
+        cx: &gpui_kit::App,
+    ) -> Roster {
+        let memberships = self.catalog.read(cx).memberships();
+        Roster::new(fleets_on(
+            memberships,
+            networks,
+            network,
+            self.loopback_fixture,
+        ))
+    }
+}
+
+/// The fleets of `initiatives` whose server is `network` among `networks`.
+fn fleets_on<'a>(
+    initiatives: &'a [MemberInitiative],
+    networks: &[NetworkConfig],
+    network: &NetworkId,
+    loopback_fixture: bool,
+) -> Vec<&'a Fleet> {
+    initiatives
+        .iter()
+        .filter(|initiative| {
+            Endpoint::from_fleet(initiative).is_some_and(|endpoint| {
+                eligible(networks, &endpoint, loopback_fixture)
+                    .iter()
+                    .any(|eligible| eligible.id == *network)
+            })
+        })
+        .filter_map(|initiative| initiative.fleet.as_ref())
+        .collect()
 }
 
 pub(crate) fn loopback_fixture() -> bool {
@@ -339,6 +378,37 @@ mod tests {
         // No exact match: any loopback network, as the fixture API's fleets
         // need not name the local test server.
         assert_eq!(ids("ircs://irc.example.com:6697").len(), 2);
+    }
+
+    #[test]
+    fn fleet_roles_belong_only_to_the_network_on_the_fleet_s_server() {
+        let initiatives: Vec<subspace_api_client::model::MemberInitiative> =
+            serde_json::from_value(serde_json::json!([
+                {"id": "one", "name": "One", "channels": "#aurora-starbase", "fleetId": "aurora",
+                 "fleet": {"id": "aurora", "slug": "aurora", "ircHost": "irc.example.com",
+                           "ircPort": 6697, "ircTls": true, "captainNames": ["Lyra"]}},
+                {"id": "two", "name": "Two", "channels": "#local", "fleetId": null, "fleet": null}
+            ]))
+            .unwrap();
+        let mut fleet = config();
+        fleet.host = "irc.example.com".into();
+        fleet.port = 6697;
+        fleet.tls = true;
+        let mut local = config();
+        local.id = subspace_client_irc::NetworkId("home".into());
+        local.host = "irc.example.org".into();
+        let networks = [fleet.clone(), local.clone()];
+        let slugs = |network: &NetworkConfig| {
+            super::fleets_on(&initiatives, &networks, &network.id, false)
+                .iter()
+                .map(|fleet| fleet.slug.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(slugs(&fleet), ["aurora"]);
+        assert!(
+            slugs(&local).is_empty(),
+            "a local-only network serves no fleet"
+        );
     }
 
     #[test]
