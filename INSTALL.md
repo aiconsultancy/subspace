@@ -278,6 +278,17 @@ answer it now.
     admiral to Teams. Both need an app the user creates and its tokens, so
     they follow those guides with the user after the fleet runs. **Default:
     neither.**
+14. **Agent dispatch?** (**no**, `--agent-dispatch` to switch it on) With it
+    on, issues flagged *Ready for agents* are offered to the captains in
+    fleet command, and issues assigned to a captain are announced to it
+    there (see [Agent dispatch](README.md#agent-dispatch)). It needs the
+    Subspace API on this VM and repositories, because only a captain with
+    crew can accept an offer. Setup registers the rear admiral and captains
+    as the fleet's API agents and gives the rear admiral's gateway a
+    development sign-in token, which lasts eight hours: re-run the installer
+    to renew it, or see
+    [Agent dispatch](subspace-installer/README.md#agent-dispatch) for a
+    long-lived token. An unattended run leaves it off.
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
@@ -854,6 +865,10 @@ subnets in the user's virtual network. Run it only when the user asks.
      demo data if asked, creates an initiative for the fleet with its channels
      and registers the fleet;
    - turns on Stargate's Fleet API when the installed Stargate has it;
+   - with agent dispatch on, registers the rear admiral and captains as the
+     fleet's API agents, gives Stargate's gateway user, and no agent, access
+     to the API's port, and switches dispatch on in the rear admiral's
+     gateway;
    - applies the lockdown and runs the privacy audit.
 4. Confirms the lockdown over a fresh SSH connection, then runs the audit
    again. If that connection fails, the change rolls itself back after three

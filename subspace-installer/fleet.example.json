@@ -31,6 +31,12 @@
     "channel": "#example-fleet-starbase",
     "target": "atlas"
   },
+  "agentDispatch": {
+    "enabled": false,
+    "pollIntervalSeconds": 120,
+    "answerTimeoutSeconds": 300,
+    "retryLadderSeconds": [3600, 10800, 21600, 43200]
+  },
   "usage": {
     "families": {
       "claude": {},

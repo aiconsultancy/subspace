@@ -123,7 +123,7 @@ other tenants, people and channels, and messages from bots.
   admiral; see [Slack](slack.md).
 - **Approvals in Teams:** Stargate can offer native permission decisions to
   chosen allowed users. See
-  [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/df03d10b039c126a2fc0b5522bf7841ef07bc799/docs/teams.md),
+  [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/teams.md),
   which also covers authentication and delivery in detail.
 - **Several fleets:** each fleet's rear admiral needs its own Azure Bot,
   identity, Teams app and callback hostname.

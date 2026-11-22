@@ -345,8 +345,15 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertIsNone(validate(config, secrets)["stargate"]["api"])
         config["stargate"] = {"api": {}}
         cfg = validate(config, secrets)
-        self.assertEqual(cfg["stargate"]["api"], {"port": 8484})
+        # Stargate allows only subspace://* by default; the Windows Fleet Console needs its own origin.
+        self.assertEqual(cfg["stargate"]["api"],
+                         {"port": 8484, "corsOrigins": ["subspace://*", "https://subspace.fleet-console"]})
         self.assertIn(8484, cfg["listeners"])
+        config["stargate"] = {"api": {"corsOrigins": ["subspace://*", "https://subspace.console-two"]}}
+        self.assertEqual(validate(config, secrets)["stargate"]["api"]["corsOrigins"][1], "https://subspace.console-two")
+        config["stargate"] = {"api": {"corsOrigins": ["https://user@subspace.example"]}}
+        with self.assertRaisesRegex(Invalid, "CORS origin"):
+            validate(config, secrets)
         config["stargate"] = {"api": {"port": 8070}}
         with self.assertRaisesRegex(Invalid, "distinct ports"):
             validate(config, secrets)
@@ -355,6 +362,12 @@ class FleetPolicyTests(unittest.TestCase):
             validate(config, secrets)
         result = rules({"dashboard": 8070, "agentsview": 8080, "proxy": 8317, "stargate-api": 8484}, [1700], [701])
         self.assertIn('oifname "lo" tcp dport 8484 meta skuid != { 0, 1700 } reject', result)
+
+    def test_stargate_is_pinned_to_a_release_with_agent_dispatch(self):
+        # v0.43.0's commit; the installer fetches its tag so the Fleet API reports the version.
+        self.assertEqual(runtime.STARGATE_REF, "fcf6ac75d9c780878c06c8b49fb160e4a27832ff")
+        cfg = validate(example_config(), officer_secrets())
+        self.assertEqual(cfg["stargate"]["ref"], runtime.STARGATE_REF)
 
     def test_toolchain_versions_are_data(self):
         self.assertEqual(toolchain_config({"node": False, "go": "1.26.1"}), {"go": "1.26.1"})
@@ -467,6 +480,196 @@ class StandardChannelTests(unittest.TestCase):
         self.config["captains"].pop()
         secrets["ircPasswords"].pop("example-ship18")
         self.assertEqual(len(validate(self.config, secrets)["irc"]["channels"]), 20)
+
+
+FIXTURE_JWT = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.fixture"
+ADMIN_JWT = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJhZG1pbiJ9.admin"
+
+
+class AgentDispatchTests(unittest.TestCase):
+    """Stargate's agent dispatch: off by default, and on only where it can work."""
+
+    def setUp(self):
+        self.config = example_config()
+        self.config["api"] = {"url": "https://subspace.example.com"}
+        # Crew need a repository; only a captain with crew has the pinned root that answers offers.
+        self.config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        self.secrets = {**officer_secrets(), "apiToken": ADMIN_JWT}
+
+    def enable(self, **settings):
+        self.config["agentDispatch"] = {"enabled": True, **settings}
+        self.secrets["rearAdmiralApiToken"] = FIXTURE_JWT
+
+    def test_dispatch_is_off_by_default(self):
+        cfg = validate(self.config, self.secrets)
+        self.assertIsNone(cfg["agentDispatch"])
+        self.assertEqual(runtime.agent_dispatch_settings(cfg), (None, {}))
+        self.config["agentDispatch"] = {"enabled": False, "pollIntervalSeconds": 60}
+        self.assertIsNone(validate(self.config, self.secrets)["agentDispatch"])
+
+    def test_dispatch_block_uses_the_command_channel_and_stargate_defaults(self):
+        self.enable()
+        cfg = validate(self.config, self.secrets)
+        block, environment = runtime.agent_dispatch_settings(cfg)
+        self.assertEqual(block, {
+            "enabled": True, "fleet": "example-fleet",
+            "api": {"baseUrl": "https://subspace.example.com/api", "tokenEnv": "SUBSPACE_DISPATCH_TOKEN"},
+            "messaging": {"type": "irc", "registration": "atlas", "channel": "#example-fleet-command"},
+            "captainAccounts": {"orion": "example-orion", "Orion": "example-orion"},
+            "pollIntervalSeconds": 120, "answerTimeoutSeconds": 300,
+            "retryLadderSeconds": [3600, 10800, 21600, 43200],
+        })
+        self.assertEqual(block["messaging"]["channel"], standard_channels.command("example-fleet"))
+        # The block names the variable only; the token goes in the gateway's private environment.
+        self.assertNotIn(FIXTURE_JWT, json.dumps(block))
+        self.assertEqual(environment, {"SUBSPACE_DISPATCH_TOKEN": FIXTURE_JWT})
+
+    def test_timings_are_overridable_within_stargates_ranges(self):
+        self.enable(pollIntervalSeconds=30, answerTimeoutSeconds=600, retryLadderSeconds=[])
+        block, _ = runtime.agent_dispatch_settings(validate(self.config, self.secrets))
+        self.assertEqual((block["pollIntervalSeconds"], block["answerTimeoutSeconds"], block["retryLadderSeconds"]),
+                         (30, 600, []))
+        for key, value in (("pollIntervalSeconds", 29), ("pollIntervalSeconds", 3601), ("answerTimeoutSeconds", 59),
+                           ("retryLadderSeconds", [59]), ("retryLadderSeconds", [3600] * 11),
+                           ("pollIntervalSeconds", "120"), ("retryLadderSeconds", 3600)):
+            self.enable(**{key: value})
+            with self.subTest(key=key, value=value), self.assertRaisesRegex(Invalid, f"agentDispatch.{key}|{key}"):
+                validate(self.config, self.secrets)
+        self.config["agentDispatch"] = {"enabled": True, "channel": "#elsewhere"}
+        with self.assertRaisesRegex(Invalid, "unknown field"):
+            validate(self.config, self.secrets)
+
+    def test_what_cannot_work_is_refused(self):
+        self.enable()
+        no_api = json.loads(json.dumps(self.config))
+        del no_api["api"]
+        secrets = {key: value for key, value in self.secrets.items() if key != "apiToken"}
+        with self.assertRaisesRegex(Invalid, "no Subspace API registration"):
+            validate(no_api, secrets)
+        no_captains = json.loads(json.dumps(self.config))
+        no_captains["captains"] = []
+        with self.assertRaisesRegex(Invalid, "no captains"):
+            validate(no_captains, {**self.secrets, "ircPasswords": {"example-atlas": "fixture-password"}})
+        claude = json.loads(json.dumps(self.config))
+        claude["rearAdmiral"]["harness"] = {"type": "claude-sdk", "family": "claude"}
+        with self.assertRaisesRegex(Invalid, "rear admiral uses claude-sdk"):
+            validate(claude, self.secrets)
+        without_token = {key: value for key, value in self.secrets.items() if key != "rearAdmiralApiToken"}
+        with self.assertRaisesRegex(Invalid, "supply rearAdmiralApiToken"):
+            validate(self.config, without_token)
+        with self.assertRaisesRegex(Invalid, "not apiToken"):
+            validate(self.config, {**self.secrets, "rearAdmiralApiToken": ADMIN_JWT})
+        with self.assertRaisesRegex(Invalid, "Invalid rearAdmiralApiToken"):
+            validate(self.config, {**self.secrets, "rearAdmiralApiToken": "not a token"})
+        crewless = json.loads(json.dumps(self.config))
+        crewless["repositories"] = []
+        with self.assertRaisesRegex(Invalid, "no captain can answer an offer"):
+            validate(crewless, self.secrets)
+        asking = json.loads(json.dumps(self.config))
+        asking["captains"][0]["harness"] = {"permissions": [{"action": "*", "resource": "*", "effect": "ask"}]}
+        with self.assertRaisesRegex(Invalid, "Captain orion's harness.permissions.*explicit allow or deny"):
+            validate(asking, self.secrets)
+        # Rules that cannot reach a fleet tool may still ask.
+        asking["captains"][0]["harness"]["permissions"] = [
+            {"action": "*", "resource": "*", "effect": "deny"}, {"action": "shell", "resource": "git *", "effect": "ask"}]
+        validate(asking, self.secrets)
+        del self.config["agentDispatch"]
+        with self.assertRaisesRegex(Invalid, "only for agent dispatch"):
+            validate(self.config, self.secrets)
+
+    def test_captains_answer_offers_through_the_fleet_plugin(self):
+        self.enable()
+        cfg = validate(self.config, self.secrets)
+        rear, captain = cfg["members"]
+        gateway = Path("/var/lib/subspace-fleet/gateway")
+        self.assertIn(runtime.DISPATCH_GRANT, runtime.captain_permissions(cfg, captain))
+        # Nothing until both the captain's and the rear admiral's roots are pinned.
+        self.assertIsNone(runtime.fleet_control(cfg, captain, "ses_captain", None, gateway))
+        self.assertIsNone(runtime.fleet_control(cfg, captain, None, "ses_rear", gateway))
+        self.assertIsNone(runtime.fleet_control(cfg, rear, "ses_rear", "ses_rear", gateway))
+        control = runtime.fleet_control(cfg, captain, "ses_captain", "ses_rear", gateway)
+        self.assertEqual(control, {
+            "socketPath": "/var/lib/subspace-fleet/fleet-control/orion/fleet.sock",
+            "statePath": "/var/lib/subspace-fleet/gateway/fleet-control/evidence.sqlite",
+            # The rear_admiral target is how the captain recognises dispatch requests and records offers.
+            "targets": [{"id": "atlas", "account": "example-atlas", "role": "rear_admiral",
+                         "channel": "#example-fleet-orion", "sessionID": "ses_rear"}],
+        })
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        documents = roles.role_documents(cfg, captain, Path("/references/atlas"), home)
+        saved = {}
+
+        def save(name, settings, _user):
+            saved[name] = settings
+            return Path(f"/etc/subspace-fleet/{name}.json")
+
+        with patch.object(runtime, "directory"), patch.object(runtime, "save_settings", side_effect=save), \
+                patch.object(runtime, "serve_unit", return_value="subspace-fleet-engine-orion.service"):
+            _, backend, _, _ = runtime.render_engine(cfg, captain, home, home / "workspace/project", 4097, b"seed",
+                                                     documents, "ses_captain", answers_offers=True)
+            crew_plugin, fleet_plugin = saved["opencode-orion"]["plugins"]
+            self.assertEqual(fleet_plugin, {
+                "package": f"/opt/subspace-fleet/src/stargate-{runtime.STARGATE_REF}/src/fleet",
+                "options": {"socketPath": control["socketPath"]},
+            })
+            self.assertIn(runtime.DISPATCH_GRANT, backend["permissions"])
+            # The rear admiral's IRC registration is pinned to the root that captains name.
+            _, backend, _, _ = runtime.render_engine(cfg, rear, Path("/var/lib/subspace-fleet/agents/atlas"),
+                                                     Path("/references/atlas/project"), 4096, b"seed",
+                                                     roles.role_documents(cfg, rear, Path("/references/atlas"), home),
+                                                     "ses_rear")
+            self.assertEqual(backend["sessionID"], "ses_rear")
+            self.assertNotIn("plugins", saved["opencode-atlas"])
+        runtime.fleet_ipc_policy(runtime.captain_permissions(cfg, captain), "fixture")
+
+    def test_role_guidance_follows_the_dispatch_switch(self):
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        references = Path("/references/atlas")
+        cfg = validate(self.config, self.secrets)
+        for person in cfg["members"]:
+            text = roles.role_documents(cfg, person, references, home)["instructions"]
+            self.assertIn("Agent dispatch is off", text)
+            self.assertNotIn("fleet_answer_offer", text)
+        self.enable(answerTimeoutSeconds=600)
+        cfg = validate(self.config, self.secrets)
+        rear, captain = (roles.role_documents(cfg, person, references, home)["instructions"] for person in cfg["members"])
+        self.assertIn("+stargate/dispatch", rear)
+        self.assertIn("#example-fleet-command", rear)
+        self.assertNotIn("fleet_answer_offer", rear)
+        self.assertIn("fleet_answer_offer", captain)
+        self.assertIn("10 minutes", captain)
+        self.assertIn("untrusted data", captain)
+        crewless = json.loads(json.dumps(self.config))
+        crewless["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra",
+                                     "crew": {"claude": {"count": 0}, "codex": {"count": 0}}})
+        cfg = validate(crewless, {**self.secrets, **officer_secrets("example-lyra"),
+                                  "rearAdmiralApiToken": FIXTURE_JWT})
+        lyra = roles.role_documents(cfg, cfg["members"][2], references, home)["instructions"]
+        self.assertIn("cannot accept offers", lyra)
+        self.assertNotIn("$", lyra)
+
+    def test_dispatch_wakes_only_the_addressed_captain(self):
+        """Stargate addresses each request to one captain's @nick; answers and status lines are NOTICEs."""
+        self.enable()
+        cfg = validate(self.config, self.secrets)
+        rear, captain = cfg["members"]
+
+        def registration(person):
+            return {"id": person["id"], "account": person["account"], "backend": {"directory": "/workspace"}}
+
+        entry = runtime.irc_officer(cfg, captain, registration(captain))
+        command = cfg["irc"]["commandChannel"]
+        self.assertIn(command, entry["channels"])
+        self.assertEqual(entry["access"]["channelRequests"], "nick-mention")
+        self.assertEqual(entry["access"]["humanWakeChannels"], [{"channel": captain["channel"], "replies": "all"}])
+        self.assertEqual(entry["access"]["allCallWords"], [])
+        # The rear admiral is an enrolled peer, so its addressed request is admitted; an enrolled peer that is
+        # also the rear_admiral target is exempt from the peer turn limit.
+        self.assertIn(rear["account"], entry["access"]["peerCaptains"])
+        self.assertIn(rear["account"], entry["fleetPolicy"]["agentAccounts"])
+        rear_entry = runtime.irc_officer(cfg, rear, registration(rear))
+        self.assertIn(command, rear_entry["channels"])
+        self.assertIn(captain["account"], rear_entry["fleetPolicy"]["agentAccounts"])
 
 
 if __name__ == "__main__":
