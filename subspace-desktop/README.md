@@ -290,6 +290,7 @@ spaces/decisions            subspace-decisions-board       Subspace decisions, r
 spaces/web                  subspace-web-board             web pages and installed web Spaces in a native web view
 clients/irc                 subspace-client-irc            IRC and IRCv3 protocol, connections and runtime
 clients/subspace-api        subspace-api-client            Subspace API reads, writes, live updates and development sign-in
+clients/fleet               subspace-client-fleet          Stargate Fleet API reads and stream, per-fleet tokens and the fleet service ([docs](docs/fleet-api.md))
 terminal/panel              subspace-terminal-panel        the docked terminal panel (excluded Zig workspace, feature `terminal`; [docs](docs/terminal.md))
 terminal/runtime            subspace-terminal              PTY/ConPTY sessions with libghostty VT emulation (excluded Zig workspace)
 terminal/ghostty-config     subspace-ghostty-config        Zig-free Ghostty configuration and theme parser
@@ -335,6 +336,13 @@ packages live in [web-spaces/](web-spaces/README.md).
 The [full-text Search view](../subspace-framework/docs/search.md) searches opted-in retained board
 content. Open it with **Cmd/Ctrl+Shift+F**. It shares its read-only query service
 with Copilot Chat and MCP. BM25 works without the optional local ONNX model.
+
+Each fleet's Fleet API token is saved once in **Settings > Application >
+Fleets** and used by every Space that shows the fleet, the built-in Fleet
+Console included. It is kept in the system keychain (in debug builds, the
+owner-only `fleet-api-tokens.json` beside `state.json`) with the address it
+was saved for, and only ever sent there; the address comes from the
+Subspace API. See [Fleets and the Fleet API](docs/fleet-api.md).
 
 Product GUI settings and preferences are separate. Existing native Subspace
 locations remain supported. A product also checks `~/.config/<binary>/config.json`

@@ -47,6 +47,10 @@ which, read the [layout](../README.md#layout) and the
   sign-in and the Subspace API.
 - [Issues and Subspace API](issues.md): the API connection, projects, the
   shared hub, live updates, comments and offline fixtures.
+- [Fleets and the Fleet API](fleet-api.md): the Stargate Fleet API client,
+  the app-wide fleet service a Space follows a fleet through, one saved
+  token per fleet bound to its address, Settings › Fleets and what the
+  built-in Fleet Console receives.
 
 ## Code quality and checks
 
@@ -138,6 +142,9 @@ If you want to know where settings, credentials and state are stored, read
   `config.json`, credential priority, `state.json` and caches.
 - [Settings and appearance](settings.md): the Settings dialog, updates and
   service connections.
+- [Fleet API tokens](fleet-api.md#where-tokens-are-stored): where each
+  fleet's token is kept (keychain, or `fleet-api-tokens.json` in debug
+  builds) and the rule that sends it only to the address it was saved for.
 
 ## Releases, packaging and installation
 
@@ -169,6 +176,9 @@ shared quick-start fragments live in `subspace/includes/`.
 
 - [Selectable find results and link menus](changes/gpui-text-patch/README.md):
   before-and-after evidence from the Component gallery fixture.
+- [Fleet API client and shared fleet tokens](changes/fleet-api-client/README.md):
+  native reads and the event stream of each initiative's fleet, one token
+  per fleet in Settings › Fleets, and the built-in Fleet Console's share.
 - [Subspace API, accounts and fleets](changes/subspace-api-accounts/README.md):
   the Issues client, provider-neutral sign-in, initiative and fleet switching
   in Channels, and what came across from a downstream fork.
