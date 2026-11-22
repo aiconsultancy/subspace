@@ -99,6 +99,15 @@ class FleetFixtureTests(unittest.TestCase):
         self.assertIn(b' 400 ', status)
         self.assertEqual(printed.getvalue().splitlines(), ['request - - 400 auth=none'])
 
+    def test_control_characters_in_the_method_and_path_are_escaped(self):
+        self.server.log_requests = True
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            self.raw(b'GE\x1bT /api/v1/fl\x1b[2Jeet HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n')
+        line = printed.getvalue().splitlines()[0]
+        self.assertNotIn('\x1b', line)
+        self.assertTrue(line.startswith('request GE\\x1bT /api/v1/fl\\x1b[2Jeet '), line)
+
     def test_every_route_needs_the_token_and_is_not_cached(self):
         for token in (None, 'wrong'):
             status, _, headers = self.get('/api/v1/fleet', token=token)

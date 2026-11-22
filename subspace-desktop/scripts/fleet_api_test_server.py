@@ -17,8 +17,8 @@ token is invented. Never calls upstream services.
 --log-requests prints each request's method, path and status with a
 fingerprint of its Authorization header (`auth=none`, or `auth=` and the
 first 12 hex digits of the header's SHA-256), never the header itself, so a
-capture can show which token reached the fixture. A malformed request logs `-`
-for its method and path.
+capture can show which token reached the fixture. Control characters in the
+method and path are escaped, and a malformed request logs `-` for them.
 """
 
 import argparse
@@ -546,6 +546,12 @@ def auth_fingerprint(header):
     return hashlib.sha256(header.encode()).hexdigest()[:12] if header else 'none'
 
 
+def printable(text):
+    """`text` for one log line: every non-printable character and backslash escaped."""
+    return ''.join(ch if ch.isprintable() and ch != '\\' else ch.encode('unicode_escape').decode('ascii')
+                   for ch in text)
+
+
 def frame(kind, data):
     return f'event: {kind}\ndata: {json.dumps(data, separators=(",", ":"))}\n\n'.encode()
 
@@ -564,8 +570,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.server.log_requests:
             headers = getattr(self, 'headers', None)
             auth = auth_fingerprint(headers.get('Authorization', '') if headers else '')
-            method = getattr(self, 'command', None) or '-'
-            path = urlsplit(getattr(self, 'path', '') or '').path or '-'
+            method = printable(getattr(self, 'command', None) or '-')
+            path = printable(urlsplit(getattr(self, 'path', '') or '').path or '-')
             print(f'request {method} {path} {code} auth={auth}', flush=True)
 
     def allowed_origin(self):
