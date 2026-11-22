@@ -157,7 +157,9 @@ the oldest forgotten first.
 
 **Endings are stored.** Each ending is written to the Channels store as one
 record (kind `Channels request ending`, id `ended:<network>:<msgid>`,
-payload `{"buffer", "request"}`) under its buffer's record parent, so
+payload `{"buffer", "request", "outcome", "at"}`, the last two being
+`completed` or `failed` and the ending notice's server time; see
+[Settled lines](#settled-lines)) under its buffer's record parent, so
 removing the buffer deletes it with the lines. The record has no title,
 body or metadata, so no search finds it. Endings go in the same write as
 the lines waiting with them, before those lines, in batches of up to 100
@@ -208,7 +210,7 @@ before.
 | `waiting` | Waiting for your answer (our request) or Waiting for an answer | A person must answer. |
 | `clarified` | Answer received | |
 | `reply` | Writing a reply | |
-| `completed`, `failed` | no line | The request ended. |
+| `completed`, `failed` | Done in …, Failed after … | The request ended; the line settles. |
 
 The line reads `<agent> · <label>`, the agent being the nick on its newest
 trusted notice. The label is fixed text; the notice's own text is never
@@ -218,13 +220,14 @@ characters with an ellipsis (`thread_status::model::agent_name`).
 
 ## Behaviour
 
-- **One line per active request**, under that request's message, after its
-  reply count. Two requests in one thread each have their own line.
+- **One line per request**, under that request's message, after its
+  reply count, while it runs and, settled, once it ended. Two requests in
+  one thread each have their own line.
 - **Newest wins.** The newest trusted notice by server time sets the
   stage; of two at the same time, the later one in the buffer. An older
   notice replayed later, such as from a bouncer, never replaces a newer
   stage. An update to one request never changes another.
-- **Endings are final.** `completed` or `failed` clears only the matching
+- **Endings are final.** `completed` or `failed` settles only the matching
   request, and no other notice, later or loaded from older history, reopens
   it. The ending is kept apart from the notice (`thread_status::Requests`)
   and stored (see **Endings are stored** under Trust), so it holds after the
@@ -260,6 +263,30 @@ characters with an ellipsis (`thread_status::model::agent_name`).
   stores them with the line. Every other client-only tag, from any sender,
   is dropped. A multiline message takes them from its opening `BATCH`
   only.
+
+## Settled lines
+
+Amended on 22 November 2026 by
+[Channels navigator, request lines and composer hints](../channels-navigator-and-requests/README.md).
+Owner decision: a finished request keeps a settled line, reversing the
+earlier behaviour in which the line disappeared when the request ended.
+
+- **While it runs** the line also shows the time since the request was
+  sent, by the server's time, as a clock (`0:35`, `1:02:03`), and a
+  five-step stage meter (Kit's `Progress`) with its word: `received`,
+  `submitting`, `accepted`, `queued` and `delivered` are *accepted*;
+  `model`, `reasoning`, `tool` and `retry` *working*; `waiting` and
+  `clarified` *waiting*; `reply` *reply*; `completed` and `failed` *done*.
+  The conversation redraws once a second only while a line runs and is not
+  stale. A stale line shows its last update and the pill instead of the
+  clock.
+- **Once it ends** the line is quiet: **Done in 42 m** or **Failed after
+  3 m**, from the request's server time to the ending notice's. The ending
+  keeps its outcome and time (`thread_status::Ending`) in memory and in its
+  stored record, so a restart reads the same. A record stored before then
+  has neither and reads **Done**; an ending notice still held fills it in
+  once, and the store is written again.
+- The trust rule is unchanged: only a trusted notice ends a request.
 
 ## Limits
 

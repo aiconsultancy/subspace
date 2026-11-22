@@ -80,6 +80,53 @@ channel whose captain is unknown is a plain channel.
   the Starbase and the command channel with a glyph, and a ship's channel
   shows its captain's status (see [Design](#design)).
 
+### The navigator by fleet
+
+The navigator groups a network's buffers by fleet (`rows.rs`,
+`rows/sections.rs`, `rows/groups.rs`). The roster carries each fleet on the
+network (`fleet/places.rs`, `FleetPlace`): its API id and name, its slug, and
+the channels it claims, being its Starbase, command and ship channels as the
+roster names them and the channels its initiatives name. A channel that two
+fleets on one network claim belongs to neither.
+
+- **One group per fleet**, named from the API, keyed
+  `irc␟<network>␟f␟<fleet id>`, holding that fleet's channels: the Starbase,
+  the command channel, the ships, then the rest, each by the name the row
+  shows. A fleet's rows drop the `#` and the `<slug>-` prefix
+  (`#aurora-lyra` shows as `lyra`); search still finds the full name. A
+  fleet with no buffer open has no group. The header carries the network's
+  connection state, as the network's own header does.
+- **People**, keyed `irc␟<network>␟p`, follows the fleets on a network that
+  serves one and holds the private conversations with people. A private
+  conversation with a nick the roster knows as an agent stays in the
+  network's group, so history stays reachable but `People` never offers an
+  agent. With more than one network it reads `People · <network>`.
+- **The network's group** keeps its key and holds the server row, the
+  channels of no fleet, those older private conversations and the listed
+  channels. A network that serves no fleet has only this group, as before.
+- Row keys are the buffers' own (`rows::row_key`), so selection, the dock
+  layout (`dock/layout.rs`, which stores buffers) and search results restore
+  as before; only group keys are new. `Irc::group_networks` maps each group
+  key to its network for the toolbar, Join and the list's menu.
+- A ship's row leads with its captain's small agent avatar
+  (`avatar::agent(...).small()`), the Starbase and the command channel with
+  their kind's glyph in its tone, other rows with the quiet kind glyph. A
+  ship's row says `working` before its count while its captain has a nick
+  status, by the heading pill's rule (`conversation::vouched_status`: a
+  member with the captain's nick signed in to its account); no idle state
+  is invented and there is no crew meter, as the Space cannot read crew
+  activity.
+- Every row with unread messages is emphasised. A mention adds an `@` mark
+  in `Tone::Red` before the count, which keeps the accent.
+- A fleet group that is not the selected initiative's fleet starts folded
+  the first time it appears (`view/navigator.rs`, `fold_new_fleets`); with no initiative
+  selected every fleet starts open. Revealing a row in a folded group
+  unfolds it, and later syncs leave it as the user left it.
+- The shared list has no caption inside a group, so `People` is a group of
+  its own and the ships have no `Ships` caption.
+
+See the [change record](changes/channels-navigator-and-requests/README.md).
+
 ### Direct messages are for people only
 
 All communication with a fleet's agents happens in channels, where everyone
@@ -423,11 +470,31 @@ are in the [change record](changes/irc-thread-status/spec.md).
   others alone.
   The agent is the nick on the newest trusted notice, shown as plain
   text on one line and cut to 32 characters.
-- **Endings.** `completed` or `failed` removes only its request's line, and
-  no later or older notice brings it back. The ending is kept apart from
-  the notice, and stored, so it holds after the notice is dropped by the
-  line cap, after a restart, and when a partial or Search reload brings
-  back earlier progress without it. A main-room final reply without a
+- **Clock and stage meter.** While a request runs, its line also shows the
+  time since the request was sent by the server (`0:35`, `1:02:03` past an
+  hour) in quiet monospace, and Kit's `Progress` as a five-step stage meter
+  with the stage's word. Stargate's fixed stages map onto the meter:
+  `received`, `submitting`, `accepted`, `queued` and `delivered` are
+  *accepted*; `model`, `reasoning`, `tool` and `retry` *working*; `waiting`
+  and `clarified` *waiting*; `reply` *reply*; `completed` and `failed`
+  *done* (`thread_status::Stage`). The meter is named *Stage N of 5:
+  <stage>*. Nothing else is shown: Stargate's data has no delegation or
+  pull request stage. The conversation redraws once a second
+  (`Conversation::follow_clock`) only while a line runs and is not stale,
+  and drops the timer once none does.
+- **Endings.** `completed` or `failed` settles its request's line, for good:
+  no later or older notice reopens it. The settled line is quiet: a check
+  and **Done in 42 m**, or a cross and **Failed after 3 m**, from the request's
+  server time to the ending notice's (`35 s`, `42 m` or `2 h 5 m`), named
+  *<agent>: Done in 42 m*. The reply count above it is unchanged. Owner
+  decision, 22 November 2026: a finished request keeps a settled line, where
+  the line used to disappear. The ending is kept apart from the notice with
+  its outcome and server time (`thread_status::Ending`), and stored with
+  them (`store::Ended`'s `outcome` and `at`), so it holds after the notice
+  is dropped by the line cap, after a restart, and when a partial or Search
+  reload brings back earlier progress without it. An ending record stored
+  before outcomes were kept loads as **Done** without a duration; a held
+  ending notice later fills it in once. A main-room final reply without a
   reply tag clears nothing.
 - **Stale.** The line shows the last stage, its time and a **Stale** pill
   when the notice carried `,disconnected`, while the network is not
@@ -1144,14 +1211,21 @@ messages after its anchor.
   `thread_status/model.rs` rebuilds each request's status from the folded
   notices on every conversation sync, beside the reply counts, and
   `transcript/status.rs` draws it under the request with GPUI Kit's
-  `Marker` (see [Request status lines](#request-status-lines)).
+  `Marker`, with Kit's `Progress` as the stage meter while it runs, and a
+  quiet settled line once it ends (see
+  [Request status lines](#request-status-lines)).
   See [GPUI-Kit messaging reuse](../../subspace-framework/docs/ui-components.md#gpui-kit-messaging-reuse).
 - The composer (`compose.rs`) is the shared `ChatInput::message` in plain-text
   mode with recall keys, under the shared completion list. `Enter` sends and
   `Shift+Enter` breaks the line, which the hint under the input names
-  (`Return` on macOS). With uploads on, one quiet line above it holds the
-  paperclip (`irc-send-attachment`, **Send as attachment…**) and the
-  retention notice (`uploads/outgoing/view.rs`). `ChatInput` draws its frame
+  (`Return` on macOS). Under the input, a slim row (`compose/hints.rs`,
+  `irc-composer-hints`) names the keys with Kit's `Kbd`: `@` mention, `/`
+  commands, `↑` recall (IRC cannot edit a sent message) and `⇧⏎` new line;
+  with uploads on, the retention notice ends that row in a shorter form,
+  “Kept 30 days. Don’t paste credentials.”, named in full. With uploads on,
+  one quiet line above the input holds the paperclip
+  (`irc-send-attachment`, **Send as attachment…**,
+  `uploads/outgoing/view.rs`). `ChatInput` draws its frame
   edge to edge, so the field is not rounded. Up and Down recall sent lines while the draft is empty,
   one line or a recalled line not yet edited (`ChatInput::set_recalled`), so
   a multi-line message does not stop the walk; they move between the lines of
@@ -1164,7 +1238,15 @@ messages after its anchor.
     for the recipient, because `@` is not part of a nick.
   - `/` at the start of the draft offers the commands that the client parser
     (`subspace_client_irc::COMMANDS`, beside `parse_input`) handles, with
-    their arguments and a description. Choosing one inserts `/name `.
+    their arguments and a description. Choosing one inserts `/name `. In a
+    ship's channel or a Starbase the channel's own command comes first:
+    `/ask <text>` (`compose/ask.rs`), *Ask <agent> and track the answer*,
+    named as a command of this channel. The shared list has no section
+    caption, so nothing heads it. `/ask` sends `<agent>: <text>` as
+    `Command::Say` to the ship's captain or the Starbase's rear admiral
+    (`Roster::asked_in`), so the request status line tracks it; anywhere
+    else, or with no text, the draft stays and the input shows why. `ask`
+    names no client command, which a test checks.
   - The first argument of `/join` offers the network's channels. `/part` and
     `/topic` offer the channels you are in. `/msg`, `/query`, `/notice`,
     `/whois`, `/invite` and `/kick` offer everyone on the network.

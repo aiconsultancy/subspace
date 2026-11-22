@@ -12,7 +12,9 @@ agent_tools/{bridge,read,write,read/search},notice,store,store/{mapping,links},
 hub/persist,state/merge,state/directory,reveal,commands,context,issues,issues/{follow,tooltip},
 markup/issue,conversation/keys,transcript/focus,transcript/line/marks,
 thread_status,thread_status/model,thread_status/trust,state/folding,
-transcript/status,transcript/replies,fleet,conversation/header,text/look,
+transcript/status,transcript/replies,fleet,fleet/places,conversation/header,
+conversation/clock,rows/sections,rows/groups,view/navigator,compose/ask,
+compose/hints,text/look,
 text/references}.rs;
 scripts/irc-thread-status-fixture.py;
 subspace-framework/services/search
@@ -24,7 +26,8 @@ clients/irc/src/session/input.rs (COMMANDS);
 clients/irc/src/session/listing.rs (LIST); docs/irc.md;
 docs/changes/irc-board; docs/changes/irc-mention-notifications;
 docs/changes/irc-search-history; docs/changes/irc-issue-references;
-docs/changes/channel-list; docs/changes/irc-thread-status (request status
+docs/changes/channel-list; docs/changes/channels-navigator-and-requests;
+docs/changes/irc-thread-status (request status
 lines: checked by tests and the local fixture only, not against a deployed
 gateway). The channel list was checked against a local Ergo
 server's LIST reply. Linux OS
@@ -132,10 +135,24 @@ connection state in words: **Disconnected**, **Connecting…**, **Signing in…*
    They are greyed out and show how many people are in each, such as
    `7 users`. See [Join channels from the list](#join-channels-from-the-list).
 
-A row's small trailing number counts unread messages. It uses the accent colour and
-the row title turns bold when the unread messages mention you. In a private
-conversation any unread message makes the title bold. Joins, parts and other
-membership lines never count as unread.
+On a network that serves a Subspace fleet, the fleet's channels have a group
+of their own, named after the fleet and showing the same connection state,
+before the network's group. A fleet's group lists its Starbase, its command
+channel, its ships' channels, then the other channels of its initiatives,
+each without the fleet's prefix: `#aurora-lyra` shows as `lyra`. A ship's
+channel leads with its captain's avatar and says **working** while the
+captain reports a status; the Starbase and the command channel lead with a
+glyph. Several fleets on one server each have a group. Fleets other than
+the selected initiative's start folded; with no initiative selected, every
+fleet starts open. Private conversations with people
+are listed under **People**, after the fleets. An older private conversation
+with a fleet agent stays under its network, as agents talk only in channels.
+Channels that belong to no fleet, and networks that serve none, are listed
+as before.
+
+A row with unread messages has a bold title and a small trailing number. When
+they mention you, an **@** mark comes before the number, which uses the accent
+colour. Joins, parts and other membership lines never count as unread.
 
 ### Transcript
 
@@ -150,9 +167,13 @@ A request to an agent can show one live status line beneath it, such as
 unconfirmed**, **Accepted**, **Queued**, **Thinking**, **Using a tool**,
 **Waiting to retry**, **Waiting for your answer** when the agent asked you
 something, **Answer received** or **Writing a reply**, and updates in place.
-Each request has its own line, also when two requests share a thread. The
-line goes away when that request finishes or fails, and stays away after a
-restart.
+After it come how long ago you asked, such as `0:35`, and a small meter of
+five steps with the step's name: **accepted**, **working**, **waiting**,
+**reply** and **done**. Each request has its own line, also when two
+requests share a thread. When the request finishes, its line settles into a
+quiet **Done in 42 m**, or **Failed after 3 m** when it failed, and keeps it
+after a restart. A request that ended before this version shows **Done**
+without a time.
 
 The line comes from progress notices that the agent's gateway marks for that
 request. Channels uses them only when the IRC server confirms they come from
@@ -333,6 +354,16 @@ It uses a warning tone from 80% of either limit and a danger tone above a
 limit. Commands use the 10-line cap; `//text` is literal text and can use
 the 100-line cap on a batching connection.
 
+A slim row under the input names its keys: `@` to mention someone, `/` for
+commands, `↑` to recall a line you sent (IRC cannot edit a sent message, so
+recalling puts it back in the input to send again) and `⇧⏎` for a new line.
+
+In a fleet's ship channel or its Starbase, `/ask` comes first: `/ask` and
+your text send the text to the channel's agent, the ship's captain or the
+rear admiral, as `aurora-lyra: <text>`, so its status line shows under your
+message as the agent works on it. Elsewhere, or with nothing after it,
+`/ask` sends nothing and the input says why.
+
 Commands start with `/`. Type `/` at the start of the input to see them all,
 each with its arguments and what it does: `/join`, `/part`, `/msg`,
 `/query`, `/me`, `/notice`, `/topic`, `/nick`, `/away`, `/whois`, `/invite`,
@@ -371,8 +402,9 @@ message is kept." If the connection drops while your message is being sent,
 your text and attachments stay and the composer says some lines may have
 gone: check the channel before you press **Enter** again.
 
-One quiet line above the composer, beside the paperclip, says “Visible to
-signed-in Subspace users for 30 days. Don’t paste credentials into chat.” Put material worth retaining on an issue.
+The end of the hint row under the composer says “Kept 30 days. Don’t paste
+credentials.”: what you send is visible to signed-in Subspace users for 30
+days. Put material worth retaining on an issue.
 
 Received attachments show as a row of thumbnails under the message, in the
 order they were sent; the reference text is hidden once it resolves. Images

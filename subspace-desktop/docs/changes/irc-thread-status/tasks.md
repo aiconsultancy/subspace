@@ -71,6 +71,11 @@
 - [ ] Build and test the round-3 fixes: `cargo test` and `make check`.
 - [ ] Run the fixture against a fresh local Ergo server again.
 - [ ] Both model reviews (round 4) clear the final head.
+- [x] Owner decision, 22 November 2026: a finished request keeps a settled
+      line (**Done in …**, **Failed after …**), with its outcome and time
+      stored; a running line gains a clock and a stage meter. See
+      [Settled lines](spec.md#settled-lines) and
+      [the change that built it](../channels-navigator-and-requests/README.md).
 
 ### Board checklist: irc
 

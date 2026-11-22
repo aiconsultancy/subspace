@@ -206,6 +206,9 @@ record. [Change records](changes/README.md) explains the convention.
   ranks from the API's agent nicks and the fleet's recorded channels, agent
   avatars and coloured marks, no private conversation with an agent, and
   the base pull request's review fixes.
+- [Channels navigator, request lines and composer hints](changes/channels-navigator-and-requests/README.md):
+  the navigator grouped by fleet with a People section, request status lines
+  that settle into `Done in …`, and the composer's hint row with `/ask`.
 - [Bundled Inter and JetBrains Mono](changes/bundled-fonts/README.md): the
   fonts the Subspace App embeds for Twilight Two, and why themes that name no
   font keep the platform's fonts.
