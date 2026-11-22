@@ -23,8 +23,9 @@
 //! its ship's recorded one, else that of its ship's only active captain.
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
-use subspace_api_client::model::{AgentRank, Fleet, FleetAgent};
+use subspace_api_client::model::{AgentRank, Fleet, FleetAgent, MemberInitiative};
 use subspace_framework::dashboard::Tone;
 use subspace_framework::dashboard::avatar::AgentRank as AvatarRank;
 
@@ -112,7 +113,13 @@ pub(crate) struct Roster {
     agents: HashMap<String, Agent>,
     /// Channels by case-folded name.
     channels: HashMap<String, ChannelKind>,
+    /// The fleets on the network and the channels each claims alone, for
+    /// the navigator's fleet groups.
+    fleets: Vec<FleetPlace>,
 }
+
+/// The roster of a network that serves no fleet.
+pub(crate) static NO_ROSTER: LazyLock<Roster> = LazyLock::new(Roster::default);
 
 impl Roster {
     /// The roles of `fleets`, the fleets whose IRC server the network is.
@@ -129,7 +136,29 @@ impl Roster {
         );
         let agents = unclaimed_twice(agents);
         let channels = crewed(unclaimed_twice(channels), &agents);
-        Self { agents, channels }
+        Self {
+            agents,
+            channels,
+            fleets: Vec::new(),
+        }
+    }
+
+    /// The roles of the fleets of `initiatives`, the initiatives whose IRC
+    /// server the network is, with the channels each fleet and its
+    /// initiatives name, for the navigator.
+    pub(crate) fn for_initiatives(initiatives: &[&MemberInitiative]) -> Self {
+        let fleets = initiatives
+            .iter()
+            .filter_map(|initiative| initiative.fleet.as_ref());
+        Self {
+            fleets: places::places(initiatives),
+            ..Self::new(fleets)
+        }
+    }
+
+    /// The fleets on the network, in the catalogue's order.
+    pub(crate) fn fleets(&self) -> &[FleetPlace] {
+        &self.fleets
     }
 
     /// The agent whose API nick is `nick`, when exactly one agent of the
@@ -151,6 +180,27 @@ impl Roster {
         account
             .filter(|account| account.eq_ignore_ascii_case(nick))
             .and_then(|_| self.rank(nick))
+    }
+
+    /// Whom `/ask` addresses in `channel`: a ship's captain, or the rear
+    /// admiral whose Starbase it is. `None` elsewhere, the command channel
+    /// included, where no one agent answers for the channel.
+    pub(crate) fn asked_in(&self, channel: &str) -> Option<&str> {
+        match self.channel(channel)? {
+            ChannelKind::Ship { captain } => Some(captain),
+            ChannelKind::Starbase => self
+                .agents
+                .iter()
+                .find(|(_, agent)| {
+                    agent.rank == Rank::RearAdmiral
+                        && agent
+                            .channel
+                            .as_deref()
+                            .is_some_and(|held| held.eq_ignore_ascii_case(channel))
+                })
+                .map(|(nick, _)| nick.as_str()),
+            ChannelKind::Command => None,
+        }
     }
 
     /// What `channel` is for, when the network's fleets name it so.
@@ -376,6 +426,10 @@ fn slug(slug: &str) -> Option<&str> {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
     valid.then_some(slug)
 }
+
+mod places;
+
+pub(crate) use places::{FleetPlace, short_name};
 
 #[cfg(test)]
 pub(crate) mod tests;

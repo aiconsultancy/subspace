@@ -18,8 +18,8 @@ mod trust;
 
 use subspace_client_irc::{Line, LineKind, Target};
 
-pub(crate) use model::{Shown, Statuses, shown_entry, statuses};
-pub(crate) use requests::{Arrival, REMEMBERED, Requests};
+pub(crate) use model::{Settled, Shown, Statuses, shown_entry, statuses};
+pub(crate) use requests::{Arrival, Ending, REMEMBERED, Requests};
 pub(crate) use trust::{arrival, asked, notices};
 
 /// The client-only tag that marks request progress on a `NOTICE`. Its value
@@ -52,8 +52,63 @@ pub(crate) enum Phase {
     Answered,
     /// `reply`.
     Writing,
-    /// `completed`, `failed`: the request ended.
-    Finished,
+    /// `completed` or `failed`: the request ended.
+    Finished(Outcome),
+}
+
+/// How a request ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Outcome {
+    Completed,
+    Failed,
+}
+
+/// The segments of a request's stage meter, Stargate's fixed stages
+/// gathered into five: `received`, `submitting`, `accepted`, `queued` and
+/// `delivered` are accepted; `model`, `reasoning`, `tool` and `retry` are
+/// working; `waiting` and `clarified` are waiting; `reply` is the reply;
+/// `completed` and `failed` are done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Stage {
+    Accepted,
+    Working,
+    Waiting,
+    Reply,
+    Done,
+}
+
+impl Stage {
+    /// Every stage, in order.
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Accepted,
+        Self::Working,
+        Self::Waiting,
+        Self::Reply,
+        Self::Done,
+    ];
+
+    /// Each stage's word beside the meter, in order.
+    const WORDS: [&'static str; 5] = ["accepted", "working", "waiting", "reply", "done"];
+
+    /// The meter when full.
+    const FULL: f32 = 100.0;
+
+    /// The stage's step on the meter, from 1 for accepted to 5 for done.
+    pub(crate) fn step(self) -> usize {
+        self as usize + 1
+    }
+
+    /// The stage's word beside the meter.
+    pub(crate) fn word(self) -> &'static str {
+        Self::WORDS.get(self as usize).copied().unwrap_or_default()
+    }
+
+    /// How far along the meter the stage is, as Kit's progress value: one
+    /// fifth for accepted up to all of it for done.
+    pub(crate) fn percent(self) -> f32 {
+        Self::FULL * self.step() as f32 / Self::ALL.len() as f32
+    }
 }
 
 /// What one progress notice says.
@@ -79,8 +134,19 @@ impl Phase {
             Self::Waiting => "Waiting for an answer",
             Self::Answered => "Answer received",
             Self::Writing => "Writing a reply",
-            Self::Finished => return None,
+            Self::Finished(_) => return None,
         })
+    }
+
+    /// The meter's segment for this phase.
+    pub(crate) fn stage(self) -> Stage {
+        match self {
+            Self::Unconfirmed | Self::Accepted | Self::Queued => Stage::Accepted,
+            Self::Thinking | Self::Tool | Self::Retrying => Stage::Working,
+            Self::Waiting | Self::Answered => Stage::Waiting,
+            Self::Writing => Stage::Reply,
+            Self::Finished(_) => Stage::Done,
+        }
     }
 }
 
@@ -122,10 +188,11 @@ fn parse(value: &str) -> Option<Marker> {
         "waiting" => Phase::Waiting,
         "clarified" => Phase::Answered,
         "reply" => Phase::Writing,
-        "completed" | "failed" => Phase::Finished,
+        "completed" => Phase::Finished(Outcome::Completed),
+        "failed" => Phase::Finished(Outcome::Failed),
         _ => return None,
     };
-    let ended_while_lost = disconnected && phase == Phase::Finished;
+    let ended_while_lost = disconnected && matches!(phase, Phase::Finished(_));
     (!ended_while_lost).then_some(Marker {
         phase,
         disconnected,

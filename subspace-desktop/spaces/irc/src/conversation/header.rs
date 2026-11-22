@@ -57,6 +57,20 @@ pub(super) fn live(
     let Some(ChannelKind::Ship { captain }) = kind else {
         return None;
     };
+    vouched_status(captain, statuses, members).map(|text| Live {
+        text: shortened(text, LIVE_MAX_CHARS),
+        spoken: format!("Captain {captain}: {text}"),
+    })
+}
+
+/// `captain`'s nick status from `statuses`, only while a member of
+/// `members` with the captain's nick is signed in to the account of that
+/// nick, so a status shows only for the agent the server vouches for.
+pub(crate) fn vouched_status<'a>(
+    captain: &str,
+    statuses: &'a Statuses,
+    members: &[Member],
+) -> Option<&'a str> {
     let vouched = members.iter().any(|member| {
         member.nick.eq_ignore_ascii_case(captain)
             && member
@@ -64,13 +78,7 @@ pub(super) fn live(
                 .as_deref()
                 .is_some_and(|account| account.eq_ignore_ascii_case(captain))
     });
-    if !vouched {
-        return None;
-    }
-    statuses.get(captain).map(|text| Live {
-        text: shortened(text, LIVE_MAX_CHARS),
-        spoken: format!("Captain {captain}: {text}"),
-    })
+    vouched.then(|| statuses.get(captain)).flatten()
 }
 
 /// `text` cut to at most `max` characters, the last an ellipsis when cut.
@@ -83,7 +91,7 @@ fn shortened(text: &str, max: usize) -> String {
 }
 
 /// The glyph, its tone and its name for a fleet channel's `kind`.
-fn kind_glyph(kind: &ChannelKind) -> (IconName, Tone, &'static str) {
+pub(crate) fn kind_glyph(kind: &ChannelKind) -> (IconName, Tone, &'static str) {
     match kind {
         ChannelKind::Ship { .. } => (IconName::Navigation, Tone::Blue, "ship channel"),
         ChannelKind::Starbase => (IconName::Orbit, Tone::Accent, "Starbase"),

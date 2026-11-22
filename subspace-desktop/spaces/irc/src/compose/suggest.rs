@@ -1,7 +1,8 @@
 //! What the word at the cursor could become: an `@member`, a `/command`, a
-//! command's first argument or a `#channel`. Pure: [`Facts`] are gathered
-//! from the hub's state, and the result is shown in the shared completion
-//! list above the composer.
+//! command's first argument or a `#channel`. In a fleet channel, its own
+//! commands ([`super::ask`]) come before the IRC client's. Pure: [`Facts`]
+//! are gathered from the hub's state, and the result is shown in the shared
+//! completion list above the composer.
 
 use std::ops::Range;
 
@@ -63,6 +64,9 @@ pub(crate) struct Facts {
     pub channels: Vec<String>,
     /// The channels we are in, by name.
     pub joined: Vec<String>,
+    /// The agent `/ask` addresses in this channel, when it is a fleet's
+    /// ship channel or Starbase.
+    pub ask: Option<String>,
 }
 
 /// One choice: the row shown, and the text that replaces the word.
@@ -137,7 +141,7 @@ fn command_before(before: &str) -> Option<&'static CommandHelp> {
 
 fn choices(trigger: Trigger<'_>, facts: &Facts) -> Vec<Suggestion> {
     match trigger {
-        Trigger::Command(query) => commands(query),
+        Trigger::Command(query) => commands(query, facts.ask.as_deref()),
         Trigger::Mention(query) => people(&facts.people, query, "@"),
         Trigger::Channel(query) => channels(&facts.joined, query),
         Trigger::Argument(FirstArgument::Nick, query) => {
@@ -149,10 +153,15 @@ fn choices(trigger: Trigger<'_>, facts: &Facts) -> Vec<Suggestion> {
     }
 }
 
-/// Commands whose name or alias starts with `query`, in catalogue order.
-fn commands(query: &str) -> Vec<Suggestion> {
+/// Commands whose name or alias starts with `query`: the channel's own
+/// first, when it has an agent to `ask`, then the IRC client's in
+/// catalogue order.
+fn commands(query: &str, ask: Option<&str>) -> Vec<Suggestion> {
     let query = query.to_ascii_lowercase();
-    COMMANDS
+    let own = ask
+        .filter(|_| super::ask::NAME.starts_with(&query))
+        .map(ask_suggestion);
+    let client = COMMANDS
         .iter()
         .filter(|command| {
             std::iter::once(&command.name)
@@ -167,8 +176,21 @@ fn commands(query: &str) -> Vec<Suggestion> {
             )
             .spoken(format!("{}, {}", command.usage(), command.description)),
             insert: format!("/{} ", command.name),
-        })
-        .collect()
+        });
+    own.into_iter().chain(client).collect()
+}
+
+/// `/ask`, which addresses `agent`, as a command of this channel.
+fn ask_suggestion(agent: &str) -> Suggestion {
+    let description = super::ask::description(agent);
+    let name = super::ask::NAME;
+    let args = super::ask::ARGS;
+    Suggestion {
+        item: CompletionItem::command(format!("/{name}"), args, description.clone()).spoken(
+            format!("/{name} {args}, {description}, a command of this channel"),
+        ),
+        insert: format!("/{name} "),
+    }
 }
 
 /// People whose nick starts with `query`, ignoring case, each inserted
@@ -235,7 +257,14 @@ impl Facts {
             everyone: ordered(network_people(state, buffer), &recent, &own),
             channels,
             joined,
+            ask: None,
         }
+    }
+
+    /// The same facts with the agent `/ask` addresses, when there is one.
+    pub fn asking(mut self, agent: Option<&str>) -> Self {
+        self.ask = agent.map(str::to_owned);
+        self
     }
 
     /// The same facts with each person's fleet rank from `roster`.

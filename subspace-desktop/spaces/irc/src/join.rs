@@ -49,7 +49,7 @@ pub(crate) fn channel_name(typed: &str) -> Option<String> {
 
 pub(crate) fn open(board: &mut Irc, window: &mut Window, cx: &mut Context<Irc>) {
     // The toolbar's network: Join… there names the network it joins on.
-    let Some(network) = board.toolbar_network(cx) else {
+    let Some(network) = board.toolbar_network() else {
         return;
     };
     let network_name = board

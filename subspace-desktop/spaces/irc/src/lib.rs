@@ -69,6 +69,15 @@ pub struct Irc {
     buffers: HashMap<SharedString, BufferKey>,
     /// The channel each listed row we are not in names.
     listed: HashMap<SharedString, BufferKey>,
+    /// The network each group header stands for.
+    group_networks: HashMap<SharedString, NetworkId>,
+    /// Each ship row's activity, for its dot.
+    ships: HashMap<SharedString, rows::Activity>,
+    /// Each `People` row's presence, for its mark.
+    people: HashMap<SharedString, rows::Presence>,
+    /// The fleet groups shown so far, so a fleet's group folds only when it
+    /// first appears.
+    seen_fleets: std::collections::HashSet<SharedString>,
     hub: Option<Entity<hub::Hub>>,
     hub_subscription: Option<Subscription>,
     /// The networks as last synced, for panels that read without a context.
@@ -381,7 +390,7 @@ impl Irc {
     }
 
     /// The network of the selected row or group header.
-    fn selected_network(&self, cx: &App) -> Option<NetworkId> {
+    fn selected_network(&self) -> Option<NetworkId> {
         if let Some(buffer) = self.selected_buffer().or_else(|| self.selected_listed()) {
             return Some(buffer.network.clone());
         }
@@ -392,12 +401,7 @@ impl Irc {
                 .as_ref()
                 .map(|buffer| buffer.network.clone());
         };
-        let hub = self.hub.as_ref()?.read(cx);
-        hub.state
-            .networks()
-            .iter()
-            .find(|network| &rows::group_key(&network.id) == selected)
-            .map(|network| network.id.clone())
+        self.group_networks.get(selected).cloned()
     }
 
     /// The buffer the pane's toolbar acts on. While the navigator is hidden
@@ -412,10 +416,10 @@ impl Irc {
 
     /// The network the pane's toolbar acts on, by the same rule as
     /// [`Self::toolbar_buffer`].
-    fn toolbar_network(&self, cx: &App) -> Option<NetworkId> {
+    fn toolbar_network(&self) -> Option<NetworkId> {
         match self.dock.focused.as_ref() {
             Some(focused) if !self.dock.buffers_open() => Some(focused.network.clone()),
-            _ => self.selected_network(cx),
+            _ => self.selected_network(),
         }
     }
 
@@ -494,10 +498,6 @@ impl Irc {
         self.hub.as_ref()?.read(cx).state.buffer(buffer).cloned()
     }
 
-    fn is_query_row(&self, row: &subspace_framework::dashboard::Row) -> bool {
-        self.buffers.get(&row.key).is_some_and(Irc::is_query)
-    }
-
     /// The network's display name as last synced, else its id.
     fn network_name(&self, id: &NetworkId) -> String {
         self.networks
@@ -513,10 +513,6 @@ impl Irc {
             Target::Server => self.network_name(&buffer.network).into(),
             _ => rows::title(buffer).to_owned().into(),
         }
-    }
-
-    fn is_query(buffer: &BufferKey) -> bool {
-        matches!(buffer.target, Target::Query(_))
     }
 }
 

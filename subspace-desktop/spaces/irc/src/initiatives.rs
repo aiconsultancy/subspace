@@ -103,6 +103,14 @@ impl InitiativeIrc {
         })
     }
 
+    /// The selected initiative's fleet id: `None` with no initiative
+    /// selected, `Some(None)` for one without a fleet.
+    pub(crate) fn selected_fleet(&self) -> Option<Option<&str>> {
+        self.selection
+            .as_ref()
+            .map(|initiative| initiative.fleet_id.as_deref())
+    }
+
     pub(crate) fn selected_for_runtime(&self) -> bool {
         self.network.is_some()
     }
@@ -129,7 +137,7 @@ impl InitiativeIrc {
             return Rc::clone(held);
         }
         let memberships = self.catalog.read(cx).memberships();
-        let roster = Rc::new(Roster::new(fleets_on(
+        let roster = Rc::new(Roster::for_initiatives(&initiatives_on(
             memberships,
             networks,
             network,
@@ -148,13 +156,13 @@ impl InitiativeIrc {
     }
 }
 
-/// The fleets of `initiatives` whose server is `network` among `networks`.
-fn fleets_on<'a>(
+/// The initiatives with a fleet whose server is `network` among `networks`.
+fn initiatives_on<'a>(
     initiatives: &'a [MemberInitiative],
     networks: &[NetworkConfig],
     network: &NetworkId,
     loopback_fixture: bool,
-) -> Vec<&'a Fleet> {
+) -> Vec<&'a MemberInitiative> {
     initiatives
         .iter()
         .filter(|initiative| {
@@ -164,7 +172,7 @@ fn fleets_on<'a>(
                     .any(|eligible| eligible.id == *network)
             })
         })
-        .filter_map(|initiative| initiative.fleet.as_ref())
+        .filter(|initiative| initiative.fleet.is_some())
         .collect()
 }
 
@@ -396,8 +404,9 @@ mod tests {
         local.host = "irc.example.org".into();
         let networks = [fleet.clone(), local.clone()];
         let slugs = |network: &NetworkConfig| {
-            super::fleets_on(&initiatives, &networks, &network.id, false)
+            super::initiatives_on(&initiatives, &networks, &network.id, false)
                 .iter()
+                .filter_map(|initiative| initiative.fleet.as_ref())
                 .map(|fleet| fleet.slug.clone())
                 .collect::<Vec<_>>()
         };
@@ -427,9 +436,9 @@ mod tests {
         network.port = 6697;
         network.tls = true;
         let networks = [network.clone()];
-        let fleets = super::fleets_on(&initiatives, &networks, &network.id, false);
-        assert_eq!(fleets.len(), 2, "one per initiative");
-        let roster = crate::fleet::Roster::new(fleets);
+        let held = super::initiatives_on(&initiatives, &networks, &network.id, false);
+        assert_eq!(held.len(), 2, "one per initiative");
+        let roster = crate::fleet::Roster::for_initiatives(&held);
         assert_eq!(
             roster.rank("aurora-lyra"),
             Some(crate::fleet::Rank::Captain),

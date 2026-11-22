@@ -120,7 +120,7 @@ pub(crate) fn menu_command(board: &Irc, cx: &App) -> Option<MenuCommand> {
         return Some(join_command(board.me.clone(), channel.clone(), enabled));
     }
     let header = board.selected_buffer().is_none();
-    let network = board.selected_network(cx).filter(|_| header)?;
+    let network = board.selected_network().filter(|_| header)?;
     let enabled = connected(state, &network);
     Some(refresh_command(board.me.clone(), network, enabled))
 }

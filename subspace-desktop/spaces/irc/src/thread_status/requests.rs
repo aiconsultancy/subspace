@@ -9,6 +9,9 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
+use chrono::{DateTime, Utc};
+
+use super::Outcome;
 use crate::state::HISTORY_MAX;
 
 /// The most endings a buffer remembers, oldest forgotten first, in memory
@@ -23,13 +26,22 @@ pub(crate) struct Asked {
     pub nick: String,
 }
 
+/// How and when a request ended, as far as is known: an ending stored
+/// before outcomes were kept has neither.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Ending {
+    pub outcome: Option<Outcome>,
+    /// The server time of the notice that ended it.
+    pub at: Option<DateTime<Utc>>,
+}
+
 /// A held progress notice and the request it answers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Notice {
     pub seq: i64,
     pub request: String,
-    /// It says the request completed or failed.
-    pub ended: bool,
+    /// How the request ended, when the notice says it completed or failed.
+    pub ending: Option<Ending>,
     /// The sender's account, from the server's `account` tag.
     pub account: Option<String>,
 }
@@ -54,28 +66,35 @@ impl Arrival {
     }
 }
 
-/// Request message IDs, oldest forgotten beyond [`REMEMBERED`].
+/// Ended requests by message ID, with how each ended, oldest forgotten
+/// beyond [`REMEMBERED`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Recent {
-    ids: HashSet<String>,
+    endings: HashMap<String, Ending>,
     order: VecDeque<String>,
 }
 
 impl Recent {
-    fn contains(&self, id: &str) -> bool {
-        self.ids.contains(id)
+    fn get(&self, id: &str) -> Option<&Ending> {
+        self.endings.get(id)
     }
 
-    /// Adds `id`. True when it was new.
-    fn insert(&mut self, id: &str) -> bool {
-        if !self.ids.insert(id.to_owned()) {
-            return false;
+    /// Adds `id`'s `ending`, or fills in one known without its outcome.
+    /// True when that changed what is kept.
+    fn insert(&mut self, id: &str, ending: Ending) -> bool {
+        if let Some(held) = self.endings.get_mut(id) {
+            let fills = held.outcome.is_none() && ending.outcome.is_some();
+            if fills {
+                *held = ending;
+            }
+            return fills;
         }
+        self.endings.insert(id.to_owned(), ending);
         self.order.push_back(id.to_owned());
         if self.order.len() > REMEMBERED
             && let Some(oldest) = self.order.pop_front()
         {
-            self.ids.remove(&oldest);
+            self.endings.remove(&oldest);
         }
         true
     }
@@ -100,8 +119,14 @@ pub(crate) struct Requests {
 }
 
 impl Requests {
-    pub(crate) fn ended(&self, id: &str) -> bool {
-        self.ended.contains(id)
+    /// How request `id` ended, once it has.
+    pub(crate) fn ending(&self, id: &str) -> Option<&Ending> {
+        self.ended.get(id)
+    }
+
+    /// The nick held request `id` asks, in ASCII lower case.
+    pub(crate) fn asked(&self, id: &str) -> Option<&str> {
+        self.held.get(id).map(String::as_str)
     }
 
     /// Whether `notice` folds: its request is held, and its server account
@@ -139,7 +164,9 @@ impl Requests {
             .entry(notice.request.clone())
             .or_default()
             .push(notice.seq);
-        if notice.ended && self.ended.insert(&notice.request) {
+        if let Some(ending) = notice.ending
+            && self.ended.insert(&notice.request, ending)
+        {
             self.changed.insert(notice.request.clone());
         }
     }
@@ -200,12 +227,21 @@ impl Requests {
     }
 
     /// Loads the endings the store kept, oldest first.
-    pub(crate) fn load(&mut self, ended: &[String]) {
-        ended.iter().for_each(|id| _ = self.ended.insert(id));
+    pub(crate) fn load(&mut self, ended: &[(String, Ending)]) {
+        ended
+            .iter()
+            .for_each(|(id, ending)| _ = self.ended.insert(id, *ending));
     }
 
-    /// The requests that ended since the last call, for the store.
-    pub(crate) fn take_endings(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.changed).into_iter().collect()
+    /// The requests that ended since the last call, with how each ended,
+    /// for the store.
+    pub(crate) fn take_endings(&mut self) -> Vec<(String, Ending)> {
+        std::mem::take(&mut self.changed)
+            .into_iter()
+            .filter_map(|id| {
+                let ending = *self.ended.get(&id)?;
+                Some((id, ending))
+            })
+            .collect()
     }
 }

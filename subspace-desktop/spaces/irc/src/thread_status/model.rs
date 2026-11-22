@@ -1,20 +1,22 @@
 //! Each loaded request's newest trusted progress, and the status line that
 //! shows. Rebuilt from the buffer's lines whenever it changes, so a restored
 //! or reloaded thread reads the same as it did live. Endings are also kept
-//! apart from the lines ([`crate::thread_status::Requests`]), so a request
-//! stays ended once the notice that ended it is no longer held.
+//! apart from the lines ([`crate::thread_status::Requests`]), with how and
+//! when each request ended, so a finished request keeps its settled line
+//! once the notice that ended it is no longer held.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ops::Range;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use subspace_client_irc::Line;
 
-use super::{Marker, Phase, marker};
+use super::requests::Ending;
+use super::{Marker, Outcome, Stage, marker};
 use crate::state::{Buffer, Entry};
 
-/// The status line under each request in progress, by the request line's
-/// sequence.
+/// The status line under each request that has trusted progress or has
+/// ended, by the request line's sequence.
 pub(crate) type Statuses = BTreeMap<i64, Shown>;
 
 /// The most characters of the agent's nick a status line shows. The nick
@@ -25,13 +27,37 @@ const AGENT_CHARS: usize = 32;
 /// The status line under a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Shown {
-    /// The agent's nick, as its newest progress notice spelt it.
+    /// The agent's nick, as its newest progress notice spelt it, else as
+    /// the request addressed it.
     pub agent: String,
     pub label: &'static str,
     /// The newest notice's time, when it may be out of date: the agent lost
     /// its event stream, the network is not connected, or the notice was
     /// already held when the network's current connection began.
     pub stale: Option<DateTime<Utc>>,
+    /// The segment of the stage meter the request has reached.
+    pub stage: Stage,
+    /// When the request was sent, by the server: the line's clock counts
+    /// from here.
+    pub since: DateTime<Utc>,
+    /// How the request ended, once it has: the line has settled.
+    pub settled: Option<Settled>,
+}
+
+impl Shown {
+    /// Whether the line is still running and current, so its clock ticks.
+    pub(crate) fn ticking(&self) -> bool {
+        self.settled.is_none() && self.stale.is_none()
+    }
+}
+
+/// How a finished request's line reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Settled {
+    pub failed: bool,
+    /// From the request to the notice that ended it, when the ending's
+    /// time is known.
+    pub took: Option<TimeDelta>,
 }
 
 /// One folded progress notice.
@@ -49,32 +75,19 @@ struct Progress<'a> {
     /// The newest observation of each request by server time; of two at the
     /// same time, the later in the buffer.
     latest: BTreeMap<&'a str, Observation>,
-    /// Requests that completed or failed. No other notice, older or later,
-    /// reopens them.
-    ended: BTreeSet<&'a str>,
 }
 
-/// The status line of every request in `held` that is still in progress.
-/// `connected` holds the sequences already held when the network's current
-/// connection began, `None` while it is down: notices among them, or any
-/// notice while it is down, are stale.
+/// The status line of every request in `held` that is in progress or has
+/// ended. `connected` holds the sequences already held when the network's
+/// current connection began, `None` while it is down: notices among them,
+/// or any notice while it is down, are stale. An ended request settles for
+/// good: no other notice, older or later, reopens it.
 pub(crate) fn statuses(held: &Buffer, connected: Option<&Range<i64>>) -> Statuses {
     let progress = progress(held);
     held.entries
         .iter()
-        .filter(|entry| !ended(held, entry))
-        .filter_map(|entry| request_line(entry, &progress, connected))
+        .filter_map(|entry| request_line(held, entry, &progress, connected))
         .collect()
-}
-
-/// Whether `entry` is a request that ended, also when the notice that
-/// ended it is no longer held.
-fn ended(held: &Buffer, entry: &Entry) -> bool {
-    entry
-        .line
-        .id
-        .as_deref()
-        .is_some_and(|id| held.requests.ended(id))
 }
 
 /// The folded notices of `held`, each against the request it answers.
@@ -135,14 +148,11 @@ fn invisible(c: char) -> bool {
 }
 
 /// Keeps each request's newest observation by server time, so an older
-/// replay never replaces a newer stage, and an ending for good.
+/// replay never replaces a newer stage.
 fn record<'a>(
     mut progress: Progress<'a>,
     (request, observation): (&'a str, Observation),
 ) -> Progress<'a> {
-    if observation.marker.phase == Phase::Finished {
-        progress.ended.insert(request);
-    }
     let newer = progress
         .latest
         .get(request)
@@ -153,25 +163,61 @@ fn record<'a>(
     progress
 }
 
-/// The status line under `entry`, when it is a request still in progress.
+/// The status line under `entry`, when it is a request that ended or has
+/// trusted progress.
 fn request_line(
+    held: &Buffer,
     entry: &Entry,
     progress: &Progress<'_>,
     connected: Option<&Range<i64>>,
 ) -> Option<(i64, Shown)> {
-    let id = entry
-        .line
-        .id
-        .as_deref()
-        .filter(|id| !progress.ended.contains(*id))?;
-    let observation = progress.latest.get(id)?;
-    let label = observation.marker.phase.label(entry.line.own)?;
-    let shown = Shown {
-        agent: observation.agent.clone(),
-        label,
-        stale: stale(observation, connected),
+    let id = entry.line.id.as_deref()?;
+    let latest = progress.latest.get(id);
+    let shown = match held.requests.ending(id) {
+        Some(ending) => {
+            let agent = latest
+                .map(|observation| observation.agent.clone())
+                .or_else(|| held.requests.asked(id).map(agent_name));
+            settled_line(entry, agent.unwrap_or_default(), ending)
+        }
+        None => live_line(entry, latest?, connected)?,
     };
     Some((entry.seq, shown))
+}
+
+/// The line of a request in progress, from its newest observation.
+fn live_line(
+    entry: &Entry,
+    observation: &Observation,
+    connected: Option<&Range<i64>>,
+) -> Option<Shown> {
+    let phase = observation.marker.phase;
+    Some(Shown {
+        agent: observation.agent.clone(),
+        label: phase.label(entry.line.own)?,
+        stale: stale(observation, connected),
+        stage: phase.stage(),
+        since: entry.line.time,
+        settled: None,
+    })
+}
+
+/// The quiet line of a request that ended: done or failed, and how long it
+/// took when the ending's time is known.
+fn settled_line(entry: &Entry, agent: String, ending: &Ending) -> Shown {
+    let failed = ending.outcome == Some(Outcome::Failed);
+    let took = ending
+        .at
+        .map(|at| at - entry.line.time)
+        .filter(|took| *took >= TimeDelta::zero());
+    Shown {
+        agent,
+        label: if failed { "Failed" } else { "Done" },
+        stale: None,
+        stage: Stage::Done,
+        since: entry.line.time,
+        settled: Some(Settled { failed, took }),
+    }
 }
 
 /// The notice's time when it may be out of date: the agent reported losing

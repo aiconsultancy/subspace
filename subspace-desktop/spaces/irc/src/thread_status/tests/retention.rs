@@ -5,9 +5,10 @@
 use chrono::{DateTime, Utc};
 use subspace_client_irc::{Event, Line};
 
-use super::{is_folded, joined, label, live, progress, request, room, ship};
+use super::{is_folded, joined, label, live, progress, request, room, settled, ship};
 use crate::fixtures::{at, message};
 use crate::state::{Buffer, IrcState, LINE_CAP};
+use crate::thread_status::Settled;
 use crate::thread_status::shown_entry;
 
 /// `count` ordinary messages from bob, each with its own message ID.
@@ -57,6 +58,14 @@ fn an_ending_survives_the_eviction_and_partial_reload_of_its_notice() {
         label(&state, "first"),
         None,
         "without its completed notice, the request stays ended"
+    );
+    assert_eq!(
+        settled(&state, "first"),
+        Some(Settled {
+            failed: false,
+            took: Some(chrono::TimeDelta::minutes(2)),
+        }),
+        "and keeps how and when it ended"
     );
 }
 

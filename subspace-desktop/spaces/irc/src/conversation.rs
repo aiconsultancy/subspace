@@ -3,8 +3,12 @@
 //! scroll position and composer draft, follows the hub itself, and tells its
 //! host about navigation through [`ConversationEvent`]s.
 
+mod clock;
+#[cfg(test)]
+pub(crate) use clock::ticking;
 pub(crate) mod find;
 mod header;
+pub(crate) use header::vouched_status;
 mod keys;
 mod panel;
 pub(crate) mod summaries;
@@ -56,7 +60,7 @@ pub(crate) struct Conversation {
     scroll: Scroller,
     pub(crate) summaries: summaries::Summaries,
     replies: Rc<transcript::replies::Counts>,
-    statuses: Rc<thread_status::Statuses>,
+    statuses: clock::Lines,
     /// The fleet roles on the buffer's network.
     pub(crate) roster: Rc<Roster>,
     pub(crate) draft: Draft,
@@ -110,7 +114,7 @@ impl Conversation {
             scroll: Scroller::new(cx),
             summaries: Default::default(),
             replies: Rc::default(),
-            statuses: Rc::default(),
+            statuses: clock::Lines::default(),
             roster: Rc::default(),
             draft,
             tray: crate::uploads::outgoing::Tray::default(),
@@ -168,6 +172,7 @@ impl Conversation {
         self.refresh_roster(cx);
         self.refresh_replies(cx);
         self.refresh_statuses(cx);
+        clock::follow(self, cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
         self.scroll.reset(rows, ids, cx);
@@ -205,10 +210,11 @@ impl Conversation {
 
     /// Re-reads the buffer after the hub changed, keeping the reader's place.
     fn sync(&mut self, cx: &mut Context<Self>) {
-        let previous = (self.replies.clone(), self.statuses.clone());
+        let previous = (self.replies.clone(), self.statuses.shown.clone());
         let ranks_changed = self.refresh_roster(cx);
         self.refresh_replies(cx);
         self.refresh_statuses(cx);
+        clock::follow(self, cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
         let changed = if ranks_changed {
@@ -250,7 +256,7 @@ impl Conversation {
                     rows,
                     entries,
                     statuses,
-                    &*self.statuses,
+                    &*self.statuses.shown,
                 ));
                 changed.sort_unstable();
                 changed.dedup();
@@ -293,7 +299,7 @@ impl Conversation {
             .buffer(&self.buffer)
             .map(|held| thread_status::statuses(held, connected))
             .unwrap_or_default();
-        self.statuses = Rc::new(statuses);
+        self.statuses.shown = Rc::new(statuses);
     }
 
     /// The shared row facts: who may be mentioned, today, and where
@@ -312,7 +318,8 @@ impl Conversation {
             upload_focus: keys::focused_upload(self, cx),
             // Shared counts, not copies: each row takes a reference.
             replies: Rc::clone(&self.replies),
-            statuses: Rc::clone(&self.statuses),
+            statuses: Rc::clone(&self.statuses.shown),
+            now: chrono::Utc::now(),
             roster: Rc::clone(&self.roster),
         }
     }

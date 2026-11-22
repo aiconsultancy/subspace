@@ -65,6 +65,8 @@ pub(crate) struct RowContext {
     pub replies: Rc<super::replies::Counts>,
     /// Request status lines from the same sync, shared the same way.
     pub statuses: Rc<crate::thread_status::Statuses>,
+    /// The time a running request's clock reads to.
+    pub now: chrono::DateTime<chrono::Utc>,
     /// The fleet roles on the buffer's network, which mark agents' names.
     pub roster: Rc<crate::fleet::Roster>,
 }

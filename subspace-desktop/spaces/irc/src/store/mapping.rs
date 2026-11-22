@@ -141,12 +141,28 @@ pub(crate) fn line(document: &Document) -> Option<Line> {
 }
 
 /// A request that completed or failed, by a trusted notice, as the store
-/// keeps it: the buffer, so it restores without any surviving line, and the
-/// request's message ID.
+/// keeps it: the buffer, so it restores without any surviving line, the
+/// request's message ID, and how and when it ended. A record stored before
+/// outcomes were kept has neither, and loads as done without a duration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Ended {
     pub buffer: BufferKey,
     pub request: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<crate::thread_status::Outcome>,
+    /// The server time of the notice that ended it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<DateTime<Utc>>,
+}
+
+impl Ended {
+    /// The ending as the buffer's requests keep it.
+    pub(crate) fn ending(&self) -> crate::thread_status::Ending {
+        crate::thread_status::Ending {
+            outcome: self.outcome,
+            at: self.at,
+        }
+    }
 }
 
 /// The record of `ended` at `now`: one per request, under its buffer's

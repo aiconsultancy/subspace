@@ -2,7 +2,7 @@
 //! and member avatars.
 
 use gpui_kit::{Context, Window};
-use subspace_dashboard::avatar::AgentRank;
+use subspace_dashboard::avatar::{AgentIcons, AgentRank};
 use subspace_dashboard::{Tokens, avatar};
 
 use super::PEOPLE;
@@ -37,6 +37,17 @@ pub(crate) fn agents(
             avatar::agent("gallery-sample:agent-crew", AgentRank::Captain, "Lyra").crew(3, 4),
         ),
     ]
+    .into_iter()
+    .chain(icons_small())
+    .collect()
+}
+
+/// The small icon `avatar::agent_icon` gives under the Icons setting's
+/// Small, the size of a row's leading glyph.
+fn icons_small() -> Option<Sample> {
+    let lyra = avatar::agent("gallery-sample:agent-mark", AgentRank::Captain, "Lyra").small();
+    avatar::agent_icon(lyra, AgentIcons::Small)
+        .map(|icon| sample("Icons: Small, where a row's # sits", icon))
 }
 
 pub(crate) fn externals(
@@ -53,7 +64,7 @@ pub(crate) fn externals(
 
 pub(crate) fn crew_meters(
     _: &ComponentGallery,
-    _: &Tokens,
+    tokens: &Tokens,
     _: &mut Window,
     _: &mut Context<ComponentGallery>,
 ) -> Vec<Sample> {
@@ -69,5 +80,17 @@ pub(crate) fn crew_meters(
             avatar::crew_meter(format!("gallery-sample:crew:{state}"), busy, total),
         )
     })
+    .chain([true, false].map(|busy| activity_dot(busy, tokens)))
     .collect()
+}
+
+/// `avatar::activity_dot` alone: a ship working or a person here, filled;
+/// otherwise a ring.
+fn activity_dot(busy: bool, tokens: &Tokens) -> Sample {
+    let state = if busy {
+        "Activity dot: on"
+    } else {
+        "Activity dot: off"
+    };
+    sample(state, avatar::activity_dot(busy, tokens))
 }

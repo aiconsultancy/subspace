@@ -60,6 +60,7 @@ struct AppearanceDraft {
     fonts: [Option<String>; 3],
     sizes: Vec<Option<f32>>,
     icon_button_size: Option<String>,
+    agent_icons: Option<String>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -143,6 +144,7 @@ impl Settings {
                 fonts: self.fonts.each_ref().map(|font| selection(font, cx)),
                 sizes: super::sizes::values(&self.font_sizes, cx),
                 icon_button_size: selection(&self.icon_buttons.choice, cx),
+                agent_icons: selection(&self.agent_icons.choice, cx),
             },
             layout: LayoutDraft {
                 boards: self.boards.iter().map(|board| board.id).collect(),

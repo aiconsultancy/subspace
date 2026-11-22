@@ -2,6 +2,9 @@
 //! into an input; an empty input keeps its token unless Clear is selected.
 
 #[cfg(test)]
+mod agent_icon_tests;
+mod agent_icons;
+#[cfg(test)]
 mod background_update_tests;
 mod background_updates;
 pub(crate) mod board_choice;
@@ -154,7 +157,8 @@ pub struct Settings {
     initial_confirm_quit: bool,
     fonts: [FontPicker; 3],
     font_sizes: Vec<Entity<InputState>>,
-    icon_buttons: icon_buttons::Draft,
+    icon_buttons: icon_buttons::Draft<subspace_dashboard::icon_button::IconButtonSize>,
+    agent_icons: icon_buttons::Draft<subspace_dashboard::avatar::AgentIcons>,
     account: Choice,
     initial_account: Option<String>,
     /// The accounts under GitHub accounts, and the shared sign-in.
@@ -199,6 +203,7 @@ struct SubscriptionInputs<'a> {
     fonts: &'a [FontPicker; 3],
     font_sizes: &'a [Entity<InputState>],
     icon_buttons: &'a Choice,
+    agent_icons: &'a Choice,
     chat_engine: &'a Choice,
     navigation: &'a Navigation,
 }
@@ -233,6 +238,7 @@ impl Settings {
                 fonts: &settings.fonts,
                 font_sizes: &settings.font_sizes,
                 icon_buttons: &settings.icon_buttons.choice,
+                agent_icons: &settings.agent_icons.choice,
                 chat_engine: &settings.chat_engine,
                 navigation: &settings.navigation,
             },
@@ -353,6 +359,7 @@ impl Settings {
             fonts,
             font_sizes,
             icon_buttons: icon_buttons::Draft::new(window, cx),
+            agent_icons: icon_buttons::Draft::new(window, cx),
             account,
             initial_account,
             github: AccountList::new(accounts, cx),
@@ -396,6 +403,7 @@ impl Settings {
         );
         subscriptions.extend(sizes::subscribe(inputs.font_sizes, window, cx));
         subscriptions.push(cx.observe(inputs.icon_buttons, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(inputs.agent_icons, |_, _, cx| cx.notify()));
         // The ACP agent choice shows only while ACP is the selected engine.
         subscriptions.push(cx.observe(inputs.chat_engine, |_, _, cx| cx.notify()));
         subscriptions.extend(inputs.navigation.states().map(|state| {
@@ -581,6 +589,7 @@ impl Settings {
         cx.set_global(DensityPreview(false));
         background_updates::save(&mut self.background_updates, cx)?;
         self.icon_buttons.save(cx)?;
+        self.agent_icons.save(cx)?;
         self.initial_appearance = theme::AppearanceSnapshot::capture(cx);
         self.initial_draft = Some(self.draft_snapshot(cx));
         self.partial_draft = None;

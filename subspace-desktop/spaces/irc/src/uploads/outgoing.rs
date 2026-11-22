@@ -12,7 +12,7 @@ pub(crate) use delivery::submit;
 pub(crate) use follow::{dismiss, follow};
 pub(crate) use recovery::check;
 pub(crate) use source::{ingest, paths};
-pub(crate) use view::controls;
+pub(crate) use view::{VISIBILITY, controls};
 
 use super::intake::Preview;
 use crate::conversation::Conversation;

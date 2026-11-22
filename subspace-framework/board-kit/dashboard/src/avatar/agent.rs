@@ -10,8 +10,12 @@ use gpui_kit::{
 };
 use subspace_lucide::IconName;
 
-use super::{MEMBER_SIZE_PX, SENDER_SIZE_PX};
+use super::{AgentIcons, MEMBER_SIZE_PX, SENDER_SIZE_PX};
 use crate::{Tokens, Tone};
+
+/// The side of an agent's small icon under the Icons setting's **Small**:
+/// a row's leading glyph's, so it sits where a `#` would.
+pub const MARK_SIZE_PX: f32 = 12.0;
 
 /// The fill inside the ring: the rank's tone, faint, so the glyph reads on
 /// any surface.
@@ -131,6 +135,22 @@ impl AgentAvatar {
     }
 }
 
+/// The one seam for an agent's or a ship's icon under the app's Icons
+/// setting: `avatar` as its surface draws it today for **Large**, the same
+/// avatar at [`MARK_SIZE_PX`] for **Small**, and nothing for **Off**, so the
+/// surface closes up around its text. Every surface that shows such an icon
+/// asks this, with [`AgentIcons::current`].
+pub fn agent_icon(avatar: AgentAvatar, icons: AgentIcons) -> Option<AgentAvatar> {
+    match icons {
+        AgentIcons::Large => Some(avatar),
+        AgentIcons::Small => Some(AgentAvatar {
+            side: MARK_SIZE_PX,
+            ..avatar
+        }),
+        AgentIcons::Off => None,
+    }
+}
+
 /// The share of the crew that is busy, as Kit's progress value.
 fn busy_percent(busy: usize, total: usize) -> f32 {
     match total {
@@ -197,9 +217,11 @@ impl RenderOnce for AgentAvatar {
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentRank, Crew, RINGED_SHARE, agent, busy_percent, face_side};
+    use super::{
+        AgentRank, Crew, MARK_SIZE_PX, RINGED_SHARE, agent, agent_icon, busy_percent, face_side,
+    };
     use crate::Tone;
-    use crate::avatar::{MEMBER_SIZE_PX, SENDER_SIZE_PX};
+    use crate::avatar::{AgentIcons, MEMBER_SIZE_PX, SENDER_SIZE_PX};
     use gpui_kit::px;
     use subspace_lucide::IconName;
 
@@ -233,5 +255,16 @@ mod tests {
         assert!(busy_percent(0, 0).abs() < f32::EPSILON, "no crew, no arc");
         assert!((face_side(32., true) - 32. * RINGED_SHARE).abs() < f32::EPSILON);
         assert!((face_side(32., false) - 32.).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn the_icons_setting_keeps_an_icon_large_makes_it_small_or_leaves_it_out() {
+        let lyra = || agent("lyra", AgentRank::Captain, "aurora-lyra").small();
+        let large = agent_icon(lyra(), AgentIcons::Large).map(|icon| icon.side());
+        assert_eq!(large, Some(px(MEMBER_SIZE_PX)), "as the surface drew it");
+        let small = agent_icon(lyra(), AgentIcons::Small).expect("a small icon");
+        assert_eq!(small.side(), px(MARK_SIZE_PX));
+        assert_eq!(small.spoken(), "aurora-lyra, captain", "still named");
+        assert!(agent_icon(lyra(), AgentIcons::Off).is_none());
     }
 }

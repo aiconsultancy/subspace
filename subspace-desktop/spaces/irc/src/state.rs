@@ -161,7 +161,7 @@ pub(crate) struct IrcState {
     pub joins: joins::Joins,
     /// Request endings the store kept for buffers that held no lines when
     /// it restored, by buffer, until the buffer holds lines.
-    parked: BTreeMap<BufferKey, Vec<String>>,
+    parked: BTreeMap<BufferKey, Vec<(String, crate::thread_status::Ending)>>,
     sends: Sends,
 }
 
@@ -361,7 +361,12 @@ impl IrcState {
     /// and the requests that `ended` there, oldest first. Endings for a
     /// buffer that holds no lines wait in [`Self::parked`] until it does,
     /// so they never bring a buffer back into the list by themselves.
-    pub fn restore_buffer(&mut self, key: &BufferKey, lines: Vec<Line>, ended: &[String]) {
+    pub fn restore_buffer(
+        &mut self,
+        key: &BufferKey,
+        lines: Vec<Line>,
+        ended: &[(String, crate::thread_status::Ending)],
+    ) {
         if !lines.is_empty() {
             self.restore(key, lines);
         }
@@ -388,7 +393,9 @@ impl IrcState {
 
     /// The requests that ended in each buffer since the last call, for the
     /// store.
-    pub fn take_endings(&mut self) -> Vec<(BufferKey, Vec<String>)> {
+    pub fn take_endings(
+        &mut self,
+    ) -> Vec<(BufferKey, Vec<(String, crate::thread_status::Ending)>)> {
         self.buffers
             .iter_mut()
             .filter_map(|(key, buffer)| {
