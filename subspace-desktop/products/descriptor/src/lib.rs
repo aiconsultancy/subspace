@@ -10,13 +10,20 @@ pub const SUBSPACE_PRODUCT_ID: &str = "subspace";
 pub const SUBSPACE_BINARY_NAME: &str = "subspace";
 /// The app's version, which decides whether this build updates itself.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The theme a new install opens in: the first desktop start of an install
+/// with no config or state file records it as the saved theme. Twilight Two
+/// has only a dark variant, so a new install opens dark whatever the system
+/// appearance.
+pub const NEW_INSTALL_THEME: &str = "Twilight Two";
+/// The bundled theme document that holds [`NEW_INSTALL_THEME`].
+const NEW_INSTALL_THEME_DOCUMENT: &str = "twilight-two";
 
 const SUBSPACE_THEMES: &[&str] = &[
     "one-dark",
     DEFAULT_THEME_DOCUMENT,
     "subspace-channel",
     "macos-classic-dark-remix",
-    "twilight-two",
+    NEW_INSTALL_THEME_DOCUMENT,
     "adventure",
     "alduin",
     "asciinema",
@@ -64,6 +71,9 @@ fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor 
         icon_paths: icon_paths(channel, "subspace", "subspace-app"),
         credits: Vec::new(),
         themes: SUBSPACE_THEMES.iter().map(|id| (*id).to_owned()).collect(),
+        // What an install with no saved theme shows. It stays the Framework
+        // default so that installs from before Twilight Two keep their look;
+        // new installs get NEW_INSTALL_THEME recorded instead.
         default_theme: Some(DEFAULT_THEME.into()),
         boards: vec![
             board("github", true),
@@ -194,8 +204,8 @@ mod tests {
         }
     }
     use super::{
-        SUBSPACE_BINARY_NAME, SUBSPACE_PRODUCT_ID, known_product_descriptors, subspace_descriptor,
-        subspace_descriptor_for,
+        NEW_INSTALL_THEME, SUBSPACE_BINARY_NAME, SUBSPACE_PRODUCT_ID, known_product_descriptors,
+        subspace_descriptor, subspace_descriptor_for,
     };
     use subspace_framework::product::{
         Channel, DEFAULT_THEME, DEFAULT_THEME_DOCUMENT, ProductError, ValidatedProduct,
@@ -376,8 +386,11 @@ mod tests {
         }
     }
 
+    /// New installs open in Twilight Two; an install with no saved theme
+    /// keeps Cupertino Dark, the Framework default, as before.
     #[test]
-    fn the_catalogue_defaults_to_cupertino_dark_and_keeps_one_dark() {
+    fn new_installs_open_in_twilight_two_and_unsaved_installs_keep_cupertino_dark() {
+        assert_eq!(NEW_INSTALL_THEME, "Twilight Two");
         assert_eq!(DEFAULT_THEME, "Cupertino Dark");
         assert_eq!(DEFAULT_THEME_DOCUMENT, "cupertino");
         let products = known_products().unwrap();
@@ -391,7 +404,7 @@ mod tests {
                     .iter()
                     .any(|theme| theme.contains("shell"))
             );
-            for id in ["one-dark", DEFAULT_THEME_DOCUMENT] {
+            for id in ["one-dark", DEFAULT_THEME_DOCUMENT, "twilight-two"] {
                 assert!(
                     descriptor.themes.iter().any(|theme| theme == id),
                     "{}: {id}",

@@ -3,9 +3,10 @@
 # moves the versions in the manifests but cannot run Cargo; this commits
 # what scripts/sync-lockfiles.py changes, after Cargo accepts the result with
 # --locked, and pushes it to the branch. Then it starts
-# .github/workflows/lockfiles.yml on the branch: a pull request opened or
-# pushed with the workflow's token starts no pull_request run, so this is how a
-# release pull request gets its lockfiles check. Run by
+# .github/workflows/lockfiles.yml and .github/workflows/stargate-pin.yml on the
+# branch: a pull request opened or pushed with the workflow's token starts no
+# pull_request run, so this is how a release pull request gets its lockfiles
+# and Stargate pin checks. Run by
 # .github/workflows/release.yml from the repository root, with GH_TOKEN, a
 # checkout that can push and actions: write.
 # Environment for tests: RELEASE_SYNC and RELEASE_VERIFY replace the sync and
@@ -27,8 +28,17 @@ verify_locked() {
 
 # Checks the branch's head as it is when the run starts: refreshed, or
 # rewritten since by Release Please, whose next run refreshes and checks it.
+# The Stargate pin check skips the Framework's branch itself; starting it there
+# too gives every release pull request the same checks. A branch Release
+# Please built before the check existed cannot start it; its rebuild on main
+# can.
 check() {
 	gh workflow run lockfiles.yml --repo "$repo" --ref "$1"
+	if [[ -f .github/workflows/stargate-pin.yml ]]; then
+		gh workflow run stargate-pin.yml --repo "$repo" --ref "$1"
+	else
+		echo "$1: has no stargate-pin workflow yet, so its Stargate pin was not checked." >>"$summary"
+	fi
 }
 
 git config user.name 'github-actions[bot]'

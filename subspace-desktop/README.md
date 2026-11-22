@@ -17,8 +17,10 @@ The app checks for updates at launch by default. To check manually, open
 ## Developer overview
 
 A desktop dashboard app built with Rust and
-[GPUI Kit](https://github.com/longbridge/gpui-kit). It opens in the Cupertino Dark
-theme, with Space tabs in the title bar and a ⌘K command palette. Every Space
+[GPUI Kit](https://github.com/longbridge/gpui-kit). A new install opens in the
+Twilight Two theme, and an install from before that keeps the theme it shows
+([why](docs/changes/default-twilight-two/README.md)). It has Space tabs in the
+title bar and a ⌘K command palette. Every Space
 uses the same workspace shell: a navigator on the left, a tab strip and
 toolbar above the content, an inspector on the right and the status bar
 (see the [design guide](../subspace-framework/docs/design-guide.md)).

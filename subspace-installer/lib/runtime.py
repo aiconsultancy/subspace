@@ -58,7 +58,10 @@ TOOL_ENV = {"MISE_DATA_DIR": str(TOOL_HOME), "MISE_GLOBAL_CONFIG_FILE": str(ETC 
             "MISE_SYSTEM_CONFIG_DIR": str(TOOL_HOME / "system-config")}
 FLEET_PATH = f"{APP}/bin:{TOOL_HOME}/shims:/usr/local/bin:/usr/bin:/bin"
 STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
-# Stargate v0.43.0, the first release with agent dispatch on the rear admiral's gateway.
+# Stargate's latest release and the commit its tag names; every install gets exactly that commit. Agent
+# dispatch on the rear admiral's gateway needs v0.43.0 or later. scripts/stargate-pin.py checks the two
+# against GitHub and moves them together: see "Stargate pin" in subspace-installer/README.md.
+STARGATE_RELEASE = "v0.43.0"
 STARGATE_REF = "fcf6ac75d9c780878c06c8b49fb160e4a27832ff"
 # Fleet API browser origins: macOS Spaces, and the built-in Fleet Console's WebView2 origin on
 # Windows, which Stargate stopped allowing by default in v0.41.0.

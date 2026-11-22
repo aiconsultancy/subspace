@@ -1,0 +1,41 @@
+# Fails when the fleet installer's Stargate pin (subspace-installer/lib/runtime.py)
+# is not Stargate's latest release, unless subspace-installer/stargate-hold.json
+# holds it for a stated reason, which shows as a warning. It also fails when
+# GitHub's API cannot be reached or answers with an error, so an unchecked pin
+# never passes. See scripts/stargate-pin.py.
+#
+# - On each release branch, started by scripts/release-lockfiles.sh from
+#   release.yml beside the lockfiles check, on every push to main and nightly:
+#   a pull request opened or pushed with the release workflow's token starts no
+#   pull_request run. Each Subspace release carries the installer, so its
+#   release pull request must not merge with a stale pin. The Framework's
+#   release does not carry the installer, so its run is skipped.
+# - By hand, on any branch, to see whether its pin is current.
+# - On each pull request, skipped, so that the check can be made required
+#   without blocking pull requests that have nothing to release.
+name: stargate-pin
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  stargate-pin:
+    name: stargate-pin
+    if: github.event_name == 'workflow_dispatch' && github.ref_name != 'release-please--branches--main--components--subspace-framework'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the pin against Stargate's latest release
+        env:
+          # Read-only requests for public data, made with this run's token for
+          # its higher rate limit.
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/stargate-pin.py --check

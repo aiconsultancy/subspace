@@ -66,21 +66,31 @@ fn contains_theme(content: &str, name: &str) -> bool {
 /// Every declared document must be embedded, and one of them must contain
 /// the product's default variant.
 pub(crate) fn validate_product_themes(product: &ValidatedProduct) -> Result<(), String> {
+    require_catalogue_variant(product, "default theme", &product.default_theme)
+}
+
+/// `name`, the product's `role` theme, must be a variant of one of its
+/// declared documents.
+pub(crate) fn require_catalogue_variant(
+    product: &ValidatedProduct,
+    role: &str,
+    name: &str,
+) -> Result<(), String> {
     let names = product
         .themes
         .iter()
         .map(|id| variant_names(id.as_str()))
         .collect::<Result<Vec<_>, _>>()?
         .concat();
-    require_default_variant(&names, &product.default_theme)
+    require_variant(&names, role, name)
 }
 
-fn require_default_variant(names: &[String], default: &str) -> Result<(), String> {
-    if names.iter().any(|name| name == default) {
+fn require_variant(names: &[String], role: &str, name: &str) -> Result<(), String> {
+    if names.iter().any(|candidate| candidate == name) {
         Ok(())
     } else {
         Err(format!(
-            "product default theme is not in its theme catalogue: {default}"
+            "product {role} is not in its theme catalogue: {name}"
         ))
     }
 }

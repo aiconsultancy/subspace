@@ -726,7 +726,7 @@ their crew's assignments through `stargate_crew`.
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<slug>-<id>` for a captain. Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
-| `stargate` | Optional `repo` and `ref`. Defaults to the [pinned upstream Stargate release, v0.43.0](https://github.com/aiconsultancy/stargate/commit/fcf6ac75d9c780878c06c8b49fb160e4a27832ff), the first with [agent dispatch](#agent-dispatch). `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
+| `stargate` | Optional `repo` and `ref`. Defaults to the [Stargate pin](#stargate-pin): Stargate's latest release when this installer was released, and never older than v0.43.0, the first with [agent dispatch](#agent-dispatch). `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
 | `dashboard` | `bind` defaults to `127.0.0.1`. `port` defaults to 8070. The listener proxies only the Stargate read-only dashboard socket. |
 | `proxy`, `agentsview` | Loopback-only by default. Proxy `port` defaults to 8317 and `requestRetries` to 2. AgentsView `port` defaults to 8080. |
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
@@ -847,6 +847,84 @@ OAuth sessions, and the Docker volume. Back up
 `/etc/subspace-fleet/` and `/var/lib/subspace-fleet/` and, for local IRC,
 the Ergo volume. Keep backups private. The installer leaves OS packages in
 place.
+
+## Stargate pin
+
+The installer pins Stargate by commit: `STARGATE_REF` in
+[lib/runtime.py](lib/runtime.py), with the release whose tag names that
+commit beside it in `STARGATE_RELEASE`. Every fleet installed with the
+default `stargate` settings gets exactly that commit. The installer generates
+Stargate's configuration, units and plugin options, which must match the
+pinned version, so the pin only moves deliberately and after testing; it
+never follows Stargate's releases on its own.
+
+Each Subspace release carries Stargate's latest release. Three things keep it
+so:
+
+- **The check.** From the repository root,
+  `python3 scripts/stargate-pin.py` reports the pin and Stargate's latest
+  release, `--check` also fails when the pin is behind, and `--update` moves
+  `STARGATE_RELEASE` and `STARGATE_REF` to the latest release and changes
+  nothing else. It asks only GitHub's API, about `aiconsultancy/stargate`,
+  with `GH_TOKEN` or `GITHUB_TOKEN` when set. It exits 0 when the pin is
+  current or held, 1 when it is behind, 2 when the pin, the hold or GitHub's
+  answer is malformed, 3 when GitHub cannot be reached and 4 when GitHub
+  answers with an error. It never passes a pin it could not check.
+- **The bump pull request.** The daily `stargate-bump` workflow
+  (`.github/workflows/stargate-bump.yml`) finds a newer release, moves the
+  pin, runs the installer's offline tests and opens a pull request from
+  `automation/stargate-pin`, or updates the open one. Its description gives
+  the releases from and to, the release notes of each release in between,
+  the test results and a checklist. The workflow never merges, and leaves
+  the branch alone once someone else has pushed to it.
+- **The release gate.** The app's release pull request gets a
+  `stargate-pin` check, started by the release workflow beside its
+  `lockfiles` check, which fails while the pin is behind; see
+  [Releases](../subspace-desktop/docs/ways-of-working.md#releases).
+
+### Merge a bump
+
+Before merging the bump pull request, check the new release against what
+broke the installer before, using its release notes and Stargate's source at
+the new commit:
+
+- the configuration keys the installer generates for Stargate;
+- the service, unit and path names it refers to, such as the `src/main.ts`
+  and `src/fleet` entrypoints;
+- the options it passes to Stargate's crew plugin;
+- the Fleet API's CORS origins (`FLEET_API_ORIGINS`, `stargate.api.corsOrigins`);
+- the Mesij version Stargate expects, against the `mesij` rows in
+  [releases.tsv](lib/releases.tsv);
+- the documentation links that name the old commit, which the pull request
+  lists.
+
+Fix anything that needs it on the same branch. Then run the
+[verification](#verification) checks and install a test fleet on a VM from
+the branch before merging. The workflow's token starts no `pull_request`
+checks on the pull request it opens: push a commit to the branch, or close
+and reopen the pull request, to start them.
+
+### Hold a release back
+
+When Stargate's latest release cannot be adopted yet, add
+`subspace-installer/stargate-hold.json` in a reviewed pull request:
+
+```json
+{
+  "pinned": "v0.43.0",
+  "holding": "v0.44.0",
+  "reason": "v0.44.0 renames the crew plugin's options; adopting it is tracked in #123.",
+  "until": "2026-12-31"
+}
+```
+
+`pinned` is the pin's release, `holding` the release not adopted yet, and
+`until` the last day the hold applies. While all three match, the check and
+the release gate pass with the reason as a warning, and no bump pull request
+is opened. A newer Stargate release than `holding`, or the day after
+`until`, ends the hold, and the check fails again until the pin moves or the
+hold is renewed in another reviewed change. A hold that no longer describes
+the pin is reported and ignored. Remove the file when the pin moves.
 
 ## Verification
 

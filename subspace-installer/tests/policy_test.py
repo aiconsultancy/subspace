@@ -1,6 +1,7 @@
 """Offline checks for network, GitHub and workspace policy."""
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -367,8 +368,13 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertIn('oifname "lo" tcp dport 8484 meta skuid != { 0, 1700 } reject', result)
 
     def test_stargate_is_pinned_to_a_release_with_agent_dispatch(self):
-        # v0.43.0's commit; the installer fetches its tag so the Fleet API reports the version.
-        self.assertEqual(runtime.STARGATE_REF, "fcf6ac75d9c780878c06c8b49fb160e4a27832ff")
+        # A commit, labelled with its release. scripts/stargate-pin.py checks the label names that commit
+        # and moves both to Stargate's latest release; the installer fetches the tag so the Fleet API
+        # reports the version.
+        self.assertRegex(runtime.STARGATE_REF, r"\A[0-9a-f]{40}\Z")
+        release = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", runtime.STARGATE_RELEASE)
+        self.assertIsNotNone(release, runtime.STARGATE_RELEASE)
+        self.assertGreaterEqual(tuple(int(part) for part in release.groups()), (0, 43, 0))
         cfg = validate(example_config(), officer_secrets())
         self.assertEqual(cfg["stargate"]["ref"], runtime.STARGATE_REF)
 
