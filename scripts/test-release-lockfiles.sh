@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Exercise release-lockfiles.sh against a local origin with a fake gh.
+# Exercise release-lockfiles.sh against a local origin with a fake gh, whose
+# pull request list applies the script's own --jq filter with jq.
 set -euo pipefail
 while IFS= read -r name; do
 	unset "$name"
@@ -14,8 +15,22 @@ cat >"$fixture/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$FIXTURE/gh.log"
+[[ "$1 $2" = "workflow run" ]] && exit 0
 [[ "$1 $2" = "pr list" ]] || { echo "unexpected gh call: $*" >&2; exit 3; }
-printf '%s\n' $FAKE_BRANCHES
+filter=
+while (($#)); do
+	[[ "$1" = --jq ]] && filter="$2"
+	shift
+done
+# FAKE_BRANCHES carry the pending label; FAKE_UNLABELLED carry none.
+{
+	for branch in $FAKE_BRANCHES; do
+		printf '{"headRefName":"%s","labels":[{"name":"autorelease: pending"}]}\n' "$branch"
+	done
+	for branch in ${FAKE_UNLABELLED:-}; do
+		printf '{"headRefName":"%s","labels":[]}\n' "$branch"
+	done
+} | jq -rs "$filter"
 SH
 chmod 755 "$fixture/bin/gh"
 export PATH="$fixture/bin:$PATH" FIXTURE="$fixture" GITHUB_REPOSITORY=fixture/repository
@@ -43,14 +58,22 @@ sed s/0.1.0/0.2.0/ subspace-framework/Cargo.lock >subspace-framework/Cargo.lock.
 mv subspace-framework/Cargo.lock.new subspace-framework/Cargo.lock
 SH
 export RELEASE_SYNC="bash $fixture/sync"
-FAKE_BRANCHES="$framework feature" bash scripts/release-lockfiles.sh
+FAKE_BRANCHES="$framework feature" FAKE_UNLABELLED="$desktop" bash scripts/release-lockfiles.sh
 test "$(git --git-dir="$fixture/origin.git" show "$framework:subspace-framework/Cargo.lock")" = 'version = "0.2.0"'
 test "$(git --git-dir="$fixture/origin.git" log -1 --format=%s "$framework")" = 'chore: refresh the lockfiles for the release'
 test "$(git --git-dir="$fixture/origin.git" log -1 --format=%an "$framework")" = 'github-actions[bot]'
 test "$(git --git-dir="$fixture/origin.git" show feature:subspace-framework/Cargo.lock)" = 'version = "0.1.0"'
 test -f "$fixture/verified"
 grep -Fq "$framework: refreshed 1 lockfiles." "$GITHUB_STEP_SUMMARY"
-grep -Fq -- "--label autorelease: pending" "$fixture/gh.log"
+# Not --label, which makes gh query the lagging search index.
+if grep -Fq -- "--label" "$fixture/gh.log"; then
+	echo 'the pull request list must not use --label' >&2
+	exit 1
+fi
+test "$(git --git-dir="$fixture/origin.git" rev-parse "$desktop")" = "$(git --git-dir="$fixture/origin.git" rev-parse main)"
+# The lockfiles check is started on the refreshed release branch only.
+test "$(grep -c '^workflow run' "$fixture/gh.log")" = 1
+grep -Fqx "workflow run lockfiles.yml --repo fixture/repository --ref $framework" "$fixture/gh.log"
 test "$(git rev-parse HEAD)" = "$(git --git-dir="$fixture/origin.git" rev-parse main)"
 
 # A second run finds nothing to do and pushes nothing.
@@ -60,6 +83,8 @@ FAKE_BRANCHES="$framework" bash scripts/release-lockfiles.sh
 test "$(git --git-dir="$fixture/origin.git" rev-parse "$framework")" = "$before"
 test ! -e "$fixture/verified"
 grep -Fq "$framework: the lockfiles are up to date." "$GITHUB_STEP_SUMMARY"
+# An up-to-date release branch is checked too.
+test "$(grep -c "^workflow run lockfiles.yml --repo fixture/repository --ref $framework\$" "$fixture/gh.log")" = 2
 
 # A sync that touches anything but lockfiles stops before committing.
 printf '#!/usr/bin/env bash\nprintf "changed\\n" >>README.md\n' >"$fixture/sync"
@@ -68,5 +93,9 @@ if FAKE_BRANCHES="$desktop" bash scripts/release-lockfiles.sh 2>"$fixture/error"
 	exit 1
 fi
 grep -Fq 'changed files other than lockfiles' "$fixture/error"
+if grep -Fq -- "--ref $desktop" "$fixture/gh.log"; then
+	echo 'a branch that was not refreshed must not be checked' >&2
+	exit 1
+fi
 test "$(git --git-dir="$fixture/origin.git" rev-parse "$desktop")" = "$(git --git-dir="$fixture/origin.git" rev-parse main)"
 echo "release-lockfiles fixtures passed"

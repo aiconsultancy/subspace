@@ -1,0 +1,37 @@
+# Fails when a lockfile names a version of one of this repository's own
+# packages other than its manifest's, which every `--locked` build refuses.
+# See scripts/sync-lockfiles.py.
+#
+# - On each pull request.
+# - On each release branch, started by scripts/release-lockfiles.sh from
+#   release.yml: Release Please opens its pull requests, and the lockfile
+#   refresh pushes to them, with the release workflow's token, which starts no
+#   pull_request run.
+name: lockfiles
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  lockfiles:
+    name: lockfiles
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the Rust toolchain the Framework names
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' subspace-framework/Cargo.toml)"
+          test -n "$version"
+          rustup toolchain install "$version" --profile minimal
+          rustup default "$version"
+      - name: Check the lockfiles against the manifests
+        run: python3 scripts/sync-lockfiles.py --check
