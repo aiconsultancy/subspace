@@ -34,6 +34,7 @@ pub(super) fn submit(
         return;
     }
     if let Some(asked) = ask::ask(&text, &conversation.buffer, &conversation.roster) {
+        let asked = ask::within_limits(asked, batches);
         send_ask(conversation, asked, text, window, cx);
         return;
     }
