@@ -58,6 +58,12 @@ fn reads(count: &std::sync::atomic::AtomicUsize) -> usize {
     count.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// The person's Retry at `at`, and whatever it reads.
+fn retry_at(service: &Entity<FleetApi>, at: Instant, cx: &mut TestAppContext) {
+    service.update(cx, |service, cx| service.reload_unreadable_at(at, cx));
+    cx.run_until_parked();
+}
+
 fn revision(service: &Entity<FleetApi>, cx: &mut TestAppContext) -> u64 {
     service.read_with(cx, |service, _| service.directory_revision())
 }
@@ -102,8 +108,7 @@ fn a_store_still_locked_on_retry_neither_announces_nor_reads_again_soon(cx: &mut
         })
     });
     let start = Instant::now();
-    service.update(cx, |service, cx| service.reload_unreadable_at(start, cx));
-    cx.run_until_parked();
+    retry_at(&service, start, cx);
     assert_eq!(reads(&count), 2, "the retry read the store once");
     assert_eq!(
         self::revision(&service, cx),
@@ -114,14 +119,10 @@ fn a_store_still_locked_on_retry_neither_announces_nor_reads_again_soon(cx: &mut
 
     // Asking again within the interval reads nothing, whoever asks.
     for seconds in [1, 4] {
-        let at = start + Duration::from_secs(seconds);
-        service.update(cx, |service, cx| service.reload_unreadable_at(at, cx));
-        cx.run_until_parked();
+        retry_at(&service, start + Duration::from_secs(seconds), cx);
     }
     assert_eq!(reads(&count), 2);
-    let later = start + Duration::from_secs(5);
-    service.update(cx, |service, cx| service.reload_unreadable_at(later, cx));
-    cx.run_until_parked();
+    retry_at(&service, start + Duration::from_secs(5), cx);
     assert_eq!(reads(&count), 3, "read again once the interval has passed");
     assert_eq!(self::revision(&service, cx), revision);
 }
@@ -130,13 +131,10 @@ fn a_store_still_locked_on_retry_neither_announces_nor_reads_again_soon(cx: &mut
 fn a_retry_asked_too_soon_reads_once_the_interval_ends(cx: &mut TestAppContext) {
     let (service, _locked, count) = locked_service(cx);
     let start = Instant::now();
-    service.update(cx, |service, cx| service.reload_unreadable_at(start, cx));
-    cx.run_until_parked();
+    retry_at(&service, start, cx);
     assert_eq!(reads(&count), 2);
     for seconds in [1, 2] {
-        let at = start + Duration::from_secs(seconds);
-        service.update(cx, |service, cx| service.reload_unreadable_at(at, cx));
-        cx.run_until_parked();
+        retry_at(&service, start + Duration::from_secs(seconds), cx);
     }
     assert_eq!(reads(&count), 2, "not read again within the interval");
     cx.executor().advance_clock(Duration::from_secs(4));

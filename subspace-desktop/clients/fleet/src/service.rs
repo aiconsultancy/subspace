@@ -57,13 +57,11 @@ pub struct FleetInfo {
     pub state: FleetState,
 }
 
-/// The service. Reach it through [`FleetApi::shared`].
-pub struct FleetApi {
-    store: Arc<TokenStore>,
-    fleets: Vec<FleetRecord>,
-    tokens: BTreeMap<String, TokenLoad>,
+/// What the service keeps of its token reads.
+#[derive(Default)]
+struct Reads {
     /// When each fleet's unreadable token was last read again.
-    rereads: BTreeMap<String, Instant>,
+    last: BTreeMap<String, Instant>,
     /// Whether a Retry asked too soon has a read waiting for its interval.
     deferred: bool,
     /// Each fleet's token generation: a save, a clear or the fleet's
@@ -73,6 +71,16 @@ pub struct FleetApi {
     generations: BTreeMap<String, u64>,
     /// The last generation handed out, across every fleet.
     generation: u64,
+}
+
+/// The service. Reach it through [`FleetApi::shared`].
+pub struct FleetApi {
+    store: Arc<TokenStore>,
+    fleets: Vec<FleetRecord>,
+    tokens: BTreeMap<String, TokenLoad>,
+    /// The token reads: when each was last read again and which are
+    /// current.
+    reads: Reads,
     /// Each fleet a handle follows, with the holder every handle clones.
     interest: BTreeMap<String, Arc<()>>,
     feeds: BTreeMap<String, Followed>,
@@ -140,10 +148,7 @@ impl FleetApi {
             store,
             fleets: Vec::new(),
             tokens: BTreeMap::new(),
-            rereads: BTreeMap::new(),
-            deferred: false,
-            generations: BTreeMap::new(),
-            generation: 0,
+            reads: Reads::default(),
             interest: BTreeMap::new(),
             feeds: BTreeMap::new(),
             revision: 0,
@@ -253,7 +258,7 @@ impl FleetApi {
     }
 
     pub(crate) fn reload_unreadable_at(&mut self, now: Instant, cx: &mut Context<Self>) {
-        let later = directory::next_reread(&self.tokens, &self.rereads, now, REREAD_INTERVAL);
+        let later = directory::next_reread(&self.tokens, &self.reads.last, now, REREAD_INTERVAL);
         self.read_due(now, cx);
         if let Some(at) = later {
             self.defer_reread(now, at, cx);
@@ -262,7 +267,7 @@ impl FleetApi {
 
     /// Reads again each unreadable token not read within the interval.
     fn read_due(&mut self, now: Instant, cx: &mut Context<Self>) {
-        directory::due_rereads(&self.tokens, &mut self.rereads, now, REREAD_INTERVAL)
+        directory::due_rereads(&self.tokens, &mut self.reads.last, now, REREAD_INTERVAL)
             .into_iter()
             .for_each(|fleet| self.load_token(fleet, cx));
     }
@@ -272,14 +277,14 @@ impl FleetApi {
     /// however often the person asks meanwhile, and it never waits again,
     /// so a keychain that stays locked is not read on a timer.
     fn defer_reread(&mut self, now: Instant, at: Instant, cx: &mut Context<Self>) {
-        if std::mem::replace(&mut self.deferred, true) {
+        if std::mem::replace(&mut self.reads.deferred, true) {
             return;
         }
         let wait = at.saturating_duration_since(now);
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(wait).await;
             _ = this.update(cx, |this, cx| {
-                this.deferred = false;
+                this.reads.deferred = false;
                 this.read_due(at, cx);
             });
         })
@@ -300,15 +305,20 @@ impl FleetApi {
 
     /// The fleet's current token generation.
     fn generation_of(&self, fleet: &str) -> u64 {
-        self.generations.get(fleet).copied().unwrap_or_default()
+        self.reads
+            .generations
+            .get(fleet)
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Starts a new token generation for `fleet`, so every read or save
     /// still running lands in an older one and is dropped.
     fn supersede(&mut self, fleet: &str) -> u64 {
-        self.generation = self.generation.wrapping_add(1);
-        self.generations.insert(fleet.to_owned(), self.generation);
-        self.generation
+        let reads = &mut self.reads;
+        reads.generation = reads.generation.wrapping_add(1);
+        reads.generations.insert(fleet.to_owned(), reads.generation);
+        reads.generation
     }
 
     /// Keeps what a read, a save or a clear found, if nothing has
