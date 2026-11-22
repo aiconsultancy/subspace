@@ -74,7 +74,8 @@ shots="$(cd "$fixture/shots" && pwd)"
 fail() { echo "capture: $*" >&2; exit 1; }
 if [[ "$host_platform" = Darwin ]]; then
 TMPDIR="$fixture/tmp" XDG_CONFIG_HOME=/real-user/config GH_CONFIG_DIR=/real-user/gh GH_TOKEN=real-user-token \
-    CAPTURE_FEATURES='' CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" CAPTURE_CONFIG='{"boards": {"actions": true}}' \
+    CAPTURE_FEATURES='' CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" \
+    CAPTURE_CONFIG='{"boards": {"actions": true}, "webBoards": {"notes": {"path": "/apps/notes"}}}' \
     CAPTURE_DECISION_SCENARIO=forbidden CAPTURE_MOVE_UNCONFIRMED=1 CAPTURE_UPLOAD_SCENARIO=unknown \
     CAPTURE_FLEET_API=1 bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >"$fixture/capture.out"
 
@@ -108,6 +109,8 @@ grep -Eq '^oauth 200$' "$fixture/open/servers.txt" || fail "the sign-in fixture 
 grep -Eq '^fleet-api 200$' "$fixture/open/servers.txt" || fail "the Fleet API fixture did not answer"
 jq -e '.webBoards["fleet-console"] | (.settings.endpoint | test("^http://127\\.0\\.0\\.1:[0-9]+$")) and .secrets.token == "fixture-fleet"' \
     "$fixture/open/config.json" >/dev/null || fail "Fleet Console is not pointed at the Fleet API fixture"
+test "$(jq -r '.webBoards.notes.path' "$fixture/open/config.json")" = /apps/notes ||
+    fail "CAPTURE_CONFIG's web Spaces were not merged with Fleet Console"
 test "$(jq -r '."appearance.theme"' "$fixture/open/state.json")" = "One Dark" || fail "theme not saved"
 test "$(jq -c '[.repos[0], .boards.actions]' "$fixture/open/config.json")" = '["acme/web",true]' || fail "config not merged"
 grep -Fq 'captured main' "$fixture/capture.out" || fail "capture result not reported"
