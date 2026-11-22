@@ -8,6 +8,8 @@ use super::mapping::{self, CHANNEL_KIND, PRIVATE_KIND};
 use super::{Link, Op};
 use crate::fixtures::{at, channel, line, message, query};
 
+mod endings;
+
 /// A store in a temporary folder with IRC's source on, as IRC declares.
 pub(crate) fn service() -> (tempfile::TempDir, Service) {
     let root = tempfile::tempdir().unwrap();
@@ -166,11 +168,12 @@ fn stored_lines_restore_in_order_per_buffer_and_forget_deletes_one_buffer() {
     assert!(link.run(vec![Op::Publish(lines)], now).is_empty());
     assert_eq!(count(&link, None), 151, "membership lines are not stored");
     let restored = link.restore().unwrap().unwrap();
-    let room_lines = &restored
+    let held = restored
         .iter()
-        .find(|(buffer, _)| *buffer == room)
-        .unwrap()
-        .1;
+        .find(|restored| restored.buffer == room)
+        .unwrap();
+    assert!(held.ended.is_empty(), "a store without endings loads none");
+    let room_lines = &held.lines;
     assert_eq!(room_lines.len(), 150);
     assert_eq!(room_lines[0].text, "line 0");
     assert_eq!(room_lines[149].text, "line 149");
@@ -216,7 +219,7 @@ fn a_cleared_store_takes_new_messages_again() {
     );
     let restored = link.restore().unwrap().unwrap();
     let texts: Vec<&str> = restored[0]
-        .1
+        .lines
         .iter()
         .map(|line| line.text.as_str())
         .collect();

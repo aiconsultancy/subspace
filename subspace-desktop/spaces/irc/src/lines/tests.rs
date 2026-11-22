@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use chrono::Utc;
 use subspace_client_irc::LineKind;
@@ -34,7 +34,7 @@ fn joins_parts_quits_and_nick_changes_condense_into_one_row() {
         message(&room, "bob", "hello", 6),
         line(&room, LineKind::Join, "frank", "", 7),
     ]);
-    let rows = items(&held, &Utc, true);
+    let rows = items(&held, &HashSet::new(), &Utc, true);
     assert_eq!(rows.len(), 4);
     assert!(matches!(rows[0], Item::Day(_)));
     assert_eq!(rows[1], Item::Membership { first: 0, last: 5 });
@@ -61,7 +61,7 @@ fn a_new_day_starts_with_a_separator() {
         message(&room, "alice", "today", 0),
         message(&room, "alice", "tomorrow", minutes_per_day),
     ]);
-    let rows = items(&held, &Utc, true);
+    let rows = items(&held, &HashSet::new(), &Utc, true);
     assert!(matches!(
         rows.as_slice(),
         [
@@ -86,7 +86,7 @@ fn a_growing_run_changes_identity_and_lines_keep_theirs() {
         message(&room, "alice", "hi", 0),
         line(&room, LineKind::Join, "bob", "", 1),
     ]);
-    let before: Vec<String> = items(&held, &Utc, true)
+    let before: Vec<String> = items(&held, &HashSet::new(), &Utc, true)
         .into_iter()
         .map(|item| item_id(item, &held))
         .collect();
@@ -95,7 +95,7 @@ fn a_growing_run_changes_identity_and_lines_keep_theirs() {
         line: line(&room, LineKind::Join, "carol", "", 2),
         highlight: false,
     });
-    let after: Vec<String> = items(&held, &Utc, true)
+    let after: Vec<String> = items(&held, &HashSet::new(), &Utc, true)
         .into_iter()
         .map(|item| item_id(item, &held))
         .collect();
@@ -124,7 +124,7 @@ fn a_sender_s_messages_within_five_minutes_share_one_header() {
         message(&room, "bob", "hi", 14),
         line(&room, LineKind::Notice, "bob", "notice", 14),
     ]);
-    let rows = items(&held, &Utc, true);
+    let rows = items(&held, &HashSet::new(), &Utc, true);
     assert_eq!(
         message_rows(&rows),
         [
@@ -158,7 +158,7 @@ fn system_events_and_a_new_day_break_a_group() {
         ),
         message(&room, "alice", "after a topic", minutes_per_day + 3),
     ]);
-    let rows = items(&held, &Utc, true);
+    let rows = items(&held, &HashSet::new(), &Utc, true);
     assert_eq!(
         message_rows(&rows),
         [(0, false), (1, false), (3, false), (5, false)]
@@ -176,7 +176,7 @@ fn a_server_buffer_keeps_every_line_compact() {
         message(&room, "alice", "one", 0),
         line(&room, LineKind::Info, "", "Welcome", 0),
     ]);
-    let rows = items(&held, &Utc, false);
+    let rows = items(&held, &HashSet::new(), &Utc, false);
     assert_eq!(rows[1..], [Item::Line(0), Item::Line(1)]);
 }
 
@@ -187,7 +187,7 @@ fn a_continued_message_has_its_own_identity() {
         message(&room, "alice", "one", 0),
         message(&room, "alice", "two", 1),
     ]);
-    let ids: Vec<String> = items(&held, &Utc, true)
+    let ids: Vec<String> = items(&held, &HashSet::new(), &Utc, true)
         .into_iter()
         .map(|item| item_id(item, &held))
         .collect();
@@ -203,4 +203,36 @@ fn day_labels_read_like_a_chat_client() {
     assert_eq!(day_label(date(11, 6), today), "Friday 6 November");
     let last_year = NaiveDate::from_ymd_opt(2025, 12, 31).unwrap_or_default();
     assert_eq!(day_label(last_year, today), "Wednesday 31 December 2025");
+}
+
+#[test]
+fn folded_progress_makes_no_row_and_splits_no_sender_group() {
+    let room = channel("#ops");
+    let held = entries(vec![
+        message(&room, "astra", "first", 0),
+        line(&room, LineKind::Notice, "astra", "progress", 1),
+        message(&room, "astra", "second", 2),
+        line(&room, LineKind::Join, "bob", "", 3),
+        line(&room, LineKind::Notice, "astra", "progress", 4),
+        line(&room, LineKind::Join, "carol", "", 5),
+    ]);
+    let folded = HashSet::from([1, 4]);
+    let rows = items(&held, &folded, &Utc, true);
+    assert!(matches!(rows[0], Item::Day(_)));
+    assert_eq!(
+        &rows[1..],
+        [
+            Item::Message {
+                at: 0,
+                continues: false
+            },
+            Item::Message {
+                at: 2,
+                continues: true
+            },
+            Item::Membership { first: 3, last: 3 },
+            Item::Membership { first: 5, last: 5 },
+        ],
+        "a membership run never spans a folded line"
+    );
 }

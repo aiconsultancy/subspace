@@ -31,6 +31,7 @@ mod selection;
 mod settings;
 mod statuses;
 mod stored;
+mod thread_status;
 mod uploads;
 
 pub(crate) fn settings() -> Settings {

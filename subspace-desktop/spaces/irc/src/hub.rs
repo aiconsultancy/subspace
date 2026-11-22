@@ -324,6 +324,7 @@ impl Hub {
             .collect();
         self.state.expire_typing(now);
         self.recall.keep(&self.state, stored);
+        self.recall.keep_endings(&mut self.state);
         self.read_visible();
         self.save_removed(cx);
         save_directories(self, cx);

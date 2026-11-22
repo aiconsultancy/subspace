@@ -61,6 +61,8 @@ pub(crate) struct RowContext {
     pub upload_focus: Option<String>,
     /// Counts from this buffer's last sync, shared by every virtual row.
     pub replies: Rc<super::replies::Counts>,
+    /// Request status lines from the same sync, shared the same way.
+    pub statuses: Rc<crate::thread_status::Statuses>,
 }
 
 fn time(entry: &Entry) -> String {

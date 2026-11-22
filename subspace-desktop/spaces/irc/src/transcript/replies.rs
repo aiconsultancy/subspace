@@ -33,12 +33,14 @@ pub(crate) fn counts(buffer: &BufferKey, held: &Buffer) -> Counts {
     root_counts(buffer, held, &summaries)
 }
 
-/// Remeasure changed roots without replacing surviving rows or their scroll anchor.
-pub(crate) fn changed_rows(
+/// Remeasure changed roots without replacing surviving rows or their scroll
+/// anchor. `before` and `after` hold what each root shows under its text,
+/// by its sequence: reply counts or request statuses.
+pub(crate) fn changed_rows<V: PartialEq>(
     rows: &[Row],
     entries: &VecDeque<Entry>,
-    before: &Counts,
-    after: &Counts,
+    before: &BTreeMap<i64, V>,
+    after: &BTreeMap<i64, V>,
 ) -> Vec<usize> {
     rows.iter()
         .enumerate()
@@ -56,7 +58,8 @@ fn summaries<'a>(held: &'a Buffer, roots: &ThreadRoots<'a>) -> BTreeMap<&'a str,
     let mut summaries: BTreeMap<&str, Summary> = BTreeMap::new();
     for entry in &held.entries {
         let line = &entry.line;
-        if line.reply_to.is_none() || !is_message(line.kind) {
+        let counted = is_message(line.kind) && !held.folded.contains(&entry.seq);
+        if line.reply_to.is_none() || !counted {
             continue;
         }
         if let Some(root) = roots.root(line) {
