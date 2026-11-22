@@ -9,6 +9,8 @@ use subspace_api_client::resolution_cache::{
 
 #[path = "resolution_cache/read.rs"]
 mod read;
+#[path = "resolution_cache/refresh.rs"]
+mod refresh;
 
 fn cache() -> ResolutionCache<&'static str> {
     ResolutionCache::new(ResolutionScope::new("profile", "http://127.0.0.1/api", 1))

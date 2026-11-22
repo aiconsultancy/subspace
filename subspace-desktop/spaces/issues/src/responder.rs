@@ -8,8 +8,8 @@ use std::time::Duration;
 use gpui_kit::{App, AppContext as _, Context, Entity, Task};
 use subspace_api_client::hub::{Hub, IrcSnapshot, ReferenceCard};
 use subspace_framework::contracts::issues::{
-    Changed, CurrentScope, IssueScope, IssueState, IssueSummary, Resolution, ResolutionState,
-    Resolve, StateType,
+    Changed, CurrentScope, IssueScope, IssueState, IssueSummary, Refresh, Resolution,
+    ResolutionState, Resolve, StateType,
 };
 use subspace_framework::dashboard::contracts::{self, BoardContracts, Declaration};
 
@@ -17,6 +17,7 @@ pub(crate) const DECLARATIONS: BoardContracts = BoardContracts::new(&[
     Declaration::requests::<subspace_framework::contracts::github::OpenPullRequest>(),
     Declaration::responds::<CurrentScope>(),
     Declaration::responds::<Resolve>(),
+    Declaration::responds::<Refresh>(),
     Declaration::publishes::<Changed>(),
 ]);
 
@@ -43,6 +44,12 @@ pub(crate) fn attach(hub: Hub, cx: &mut App) -> Entity<Responder> {
         crate::ID,
         &responder,
         |this, request: &Resolve, _| this.resolve(request),
+        cx,
+    );
+    let _ = contracts::respond(
+        crate::ID,
+        &responder,
+        |this, request: &Refresh, _| this.refresh(request),
         cx,
     );
     announce(cx);
@@ -105,6 +112,14 @@ impl Responder {
                 Resolution::new(identifier, state)
             })
             .collect()
+    }
+
+    /// Reads each identifier again after another Space changed it; the
+    /// poll announces `changed` when the reads land.
+    fn refresh(&self, request: &Refresh) {
+        for identifier in request.identifiers() {
+            self.hub.refresh_reference(identifier, request.profile_id());
+        }
     }
 }
 

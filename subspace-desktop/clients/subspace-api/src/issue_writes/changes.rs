@@ -13,6 +13,9 @@ pub enum IssueProperty {
     Description(Option<String>),
     State(String),
     Assignee(Option<String>),
+    /// The Ready for agents flag. The API refuses `true` on an assigned,
+    /// closed or tracker issue.
+    ReadyForAgents(bool),
     Priority(i32),
     DueDate(Option<String>),
     Labels(Vec<String>),
@@ -39,6 +42,8 @@ pub struct IssueChanges {
     state_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     assignee_id: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ready_for_agents: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     priority: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -75,6 +80,7 @@ impl IssueChanges {
 
     fn set_context(&mut self, property: IssueProperty) {
         match property {
+            IssueProperty::ReadyForAgents(ready) => self.ready_for_agents = Some(ready),
             IssueProperty::Type(kind) => self.kind = Some(kind),
             IssueProperty::Parent(id) => self.parent_id = Some(id),
             IssueProperty::Milestone(id) => self.milestone_id = Some(id),

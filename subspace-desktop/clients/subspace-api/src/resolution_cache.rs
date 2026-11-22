@@ -197,6 +197,19 @@ impl<C> ResolutionCache<C> {
         if self.pending.contains_key(identifier) {
             return ResolutionLookup::Pending;
         }
+        ResolutionLookup::Start(self.ticket(identifier, now))
+    }
+
+    /// Starts a fresh read of `identifier` because it changed, such as after
+    /// a write: any read already pending is superseded, so its late answer
+    /// cannot land, and the card held now stays shown until the new answer
+    /// replaces it.
+    pub fn refresh(&mut self, identifier: &str, now: Instant) -> ResolutionRead {
+        self.expire(now);
+        self.ticket(identifier, now)
+    }
+
+    fn ticket(&mut self, identifier: &str, now: Instant) -> ResolutionRead {
         self.next_serial = self.next_serial.wrapping_add(1);
         self.pending.insert(
             identifier.into(),
@@ -205,11 +218,11 @@ impl<C> ResolutionCache<C> {
                 serial: self.next_serial,
             },
         );
-        ResolutionLookup::Start(ResolutionRead {
+        ResolutionRead {
             scope: self.scope.clone(),
             identifier: identifier.into(),
             serial: self.next_serial,
-        })
+        }
     }
 
     fn take_pending(&mut self, read: &ResolutionRead) -> bool {
@@ -236,7 +249,11 @@ impl<C> ResolutionCache<C> {
     }
 
     fn insert(&mut self, entry: Option<Entry<C>>) {
+        // A failed read stores nothing, so a failed refresh keeps the card
+        // shown; an answer replaces the identifier's old card.
         if let Some(entry) = entry {
+            self.entries
+                .retain(|held| held.identifier != entry.identifier);
             if self.entries.len() == CAPACITY {
                 self.entries.remove(0);
             }

@@ -188,3 +188,21 @@ fn create_conflict_explains_archived_project_and_keeps_the_draft() {
     );
     assert_eq!(mock.requests().len(), 1);
 }
+
+#[test]
+fn the_ready_for_agents_flag_is_sent_only_when_set() {
+    let mock = Mock::new(|_| (200, detail("1").to_string()));
+    let mut ready = IssueChanges::default();
+    ready.set(IssueProperty::ReadyForAgents(true));
+    client(&mock).update_issue("1", 3, &ready).unwrap();
+    let mut assigned = IssueChanges::default();
+    assigned.set(IssueProperty::Assignee(Some("user-7".into())));
+    client(&mock).update_issue("1", 4, &assigned).unwrap();
+    let bodies: Vec<Value> = mock
+        .requests()
+        .iter()
+        .map(|request| serde_json::from_str(&request.body).unwrap())
+        .collect();
+    assert_eq!(bodies[0], json!({"readyForAgents": true, "version": 3}));
+    assert_eq!(bodies[1], json!({"assigneeId": "user-7", "version": 4}));
+}

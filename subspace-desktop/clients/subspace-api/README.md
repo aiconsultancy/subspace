@@ -18,7 +18,11 @@ snapshot accessors.
 `Client::decisions` reads `/v1/decisions` in API order using opaque cursors;
 `DecisionQuery::for_issue` scopes the list to an issue key or UUID. Blank
 filters are omitted, and the client caps the requested page size at 100.
-`Client::decision` reads `/v1/decisions/{id}` and never writes decisions.
+`Client::decision` reads `/v1/decisions/{id}`. `Client::log_decision`
+(`decision_writes`) records one decision with a single `POST /v1/decisions`
+as the signed-in account, which the server records as maker and recorder;
+it never sends maker provenance. `Hub::refresh_reference` reads a reference
+again after a write, keeping the old card until the new one lands.
 
 `Hub::activate_decisions` starts paging only for the open issue; subsequent
 requests use `load_more_decisions` and `retry_decisions`. `IssueSnapshot`
