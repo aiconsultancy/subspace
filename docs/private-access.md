@@ -78,8 +78,10 @@ WireGuard network (a tailnet). It has a free plan for personal use.
    }
    ```
 
-   Keep your existing rules for other devices. Add `tag:fleet:6697` for
-   fleets and desktops that use a [shared IRC server](../INSTALL.md#one-fleet-or-several-shared-irc).
+   Keep your existing rules for other devices. For a
+   [shared IRC server](../INSTALL.md#one-fleet-or-several-shared-irc) on a
+   tailnet VM, add `tag:fleet:6697` to that rule's destinations for the
+   desktops, and a rule from `tag:fleet` to `tag:fleet:6697` for the fleets.
 3. Point the installer at the VM's tailnet name and limit SSH to the tailnet:
 
    ```sh
