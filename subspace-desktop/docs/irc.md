@@ -41,28 +41,59 @@ See the [change record](changes/subspace-api-accounts/README.md).
 Channels reads fleet roles from the same memberships (`fleet.rs`). A
 connection carries a fleet's roles when it is the one an initiative of that
 fleet would use, by the rule above; any other connection, such as a
-local-only one, has none. For each such fleet, `Fleet::slug`,
-`rear_admiral_name` and `captain_names` give the installer's default names.
-Fleet IRC servers tie each nick to the account of the same name, and the
-installer names an agent's account `<slug>-<id>`, where the id is the
-agent's name in lower case with each other run of characters a hyphen:
-captain *Lyra* of fleet `aurora` is `aurora-lyra`. A name already written as
-`<slug>-<id>` is taken as the nick. The channels are `#<slug>-starbase`,
-`#<slug>-command` and, for each captain's ship, `#<slug>-<id>`.
+local-only one, has none. A fleet that several initiatives share counts once,
+by its id. The hub builds each network's `Roster` once and forgets it when
+the catalogue or the configured networks change.
 
-Nothing is guessed. A nick or channel that two roles claim, such as a
-captain named like the rear admiral or a ship named *Starbase*, a fleet that
-uses other names, and a person whose nick is only the agent's name (`lyra`)
-are unknown and draw as a plain person or channel.
+An agent's rank comes from the Subspace API, never from its name. The
+fleet's `agents` give each agent's `rank` (`rearAdmiral`, `captain` or
+`crew`) and, when the API knows it, its `ircNick`, which fleet IRC servers
+tie to the account of the same name. An agent without a known nick is not
+marked. A sender, member or completion row has a rank only when its server
+account equals that nick, ignoring ASCII case (`Roster::verified`), the same
+rule as request status trust; a missing account is unknown. Nicks and
+channels compare ignoring ASCII case, as Ergo's `ascii` casemapping does.
 
-- **Transcript.** A captain's name is blue and the rear admiral's takes the
-  accent, each followed by a `CAPTAIN` or `REAR ADMIRAL` pill (the shared
-  `badge::Pill`), named *captain* or *rear admiral*.
-- **Members and completion.** The member list's note and the `@` completion
-  row's trailing mark say `captain` or `rear admiral`.
-- **Heading.** A ship's channel, the Starbase and the command channel lead
-  with a glyph, and a ship's channel shows its captain's status (see
-  [Design](#design)).
+The fleet's channels come from its record: `starbaseChannel`,
+`commandChannel` and each ship's `channel` (repeated on its captain as
+`shipChannel`). Without a record the standard names stand in:
+`#<slug>-starbase`, `#<slug>-command` and, for a captain, `#<nick>` (the
+installer names a captain's nick and ship channel both `<slug>-<id>`). A
+crew member talks in its captain's ship channel and the rear admiral in the
+Starbase. An initiative joins its fleet's recorded channels, then its own
+(`initiative_channels`); a guessed standard name is never joined.
+
+Nothing is guessed. A nick or channel that two roles claim, such as the rear
+admiral and a captain with one nick, or a ship whose channel is the
+Starbase's, is unknown and draws as a plain person or channel, and a ship
+channel whose captain is unknown is a plain channel.
+
+- **Transcript.** A captain or the rear admiral has the shared agent avatar
+  (`avatar::agent`) in the gutter and a name in blue or the accent, followed
+  by a `CAPTAIN` or `REAR ADMIRAL` pill (`badge::Pill::hue`) in the same tone,
+  named *captain* or *rear admiral*. Crew keep a person's avatar and tone
+  and a muted `CREW` pill.
+- **Members and completion.** The member list shows the small agent avatar
+  and its note, and the `@` completion row's trailing mark, says `captain`,
+  `rear admiral` or `crew`.
+- **Heading.** A ship's channel leads with its captain's small agent avatar,
+  the Starbase and the command channel with a glyph, and a ship's channel
+  shows its captain's status (see [Design](#design)).
+
+### Direct messages are for people only
+
+All communication with a fleet's agents happens in channels, where everyone
+can see it (an owner decision). When a private conversation would start with
+a nick the roster knows as an agent (the member list, a nick reference, a
+notification for a closed conversation, `/msg`, `/query`, `/notice`, or text
+and `/me` in an older private conversation), Channels opens and sends
+nothing and shows a notice above the composer (`compose/agents.rs`) naming
+the agent's channel, with **Go to** that channel and **Dismiss**. An older
+private conversation with an agent stays readable. This is a client-side
+rule: the server still delivers a private message sent another way. Stargate
+answers one unless its registration sets `dmPolicy: "redirect"`, which makes
+every connection answer a direct message with a notice pointing to its
+first channel and start no turn.
 
 See the [change record](changes/channels-fleet-roles/README.md).
 
@@ -1038,12 +1069,14 @@ messages after its anchor.
   and the topic in quiet text (`HeaderFacts::quiet`: the network, or the
   server buffer's status, while there is no topic); its accessible name
   still says the network. A fleet channel (see [Fleet roles](#fleet-roles))
-  leads with a glyph for its kind, and a ship's channel ends with a pill
-  holding its captain's current nick status (`header::live`), named
-  *Captain <nick>: <status>*, and nothing while the captain has none. A channel also has a `MemberList` view
+  leads with its captain's agent avatar (a ship) or a glyph for its kind,
+  and a ship's channel ends with a pill holding its captain's current nick
+  status (`header::live`), at most 40 characters, named
+  *Captain <nick>: <status>*, and nothing while the captain has none or no
+  member with its nick is signed in to its account. A channel also has a `MemberList` view
   (`members.rs`), which draws the rank groups under captions such as
   `Operators · 1`, each member with a small avatar, the nick and a quiet
-  note (`members::note`: `you`, a fleet's `captain` or `rear admiral`,
+  note (`members::note`: `you`, a fleet's `captain`, `rear admiral` or `crew`,
   `owner`, `admin` or `half-operator`), with
   the member's status line, if any, under the nick, and
   leaves the heading and the scrolling to its host. Both observe

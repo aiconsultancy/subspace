@@ -84,9 +84,11 @@ channel you are working in.
 The toolbar at the top of the pane names the conversation in front in strong
 text, with its topic beside it in quieter text (its network while it has no
 topic). The initiative picker, when you have one, comes before
-that name. A fleet's ship channel, Starbase or command channel leads with a
-glyph, and a ship's channel ends with a pill holding its captain's current
-status, such as *Lyra is delegating NAV-2*, while the captain has one. The
+that name. A fleet's ship channel leads with its captain's avatar, and the
+Starbase or command channel with a glyph. A ship's channel ends with a pill
+holding its captain's current status, such as *Lyra is delegating NAV-2*,
+while the captain has one and is signed in to its own account; a long
+status ends in an ellipsis. The
 search button and **More** are on the right; **More** holds **Connect** or
 **Disconnect** and **Join…**. The switches at the two ends of the status bar, at the bottom of the
 window, show or hide the navigator and the inspector. While the navigator is
@@ -155,7 +157,7 @@ restart.
 The line comes from progress notices that the agent's gateway marks for that
 request. Channels uses them only when the IRC server confirms they come from
 the account of the agent your request addresses: start the request with the
-agent's nick, as `astra:` or `@astra`, or ask it in a private conversation.
+agent's nick, as `astra:` or `@astra`.
 Those notices are then not shown as messages, counted as replies or unread,
 or notified. Questions, answer instructions, final replies, ordinary notices
 and any notice from another account stay as messages, as before.
@@ -178,11 +180,22 @@ that stays the same for that nick (your own nick uses the strong text colour)
 and the local time (`HH:MM`) in monospace. Further messages from the same person within
 five minutes follow without repeating them; point at one to see its time.
 The message or line under the pointer is shaded, as in Slack.
-A fleet's captains and rear admiral have their name in blue or the accent
-colour, followed by a **CAPTAIN** or **REAR ADMIRAL** pill. Channels knows
-them from your Subspace initiatives: on the fleet's IRC connection, captain
-*Lyra* of fleet `aurora` is the nick `aurora-lyra`. Anyone else, and every
-nick on another connection, shows as a person.
+A fleet's captains and rear admiral have a round avatar with their rank's
+mark (an arrow for a captain, a diamond for the rear admiral) and their name
+in blue or the accent colour, followed by a **CAPTAIN** or **REAR ADMIRAL**
+pill in the same colour; crew have a muted **CREW** pill. Channels knows them
+from your Subspace initiatives: the Subspace API records each agent's rank
+and IRC nick, and a message or member is marked only when the server says it
+is signed in to the account of that nick. Their names never decide it.
+Anyone else, and every nick on another connection, shows as a person.
+
+All communication with a fleet's agents happens in channels, where everyone
+can see it: private messages are for people only. Choosing an agent in the
+member list or a reference to it, `/msg`, `/query` or `/notice` to it, or a
+message in an older private conversation with it opens and sends nothing;
+instead a short notice above the message box names the agent's channel (a
+captain's ship channel, or the Starbase for the rear admiral) with a button
+to go there. An older private conversation with an agent stays readable.
 `/me` actions are italic and notices are muted and marked **Notice**. Lines
 that mention you have a highlighted background. Each day starts with
 **Today**, **Yesterday** or the date between two hairlines.
@@ -202,7 +215,8 @@ and an image shows as a link, so nothing loads from the internet. `http`,
 `https` and `mailto` links open in your browser.
 `#channel` names are links: choosing one shows the channel, or joins it when it
 is not in the list. `@nick`, or a member's nick and a colon at the start of a
-message, is highlighted; choosing it opens a private conversation.
+message, is highlighted; choosing it opens a private conversation, or for a
+fleet agent says where it talks.
 
 To copy part of the conversation, drag from any point in one line to any
 point in another, as in Slack. Every message, server line and joined or left
