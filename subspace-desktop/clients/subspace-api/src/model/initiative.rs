@@ -42,6 +42,11 @@ pub struct Fleet {
     pub captain_names: Vec<String>,
     #[serde(default)]
     pub vm_host: Option<String>,
+    /// The fleet's Stargate Fleet API address, when the API records one: an
+    /// absolute `https` URL, or `http` on loopback, without a trailing
+    /// slash. Never a token: each person saves their own on their machine.
+    #[serde(default)]
+    pub fleet_api_url: Option<String>,
     /// The channel for people, the rear admiral and the captains, when the
     /// fleet records one.
     #[serde(default)]
@@ -136,5 +141,14 @@ mod tests {
         assert_eq!(fleet.ships[0].channel.as_deref(), Some("#aurora-lyra"));
         let legacy: Fleet = serde_json::from_value(serde_json::json!({"id": "old"})).unwrap();
         assert!(legacy.agents.is_empty() && legacy.ships.is_empty());
+        assert_eq!(legacy.fleet_api_url, None);
+        let addressed: Fleet = serde_json::from_value(serde_json::json!({
+            "id": "aurora", "fleetApiUrl": "https://fleet.example.com"
+        }))
+        .unwrap();
+        assert_eq!(
+            addressed.fleet_api_url.as_deref(),
+            Some("https://fleet.example.com")
+        );
     }
 }
