@@ -27,12 +27,12 @@ import threading
 import time
 
 # The aurora fleet's channels, as the Fleet API fixture names its ships: the
-# Starbase, fleet command and one channel per ship (captain). Only the Lyra
+# Starbase, the command channel and one channel per ship (captain). Only the Lyra
 # ship's channel has a conversation.
 CHANNEL = '#aurora-lyra'
 TOPICS = {
     '#aurora-starbase': 'Aurora Starbase: people, the rear admiral and every captain',
-    '#aurora-fleet-command': 'Aurora fleet command: the rear admiral and its captains',
+    '#aurora-command': 'Aurora command: the rear admiral and its captains',
     '#aurora-lyra': 'Lyra: navigation console, Fallow Reach pilot review on Thursday',
     '#aurora-orion': 'Orion: sector atlas and relay handover',
     '#aurora-vega': 'Vega: Fallow Reach rehearsal scripts and runbooks',
@@ -63,7 +63,7 @@ def channels_for(nick):
     """The channels each fixture nick sits in."""
     ship = f'#{nick}' if nick in ('aurora-lyra', 'aurora-orion', 'aurora-vega', 'aurora-castor') else None
     command = nick.startswith('aurora-')
-    return [name for name in TOPICS if name == '#aurora-starbase' or (command and name == '#aurora-fleet-command')
+    return [name for name in TOPICS if name == '#aurora-starbase' or (command and name == '#aurora-command')
             or name == ship or (name == CHANNEL and nick in dict(LINES))]
 
 
