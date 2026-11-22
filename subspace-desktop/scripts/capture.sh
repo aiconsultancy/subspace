@@ -29,9 +29,9 @@
 #   CAPTURE_FLEET=1            the fixture adds the neutral FLT project and the demo world's NAV, MAP,
 #                              WARP and RELAY issues for web Space evidence
 #   CAPTURE_FLEET_API=1        a fictional Stargate Fleet API (the aurora fleet) on loopback, with the
-#                              built-in Fleet Console's address and token set to it; with
-#                              CAPTURE_FLEET=1 the API's aurora fleet records it as its fleetApiUrl, and
-#                              its token is saved for that address (Settings > Fleets)
+#                              built-in Fleet Console's address and token set to it and the fleet's
+#                              Settings > Fleets token saved for that address; with CAPTURE_FLEET=1 the
+#                              API's aurora fleet records it as its fleetApiUrl, so the app uses it
 #   CAPTURE_FLEET_TOKEN=<saved|none|moved>  with CAPTURE_FLEET_API=1, the aurora fleet's Settings > Fleets
 #                              token: saved for the fixture's address (the default), none saved, or
 #                              fixture-fleet-moved saved for https://aurora-old.example.test, so the
