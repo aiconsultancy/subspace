@@ -145,6 +145,10 @@ installed under that ID), and only with its `secrets` grant. It returns each
 fleet as `{id, name, endpoint, token, problem}` with `token` only when it was
 saved for `endpoint`; every other web Space gets an error. The page hears
 `subspace:fleets-changed` when a fleet, its address or its token changes.
+Each request reads again any token the keychain could not read
+(`FleetApi::reload_unreadable`), so the page's **Retry** after unlocking the
+keychain finds the token, and the page hears `subspace:fleets-changed` when
+the read lands.
 See the Fleet Console's [README](../web-spaces/fleet-console/README.md#fleets).
 
 ## Fixtures

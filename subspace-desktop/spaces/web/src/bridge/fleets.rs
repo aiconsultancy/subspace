@@ -21,9 +21,12 @@ pub(crate) fn shares_fleets(board: &WebBoard, entry: Option<&Map<String, Value>>
         && entry.is_some_and(crate::builtin::is_built_in)
 }
 
-/// The fleets as the page receives them.
+/// The fleets as the page receives them. A token the keychain could not
+/// read is read again, so the page's Retry after unlocking it works: the
+/// page hears `subspace:fleets-changed` once the read lands.
 pub(crate) fn current(cx: &mut App) -> Value {
     let service = FleetApi::shared(cx);
+    service.update(cx, |service, cx| service.reload_unreadable(cx));
     let fleets = service.read(cx).shared_fleets();
     Value::Array(fleets.iter().map(fleet_json).collect())
 }

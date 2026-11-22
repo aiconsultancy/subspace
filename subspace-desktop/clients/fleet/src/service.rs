@@ -202,6 +202,26 @@ impl FleetApi {
         }
     }
 
+    /// Reads again every saved token the secret store could not read, as
+    /// when the person has unlocked the keychain and chosen Retry. The
+    /// fleets are **Checking** until the reads land.
+    pub fn reload_unreadable(&mut self, cx: &mut Context<Self>) {
+        let unreadable: Vec<String> = self
+            .tokens
+            .iter()
+            .filter(|(_, token)| matches!(token, TokenLoad::Unavailable))
+            .map(|(fleet, _)| fleet.clone())
+            .collect();
+        if unreadable.is_empty() {
+            return;
+        }
+        for fleet in unreadable {
+            self.tokens.insert(fleet.clone(), TokenLoad::Loading);
+            self.load_token(fleet, cx);
+        }
+        self.changed(cx);
+    }
+
     fn load_token(&self, fleet: String, cx: &mut Context<Self>) {
         let store = Arc::clone(&self.store);
         let id = fleet.clone();

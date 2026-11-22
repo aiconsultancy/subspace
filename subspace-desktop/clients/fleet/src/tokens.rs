@@ -99,6 +99,12 @@ impl TokenStore {
         }
     }
 
+    /// Tokens kept in `vault`, as a test with a vault of its own needs.
+    #[cfg(test)]
+    pub(crate) fn with_vault(vault: Box<dyn Vault>) -> Self {
+        Self { vault }
+    }
+
     /// Tokens kept in memory for this run only, as tests need.
     pub fn memory() -> Self {
         Self {
