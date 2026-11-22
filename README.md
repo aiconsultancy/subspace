@@ -178,7 +178,8 @@ out:
 - **Opt in per fleet.** Dispatch is off by default and switched on per
   fleet. The polling interval, the time each captain has to answer and the
   retry timings are configurable, and the installer asks whether to switch
-  it on.
+  it on
+  ([how the installer sets it up](subspace-installer/README.md#agent-dispatch)).
 
 ## How it fits together
 
