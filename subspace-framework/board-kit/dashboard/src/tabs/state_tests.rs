@@ -3,18 +3,21 @@ use crate::{Tokens, tokens::ButtonFinish};
 use gpui_kit::FontWeight;
 
 #[test]
-fn selection_joins_the_content_and_hover_preserves_the_accent() {
+fn selection_joins_the_content_by_its_surface_and_text_alone() {
     let tokens = Tokens::one_dark();
     let selected = state(true, false, false, &tokens, tokens.bg);
     assert_eq!(selected.background, tokens.bg);
     assert_eq!(selected.foreground, tokens.fg_strong);
-    assert_eq!(selected.edge, tokens.accent);
     assert_eq!(selected.weight, FontWeight::MEDIUM);
     assert_eq!(state(true, true, false, &tokens, tokens.bg), selected);
     let idle = state(false, false, false, &tokens, tokens.bg);
     assert_eq!(idle.background.a, 0.);
     assert_eq!(idle.foreground, tokens.muted);
-    assert_eq!(idle.edge.a, 0.);
+    assert_ne!(
+        idle.background, selected.background,
+        "told apart by surface"
+    );
+    assert_ne!(idle.weight, selected.weight, "and by weight");
 }
 
 #[test]
@@ -46,7 +49,6 @@ fn disabled_tabs_stay_muted_without_an_accent_in_every_state() {
             let disabled = state(selected, hovered, true, &tokens, tokens.bg);
             assert_eq!(disabled.foreground, tokens.muted);
             assert_eq!(disabled.weight, FontWeight::NORMAL);
-            assert_eq!(disabled.edge.a, 0.);
             assert_eq!(disabled.background.a, 0.);
         }
     }

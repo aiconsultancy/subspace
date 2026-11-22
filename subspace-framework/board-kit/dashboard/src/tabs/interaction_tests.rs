@@ -251,7 +251,7 @@ fn the_glass_hover_rim_is_sized_to_the_tab(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn the_selected_tab_paints_its_fill_and_accent_edge_across_its_own_bounds(cx: &mut TestAppContext) {
+fn the_selected_tab_paints_its_fill_across_its_own_bounds_with_no_edge(cx: &mut TestAppContext) {
     let (_, cx) = mount(cx);
     cx.update(|window, cx| {
         window.render_frame(cx);
@@ -259,17 +259,16 @@ fn the_selected_tab_paints_its_fill_and_accent_edge_across_its_own_bounds(cx: &m
         let tab = bar.find(0usize).bounds();
         let selected = bar.within(0usize);
         let layers = selected.find("tab-layers").bounds();
-        let edge = selected.find("tab-selected-edge").bounds();
         assert_eq!(
             (layers.top(), layers.size.height),
             (tab.top(), tab.size.height)
         );
-        assert_eq!(
-            (edge.top(), edge.size.height),
-            (tab.top(), gpui_kit::px(2.))
-        );
-        assert!(edge.left() <= tab.left() + gpui_kit::px(1.) && edge.right() >= tab.right());
-        assert!(bar.within(1usize).try_find("tab-selected-edge").is_none());
+        for ix in 0..2usize {
+            assert!(
+                bar.within(ix).try_find("tab-selected-edge").is_none(),
+                "no accent line marks the selection"
+            );
+        }
     });
 }
 
