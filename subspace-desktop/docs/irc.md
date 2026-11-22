@@ -1196,7 +1196,10 @@ GitHub client or the PRs board.
   tone and `#n`, the title, then the status in words when not open, the
   repository and the lines added and removed, and the checks as a small bar
   with **4/5** (`check_counts`; red once a check failed, green when all
-  passed, yellow while running). A missing fact leaves no gap. It shares the
+  passed, yellow while running). The PRs Space answers a pull request it
+  holds only from a list at once, without counts, and reads it once for its
+  check runs; the bar appears when that read lands, inside the tile's fixed
+  box (`spaces/github/src/references.rs`). A missing fact leaves no gap. It shares the
   issue tile's fixed box, loading skeleton and unresolved line; a click
   opens the pull request as the chip does, and hovering shows the chip's
   card.

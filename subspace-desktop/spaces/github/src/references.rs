@@ -10,6 +10,16 @@
 //! `SignedOut` until it signs in again or a read with it succeeds; lists
 //! from before a reload or from the disk cache answer only once a refresh
 //! confirms them. Answers stay in memory.
+//!
+//! A pull request the account holds only from a list has its combined
+//! checks state but not its check runs, so a tile would have no bar. The
+//! first ask for one answers from the list at once and starts the same
+//! one read of it a pull request it does not hold gets, which carries the
+//! runs; its landing is announced, and later asks answer with the counts.
+//! Each list refresh marks those reads stale, so a pull request a tile
+//! still asks about is read again at most once per refresh, deduplicated
+//! with every other read and bounded by the keys asked about. The list
+//! query is not widened: every list would pay for counts no tile shows.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -46,6 +56,9 @@ pub(crate) struct References {
     /// Bumped by every sign-out, so a read that started before one never
     /// lifts it.
     sign_outs: u64,
+    /// Answers read before the last list refresh: a listed pull request
+    /// with one is read again for fresh check runs when next asked.
+    stale: HashSet<(String, String)>,
 }
 
 /// Answers the contract for `board` and follows sign-in and sign-out. The
@@ -93,6 +106,7 @@ pub(crate) fn landed(board: &mut Github, login: &str, since: u64, cx: &mut Conte
     if references.sign_outs == since {
         references.signed_out.remove(&login.to_lowercase());
     }
+    references.stale = references.answers.keys().cloned().collect();
     announce(cx);
 }
 
@@ -106,6 +120,7 @@ pub(crate) fn forget(board: &mut Github, cx: &mut Context<Github>) {
     let references = &mut board.references;
     references.answers.clear();
     references.reading.clear();
+    references.stale.clear();
     references.generation = references.generation.wrapping_add(1);
     announce(cx);
 }
@@ -122,7 +137,7 @@ fn answer(
         .collect();
     let unknown: Vec<String> = states
         .iter()
-        .filter(|(_, state)| state.is_none())
+        .filter(|(key, state)| state.is_none() || wants_checks(board, key))
         .map(|(key, _)| key.clone())
         .collect();
     let pending = read(board, unknown, cx);
@@ -132,7 +147,9 @@ fn answer(
         .collect()
 }
 
-/// What answers `key` without a read, if anything does.
+/// What answers `key` without a read, if anything does: a pull request
+/// the account opened, else one it listed, with the counts a read of it
+/// already found, else what a read of it said.
 fn known(board: &Github, key: &str) -> Option<ResolutionState> {
     let (Some(_), Some(login)) = (&board.client, board.account.as_deref()) else {
         return Some(ResolutionState::SignedOut);
@@ -140,40 +157,60 @@ fn known(board: &Github, key: &str) -> Option<ResolutionState> {
     if board.references.signed_out.contains(&login.to_lowercase()) {
         return Some(ResolutionState::SignedOut);
     }
-    if let Some((item, runs)) = loaded(board, key) {
-        return Some(ResolutionState::Available(details(item, runs)));
+    let read = board.references.answers.get(&cache_key(login, key));
+    match loaded(board, key) {
+        Some(Loaded::Opened(item, runs)) => Some(ResolutionState::Available(details(item, runs))),
+        Some(Loaded::Listed(item)) => Some(
+            read.filter(|state| matches!(state, ResolutionState::Available(_)))
+                .cloned()
+                .unwrap_or_else(|| ResolutionState::Available(details(item, &[]))),
+        ),
+        None => read.cloned(),
     }
-    board
-        .references
-        .answers
-        .get(&cache_key(login, key))
-        .cloned()
+}
+
+/// Whether `key` is a pull request the account holds only from a list,
+/// with no read of it since the last refresh: one read gives its runs.
+fn wants_checks(board: &Github, key: &str) -> bool {
+    let Some(login) = board.account.as_deref() else {
+        return false;
+    };
+    let cached = cache_key(login, key);
+    let references = &board.references;
+    matches!(loaded(board, key), Some(Loaded::Listed(_)))
+        && (!references.answers.contains_key(&cached) || references.stale.contains(&cached))
+}
+
+/// A pull request the current account already holds.
+enum Loaded<'a> {
+    /// Opened: its detail, with its head commit's check runs.
+    Opened(&'a GhItem, &'a [GhCheck]),
+    /// Only listed, by a list a refresh has confirmed: its combined checks
+    /// state, but not its runs.
+    Listed(&'a GhItem),
 }
 
 /// The pull request `key` as the current account already loaded it, from a
-/// detail or a list a refresh has confirmed, with its head commit's check
-/// runs: an opened one has them, a listed one only its combined state, so
-/// its runs are empty.
-fn loaded<'a>(board: &'a Github, key: &str) -> Option<(&'a GhItem, &'a [GhCheck])> {
+/// detail or a list a refresh has confirmed.
+fn loaded<'a>(board: &'a Github, key: &str) -> Option<Loaded<'a>> {
     let account = board.account_data()?;
     let same = |item: &GhItem| item.key.eq_ignore_ascii_case(key);
+    let is_pr = |item: &GhItem| item.kind == subspace_framework::client_github::model::ItemKind::Pr;
     let detail = account
         .details
         .values()
-        .find(|detail| same(&detail.item))
-        .map(|detail| (&detail.item, detail.check_runs.as_slice()));
+        .find(|detail| same(&detail.item) && is_pr(&detail.item))
+        .map(|detail| Loaded::Opened(&detail.item, detail.check_runs.as_slice()));
     let listed = || {
         account
             .sections
             .iter()
             .filter(|(id, _)| !account.unconfirmed.contains(*id))
             .flat_map(|(_, section)| section.items.iter())
-            .find(|item| same(item))
-            .map(|item| (item, &[][..]))
+            .find(|item| same(item) && is_pr(item))
+            .map(Loaded::Listed)
     };
-    detail
-        .or_else(listed)
-        .filter(|(item, _)| item.kind == subspace_framework::client_github::model::ItemKind::Pr)
+    detail.or_else(listed)
 }
 
 /// Starts one background read of the `keys` not already being read, and
@@ -242,6 +279,7 @@ fn land(
     for (key, state) in answers {
         let key = cache_key(login, &key);
         references.reading.remove(&key);
+        references.stale.remove(&key);
         references.answers.insert(key, state);
     }
     announce(cx);
