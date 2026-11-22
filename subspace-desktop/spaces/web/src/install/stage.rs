@@ -29,11 +29,7 @@ pub(super) fn prepare(
 }
 
 fn private_stage(store: &Path) -> Result<tempfile::TempDir, String> {
-    std::fs::create_dir_all(store).map_err(|_| "Cannot create private board store.")?;
-    let metadata = std::fs::symlink_metadata(store).map_err(|_| "Cannot inspect board store.")?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err("Board store must be a private directory, not a link.".into());
-    }
+    super::require_store(store)?;
     tempfile::Builder::new()
         .prefix("board-")
         .tempdir_in(store)

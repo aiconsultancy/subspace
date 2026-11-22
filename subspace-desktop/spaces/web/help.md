@@ -6,6 +6,7 @@ bridge/{runtime,protocol,theme,issues},page,page/unsupported,page/native,app,
 install/*}.rs, bridge/init.js, manager.rs, manager/{view,
 view/collection,view/editor,editor,model,operations}.rs;
 products/subspace/src/main.rs (one registration per webBoards entry, shared guide);
+products/subspace/src/web_spaces.rs, spaces/web/src/builtin.rs (built-in Fleet Console);
 subspace-framework/board-kit/dashboard/src/settings.rs; web-spaces/examples/weather/*;
 docs/web-spaces-reference.md, docs/web-spaces-guide.md.
 Not checked in this pass: a live web page, a GitHub import, a ZIP import,
@@ -25,7 +26,15 @@ file, and each board that you install in Settings, appears as its own board with
 this shared guide. A board has the title that you give it, and the switcher
 tooltip says `<title>: web page on <site>` or `<title>: local web app`.
 
-There are three ways to get a web Space:
+Subspace comes with one web Space built in: **Fleet Console**, which shows your
+Stargate fleets. It is in the tab strip from the first start on macOS and
+Windows, with nothing to install. Enter its Stargate API address and token in
+**Settings > Spaces > Fleet Console**. Being part of the app, it starts with
+the permissions its manifest asks for allowed; you can turn any of them off
+there. To hide it, turn it off in Settings. Removing it under **Web Spaces**
+only resets it: it comes back at the next start.
+
+There are three ways to add another web Space:
 
 - Add a website with its address.
 - Install a built web app from a folder, ZIP file, GitHub repository directory

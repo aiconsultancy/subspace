@@ -1,4 +1,4 @@
-//! Default-off GitHub Actions dashboard. All service work runs off the UI thread.
+//! Default-on GitHub Actions dashboard. All service work runs off the UI thread.
 
 mod dashboard;
 mod dialogs;

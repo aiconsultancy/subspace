@@ -44,8 +44,8 @@
 #                        `./install.sh irc-server --target NAME`
 #   --api-target NAME    for a further fleet: skip this VM's Subspace API and
 #                        register the fleet with the API on fleet NAME instead
-#   --fleet-console ID   (desktop) the Board ID you gave the Fleet Console web
-#                        Space (default fleet-console)
+#   --fleet-console ID   (desktop) the Board ID of the Fleet Console web Space
+#                        (default fleet-console, the one built into Subspace)
 #   --yes                never prompt; fail when an answer is missing
 #   --background         (tunnel) run the tunnel in the background
 #   -h, --help           show this help and the fleet options
@@ -601,17 +601,25 @@ have_python() {
 
 write_fleet_console() {
     # Point the Fleet Console web Space at this fleet's Stargate API through the tunnel.
-    local token=$state/stargate-api.token file endpoint
+    local token=$state/stargate-api.token file endpoint built_in=0
     [ "$SUBSPACE_STARGATE_API" = 1 ] && [ -s "$token" ] || return 0
     endpoint=http://127.0.0.1:${SUBSPACE_STARGATE_API_PORT:-8484}
     file=$(desktop_dir)/config.json
-    if [ -f "$file" ] && have_python && python3 -B - "$file" "$fleet_console" "$endpoint" "$token" <<'PY'
+    # Subspace on macOS builds Fleet Console in as fleet-console and adopts an
+    # entry that has only its settings, so it can be written before the app
+    # first starts. Linux shows no web Spaces; another ID is an installed copy.
+    if [ "$fleet_console" = fleet-console ] && [ "$os" = Darwin ]; then built_in=1; fi
+    if have_python && python3 -B - "$file" "$fleet_console" "$endpoint" "$token" "$built_in" <<'PY'
 import json, os, sys
-path, board, endpoint, token_file = sys.argv[1:5]
-config = json.load(open(path))
-entry = config.get("webBoards", {}).get(board)
+path, board, endpoint, token_file, built_in = sys.argv[1:6]
+config = json.load(open(path)) if os.path.exists(path) else {}
+boards = config.get("webBoards")
+entry = boards.get(board) if isinstance(boards, dict) else None
+if entry is None and built_in == "1" and (boards is None or isinstance(boards, dict)):
+    entry = config.setdefault("webBoards", {}).setdefault(board, {})
 if not isinstance(entry, dict):
     sys.exit(3)
+os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
 entry.setdefault("settings", {})["endpoint"] = endpoint
 entry.setdefault("secrets", {})["token"] = open(token_file).read().strip()
 tmp = path + ".new"
@@ -624,9 +632,9 @@ PY
     then
         say "Set the Fleet Console's Stargate API address ($endpoint) and token in $file."
     else
-        say "Fleet Console: install its web Space with Board ID '$fleet_console' (Settings > Application > Web Spaces),"
-        note "quit the app and run './install.sh desktop' again; or enter the address $endpoint and the token"
-        note "from $token in Settings > Spaces > Fleet Console."
+        say "Fleet Console: enter the address $endpoint and the token from $token"
+        note "in Settings > Spaces > Fleet Console; or, once Subspace has a web Space with Board ID '$fleet_console',"
+        note "quit the app and run './install.sh desktop' again."
     fi
 }
 

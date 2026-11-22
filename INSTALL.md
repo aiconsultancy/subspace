@@ -455,13 +455,15 @@ does the same as `./install.sh providers`.
    private Fleet API on the VM's loopback port 8484, and saves its token in
    `~/.subspace/targets/<target>/stargate-api.token`. The tunnel forwards the
    port, so the **Stargate API address** is `http://127.0.0.1:8484`.
-   - Install the Fleet Console web Space (when your desktop build has it) in
-     **Settings > Application > Web Spaces > Add board…** with the Board ID
-     `fleet-console`, and allow its permissions, including **secrets**.
-   - Quit the app and run `./install.sh desktop`. It fills in the Stargate API
-     address and token for that Space. With another Board ID, add
-     `--fleet-console <id>`. Or enter both yourself in **Settings > Spaces >
-     Fleet Console**, pasting the token from the file above.
+   - Fleet Console is built into Subspace on macOS and Windows, with its
+     permissions allowed, so there is nothing to install. On macOS the
+     installer fills in its Stargate API address and token, even before the
+     app first starts. If Subspace was running, quit it and run
+     `./install.sh desktop` again. On Windows, start Subspace once, quit it
+     and run `.\install.ps1 desktop`. Or enter both yourself in
+     **Settings > Spaces > Fleet Console**, pasting the token from the file
+     above. For a copy you installed under another Board ID, add
+     `--fleet-console <id>`.
    - Through Tailscale or Cloudflare instead of the tunnel, use that HTTPS
      address. The token is still required, and stays on your computer.
 

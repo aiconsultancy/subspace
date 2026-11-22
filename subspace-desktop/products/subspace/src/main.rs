@@ -5,6 +5,7 @@ mod identity;
 mod launch;
 #[path = "../build/settings.rs"]
 mod settings;
+mod web_spaces;
 
 include!(concat!(env!("OUT_DIR"), "/organization_logo.rs"));
 
@@ -36,6 +37,10 @@ fn main() -> ExitCode {
     }
     let mut descriptor = subspace_descriptor::subspace_descriptor();
     identity::adjust_descriptor(&mut descriptor);
+    // Only the desktop shows Spaces; commands leave the config file alone.
+    if std::env::args_os().len() == 1 {
+        web_spaces::install(&descriptor, env!("CARGO_PKG_VERSION"));
+    }
     subspace_framework::shell::launch(
         subspace_framework::shell::ProductBuild {
             descriptor,
@@ -181,6 +186,11 @@ mod config;
 #[cfg(test)]
 #[path = "../build/stamp.rs"]
 mod stamp;
+// The tests use the package rules; the rest is the build script's.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../build/web_spaces.rs"]
+mod web_spaces_build;
 
 #[cfg(test)]
 mod tests {

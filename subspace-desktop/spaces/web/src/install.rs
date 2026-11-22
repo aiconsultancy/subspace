@@ -179,6 +179,17 @@ impl PreparedImport {
     }
 }
 
+/// Creates the board store `store` if needed, and checks that it is a
+/// directory, not a link.
+pub(crate) fn require_store(store: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(store).map_err(|_| "Cannot create private board store.")?;
+    let metadata = std::fs::symlink_metadata(store).map_err(|_| "Cannot inspect board store.")?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("Board store must be a private directory, not a link.".into());
+    }
+    Ok(())
+}
+
 /// Prepare built assets with no Settings or UI dependency. GitHub choices
 /// require the selected user's immutable binding, with no fallback account.
 pub fn prepare(

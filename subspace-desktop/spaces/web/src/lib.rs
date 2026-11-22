@@ -1,10 +1,12 @@
 //! Web boards: each `webBoards` entry in the config file is a board that
 //! shows one web page, or a web app from a folder of built files, in a
 //! native web view. The app registers one instance per entry with
-//! [`create`].
+//! [`create`], and adds the entries of the web Spaces it ships with
+//! [`builtin::install`].
 
 mod app;
 mod bridge;
+pub mod builtin;
 pub mod install;
 pub mod manager;
 mod manifest;

@@ -204,6 +204,9 @@ record. [Change records](changes/README.md) explains the convention.
 - [Unreleased Spaces](changes/unreleased-spaces/intent.md): Space Lab (then
   Board Lab) and the Component gallery as Cargo features left out of release
   builds.
+- [Fleet Console built in](changes/fleet-console-built-in/README.md): Fleet
+  Console in every macOS and Windows build without an install, and the
+  fictional Stargate Fleet API that captures show it live against.
 - [Workspace shell review findings](changes/workspace-shell-review-findings/intent.md):
   the follow-up that takes every open review finding of the workspace shell,
   starting with Decisions dropping what it read when the account changes.

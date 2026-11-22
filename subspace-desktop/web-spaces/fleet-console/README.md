@@ -150,35 +150,42 @@ unreachable, and what to do about it.
    connector's local address, so `allowedNetworks` does not narrow it), which
    is why Tailscale or an SSH tunnel is the better route.
 
-## Install the Space
+## In Subspace
 
-In Subspace, open **Settings > Application > Web Spaces** and choose
-**Add board…**:
+Fleet Console is built into the Subspace App on macOS and Windows (Linux does
+not show web Spaces yet). The build embeds this folder's package files, the
+same files `make package-web-space` puts in a ZIP, and at each start the app
+writes them to `web-board-apps/fleet-console` beside its config file and keeps
+a `webBoards.fleet-console` entry pointing at them, marked `"builtIn": true`.
+It is in the tab strip from the first start, in sample mode until it has an
+address and a token. Being part of the app, it starts with every permission
+its manifest asks for allowed.
 
-- **Local folder**: choose `subspace-desktop/web-spaces/fleet-console` in a
-  checkout of this repository.
-- **Local ZIP**: from `subspace-desktop/`, run
-  `make package-web-space SPACE=web-spaces/fleet-console` and choose
-  `dist/web-spaces/fleet-console-1.0.0.zip`.
-- **GitHub repository**: repository `aiconsultancy/subspace`, board directory
-  `subspace-desktop/web-spaces/fleet-console`.
+Open **Settings > Spaces > Fleet Console** and:
 
-Then open **Settings > Spaces > Fleet Console** and:
+1. Enter the **Stargate API address** and the **API token**. `./install.sh`
+   writes both for the fleet it installs when the desktop is on the same
+   machine.
+2. Check the permissions: **read its settings** and **read its saved
+   secrets** (the token) are needed for a live fleet; without either it shows
+   the sample fleets, unless you add fleets in the page. **Save its own
+   secrets** lets you add more fleets in the page; **read and open issues**
+   gives issue tiles and badges, from the board that answers the issues
+   contract; **show a badge on its tab** counts uncertain crew plus
+   unavailable ships; **share context with chat** shares the selected crew
+   member's ship, task, phase, branch, pull request and issue identifiers,
+   never the address or token; **show notifications** tells you when a crew
+   task becomes uncertain or a ship becomes unavailable, at most one every
+   five seconds and never for what was already true when it opened.
+3. Save.
 
-1. Enter the **Stargate API address** and the **API token**.
-2. Allow it to **read its settings** and **read its saved secrets** (the
-   token). Without both it shows the sample fleets, unless you add fleets in
-   the page.
-3. To add more fleets in the page, also allow **save its own secrets**.
-4. Optionally allow **read and open issues** (issue tiles and badges, from
-   the board that answers the issues contract), **show a badge on its tab**
-   (uncertain crew plus unavailable ships), **share context with chat** (the
-   selected crew member's ship, task, phase, branch, pull request and issue
-   identifiers; never the address or token) and **show notifications** (when a
-   crew task becomes uncertain or a ship becomes unavailable, at most one
-   every five seconds and never for what was already true when it opened).
-5. Save. Every permission starts off, and replacing or updating the Space
-   needs them allowed again.
+Turn it off in Settings to hide it. Removing it under **Settings >
+Application > Web Spaces** only resets it: the app adds it again at the next
+start, with its permissions allowed. An entry you install yourself under the
+ID `fleet-console` (from a folder, a ZIP or GitHub) replaces the built-in one
+and is left alone. To try a changed copy of this folder without rebuilding,
+add it as a **Local folder** web Space under another ID; it then starts with
+every permission off, like any installed web Space.
 
 **Motion** set to **Reduced**, or the system's reduce-motion setting,
 replaces the warp with a short crossfade and stops orbits, the radar sweep
@@ -225,7 +232,10 @@ mise run test
 ```
 
 From `subspace-desktop/`, `mise run fleet-console-space-test` runs the same
-tests; it is part of `make check`. They cover the SSE parser (chunk
+tests; it is part of `make check`. `test/fixture-fleet.test.js` also reads the
+desktop's Stargate Fleet API fixture (`scripts/fleet_api_test_server.py`, the
+fictional `aurora` fleet that `CAPTURE_FLEET_API=1 make capture` serves on
+loopback) through the contract, reducer, model and inspector. They cover the SSE parser (chunk
 boundaries, multi-line data, comments, heartbeats), the reducer, the live
 source and its reconnects, the connection state machine, issue identifier
 extraction and batching, layouts and the warp camera, formatters, sample data
