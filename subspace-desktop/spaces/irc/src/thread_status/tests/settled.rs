@@ -178,3 +178,24 @@ fn a_notice_fills_in_an_older_ending_once_for_the_store() {
         Some(false)
     );
 }
+
+#[test]
+fn a_stored_failure_stays_failed_when_a_restored_notice_says_completed() {
+    let failed = Ending {
+        outcome: Some(Outcome::Failed),
+        at: Some(at(11)),
+    };
+    // The restored lines hold a later `completed` notice for the same
+    // request; the ending seen live, and stored, still stands.
+    let state = restarted(
+        vec![
+            request(&room(), "first", 1),
+            progress(&room(), "first", "completed", 12),
+        ],
+        &[("first".to_owned(), failed)],
+    );
+    assert_eq!(
+        settled(&state, "first").map(|settled| settled.failed),
+        Some(true)
+    );
+}

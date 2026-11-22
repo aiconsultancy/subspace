@@ -108,7 +108,7 @@ pub(super) fn arrived(state: &mut IrcState, key: &BufferKey, arrival: &Arrival) 
 
 /// Gives buffer `key` the endings the store kept for it while it held no
 /// lines ([`IrcState::parked`]).
-fn adopt(state: &mut IrcState, key: &BufferKey) {
+pub(super) fn adopt(state: &mut IrcState, key: &BufferKey) {
     if let Some(buffer) = state.buffers.get_mut(key)
         && let Some(ended) = state.parked.remove(key)
     {
