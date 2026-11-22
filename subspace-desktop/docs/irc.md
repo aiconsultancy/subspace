@@ -513,7 +513,7 @@ are in the [change record](changes/irc-thread-status/spec.md).
   *done* (`thread_status::Stage`). The meter is named *Stage N of 5:
   <stage>*. Nothing else is shown: Stargate's data has no delegation or
   pull request stage. The conversation redraws once a second
-  (`Conversation::follow_clock`) only while a line runs and is not stale,
+  (`conversation::clock::follow`) only while a line runs and is not stale,
   and drops the timer once none does.
 - **Endings.** `completed` or `failed` settles its request's line, for good:
   no later or older notice reopens it. The settled line is quiet: a check
@@ -1283,9 +1283,11 @@ messages after its anchor.
   `Shift+Enter` breaks the line, which the hint under the input names
   (`Return` on macOS). Under the input, a slim row (`compose/hints.rs`,
   `irc-composer-hints`) names the keys with Kit's `Kbd`: `@` mention, `/`
-  commands, `↑` recall (IRC cannot edit a sent message) and `⇧⏎` new line;
-  with uploads on, the retention notice ends that row in a shorter form,
-  “Kept 30 days. Don’t paste credentials.”, named in full. With uploads on,
+  commands, `↑` recall (IRC cannot edit a sent message) and `⇧⏎` new line,
+  each named `<word>: <key>` (*mention: at sign*); with uploads on, the
+  notice ends that row in a shorter form that says who can see what is
+  sent, “Subspace users see it for 30 days. No credentials.”, named in full
+  and shown in full on hover; a narrow pane truncates it. With uploads on,
   one quiet line above the input holds the paperclip
   (`irc-send-attachment`, **Send as attachment…**,
   `uploads/outgoing/view.rs`). `ChatInput` draws its frame

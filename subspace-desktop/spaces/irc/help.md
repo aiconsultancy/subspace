@@ -414,9 +414,9 @@ message is kept." If the connection drops while your message is being sent,
 your text and attachments stay and the composer says some lines may have
 gone: check the channel before you press **Enter** again.
 
-The end of the hint row under the composer says “Kept 30 days. Don’t paste
-credentials.”: what you send is visible to signed-in Subspace users for 30
-days. Put material worth retaining on an issue.
+The end of the hint row under the composer says “Subspace users see it for
+30 days. No credentials.”: what you send is visible to signed-in Subspace
+users for 30 days, so don't paste credentials. Hover it to read it in full. Put material worth retaining on an issue.
 
 Received attachments show as a row of thumbnails under the message, in the
 order they were sent; the reference text is hidden once it resolves. Images

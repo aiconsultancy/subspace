@@ -34,8 +34,15 @@ fn the_hint_row_names_the_keys_under_the_composer(cx: &mut TestAppContext) {
     let (_, _, cx) = ship(cx);
     cx.update(|window, _| {
         let row = window.within("irc-composer-hints");
-        for word in ["mention", "commands", "recall", "new line"] {
-            assert!(row.find(format!("irc-hint:{word}")).visible(), "{word}");
+        for (word, key) in [
+            ("mention", "at sign"),
+            ("commands", "slash"),
+            ("recall", "Up arrow"),
+            ("new line", "Shift+Return"),
+        ] {
+            let hint = row.find(format!("irc-hint:{word}"));
+            assert!(hint.visible(), "{word}");
+            assert_eq!(hint.label(), Some(format!("{word}: {key}").as_str()));
         }
     });
 }
