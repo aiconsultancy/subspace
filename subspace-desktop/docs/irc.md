@@ -1007,15 +1007,20 @@ IRC shows issue references through the `issues` contract
   mention is only the inline reference. On every sync with the hub, before
   any new row is laid out, `conversation/owners.rs` reads the messages not
   read yet, in transcript order, and `TileOwners::claim` gives each
-  reference nobody owns to the earliest of them. An owner never changes, so
-  no message gains or loses a tile, or changes height, once drawn: history
+  reference nobody owns to the earliest of them. Only messages not read yet
+  claim, so no message already drawn gains a tile or changes height: history
   loaded above or lines merged from the store are read after the held ones,
-  so an older mention found later stays a chip; an owner dropped by the line
-  cap keeps its claim, so no other message grows a tile; a new issue scope
-  reads every message again but keeps the owners. Owners live in the hub per
-  conversation for the session, in memory only, so reopening a conversation
-  keeps them and a restart decides again from the messages then held. See
-  the [change record](changes/channels-tiles-once/README.md).
+  so an older mention found later stays a chip. An owner the conversation no
+  longer shows (dropped by the line cap, folded into its request) lets go of
+  its claim, so the next new message that names the reference shows the
+  tile; a removed conversation's owners are forgotten. A new issue scope
+  reads every message again and claims issues afresh within that scope;
+  pull requests keep their owners. A sync with nothing new copies nothing.
+  Owners live in the hub per conversation for the session, in memory only,
+  so reopening a conversation keeps them and a restart decides again from
+  the messages then held. See the
+  [change record](changes/channels-tiles-once/README.md) and the
+  [fixes carried to the next one](changes/channels-fleet-live/README.md).
 - **Issue tiles** (`issues/preview.rs`, `issues/tile/compact.rs`,
   `tiles/frame.rs`) use the same batched lookup as the hover card. A tile
   leads with the inline reference's state dot and the key, then the title,
@@ -1023,8 +1028,10 @@ IRC shows issue references through the `issues` contract
   `ready_for_agents` is true), **Tracker**, **Archived**, the state's name,
   the assignee (an agent captain's or rear admiral's icon before the name,
   through `avatar::agent_icon` and the Icons setting; people get none) or
-  else the owner, and the due date (`due Wed`, or a date after seven days).
-  A tracker with sub-items ends with a small bar and **1 of 2**. A missing
+  else the owner, and the due date (`due Wed`, or a date after seven days);
+  the assignee or owner, untrusted text, is the part that gives way on a
+  full line. A tracker (the summary's tracker flag) with sub-items ends with
+  a small bar and **1 of 2**. A missing
   fact leaves no gap. Tiles keep their full accessible names and native
   activation; the A and B hover cards appear on hover or reference keyboard
   focus. Ordinary hover cards have a state edge,
@@ -1115,7 +1122,10 @@ GitHub client or the PRs board.
 - **Answers** (`pull_requests.rs`, `pull_requests/follow.rs`): the hub asks
   for the distinct keys a frame shows in one request of at most 50, keeps the
   answers in memory and forgets them, and the wanted keys, on every `changed`.
-  A refused request records `Unavailable`. Nothing reaches IRC's store,
+  A refused request records `Unavailable`, so with the PRs Space off a
+  pull request's tile settles to its muted **Unavailable** line in its
+  reserved box rather than vanishing and moving the lines under it.
+  Nothing reaches IRC's store,
   search, state file or logs.
 - **Hover tile** (`pull_requests/tooltip.rs`, `pull_requests/tile.rs`): a
   passive 320 px `reference_card` (accent treatment) with state edge and pill,
