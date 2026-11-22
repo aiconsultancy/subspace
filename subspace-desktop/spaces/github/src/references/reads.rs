@@ -14,12 +14,13 @@ use super::{announce, cache_key, details};
 use crate::Github;
 use crate::navigation::requested_pr;
 
-/// When a read started: the [`super::References`] generation and refresh
-/// count.
+/// When a read started: the [`super::References`] generation, refresh
+/// count and section landings.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Epoch {
     generation: u64,
     refreshes: u64,
+    landings: u64,
 }
 
 /// Starts one background read of the `keys` not already being read, and
@@ -44,6 +45,7 @@ pub(super) fn read(
     let epoch = Epoch {
         generation: references.generation,
         refreshes: references.refreshes,
+        landings: references.landings,
     };
     if !fresh.is_empty() {
         spawn_read(client, login, fresh, epoch, cx);
@@ -107,6 +109,7 @@ fn land(
         } else {
             references.stale.remove(&key);
         }
+        references.read_at.insert(key.clone(), epoch.landings);
         references.answers.insert(key, state);
     }
     announce(cx);
@@ -114,7 +117,7 @@ fn land(
 
 /// What a failed read tells the asker, without saying whether a pull
 /// request it cannot read exists.
-fn refused(error: &Error) -> ResolutionState {
+pub(super) fn refused(error: &Error) -> ResolutionState {
     match error {
         Error::Credential(_) | Error::Status { status: 401, .. } => ResolutionState::SignedOut,
         Error::Status {

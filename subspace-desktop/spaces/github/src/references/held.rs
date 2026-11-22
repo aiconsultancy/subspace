@@ -5,12 +5,13 @@
 use subspace_framework::client_github::model::{GhCheck, GhItem};
 use subspace_framework::contracts::github::{PullRequestDetails, ResolutionState};
 
-use super::{cache_key, details};
+use super::{References, cache_key, details, refusal};
 use crate::Github;
 
-/// What answers `key` without a read, if anything does: a pull request
-/// the account opened, else one it listed, with what a read of it already
-/// found ([`listed`]), else what a read of it said.
+/// What answers `key` without a read, if anything does: a refusal newer
+/// than what the account holds, else a pull request the account opened,
+/// else one it listed, with what a read of it already found ([`listed`]),
+/// else what a read of it said.
 pub(super) fn known(board: &Github, key: &str) -> Option<ResolutionState> {
     let (Some(_), Some(login)) = (&board.client, board.account.as_deref()) else {
         return Some(ResolutionState::SignedOut);
@@ -20,16 +21,37 @@ pub(super) fn known(board: &Github, key: &str) -> Option<ResolutionState> {
     }
     let cached = cache_key(login, key);
     let read = board.references.answers.get(&cached);
-    let fresh = !board.references.stale.contains(&cached);
-    match loaded(board, key) {
-        Some(Loaded::Opened(item, runs)) => Some(ResolutionState::Available(details(item, runs))),
-        Some(Loaded::Listed(item)) => Some(ResolutionState::Available(listed(item, read, fresh))),
-        None => read.cloned(),
+    let newer = newer_than_list(&board.references, &cached);
+    match (loaded(board, key), read) {
+        (Some(Loaded::Listed(_)), Some(read)) if refusal(read) && newer => Some(read.clone()),
+        (Some(Loaded::Opened(..)), Some(read)) if refusal(read) => Some(read.clone()),
+        (Some(Loaded::Opened(item, runs)), _) => {
+            Some(ResolutionState::Available(details(item, runs)))
+        }
+        (Some(Loaded::Listed(item)), _) => {
+            Some(ResolutionState::Available(listed(item, read, newer)))
+        }
+        (None, read) => read.cloned(),
     }
 }
 
-/// A listed pull request's answer. A read since the last list refresh
-/// (`fresh`) is newer than the list and answers whole. An older one lends
+/// Whether the answer for `cached` comes from a read that started after
+/// the last section listing the pull request landed. A later section of
+/// the same refresh is newer than a read that started before it.
+fn newer_than_list(references: &References, cached: &(String, String)) -> bool {
+    let listed = references
+        .listed_at
+        .get(cached)
+        .copied()
+        .unwrap_or_default();
+    references
+        .read_at
+        .get(cached)
+        .is_some_and(|read| *read >= listed)
+}
+
+/// A listed pull request's answer. A read newer than the section that
+/// lists it (`fresh`) answers whole. An older one lends
 /// only its check counts to the list's item, and only while the list says
 /// the pull request is as it was read: the same combined checks state and
 /// the same last update. A new head, such as a force-push, updates the

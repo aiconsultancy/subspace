@@ -649,7 +649,7 @@ impl Github {
                 account.reloading_sections &= account.loading();
                 if loaded {
                     this.save_cache(cx);
-                    references::section_landed(this, &login, since, cx);
+                    references::section_landed(this, &login, section, since, cx);
                 }
                 search_index::start_prefetch(this, cx);
                 this.rebuild(cx);

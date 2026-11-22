@@ -238,6 +238,7 @@ fn apply(
             let account = board.data.entry(request.login.to_lowercase()).or_default();
             let key = detail.item.key.clone();
             account.apply_read_detail(detail, started);
+            crate::references::detail_landed(board, &request.login, &request.key, &key);
             board
                 .retained_permits
                 .remove(&(request.login.to_lowercase(), key.clone()));
@@ -249,7 +250,10 @@ fn apply(
             }
             crate::references::landed(board, &request.login, request.since, cx);
         }
-        Err(error) => failure(board, &request.key, error_text(&error), cx),
+        Err(error) => {
+            crate::references::detail_refused(board, &request.login, &request.key, &error, cx);
+            failure(board, &request.key, error_text(&error), cx);
+        }
     }
     board.rebuild(cx);
     if let Some(key) = canonical {

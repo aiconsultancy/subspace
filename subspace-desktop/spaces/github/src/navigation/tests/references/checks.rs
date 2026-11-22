@@ -31,15 +31,22 @@ fn relist(board: &Entity<Github>, cx: &mut VisualTestContext, change: impl Fn(&m
     });
 }
 
-/// A refresh of the lists starts, and `sections` of it land.
+/// A refresh of the lists starts, and `sections` of it land, each listing
+/// the seeded pull request.
 fn refresh(board: &Entity<Github>, sections: usize, cx: &mut VisualTestContext) {
+    board.update(cx, |board, _| crate::references::refreshing(board));
+    for _ in 0..sections {
+        land_section(board, cx);
+    }
+}
+
+/// One section of a refresh lands, listing the seeded pull request.
+fn land_section(board: &Entity<Github>, cx: &mut VisualTestContext) {
     board.update(cx, |board, cx| {
-        crate::references::refreshing(board);
         let login = board.account.clone().unwrap_or_default();
-        for _ in 0..sections {
-            let since = crate::references::since(board);
-            crate::references::section_landed(board, &login, since, cx);
-        }
+        let since = crate::references::since(board);
+        let section = board.section;
+        crate::references::section_landed(board, &login, section, since, cx);
     });
 }
 
@@ -134,11 +141,7 @@ fn a_listed_pull_request_is_read_once_per_refresh_however_many_sections_land_or_
     confirm(&board, cx);
     board.update(cx, |board, _| crate::references::refreshing(board));
     for _ in 0..4 {
-        board.update(cx, |board, cx| {
-            let login = board.account.clone().unwrap_or_default();
-            let since = crate::references::since(board);
-            crate::references::section_landed(board, &login, since, cx);
-        });
+        land_section(&board, cx);
         ask(KEY, cx);
         cx.run_until_parked();
     }
@@ -254,4 +257,92 @@ fn a_pull_request_that_left_the_lists_is_checked_again_once_per_refresh(cx: &mut
     );
     cx.run_until_parked();
     assert_eq!(mock.requests().len(), 2);
+}
+
+#[gpui_kit::test]
+fn a_later_section_of_the_same_refresh_wins_over_a_read_that_started_before_it(
+    cx: &mut TestAppContext,
+) {
+    let mock = Mock::new(|_| (200, response_with_checks()));
+    let (board, _listener, cx) = routed(cx, Some(&mock));
+    board.update(cx, listed_only);
+    // The refresh's first section lands and a tile asks: one read starts.
+    refresh(&board, 1, cx);
+    ask(KEY, cx);
+    // A later section of the same refresh lands before the read does, with
+    // the checks now passing.
+    relist(&board, cx, |item| item.checks = Some(CheckState::Success));
+    land_section(&board, cx);
+    cx.run_until_parked();
+    assert_eq!(mock.requests().len(), 1);
+    let ResolutionState::Available(details) = ask(KEY, cx) else {
+        panic!("available from the list");
+    };
+    assert_eq!(
+        details.checks,
+        Some(CheckStatus::Success),
+        "the later section's checks, not the older read's failure"
+    );
+    assert!(details.check_counts.is_none(), "counts for other checks");
+}
+
+#[gpui_kit::test]
+fn a_listed_pull_request_the_account_lost_access_to_stops_showing_its_summary(
+    cx: &mut TestAppContext,
+) {
+    let served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mock = Mock::new({
+        let served = served.clone();
+        move |_| match served.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+            0 => (200, response_with_checks()),
+            _ => (200, null_repository()),
+        }
+    });
+    let (board, _listener, cx) = routed(cx, Some(&mock));
+    board.update(cx, listed_only);
+    ask(KEY, cx);
+    cx.run_until_parked();
+    assert!(matches!(ask(KEY, cx), ResolutionState::Available(_)));
+    // The refresh still lists it from before; the read again is refused.
+    refresh(&board, 1, cx);
+    ask(KEY, cx);
+    cx.run_until_parked();
+    assert_eq!(mock.requests().len(), 2);
+    assert!(
+        matches!(ask(KEY, cx), ResolutionState::Unavailable),
+        "the refusal, not the list's title and status"
+    );
+    cx.run_until_parked();
+    assert_eq!(
+        mock.requests().len(),
+        2,
+        "no read again until the next refresh"
+    );
+}
+
+#[gpui_kit::test]
+fn an_opened_pull_request_refused_since_answers_with_the_refusal_until_read_again(
+    cx: &mut TestAppContext,
+) {
+    let mock = Mock::new(|_| (200, response_with_checks()));
+    let (board, _listener, cx) = routed(cx, Some(&mock));
+    board.update(cx, seed);
+    assert!(matches!(ask(KEY, cx), ResolutionState::Available(_)));
+    board.update(cx, |board, cx| {
+        let login = board.account.clone().unwrap_or_default();
+        let denied = subspace_framework::core::http::Error::Status {
+            status: 404,
+            message: "Not Found".into(),
+        };
+        crate::references::detail_refused(board, &login, KEY, &denied, cx);
+    });
+    assert!(
+        matches!(ask(KEY, cx), ResolutionState::Unavailable),
+        "the refusal, not the detail opened before"
+    );
+    board.update(cx, |board, _| {
+        let login = board.account.clone().unwrap_or_default();
+        crate::references::detail_landed(board, &login, KEY, KEY);
+    });
+    assert!(matches!(ask(KEY, cx), ResolutionState::Available(_)));
 }

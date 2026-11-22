@@ -25,15 +25,20 @@
 //! its counts, on the newer list's item, and only while its combined
 //! checks state and last update are the list's (the list does not carry
 //! the head commit; a force-push updates the pull request). A read is
-//! taken as newer than the list only when it started after the refresh
-//! that marked it stale. The list query is not widened: every list would
-//! pay for counts no tile shows.
+//! taken as newer than the list only when it started after the last
+//! section listing the pull request landed, so a later section of the same
+//! refresh wins over a read that began before it. The list query is not
+//! widened: every list would pay for counts no tile shows.
 //!
 //! A pull request the account holds neither opened nor listed answers from
 //! its read until the next refresh, then is read again once, so one that
 //! left the lists, as when the account lost access to its repository, is
 //! not answered from memory for good: GitHub's refusal replaces it. A
-//! signed-out account starts no read at all.
+//! refusal (403, 404 or 401), from a reference read or this Space's own
+//! detail read, also answers ahead of a pull request the account opened or
+//! listed before it, until a later read of it succeeds, so one the account
+//! lost access to stops showing its summary. A signed-out account starts
+//! no read at all.
 
 use std::collections::{HashMap, HashSet};
 
@@ -77,6 +82,15 @@ pub(crate) struct References {
     /// Bumped each time answers are marked stale, so a read that started
     /// before lands stale: it is older than the list.
     refreshes: u64,
+    /// Bumped as each list section lands.
+    landings: u64,
+    /// For each pull request a section lists, the `landings` when the last
+    /// section listing it landed.
+    listed_at: HashMap<(String, String), u64>,
+    /// For each answer, the `landings` when its read started: it is newer
+    /// than the list only when it started after the last section listing
+    /// the pull request landed.
+    read_at: HashMap<(String, String), u64>,
 }
 
 /// Answers the contract for `board` and follows sign-in and sign-out. The
@@ -122,17 +136,88 @@ pub(crate) fn refreshing(board: &mut Github) {
     board.references.refresh_due = true;
 }
 
-/// A list section read by `login` that started at `since` just landed:
-/// the first of a refresh marks every answer stale, so each listed pull
-/// request a tile asks about is read again once per refresh.
+/// List section `section` read by `login` that started at `since` just
+/// landed: the first of a refresh marks every answer stale, so each listed
+/// pull request a tile asks about is read again once per refresh, and a
+/// read that started before this section landed is older than what it
+/// lists.
 pub(crate) fn section_landed(
     board: &mut Github,
     login: &str,
+    section: &str,
     since: u64,
     cx: &mut Context<Github>,
 ) {
     mark_stale(&mut board.references);
+    let keys = listed_keys(board, login, section);
+    mark_listed(&mut board.references, keys);
     landed(board, login, since, cx);
+}
+
+/// The cache keys of the pull requests `login`'s section `section` lists.
+fn listed_keys(board: &Github, login: &str, section: &str) -> Vec<(String, String)> {
+    let account = login.to_lowercase();
+    let items = board
+        .data
+        .get(&account)
+        .and_then(|data| data.sections.get(section))
+        .map(|data| data.items.as_slice())
+        .unwrap_or_default();
+    items
+        .iter()
+        .map(|item| (account.clone(), item.key.to_ascii_lowercase()))
+        .collect()
+}
+
+/// A section listing `keys` landed now.
+fn mark_listed(references: &mut References, keys: Vec<(String, String)>) {
+    references.landings = references.landings.wrapping_add(1);
+    for key in keys {
+        references.listed_at.insert(key, references.landings);
+    }
+}
+
+/// This Space's own read of pull request `key` (and of `canonical`, the
+/// key GitHub answered with) by `login` succeeded: a refusal an earlier
+/// read gave no longer answers for it.
+pub(crate) fn detail_landed(board: &mut Github, login: &str, key: &str, canonical: &str) {
+    let answers = &mut board.references.answers;
+    for key in [key, canonical] {
+        let key = cache_key(login, key);
+        if answers.get(&key).is_some_and(refusal) {
+            answers.remove(&key);
+        }
+    }
+}
+
+/// This Space's own read of pull request `key` by `login` was refused:
+/// the refusal answers for it, ahead of the detail and lists held from
+/// before, until a later read succeeds. Other failures change nothing.
+pub(crate) fn detail_refused(
+    board: &mut Github,
+    login: &str,
+    key: &str,
+    error: &subspace_framework::core::http::Error,
+    cx: &mut Context<Github>,
+) {
+    let state = reads::refused(error);
+    if !refusal(&state) {
+        return;
+    }
+    let references = &mut board.references;
+    let key = cache_key(login, key);
+    references.read_at.insert(key.clone(), references.landings);
+    references.stale.remove(&key);
+    references.answers.insert(key, state);
+    announce(cx);
+}
+
+/// Whether `state` says the account may not read the pull request.
+fn refusal(state: &ResolutionState) -> bool {
+    matches!(
+        state,
+        ResolutionState::Unavailable | ResolutionState::SignedOut
+    )
 }
 
 /// Marks every answer stale, once per refresh.
@@ -166,6 +251,7 @@ pub(crate) fn forget(board: &mut Github, cx: &mut Context<Github>) {
     references.answers.clear();
     references.reading.clear();
     references.stale.clear();
+    references.read_at.clear();
     references.generation = references.generation.wrapping_add(1);
     announce(cx);
 }
