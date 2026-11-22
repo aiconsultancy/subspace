@@ -16,10 +16,24 @@
 //! first ask for one answers from the list at once and starts the same
 //! one read of it a pull request it does not hold gets, which carries the
 //! runs; its landing is announced, and later asks answer with the counts.
-//! Each list refresh marks those reads stale, so a pull request a tile
-//! still asks about is read again at most once per refresh, deduplicated
-//! with every other read and bounded by the keys asked about. The list
-//! query is not widened: every list would pay for counts no tile shows.
+//! A refresh of the lists (every section, or the favourites' sections)
+//! marks those reads stale when its first section lands, once however
+//! many sections land and however many pull requests are opened, so a
+//! pull request a tile still asks about is read again at most once per
+//! refresh, deduplicated with every other read and bounded by the keys
+//! asked about. Until the new read lands a stale read answers only with
+//! its counts, on the newer list's item, and only while its combined
+//! checks state and last update are the list's (the list does not carry
+//! the head commit; a force-push updates the pull request). A read is
+//! taken as newer than the list only when it started after the refresh
+//! that marked it stale. The list query is not widened: every list would
+//! pay for counts no tile shows.
+//!
+//! A pull request the account holds neither opened nor listed answers from
+//! its read until the next refresh, then is read again once, so one that
+//! left the lists, as when the account lost access to its repository, is
+//! not answered from memory for good: GitHub's refusal replaces it. A
+//! signed-out account starts no read at all.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -59,6 +73,19 @@ pub(crate) struct References {
     /// Answers read before the last list refresh: a listed pull request
     /// with one is read again for fresh check runs when next asked.
     stale: HashSet<(String, String)>,
+    /// A list refresh started and none of its sections has landed yet:
+    /// the first to land marks every answer stale.
+    refresh_due: bool,
+    /// Bumped each time answers are marked stale, so a read that started
+    /// before lands stale: it is older than the list.
+    refreshes: u64,
+}
+
+/// When a read started: the [`References`] generation and refresh count.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Epoch {
+    generation: u64,
+    refreshes: u64,
 }
 
 /// Answers the contract for `board` and follows sign-in and sign-out. The
@@ -98,15 +125,42 @@ pub(crate) fn since(board: &Github) -> u64 {
     board.references.sign_outs
 }
 
+/// A list refresh starts: its first section to land marks the answers
+/// read before it stale ([`section_landed`]).
+pub(crate) fn refreshing(board: &mut Github) {
+    board.references.refresh_due = true;
+}
+
+/// A list section read by `login` that started at `since` just landed:
+/// the first of a refresh marks every answer stale, so each listed pull
+/// request a tile asks about is read again once per refresh.
+pub(crate) fn section_landed(
+    board: &mut Github,
+    login: &str,
+    since: u64,
+    cx: &mut Context<Github>,
+) {
+    mark_stale(&mut board.references);
+    landed(board, login, since, cx);
+}
+
+/// Marks every answer stale, once per refresh.
+fn mark_stale(references: &mut References) {
+    if std::mem::take(&mut references.refresh_due) {
+        references.stale = references.answers.keys().cloned().collect();
+        references.refreshes = references.refreshes.wrapping_add(1);
+    }
+}
+
 /// A read by `login` that started at `since` just landed. Its credentials
 /// work, so a sign-out since before it started no longer holds; one that
 /// came while it ran still does. Either way the other Spaces ask again.
+/// It marks nothing stale: a detail read lands here too.
 pub(crate) fn landed(board: &mut Github, login: &str, since: u64, cx: &mut Context<Github>) {
     let references = &mut board.references;
     if references.sign_outs == since {
         references.signed_out.remove(&login.to_lowercase());
     }
-    references.stale = references.answers.keys().cloned().collect();
     announce(cx);
 }
 
@@ -137,7 +191,7 @@ fn answer(
         .collect();
     let unknown: Vec<String> = states
         .iter()
-        .filter(|(key, state)| state.is_none() || wants_checks(board, key))
+        .filter(|(key, state)| state.is_none() || wants_read(board, key))
         .map(|(key, _)| key.clone())
         .collect();
     let pending = read(board, unknown, cx);
@@ -148,8 +202,8 @@ fn answer(
 }
 
 /// What answers `key` without a read, if anything does: a pull request
-/// the account opened, else one it listed, with the counts a read of it
-/// already found, else what a read of it said.
+/// the account opened, else one it listed, with what a read of it already
+/// found ([`listed`]), else what a read of it said.
 fn known(board: &Github, key: &str) -> Option<ResolutionState> {
     let (Some(_), Some(login)) = (&board.client, board.account.as_deref()) else {
         return Some(ResolutionState::SignedOut);
@@ -157,28 +211,55 @@ fn known(board: &Github, key: &str) -> Option<ResolutionState> {
     if board.references.signed_out.contains(&login.to_lowercase()) {
         return Some(ResolutionState::SignedOut);
     }
-    let read = board.references.answers.get(&cache_key(login, key));
+    let cached = cache_key(login, key);
+    let read = board.references.answers.get(&cached);
+    let fresh = !board.references.stale.contains(&cached);
     match loaded(board, key) {
         Some(Loaded::Opened(item, runs)) => Some(ResolutionState::Available(details(item, runs))),
-        Some(Loaded::Listed(item)) => Some(
-            read.filter(|state| matches!(state, ResolutionState::Available(_)))
-                .cloned()
-                .unwrap_or_else(|| ResolutionState::Available(details(item, &[]))),
-        ),
+        Some(Loaded::Listed(item)) => Some(ResolutionState::Available(listed(item, read, fresh))),
         None => read.cloned(),
     }
 }
 
-/// Whether `key` is a pull request the account holds only from a list,
-/// with no read of it since the last refresh: one read gives its runs.
-fn wants_checks(board: &Github, key: &str) -> bool {
+/// A listed pull request's answer. A read since the last list refresh
+/// (`fresh`) is newer than the list and answers whole. An older one lends
+/// only its check counts to the list's item, and only while the list says
+/// the pull request is as it was read: the same combined checks state and
+/// the same last update. A new head, such as a force-push, updates the
+/// pull request, so its old head's counts are never shown; the list does
+/// not carry the head commit itself.
+fn listed(item: &GhItem, read: Option<&ResolutionState>, fresh: bool) -> PullRequestDetails {
+    let from_list = details(item, &[]);
+    match read {
+        Some(ResolutionState::Available(read)) if fresh => read.clone(),
+        Some(ResolutionState::Available(read))
+            if read.checks == from_list.checks && read.updated_at == from_list.updated_at =>
+        {
+            from_list.with_check_counts(read.check_counts)
+        }
+        _ => from_list,
+    }
+}
+
+/// Whether `key` wants a read although something answers it: a pull
+/// request the account holds only from a list, with no read of it since
+/// the last refresh (one read gives its runs), or one it does not hold
+/// whose read is from before the last refresh, so a pull request that
+/// left the lists, as when the account lost access to its repository, is
+/// checked again once per refresh rather than answered from memory for
+/// good.
+fn wants_read(board: &Github, key: &str) -> bool {
     let Some(login) = board.account.as_deref() else {
         return false;
     };
     let cached = cache_key(login, key);
     let references = &board.references;
-    matches!(loaded(board, key), Some(Loaded::Listed(_)))
-        && (!references.answers.contains_key(&cached) || references.stale.contains(&cached))
+    let stale = references.stale.contains(&cached);
+    match loaded(board, key) {
+        Some(Loaded::Listed(_)) => !references.answers.contains_key(&cached) || stale,
+        Some(Loaded::Opened(..)) => false,
+        None => stale,
+    }
 }
 
 /// A pull request the current account already holds.
@@ -220,12 +301,20 @@ fn read(board: &mut Github, keys: Vec<String>, cx: &mut Context<Github>) -> Reso
         return ResolutionState::SignedOut;
     };
     let references = &mut board.references;
+    // A signed-out account reads nothing, whatever answers the keys.
+    if references.signed_out.contains(&login.to_lowercase()) {
+        return ResolutionState::SignedOut;
+    }
     let fresh: Vec<String> = keys
         .into_iter()
         .filter(|key| references.reading.insert(cache_key(&login, key)))
         .collect();
+    let epoch = Epoch {
+        generation: references.generation,
+        refreshes: references.refreshes,
+    };
     if !fresh.is_empty() {
-        spawn_read(client, login, fresh, references.generation, cx);
+        spawn_read(client, login, fresh, epoch, cx);
     }
     ResolutionState::Pending
 }
@@ -234,7 +323,7 @@ fn spawn_read(
     client: Arc<Client>,
     login: String,
     keys: Vec<String>,
-    generation: u64,
+    epoch: Epoch,
     cx: &mut Context<Github>,
 ) {
     cx.spawn(async move |this, cx| {
@@ -242,7 +331,7 @@ fn spawn_read(
         let answers = cx
             .background_spawn(async move { read_all(&client, &account, keys) })
             .await;
-        _ = this.update(cx, |board, cx| land(board, &login, answers, generation, cx));
+        _ = this.update(cx, |board, cx| land(board, &login, answers, epoch, cx));
     })
     .detach();
 }
@@ -269,17 +358,23 @@ fn land(
     board: &mut Github,
     login: &str,
     answers: Vec<(String, ResolutionState)>,
-    generation: u64,
+    epoch: Epoch,
     cx: &mut Context<Github>,
 ) {
     let references = &mut board.references;
-    if references.generation != generation {
+    if references.generation != epoch.generation {
         return;
     }
+    // A read that started before the last refresh is older than the list.
+    let older = references.refreshes != epoch.refreshes;
     for (key, state) in answers {
         let key = cache_key(login, &key);
         references.reading.remove(&key);
-        references.stale.remove(&key);
+        if older {
+            references.stale.insert(key.clone());
+        } else {
+            references.stale.remove(&key);
+        }
         references.answers.insert(key, state);
     }
     announce(cx);
