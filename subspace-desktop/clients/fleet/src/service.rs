@@ -64,6 +64,15 @@ pub struct FleetApi {
     tokens: BTreeMap<String, TokenLoad>,
     /// When each fleet's unreadable token was last read again.
     rereads: BTreeMap<String, Instant>,
+    /// Whether a Retry asked too soon has a read waiting for its interval.
+    deferred: bool,
+    /// Each fleet's token generation: a save, a clear or the fleet's
+    /// removal starts a new one, and a read or save that began in an older
+    /// one is dropped when it lands, so a cleared or replaced token never
+    /// comes back.
+    generations: BTreeMap<String, u64>,
+    /// The last generation handed out, across every fleet.
+    generation: u64,
     /// Each fleet a handle follows, with the holder every handle clones.
     interest: BTreeMap<String, Arc<()>>,
     feeds: BTreeMap<String, Followed>,
@@ -132,6 +141,9 @@ impl FleetApi {
             fleets: Vec::new(),
             tokens: BTreeMap::new(),
             rereads: BTreeMap::new(),
+            deferred: false,
+            generations: BTreeMap::new(),
+            generation: 0,
             interest: BTreeMap::new(),
             feeds: BTreeMap::new(),
             revision: 0,
@@ -146,6 +158,9 @@ impl FleetApi {
     pub fn set_fleets(&mut self, fleets: Vec<FleetRecord>, cx: &mut Context<Self>) {
         if fleets == self.fleets {
             return;
+        }
+        for gone in directory::removed(&self.fleets, &fleets) {
+            self.supersede(&gone);
         }
         let new = directory::retain_tokens(&mut self.tokens, &fleets);
         self.fleets = fleets;
@@ -231,32 +246,83 @@ impl FleetApi {
     /// when the person has unlocked the keychain and chosen Retry. Each
     /// fleet stays **Keychain locked** until a read finds otherwise, and is
     /// read again at most once every few seconds, however often this is
-    /// called. Call it only when the person asks.
+    /// called: one asked sooner is read once that interval ends. Call it
+    /// only when the person asks.
     pub fn reload_unreadable(&mut self, cx: &mut Context<Self>) {
         self.reload_unreadable_at(Instant::now(), cx);
     }
 
     pub(crate) fn reload_unreadable_at(&mut self, now: Instant, cx: &mut Context<Self>) {
+        let later = directory::next_reread(&self.tokens, &self.rereads, now, REREAD_INTERVAL);
+        self.read_due(now, cx);
+        if let Some(at) = later {
+            self.defer_reread(now, at, cx);
+        }
+    }
+
+    /// Reads again each unreadable token not read within the interval.
+    fn read_due(&mut self, now: Instant, cx: &mut Context<Self>) {
         directory::due_rereads(&self.tokens, &mut self.rereads, now, REREAD_INTERVAL)
             .into_iter()
             .for_each(|fleet| self.load_token(fleet, cx));
     }
 
-    fn load_token(&self, fleet: String, cx: &mut Context<Self>) {
-        let store = Arc::clone(&self.store);
-        let id = fleet.clone();
-        let load = cx.background_spawn(async move { TokenLoad::read(&store, &id) });
+    /// A Retry asked within the interval of a fleet's last read: reads it
+    /// once the interval ends rather than doing nothing. One waiting read
+    /// however often the person asks meanwhile, and it never waits again,
+    /// so a keychain that stays locked is not read on a timer.
+    fn defer_reread(&mut self, now: Instant, at: Instant, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.deferred, true) {
+            return;
+        }
+        let wait = at.saturating_duration_since(now);
         cx.spawn(async move |this, cx| {
-            let token = load.await;
-            _ = this.update(cx, |this, cx| this.set_token(&fleet, token, cx));
+            cx.background_executor().timer(wait).await;
+            _ = this.update(cx, |this, cx| {
+                this.deferred = false;
+                this.read_due(at, cx);
+            });
         })
         .detach();
     }
 
-    /// Keeps what a read or a save found, announcing it only when it
-    /// differs from what the service had.
-    fn set_token(&mut self, fleet: &str, token: TokenLoad, cx: &mut Context<Self>) {
-        if self.record(fleet).is_none() || self.tokens.get(fleet) == Some(&token) {
+    fn load_token(&self, fleet: String, cx: &mut Context<Self>) {
+        let store = Arc::clone(&self.store);
+        let id = fleet.clone();
+        let generation = self.generation_of(&fleet);
+        let load = cx.background_spawn(async move { TokenLoad::read(&store, &id) });
+        cx.spawn(async move |this, cx| {
+            let token = load.await;
+            _ = this.update(cx, |this, cx| this.set_token(&fleet, generation, token, cx));
+        })
+        .detach();
+    }
+
+    /// The fleet's current token generation.
+    fn generation_of(&self, fleet: &str) -> u64 {
+        self.generations.get(fleet).copied().unwrap_or_default()
+    }
+
+    /// Starts a new token generation for `fleet`, so every read or save
+    /// still running lands in an older one and is dropped.
+    fn supersede(&mut self, fleet: &str) -> u64 {
+        self.generation = self.generation.wrapping_add(1);
+        self.generations.insert(fleet.to_owned(), self.generation);
+        self.generation
+    }
+
+    /// Keeps what a read, a save or a clear found, if nothing has
+    /// superseded it since it began, announcing it only when it differs
+    /// from what the service had.
+    fn set_token(
+        &mut self,
+        fleet: &str,
+        generation: u64,
+        token: TokenLoad,
+        cx: &mut Context<Self>,
+    ) {
+        let current = generation == self.generation_of(fleet);
+        if !current || self.record(fleet).is_none() || self.tokens.get(fleet) == Some(&token) {
             return;
         }
         self.tokens.insert(fleet.to_owned(), token);

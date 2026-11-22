@@ -32,6 +32,8 @@ pub enum TokenError {
 
 impl FleetApi {
     /// Saves `token` for `fleet`, bound to the address the API records now.
+    /// A read, save or clear of the fleet's token still running is dropped
+    /// when it lands: this one is newer.
     pub fn save_token(
         &mut self,
         fleet: &str,
@@ -39,6 +41,7 @@ impl FleetApi {
         cx: &mut Context<Self>,
     ) -> Task<Result<(), TokenError>> {
         let address = self.address(fleet);
+        let generation = self.supersede(fleet);
         let (store, id) = (Arc::clone(&self.store), fleet.to_owned());
         let save = cx.background_spawn(async move {
             let address = address?;
@@ -52,19 +55,21 @@ impl FleetApi {
         cx.spawn(async move |this, cx| {
             let saved = save.await?;
             _ = this.update(cx, |this, cx| {
-                this.set_token(&id, TokenLoad::Saved(saved), cx)
+                this.set_token(&id, generation, TokenLoad::Saved(saved), cx)
             });
             Ok(())
         })
     }
 
-    /// Forgets `fleet`'s token on this computer.
+    /// Forgets `fleet`'s token on this computer. A read or save still
+    /// running is dropped when it lands, so the token never comes back.
     pub fn clear_token(
         &mut self,
         fleet: &str,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), TokenError>> {
         let known = self.record(fleet).map(|record| record.id.clone());
+        let generation = self.supersede(fleet);
         let store = Arc::clone(&self.store);
         let clear = cx.background_spawn(async move {
             let id = known.ok_or(TokenError::UnknownFleet)?;
@@ -73,7 +78,9 @@ impl FleetApi {
         });
         cx.spawn(async move |this, cx| {
             let id = clear.await?;
-            _ = this.update(cx, |this, cx| this.set_token(&id, TokenLoad::Missing, cx));
+            _ = this.update(cx, |this, cx| {
+                this.set_token(&id, generation, TokenLoad::Missing, cx)
+            });
             Ok(())
         })
     }

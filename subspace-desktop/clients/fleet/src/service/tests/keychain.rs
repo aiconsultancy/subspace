@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use gpui_kit::{Entity, TestAppContext};
 use subspace_framework::core::Secret;
 
-use super::{HOME, aurora, service, state};
+use super::{HOME, aurora, service, state, token};
 use crate::service::FleetApi;
 use crate::{FleetState, TokenStore};
 
@@ -124,4 +124,95 @@ fn a_store_still_locked_on_retry_neither_announces_nor_reads_again_soon(cx: &mut
     cx.run_until_parked();
     assert_eq!(reads(&count), 3, "read again once the interval has passed");
     assert_eq!(self::revision(&service, cx), revision);
+}
+
+#[gpui_kit::test]
+fn a_retry_asked_too_soon_reads_once_the_interval_ends(cx: &mut TestAppContext) {
+    let (service, _locked, count) = locked_service(cx);
+    let start = Instant::now();
+    service.update(cx, |service, cx| service.reload_unreadable_at(start, cx));
+    cx.run_until_parked();
+    assert_eq!(reads(&count), 2);
+    for seconds in [1, 2] {
+        let at = start + Duration::from_secs(seconds);
+        service.update(cx, |service, cx| service.reload_unreadable_at(at, cx));
+        cx.run_until_parked();
+    }
+    assert_eq!(reads(&count), 2, "not read again within the interval");
+    cx.executor().advance_clock(Duration::from_secs(4));
+    cx.run_until_parked();
+    assert_eq!(reads(&count), 3, "the Retry is read once the interval ends");
+    cx.executor().advance_clock(Duration::from_secs(60));
+    cx.run_until_parked();
+    assert_eq!(reads(&count), 3, "and never again on a timer");
+}
+
+/// A keychain whose reads answer with the token saved before: a read that
+/// began before a clear or a save, however late it lands.
+struct Earlier {
+    locked: Arc<std::sync::atomic::AtomicBool>,
+    packed: String,
+}
+
+impl subspace_framework::core::vault::Vault for Earlier {
+    fn load(&self, _: &str) -> Result<Option<Secret>, subspace_framework::core::vault::VaultError> {
+        if self.locked.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(subspace_framework::core::vault::VaultError);
+        }
+        Ok(Some(Secret::new(self.packed.clone())))
+    }
+
+    fn save(&self, _: &str, _: &Secret) -> Result<(), subspace_framework::core::vault::VaultError> {
+        Ok(())
+    }
+
+    fn delete(&self, _: &str) -> Result<(), subspace_framework::core::vault::VaultError> {
+        Ok(())
+    }
+}
+
+/// A service whose keychain was locked and now reads `earlier`, saved for
+/// the fleet's address, until something replaces it.
+fn unlocked_with(earlier: &str, cx: &mut TestAppContext) -> Entity<FleetApi> {
+    let address = crate::FleetAddress::parse(HOME).unwrap();
+    let keychain = Earlier {
+        locked: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        packed: serde_json::json!({"v": 1, "endpoint": address.as_str(), "token": earlier})
+            .to_string(),
+    };
+    let locked = keychain.locked.clone();
+    let store = Arc::new(TokenStore::with_vault(Box::new(keychain)));
+    let service = service(store, aurora(HOME), cx);
+    assert_eq!(state(&service, cx), FleetState::StoreUnavailable);
+    locked.store(false, std::sync::atomic::Ordering::SeqCst);
+    service
+}
+
+#[gpui_kit::test(iterations = 40)]
+fn a_retry_still_reading_never_brings_back_a_cleared_token(cx: &mut TestAppContext) {
+    let service = unlocked_with("earlier", cx);
+    service.update(cx, |service, cx| {
+        service.reload_unreadable(cx);
+        service.clear_token("aurora", cx).detach();
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        state(&service, cx),
+        FleetState::NoToken,
+        "cleared stays cleared"
+    );
+    assert_eq!(token(&service, cx), None);
+}
+
+#[gpui_kit::test(iterations = 40)]
+fn a_retry_still_reading_never_brings_back_a_replaced_token(cx: &mut TestAppContext) {
+    let service = unlocked_with("earlier", cx);
+    service.update(cx, |service, cx| {
+        service.reload_unreadable(cx);
+        service
+            .save_token("aurora", Secret::new("newer"), cx)
+            .detach();
+    });
+    cx.run_until_parked();
+    assert_eq!(token(&service, cx).as_deref(), Some("newer"));
 }

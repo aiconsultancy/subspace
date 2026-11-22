@@ -245,6 +245,31 @@ pub(crate) fn retain_tokens(
     new
 }
 
+/// The fleets in `old` that `new` no longer has.
+pub(crate) fn removed(old: &[FleetRecord], new: &[FleetRecord]) -> Vec<String> {
+    old.iter()
+        .filter(|fleet| !new.iter().any(|kept| kept.id == fleet.id))
+        .map(|fleet| fleet.id.clone())
+        .collect()
+}
+
+/// When the soonest fleet whose token the store could not read, and that
+/// was read again within `interval` of `now`, may be read again: a Retry
+/// asked too soon waits for it. `None` when no such fleet waits.
+pub(crate) fn next_reread(
+    tokens: &BTreeMap<String, TokenLoad>,
+    last: &BTreeMap<String, Instant>,
+    now: Instant,
+    interval: Duration,
+) -> Option<Instant> {
+    tokens
+        .iter()
+        .filter(|(_, token)| **token == TokenLoad::Unavailable)
+        .filter_map(|(fleet, _)| last.get(fleet).map(|at| *at + interval))
+        .filter(|due| *due > now)
+        .min()
+}
+
 /// The fleets whose token the store could not read and that may be read
 /// again at `now`: none read again within `interval`. Marks them read at
 /// `now` and forgets fleets no longer known.
