@@ -152,6 +152,62 @@ fn loaded_pull_requests_answer_from_memory_by_any_spelling(cx: &mut TestAppConte
     assert!(mock.requests().is_empty(), "no read for what is loaded");
 }
 
+/// A completed check run named `name` that ended `conclusion`.
+fn run(name: &str, conclusion: &str) -> serde_json::Value {
+    json!({"__typename":"CheckRun", "name":name, "status":"COMPLETED",
+        "conclusion":conclusion, "detailsUrl":null})
+}
+
+/// The read of a pull request whose head commit has five checks, one failed.
+fn response_with_checks() -> String {
+    let mut body: serde_json::Value = serde_json::from_str(&response("PullRequest", 421)).unwrap();
+    let contexts = ["SUCCESS", "SUCCESS", "SKIPPED", "NEUTRAL", "FAILURE"]
+        .iter()
+        .enumerate()
+        .map(|(index, conclusion)| run(&format!("check-{index}"), conclusion))
+        .collect::<Vec<_>>();
+    body["data"]["repository"]["issueOrPullRequest"]["commits"] = json!({"nodes":[{"commit":
+        {"statusCheckRollup":{"state":"FAILURE", "contexts":{"nodes":contexts}}}}]});
+    body.to_string()
+}
+
+#[gpui_kit::test]
+fn a_listed_pull_request_has_its_combined_state_but_no_check_counts(cx: &mut TestAppContext) {
+    let mock = Mock::new(|_| (500, String::new()));
+    let (board, _, cx) = routed(cx, Some(&mock));
+    board.update(cx, seed);
+    let ResolutionState::Available(details) = ask(KEY, cx) else {
+        panic!("a loaded pull request is available");
+    };
+    assert_eq!(details.checks, Some(CheckStatus::Pending));
+    assert!(
+        details.check_counts.is_none(),
+        "no check runs were read, and none is read for the counts"
+    );
+    assert!(mock.requests().is_empty());
+}
+
+#[gpui_kit::test]
+fn a_read_pull_request_counts_the_checks_that_passed(cx: &mut TestAppContext) {
+    let mock = Mock::new(|_| (200, response_with_checks()));
+    let (_, listener, cx) = routed(cx, Some(&mock));
+    assert!(matches!(ask(KEY, cx), ResolutionState::Pending));
+    assert_eq!(heard(&listener, cx), 1);
+    let ResolutionState::Available(details) = ask(KEY, cx) else {
+        panic!("the read pull request is available");
+    };
+    assert_eq!(details.checks, Some(CheckStatus::Failure));
+    let counts = details
+        .check_counts
+        .expect("the read carried the check runs");
+    assert_eq!(
+        (counts.passed, counts.total),
+        (4, 5),
+        "skipped and neutral checks pass; the failed one does not"
+    );
+    assert_eq!(mock.requests().len(), 1, "the same one read, no more");
+}
+
 #[gpui_kit::test]
 fn an_unknown_pull_request_is_pending_then_read_once_with_the_current_account(
     cx: &mut TestAppContext,

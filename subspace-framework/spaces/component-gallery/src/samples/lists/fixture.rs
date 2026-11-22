@@ -4,12 +4,15 @@
 //! app-wide width preference) closed. The muted row stands for one a
 //! click only selects and a double click activates, such as a channel not
 //! joined yet.
-//! A second instance adds group notes.
+//! A second instance adds group notes, and a third a fleet's group with
+//! captions above its ships and its people.
 
 use gpui_kit::{
     App, Context, EventEmitter, FocusHandle, Focusable, IntoElement, Render, SharedString, Window,
 };
-use subspace_dashboard::list::{self, Detail, Group, GroupNote, ListDashboard, ListState, Row};
+use subspace_dashboard::list::{
+    self, Detail, Group, GroupCaption, GroupNote, ListDashboard, ListState, Row,
+};
 use subspace_dashboard::{Dashboard, DashboardEvent, Glyph, Tone};
 
 /// The muted row: a click selects it and a double click activates it.
@@ -96,11 +99,49 @@ fn note_groups() -> (Vec<Group>, Vec<(SharedString, GroupNote)>) {
     (groups, notes)
 }
 
+/// The fleet group of the captions sample: its ships, then its people,
+/// each run under its caption.
+const FLEET: [(&str, &str, &str); 4] = [
+    ("gallery-caption-ship-1", "◆", "Example ship one"),
+    ("gallery-caption-ship-2", "◆", "Example ship two"),
+    ("gallery-caption-person-1", "●", "Ada Example"),
+    ("gallery-caption-person-2", "●", "Sam Fixture"),
+];
+
+/// A fleet's group with its two runs, and the captions above them.
+fn caption_groups() -> (Vec<Group>, Vec<GroupCaption>) {
+    let rows = FLEET
+        .iter()
+        .map(|(key, icon, title)| Row {
+            key: (*key).into(),
+            icon: Glyph::new(*icon, Tone::Muted),
+            id: None,
+            title: (*title).into(),
+            trailing: Vec::new(),
+            done: false,
+            indent: 0,
+        })
+        .collect();
+    let fleet = Group {
+        key: "example-fleet".into(),
+        icon: Glyph::new("▣", Tone::Muted),
+        name: "Example fleet".into(),
+        count: None,
+        rows,
+    };
+    let captions = vec![
+        GroupCaption::new(FLEET[0].0, "Ships"),
+        GroupCaption::new(FLEET[2].0, "People"),
+    ];
+    (vec![fleet], captions)
+}
+
 /// The fixture list view.
 pub(crate) struct FixtureList {
     focus: FocusHandle,
     list: ListState,
     notes: Vec<(SharedString, GroupNote)>,
+    captions: Vec<GroupCaption>,
 }
 
 impl FixtureList {
@@ -111,6 +152,19 @@ impl FixtureList {
             focus: cx.focus_handle(),
             list: ListState::new(groups),
             notes,
+            captions: Vec::new(),
+        }
+    }
+
+    /// The fixture list with a fleet's group whose ships and people sit
+    /// under captions.
+    pub(crate) fn with_captions(cx: &mut Context<Self>) -> Self {
+        let (groups, captions) = caption_groups();
+        Self {
+            focus: cx.focus_handle(),
+            list: ListState::new(groups),
+            notes: Vec::new(),
+            captions,
         }
     }
 }
@@ -138,6 +192,7 @@ impl Dashboard for FixtureList {
             focus: cx.focus_handle(),
             list: ListState::new(groups()),
             notes: Vec::new(),
+            captions: Vec::new(),
         }
     }
 
@@ -168,5 +223,9 @@ impl ListDashboard for FixtureList {
             .iter()
             .find(|(key, _)| *key == group.key)
             .map(|(_, note)| note.clone())
+    }
+
+    fn group_captions(&self, _: &Group, _: &App) -> Vec<GroupCaption> {
+        self.captions.clone()
     }
 }

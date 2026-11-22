@@ -19,7 +19,7 @@ SPEC.loader.exec_module(FIXTURE)
 
 ISSUE_FIELDS = set('archivedAt assignee owner blocked commentCount createdAt cycle cycleId dueDate estimate id '
                    'identifier labels lastActivity lastActivityAt milestoneId parentId priority progress projectId '
-                   'projectKey projectRank provenance pullRequestSummary relayedCrew state subIssueRank summary title todoCounts type updatedAt version'.split())
+                   'projectKey projectRank provenance pullRequestSummary readyForAgents relayedCrew state subIssueRank summary title todoCounts type updatedAt version'.split())
 COMMENT_FIELDS = set('actualAuthor body createdAt deletedAt displayCreatedAt editedAt hasReplies id issueId media mentions '
                      'parentCommentId provenance relayedCrew replyCount resolved resolvedAt resolvedBy version'.split())
 DETAIL_FIELDS = set('archivedBy canceledAt children completedAt createdBy description duplicateOf mentions parent '

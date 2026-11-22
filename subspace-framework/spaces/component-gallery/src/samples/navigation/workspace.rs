@@ -26,9 +26,9 @@ use crate::catalog::Item;
 use crate::samples::{Sample, bounded, ignore_click, sample, sized};
 
 mod inspector;
-pub(super) use inspector::INSPECTOR;
+pub(super) use inspector::{INSPECTOR, INSPECTOR_TAB};
 #[cfg(test)]
-pub(in crate::samples) use inspector::inspectors;
+pub(in crate::samples) use inspector::{inspector_tabs, inspectors};
 
 const NAVIGATOR_SOURCE: &str = "board-kit/dashboard/src/workspace/navigator.rs";
 const PANE_SOURCE: &str = "board-kit/dashboard/src/workspace/pane.rs";

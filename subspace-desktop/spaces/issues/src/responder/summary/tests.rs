@@ -15,6 +15,7 @@ fn resolved() -> subspace_framework::contracts::issues::IssueSummary {
             json!({"done":3,"total":7,"canceled":0,"duplicate":0,"sample":[],"hasMore":false});
         detail["pullRequestSummary"] = json!({"total":5,"open":1,"closed":0,"merged":4,"closingPending":0,"checksState":"success"});
         detail["dueDate"] = json!("2026-11-20");
+        detail["readyForAgents"] = json!(true);
         detail["lastActivity"] = json!({"kind":"comment.created", "occurredAt":"2026-11-16T12:00:00Z", "actor":{"type":"agent","userId":"agent","label":"protostar"}});
         Some((200, detail.to_string()))
     });
@@ -47,6 +48,7 @@ fn api_card_preserves_optional_tile_facts_through_the_responder() {
     assert_eq!((prs.total, prs.open, prs.closed, prs.merged), (5, 1, 0, 4));
     assert_eq!(prs.checks.as_deref(), Some("success"));
     assert_eq!(issue.due_date(), Some("2026-11-20"));
+    assert_eq!(issue.ready_for_agents(), Some(true));
     let activity = issue.latest_activity().unwrap();
     assert_eq!(
         (

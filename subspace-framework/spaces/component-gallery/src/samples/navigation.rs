@@ -87,6 +87,7 @@ pub(crate) const ITEMS: &[Item] = &[
     workspace::DOCK_SWITCH,
     workspace::PANE,
     workspace::INSPECTOR,
+    workspace::INSPECTOR_TAB,
     Item {
         name: "tokens::Tokens",
         source: "board-kit/dashboard/src/tokens.rs",

@@ -28,6 +28,7 @@ fn messaging_and_navigation_builders_caption_every_state(cx: &mut TestAppContext
             navigation::workspace::dock_switches(g, t, w, cx),
             navigation::workspace::panes(g, t, w, cx),
             navigation::workspace::inspectors(g, t, w, cx),
+            navigation::workspace::inspector_tabs(g, t, w, cx),
             navigation::token_swatches(g, t, w, cx),
         ]
     });

@@ -16,11 +16,13 @@ use std::sync::Arc;
 
 use gpui_kit::{AppContext as _, Context, Subscription};
 use subspace_framework::client_github::Client;
-use subspace_framework::client_github::model::{CheckState, GhItem, PrState, ReviewDecision};
+use subspace_framework::client_github::model::{
+    CheckRunState, CheckState, GhCheck, GhItem, PrState, ReviewDecision,
+};
 use subspace_framework::contracts::github::recognition::PullRequestLink;
 use subspace_framework::contracts::github::{
-    Changed, CheckStatus, PullRequestDetails, PullRequestStatus, Resolution, ResolutionState,
-    ResolvePullRequests, ReviewStatus,
+    Changed, CheckCounts, CheckStatus, PullRequestDetails, PullRequestStatus, Resolution,
+    ResolutionState, ResolvePullRequests, ReviewStatus,
 };
 use subspace_framework::core::http::Error;
 use subspace_framework::dashboard::Dashboard as _;
@@ -138,8 +140,8 @@ fn known(board: &Github, key: &str) -> Option<ResolutionState> {
     if board.references.signed_out.contains(&login.to_lowercase()) {
         return Some(ResolutionState::SignedOut);
     }
-    if let Some(item) = loaded(board, key) {
-        return Some(ResolutionState::Available(details(item)));
+    if let Some((item, runs)) = loaded(board, key) {
+        return Some(ResolutionState::Available(details(item, runs)));
     }
     board
         .references
@@ -149,26 +151,29 @@ fn known(board: &Github, key: &str) -> Option<ResolutionState> {
 }
 
 /// The pull request `key` as the current account already loaded it, from a
-/// detail or a list a refresh has confirmed.
-fn loaded<'a>(board: &'a Github, key: &str) -> Option<&'a GhItem> {
+/// detail or a list a refresh has confirmed, with its head commit's check
+/// runs: an opened one has them, a listed one only its combined state, so
+/// its runs are empty.
+fn loaded<'a>(board: &'a Github, key: &str) -> Option<(&'a GhItem, &'a [GhCheck])> {
     let account = board.account_data()?;
-    let same = |item: &&GhItem| item.key.eq_ignore_ascii_case(key);
+    let same = |item: &GhItem| item.key.eq_ignore_ascii_case(key);
     let detail = account
         .details
         .values()
-        .map(|detail| &detail.item)
-        .find(same);
+        .find(|detail| same(&detail.item))
+        .map(|detail| (&detail.item, detail.check_runs.as_slice()));
     let listed = || {
         account
             .sections
             .iter()
             .filter(|(id, _)| !account.unconfirmed.contains(*id))
             .flat_map(|(_, section)| section.items.iter())
-            .find(same)
+            .find(|item| same(item))
+            .map(|item| (item, &[][..]))
     };
     detail
         .or_else(listed)
-        .filter(|item| item.kind == subspace_framework::client_github::model::ItemKind::Pr)
+        .filter(|(item, _)| item.kind == subspace_framework::client_github::model::ItemKind::Pr)
 }
 
 /// Starts one background read of the `keys` not already being read, and
@@ -213,7 +218,9 @@ fn read_all(client: &Client, login: &str, keys: Vec<String>) -> Vec<(String, Res
                 .item(login, &key)
                 .and_then(|detail| requested_pr((detail, ()), &key));
             let state = match read {
-                Ok((detail, ())) => ResolutionState::Available(details(&detail.item)),
+                Ok((detail, ())) => {
+                    ResolutionState::Available(details(&detail.item, &detail.check_runs))
+                }
                 Err(error) => refused(&error),
             };
             (key, state)
@@ -257,8 +264,9 @@ fn cache_key(login: &str, key: &str) -> (String, String) {
     (login.to_lowercase(), key.to_ascii_lowercase())
 }
 
-/// The short summary of a loaded pull request.
-fn details(item: &GhItem) -> PullRequestDetails {
+/// The short summary of a loaded pull request, with its check counts when
+/// its check runs were read with it.
+fn details(item: &GhItem, runs: &[GhCheck]) -> PullRequestDetails {
     let url =
         PullRequestLink::from_key(&item.key).map_or_else(|| item.url.clone(), |link| link.url());
     let updated = Some(item.updated_at.as_str()).filter(|at| !at.is_empty());
@@ -266,9 +274,27 @@ fn details(item: &GhItem) -> PullRequestDetails {
         .with_author(item.author.as_ref().map(|author| author.login.as_str()))
         .with_review(item.review_decision.map(review))
         .with_checks(item.checks.map(checks))
+        .with_check_counts(check_counts(runs))
         .with_updated_at(updated)
         .with_branches(item.head_ref.as_deref(), item.base_ref.as_deref())
         .with_changes(item.additions, item.deletions)
+}
+
+/// How many of `runs` passed, out of how many: a check passes unless it
+/// failed, was cancelled or is still running, as the detail's check summary
+/// counts them. `None` when no runs were read.
+fn check_counts(runs: &[GhCheck]) -> Option<CheckCounts> {
+    let passed = runs
+        .iter()
+        .filter(|run| {
+            matches!(
+                run.state,
+                CheckRunState::Success | CheckRunState::Neutral | CheckRunState::Skipped
+            )
+        })
+        .count();
+    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    (!runs.is_empty()).then(|| CheckCounts::new(count(passed), count(runs.len())))
 }
 
 // qual:allow(dry, boilerplate) reason: "Maps the GitHub client's model onto the independent public contract enum; the contract crate must not depend on the client, so neither can derive the other."

@@ -32,7 +32,7 @@ use gpui_kit::{
 };
 
 pub use docks::{SpaceDock, SpaceDocks, dock_switch};
-pub use inspector::{Inspector, fact, section};
+pub use inspector::{INSPECTOR_MAX_TABS, Inspector, InspectorTab, fact, section};
 pub use navigator::{NavRow, Navigator, nav_section};
 pub use pane::{Pane, Toolbar, pane_head};
 pub use resize::{InspectorResize, NavigatorResize, inspector_width, navigator_width};

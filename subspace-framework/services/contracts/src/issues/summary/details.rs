@@ -11,6 +11,7 @@ pub(super) struct Details {
     pub pull_requests: Option<PullRequestSummary>,
     pub due_date: Option<String>,
     pub latest_activity: Option<LatestActivity>,
+    pub ready_for_agents: Option<bool>,
 }
 
 impl IssueSummary {
@@ -107,5 +108,20 @@ impl IssueSummary {
         self.details
             .as_ref()
             .and_then(|facts| facts.latest_activity.as_ref())
+    }
+    /// Whether the issue is flagged Ready for agents, to be picked up by a
+    /// fleet's agents. `None` when the responder has not read it.
+    // qual:api - Consumed by app crates through the Framework facade.
+    pub fn with_ready_for_agents(mut self, value: Option<bool>) -> Self {
+        self.details
+            .get_or_insert_with(Default::default)
+            .ready_for_agents = value;
+        self
+    }
+    // qual:api - Consumed by app crates through the Framework facade.
+    pub fn ready_for_agents(&self) -> Option<bool> {
+        self.details
+            .as_ref()
+            .and_then(|facts| facts.ready_for_agents)
     }
 }

@@ -25,6 +25,7 @@ fn older_callers_keep_optional_facts_absent() {
             && issue.pull_requests().is_none()
             && issue.due_date().is_none()
             && issue.latest_activity().is_none()
+            && issue.ready_for_agents().is_none()
     );
 }
 #[test]
@@ -44,8 +45,10 @@ fn all_additive_builders_preserve_their_facts() {
         .with_latest_activity(Some(
             LatestActivity::new("comment.created", "2026-11-16T12:00:00Z")
                 .with_actor(Some("Rosa Fixture")),
-        ));
+        ))
+        .with_ready_for_agents(Some(true));
     assert_eq!(issue.priority(), Some(2));
+    assert_eq!(issue.ready_for_agents(), Some(true));
     assert_eq!(issue.owner().unwrap().id, "human");
     assert_eq!(issue.assignee_id(), Some("agent"));
     assert_eq!(issue.assignee_kind(), Some("agent"));
@@ -90,7 +93,9 @@ fn facts_can_be_removed_and_progress_is_bounded() {
         .with_due_date(Some("2026-11-20"))
         .with_due_date(None)
         .with_latest_activity(Some(LatestActivity::new("issue.created", "invalid")))
-        .with_latest_activity(None);
+        .with_latest_activity(None)
+        .with_ready_for_agents(Some(false))
+        .with_ready_for_agents(None);
     assert!(
         issue.priority().is_none()
             && issue.assignee_kind().is_none()
@@ -103,6 +108,13 @@ fn facts_can_be_removed_and_progress_is_bounded() {
             && issue.due_date().is_none()
             && issue.latest_activity().is_none()
     );
-    assert!(issue.assignee_id().is_none());
+    assert!(issue.assignee_id().is_none() && issue.ready_for_agents().is_none());
+    assert_eq!(
+        summary()
+            .with_ready_for_agents(Some(false))
+            .ready_for_agents(),
+        Some(false),
+        "not ready is a fact, not an absence"
+    );
     assert_eq!(IssueProgress::new(9, 7).done, 7);
 }
