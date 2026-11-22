@@ -87,6 +87,20 @@ impl FleetApi {
         service
     }
 
+    /// The process's service when something has created it, without
+    /// creating one, so a caller that must never open the token store, such
+    /// as a Space under test, can still read fleets a test set up.
+    pub fn current(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<Session>().map(|session| session.0.clone())
+    }
+
+    /// Makes `service` the process's service in place of the one
+    /// [`Self::shared`] would create, as a test does with one over
+    /// [`TokenStore::memory`].
+    pub fn install(service: Entity<Self>, cx: &mut App) {
+        cx.set_global(Session(service));
+    }
+
     /// A service over `store` with no fleets until [`Self::set_fleets`].
     pub fn new(store: Arc<TokenStore>) -> Self {
         Self {

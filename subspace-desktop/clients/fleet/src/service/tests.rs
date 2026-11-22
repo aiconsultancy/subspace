@@ -223,3 +223,16 @@ fn the_shared_service_asks_for_the_initiatives_that_name_the_fleets(cx: &mut Tes
         assert_eq!(catalog.read(cx).hint(), Some("Checking initiatives…"));
     });
 }
+
+#[gpui_kit::test]
+fn an_installed_service_is_the_shared_one_and_nothing_is_created_to_read_it(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| assert!(FleetApi::current(cx).is_none(), "none until made"));
+    let installed = service(Arc::new(TokenStore::memory()), aurora(HOME), cx);
+    cx.update(|cx| {
+        FleetApi::install(installed.clone(), cx);
+        assert_eq!(FleetApi::current(cx), Some(installed.clone()));
+        assert_eq!(FleetApi::shared(cx), installed);
+    });
+}

@@ -165,7 +165,6 @@ pub struct CrewMember {
 
 impl CrewMember {
     /// The task the member is working on now, in its most active context.
-    // qual:api
     pub fn current_task(&self) -> Option<&Task> {
         self.contexts
             .iter()
