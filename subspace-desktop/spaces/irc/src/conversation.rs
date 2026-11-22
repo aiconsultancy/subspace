@@ -12,6 +12,7 @@ pub(crate) use header::vouched_status;
 mod keys;
 mod owners;
 mod panel;
+pub(crate) mod reacting;
 pub(crate) mod summaries;
 
 pub(crate) use keys::{KEYS, bind_keys};
@@ -65,6 +66,8 @@ pub(crate) struct Conversation {
     pub(crate) summaries: summaries::Summaries,
     replies: Rc<transcript::replies::Counts>,
     statuses: clock::Lines,
+    /// Reactions on the held messages and what reacting waits to hear.
+    pub(crate) reacting: reacting::Reacting,
     /// The fleet roles on the buffer's network.
     pub(crate) roster: Rc<Roster>,
     /// Which message keeps each reference's tile, read before rows show.
@@ -113,6 +116,12 @@ impl Conversation {
                 compose::handle(this, event, window, cx);
             }),
         ];
+        let seen_refusal = hub
+            .read(cx)
+            .reactions
+            .refusal(&buffer)
+            .map_or(0, |refusal| refusal.serial);
+        let reacting = reacting::Reacting::new(seen_refusal, cx);
         let mut conversation = Self {
             me: cx.entity().downgrade(),
             buffer,
@@ -121,6 +130,7 @@ impl Conversation {
             summaries: Default::default(),
             replies: Rc::default(),
             statuses: clock::Lines::default(),
+            reacting,
             roster: Rc::default(),
             tiles: Rc::default(),
             draft,
@@ -179,6 +189,7 @@ impl Conversation {
         self.refresh_roster(cx);
         self.refresh_replies(cx);
         self.refresh_statuses(cx);
+        reacting::refresh(self, cx);
         clock::follow(self, cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
@@ -225,13 +236,18 @@ impl Conversation {
         let ranks_changed = self.refresh_roster(cx);
         self.refresh_replies(cx);
         self.refresh_statuses(cx);
+        let reactions_before = reacting::refresh(self, cx);
         clock::follow(self, cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
         let changed = if ranks_changed {
             (0..rows.len()).collect()
         } else {
-            self.changed_reply_rows(&rows, (&*previous.0, &*previous.1), cx)
+            let mut changed = self.changed_reply_rows(&rows, (&*previous.0, &*previous.1), cx);
+            changed.extend(reacting::changed_rows(self, &rows, &reactions_before, cx));
+            changed.sort_unstable();
+            changed.dedup();
+            changed
         };
         let revision = self.find_active.then(|| find::revision(self, cx));
         let find_changed = self.scroll.rows() != rows || self.find_source != revision;
@@ -336,6 +352,10 @@ impl Conversation {
             roster: Rc::clone(&self.roster),
             tiles: Rc::clone(&self.tiles),
             threads: crate::thread::has_tab(&self.roster, &self.buffer),
+            reactions: Rc::clone(&self.reacting.shown),
+            stops: Rc::clone(&self.reacting.stops),
+            can_react: self.reacting.supported,
+            react_anchor: Some(self.reacting.anchor.clone()),
         }
     }
 
@@ -476,7 +496,9 @@ impl Render for Conversation {
         let transcript = keys::transcript(self, cx)
             .flex_1()
             .min_h_0()
-            .child(self.render_transcript(cx));
+            .child(self.render_transcript(cx))
+            .child(self.reacting.anchor.clone());
+        let notice = reacting::notice(self, cx);
         let content = v_flex()
             .id("irc-conversation")
             .track_focus(&self.focus)
@@ -492,12 +514,17 @@ impl Render for Conversation {
             .bg(tokens.surface)
             .children(header)
             .child(transcript)
-            .child(div().flex_shrink_0().child(self.draft.render(
-                &self.tray,
-                !matches!(self.buffer.target, Target::Server)
-                    && subspace_api_client::capabilities().chat_uploads,
-                cx,
-            )))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .children(notice)
+                    .child(self.draft.render(
+                        &self.tray,
+                        !matches!(self.buffer.target, Target::Server)
+                            && subspace_api_client::capabilities().chat_uploads,
+                        cx,
+                    )),
+            )
             .into_any_element();
         find::scope(self, content, cx)
     }

@@ -27,6 +27,7 @@ mod members;
 mod notice;
 mod prompt;
 mod pull_requests;
+mod reactions;
 mod remove;
 mod reveal;
 mod rows;

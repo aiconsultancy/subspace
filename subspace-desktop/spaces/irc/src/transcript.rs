@@ -8,6 +8,7 @@ pub(crate) mod activity;
 mod fill;
 pub(crate) mod focus;
 mod line;
+pub(crate) mod reactions;
 pub(crate) mod replies;
 mod scroll;
 pub(crate) mod status;

@@ -29,6 +29,7 @@ actions!(
         OpenReference,
         OpenAttachment,
         LeaveTranscript,
+        ReactToMessage,
     ]
 );
 
@@ -57,6 +58,7 @@ pub(crate) const KEYS: &[KeyHelp] = &[
         "Open its thread in the inspector",
     ),
     KeyHelp::new("Enter / Space on an attachment", "Open it"),
+    KeyHelp::new("r on a message", "Add or take back a reaction"),
     KeyHelp::new("Esc on a message", "Back to the message input"),
 ];
 
@@ -99,6 +101,9 @@ pub(super) fn transcript(this: &Conversation, cx: &mut Context<Conversation>) ->
             }
         }))
         .on_action(cx.listener(|this, _: &LeaveTranscript, window, cx| leave(this, window, cx)))
+        .on_action(cx.listener(|this, _: &ReactToMessage, window, cx| {
+            super::reacting::open_choices(this, window, cx);
+        }))
 }
 
 /// The focused message and reference, for tests.
@@ -169,6 +174,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("enter", OpenReference, transcript),
         KeyBinding::new("space", OpenAttachment, transcript),
         KeyBinding::new("escape", LeaveTranscript, transcript),
+        KeyBinding::new("r", ReactToMessage, transcript),
         KeyBinding::new(
             "escape",
             subspace_framework::dashboard::find_in_page::Close,

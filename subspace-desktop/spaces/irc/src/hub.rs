@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription, Task};
 use subspace_api_client::initiatives::Catalog;
-use subspace_client_irc::{BufferKey, Command, Event, NetworkConfig, NetworkId, Runtime};
+use subspace_client_irc::{BufferKey, Command, Event, NetworkConfig, NetworkId, Runtime, Update};
 use subspace_framework::dashboard::{Services, full_text_service, notifications, prefs};
 
 use crate::config::{self, Settings};
@@ -74,6 +74,8 @@ pub(crate) struct Hub {
     /// What the Fleet API says of each fleet the board shows, by fleet id,
     /// for the conversations' headers; the board keeps it current.
     pub fleets: crate::live::Lives,
+    /// Message reactions, reaction support per network and refusals.
+    pub reactions: crate::reactions::Reactions,
     captain_notifications: captain_notifications::Monitor,
     _timer: Option<Task<()>>,
     _settings: Option<Subscription>,
@@ -236,6 +238,7 @@ impl Hub {
             captain_notifications: Default::default(),
             uploads: Default::default(),
             fleets: Default::default(),
+            reactions: Default::default(),
             _timer: None,
             _settings: None,
         }
@@ -246,6 +249,7 @@ impl Hub {
     pub fn remove(&mut self, buffer: &BufferKey, cx: &mut Context<Self>) {
         if self.state.remove(buffer) {
             self.recall.forget(buffer);
+            self.reactions.forget(buffer);
             self.tiles.forget(buffer);
             self.save_removed(cx);
             cx.notify();
@@ -284,8 +288,8 @@ impl Hub {
         }
         crate::uploads::session::refresh(self, cx);
         self.serve_tools(cx);
-        let events = match &self.outbox {
-            Outbox::Runtime(runtime) => runtime.drain(),
+        let updates = match &self.outbox {
+            Outbox::Runtime(runtime) => runtime.drain_updates(),
             #[cfg(test)]
             Outbox::Recorded(_) => Vec::new(),
         };
@@ -294,13 +298,7 @@ impl Hub {
             cx.notify();
         }
         self.now = now;
-        if events.is_empty() {
-            if self.state.expire_typing(now) {
-                cx.notify();
-            }
-        } else {
-            self.ingest(events, now, cx);
-        }
+        receive(self, updates, now, cx);
         self.flush_store(false, cx);
         captain_notifications::tick(self, cx);
     }
@@ -456,6 +454,33 @@ impl Hub {
     pub fn resolve(&self, target: u64) -> Option<BufferKey> {
         let index = usize::try_from(target.checked_sub(1)?).ok()?;
         self.targets.get(index).cloned()
+    }
+}
+
+/// Takes the runtime's updates in order: reactions and their support go
+/// to [`crate::reactions::Reactions`], which also follows every event
+/// before it is applied; the events are then ingested together.
+pub(crate) fn receive(
+    hub: &mut Hub,
+    updates: Vec<Update>,
+    now: DateTime<Utc>,
+    cx: &mut Context<Hub>,
+) {
+    let mut events = Vec::new();
+    let mut changed = false;
+    for update in updates {
+        match update {
+            Update::Event(event) => {
+                hub.reactions.observe(&event);
+                events.push(event);
+            }
+            other => changed |= crate::reactions::react(&mut hub.reactions, &hub.state, other),
+        }
+    }
+    if !events.is_empty() {
+        hub.ingest(events, now, cx);
+    } else if hub.state.expire_typing(now) || changed {
+        cx.notify();
     }
 }
 
