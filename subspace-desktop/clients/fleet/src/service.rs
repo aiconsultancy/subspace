@@ -96,7 +96,9 @@ impl FleetApi {
 
     /// Makes `service` the process's service in place of the one
     /// [`Self::shared`] would create, as a test does with one over
-    /// [`TokenStore::memory`].
+    /// [`TokenStore::memory`]. Only for tests: the `test-support` feature,
+    /// which only dev-dependencies enable.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn install(service: Entity<Self>, cx: &mut App) {
         cx.set_global(Session(service));
     }
