@@ -341,6 +341,55 @@ use that same TLS endpoint in remote mode. They can trust a private CA with
 rather than one fleet's Ergo:
 [Run the shared IRC server in a container](../INSTALL.md#run-the-shared-irc-server-in-a-container).
 
+## Subspace API registration
+
+With `api` set, `subspace-fleetctl register`, which the installer runs after
+each install or upgrade, records the fleet in the Subspace API as the
+desktop needs it: the desktop marks an agent's rank in Channels only by the
+IRC nick on its API agent record, and joins the channels the fleet and its
+ships record plus the initiative's own.
+
+- **The fleet**: its name, the IRC endpoint the desktop uses
+  (`irc.advertise`, else the gateway's), `vmHost`, and its standard
+  `starbaseChannel` and `commandChannel`.
+- **One ship per captain**, named after the ship, the captain's `name`, and
+  recording its ship channel, `#<slug>-<captain-id>`.
+- **The rear admiral's agent record**, rank `rearAdmiral`, named with its
+  own `name`, and **one per captain**, rank `captain`, on its ship. A captain
+  has no name of its own, so its agent name is its account,
+  `<slug>-<captain-id>`. Each record has `ircNick` (the officer's IRC
+  account), `defaultModel` (its harness model) and `serviceTokenClientId`,
+  the account subject the API knows it by: by default
+  `<account>@agents.example.com`, which suits the API's development sign-in.
+  With WorkOS or Entra, set the member's `serviceTokenClientId` to its
+  provider subject (an Entra object ID, for example).
+- **Crew have no records.** They are not on IRC, and the API records crew
+  work under their captain with the crew member's name and model.
+
+The API keeps the rear admiral's name as its agent name, which allows only
+letters, digits and hyphens (at most 64), and is unique in the organisation
+ignoring case, as is every agent's IRC nick. Ship names are one line of at
+most 64 characters, distinct in the fleet, and a captain's account, its agent
+name, has no underscores. `--dry-run` refuses a fleet with `api` that breaks
+these rules. The `apiToken` must belong to a human organisation
+administrator: only one may register fleets and agents.
+
+Registration is idempotent. Existing records are found by IRC nick, else by
+account subject, and changed only where they differ, so a re-run writes
+nothing. A renamed ship keeps its record. A captain removed from the roster
+has its agent record deactivated and its ship's channel cleared (the API
+cannot delete ships); add the captain back and its record is reactivated. The
+installer refuses, naming the record, to take over an agent with the same IRC
+nick under another account subject, an agent of another fleet, or an agent
+name already in use.
+
+`subspace-setup` registers the same records with the API on its VM before it
+runs the installer, so [agent dispatch](#agent-dispatch) can sign the rear
+admiral in, and `subspace-setup register-fleet` registers a further fleet's
+from its `subspace-setup fleet-registration` output. Setup gives the fleet's
+initiative no channels of its own: the standard channels belong to the fleet
+and its ships.
+
 ## Agent dispatch
 
 Stargate's dispatcher runs in the rear admiral's gateway and hands out
@@ -378,20 +427,21 @@ its IRC account, and any other name must be the IRC account itself.
 **Credential.** The dispatcher calls the API as the rear admiral, so
 assignments, comments and flag changes are recorded as the rear admiral's.
 Give it a bearer token for the rear admiral's own API agent identity, not the
-administrator's `apiToken`: register the agent (rank `rearAdmiral`, linked to
-this fleet, by an organisation administrator with `POST /api/v1/agents`) and
-put a token for its account subject in the secrets file as
-`rearAdmiralApiToken`. Register each captain as an agent of rank `captain` in
-the fleet. The token needs no other scope: it is an ordinary member's token
+administrator's `apiToken`. The installer registers the rear admiral's agent
+record (rank `rearAdmiral`, in this fleet) and each captain's (rank
+`captain`) whether or not dispatch is on (see
+[Subspace API registration](#subspace-api-registration)); put a token for the
+rear admiral's account subject in the secrets file as `rearAdmiralApiToken`.
+The token needs no other scope: it is an ordinary member's token
 for that agent identity, and the API limits a fleet agent's assignments and
 *Ready for agents* changes to its own fleet. The installer passes it to the
 gateway only through its private runtime settings, as
 `SUBSPACE_DISPATCH_TOKEN`, and never prints it. Stargate reads it when the
 gateway starts and has no refresh of its own, so use a long-lived token, or
 renew it and re-run the installer. `subspace-setup`, on an API with
-development sign-in, registers the agents (named after their IRC accounts,
-signing in as `<account>@agents.example.com`) and mints the rear admiral's
-token on each run; a development token lasts eight hours. The gateway's
+development sign-in, registers the agents first and mints the rear admiral's
+token for its account subject (by default `<account>@agents.example.com`) on
+each run; a development token lasts eight hours. The gateway's
 Linux user must be able to reach the API: `subspace-setup` lets it, and no
 agent, through to the API's port.
 
@@ -645,7 +695,7 @@ their crew's assignments through `stargate_crew`.
 | Field | Meaning and default |
 | --- | --- |
 | `slug`, `name` | Stable fleet ID and display label. Keep the slug fixed on a VM. Use up to 35 lowercase ASCII letters, digits and hyphens, starting with a letter or digit. |
-| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp` and `harness`. Captains also take optional `crew` and `crewNames`. IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
+| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew` and `crewNames`. IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
 | `harness` | Default `{"type":"opencode","model":"gpt-5.4"}` with the [role's starter permissions](#instructions-permissions-and-toolchains). Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
@@ -662,7 +712,7 @@ their crew's assignments through `stargate_crew`.
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
 | `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. |
-| `api` | Optional `url` (origin or ending in `/api`), `vmHost` and `initiatives` (array of UUIDs). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. |
+| `api` | Optional `url` (origin or ending in `/api`), `vmHost` and `initiatives` (array of UUIDs). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
 | `agentDispatch` | Optional [agent dispatch](#agent-dispatch): `enabled` (default `false`), `pollIntervalSeconds` (120), `answerTimeoutSeconds` (300) and `retryLadderSeconds` (`[3600, 10800, 21600, 43200]`). On, it needs `api`, a captain with crew, an OpenCode rear admiral and `rearAdmiralApiToken`. |
 
 The mode-0600 secrets JSON has `proxyKey` (a random proxy client key),
@@ -711,8 +761,10 @@ reloading a site-managed firewall. Apply your site's SSH and deliberate IRC
 listener policy separately, including Docker-published ports.
 
 The API integration looks up the fleet by slug and creates or patches its
-registration. It applies the listed initiative assignments after startup.
-An API failure leaves the fleet running and can be retried independently.
+registration, with its ships and officers (see
+[Subspace API registration](#subspace-api-registration)). It applies the
+listed initiative assignments after startup. An API failure leaves the fleet
+running and can be retried independently.
 
 ```sh
 sudo subspace-fleetctl register
