@@ -31,8 +31,9 @@ pub const MAX_REACTION_CHARS: usize = 32;
 pub const MAX_MSGID_BYTES: usize = 128;
 
 /// Whether a connection with these enabled capabilities (from
-/// [`crate::Event::Capabilities`]) can send and receive reactions. A UI
-/// hides reactions when this is false.
+/// [`crate::Event::Capabilities`]) can send and receive reactions. It cannot
+/// see a server's `CLIENTTAGDENY`; [`crate::Update::ReactionSupport`] can,
+/// so a UI should prefer that.
 pub fn reactions_supported(enabled: &[String]) -> bool {
     enabled.iter().any(|cap| cap == CAPABILITY)
 }
