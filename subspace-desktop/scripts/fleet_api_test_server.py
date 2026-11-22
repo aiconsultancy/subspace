@@ -17,7 +17,8 @@ token is invented. Never calls upstream services.
 --log-requests prints each request's method, path and status with a
 fingerprint of its Authorization header (`auth=none`, or `auth=` and the
 first 12 hex digits of the header's SHA-256), never the header itself, so a
-capture can show which token reached the fixture.
+capture can show which token reached the fixture. A malformed request logs `-`
+for its method and path.
 """
 
 import argparse
@@ -557,10 +558,15 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def log_request(self, code='-', size='-'):
+        # The standard library logs an error it sends before the request
+        # line is read (a malformed request), when there are no headers,
+        # path or method yet: those log as `-` and `auth=none`.
         if self.server.log_requests:
-            auth = auth_fingerprint(self.headers.get('Authorization', ''))
-            path = urlsplit(self.path).path
-            print(f'request {self.command} {path} {code} auth={auth}', flush=True)
+            headers = getattr(self, 'headers', None)
+            auth = auth_fingerprint(headers.get('Authorization', '') if headers else '')
+            method = getattr(self, 'command', None) or '-'
+            path = urlsplit(getattr(self, 'path', '') or '').path or '-'
+            print(f'request {method} {path} {code} auth={auth}', flush=True)
 
     def allowed_origin(self):
         origin = self.headers.get('Origin', '')

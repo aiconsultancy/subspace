@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import re
+import socket
 import threading
 import unittest
 from pathlib import Path
@@ -82,6 +83,21 @@ class FleetFixtureTests(unittest.TestCase):
                                  'request GET /api/v1/fleet 401 auth=none'])
         self.assertNotIn(TOKEN, printed.getvalue())
         self.assertNotIn('other-token', printed.getvalue())
+
+    def raw(self, request):
+        """Sends `request` as bytes and returns the status line."""
+        host, port = self.server.server_address[:2]
+        with socket.create_connection((host, port), timeout=3) as conn:
+            conn.sendall(request)
+            return conn.makefile('rb').readline()
+
+    def test_a_malformed_request_is_logged_without_failing_the_log(self):
+        self.server.log_requests = True
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            status = self.raw(b'NONSENSE\r\n\r\n')
+        self.assertIn(b' 400 ', status)
+        self.assertEqual(printed.getvalue().splitlines(), ['request - - 400 auth=none'])
 
     def test_every_route_needs_the_token_and_is_not_cached(self):
         for token in (None, 'wrong'):
