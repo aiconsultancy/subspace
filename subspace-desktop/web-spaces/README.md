@@ -7,12 +7,15 @@ badge, share context with chat and send notifications through a
 permission-controlled bridge. The manifest keeps the older name
 `subspace-board.json` for compatibility.
 
-This folder holds installable web Space packages. They are not Rust crates and
-are not built into the app; users install them at run time.
+This folder holds web Space packages. They are not Rust crates. Fleet Console
+is built into the Subspace App: the build embeds its package files, and the app
+adds it to the tab strip at start (see
+[its README](fleet-console/README.md#in-subspace)). The examples are installed
+by users at run time.
 
 | Path | What it is |
 | --- | --- |
-| [`fleet-console/`](fleet-console/README.md) | Fleet Console: your Stargate fleets drawn with WebGL2, drilling from fleets to fleet, ship and crew, fed by Stargate's Fleet API; sample fleets without setup |
+| [`fleet-console/`](fleet-console/README.md) | Fleet Console, built into the app: your Stargate fleets drawn with WebGL2, drilling from fleets to fleet, ship and crew, fed by Stargate's Fleet API; sample fleets without setup |
 | [`examples/weather/`](examples/weather/README.md) | Weather: a keyless UK-postcode forecast, plain HTML, CSS and JavaScript with no build step and no permissions |
 
 ## Try Weather

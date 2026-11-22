@@ -71,6 +71,7 @@ screenshots.
 | Board Lab | [Native dashboards and managed environments](spaces/board-lab/help.md) |
 | Actions | [GitHub Actions](spaces/actions/help.md) |
 | Component gallery | [Shared UI components for developers](../subspace-framework/spaces/component-gallery/help.md) |
+| Fleet Console | [Fleet Console web Space](web-spaces/fleet-console/README.md) |
 | Web Spaces | [Websites and installed web Spaces](spaces/web/help.md) |
 
 Availability depends on the platform, build features and enabled boards. Configured web Spaces share the Web Spaces guide.
@@ -291,6 +292,7 @@ clients/subspace-api        subspace-api-client            Subspace API reads, w
 terminal/panel              subspace-terminal-panel        the docked terminal panel (excluded Zig workspace, feature `terminal`; [docs](docs/terminal.md))
 terminal/runtime            subspace-terminal              PTY/ConPTY sessions with libghostty VT emulation (excluded Zig workspace)
 terminal/ghostty-config     subspace-ghostty-config        Zig-free Ghostty configuration and theme parser
+web-spaces/fleet-console    (not a crate)                  Fleet Console web Space, built into the app
 web-spaces/examples/weather (not a crate)                  installable Weather web Space package
 ```
 
@@ -318,7 +320,10 @@ a dashboard runs them in `cx.background_spawn` and applies the result with
 
 ## Settings and stored state
 
-The Subspace App can add [web Spaces](spaces/web/help.md) immediately from
+The Subspace App ships one web Space, [Fleet Console](web-spaces/fleet-console/README.md),
+in the tab strip on macOS and Windows from the first start: the build embeds
+its package files and the app adds its `webBoards.fleet-console` entry at
+start. It can add other [web Spaces](spaces/web/help.md) immediately from
 **Settings > Application > Web Spaces**, using URLs, built folders, ZIPs or
 organization-authorized GitHub sources. It includes an installable UK-postcode
 Weather example. Local apps can declare native settings and request a
@@ -386,13 +391,13 @@ values keyed by ID: `{"boards":{"github":false,"irc":true}}`. An omitted
 board uses that product's default for the current build. In a Subspace release
 build, Channels and Issues default to disabled. They remain compiled and
 you can enable them in Settings. Debug builds enable Channels and Issues
-by default. GitHub defaults to enabled in both builds; Copilot Agents and Actions default to disabled.
+by default. GitHub and Actions default to enabled in both builds; Copilot Agents defaults to disabled.
 An explicit `true` or `false`
 overrides the product default. Restart to apply changes made in the file;
 Settings applies them on Save. Disabled boards have
 no UI or agent tools. Config cannot enable a board excluded from a product.
-Actions defaults to disabled in both builds. Enable it in Settings and save;
-its Flow view needs no separate experiment flag.
+Actions defaults to enabled in both builds. Its Flow view needs no separate
+experiment flag.
 Board Lab and the Component gallery are in the binary only with the
 `board-lab` and `component-gallery` features, which release builds leave off.
 Built in, each defaults to disabled in both builds: enable it in Settings and
