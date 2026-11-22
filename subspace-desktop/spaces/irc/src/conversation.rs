@@ -5,6 +5,7 @@
 
 pub(crate) mod find;
 mod header;
+pub(crate) use header::{kind_glyph, vouched_status};
 mod keys;
 mod panel;
 pub(crate) mod summaries;

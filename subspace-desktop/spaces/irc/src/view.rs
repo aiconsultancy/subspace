@@ -1,10 +1,11 @@
 //! The board's view: the workspace (buffer list, conversations, member
 //! list), rows from the state, and keeping the hub told which buffer is read.
 
-use gpui_kit::component::{Icon, Sizable as _, h_flex};
+use gpui_kit::component::h_flex;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Styled as _, TestSupportExt as _, WeakEntity, Window, div,
+    AnyElement, App, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, SharedString, Styled as _, TestSupportExt as _, WeakEntity, Window, div,
 };
 use subspace_client_irc::{BufferKey, Target};
 use subspace_framework::dashboard::panel::IconName;
@@ -21,6 +22,7 @@ mod details;
 mod empty;
 mod frame;
 mod hosting;
+mod navigator;
 
 use details::{kind, kind_icon};
 
@@ -44,6 +46,9 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         list: ListState::default(),
         buffers: Default::default(),
         listed: Default::default(),
+        group_networks: Default::default(),
+        kinds: Default::default(),
+        seen_fleets: Default::default(),
         hub: None,
         hub_subscription: None,
         networks: Vec::new(),
@@ -102,12 +107,8 @@ pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
         .filter(|buffer| state.joins.retired(buffer))
         .cloned()
         .collect();
-    let layout = rows::layout(state);
     board.networks = state.networks().to_vec();
-    board.buffers = layout.buffers;
-    board.listed = layout.listed;
-    board.search = std::rc::Rc::new(rows::search(&layout.groups));
-    board.list.set_groups(layout.groups);
+    navigator::apply(board, &hub, cx);
     let opened = hub.update(cx, |hub, _| hub.state.take_opened());
     if let Some(query) = opened {
         reveal(board, &query, cx);
@@ -214,24 +215,30 @@ impl ListDashboard for Irc {
         })
     }
 
+    /// A ship channel leads with its captain's small agent avatar, the
+    /// Starbase and the command channel with their kind's glyph, and any
+    /// other buffer with its kind's quiet glyph.
     fn row_leading(&self, row: &Row, cx: &App) -> Option<AnyElement> {
         let buffer = self
             .buffers
             .get(&row.key)
             .or_else(|| self.listed.get(&row.key))?;
-        let tokens = Tokens::current(cx);
+        let mark = navigator::row_mark(row, self.kinds.get(&row.key), &buffer.target, cx);
         Some(
             div()
                 .id(SharedString::from(format!("irc-row:{}", row.key)))
                 .test_support()
                 .flex_shrink_0()
-                .child(
-                    Icon::from(kind_icon(&buffer.target))
-                        .xsmall()
-                        .text_color(tokens.muted),
-                )
+                .child(mark)
                 .into_any_element(),
         )
+    }
+
+    /// `People` leads with the people glyph; the other groups with their
+    /// connection state's dot.
+    fn group_leading(&self, group: &Group, cx: &App) -> Option<AnyElement> {
+        let network = self.group_networks.get(&group.key)?;
+        (rows::people_group_key(network) == group.key).then(|| navigator::people_mark(cx))
     }
 
     /// Networks and their buffers start on the workspace's one text edge,
@@ -240,8 +247,9 @@ impl ListDashboard for Irc {
         Some(self.text_edge)
     }
 
-    /// An unread count or a channel's user count, as a navigator row's
-    /// quiet count: small, at the trailing edge.
+    /// A ship's `working` note, a mention's `@` mark, then an unread count
+    /// or a channel's user count, as a navigator row's quiet count: small,
+    /// at the trailing edge.
     fn row_trailing(&self, row: &Row, cx: &App) -> Option<AnyElement> {
         let tokens = Tokens::current(cx);
         Some(
@@ -253,16 +261,18 @@ impl ListDashboard for Irc {
                         .flex_shrink_0()
                         .text_size(tokens.caption_size())
                         .text_color(tokens.glyph(glyph))
+                        .when(glyph.text.as_ref() == rows::MENTION, |mark| {
+                            mark.font_weight(FontWeight::BOLD)
+                        })
                         .child(glyph.text.clone())
                 }))
                 .into_any_element(),
         )
     }
 
+    /// Every row with unread lines reads emphasised.
     fn row_emphasis(&self, row: &Row, cx: &App) -> bool {
-        self.buffer_state(&row.key, cx).is_some_and(|buffer| {
-            buffer.highlights > 0 || Irc::is_query_row(self, row) && buffer.unread > 0
-        })
+        navigator::unread(self, &row.key, cx)
     }
 
     fn row_accessible_label(&self, row: &Row, cx: &App) -> SharedString {

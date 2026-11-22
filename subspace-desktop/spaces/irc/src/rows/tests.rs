@@ -1,9 +1,14 @@
 use subspace_client_irc::{ConnectionStatus, Event, Target};
 use subspace_framework::dashboard::Tone;
 
-use super::{accessible_label, layout, row_key, status_label};
+use super::{Layout, Rosters, accessible_label, row_key, status_label};
 use crate::fixtures::{at, channel, config, message, network_id, query};
 use crate::state::{IrcState, server_key};
+
+/// The layout of a state whose networks serve no fleet.
+fn layout(state: &IrcState) -> Layout {
+    super::layout(state, &Rosters::default())
+}
 
 fn titles(state: &IrcState) -> Vec<String> {
     layout(state).groups[0]
@@ -57,7 +62,13 @@ fn rows_carry_counts_and_parted_channels_are_muted() {
         at(3),
     );
     let rows = layout(&state).groups.remove(0).rows;
-    assert_eq!(rows[1].trailing[0].tone, Tone::Accent);
+    assert_eq!(
+        rows[1].trailing[0].text.as_ref(),
+        "@",
+        "a mention's own mark"
+    );
+    assert_eq!(rows[1].trailing[0].tone, Tone::Red);
+    assert_eq!(rows[1].trailing[1].tone, Tone::Accent);
     assert!(rows[1].done);
     let buffer = state.buffer(&room).unwrap();
     assert_eq!(
@@ -195,8 +206,10 @@ fn search_finds_listed_channels_as_not_joined() {
     let mut state = IrcState::new(&[config()], Vec::new());
     state.apply(channel_list(&[("#rust", 9)]), at(1));
     let layout = layout(&state);
-    let index = super::search(&layout.groups);
+    let index = super::search(&layout);
     let found = index.search("rust", 5);
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].1.title.as_ref(), "#rust");
 }
+
+mod fleets;

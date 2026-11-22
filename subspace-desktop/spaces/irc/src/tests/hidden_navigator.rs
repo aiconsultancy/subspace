@@ -55,8 +55,8 @@ fn with_the_navigator_hidden_connection_acts_on_the_named_conversation(cx: &mut 
         dock::toggle_buffers(board, cx);
     });
     settle(cx);
-    board.read_with(cx, |board, cx| {
-        assert_eq!(board.toolbar_network(cx), Some(network_id()));
+    board.read_with(cx, |board, _| {
+        assert_eq!(board.toolbar_network(), Some(network_id()));
         assert_eq!(board.toolbar_buffer(), Some(&channel("#subspace")));
     });
     let before = hub.read_with(cx, |hub, _| hub.sent().len());
@@ -107,8 +107,8 @@ fn with_the_navigator_shown_the_toolbar_acts_on_the_selection(cx: &mut TestAppCo
         list::update(board, cx, |list| list.select(rows::group_key(&home())));
     });
     settle(cx);
-    board.read_with(cx, |board, cx| {
-        assert_eq!(board.toolbar_network(cx), Some(home()));
+    board.read_with(cx, |board, _| {
+        assert_eq!(board.toolbar_network(), Some(home()));
         assert_eq!(board.toolbar_buffer(), None);
     });
 }

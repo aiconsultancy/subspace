@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use subspace_api_client::model::{AgentRank, Fleet, FleetAgent};
+use subspace_api_client::model::{AgentRank, Fleet, FleetAgent, MemberInitiative};
 use subspace_framework::dashboard::Tone;
 use subspace_framework::dashboard::avatar::AgentRank as AvatarRank;
 
@@ -105,7 +105,17 @@ pub(crate) struct Roster {
     agents: Vec<(String, Agent)>,
     /// Channels by name.
     channels: Vec<(String, ChannelKind)>,
+    /// The fleets on the network and the channels each claims alone, for
+    /// the navigator's fleet groups.
+    fleets: Vec<FleetPlace>,
 }
+
+/// The roster of a network that serves no fleet.
+pub(crate) static NO_ROSTER: Roster = Roster {
+    agents: Vec::new(),
+    channels: Vec::new(),
+    fleets: Vec::new(),
+};
 
 impl Roster {
     /// The roles of `fleets`, the fleets whose IRC server the network is.
@@ -122,7 +132,29 @@ impl Roster {
         );
         let agents = unclaimed_twice(agents);
         let channels = crewed(unclaimed_twice(channels), &agents);
-        Self { agents, channels }
+        Self {
+            agents,
+            channels,
+            fleets: Vec::new(),
+        }
+    }
+
+    /// The roles of the fleets of `initiatives`, the initiatives whose IRC
+    /// server the network is, with the channels each fleet and its
+    /// initiatives name, for the navigator.
+    pub(crate) fn for_initiatives(initiatives: &[&MemberInitiative]) -> Self {
+        let fleets = initiatives
+            .iter()
+            .filter_map(|initiative| initiative.fleet.as_ref());
+        Self {
+            fleets: places::places(initiatives),
+            ..Self::new(fleets)
+        }
+    }
+
+    /// The fleets on the network, in the catalogue's order.
+    pub(crate) fn fleets(&self) -> &[FleetPlace] {
+        &self.fleets
     }
 
     /// The agent whose API nick is `nick`, when exactly one agent of the
@@ -295,6 +327,10 @@ fn slug(slug: &str) -> Option<&str> {
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
     valid.then_some(slug)
 }
+
+mod places;
+
+pub(crate) use places::{FleetPlace, short_name};
 
 #[cfg(test)]
 pub(crate) mod tests;

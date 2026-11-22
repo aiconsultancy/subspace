@@ -42,7 +42,7 @@ pub(crate) fn render(board: &mut Irc, cx: &mut Context<Irc>) -> Option<Entity<Ov
         return None;
     };
     // While the navigator is hidden, the conversation the toolbar names.
-    let network = board.toolbar_network(cx);
+    let network = board.toolbar_network();
     let status = network
         .as_ref()
         .and_then(|id| state.network(id))
@@ -155,7 +155,7 @@ fn join(board: &Irc, unavailable: Option<&'static str>) -> Control {
 /// for the same reasons as **Join…**.
 pub(crate) fn navigator_join(board: &Irc, cx: &mut Context<Irc>) -> IconButton {
     const LABEL: &str = "Join a channel";
-    let network = board.selected_network(cx);
+    let network = board.selected_network();
     let unavailable = board.hub.as_ref().and_then(|hub| {
         let state = &hub.read(cx).state;
         let known = network.as_ref().and_then(|id| state.network(id));

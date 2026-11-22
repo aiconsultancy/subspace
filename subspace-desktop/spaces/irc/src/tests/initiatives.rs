@@ -1,6 +1,7 @@
 mod direct;
 mod fleet;
 mod header;
+mod navigator;
 mod scope;
 
 use gpui_kit::test::TestWindowExt as _;

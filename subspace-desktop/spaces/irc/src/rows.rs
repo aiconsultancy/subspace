@@ -1,12 +1,17 @@
 //! List groups (networks) and rows (buffers) built from the state.
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use gpui_kit::SharedString;
 use subspace_client_irc::{BufferKey, ConnectionStatus, ListedChannel, NetworkId, Target};
 use subspace_framework::dashboard::{Glyph, Group, ItemSearch, Row, SearchDoc, Tone};
 
-use crate::state::{Buffer, IrcState, Network};
+use crate::fleet::{ChannelKind, NO_ROSTER, Roster};
+use crate::state::{Buffer, IrcState};
+
+mod groups;
+mod sections;
 
 /// Separates the parts of a row key; it cannot appear in a nick or channel.
 const SEPARATOR: char = '\u{1f}';
@@ -14,6 +19,13 @@ const SEPARATOR: char = '\u{1f}';
 const MAX_COUNT: usize = 99;
 /// The kind part of a listed channel's row key.
 const LISTED: &str = "l";
+/// A ship row's note while its captain has a nick status.
+pub(crate) const WORKING: &str = "working";
+/// The mark of a row whose unread lines mention us.
+pub(crate) const MENTION: &str = "@";
+
+/// Each network's fleet roles, as the hub caches them.
+pub(crate) type Rosters = HashMap<NetworkId, Rc<Roster>>;
 
 /// The rows the list shows, the buffer each row key names and, apart, the
 /// channels from the server's list that we are not in.
@@ -22,41 +34,36 @@ pub(crate) struct Layout {
     pub groups: Vec<Group>,
     pub buffers: HashMap<SharedString, BufferKey>,
     pub listed: HashMap<SharedString, BufferKey>,
+    /// The network each group header stands for.
+    pub networks: HashMap<SharedString, NetworkId>,
+    /// The fleet groups, with their fleet's id.
+    pub fleets: HashMap<SharedString, String>,
+    /// What each fleet channel's row is for: a ship, the Starbase or the
+    /// command channel.
+    pub kinds: HashMap<SharedString, ChannelKind>,
 }
 
-pub(crate) fn layout(state: &IrcState) -> Layout {
+/// The navigator: on each network, one group per fleet holding its
+/// channels, then `People` with the private conversations with people,
+/// then the network's own group with its server, the channels of no fleet,
+/// any older private conversation with an agent and the listed channels.
+/// A network that serves no fleet keeps one group, as before.
+pub(crate) fn layout(state: &IrcState, rosters: &Rosters) -> Layout {
     let mut layout = Layout::default();
     for network in state.networks() {
-        let mut rows = buffer_rows(state, &network.id, &mut layout.buffers);
-        rows.extend(listed_rows(state, &network.id, &mut layout.listed));
-        layout.groups.push(group(network, rows));
+        groups::network(state, network, roster_of(rosters, &network.id), &mut layout);
     }
     layout
 }
 
-/// The buffers of `network`: server, channels, then private conversations.
-fn buffer_rows(
-    state: &IrcState,
-    network: &NetworkId,
-    keys: &mut HashMap<SharedString, BufferKey>,
-) -> Vec<Row> {
-    let mut held: Vec<(&BufferKey, &Buffer)> = state
-        .buffers()
-        .filter(|(key, _)| &key.network == network)
-        .collect();
-    held.sort_by_cached_key(|(key, _)| order(key));
-    held.into_iter()
-        .map(|(key, buffer)| {
-            let row = row(key, buffer);
-            keys.insert(row.key.clone(), key.clone());
-            row
-        })
-        .collect()
+/// `network`'s roster, or the empty one when it serves no fleet.
+fn roster_of<'a>(rosters: &'a Rosters, network: &NetworkId) -> &'a Roster {
+    rosters.get(network).map_or(&NO_ROSTER, Rc::as_ref)
 }
 
 /// The channels from `network`'s list that are not in the list already,
 /// greyed, by name, after its buffers.
-fn listed_rows(
+pub(super) fn listed_rows(
     state: &IrcState,
     network: &NetworkId,
     keys: &mut HashMap<SharedString, BufferKey>,
@@ -98,12 +105,17 @@ pub(crate) fn unjoined<'a>(state: &'a IrcState, network: &NetworkId) -> Vec<&'a 
         .unwrap_or_default()
 }
 
-/// What `/` and the palette search: every buffer by name, under its network,
-/// with its kind, so `#rust` or `libera carol` finds it.
-pub(crate) fn search(groups: &[Group]) -> ItemSearch {
-    ItemSearch::new(groups.iter().flat_map(|group| {
+/// What `/` and the palette search: every buffer by its full name, under
+/// its group, with its kind, so `#rust`, `libera carol` or `aurora lyra`
+/// finds it.
+pub(crate) fn search(layout: &Layout) -> ItemSearch {
+    ItemSearch::new(layout.groups.iter().flat_map(|group| {
         group.rows.iter().map(move |row| {
-            let doc = SearchDoc::new(row.key.to_string(), row.title.to_string())
+            let name = layout
+                .buffers
+                .get(&row.key)
+                .map_or_else(|| row.title.to_string(), |key| title(key).to_owned());
+            let doc = SearchDoc::new(row.key.to_string(), name)
                 .parent(group.name.to_string())
                 .meta(kind_name(&row.key));
             (doc, row.clone())
@@ -123,7 +135,7 @@ fn kind_name(key: &str) -> &'static str {
 }
 
 /// Server first, then channels, then queries, each by name ignoring case.
-fn order(key: &BufferKey) -> (u8, String) {
+pub(super) fn order(key: &BufferKey) -> (u8, String) {
     match &key.target {
         Target::Server => (0, String::new()),
         Target::Channel(name) => (1, name.to_lowercase()),
@@ -154,6 +166,16 @@ pub(crate) fn group_key(network: &NetworkId) -> SharedString {
     format!("irc{SEPARATOR}{}", network.0).into()
 }
 
+/// A fleet's group on `network`, apart from the network's own.
+pub(crate) fn fleet_group_key(network: &NetworkId, fleet: &str) -> SharedString {
+    format!("irc{SEPARATOR}{}{SEPARATOR}f{SEPARATOR}{fleet}", network.0).into()
+}
+
+/// The `People` group on `network`.
+pub(crate) fn people_group_key(network: &NetworkId) -> SharedString {
+    format!("irc{SEPARATOR}{}{SEPARATOR}p", network.0).into()
+}
+
 /// The buffer's display name: the channel or nick, or `Server`.
 pub(crate) fn title(key: &BufferKey) -> &str {
     match &key.target {
@@ -163,13 +185,13 @@ pub(crate) fn title(key: &BufferKey) -> &str {
     }
 }
 
-fn row(key: &BufferKey, buffer: &Buffer) -> Row {
+pub(super) fn row(key: &BufferKey, buffer: &Buffer) -> Row {
     Row {
         key: row_key(key),
         icon: Glyph::new(kind_glyph(&key.target), Tone::Muted),
         id: None,
         title: title(key).to_owned().into(),
-        trailing: count(buffer).into_iter().collect(),
+        trailing: count(buffer),
         done: matches!(key.target, Target::Channel(_)) && !buffer.joined,
         indent: 0,
     }
@@ -205,32 +227,24 @@ fn kind_glyph(target: &Target) -> &'static str {
     }
 }
 
-/// The unread count, in the accent tone when it includes a mention.
-fn count(buffer: &Buffer) -> Option<Glyph> {
+/// The unread count, in the accent tone when it includes a mention, after
+/// a distinct `@` mark for the mention.
+fn count(buffer: &Buffer) -> Vec<Glyph> {
     if buffer.unread == 0 {
-        return None;
+        return Vec::new();
     }
     let text = if buffer.unread > MAX_COUNT {
         format!("{MAX_COUNT}+")
     } else {
         buffer.unread.to_string()
     };
-    let tone = if buffer.highlights > 0 {
-        Tone::Accent
-    } else {
-        Tone::Muted
-    };
-    Some(Glyph::new(text, tone))
-}
-
-fn group(network: &Network, rows: Vec<Row>) -> Group {
-    Group {
-        key: group_key(&network.id),
-        icon: Glyph::new("●", status_tone(&network.status)),
-        name: network.name.clone().into(),
-        count: Some(status_label(&network.status).into()),
-        rows,
+    if buffer.highlights > 0 {
+        return vec![
+            Glyph::new(MENTION, Tone::Red),
+            Glyph::new(text, Tone::Accent),
+        ];
     }
+    vec![Glyph::new(text, Tone::Muted)]
 }
 
 /// A short connection state for the group header and the status bar.
@@ -247,7 +261,7 @@ pub(crate) fn status_label(status: &ConnectionStatus) -> String {
     }
 }
 
-fn status_tone(status: &ConnectionStatus) -> Tone {
+pub(super) fn status_tone(status: &ConnectionStatus) -> Tone {
     match status {
         ConnectionStatus::Connected { .. } => Tone::Green,
         ConnectionStatus::Connecting

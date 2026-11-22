@@ -59,7 +59,7 @@ pub(crate) fn commands(board: &Irc, cx: &Context<Irc>) -> Vec<PaletteCommand> {
     let Some(hub) = board.hub.as_ref() else {
         return Vec::new();
     };
-    let network = board.toolbar_network(cx);
+    let network = board.toolbar_network();
     let offers = offers(
         &hub.read(cx).state,
         network.as_ref(),
