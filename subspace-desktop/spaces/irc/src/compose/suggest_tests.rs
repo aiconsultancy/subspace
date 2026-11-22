@@ -94,9 +94,9 @@ fn rows_show_the_mode_prefix_and_speak_rank_and_away() {
 fn a_fleet_agent_s_row_notes_its_rank_as_the_member_list_does() {
     let aurora: subspace_api_client::model::Fleet = serde_json::from_value(serde_json::json!({
         "id": "aurora", "slug": "aurora", "agents": [
-            {"name": "Vance", "rank": "rearAdmiral", "ircNick": "aurora-admiral"},
-            {"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra"},
-            {"name": "Orion", "rank": "captain", "ircNick": "aurora-orion"}
+            {"name": "Vance", "rank": "rearAdmiral", "ircNick": "aurora-admiral", "available": true},
+            {"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra", "available": true},
+            {"name": "Orion", "rank": "captain", "ircNick": "aurora-orion", "available": true}
         ]
     }))
     .unwrap();

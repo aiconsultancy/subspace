@@ -434,7 +434,11 @@ impl Irc {
             return;
         };
         let roster = hub.read(cx).roster(network, cx);
-        if let Some(notice) = compose::AgentNotice::refusing(&roster, nick) {
+        let state = &hub.read(cx).state;
+        let notice = compose::AgentNotice::refusing(&roster, nick, |channel| {
+            compose::listed_channel(state, network, channel).is_some()
+        });
+        if let Some(notice) = notice {
             self.refuse_query(network, notice, cx);
             return;
         }
@@ -452,7 +456,11 @@ impl Irc {
     }
 
     /// Shows `notice` above the composer of the conversation in front on
-    /// `network`, in place of a private conversation with an agent.
+    /// `network`, in place of a private conversation with an agent. When
+    /// nothing of that network is in front, as after a notification click
+    /// while another network shows, it shows the agent's channel if the
+    /// user's channel list holds it, else the network's server buffer, and
+    /// the notice there, so the user sees why nothing opened.
     fn refuse_query(
         &mut self,
         network: &NetworkId,
@@ -467,11 +475,19 @@ impl Irc {
             .and_then(|buffer| self.dock.open.get(buffer))
             .map(|hosted| hosted.entity.clone());
         if let Some(conversation) = front {
-            conversation.update(cx, |conversation, cx| {
-                conversation.draft.agent_notice = Some(notice);
-                cx.notify();
-            });
+            show_notice(&conversation, notice, cx);
+            return;
         }
+        let Some(hub) = self.hub.clone() else {
+            return;
+        };
+        let place = notice_place(&hub.read(cx).state, network, &notice);
+        view::reveal(self, &place, cx);
+        dock::with_window(self, cx, move |board, _, cx| {
+            if let Some(hosted) = board.dock.open.get(&place) {
+                show_notice(&hosted.entity.clone(), notice, cx);
+            }
+        });
     }
 
     /// A row's buffer state, copied out of the hub for list hooks.
@@ -496,4 +512,33 @@ impl Irc {
             _ => rows::title(buffer).to_owned().into(),
         }
     }
+}
+
+/// Puts `notice` above `conversation`'s composer.
+fn show_notice(
+    conversation: &gpui_kit::Entity<conversation::Conversation>,
+    notice: compose::AgentNotice,
+    cx: &mut App,
+) {
+    conversation.update(cx, |conversation, cx| {
+        conversation.draft.agent_notice = Some(notice);
+        cx.notify();
+    });
+}
+
+/// Where a notice shows when nothing of `network` is in front: the agent's
+/// channel when the user's channel list holds it, else the server buffer.
+fn notice_place(
+    state: &state::IrcState,
+    network: &NetworkId,
+    notice: &compose::AgentNotice,
+) -> BufferKey {
+    notice
+        .channel
+        .as_deref()
+        .and_then(|channel| compose::listed_channel(state, network, channel))
+        .unwrap_or_else(|| BufferKey {
+            network: network.clone(),
+            target: Target::Server,
+        })
 }

@@ -1,4 +1,5 @@
-//! The two kinds of line in a list: a group header and an item row.
+//! The two kinds of line in a list, a group header and an item row, and a
+//! group's note, the quiet line under its last row.
 
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};

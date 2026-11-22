@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 subspace-framework = { workspace = true, features = ["host", "search-onnx", "gpui-kit-text-patch"] }
 subspace-api-client = { path = "../../clients/subspace-api" }
+subspace-client-fleet.workspace = true
 subspace-github-board = { path = "../../spaces/github" }
 subspace-github-copilot-agents-board = { path = "../../spaces/github-copilot-agents" }
 subspace-actions-board = { path = "../../spaces/actions" }

@@ -1,0 +1,30 @@
+[package]
+name = "subspace-client-fleet"
+description = "Stargate Fleet API reads, the fleet event stream and one saved token per fleet for the desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+rustls-platform-verifier.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subspace-api-client.workspace = true
+subspace-framework = { workspace = true }
+thiserror.workspace = true
+tokio.workspace = true
+ureq.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+subspace-framework = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

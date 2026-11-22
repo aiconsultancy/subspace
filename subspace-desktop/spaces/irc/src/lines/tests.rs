@@ -140,6 +140,29 @@ fn a_sender_s_messages_within_five_minutes_share_one_header() {
 }
 
 #[test]
+fn a_change_of_server_account_starts_a_new_group() {
+    let room = channel("#aurora-lyra");
+    let signed = |text: &str, minute: i64, account: Option<&str>| {
+        let mut line = message(&room, "aurora-lyra", text, minute);
+        line.account = account.map(str::to_owned);
+        line
+    };
+    let held = entries(vec![
+        signed("one", 0, Some("aurora-lyra")),
+        signed("two", 1, Some("Aurora-Lyra")),
+        signed("three", 2, Some("mira")),
+        signed("four", 3, None),
+        signed("five", 4, None),
+    ]);
+    let rows = items(&held, &HashSet::new(), &Utc, true);
+    assert_eq!(
+        message_rows(&rows),
+        [(0, false), (1, true), (2, false), (3, false), (4, true)],
+        "a verified agent's group ends where another account, or none, speaks for the nick"
+    );
+}
+
+#[test]
 fn system_events_and_a_new_day_break_a_group() {
     let room = channel("#subspace");
     // The fixture clock starts at 09:00 UTC: midnight is 15 hours later.

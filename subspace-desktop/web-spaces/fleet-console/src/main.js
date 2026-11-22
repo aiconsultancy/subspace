@@ -255,7 +255,7 @@ function connectionDisplay() {
   }
   const fleet = activeFleet();
   if (fleet?.connection.reason === "no-token") {
-    const problem = tokenProblem(fleet.entry.problem);
+    const problem = tokenProblem(fleet.entry.problem, fleet.entry.origin);
     return { label: "No token", tone: "red", banner: { title: `${fleet.name}: ${problem.title.charAt(0).toLowerCase()}${problem.title.slice(1)}`, body: problem.body, retry: false } };
   }
   return describeConnection(app.connection, { endpoint: activeEndpoint(), now: Date.now() });
@@ -375,7 +375,7 @@ function stateFor(id) {
     unavailableSince: fleet.state.unavailableSince,
     name: fleetName(fleet.entry, fleet.state.fleet),
     active: fleet.id === app.manager.active,
-    emptyMessage: fleet.connection.reason === "no-token" ? tokenProblem(fleet.entry.problem).title : description.banner ? description.banner.title : "Connecting to Stargate…",
+    emptyMessage: fleet.connection.reason === "no-token" ? tokenProblem(fleet.entry.problem, fleet.entry.origin).title : description.banner ? description.banner.title : "Connecting to Stargate…",
     emptyDetail: `Stargate API · ${fleet.entry.endpoint}`,
   };
 }
@@ -774,8 +774,9 @@ async function readConfig() {
   const capabilities = bridge.capabilities();
   const settings = allowed.settings ? ((await bridge.settings()) ?? {}) : {};
   const secrets = allowed.secrets ? ((await bridge.secrets()) ?? {}) : {};
+  const api = allowed.secrets && capabilities.fleets ? ((await bridge.fleets()) ?? []) : [];
   app.blocker = addBlocker({ present: bridge.present, capabilities, allowed });
-  return resolveFleets({ present: bridge.present, allowed, capabilities, settings, secrets, list: store.load(), normalizeEndpoint });
+  return resolveFleets({ present: bridge.present, allowed, capabilities, settings, secrets, list: store.load(), api, normalizeEndpoint });
 }
 
 async function startManager(mode, fleets) {
@@ -900,6 +901,7 @@ async function start() {
     app.bridge.onTheme((next) => {
       if (!preview.theme) applyTheme(next);
     });
+    app.bridge.onFleetsChanged(() => reconfigure());
     app.bridge.issues.onChanged(async () => {
       if (app.sample) return;
       const scope = await app.bridge.issues.scope();

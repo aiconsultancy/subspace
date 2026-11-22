@@ -480,13 +480,13 @@ export const mcpTools = {
     (member, { fleetId }) => listShips(member, fleetId),
   ),
   subspace_create_ship: tool(
-    "Create a ship in a fleet.",
+    "Create a ship in a fleet. Setting its channel requires a human administrator.",
     false,
     Schema.Struct({ fleetId: Uuid, ...CreateShip.fields }),
     (member, { fleetId, name, channel }) => createShip(member, fleetId, name, channel),
   ),
   subspace_rename_ship: tool(
-    "Rename a ship.",
+    "Rename a ship. Changing its channel requires a human administrator.",
     false,
     Schema.Struct({ shipId: Uuid, ...RenameShip.fields }),
     (member, { shipId, ...changes }) => renameShip(member, shipId, changes),

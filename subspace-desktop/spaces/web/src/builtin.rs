@@ -22,6 +22,11 @@ use config_file::{parse_config, read_text, save_unless_changed, write_target};
 use entry::{Package, claimed, planned_entry};
 use files::sync_files;
 
+/// The board ID of the built-in Fleet Console. Built in under this ID, it
+/// is the one web Space whose bridge answers `fleets.get` (see
+/// `bridge::fleets`).
+pub const FLEET_CONSOLE_ID: &str = "fleet-console";
+
 /// The entry key that marks a built-in web Space.
 pub const BUILT_IN_KEY: &str = "builtIn";
 

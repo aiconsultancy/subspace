@@ -122,6 +122,29 @@ impl GroupNote {
     }
 }
 
+/// A caption inside a group, above the row `before`, naming the run of rows
+/// under it, such as "Ships" or "People". It shows in capitals; its
+/// accessible name and id keep the text as written. It is not a row: it
+/// takes no selection and no keyboard stop, the list keys and the panel's
+/// steps pass over it, a selection restored after new groups never lands on
+/// it, and folding the group hides it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupCaption {
+    /// The key of the row the caption sits above. A caption whose row is not
+    /// in the group is not drawn.
+    pub before: SharedString,
+    pub label: SharedString,
+}
+
+impl GroupCaption {
+    pub fn new(before: impl Into<SharedString>, label: impl Into<SharedString>) -> Self {
+        Self {
+            before: before.into(),
+            label: label.into(),
+        }
+    }
+}
+
 /// A small, non-interactive status mark shown at the right of a group
 /// header, such as a repository's scanning status. Presentation only: it
 /// carries no click behaviour of its own.
@@ -629,6 +652,14 @@ pub trait ListDashboard: Dashboard {
         vec![]
     }
 
+    /// Captions inside group `group`, each above the row it names, such as
+    /// "Ships" above a fleet's ships and "People" above its people. Empty,
+    /// the default, draws none, which preserves every existing board's
+    /// groups.
+    fn group_captions(&self, _group: &Group, _cx: &App) -> Vec<GroupCaption> {
+        Vec::new()
+    }
+
     /// A quiet line under a group's rows, such as "Loading runs…" while the
     /// group's records load or "No failed runs" when a filter matches none.
     /// `None`, the default, draws nothing, which preserves every existing
@@ -699,6 +730,10 @@ mod header_tests;
 #[cfg(test)]
 #[path = "list/note_tests.rs"]
 mod note_tests;
+
+#[cfg(test)]
+#[path = "list/caption_tests.rs"]
+mod caption_tests;
 
 #[cfg(test)]
 mod tests {

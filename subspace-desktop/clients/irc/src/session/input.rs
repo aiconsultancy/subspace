@@ -1,8 +1,10 @@
 //! Composer input: plain text or a `/command`.
 
 mod catalogue;
+mod recipients;
 
 pub use catalogue::{COMMANDS, CommandHelp, FirstArgument};
+pub use recipients::private_recipients;
 
 /// What composer input asks for. Targets left `None` mean the buffer's own.
 #[derive(Debug, Clone, PartialEq, Eq)]

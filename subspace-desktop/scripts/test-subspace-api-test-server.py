@@ -19,7 +19,7 @@ SPEC.loader.exec_module(FIXTURE)
 
 ISSUE_FIELDS = set('archivedAt assignee owner blocked commentCount createdAt cycle cycleId dueDate estimate id '
                    'identifier labels lastActivity lastActivityAt milestoneId parentId priority progress projectId '
-                   'projectKey projectRank provenance pullRequestSummary relayedCrew state subIssueRank summary title todoCounts type updatedAt version'.split())
+                   'projectKey projectRank provenance pullRequestSummary readyForAgents relayedCrew state subIssueRank summary title todoCounts type updatedAt version'.split())
 COMMENT_FIELDS = set('actualAuthor body createdAt deletedAt displayCreatedAt editedAt hasReplies id issueId media mentions '
                      'parentCommentId provenance relayedCrew replyCount resolved resolvedAt resolvedBy version'.split())
 DETAIL_FIELDS = set('archivedBy canceledAt children completedAt createdBy description duplicateOf mentions parent '
@@ -435,6 +435,25 @@ class FixtureTests(unittest.TestCase):
             fleet.shutdown()
             fleet.server_close()
             worker.join()
+
+    def test_the_fleet_records_its_fleet_api_address(self):
+        for given, expected in ((None, 'http://127.0.0.1:18484'), ('http://127.0.0.1:41234', 'http://127.0.0.1:41234')):
+            fleet = FIXTURE.FixtureServer(0, 'fixture-access', fleet=True, fleet_api_url=given)
+            worker = threading.Thread(target=fleet.serve_forever, daemon=True)
+            worker.start()
+            try:
+                request = Request(fleet.origin + '/api/v1/me/initiatives',
+                                  headers={'Authorization': 'Bearer fixture-access'})
+                with urlopen(request, timeout=3) as response:
+                    items = json.load(response)['items']
+                aurora = next(item['fleet'] for item in items if item.get('fleetId') == 'aurora')
+                self.assertEqual(aurora['fleetApiUrl'], expected)
+            finally:
+                fleet.shutdown()
+                fleet.server_close()
+                worker.join()
+        # The shared record is never changed by a server's address.
+        self.assertEqual(FIXTURE.FLEET_INITIATIVE['fleet']['fleetApiUrl'], 'http://127.0.0.1:18484')
 
     def test_decision_scenarios_leave_other_issue_reads_available(self):
         current = self.get('/decisions?status=accepted')['items'][0]

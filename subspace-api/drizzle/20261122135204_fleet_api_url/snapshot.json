@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "32e0eea6-bcc5-4790-95c9-5e83cd2339ee",
+  "prevIds": [
+    "d6af40c5-77c3-414e-bd5c-5e56956d3325"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "fleets",
+        "fleet_api_url"
+      ],
+      "writes": [
+        "s|col|public.fleets.fleet_api_url",
+        "n|col|public.fleets.fleet_api_url",
+        "e|col|public.fleets.fleet_api_url"
+      ],
+      "reads": [
+        "n|tbl|public.fleets",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "fleets",
+        "name": "fleet_api_url",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

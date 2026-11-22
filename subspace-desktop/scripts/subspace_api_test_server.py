@@ -148,7 +148,8 @@ def issue(ref, title, kind, now):
                 priority=2, estimate=3, dueDate=None, parentId=None, blocked=False, progress=None,
                 archivedAt=None, createdAt=now, updatedAt=now, version=1, commentCount=0,
                 todoCounts=dict(total=0, done=0), lastActivityAt=now, lastActivity=None,
-                cycle=None, cycleId=None, milestoneId=None, relayedCrew=None, provenance=None, pullRequestSummary=None)
+                cycle=None, cycleId=None, milestoneId=None, relayedCrew=None, provenance=None, pullRequestSummary=None,
+                readyForAgents=False)
 
 
 def comment(issue_id, body, parent, now, author=ADA):
@@ -289,7 +290,10 @@ FLEET_CAPTAINS = {'lyra': ('aurora-lyra', 'aurora'), 'orion': ('aurora-orion', '
 # aurora-castor and aurora-vega are the captains of the ships Lyra, Orion,
 # Castor and Vega (a captain is named by its ship), and Wren is Lyra's crew.
 # The fleet records #aurora-starbase and #aurora-command; each captain's ship
-# channel is the standard #<nick>. Never selected, so it joins nothing.
+# channel is the standard #<nick>. Never selected, so it joins nothing. Its
+# Fleet API address is the Fleet API fixture's default port unless
+# --fleet-api-url names the one a capture started.
+FLEET_API_URL = 'http://127.0.0.1:18484'
 FLEET_AGENTS = [dict(userId='fixture-agent-admiral', name='admiral-vance', rank='rearAdmiral', shipId=None,
                      ship=None, ircNick='aurora-admiral', shipChannel=None, available=True)] + [
     dict(userId=f'fixture-agent-{code}', name=f'aurora-{code}', rank='captain', shipId=f'fixture-ship-{code}',
@@ -302,11 +306,20 @@ FLEET_INITIATIVE = dict(
     fleetId='aurora', fleet=dict(id='aurora', slug='aurora', name='Aurora', ircHost='irc.example.test', ircPort=6697,
                                  ircTls=True, ircWebsocketUrl=None, rearAdmiralName='admiral-vance',
                                  captainNames=['aurora-castor', 'aurora-lyra', 'aurora-orion', 'aurora-vega'],
-                                 vmHost=None,
+                                 vmHost=None, fleetApiUrl=FLEET_API_URL,
                                  starbaseChannel='#aurora-starbase', commandChannel='#aurora-command',
                                  agents=FLEET_AGENTS,
                                  ships=[dict(id=agent['shipId'], name=agent['ship'], channel=None)
                                         for agent in FLEET_AGENTS if agent['rank'] == 'captain']))
+
+
+def fleet_initiative(fleet_api_url):
+    """The aurora initiative, its fleet's Fleet API at `fleet_api_url`."""
+    initiative = copy.deepcopy(FLEET_INITIATIVE)
+    initiative['fleet']['fleetApiUrl'] = fleet_api_url or FLEET_API_URL
+    return initiative
+
+
 FLEET_LABELS = dict(bug='#e5484d', feature='#5b5bd6', performance='#f76b15', docs='#30a46c',
                     design='#ab4aba', reliability='#008c95')
 # Per project: key, name, lead, then issues as (title, state type, label,
@@ -1229,7 +1242,7 @@ class FixtureServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, port, access_jwt, fail_chat_uploads=None, updates_stream=True, change_after=None,
-                 decision_scenario='normal', fleet=False):
+                 decision_scenario='normal', fleet=False, fleet_api_url=None):
         if not access_jwt:
             raise ValueError('A non-empty fixture Access JWT is required.')
         self.access_jwt = access_jwt
@@ -1240,6 +1253,7 @@ class FixtureServer(ThreadingHTTPServer):
         self.updates = UpdateFeed(updates_stream)
         self.change_after = change_after
         self.decision_scenario = decision_scenario
+        self.fleet_api_url = fleet_api_url
         super().__init__(('127.0.0.1', port), Handler)
 
     def change_later(self, seconds, identifier='SUB-1'):
@@ -1352,7 +1366,7 @@ class Handler(BaseHTTPRequestHandler):
             return 200, dict(items=[
                 dict(id='ca2aabe7-68bd-4e82-9b76-d577ddf987ac', name='Design Studio', channels='#design, #releases'),
                 dict(id='47d093d1-2498-4943-b0fd-b816d3b83425', name='Observatory', channels='#data, #forecast'),
-            ] + ([FLEET_INITIATIVE] if fixture.fleet else []))
+            ] + ([fleet_initiative(self.server.fleet_api_url)] if fixture.fleet else []))
         if method == 'GET' and path == '/api/v1/projects':
             return 200, page(fixture.projects, query, 'projects')
         match = re.fullmatch(r'/api/v1/projects/([^/]+)/workflow-states', path)
@@ -1605,10 +1619,13 @@ def main():
                         help='Choose which fictional Decisions response to capture.')
     parser.add_argument('--fleet', action='store_true',
                         help='Add the fictional FLT, NAV, MAP, WARP and RELAY projects and their issues, for web Space evidence.')
+    parser.add_argument('--fleet-api-url', metavar='URL',
+                        help="With --fleet, the aurora fleet's Fleet API address (default http://127.0.0.1:18484).")
     args = parser.parse_args()
     with FixtureServer(args.port, args.access_jwt, fail_chat_uploads=args.fail_chat_uploads,
                        updates_stream=not args.no_updates_stream, change_after=args.change_after,
-                       decision_scenario=args.decision_scenario, fleet=args.fleet) as server:
+                       decision_scenario=args.decision_scenario, fleet=args.fleet,
+                       fleet_api_url=args.fleet_api_url) as server:
         print(f'Subspace API fixture on {server.origin}', flush=True)
         print(f'SUBSPACE_API_URL={server.origin}/api', flush=True)
         server.serve_forever()

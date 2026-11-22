@@ -58,7 +58,7 @@ pub(crate) fn layout(state: &IrcState, rosters: &Rosters) -> Layout {
 
 /// `network`'s roster, or the empty one when it serves no fleet.
 fn roster_of<'a>(rosters: &'a Rosters, network: &NetworkId) -> &'a Roster {
-    rosters.get(network).map_or(&NO_ROSTER, Rc::as_ref)
+    rosters.get(network).map_or(&*NO_ROSTER, Rc::as_ref)
 }
 
 /// The channels from `network`'s list that are not in the list already,

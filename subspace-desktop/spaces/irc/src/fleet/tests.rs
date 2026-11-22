@@ -97,6 +97,7 @@ fn each_agent_talks_in_its_ship_channel_or_the_starbase() {
         Some(&Agent {
             rank: Rank::Captain,
             channel: Some("#aurora-orion".into()),
+            recorded: false,
         })
     );
 }
@@ -153,6 +154,12 @@ fn a_recorded_channel_replaces_its_standard_name() {
         ship("aurora-orion"),
         "the ship's own record"
     );
+    for nick in ["aurora-lyra", "aurora-orion"] {
+        assert!(
+            roster.agent(nick).is_some_and(|agent| agent.recorded),
+            "{nick}"
+        );
+    }
     for replaced in ["#aurora-starbase", "#aurora-command", "#aurora-lyra"] {
         assert_eq!(roster.channel(replaced), None, "{replaced}");
     }
@@ -287,3 +294,5 @@ fn a_ship_whose_captain_is_ambiguous_is_no_ship_channel() {
         Some(&ChannelKind::Starbase)
     );
 }
+
+mod active;

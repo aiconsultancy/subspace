@@ -208,15 +208,23 @@ pill in the same colour; crew have a muted **CREW** pill. Channels knows them
 from your Subspace initiatives: the Subspace API records each agent's rank
 and IRC nick, and a message or member is marked only when the server says it
 is signed in to the account of that nick. Their names never decide it.
-Anyone else, and every nick on another connection, shows as a person.
+Only active agents are marked: one the API reports as retired shows as a
+person. A run of messages from one nick starts again where the account it
+is signed in to changes. Anyone else, and every nick on another connection,
+shows as a person.
 
 All communication with a fleet's agents happens in channels, where everyone
 can see it: private messages are for people only. Choosing an agent in the
-member list or a reference to it, `/msg`, `/query` or `/notice` to it, or a
-message in an older private conversation with it opens and sends nothing;
-instead a short notice above the message box names the agent's channel (a
-captain's ship channel, or the Starbase for the rear admiral) with a button
-to go there. An older private conversation with an agent stays readable.
+member list or a reference to it, `/msg`, `/query` or `/notice` to it (alone
+or in a comma-separated list), a PRIVMSG or NOTICE to it through `/raw` or
+`/quote`, or a message or attachment in an older private conversation with
+it opens, uploads and sends nothing; instead a short notice above the
+message box names the agent's channel (its ship's channel, or the Starbase
+for the rear admiral). **Go to** shows that channel when your initiative
+records it or it is already in your list. If nothing of the agent's network
+is showing, as after a notification, Channels shows the agent's channel, or
+the network's server buffer, with the notice. An older private conversation
+with an agent stays readable.
 `/me` actions are italic and notices are muted and marked **Notice**. Lines
 that mention you have a highlighted background. Each day starts with
 **Today**, **Yesterday** or the date between two hairlines.
@@ -258,7 +266,8 @@ another buffer and back; **Jump to latest** returns to the newest line.
 
 If you have Subspace initiative memberships and a Subspace IRC connection,
 open the initiative menu at the start of the toolbar. Search for an initiative and
-select it to join its channels. **Local channels** restores the autojoin
+select it to join its channels and show its own first channel, or its
+fleet's Starbase when it has none of its own. **Local channels** restores the autojoin
 list in your IRC settings. The initiative choice also filters the Projects
 menu in Issues. You can change or clear the selection from either Space.
 
@@ -555,8 +564,9 @@ and known checks, merged pull requests and a due date. Missing facts are omitted
 The cards have no controls and do not take keyboard focus.
 
 Once its summary arrives, an inline reference leads with a dot for its
-state: orange while started, blue in review, green when done, grey when
-cancelled, and a hollow ring before work starts. Copying it copies the
+state, in the colour of its hover card's state icon: yellow while started,
+blue in review, the accent colour when done, grey when cancelled or a
+duplicate, and a hollow ring before work starts (orange in triage). Copying it copies the
 identifier as written.
 
 Until a summary arrives the reference shows `Loading SUB-827…`. An unavailable
@@ -701,8 +711,10 @@ server.
 
 Subspace reads the issue key from the PR description, for example `Closes APL-7`.
 The issue assignee identifies the ship and the project identifies the initiative.
-Subspace posts to that initiative's `#<initiative>-<ship>` channel and mentions
-the captain. You must have joined the matching channel. Subspace skips the
+Subspace posts to the ship's channel, the same one its conversation uses: the
+channel the fleet records for the ship, else its captain's `#<nick>`. If the
+fleet does not list the assignee, it posts to the initiative's
+`#<initiative>-<ship>` channel. It mentions the captain. You must have joined the matching channel. Subspace skips the
 update if it cannot resolve one issue and one channel.
 
 Updates include PR merges and deployments of the merge commit that GitHub

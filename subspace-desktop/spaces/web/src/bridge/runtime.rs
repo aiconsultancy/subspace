@@ -11,7 +11,7 @@ use subspace_framework::dashboard::{
 };
 
 use super::issues::{self, IssueCall};
-use super::{Bridge, Effect, protocol, secrets, theme};
+use super::{Bridge, Effect, fleets, protocol, secrets, theme};
 use crate::{WebBoard, WebBoardConfig, manifest::Permission, page::Page};
 
 pub(crate) struct Incoming<'a> {
@@ -75,6 +75,7 @@ fn finish(
         Effect::SaveSecret(write) => {
             secrets::save(bridge, &config.id, &write, cx).map(|()| Value::Null)
         }
+        Effect::Fleets => Ok(fleets::current(cx)),
     }
 }
 
@@ -114,6 +115,18 @@ pub(crate) fn push_theme(bridge: &mut Bridge, page: &Page, cx: &App) {
 pub(crate) fn push_issues_changed(bridge: &Bridge, page: &Page, config: &WebBoardConfig, cx: &App) {
     if shows_app(bridge, page, cx) && bridge.allows(Permission::Issues, config) {
         let script = protocol::event("issues-changed", &Value::Null, &bridge.origin);
+        page.push(&script, cx);
+    }
+}
+
+/// Tells the built-in Fleet Console, when allowed `secrets`, to read the
+/// fleets again.
+pub(crate) fn push_fleets_changed(bridge: &Bridge, page: &Page, config: &WebBoardConfig, cx: &App) {
+    if bridge.shares_fleets()
+        && shows_app(bridge, page, cx)
+        && bridge.allows(Permission::Secrets, config)
+    {
+        let script = protocol::event("fleets-changed", &Value::Null, &bridge.origin);
         page.push(&script, cx);
     }
 }

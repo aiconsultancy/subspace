@@ -311,6 +311,7 @@ impl Dashboard for WebBoard {
         self.active = true;
         self.ensure_page(window, cx);
         page_bridge::attach_issues(self, cx);
+        page_bridge::attach_fleets(self, cx);
         self.sync_shown(cx);
     }
 

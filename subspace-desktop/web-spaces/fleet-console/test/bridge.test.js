@@ -69,7 +69,7 @@ test("calls are gated by granted permissions and detected methods", async () => 
   await bridge.notify({ title: "t", body: "b" });
   assert.deepEqual(host.calls, [["badge", "2"]]);
   assert.equal(bridge.issues.available(), false, "issues need the permission");
-  assert.deepEqual(bridge.capabilities(), { theme: true, secrets: true, secretsSet: false, issues: true });
+  assert.deepEqual(bridge.capabilities(), { theme: true, secrets: true, secretsSet: false, issues: true, fleets: false });
   const granted = await connectBridge(fakeHost({ permissions: ALL }));
   assert.equal(granted.issues.available(), true);
   assert.deepEqual((await granted.issues.scope()).teamKeys, ["ABC"]);
@@ -146,4 +146,32 @@ test("the Settings token is never written through secrets.set", async () => {
   assert.ok(SETTINGS_SECRETS.has("token"));
   for (const value of ["replacement", null]) await assert.rejects(bridge.setSecret("token", value), /Settings/);
   assert.deepEqual(writes, []);
+});
+
+test("the app's fleets are read only with the secrets permission, and changes are heard", async () => {
+  const host = fakeHost({ permissions: ["secrets"] });
+  const fleets = [{ id: "aurora", name: "Aurora", endpoint: "https://aurora.example.com", token: "k", problem: null }];
+  host.subspace.fleets = { get: async () => fleets };
+  const bridge = await connectBridge(host);
+  assert.equal(bridge.capabilities().fleets, true);
+  assert.deepEqual(await bridge.fleets(), fleets);
+  let heard = 0;
+  const stop = bridge.onFleetsChanged(() => heard++);
+  host.listeners["subspace:fleets-changed"]();
+  assert.equal(heard, 1);
+  stop();
+  assert.equal(host.listeners["subspace:fleets-changed"], undefined);
+
+  const denied = fakeHost({ permissions: [] });
+  denied.subspace.fleets = { get: async () => fleets };
+  assert.equal(await (await connectBridge(denied)).fleets(), null);
+  // An older Subspace, or another app's page, has no fleets.
+  const older = await connectBridge(fakeHost({ permissions: ["secrets"] }));
+  assert.equal(older.capabilities().fleets, false);
+  assert.equal(await older.fleets(), null);
+  // A refusal from Subspace (any page but the built-in Fleet Console) reads as none.
+  const refused = fakeHost({ permissions: ["secrets"] });
+  refused.subspace.fleets = { get: async () => Promise.reject(new Error("Only the built-in Fleet Console reads the fleets of your initiatives.")) };
+  assert.equal(await (await connectBridge(refused)).fleets(), null);
+  assert.equal(await (await connectBridge({})).fleets(), null);
 });

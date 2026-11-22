@@ -1,6 +1,7 @@
 //! The board-owned bridge. Authority is the intersection of a manifest's
 //! requests and native Settings grants, bound to its folder and manifest.
 
+pub(crate) mod fleets;
 pub(crate) mod issues;
 pub(crate) mod protocol;
 pub(crate) mod runtime;
@@ -45,6 +46,9 @@ pub(crate) struct Bridge {
     pub board: &'static str,
     /// The theme last pushed to the page, so an unchanged one is not sent.
     pub pushed_theme: Option<Value>,
+    /// Whether this is the app's built-in Fleet Console, the one page that
+    /// may read the fleets the Subspace API assigns and their tokens.
+    shares_fleets: bool,
 }
 
 /// What the runtime finishes with the app after a call is allowed.
@@ -57,6 +61,8 @@ pub(crate) enum Effect {
     Issues(IssueCall),
     /// Save a checked `secrets.set`.
     SaveSecret(secrets::SecretWrite),
+    /// Answer with the app's fleets ([`fleets`]).
+    Fleets,
 }
 
 impl Bridge {
@@ -81,6 +87,7 @@ impl Bridge {
             document_epoch: None,
             board: issues::board_id(&board.id),
             pushed_theme: None,
+            shares_fleets: fleets::shares_fleets(board, entry),
         })
     }
 
@@ -96,6 +103,11 @@ impl Bridge {
                 .permissions
                 .get(&format!("{}.{}", self.identity, permission.name()))
                 == Some(&true)
+    }
+
+    /// Whether the page may read the app's fleets, when allowed `secrets`.
+    pub(crate) fn shares_fleets(&self) -> bool {
+        self.shares_fleets
     }
 
     pub(crate) fn trusted(&self, source: &str, current: &str) -> bool {
@@ -128,6 +140,8 @@ impl Bridge {
             Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
                 Permission::Issues
             }
+            Operation::Fleets if !self.shares_fleets => return Err(fleets::NOT_SHARED),
+            Operation::Fleets => Permission::Secrets,
         };
         if !self.allows(required, config) {
             return Err(DENIED);
@@ -182,7 +196,7 @@ impl Bridge {
                 self.context = context.clone();
             }
             Operation::Notify(message) => return self.notification(message, notifications_on, now),
-            Operation::Secrets | Operation::SecretsSet(_) => {
+            Operation::Secrets | Operation::SecretsSet(_) | Operation::Fleets => {
                 return self.secrets(operation, config, now);
             }
             Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
@@ -193,13 +207,17 @@ impl Bridge {
         Ok((Value::Null, Effect::None))
     }
 
-    /// `secrets.get`, or a checked and counted `secrets.set`.
+    /// `secrets.get`, `fleets.get` (the app finishes it), or a checked and
+    /// counted `secrets.set`.
     fn secrets(
         &mut self,
         operation: &Operation,
         config: &WebBoard,
         now: Instant,
     ) -> Result<(Value, Effect), &'static str> {
+        if matches!(operation, Operation::Fleets) {
+            return Ok((Value::Null, Effect::Fleets));
+        }
         let Operation::SecretsSet(write) = operation else {
             let value = secrets::readable(&self.manifest, &self.owner, config);
             return Ok((value, Effect::None));

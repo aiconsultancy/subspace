@@ -13,12 +13,17 @@
 //! captain, `#<nick>` (the installer names a captain's nick and ship channel
 //! both `<slug>-<id>`).
 //!
+//! Only active agents count: one the API reports as not available, such as
+//! a retired captain, has no rank and is no longer a fleet agent here.
+//!
 //! Nicks and channels compare ignoring ASCII case, as Ergo's `ascii`
 //! casemapping and the rest of the Space do. Nothing is guessed: a network
 //! that serves no fleet, and a nick or channel that two roles claim, are
-//! unknown and draw as a plain person or channel.
+//! unknown and draw as a plain person or channel. A crew member's channel is
+//! its ship's recorded one, else that of its ship's only active captain.
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use subspace_api_client::model::{AgentRank, Fleet, FleetAgent, MemberInitiative};
 use subspace_framework::dashboard::Tone;
@@ -96,26 +101,25 @@ pub(crate) struct Agent {
     /// Where the agent talks: a captain's or crew member's ship channel, or
     /// the rear admiral's Starbase. `None` when the fleet names none.
     pub channel: Option<String>,
+    /// Whether the API records `channel`, rather than a standard name
+    /// standing in for it.
+    pub recorded: bool,
 }
 
 /// The fleet roles known on one network.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Roster {
-    /// Agents by nick.
-    agents: Vec<(String, Agent)>,
-    /// Channels by name.
-    channels: Vec<(String, ChannelKind)>,
+    /// Agents by case-folded nick.
+    agents: HashMap<String, Agent>,
+    /// Channels by case-folded name.
+    channels: HashMap<String, ChannelKind>,
     /// The fleets on the network and the channels each claims alone, for
     /// the navigator's fleet groups.
     fleets: Vec<FleetPlace>,
 }
 
 /// The roster of a network that serves no fleet.
-pub(crate) static NO_ROSTER: Roster = Roster {
-    agents: Vec::new(),
-    channels: Vec::new(),
-    fleets: Vec::new(),
-};
+pub(crate) static NO_ROSTER: LazyLock<Roster> = LazyLock::new(Roster::default);
 
 impl Roster {
     /// The roles of `fleets`, the fleets whose IRC server the network is.
@@ -160,7 +164,7 @@ impl Roster {
     /// The agent whose API nick is `nick`, when exactly one agent of the
     /// network's fleets has it.
     pub(crate) fn agent(&self, nick: &str) -> Option<&Agent> {
-        found(&self.agents, nick)
+        self.agents.get(&nick.to_ascii_lowercase())
     }
 
     /// `nick`'s rank, when exactly one agent of the network's fleets has it.
@@ -201,7 +205,7 @@ impl Roster {
 
     /// What `channel` is for, when the network's fleets name it so.
     pub(crate) fn channel(&self, channel: &str) -> Option<&ChannelKind> {
-        found(&self.channels, channel)
+        self.channels.get(&channel.to_ascii_lowercase())
     }
 }
 
@@ -213,15 +217,17 @@ struct Names {
 }
 
 impl Names {
-    /// The agents with a known nick and the standard channels of `fleet`.
+    /// The active agents with a known nick and the standard channels of
+    /// `fleet`.
     fn of(fleet: &Fleet) -> Self {
         let slug = slug(&fleet.slug);
         let starbase = recorded_or(fleet.starbase_channel.as_deref(), slug, "starbase");
         let command = recorded_or(fleet.command_channel.as_deref(), slug, "command");
+        let ships = Ships::of(fleet);
         let agents: Vec<(String, Agent)> = fleet
             .agents
             .iter()
-            .filter_map(|agent| known(fleet, agent, starbase.as_deref()))
+            .filter_map(|agent| known(&ships, agent, starbase.clone()))
             .collect();
         let ships = agents
             .iter()
@@ -233,8 +239,8 @@ impl Names {
                 agent.channel.clone().map(|channel| (channel, kind))
             });
         let channels = [
-            starbase.map(|name| (name, ChannelKind::Starbase)),
-            command.map(|name| (name, ChannelKind::Command)),
+            starbase.map(|(name, _)| (name, ChannelKind::Starbase)),
+            command.map(|(name, _)| (name, ChannelKind::Command)),
         ]
         .into_iter()
         .flatten()
@@ -244,51 +250,130 @@ impl Names {
     }
 }
 
-/// `agent` of `fleet` under its API nick, with its rank and channel; `None`
-/// without a nick or a known rank.
-fn known(fleet: &Fleet, agent: &FleetAgent, starbase: Option<&str>) -> Option<(String, Agent)> {
-    let nick = agent.irc_nick.as_deref().map(str::trim)?;
-    let rank = Rank::of(agent.rank)?;
-    let channel = match rank {
-        Rank::RearAdmiral => starbase.map(str::to_owned),
-        Rank::Captain => ship_channel(fleet, agent),
-        Rank::Crew => captain_of(fleet, agent).and_then(|captain| ship_channel(fleet, captain)),
-    };
-    (!nick.is_empty()).then(|| (nick.to_owned(), Agent { rank, channel }))
+/// A fleet's ships, indexed once: each ship's recorded channel and its
+/// active captains, by ship id.
+struct Ships<'a> {
+    channels: HashMap<&'a str, &'a str>,
+    captains: HashMap<&'a str, Vec<&'a FleetAgent>>,
 }
 
-/// A captain's ship channel: the one its ship records, else `#<nick>`.
-fn ship_channel(fleet: &Fleet, captain: &FleetAgent) -> Option<String> {
-    let recorded = captain.ship_channel.clone().or_else(|| {
-        let ship = captain.ship_id.as_deref()?;
-        fleet
+impl<'a> Ships<'a> {
+    fn of(fleet: &'a Fleet) -> Self {
+        let channels = fleet
             .ships
             .iter()
-            .find(|held| held.id == ship)
-            .and_then(|held| held.channel.clone())
-    });
-    let nick = captain.irc_nick.as_deref().map(str::trim);
-    recorded.or_else(|| {
-        nick.filter(|nick| !nick.is_empty())
-            .map(|nick| format!("#{nick}"))
-    })
+            .filter_map(|ship| Some((ship.id.as_str(), ship.channel.as_deref()?)))
+            .collect();
+        let mut captains: HashMap<&str, Vec<&FleetAgent>> = HashMap::new();
+        for captain in fleet
+            .agents
+            .iter()
+            .filter(|agent| agent.available && agent.rank == AgentRank::Captain)
+        {
+            if let Some(ship) = captain.ship_id.as_deref() {
+                captains.entry(ship).or_default().push(captain);
+            }
+        }
+        Self { channels, captains }
+    }
+
+    /// The channel `agent`'s ship records, from the agent's own copy or the
+    /// fleet's ships.
+    fn recorded(&self, agent: &FleetAgent) -> Option<String> {
+        let held = || {
+            let ship = agent.ship_id.as_deref()?;
+            self.channels.get(ship).map(|channel| (*channel).to_owned())
+        };
+        nonempty(agent.ship_channel.as_deref()).or_else(held)
+    }
+
+    /// The one active captain of `agent`'s ship; `None` when it has none or
+    /// several.
+    fn captain(&self, agent: &FleetAgent) -> Option<&'a FleetAgent> {
+        match self.captains.get(agent.ship_id.as_deref()?)?.as_slice() {
+            [captain] => Some(captain),
+            _ => None,
+        }
+    }
 }
 
-/// The captain of the ship a crew member serves on.
-fn captain_of<'a>(fleet: &'a Fleet, crew: &FleetAgent) -> Option<&'a FleetAgent> {
-    let ship = crew.ship_id.as_deref()?;
-    fleet
+/// `agent` under its API nick, with its rank and channel; `None` without a
+/// nick or a known rank, or once the agent is no longer active.
+fn known(ships: &Ships, agent: &FleetAgent, starbase: Option<Place>) -> Option<(String, Agent)> {
+    let nick = agent
+        .available
+        .then_some(agent.irc_nick.as_deref())
+        .flatten()
+        .map(str::trim)?;
+    let rank = Rank::of(agent.rank)?;
+    let place = match rank {
+        Rank::RearAdmiral => starbase,
+        Rank::Captain => ship_channel(ships, agent),
+        Rank::Crew => crew_channel(ships, agent),
+    };
+    let (channel, recorded) =
+        place.map_or((None, false), |(name, recorded)| (Some(name), recorded));
+    let agent = Agent {
+        rank,
+        channel,
+        recorded,
+    };
+    (!nick.is_empty()).then(|| (nick.to_owned(), agent))
+}
+
+/// The ship channel of `fleet`'s agent `user_id`, by the roster's rule: its
+/// ship's recorded channel, else the standard `#<captain nick>` of its
+/// ship's one active captain. `None` for a rear admiral or an agent that is
+/// not active.
+pub(crate) fn ship_channel_of(fleet: &Fleet, user_id: &str) -> Option<String> {
+    let agent = fleet
         .agents
         .iter()
-        .find(|agent| agent.rank == AgentRank::Captain && agent.ship_id.as_deref() == Some(ship))
+        .find(|agent| agent.available && agent.user_id == user_id)?;
+    let ships = Ships::of(fleet);
+    let place = match Rank::of(agent.rank)? {
+        Rank::Captain => ship_channel(&ships, agent),
+        Rank::Crew => crew_channel(&ships, agent),
+        Rank::RearAdmiral => None,
+    };
+    place.map(|(name, _)| name)
+}
+
+/// A channel, and whether the API records it rather than a standard name
+/// standing in.
+type Place = (String, bool);
+
+/// A captain's ship channel: the one its ship records, else `#<nick>`.
+fn ship_channel(ships: &Ships, captain: &FleetAgent) -> Option<Place> {
+    let standard = || nonempty(captain.irc_nick.as_deref()).map(|nick| (format!("#{nick}"), false));
+    ships
+        .recorded(captain)
+        .map(|name| (name, true))
+        .or_else(standard)
+}
+
+/// A crew member's channel: the one its ship records, else its ship's one
+/// captain's.
+fn crew_channel(ships: &Ships, crew: &FleetAgent) -> Option<Place> {
+    ships
+        .recorded(crew)
+        .map(|name| (name, true))
+        .or_else(|| ship_channel(ships, ships.captain(crew)?))
+}
+
+/// `text` trimmed, when anything is left.
+fn nonempty(text: Option<&str>) -> Option<String> {
+    text.map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
 }
 
 /// The channel a fleet records, else its standard name `#<slug>-<role>`.
-fn recorded_or(recorded: Option<&str>, slug: Option<&str>, role: &str) -> Option<String> {
-    let recorded = recorded.map(str::trim).filter(|name| !name.is_empty());
-    recorded
-        .map(str::to_owned)
-        .or_else(|| slug.map(|slug| format!("#{slug}-{role}")))
+fn recorded_or(recorded: Option<&str>, slug: Option<&str>, role: &str) -> Option<Place> {
+    let standard = || slug.map(|slug| (format!("#{slug}-{role}"), false));
+    nonempty(recorded)
+        .map(|name| (name, true))
+        .or_else(standard)
 }
 
 /// `fleets` with each fleet once, by its id, in their first order: two
@@ -304,38 +389,31 @@ fn distinct<'a>(fleets: impl IntoIterator<Item = &'a Fleet>) -> Vec<&'a Fleet> {
 /// `channels` without a ship whose captain is not one of `agents` as a
 /// captain, such as one whose nick two roles claimed.
 fn crewed(
-    channels: Vec<(String, ChannelKind)>,
-    agents: &[(String, Agent)],
-) -> Vec<(String, ChannelKind)> {
+    channels: HashMap<String, ChannelKind>,
+    agents: &HashMap<String, Agent>,
+) -> HashMap<String, ChannelKind> {
     channels
         .into_iter()
         .filter(|(_, kind)| match kind {
-            ChannelKind::Ship { captain } => {
-                found(agents, captain).is_some_and(|agent| agent.rank == Rank::Captain)
-            }
+            ChannelKind::Ship { captain } => agents
+                .get(&captain.to_ascii_lowercase())
+                .is_some_and(|agent| agent.rank == Rank::Captain),
             ChannelKind::Starbase | ChannelKind::Command => true,
         })
         .collect()
 }
 
-/// The entry named `name`, ignoring ASCII case.
-fn found<'a, T>(entries: &'a [(String, T)], name: &str) -> Option<&'a T> {
-    entries
-        .iter()
-        .find(|(held, _)| held.eq_ignore_ascii_case(name))
-        .map(|(_, value)| value)
-}
-
-/// `entries` without every name that more than one entry claims, so a clash
-/// is unknown rather than either role.
-fn unclaimed_twice<T>(entries: Vec<(String, T)>) -> Vec<(String, T)> {
+/// `entries` by case-folded name, without every name that more than one
+/// entry claims, so a clash is unknown rather than either role.
+fn unclaimed_twice<T>(entries: Vec<(String, T)>) -> HashMap<String, T> {
     let mut claims: HashMap<String, usize> = HashMap::new();
     for (name, _) in &entries {
         *claims.entry(name.to_ascii_lowercase()).or_default() += 1;
     }
     entries
         .into_iter()
-        .filter(|(name, _)| claims.get(&name.to_ascii_lowercase()) == Some(&1))
+        .map(|(name, value)| (name.to_ascii_lowercase(), value))
+        .filter(|(name, _)| claims.get(name) == Some(&1))
         .collect()
 }
 

@@ -16,7 +16,7 @@ use crate::hub::Hub;
 mod channels;
 mod endpoint;
 mod picker;
-pub(crate) use channels::{channel_names, initiative_channels};
+pub(crate) use channels::{channel_names, focus_channel, initiative_channels};
 pub(crate) use endpoint::Endpoint;
 pub(crate) use picker::{Picker, button, command, dismiss_stale_picker, hint};
 
@@ -230,9 +230,11 @@ impl Hub {
             .as_ref()
             .filter(|_| subspace_api_client::capabilities().initiative_channels)
             .zip(self.configured_initiative_network());
-        let intent =
-            selection.map(|(initiative, network)| (network, initiative_channels(initiative)));
-        let new_network = intent.as_ref().map(|(network, _)| network.clone());
+        let intent = selection.map(|(initiative, network)| {
+            let focus = focus_channel(initiative);
+            (network, initiative_channels(initiative), focus)
+        });
+        let new_network = intent.as_ref().map(|(network, ..)| network.clone());
         let old_network = std::mem::replace(&mut self.initiatives.network, new_network.clone());
         let changed_network = old_network != new_network;
         if let Some(network) = old_network.filter(|_| changed_network) {
@@ -244,7 +246,7 @@ impl Hub {
         if focus || changed_network {
             self.focus_initiative(intent.as_ref().and_then(first_channel));
         }
-        if let Some((network, channels)) = intent {
+        if let Some((network, channels, _)) = intent {
             self.send(Command::SetAutojoin {
                 network,
                 channels: Some(channels),
@@ -312,10 +314,13 @@ fn eligible<'a>(
     if exact.is_empty() { loopback } else { exact }
 }
 
-fn first_channel((network, channels): &(NetworkId, Vec<String>)) -> Option<BufferKey> {
+/// The channel shown when an initiative is chosen, on its network.
+fn first_channel(
+    (network, _, focus): &(NetworkId, Vec<String>, Option<String>),
+) -> Option<BufferKey> {
     Some(BufferKey {
         network: network.clone(),
-        target: Target::Channel(channels.first()?.clone()),
+        target: Target::Channel(focus.clone()?),
     })
 }
 
@@ -417,7 +422,8 @@ mod tests {
         let fleet = serde_json::json!({
             "id": "aurora", "slug": "aurora", "ircHost": "irc.example.com", "ircPort": 6697,
             "ircTls": true,
-            "agents": [{"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra"}]
+            "agents": [{"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra",
+                        "available": true}]
         });
         let initiatives: Vec<subspace_api_client::model::MemberInitiative> =
             serde_json::from_value(serde_json::json!([
