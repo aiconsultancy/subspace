@@ -1,5 +1,8 @@
 import type { SeedIssue } from "./api";
 
+// Each fleet's standard channels: people talk to the rear admiral in Starbase,
+// the rear admiral and the captains coordinate in command, and people talk to
+// a captain in its ship channel, #<fleet>-<captain-id>.
 export function conversations(projectIssues: Map<string, SeedIssue[]>, screenshot: string) {
   function ref(key: string, number = 1) {
     return projectIssues.get(key)![number - 1]!.identifier;
@@ -9,18 +12,35 @@ export function conversations(projectIssues: Map<string, SeedIssue[]>, screensho
     "#subspace": [
       [
         "developer",
-        "The Fallow Reach rehearsal workspace is ready. Navigation, Warp diagnostics and Relay reliability have their own channels.",
+        "The Fallow Reach rehearsal workspace is ready. Each fleet has a Starbase, a command channel and a channel for each captain.",
       ],
       [
         "aurora-admiral",
-        `Start with ${ref("NAV")} for the chart-pan replay. We will collect handover notes in #aurora-relay.`,
+        `Start with ${ref("NAV")} for the chart-pan replay. We will collect handover notes in #aurora-starbase.`,
       ],
       [
         "borealis-rigel",
         `The thermal replay is in ${ref("WARP")}. The first spike is intentional.`,
       ],
     ],
-    "#aurora-nav": [
+    "#aurora-starbase": [
+      ["developer", "Flight operations has a 20-minute window for the pilot handover on Thursday."],
+      [
+        "aurora-admiral",
+        `Navigation first, relay second. I have asked aurora-orion to hold the relay rollout at 25% until ${ref("RELAY", 3)} is reviewed.`,
+      ],
+    ],
+    "#aurora-command": [
+      [
+        "aurora-admiral",
+        `Navigation first, relay second. @aurora-orion Hold the rollout at 25% until ${ref("RELAY", 3)} is reviewed.`,
+      ],
+      [
+        "aurora-orion",
+        `Understood. The checklist is on ${ref("RELAY", 10)} and the rehearsal guide is https://example.com/fallow-reach/relay.`,
+      ],
+    ],
+    "#aurora-lyra": [
       [
         "developer",
         `@aurora-lyra Can you rerun ${ref("NAV")} with a cold tile cache before the pilot review?`,
@@ -39,52 +59,7 @@ export function conversations(projectIssues: Map<string, SeedIssue[]>, screensho
         `Keep the corridor pinned for the pilot. Put the viewport decision and the cold-pass numbers on ${ref("NAV")}.`,
       ],
     ],
-    "#aurora-command": [
-      ["developer", "Flight operations has a 20-minute window for the pilot handover on Thursday."],
-      [
-        "aurora-admiral",
-        `Navigation first, relay second. @aurora-orion Hold the rollout at 25% until ${ref("RELAY", 3)} is reviewed.`,
-      ],
-      [
-        "aurora-orion",
-        `Understood. The checklist is on ${ref("RELAY", 10)} and the rehearsal guide is https://example.com/fallow-reach/relay.`,
-      ],
-    ],
-    "#borealis-warp": [
-      [
-        "developer",
-        `@borealis-rigel Is the 09:42 spike in ${ref("WARP")} calibration noise or a real rise?`,
-        `@borealis-rigel Is the 09:42 alarm in ${ref("WARP")} a calibration spike or a real rise?`,
-      ],
-      [
-        "borealis-rigel",
-        "The 09:42 crossing is noise. `warp replay thermal-rise --window 5m` shows the sustained rise firing the alert around 09:46:45 UTC.",
-        "The first crossing is noise. `warp replay thermal-rise --window 5m` shows the sustained rise a minute later.",
-      ],
-      [
-        "borealis-admiral",
-        `Use the five-minute slope for the pilot. Can we show the window next to the alarm? See ${ref("WARP", 6)}.`,
-      ],
-      [
-        "borealis-rigel",
-        "Yes. The next replay will include the new label and a pressure event during calibration.",
-      ],
-    ],
-    "#borealis-command": [
-      [
-        "borealis-admiral",
-        "Deployment pilot-simulator #101 completed. No independent pressure events were suppressed.",
-      ],
-      [
-        "developer",
-        `I will run the longer diagnostics report before sign-off. The timeout is tracked in ${ref("WARP", 2)}.`,
-      ],
-      [
-        "borealis-rigel",
-        "Keep the six-hour run attached to the report. It has the time range used in the pilot.",
-      ],
-    ],
-    "#aurora-relay": [
+    "#aurora-orion": [
       [
         "aurora-orion",
         `${ref("RELAY")}: 25% of rehearsal traffic switched to the backup relay. All 240 frames were accounted for.`,
@@ -97,6 +72,44 @@ export function conversations(projectIssues: Map<string, SeedIssue[]>, screensho
       [
         "aurora-admiral",
         `Hold at 25%. Verify rollback with a non-empty queue in ${ref("RELAY", 10)} before increasing traffic.`,
+      ],
+    ],
+    "#borealis-starbase": [
+      [
+        "borealis-admiral",
+        "Deployment pilot-simulator #101 completed. No independent pressure events were suppressed.",
+      ],
+      [
+        "developer",
+        `I will run the longer diagnostics report before sign-off. The timeout is tracked in ${ref("WARP", 2)}.`,
+      ],
+    ],
+    "#borealis-command": [
+      [
+        "borealis-admiral",
+        `@borealis-rigel The longer diagnostics report runs before sign-off. Its timeout is tracked in ${ref("WARP", 2)}.`,
+      ],
+      [
+        "borealis-rigel",
+        "Keep the six-hour run attached to the report. It has the time range used in the pilot.",
+      ],
+    ],
+    "#borealis-rigel": [
+      [
+        "developer",
+        `@borealis-rigel Is the 09:42 spike in ${ref("WARP")} calibration noise or a real rise?`,
+      ],
+      [
+        "borealis-rigel",
+        "The 09:42 crossing is noise. `warp replay thermal-rise --window 5m` shows the sustained rise firing the alert around 09:46:45 UTC.",
+      ],
+      [
+        "borealis-admiral",
+        `Use the five-minute slope for the pilot. Can we show the window next to the alarm? See ${ref("WARP", 6)}.`,
+      ],
+      [
+        "borealis-rigel",
+        "Yes. The next replay will include the new label and a pressure event during calibration.",
       ],
     ],
   };
