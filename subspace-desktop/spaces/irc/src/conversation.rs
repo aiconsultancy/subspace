@@ -10,6 +10,7 @@ pub(crate) mod find;
 mod header;
 pub(crate) use header::vouched_status;
 mod keys;
+mod owners;
 mod panel;
 pub(crate) mod summaries;
 
@@ -63,6 +64,8 @@ pub(crate) struct Conversation {
     statuses: clock::Lines,
     /// The fleet roles on the buffer's network.
     pub(crate) roster: Rc<Roster>,
+    /// Which message keeps each reference's tile, read before rows show.
+    tiles: Rc<crate::tiles::Tiles>,
     pub(crate) draft: Draft,
     pub(crate) tray: crate::uploads::outgoing::Tray,
     pub(crate) upload_viewer: Option<crate::uploads::viewer::Viewer>,
@@ -116,6 +119,7 @@ impl Conversation {
             replies: Rc::default(),
             statuses: clock::Lines::default(),
             roster: Rc::default(),
+            tiles: Rc::default(),
             draft,
             tray: crate::uploads::outgoing::Tray::default(),
             upload_viewer: None,
@@ -175,6 +179,7 @@ impl Conversation {
         clock::follow(self, cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
+        self.tiles = owners::follow(self, &rows, cx);
         self.scroll.reset(rows, ids, cx);
     }
 
@@ -190,6 +195,7 @@ impl Conversation {
             .buffer(&self.buffer)
             .and_then(|held| thread_status::shown_entry(held, seq));
         let index = shown.and_then(|(at, _)| transcript::row_of(&rows, at));
+        self.tiles = owners::follow(self, &rows, cx);
         self.scroll.replace(rows, ids, cx);
         let (Some(index), Some((_, seq))) = (index, shown) else {
             return false;
@@ -225,6 +231,7 @@ impl Conversation {
         let revision = self.find_active.then(|| find::revision(self, cx));
         let find_changed = self.scroll.rows() != rows || self.find_source != revision;
         self.find_source = revision;
+        self.tiles = owners::follow(self, &rows, cx);
         self.scroll.replace(rows, ids, cx);
         self.scroll.remeasure(&changed, cx);
         if find_changed {
@@ -321,6 +328,7 @@ impl Conversation {
             statuses: Rc::clone(&self.statuses.shown),
             now: chrono::Utc::now(),
             roster: Rc::clone(&self.roster),
+            tiles: Rc::clone(&self.tiles),
         }
     }
 

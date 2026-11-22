@@ -11,6 +11,10 @@ use subspace_framework::dashboard::{DashboardEvent, contracts};
 
 use super::{TRACKER, open_board, open_room};
 
+/// Taller than a two-line tile at the test's text size, shorter than any
+/// tile whose title wrapped.
+pub(super) const TILE_MAX_PX: f32 = 72.;
+
 #[gpui_kit::test]
 fn available_issues_show_one_tile_per_message_and_navigate_to_the_responder(
     cx: &mut TestAppContext,
@@ -136,8 +140,8 @@ fn previews_stay_within_a_narrow_transcript(cx: &mut TestAppContext) {
         let tile = window.find(TILE).bounds();
         assert!(tile.right() <= transcript.right());
         assert!(
-            tile.size.height < px(40.),
-            "a single issue keeps the compact chip height"
+            tile.size.height < px(TILE_MAX_PX),
+            "a single issue keeps the tile's two-line height"
         );
     });
 }

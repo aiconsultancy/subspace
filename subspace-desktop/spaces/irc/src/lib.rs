@@ -36,6 +36,7 @@ mod store;
 mod style;
 mod text;
 mod thread_status;
+mod tiles;
 mod toolbar;
 mod transcript;
 mod uploads;

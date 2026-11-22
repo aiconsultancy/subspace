@@ -117,6 +117,12 @@ fn name(look: &Look) -> Option<SharedString> {
     }
 }
 
+/// The dot or ring an issue's `state` leads with, as its inline reference
+/// shows it: the tile under a message leads with the same mark.
+pub(crate) fn issue_mark(state: &IssueState, tokens: &Tokens) -> Option<AnyElement> {
+    dot(issue(state), tokens)
+}
+
 /// The dot or ring an issue reference leads with.
 fn dot(look: Look, tokens: &Tokens) -> Option<AnyElement> {
     let (tone, filled) = match look {

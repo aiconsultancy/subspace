@@ -21,7 +21,7 @@ use subspace_framework::dashboard::{Tokens, Tone, avatar, chat_bubble};
 
 mod marks;
 mod message;
-pub(crate) use message::{displayed, message};
+pub(crate) use message::{displayed, message, tile_refs};
 
 use super::fill::{RowFill, filled};
 use crate::fleet::Rank;
@@ -69,6 +69,8 @@ pub(crate) struct RowContext {
     pub now: chrono::DateTime<chrono::Utc>,
     /// The fleet roles on the buffer's network, which mark agents' names.
     pub roster: Rc<crate::fleet::Roster>,
+    /// Which message keeps each reference's tile, from the same sync.
+    pub tiles: Rc<crate::tiles::Tiles>,
 }
 
 fn time(entry: &Entry) -> String {

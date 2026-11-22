@@ -7,6 +7,7 @@ mod interaction;
 mod previews;
 mod reserved;
 mod summaries;
+mod tiles;
 
 use std::collections::HashMap;
 
@@ -53,6 +54,22 @@ impl Tracker {
             })
             .collect()
     }
+}
+
+/// The tracker's answer for `identifier` becomes `state`, announced by
+/// `changed`.
+pub(super) fn answer(
+    tracker: &Entity<Tracker>,
+    identifier: &str,
+    state: ResolutionState,
+    cx: &mut VisualTestContext,
+) {
+    cx.update(|_, cx| {
+        tracker.update(cx, |tracker, _| {
+            tracker.answers.insert(identifier.into(), state);
+        });
+        assert!(contracts::publish(TRACKER, Changed, cx).is_ok());
+    });
 }
 
 fn scope() -> IssueScope {

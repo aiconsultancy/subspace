@@ -216,6 +216,12 @@ pub(crate) fn pull_requests(
     )
 }
 
+/// Every reference of message `text` in reading order, as the issue and
+/// pull request lists above read them.
+pub(crate) fn references(text: &str, mentions: &Mentions, rendered: Option<&Rendered>) -> Vec<Ref> {
+    found_refs(text, mentions, rendered).collect()
+}
+
 /// The references of message `text` in reading order: those outside code
 /// when it is `rendered` as Markdown, or else all of its plain text's.
 fn found_refs(

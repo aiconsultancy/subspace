@@ -27,7 +27,12 @@ pub(crate) fn message(
     let group: SharedString = format!("{id}:hover").into();
     let rendered = markup::rich(&entry.line.text, &context.mentions);
     let issues = markup::issues(&original.line.text, &context.mentions, rendered.as_ref());
-    let identifiers = identifiers(original, context, rendered.as_ref(), issues.clone());
+    let refs = crate::tiles::candidates(markup::references(
+        &original.line.text,
+        &context.mentions,
+        rendered.as_ref(),
+    ));
+    let identifiers = identifiers(original, context, rendered.as_ref(), issues);
     let spoken = spoken(entry, rendered.as_ref());
     let rank = context
         .roster
@@ -45,7 +50,7 @@ pub(crate) fn message(
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
         })
         .children(thread_facts(entry, context, &tokens, cx))
-        .children(crate::issues::tiles(entry, &issues, context, &tokens, cx))
+        .children(crate::tiles::row(entry, &refs, context, cx))
         .children(attachments(original, context, &tokens, cx))
         .children(marks::focus_card(entry, context));
     let row = h_flex()
@@ -95,6 +100,23 @@ fn attachments(
 ) -> Option<AnyElement> {
     let focused = context.upload_focus.as_deref();
     crate::uploads::tiles(&original.line.text, context, focused, tokens, cx)
+}
+
+/// The issues and pull requests message `original` names that could show
+/// a tile, read exactly as its row reads them.
+pub(crate) fn tile_refs(
+    original: &Entry,
+    hub: Option<&crate::hub::Hub>,
+    mentions: &crate::markup::Mentions,
+) -> Vec<crate::markup::Ref> {
+    let shown = displayed(original, hub);
+    let entry = shown.as_ref().unwrap_or(original);
+    let rendered = markup::rich(&entry.line.text, mentions);
+    crate::tiles::candidates(markup::references(
+        &original.line.text,
+        mentions,
+        rendered.as_ref(),
+    ))
 }
 
 /// `entry` with the sent text of every resolved upload hidden, when any is:
