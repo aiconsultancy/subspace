@@ -56,6 +56,24 @@ pub(crate) fn ask(text: &str, buffer: &BufferKey, roster: &Roster) -> Option<Ask
     }))
 }
 
+/// What `/ask` refuses when the agent's address makes the message too long.
+pub(crate) const TOO_LONG: &str =
+    "With the agent's name in front, this is too long to send. Shorten it.";
+
+/// `asked`, refused when its message, with the agent's address added, is
+/// over the connection's limits (`batches`: whether it sends multi-line
+/// text as one batch): the draft was checked before the address was added.
+pub(crate) fn within_limits(asked: Asked, batches: bool) -> Asked {
+    match &asked {
+        Asked::Send(Command::Say { text, .. })
+            if subspace_client_irc::check_draft(text, batches).is_err() =>
+        {
+            Asked::Refused(TOO_LONG)
+        }
+        _ => asked,
+    }
+}
+
 /// The text after `/ask` and a space, trimmed, when `text` starts with the
 /// command, in any case.
 fn argument(text: &str) -> Option<&str> {
@@ -119,6 +137,40 @@ mod tests {
             said("aurora-admiral: show Priya the pan", "#Aurora-Starbase"),
             "the rear admiral in the Starbase"
         );
+    }
+
+    #[test]
+    fn ask_is_refused_when_the_address_makes_it_too_long() {
+        use super::{TOO_LONG, within_limits};
+        let roster = roster();
+        let room = channel("#aurora-lyra");
+        let fits = ask("/ask capture a baseline", &room, &roster).unwrap();
+        assert_eq!(within_limits(fits.clone(), false), fits);
+        let limit = subspace_client_irc::MAX_INLINE_BYTES;
+        let long = format!("/ask {}", "a".repeat(limit - "/ask ".len()));
+        assert!(
+            subspace_client_irc::check_draft(&long, false).is_ok(),
+            "the draft fits"
+        );
+        let asked = ask(&long, &room, &roster).unwrap();
+        assert_eq!(within_limits(asked, false), Asked::Refused(TOO_LONG));
+    }
+
+    #[test]
+    fn ask_is_refused_in_a_starbase_that_two_rear_admirals_name() {
+        let aurora = fleet_with(
+            "aurora",
+            vec![
+                agent("admiral-vance", "rearAdmiral", Some("aurora-admiral"), None),
+                agent("admiral-reyes", "rearAdmiral", Some("aurora-deputy"), None),
+            ],
+            serde_json::json!({"starbaseChannel": "#aurora-starbase"}),
+        );
+        let roster = Roster::new([&aurora]);
+        assert!(matches!(
+            ask("/ask anything", &channel("#aurora-starbase"), &roster),
+            Some(Asked::Refused(_))
+        ));
     }
 
     #[test]

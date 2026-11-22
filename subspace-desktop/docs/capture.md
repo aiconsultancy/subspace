@@ -63,7 +63,9 @@ local IRC fixture. `CAPTURE_FLEET_API=1` starts the Stargate Fleet API fixture
 it. `CAPTURE_FLEET=1` adds the fleet's issues to the Subspace API fixture. `CAPTURE_NO_UPDATES_STREAM=1` starts the Subspace API fixture
 without its live updates stream. `CAPTURE_CHANGE_AFTER=<seconds>` retitles
 SUB-1 that long after the first detail read to simulate a change made
-elsewhere. `CAPTURE_KEEP_LOG=1` keeps the app and API fixture logs in
+elsewhere. `CAPTURE_ITEM_DELAY=<seconds>` holds each GitHub
+issue or pull request detail read that long, so a Channels pull request
+tile can be captured while it loads. `CAPTURE_KEEP_LOG=1` keeps the app and API fixture logs in
 the output directory for diagnosis. A failed launch or render fails the
 command; inspect retained logs before using the evidence.
 

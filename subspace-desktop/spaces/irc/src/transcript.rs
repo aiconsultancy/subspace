@@ -34,7 +34,7 @@ use crate::state::{Buffer, Entry, HistoryState};
 use crate::style;
 use crate::text;
 
-pub(crate) use line::{Claim, RowContext, displayed};
+pub(crate) use line::{Claim, RowContext, displayed, tile_refs};
 pub(crate) use scroll::{Row, Scroller, identities, load_older, row_of};
 pub(crate) use targets::message_targets;
 pub(crate) use viewport::scroller;

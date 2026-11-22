@@ -8,7 +8,9 @@
 //! Space the chips stay and say their details are unavailable. Answers live
 //! in memory only, never in IRC's store or search.
 
+mod compact;
 mod follow;
+mod slot;
 mod tile;
 mod tooltip;
 
@@ -20,6 +22,7 @@ use subspace_framework::contracts::github::{
 use subspace_framework::dashboard::contracts::ContractError;
 
 pub(crate) use follow::{attach, open, want};
+pub(crate) use slot::slot;
 pub(crate) use tooltip::tooltip;
 
 /// What the answering Space said about the pull requests shown, since the

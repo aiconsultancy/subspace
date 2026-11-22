@@ -66,6 +66,8 @@ pub(crate) struct Hub {
     /// Issue references: the contract's scope and the answers shown.
     pub issues: IssueReferences,
     pub pull_requests: PullRequestReferences,
+    /// Which message keeps each reference's tile, per conversation.
+    pub tiles: crate::tiles::Sessions,
     /// Clock sampled by the existing drain timer, never by tile rendering.
     pub now: DateTime<Utc>,
     pub uploads: crate::uploads::cache::References,
@@ -226,6 +228,7 @@ impl Hub {
             recall: persist::Recall::waiting(running),
             issues: IssueReferences::default(),
             pull_requests: PullRequestReferences::default(),
+            tiles: crate::tiles::Sessions::default(),
             now: Utc::now(),
             captain_notifications: Default::default(),
             uploads: Default::default(),

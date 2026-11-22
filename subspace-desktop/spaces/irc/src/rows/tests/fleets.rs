@@ -240,3 +240,62 @@ fn search_finds_a_fleet_channel_by_its_full_name() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].1.title.as_ref(), "lyra");
 }
+
+#[test]
+fn search_still_finds_a_fleet_channel_and_a_person_by_their_network() {
+    let state = joined([channel("#aurora-lyra"), query("mira")]);
+    let layout = super::super::layout(&state, &aurora());
+    let index = super::super::search(&layout);
+    for (query, title) in [("Local Ergo lyra", "lyra"), ("Local Ergo mira", "mira")] {
+        let found = index.search(query, 5);
+        assert_eq!(
+            found.first().map(|(_, row)| row.title.as_ref()),
+            Some(title),
+            "{query}"
+        );
+    }
+}
+
+#[test]
+fn channels_whose_short_names_clash_keep_their_full_names() {
+    // The initiative names `#lyra`, which would read as the ship `#aurora-lyra`.
+    let rosters = rosters(json!([initiative(
+        "aurora",
+        "Aurora",
+        &["lyra"],
+        "#lyra, #aurora-nav"
+    )]));
+    let state = joined([
+        channel("#aurora-lyra"),
+        channel("#lyra"),
+        channel("#aurora-nav"),
+    ]);
+    let layout = super::super::layout(&state, &rosters);
+    let (_, titles) = outline(&layout)
+        .into_iter()
+        .find(|(name, _)| name == "Aurora")
+        .expect("the fleet's group");
+    assert!(titles.contains(&"#aurora-lyra".to_owned()), "{titles:?}");
+    assert!(titles.contains(&"#lyra".to_owned()), "{titles:?}");
+    assert!(
+        titles.contains(&"nav".to_owned()),
+        "an unclashed name stays short"
+    );
+}
+
+#[test]
+fn ask_addresses_no_one_in_a_channel_two_fleets_claim() {
+    // Borealis's initiative names Aurora's ship channel too, so the
+    // navigator shows it in neither fleet, and /ask refuses it.
+    let rosters = rosters(json!([
+        initiative("aurora", "Aurora", &["lyra", "orion"], ""),
+        initiative("borealis", "Borealis", &["vega"], "#aurora-lyra"),
+    ]));
+    let roster = &rosters[&network_id()];
+    assert_eq!(roster.asked_in("#aurora-lyra"), None);
+    assert_eq!(roster.asked_in("#aurora-orion"), Some("aurora-orion"));
+    assert_eq!(
+        roster.asked_in("#borealis-starbase"),
+        Some("borealis-admiral")
+    );
+}

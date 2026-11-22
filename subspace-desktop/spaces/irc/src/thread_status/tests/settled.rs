@@ -1,7 +1,7 @@
 //! A request's line while it runs, with its stage on the meter and the
 //! time it was sent, and the quiet line it settles into: done or failed,
-//! with how long it took, also after a restart, and plain `Done` for an
-//! ending stored before its time was kept.
+//! with how long it took, also after a restart, and a neutral `Ended` for an
+//! ending stored before its outcome was kept.
 
 use chrono::TimeDelta;
 use subspace_client_irc::Event;
@@ -58,7 +58,7 @@ fn a_completed_request_settles_into_done_with_its_duration() {
     assert_eq!(
         shown.settled,
         Some(Settled {
-            failed: false,
+            outcome: Some(Outcome::Completed),
             took: Some(TimeDelta::minutes(42)),
         })
     );
@@ -70,7 +70,7 @@ fn a_failed_request_settles_into_failed_after_its_duration() {
     assert_eq!(
         settled(&ended("failed", 4), "first"),
         Some(Settled {
-            failed: true,
+            outcome: Some(Outcome::Failed),
             took: Some(TimeDelta::minutes(3)),
         })
     );
@@ -124,7 +124,7 @@ fn a_stored_ending_keeps_its_outcome_and_time_after_a_restart() {
     assert_eq!(
         settled(&state, "first"),
         Some(Settled {
-            failed: true,
+            outcome: Some(Outcome::Failed),
             took: Some(TimeDelta::minutes(10)),
         })
     );
@@ -136,7 +136,7 @@ fn a_stored_ending_keeps_its_outcome_and_time_after_a_restart() {
 }
 
 #[test]
-fn an_older_ending_without_a_time_loads_as_done_without_a_duration() {
+fn an_older_ending_without_an_outcome_loads_as_ended_without_a_duration() {
     let state = restarted(
         vec![request(&room(), "first", 1)],
         &[("first".to_owned(), Ending::default())],
@@ -144,9 +144,14 @@ fn an_older_ending_without_a_time_loads_as_done_without_a_duration() {
     assert_eq!(
         settled(&state, "first"),
         Some(Settled {
-            failed: false,
+            outcome: None,
             took: None,
         })
+    );
+    assert_eq!(
+        line(&state, &room(), "first").map(|shown| shown.label),
+        Some("Ended"),
+        "an unknown outcome never reads as Done"
     );
 }
 
@@ -174,7 +179,28 @@ fn a_notice_fills_in_an_older_ending_once_for_the_store() {
     live(&mut state, [progress(&room(), "first", "failed", 6)]);
     assert!(state.take_endings().is_empty(), "the first outcome stands");
     assert_eq!(
-        settled(&state, "first").map(|settled| settled.failed),
+        settled(&state, "first").map(|settled| settled.outcome == Some(Outcome::Failed)),
         Some(false)
+    );
+}
+
+#[test]
+fn a_stored_failure_stays_failed_when_a_restored_notice_says_completed() {
+    let failed = Ending {
+        outcome: Some(Outcome::Failed),
+        at: Some(at(11)),
+    };
+    // The restored lines hold a later `completed` notice for the same
+    // request; the ending seen live, and stored, still stands.
+    let state = restarted(
+        vec![
+            request(&room(), "first", 1),
+            progress(&room(), "first", "completed", 12),
+        ],
+        &[("first".to_owned(), failed)],
+    );
+    assert_eq!(
+        settled(&state, "first").map(|settled| settled.outcome == Some(Outcome::Failed)),
+        Some(true)
     );
 }

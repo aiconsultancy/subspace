@@ -3,6 +3,7 @@
 
 use gpui_kit::{AnyElement, App, Context, Entity, SharedString, WeakEntity, Window};
 use subspace_client_irc::{BufferKey, Target};
+use subspace_framework::dashboard::list::GroupIndicator;
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::row_menu::{MenuCommand, MenuGroup};
 use subspace_framework::dashboard::{
@@ -266,6 +267,11 @@ impl ListDashboard for Irc {
 
     fn group_menu(&self, group: &Group) -> Option<RowMenu> {
         Some(listing::group_menu(group))
+    }
+
+    /// A folded group says when it hides a mention or unread messages.
+    fn group_indicators(&self, group: &Group, cx: &App) -> Vec<GroupIndicator> {
+        navigator::group_indicators(self, group, cx)
     }
 
     fn empty_message(&self) -> (SharedString, SharedString) {

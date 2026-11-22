@@ -15,8 +15,9 @@ use gpui_kit::{
 };
 use subspace_client_irc::Target;
 use subspace_framework::dashboard::avatar::{self, AgentAvatar, AgentIcons, AgentRank};
+use subspace_framework::dashboard::list::GroupIndicator;
 use subspace_framework::dashboard::panel::IconName;
-use subspace_framework::dashboard::{Glyph, Row, Tokens};
+use subspace_framework::dashboard::{Glyph, Group, Row, Tokens, Tone};
 
 use super::kind_icon;
 use crate::hub::Hub;
@@ -37,7 +38,7 @@ pub(super) fn apply(board: &mut Irc, hub: &Entity<Hub>, cx: &mut Context<Irc>) {
     let layout = rows::layout(state, &rosters);
     let selected = held.initiatives.selected_fleet();
     board.search = std::rc::Rc::new(rows::search(&layout));
-    fold_new_fleets(board, &layout.fleets, selected);
+    fold_new_fleets(board, (&layout.fleets, &layout.groups), selected);
     board.buffers = layout.buffers;
     board.listed = layout.listed;
     board.group_networks = layout.networks;
@@ -199,18 +200,97 @@ pub(super) fn people_mark(cx: &App) -> AnyElement {
 
 /// Folds each fleet group that appears for the first time while the
 /// selected initiative (`selected`, its fleet id if any) is not of its
-/// fleet. With no initiative selected, every fleet starts open.
+/// fleet. With no initiative selected, every fleet starts open. A new group
+/// that holds the selected row stays open, so the list keeps the selection
+/// (a channel joined on request, or one that moved into a fleet's group).
 pub(super) fn fold_new_fleets(
     board: &mut Irc,
-    fleets: &HashMap<SharedString, String>,
+    (fleets, groups): (&HashMap<SharedString, String>, &[Group]),
     selected: Option<Option<&str>>,
 ) {
+    let holding = holding_group(groups, board.list.selected());
     for (key, fleet) in fleets {
         let first = board.seen_fleets.insert(key.clone());
         let other = selected.is_some_and(|selected| selected != Some(fleet.as_str()));
-        if first && other && !board.list.is_folded(key) {
+        let keeps = holding == Some(key);
+        if first && other && !keeps && !board.list.is_folded(key) {
             board.list.toggle(key);
         }
+    }
+}
+
+/// The key of the group in `groups` that holds row `selected`.
+pub(super) fn holding_group<'a>(
+    groups: &'a [Group],
+    selected: Option<&SharedString>,
+) -> Option<&'a SharedString> {
+    let selected = selected?;
+    groups
+        .iter()
+        .find(|group| group.rows.iter().any(|row| &row.key == selected))
+        .map(|group| &group.key)
+}
+
+/// What a folded group's header says about the rows it hides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Hidden {
+    Mention,
+    Unread,
+}
+
+/// What a folded group hides, from each row's (mention, unread): a mention
+/// over unread messages over nothing. An open group shows its rows' own
+/// marks, so it says nothing.
+pub(super) fn hidden(folded: bool, rows: impl IntoIterator<Item = (bool, bool)>) -> Option<Hidden> {
+    if !folded {
+        return None;
+    }
+    let (mut mention, mut unread) = (false, false);
+    for (row_mention, row_unread) in rows {
+        mention |= row_mention;
+        unread |= row_unread;
+    }
+    match (mention, unread) {
+        (true, _) => Some(Hidden::Mention),
+        (false, true) => Some(Hidden::Unread),
+        (false, false) => None,
+    }
+}
+
+/// The marks on group `group`'s header: a folded group with a mention or
+/// unread messages in it says so, as its rows would.
+pub(super) fn group_indicators(board: &Irc, group: &Group, cx: &App) -> Vec<GroupIndicator> {
+    let rows = group.rows.iter().map(|row| {
+        let mention = row
+            .trailing
+            .iter()
+            .any(|glyph| glyph.text.as_ref() == rows::MENTION);
+        (mention, unread(board, &row.key, cx))
+    });
+    hidden(board.list.is_folded(&group.key), rows)
+        .map(indicator)
+        .into_iter()
+        .collect()
+}
+
+fn indicator(hidden: Hidden) -> GroupIndicator {
+    let (icon, tone, label) = match hidden {
+        Hidden::Mention => (
+            IconName::AtSign,
+            Tone::Red,
+            "You were mentioned in this group",
+        ),
+        Hidden::Unread => (
+            IconName::Circle,
+            Tone::Accent,
+            "Unread messages in this group",
+        ),
+    };
+    GroupIndicator {
+        icon,
+        tone,
+        label: label.into(),
+        tooltip: label.into(),
     }
 }
 
@@ -266,5 +346,60 @@ mod tests {
             .len()
         });
         assert_eq!(built, 6);
+    }
+
+    fn group(key: &str, rows: &[&str]) -> subspace_framework::dashboard::Group {
+        use subspace_framework::dashboard::{Glyph, Row, Tone};
+        subspace_framework::dashboard::Group {
+            key: key.to_owned().into(),
+            icon: Glyph::new("", Tone::Muted),
+            name: key.to_owned().into(),
+            count: None,
+            rows: rows
+                .iter()
+                .map(|row| Row {
+                    key: (*row).to_owned().into(),
+                    icon: Glyph::new("", Tone::Muted),
+                    id: None,
+                    title: (*row).to_owned().into(),
+                    trailing: Vec::new(),
+                    done: false,
+                    indent: 0,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn the_group_holding_the_selection_is_found() {
+        let groups = [
+            group("fleet-a", &["lyra", "orion"]),
+            group("fleet-b", &["vega"]),
+        ];
+        let vega = gpui_kit::SharedString::from("vega");
+        let found = super::holding_group(&groups, Some(&vega));
+        assert_eq!(found.map(|key| key.as_ref()), Some("fleet-b"));
+        assert_eq!(super::holding_group(&groups, None), None);
+        let gone = gpui_kit::SharedString::from("castor");
+        assert_eq!(super::holding_group(&groups, Some(&gone)), None);
+    }
+
+    #[test]
+    fn a_folded_group_says_what_it_hides() {
+        use super::{Hidden, hidden};
+        assert_eq!(
+            hidden(true, [(false, true), (true, true)]),
+            Some(Hidden::Mention)
+        );
+        assert_eq!(
+            hidden(true, [(false, false), (false, true)]),
+            Some(Hidden::Unread)
+        );
+        assert_eq!(hidden(true, [(false, false)]), None);
+        assert_eq!(
+            hidden(false, [(true, true)]),
+            None,
+            "an open group's rows say it"
+        );
     }
 }

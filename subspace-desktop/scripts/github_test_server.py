@@ -2,12 +2,15 @@
 """Fictional GitHub API for Subspace debug screenshots.
 
 Usage: python3 scripts/github_test_server.py [--port N] [--runs-delay SECONDS]
+    [--item-delay SECONDS]
 
 Port 0 picks a free port. The first line on stdout names the address as
 SUBSPACE_GITHUB_API_URL=http://127.0.0.1:<port>. scripts/capture.sh starts
 it for every capture. --runs-delay holds each repository's Actions run list
 for that many seconds, so a capture can show the Actions board while it loads
-(capture.sh passes CAPTURE_RUNS_DELAY).
+(capture.sh passes CAPTURE_RUNS_DELAY). --item-delay holds each single issue or
+pull request detail read the same way, so a capture can show a reference
+loading (capture.sh passes CAPTURE_ITEM_DELAY).
 
 Answers the GraphQL and REST requests of the GitHub (PRs), Copilot Agents and
 Actions boards with invented data: the organisation `acme`, the repositories
@@ -43,6 +46,7 @@ WORK_VIEWER = "octo-dev_acme"
 NOW = datetime.now(timezone.utc).replace(microsecond=0)
 BASE_URL = "http://127.0.0.1"
 RUNS_DELAY = 0.0
+ITEM_DELAY = 0.0
 
 PEOPLE = {
     "octo-dev": "Octo Developer",
@@ -924,9 +928,11 @@ def graphql(body, login):
         item, kind = find_item(variables.get("owner", ""), variables.get("name", ""),
                                int(variables.get("number", 0)))
         if item is None:
+            time.sleep(ITEM_DELAY)
             log(f"UNKNOWN item {variables}")
             return {"repository": {"issueOrPullRequest": None}}
         if "bodyHTML" in query:
+            time.sleep(ITEM_DELAY)
             data = {"repository": {"issueOrPullRequest": detail(item, kind)}}
         else:
             data = {"repository": {"issueOrPullRequest": {
@@ -1212,13 +1218,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global BASE_URL, RUNS_DELAY
+    global BASE_URL, RUNS_DELAY, ITEM_DELAY
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, default=18162)
     parser.add_argument("--runs-delay", type=float, default=0.0,
                         help="seconds to hold each Actions run list")
+    parser.add_argument("--item-delay", type=float, default=0.0,
+                        help="seconds to hold each issue or pull request detail read")
     args = parser.parse_args()
     RUNS_DELAY = args.runs_delay
+    ITEM_DELAY = args.item_delay
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     BASE_URL = f"http://127.0.0.1:{server.server_port}"
     print(f"SUBSPACE_GITHUB_API_URL={BASE_URL}", flush=True)

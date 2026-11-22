@@ -358,29 +358,31 @@ impl IrcState {
     }
 
     /// Restores buffer `key` from the store: its `lines`, when any survive,
-    /// and the requests that `ended` there, oldest first. Endings for a
-    /// buffer that holds no lines wait in [`Self::parked`] until it does,
-    /// so they never bring a buffer back into the list by themselves.
+    /// and the requests that `ended` there, oldest first. The endings are
+    /// taken in before the lines fold, so a restored notice never overrides
+    /// how a request was seen to end (it still fills in an ending stored
+    /// without its outcome). Endings for a buffer that holds no lines wait
+    /// in [`Self::parked`] until it does, so they never bring a buffer back
+    /// into the list by themselves.
     pub fn restore_buffer(
         &mut self,
         key: &BufferKey,
         lines: Vec<Line>,
         ended: &[(String, crate::thread_status::Ending)],
     ) {
+        if !self.restorable(key) {
+            return;
+        }
+        if !ended.is_empty() {
+            self.parked
+                .entry(key.clone())
+                .or_default()
+                .extend(ended.iter().cloned());
+        }
         if !lines.is_empty() {
             self.restore(key, lines);
         }
-        if !self.restorable(key) || ended.is_empty() {
-            return;
-        }
-        match self.buffers.get_mut(key) {
-            Some(buffer) => buffer.requests.load(ended),
-            None => self
-                .parked
-                .entry(key.clone())
-                .or_default()
-                .extend(ended.iter().cloned()),
-        }
+        folding::adopt(self, key);
     }
 
     /// Whether the store may restore buffer `key`: a channel or private

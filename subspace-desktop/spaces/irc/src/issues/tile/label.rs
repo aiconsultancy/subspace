@@ -6,6 +6,9 @@ pub(in crate::issues) fn label(
     now: chrono::DateTime<chrono::Utc>,
 ) -> String {
     let mut facts = vec![summary.state.name.clone()];
+    if summary.ready_for_agents() == Some(true) {
+        facts.push("ready for agents".into());
+    }
     if summary.tracker {
         facts.push("Tracker".into());
     }

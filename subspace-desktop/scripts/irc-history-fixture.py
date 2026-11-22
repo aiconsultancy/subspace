@@ -54,6 +54,17 @@ LATE = (
     ('mira', '@aurora-lyra can you take NAV-2 next, once NAV-7 merges?'),
     ('aurora-lyra', 'Accepted. Handing NAV-2 to Juniper now.'),
 )
+# With --repeats: NAV-1 and pull request 492 named again, and two references
+# that cannot be resolved.
+REPEATS = (
+    ('tavi', 'Pulled https://github.com/acme/web/pull/492 onto the pilot laptop: NAV-1 pans hold at 41 ms warm.'),
+    ('sela', 'I could not open NAV-99 or https://github.com/acme/vault/pull/7 from here.'),
+    ('mira', 'Then https://github.com/acme/web/pull/492 merges first, and NAV-1 closes after the review.'),
+)
+# With --repeats and --late-after: a late pull request, whose tile loads in place.
+LATE_REPEATS = (
+    ('aurora-lyra', 'Juniper opened https://github.com/acme/web/pull/491 for the worker pool.'),
+)
 STATUS = 'Lyra is delegating NAV-2 to Juniper'
 
 SPEAKERS = ('mira', 'tavi', 'sela', 'aurora-lyra', 'aurora-admiral', 'aurora-orion', 'aurora-vega', 'aurora-castor')
@@ -111,7 +122,7 @@ def keep_alive(sock):
         pass
 
 
-def late_lines(sock, socks, nick, delay):
+def late_lines(sock, socks, nick, delay, late):
     """Waits for `nick` to join the ship channel on `sock`, then, after
     `delay` seconds, posts the late lines there."""
     joined = f' JOIN {CHANNEL}'.encode()
@@ -126,10 +137,10 @@ def late_lines(sock, socks, nick, delay):
                     sock.sendall(b'PONG' + line[4:] + b'\r\n')
                 elif line.startswith(f':{nick}!'.encode()) and line.endswith(joined):
                     time.sleep(delay)
-                    for speaker, text in LATE:
+                    for speaker, text in late:
                         socks[speaker].sendall(f'PRIVMSG {CHANNEL} :{text}\r\n'.encode())
                         time.sleep(0.4)
-                    print(f'posted {len(LATE)} late lines to {CHANNEL}', flush=True)
+                    print(f'posted {len(late)} late lines to {CHANNEL}', flush=True)
     except OSError:
         pass
 
@@ -140,6 +151,7 @@ def main():
     parser.add_argument('--nick', default='subspace', help="the capture build's nick")
     parser.add_argument('--late-after', type=float, help='seconds after the capture build joins')
     parser.add_argument('--status', action='store_true', help="set aurora-lyra's status")
+    parser.add_argument('--repeats', action='store_true', help='name NAV-1 and pull request 492 again')
     options = parser.parse_args()
     if not options.server.startswith('127.0.0.1:'):
         raise SystemExit('Use a loopback server, 127.0.0.1:<port>.')
@@ -152,16 +164,17 @@ def main():
         # The first to join holds the channel's operator status, which +t needs.
         first = next(nick for nick in SPEAKERS if name in channels_for(nick))
         socks[first].sendall(f'TOPIC {name} :{topic}\r\n'.encode())
-    for nick, text in LINES:
+    for nick, text in LINES + (REPEATS if options.repeats else ()):
         socks[nick].sendall(f'PRIVMSG {CHANNEL} :{text}\r\n'.encode())
         time.sleep(1.2)
-    print(f'posted {len(LINES)} lines to {CHANNEL}', flush=True)
+    print(f'posted the lines to {CHANNEL}', flush=True)
     watcher = 'mira' if options.late_after is not None else None
     threads = [threading.Thread(target=keep_alive, args=(sock,), daemon=True)
                for nick, sock in socks.items() if nick != watcher]
     if watcher:
         threads.append(threading.Thread(target=late_lines, daemon=True,
-                                        args=(socks[watcher], socks, options.nick, options.late_after)))
+                                        args=(socks[watcher], socks, options.nick, options.late_after,
+                                              LATE + (LATE_REPEATS if options.repeats else ()))))
     for thread in threads:
         thread.start()
     try:

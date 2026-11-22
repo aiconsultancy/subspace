@@ -1,13 +1,10 @@
 //! Chip slots reserved from a message's first frame, so an answer landing
 //! never changes the row's height and nothing below or above it moves.
-use super::{TRACKER, Tracker, open_board};
+use super::{answer, open_board};
 use crate::{Irc, fixtures::channel};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Bounds, Entity, Pixels, SharedString, TestAppContext, VisualTestContext, px, size};
-use subspace_framework::contracts::issues::{
-    Changed, IssueState, IssueSummary, ResolutionState, StateType,
-};
-use subspace_framework::dashboard::contracts;
+use subspace_framework::contracts::issues::{IssueState, IssueSummary, ResolutionState, StateType};
 
 const ROW: &str = "irc-line:2:row";
 
@@ -28,21 +25,6 @@ fn settle(cx: &mut VisualTestContext) -> Bounds<Pixels> {
 fn present(cx: &mut VisualTestContext, id: &str) -> bool {
     let id = SharedString::from(id.to_owned());
     cx.update(move |window, _| window.try_find(id).is_some())
-}
-
-/// The tracker's answer for `identifier` becomes `state`, announced by `changed`.
-fn answer(
-    tracker: &Entity<Tracker>,
-    identifier: &str,
-    state: ResolutionState,
-    cx: &mut VisualTestContext,
-) {
-    cx.update(|_, cx| {
-        tracker.update(cx, |tracker, _| {
-            tracker.answers.insert(identifier.into(), state);
-        });
-        assert!(contracts::publish(TRACKER, Changed, cx).is_ok());
-    });
 }
 
 fn assigned(identifier: &str) -> ResolutionState {

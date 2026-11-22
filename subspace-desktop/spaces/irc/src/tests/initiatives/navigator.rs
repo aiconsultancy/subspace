@@ -267,3 +267,36 @@ fn with_no_initiative_selected_every_fleet_starts_open(cx: &mut TestAppContext) 
         }
     });
 }
+
+#[gpui_kit::test]
+fn a_folded_fleet_says_it_hides_a_mention(cx: &mut TestAppContext) {
+    let (board, hub, cx) = two_fleets(cx, true);
+    let borealis = rows::fleet_group_key(&network_id(), "borealis");
+    let labels = |board: &Irc, cx: &gpui_kit::App| {
+        let group = board
+            .list
+            .groups()
+            .iter()
+            .find(|group| group.key == borealis);
+        group.map_or_else(Vec::new, |group| {
+            board
+                .group_indicators(group, cx)
+                .into_iter()
+                .map(|mark| mark.label.to_string())
+                .collect::<Vec<_>>()
+        })
+    };
+    assert!(cx.update(|_, cx| labels(board.read(cx), cx)).is_empty());
+    let line = mention(message(
+        &channel("#borealis-vega"),
+        "mira",
+        "vega, a word?",
+        9,
+    ));
+    inject(&hub, vec![Event::Line(line)], cx);
+    board.update(cx, crate::view::sync);
+    assert_eq!(
+        cx.update(|_, cx| labels(board.read(cx), cx)),
+        ["You were mentioned in this group"]
+    );
+}

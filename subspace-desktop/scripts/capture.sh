@@ -20,6 +20,7 @@
 #   CAPTURE_STATE='{...}'      keys merged into state.json
 #   CAPTURE_CONFIG='{...}'     keys merged into config.json, such as boards
 #   CAPTURE_RUNS_DELAY=<secs>  hold each Actions run list
+#   CAPTURE_ITEM_DELAY=<secs>  hold each GitHub issue or pull request detail read
 #   CAPTURE_IRC_CONFIG=<file>  IRC board config; use scripts/irc-test-server.sh
 #   CAPTURE_NO_GH=1            no gh accounts, as for a user without the GitHub CLI
 #   CAPTURE_NO_UPDATES_STREAM=1   the Subspace API fixture has no live updates stream
@@ -134,6 +135,7 @@ server_address() {
     printf '%s\n' "$address"
 }
 python3 -u "$root/scripts/github_test_server.py" --port 0 --runs-delay "${CAPTURE_RUNS_DELAY:-0}" \
+    --item-delay "${CAPTURE_ITEM_DELAY:-0}" \
     >"$fixture/github.log" 2>&1 &
 servers+=("$!")
 api_args=(--port 0 --access-jwt fixture-access)

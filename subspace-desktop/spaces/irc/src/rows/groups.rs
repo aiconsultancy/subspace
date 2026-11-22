@@ -1,6 +1,8 @@
 //! A network's navigator groups: each fleet's, `People`, then the
 //! network's own.
 
+use std::collections::HashMap;
+
 use gpui_kit::SharedString;
 use subspace_client_irc::{BufferKey, NetworkId};
 use subspace_framework::dashboard::{Glyph, Group, Row, Tone};
@@ -44,10 +46,12 @@ fn fleet_groups(
             roster,
             place,
         };
-        let rows = held
+        let mut rows: Vec<Row> = held
             .iter()
             .map(|(key, buffer)| fleet_row(key, buffer, &fleet, layout))
             .collect();
+        let full: Vec<&str> = held.iter().map(|(key, _)| title(key)).collect();
+        unclash(&mut rows, &full);
         let key = fleet_group_key(&network.id, &place.id);
         layout.fleets.insert(key.clone(), place.id.clone());
         let group = status_group(key, &place.name, network, rows);
@@ -61,9 +65,10 @@ fn people_group(state: &IrcState, network: &Network, people: Vec<Held<'_>>, layo
     if people.is_empty() {
         return;
     }
+    let presences = activity::presences(state, &network.id);
     let rows = people
         .iter()
-        .map(|(key, buffer)| person_row(state, key, buffer, layout))
+        .map(|(key, buffer)| person_row(&presences, key, buffer, layout))
         .collect();
     let group = Group {
         key: people_group_key(&network.id),
@@ -76,9 +81,14 @@ fn people_group(state: &IrcState, network: &Network, people: Vec<Held<'_>>, layo
 }
 
 /// A person's row, with their presence recorded for its mark.
-fn person_row(state: &IrcState, key: &BufferKey, buffer: &Buffer, layout: &mut Layout) -> Row {
+fn person_row(
+    presences: &HashMap<String, activity::Presence>,
+    key: &BufferKey,
+    buffer: &Buffer,
+    layout: &mut Layout,
+) -> Row {
     let row = keyed(row(key, buffer), key, layout);
-    let presence = activity::presence(state, &key.network, title(key));
+    let presence = activity::presence(presences, title(key));
     layout.people.insert(row.key.clone(), presence);
     row
 }
@@ -116,8 +126,9 @@ fn keyed(row: Row, key: &BufferKey, layout: &mut Layout) -> Row {
     row
 }
 
-/// A fleet channel's row: its name without the fleet's prefix, and for a
-/// ship, its activity recorded for its dot.
+/// A fleet channel's row: its name without the fleet's prefix (see
+/// [`unclash`] for names that would read alike), and for a ship, its
+/// activity recorded for its dot.
 fn fleet_row(key: &BufferKey, buffer: &Buffer, fleet: &Fleet<'_>, layout: &mut Layout) -> Row {
     let mut row = row(key, buffer);
     row.title = short_name(fleet.place.slug.as_deref(), title(key))
@@ -126,6 +137,19 @@ fn fleet_row(key: &BufferKey, buffer: &Buffer, fleet: &Fleet<'_>, layout: &mut L
     let ship = ship_activity(key, buffer, fleet).map(|ship| (row.key.clone(), ship));
     layout.ships.extend(ship);
     keyed(row, key, layout)
+}
+
+/// Gives every row of `rows` whose title another row also has its channel's
+/// full name from `full` (in the same order), so no two rows of a group read
+/// alike: an initiative's `#lyra` beside the ship `#aurora-lyra`.
+pub(super) fn unclash(rows: &mut [Row], full: &[&str]) {
+    let titles: Vec<SharedString> = rows.iter().map(|row| row.title.clone()).collect();
+    for (row, full) in rows.iter_mut().zip(full) {
+        let shared = titles.iter().filter(|title| **title == row.title).count() > 1;
+        if shared {
+            row.title = (*full).to_owned().into();
+        }
+    }
 }
 
 /// A ship channel's activity; `None` for any other channel.
