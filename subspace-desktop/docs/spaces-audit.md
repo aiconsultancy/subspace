@@ -98,7 +98,7 @@ HTTP requests are limited to 60 requests per bind per minute and receive
 | Contract | Messages | Answers and publishes | Subscribes and asks | Status |
 | --- | --- | --- | --- | --- |
 | `issues` v1 (`subspace_contracts::issues`) | `current-scope` request: profile, API origin and project keys, or none while unavailable. `resolve` request: one resolution per identifier (summary, unavailable, pending, signed out or failed), at most 50; a summary's optional facts include whether the issue is flagged Ready for agents (`IssueSummary::ready_for_agents`, from the API's `readyForAgents`). `changed` event | The Issues board, from its Subspace API hub | Channels, to recognise and show issue references ([Channels issue references](irc.md#issue-references)); web Spaces, for app pages allowed `issues` ([Show issues](web-spaces-reference.md#show-issues)); Decisions, which asks for the scope to open a decision's linked issues in the answering Space ([Decisions](decisions.md#linked-issues)) | Delivered: phases 3 and 4 of the [delivery plan](changes/board-contracts/tasks.md); per-reference HTTP reads, with batch HTTP resolution to follow |
-| `github` v1 (`subspace_contracts::github`) | `open-pull-request`: navigation responder role for a validated GitHub PR URL. `resolve-pull-requests` request: one resolution per `owner/repo#n` key (summary, unavailable, pending, signed out or failed), at most 50. `changed` event | PRs, through `Dashboard::open_link`; summaries from what its current account loaded and a refresh confirmed, else one background read; a signed-out login answers signed out until it signs in or reads again | Issues, from its pull requests panel and palette. Channels, for pull request chips and hover tiles ([change record](changes/subspace-api-accounts/README.md)) | Delivered: [pull request navigation](changes/subspace-api-accounts/README.md) and [change record](changes/subspace-api-accounts/README.md); unavailable responders and unsupported links fall back to the browser |
+| `github` v1 (`subspace_contracts::github`) | `open-pull-request`: navigation responder role for a validated GitHub PR URL. `resolve-pull-requests` request: one resolution per `owner/repo#n` key (summary, unavailable, pending, signed out or failed), at most 50; a summary has the combined check state and, when the pull request's check runs were read with it, how many passed of how many (`check_counts`). `changed` event | PRs, through `Dashboard::open_link`; summaries from what its current account loaded and a refresh confirmed, else one background read; a signed-out login answers signed out until it signs in or reads again | Issues, from its pull requests panel and palette. Channels, for pull request chips and hover tiles ([change record](changes/subspace-api-accounts/README.md)) | Delivered: [pull request navigation](changes/subspace-api-accounts/README.md) and [change record](changes/subspace-api-accounts/README.md); unavailable responders and unsupported links fall back to the browser |
 
 **Pull request navigation.** `github@1/open-pull-request`
 (`subspace_framework::contracts::github::OpenPullRequest`) is a navigation responder
@@ -133,6 +133,11 @@ sign-in, sign-out or reload forgets every answer and publishes `changed`, so
 askers keep nothing across a `changed`. The PRs board creates its view at
 window start, so it answers before it is first opened. Summaries hold pull
 request content: they stay in memory and the types do not implement `Debug`.
+A summary's check counts (`PullRequestDetails::check_counts`, passed of
+total, a skipped or neutral check counting as passed) come only from check
+runs the board already holds: a pull request it opened or read for a
+resolution has them, one it knows only from a list has the combined state
+alone, and no read is made for the counts.
 
 ```rust
 // In the requester's contracts():
