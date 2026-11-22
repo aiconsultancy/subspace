@@ -22,14 +22,14 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "anchored::dropdown_menu",
         source: ANCHORED,
-        used_in: "Native popup menus on a button in Board Lab, the help dock and the chat toolbar.",
+        used_in: "Native popup menus on a button in Space Lab, the help dock and the chat toolbar.",
         samples: dropdown_menu,
         kit: None,
     },
     Item {
         name: "anchored::select",
         source: ANCHORED,
-        used_in: "Native selects in the Web manager, Board Lab and the host Settings.",
+        used_in: "Native selects in the Web manager, Space Lab and the host Settings.",
         samples: selects,
         kit: None,
     },

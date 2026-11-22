@@ -65,10 +65,10 @@ class BoardDocsTests(unittest.TestCase):
         source = """
         BoardRegistration::new::<subspace_github_board::Board>();
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        BoardRegistration::new::<subspace_board_lab_board::BoardLab>();
+        BoardRegistration::new::<subspace_space_lab_board::SpaceLab>();
         BoardRegistration::configured::<subspace_web_board::WebBoard>();
         """
-        self.assertEqual(DOCS.registered_board_ids(source), {"github", "board-lab", "web"})
+        self.assertEqual(DOCS.registered_board_ids(source), {"github", "space-lab", "web"})
 
     def test_placeholders_cannot_hide_text_or_start_docfx_html_blocks(self) -> None:
         self.assertTrue(DOCS.markup_errors("The toast is `No longer monitoring\n<title>`."))

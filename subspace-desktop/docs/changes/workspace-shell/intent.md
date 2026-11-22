@@ -1,5 +1,7 @@
 # Intent: workspace shell
 
+> Board Lab has since been renamed Space Lab; see [Space Lab rename](../space-lab-rename/intent.md).
+
 Back to [change records](../README.md).
 
 Every Space lays its content out for itself today: a large heading with a

@@ -47,8 +47,8 @@ pub fn subspace_descriptor() -> ProductDescriptor {
 
 /// Subspace: every board this build includes, with board commands under
 /// their ids. The display name, bundle id and release stream follow
-/// `channel`. Board Lab and the Component gallery are listed only with the
-/// `board-lab` and `component-gallery` features, which the app turns on with
+/// `channel`. Space Lab and the Component gallery are listed only with the
+/// `space-lab` and `component-gallery` features, which the app turns on with
 /// its own, and start off in every build profile.
 pub fn subspace_descriptor_for(channel: Channel) -> ProductDescriptor {
     descriptor_for_version(channel, VERSION)
@@ -71,8 +71,8 @@ fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor 
             board("irc", cfg!(debug_assertions)),
             board("issues", cfg!(debug_assertions)),
             board("decisions", cfg!(debug_assertions)),
-            #[cfg(all(feature = "board-lab", target_os = "macos", target_arch = "aarch64"))]
-            board("board-lab", false),
+            #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
+            board("space-lab", false),
             board("actions", true),
             #[cfg(feature = "component-gallery")]
             board("component-gallery", false),
@@ -144,13 +144,13 @@ fn board(id: &str, default_enabled: bool) -> BoardDescriptor {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn board_lab_is_listed_only_with_its_feature_and_starts_off() {
+    fn space_lab_is_listed_only_with_its_feature_and_starts_off() {
         let full = super::subspace_descriptor();
-        let lab = full.boards.iter().find(|board| board.id == "board-lab");
+        let lab = full.boards.iter().find(|board| board.id == "space-lab");
         assert_eq!(
             lab.is_some(),
             cfg!(all(
-                feature = "board-lab",
+                feature = "space-lab",
                 target_os = "macos",
                 target_arch = "aarch64"
             ))
@@ -330,8 +330,8 @@ mod tests {
                 "irc",
                 "issues",
                 "decisions",
-                #[cfg(all(feature = "board-lab", target_os = "macos", target_arch = "aarch64"))]
-                "board-lab",
+                #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
+                "space-lab",
                 "actions",
                 #[cfg(feature = "component-gallery")]
                 "component-gallery"
@@ -365,7 +365,7 @@ mod tests {
             assert_eq!(board.default_enabled, enabled, "{id}");
         }
         // The unreleased Spaces, listed only with their features, start off.
-        for id in ["board-lab", "component-gallery"] {
+        for id in ["space-lab", "component-gallery"] {
             if let Some(board) = products[0]
                 .boards
                 .iter()

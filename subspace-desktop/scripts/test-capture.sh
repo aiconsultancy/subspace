@@ -74,12 +74,13 @@ shots="$(cd "$fixture/shots" && pwd)"
 fail() { echo "capture: $*" >&2; exit 1; }
 if [[ "$host_platform" = Darwin ]]; then
 TMPDIR="$fixture/tmp" XDG_CONFIG_HOME=/real-user/config GH_CONFIG_DIR=/real-user/gh GH_TOKEN=real-user-token \
-    CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" CAPTURE_CONFIG='{"boards": {"actions": true}}' \
+    CAPTURE_FEATURES='' CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" CAPTURE_CONFIG='{"boards": {"actions": true}}' \
     CAPTURE_DECISION_SCENARIO=forbidden CAPTURE_MOVE_UNCONFIRMED=1 CAPTURE_UPLOAD_SCENARIO=unknown \
     CAPTURE_FLEET_API=1 bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >"$fixture/capture.out"
 
 args="$fixture/open/args.txt"
 grep -Fq "build --locked -p subspace --features capture" "$fixture/cargo.log" || fail "no capture build"
+grep -Eq -e '--features capture( --features terminal)?$' "$fixture/cargo.log" || fail "the capture build added features by default"
 for flag in -g -n -W; do grep -Fxq -- "$flag" "$args" || fail "open without $flag"; done
 if grep -F real-user "$fixture/open/env.txt"; then fail "the caller's environment reached open"; fi
 if grep -F real-user "$args"; then fail "a real value reached the app"; fi
@@ -121,7 +122,10 @@ while IFS= read -r address; do
 done <"$fixture/open/urls.txt"
 grep -Fxq hosts.yml "$fixture/open/gh.txt" || fail "the fixture gh accounts are missing"
 rm -rf "$fixture/open"
-TMPDIR="$fixture/tmp" CAPTURE_NO_GH=1 bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null
+TMPDIR="$fixture/tmp" CAPTURE_NO_GH=1 CAPTURE_FEATURES=space-lab,component-gallery \
+    bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null
+grep -Eq -e '--features capture( --features terminal)? --features space-lab,component-gallery$' "$fixture/cargo.log" ||
+    fail "CAPTURE_FEATURES did not reach the build"
 if grep -Fxq hosts.yml "$fixture/open/gh.txt"; then fail "CAPTURE_NO_GH left gh accounts"; fi
 if grep -Fq SUBSPACE_CAPTURE_MOVE_UNCONFIRMED "$fixture/open/args.txt"; then fail "the move fixture is on by default"; fi
 if grep -Fq SUBSPACE_CAPTURE_UPLOAD_SCENARIO "$fixture/open/args.txt"; then fail "the upload fixture is on by default"; fi

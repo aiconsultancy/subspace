@@ -102,16 +102,16 @@ pub(super) fn single_tool(name: &'static str) -> Arc<dyn AgentTool> {
 
 fn mixed_catalog() -> Catalog {
     Catalog::new(vec![
-        single_tool("board_lab_inspect"),
-        single_tool("board_lab_edit"),
+        single_tool("space_lab_inspect"),
+        single_tool("space_lab_edit"),
         single_tool("irc_fixture"),
         single_tool("unrelated_fixture"),
         tool(
-            "board_lab_project_inspect",
+            "space_lab_project_inspect",
             &[schema::action("list", "List", vec![])],
         ),
         tool(
-            "board_lab_project_edit",
+            "space_lab_project_edit",
             &[schema::action("save", "Save", vec![])],
         ),
         tool(
@@ -128,7 +128,7 @@ fn mixed_catalog() -> Catalog {
 
 fn mixed_context() -> ProductContext {
     let mut descriptor = fixture::descriptor();
-    descriptor.boards = ["actions", "github", "irc", "board-lab"]
+    descriptor.boards = ["actions", "github", "irc", "space-lab"]
         .into_iter()
         .map(|id| BoardDescriptor {
             id: id.into(),
@@ -152,8 +152,8 @@ fn colliding_single_tools_keep_distinct_roots_and_board_actions() {
             .contains_key("unrelated_fixture")
     );
     for (root, alias) in [
-        ("board-lab-inspect", "board_lab_inspect"),
-        ("board-lab-edit", "board_lab_edit"),
+        ("space-lab-inspect", "space_lab_inspect"),
+        ("space-lab-edit", "space_lab_edit"),
     ] {
         let command = &commands.spec.cmd.subcommands[root];
         assert_eq!(command.hidden_aliases, [alias]);
@@ -178,8 +178,8 @@ fn colliding_single_tools_keep_distinct_roots_and_board_actions() {
 fn mixed_tools_preserve_existing_action_paths_and_aliases() {
     let commands = commands(&mixed_context(), &mixed_catalog()).unwrap();
     for (root, action) in [
-        ("board-lab", "list"),
-        ("board-lab", "save"),
+        ("space-lab", "list"),
+        ("space-lab", "save"),
         ("actions", "note"),
         ("github", "issue"),
     ] {

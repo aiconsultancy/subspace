@@ -185,7 +185,7 @@ function buildShips(now) {
         observed: true,
         current: running("Fleet bridge canvas: tier warp and hit testing", "Implementing", "Orbit layout and hit testing pass. Wiring the warp between the ship and crew tiers for FLT-212.", 38),
         queued: [waiting("Snapshot tests for tier layout", 30)],
-        recent: [done("Theme tones for the fleet board (FLT-188)", 190, 52, now), done("Stargate client crate scaffold", 320, 34, now), done("Board-lab capacity test retry", 470, 12, now, "uncertain"), done("Inspector keyboard focus", 860, 21, now)],
+        recent: [done("Theme tones for the fleet board (FLT-188)", 190, 52, now), done("Stargate client crate scaffold", 320, 34, now), done("Space Lab capacity test retry", 470, 12, now, "uncertain"), done("Inspector keyboard focus", 860, 21, now)],
         git: gitState("feat/flt-212-tier-warp", "a3f91c2", 6, 0, 3, galacticaRepo, now),
         pr: { number: 81, url: "https://github.com/example-org/subspace/pull/81", title: "Fleet Console: tier warp (FLT-212)", state: "draft", checks: "running" },
       }),

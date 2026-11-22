@@ -82,7 +82,7 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "action::icon_button",
         source: ACTION,
-        used_in: "Icon-only actions in Board Lab, Web, the detail panel, the composer, chat, shortcuts and toasts.",
+        used_in: "Icon-only actions in Space Lab, Web, the detail panel, the composer, chat, shortcuts and toasts.",
         samples: icon_buttons,
         kit: None,
     },

@@ -1,5 +1,7 @@
 # Intent: leave Board Lab and the Component gallery out of releases
 
+> Board Lab has since been renamed Space Lab; see [Space Lab rename](../space-lab-rename/intent.md).
+
 Board Lab (`spaces/board-lab`, board id `board-lab`) and the Framework's
 Component gallery (board id `component-gallery`) are not ready to ship. The
 owner's decision: disable them for now, so that they are not built or in the

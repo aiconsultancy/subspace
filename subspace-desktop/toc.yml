@@ -8,8 +8,8 @@
   href: docs/subspace/boards.md
 - name: Installation and releases
   href: docs/installation.md
-- name: Board Lab (experimental)
-  href: docs/board-lab.md
+- name: Space Lab (experimental)
+  href: docs/space-lab.md
 - name: Terminal
   href: docs/terminal.md
 - name: Channels

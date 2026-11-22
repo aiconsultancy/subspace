@@ -95,7 +95,7 @@ then fill in its [board checklist](../../subspace-framework/docs/board-checklist
 | Channels | [IRC networks, channels and private messages](../spaces/irc/help.md) | [Channels](irc.md): configuration, protocol support, initiatives and fleets, agent tools |
 | Issues | [Subspace API issues and comments](../spaces/issues/help.md) | [Issues and Subspace API](issues.md): connection, shared hub and offline fixtures |
 | Decisions | [Subspace API decisions](../spaces/decisions/help.md) | [Decisions](decisions.md): reads, stored choices and opening linked issues |
-| Board Lab | [Native dashboards and managed environments](../spaces/board-lab/help.md) | [Board Lab](board-lab.md): enablement and safety; [design evidence](agents/board-lab/README.md): retired harness history |
+| Space Lab | [Native dashboards and managed environments](../spaces/space-lab/help.md) | [Space Lab](space-lab.md): enablement and safety; [design evidence](agents/space-lab/README.md): retired harness history |
 | Actions | [GitHub Actions](../spaces/actions/help.md) | [Actions board](actions.md) |
 | Component gallery | [Shared UI components](../../subspace-framework/spaces/component-gallery/help.md) | |
 | Web Spaces | [Websites and installed web Spaces](../spaces/web/help.md) | [Web Space reference](web-spaces-reference.md): manifest, install sources, package rules, bridge; [authoring guide](web-spaces-guide.md) |
@@ -201,11 +201,16 @@ record. [Change records](changes/README.md) explains the convention.
 - [Bundled Inter and JetBrains Mono](changes/bundled-fonts/README.md): the
   fonts the Subspace App embeds for Twilight Two, and why themes that name no
   font keep the platform's fonts.
-- [Unreleased Spaces](changes/unreleased-spaces/intent.md): Board Lab and the
-  Component gallery as Cargo features left out of release builds.
+- [Unreleased Spaces](changes/unreleased-spaces/intent.md): Space Lab (then
+  Board Lab) and the Component gallery as Cargo features left out of release
+  builds.
 - [Fleet Console built in](changes/fleet-console-built-in/README.md): Fleet
   Console in every macOS and Windows build without an install, and the
   fictional Stargate Fleet API that captures show it live against.
 - [Workspace shell review findings](changes/workspace-shell-review-findings/intent.md):
   the follow-up that takes every open review finding of the workspace shell,
   starting with Decisions dropping what it read when the account changes.
+- [Space Lab rename](changes/space-lab-rename/intent.md): Board Lab renamed
+  Space Lab, in its display name and every identifier, with no migration.
+- [Space Lab store race](changes/space-lab-store-race/intent.md): Space Lab's
+  project folders created without a start-up race.

@@ -46,7 +46,7 @@ build cache.
 ```bash
 make build      # debug build of every crate
 make run        # start the desktop app
-make run-unreleased # with Board Lab and the Component gallery, off until enabled
+make run-unreleased # with Space Lab and the Component gallery, off until enabled
 make check      # format check, clippy and tests
 make interfaces # real headless product interface
 make run ARGS='--help' # headless CLI help

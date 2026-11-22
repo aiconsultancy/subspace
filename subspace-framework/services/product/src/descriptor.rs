@@ -319,7 +319,7 @@ mod tests {
                 board("github"),
                 board("github-copilot-agents"),
                 board("irc"),
-                board("board-lab"),
+                board("space-lab"),
             ],
             update: None,
         }
@@ -348,8 +348,8 @@ mod tests {
         assert!(product.boards[0].aliases.is_empty());
         assert_eq!(product.default_theme, "Subspace One Dark");
         assert_eq!(
-            product.board_for_command("board-lab").unwrap().id.as_str(),
-            "board-lab"
+            product.board_for_command("space-lab").unwrap().id.as_str(),
+            "space-lab"
         );
         assert_eq!(product.boards.len(), 5);
         assert!(product.commands.contains_key("actions"));

@@ -83,7 +83,7 @@ class LayoutTests(Fixture):
         self.assertEqual(CHECK.group(self.root / "products/descriptor"), ("products", None))
         for unclassified in ("boards/irc", "boards/irc/crates/support", "spaces/irc/extra/nested",
                              "framework/host/app", "framework/spaces/irc",
-                             "prototypes/board-lab/managed-runtimes"):
+                             "prototypes/space-lab/managed-runtimes"):
             with self.assertRaises(ValueError, msg=unclassified):
                 CHECK.group(self.root / unclassified)
 
@@ -236,7 +236,7 @@ use subspace_framework::{dashboard::{chat_input, prefs}, lucide};
         self.write("spaces/irc/src/tool.rs",
                    'let tool = subspace_framework::core::path::find_tool("gh"); // not split_paths(\n'
                    'let home = std::env::var_os("HOME");')
-        self.write("spaces/board-lab/src/environments/extensions.rs", 'std::env::split_paths(&p)')
+        self.write("spaces/space-lab/src/environments/extensions.rs", 'std::env::split_paths(&p)')
         self.write("terminal/runtime/src/program.rs", 'std::env::split_paths(v)')
         self.assertFalse(any("find_tool" in failure for failure in self.failures()))
 
@@ -476,7 +476,7 @@ include_str!("../../../shared.rs");
         self.assertTrue(all("unsupported" in failure for failure in failures))
 
     def test_retired_harness_packages_and_cargo_edges_fail_closed(self) -> None:
-        retired = self.root / "prototypes/board-lab/managed-runtimes"
+        retired = self.root / "prototypes/space-lab/managed-runtimes"
         for kind in KINDS:
             with self.subTest(kind=kind):
                 self.depend("products/subspace", name="retired-harness", kind=kind,
@@ -488,7 +488,7 @@ include_str!("../../../shared.rs");
         for syntax in ("include_str", "include_bytes", "path"):
             with self.subTest(syntax=syntax):
                 self.include("products/subspace/src/main.rs",
-                             "prototypes/board-lab/managed-runtimes/src/main.rs", syntax)
+                             "prototypes/space-lab/managed-runtimes/src/main.rs", syntax)
                 failures = self.failures()
                 self.assertEqual(len(failures), 1, failures)
                 self.assertIn("unowned/outside source include", failures[0])
