@@ -2,8 +2,6 @@
 //! roster captain, its figures, its crew and what each is on, untrusted
 //! text bounded, and nothing while the fleet is not live.
 
-use std::rc::Rc;
-
 use serde_json::json;
 use subspace_client_fleet::model::{Activity, FleetOverview, ShipDetail};
 use subspace_client_fleet::{FleetSnapshot, FleetState, Link};
@@ -71,10 +69,7 @@ pub(crate) fn snapshot() -> FleetSnapshot {
 
 /// The aurora fleet as the hub holds it in `state`, with the snapshot.
 pub(crate) fn aurora(state: FleetState) -> FleetLive {
-    FleetLive {
-        state,
-        snapshot: Some(Rc::new(snapshot())),
-    }
+    FleetLive::new(state, Some(&snapshot()))
 }
 
 /// The aurora fleet, live.
@@ -155,10 +150,7 @@ fn nothing_shows_while_the_fleet_is_not_live() {
             .ship("aurora-lyra")
             .is_some()
     );
-    let empty = FleetLive {
-        state: FleetState::Followed(Link::Live),
-        snapshot: None,
-    };
+    let empty = FleetLive::new(FleetState::Followed(Link::Live), None);
     assert!(
         empty.ship("aurora-lyra").is_none(),
         "before the first event"
@@ -218,4 +210,41 @@ fn a_ship_whose_crew_cannot_be_read_says_so_and_counts_nothing() {
     );
     assert_eq!(ship::state_word(Activity::Running), Some("Working"));
     assert_eq!(ship::state_word(Activity::Unknown), None);
+}
+
+#[test]
+fn news_channels_does_not_draw_leaves_the_fleet_equal() {
+    // A busy fleet's activity lines and sample times must not re-sync the
+    // navigator, the search index and every open transcript.
+    let before = snapshot();
+    let mut after = snapshot();
+    after.activity.push_back(
+        serde_json::from_value(json!({"ship": "aurora-lyra", "member": "wren",
+            "kind": "phase", "text": "Wren started reviewing", "at": NOW}))
+        .unwrap(),
+    );
+    after
+        .ships
+        .get_mut("aurora-lyra")
+        .unwrap()
+        .detail_updated_at = Some(NOW);
+    let lyra = &mut after.overview.as_mut().unwrap().ships[0];
+    lyra.repository = Some("acme/nav".into());
+    let state = FleetState::Followed(Link::Live);
+    assert_eq!(
+        FleetLive::new(state.clone(), Some(&before)),
+        FleetLive::new(state.clone(), Some(&after))
+    );
+    // What it draws still counts: a crew member going idle.
+    let mut idle = snapshot();
+    idle.overview.as_mut().unwrap().ships[0]
+        .crew
+        .as_mut()
+        .unwrap()
+        .busy = 2;
+    idle.ships.remove("aurora-lyra");
+    assert_ne!(
+        FleetLive::new(state.clone(), Some(&before)),
+        FleetLive::new(state, Some(&idle))
+    );
 }

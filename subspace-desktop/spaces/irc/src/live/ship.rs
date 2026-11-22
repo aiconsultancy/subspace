@@ -63,6 +63,7 @@ impl ShipLive {
 
 /// The ship in `snapshot` whose captain has the roster nick `captain`,
 /// matched to its registration ID ignoring ASCII case.
+#[cfg(test)]
 pub(crate) fn of(snapshot: &FleetSnapshot, captain: &str) -> Option<ShipLive> {
     let ship = snapshot
         .overview

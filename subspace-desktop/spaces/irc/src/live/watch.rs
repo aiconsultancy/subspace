@@ -11,7 +11,6 @@
 //! why it shows what it showed before.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::rc::Rc;
 
 use gpui_kit::{App, Context, Entity, Subscription};
 use subspace_client_fleet::{FleetApi, FleetFollow, FleetState};
@@ -135,22 +134,22 @@ fn follow(
     }
 }
 
-/// What the service says of each shown fleet.
+/// What the service says of each shown fleet, reduced to what Channels
+/// draws ([`FleetLive::new`]).
 fn lives(fleets: &FleetApi, shown: &BTreeSet<String>) -> Lives {
     shown
         .iter()
         .map(|id| {
-            let live = FleetLive {
-                state: fleets.state(id),
-                snapshot: fleets.snapshot(id).map(Rc::new),
-            };
+            let snapshot = fleets.snapshot(id);
+            let live = FleetLive::new(fleets.state(id), snapshot.as_ref());
             (id.clone(), live)
         })
         .collect()
 }
 
 /// Gives the hub `lives` when they differ from what it holds, so the
-/// conversations and the navigator draw again only on news.
+/// conversations and the navigator draw again only on news they draw: a
+/// new activity line or sample time leaves `lives` equal.
 fn publish(board: &Irc, lives: Lives, cx: &mut Context<Irc>) {
     let Some(hub) = board.hub.clone() else {
         return;
