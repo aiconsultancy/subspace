@@ -35,6 +35,7 @@ pub fn init_file(file: Option<PathBuf>, cx: &mut App) {
         dirty: false,
     });
     crate::icon_button::initialize(cx);
+    crate::avatar::initialize_icons(cx);
 }
 
 pub fn get(cx: &App, key: &str) -> Option<String> {

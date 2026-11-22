@@ -14,9 +14,12 @@ use std::sync::Arc;
 mod agent;
 mod crew;
 mod external;
-pub use agent::{AgentAvatar, AgentRank, agent};
-pub use crew::{CrewMeter, MAX_DOTS as CREW_METER_MAX_DOTS, crew_meter};
+mod icons;
+pub use agent::{AgentAvatar, AgentRank, MARK_SIZE_PX, agent, agent_icon};
+pub use crew::{CrewMeter, MAX_DOTS as CREW_METER_MAX_DOTS, activity_dot, crew_meter};
 pub use external::{ExternalAvatar, external};
+pub(crate) use icons::initialize as initialize_icons;
+pub use icons::{AgentIcons, DEFAULT_AGENT_ICONS, PREFERENCE_KEY as AGENT_ICONS_KEY};
 
 const AVATAR_SIZE_PX: f32 = 24.0;
 /// A message sender's avatar: Kit's avatar sizes are pixel tiers, and 24 px

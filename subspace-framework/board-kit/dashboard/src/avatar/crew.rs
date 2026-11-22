@@ -51,8 +51,10 @@ impl CrewMeter {
     }
 }
 
-/// One dot: filled for a busy member, a hollow ring for an idle one.
-fn dot(busy: bool, tokens: &Tokens) -> AnyElement {
+/// One dot: filled green for a busy member, a hollow muted ring for an
+/// idle one. Also the one mark for a single yes-or-no activity, such as
+/// whether a ship is working or a person is here.
+pub fn activity_dot(busy: bool, tokens: &Tokens) -> AnyElement {
     let dot = div().size(px(DOT_PX)).flex_shrink_0().rounded_full();
     let dot = if busy {
         dot.bg(tokens.green)
@@ -74,7 +76,9 @@ fn content(meter: &CrewMeter, tokens: &Tokens) -> Vec<AnyElement> {
                 .into_any_element(),
         ];
     }
-    dots.into_iter().map(|busy| dot(busy, tokens)).collect()
+    dots.into_iter()
+        .map(|busy| activity_dot(busy, tokens))
+        .collect()
 }
 
 impl RenderOnce for CrewMeter {

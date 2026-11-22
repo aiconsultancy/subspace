@@ -102,7 +102,7 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "avatar::crew_meter",
         source: "board-kit/dashboard/src/avatar/crew.rs",
-        used_in: "How many of an agent's crew are busy; no Space uses it yet.",
+        used_in: "How many of an agent's crew are busy; its `activity_dot` is Channels' ship and presence dot.",
         samples: crew_meters,
         kit: None,
     },

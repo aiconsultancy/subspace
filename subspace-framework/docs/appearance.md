@@ -214,6 +214,26 @@ These dimensions follow the interface's relative scale. Changing the icon-button
 choice does not change the interface base font or visible button text size. The
 theme, interface zoom and display rounding determine the resolved dimensions.
 
+## Agent icons
+
+Open **Settings > Application > Appearance** and choose **Icons**: **Large**,
+**Small** or **Off**. It sets how fleet agents' and ships' icons show in
+Spaces. **Small** is the default (`avatar::DEFAULT_AGENT_ICONS`), and a state
+file without the choice reads as it. **Save** keeps the choice under
+`app.agent-icons` and applies it without a restart; **Cancel** leaves the
+saved choice unchanged.
+
+- **Large** draws each icon as its surface always has, such as the agent
+  avatar beside a ship in a list.
+- **Small** draws the same avatar at 12 px (`avatar::MARK_SIZE_PX`), the size
+  of a row's leading glyph, where that glyph would sit.
+- **Off** leaves the icon out, and the text beside it closes up.
+
+A Space reads the choice with `AgentIcons::current` and passes each agent
+avatar through the one helper, `avatar::agent_icon`, so every surface
+follows it the same way. People's initials, message authors' avatars and
+text role marks are not agent icons and do not change.
+
 ## Design a theme
 
 1. Open the theme designer and select a base theme. Solarized Light and Solarized Dark
