@@ -248,3 +248,54 @@ fn news_channels_does_not_draw_leaves_the_fleet_equal() {
         FleetLive::new(state, Some(&idle))
     );
 }
+
+#[test]
+fn a_kept_or_unavailable_crew_detail_never_shows_as_live() {
+    // Stargate keeps the last good detail after a failed read: no crew
+    // member shows on the task they were last seen on.
+    let mut kept = snapshot();
+    kept.ships.get_mut("aurora-lyra").unwrap().detail_stale = true;
+    let lyra = ship::of(&kept, "aurora-lyra").unwrap();
+    assert!(lyra.members.is_empty(), "no crew lines from a kept detail");
+    assert_eq!(lyra.crew, Some((3, 4)), "the overview's totals stand in");
+    // The overview says the ship is unavailable while its detail stays.
+    let mut down = snapshot();
+    let overview = down.overview.as_mut().unwrap();
+    overview.ships[0].available = false;
+    let lyra = ship::of(&down, "aurora-lyra").unwrap();
+    assert!(lyra.members.is_empty());
+    assert_eq!(lyra.crew, None);
+    assert!(lyra.unavailable.is_some());
+    // The detail itself says the ship is unavailable.
+    let mut detail_down = snapshot();
+    detail_down
+        .ships
+        .get_mut("aurora-lyra")
+        .unwrap()
+        .ship
+        .available = false;
+    assert!(
+        ship::of(&detail_down, "aurora-lyra")
+            .unwrap()
+            .members
+            .is_empty()
+    );
+    // A kept overview is not live at all.
+    let mut kept_overview = snapshot();
+    kept_overview.overview.as_mut().unwrap().overview_stale = true;
+    let fleet = FleetLive::new(FleetState::Followed(Link::Live), Some(&kept_overview));
+    assert!(fleet.ship("aurora-lyra").is_none());
+    assert!(fleet.ships(|_| true).is_none());
+}
+
+#[test]
+fn bidirectional_controls_are_stripped_from_untrusted_text() {
+    let name = "Ly\u{202E}ar\u{202C} \u{2067}x\u{2069}\u{200F}";
+    assert_eq!(bounded(name, MAX_NAME_CHARS), "Lyar x");
+    let mut detail = lyra_detail();
+    detail.crew_members[1].name = "\u{202E}nerW".into();
+    let mut snapshot = snapshot();
+    snapshot.ships.insert("aurora-lyra".into(), detail);
+    let ship = ship::of(&snapshot, "aurora-lyra").unwrap();
+    assert_eq!(ship.members[0].name, "nerW");
+}
