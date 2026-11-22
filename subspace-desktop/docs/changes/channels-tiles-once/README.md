@@ -175,7 +175,7 @@ channels. Every name, issue, repository and message is fictional. Steps:
 `wait:2000;click:75,187;wait:3000;shot:…` opens `#aurora-lyra` at its
 newest lines; `scroll:680,400,500;wait:1200;shot:…` shows its first ones.
 
-- **Loading**: the same with `CAPTURE_ITEM_DELAY=30`, a new capture
+- **Loading**: the same with `CAPTURE_ITEM_DELAY=20` (well under the GitHub client's read timeout), a new capture
   option that holds the GitHub fixture's single item reads, so
   `acme/vault#7`, which no list holds, stays `Pending`.
 - **Checks**: from the first lines, `click:800,315` opens pull request 492
