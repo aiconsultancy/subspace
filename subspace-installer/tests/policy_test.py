@@ -482,5 +482,87 @@ class StandardChannelTests(unittest.TestCase):
         self.assertEqual(len(validate(self.config, secrets)["irc"]["channels"]), 20)
 
 
+FIXTURE_JWT = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0.fixture"
+ADMIN_JWT = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJhZG1pbiJ9.admin"
+
+
+class AgentDispatchTests(unittest.TestCase):
+    """Stargate's agent dispatch: off by default, and on only where it can work."""
+
+    def setUp(self):
+        self.config = example_config()
+        self.config["api"] = {"url": "https://subspace.example.com"}
+        self.secrets = {**officer_secrets(), "apiToken": ADMIN_JWT}
+
+    def enable(self, **settings):
+        self.config["agentDispatch"] = {"enabled": True, **settings}
+        self.secrets["rearAdmiralApiToken"] = FIXTURE_JWT
+
+    def test_dispatch_is_off_by_default(self):
+        cfg = validate(self.config, self.secrets)
+        self.assertIsNone(cfg["agentDispatch"])
+        self.assertEqual(runtime.agent_dispatch_settings(cfg), (None, {}))
+        self.config["agentDispatch"] = {"enabled": False, "pollIntervalSeconds": 60}
+        self.assertIsNone(validate(self.config, self.secrets)["agentDispatch"])
+
+    def test_dispatch_block_uses_the_command_channel_and_stargate_defaults(self):
+        self.enable()
+        cfg = validate(self.config, self.secrets)
+        block, environment = runtime.agent_dispatch_settings(cfg)
+        self.assertEqual(block, {
+            "enabled": True, "fleet": "example-fleet",
+            "api": {"baseUrl": "https://subspace.example.com/api", "tokenEnv": "SUBSPACE_DISPATCH_TOKEN"},
+            "messaging": {"type": "irc", "registration": "atlas", "channel": "#example-fleet-command"},
+            "captainAccounts": {"orion": "example-orion", "Orion": "example-orion"},
+            "pollIntervalSeconds": 120, "answerTimeoutSeconds": 300,
+            "retryLadderSeconds": [3600, 10800, 21600, 43200],
+        })
+        self.assertEqual(block["messaging"]["channel"], standard_channels.command("example-fleet"))
+        # The block names the variable only; the token goes in the gateway's private environment.
+        self.assertNotIn(FIXTURE_JWT, json.dumps(block))
+        self.assertEqual(environment, {"SUBSPACE_DISPATCH_TOKEN": FIXTURE_JWT})
+
+    def test_timings_are_overridable_within_stargates_ranges(self):
+        self.enable(pollIntervalSeconds=30, answerTimeoutSeconds=600, retryLadderSeconds=[])
+        block, _ = runtime.agent_dispatch_settings(validate(self.config, self.secrets))
+        self.assertEqual((block["pollIntervalSeconds"], block["answerTimeoutSeconds"], block["retryLadderSeconds"]),
+                         (30, 600, []))
+        for key, value in (("pollIntervalSeconds", 29), ("pollIntervalSeconds", 3601), ("answerTimeoutSeconds", 59),
+                           ("retryLadderSeconds", [59]), ("retryLadderSeconds", [3600] * 11),
+                           ("pollIntervalSeconds", "120"), ("retryLadderSeconds", 3600)):
+            self.enable(**{key: value})
+            with self.subTest(key=key, value=value), self.assertRaisesRegex(Invalid, f"agentDispatch.{key}|{key}"):
+                validate(self.config, self.secrets)
+        self.config["agentDispatch"] = {"enabled": True, "channel": "#elsewhere"}
+        with self.assertRaisesRegex(Invalid, "unknown field"):
+            validate(self.config, self.secrets)
+
+    def test_what_cannot_work_is_refused(self):
+        self.enable()
+        no_api = json.loads(json.dumps(self.config))
+        del no_api["api"]
+        secrets = {key: value for key, value in self.secrets.items() if key != "apiToken"}
+        with self.assertRaisesRegex(Invalid, "no Subspace API registration"):
+            validate(no_api, secrets)
+        no_captains = json.loads(json.dumps(self.config))
+        no_captains["captains"] = []
+        with self.assertRaisesRegex(Invalid, "no captains"):
+            validate(no_captains, {**self.secrets, "ircPasswords": {"example-atlas": "fixture-password"}})
+        claude = json.loads(json.dumps(self.config))
+        claude["rearAdmiral"]["harness"] = {"type": "claude-sdk", "family": "claude"}
+        with self.assertRaisesRegex(Invalid, "rear admiral uses claude-sdk"):
+            validate(claude, self.secrets)
+        without_token = {key: value for key, value in self.secrets.items() if key != "rearAdmiralApiToken"}
+        with self.assertRaisesRegex(Invalid, "supply rearAdmiralApiToken"):
+            validate(self.config, without_token)
+        with self.assertRaisesRegex(Invalid, "not apiToken"):
+            validate(self.config, {**self.secrets, "rearAdmiralApiToken": ADMIN_JWT})
+        with self.assertRaisesRegex(Invalid, "Invalid rearAdmiralApiToken"):
+            validate(self.config, {**self.secrets, "rearAdmiralApiToken": "not a token"})
+        del self.config["agentDispatch"]
+        with self.assertRaisesRegex(Invalid, "only for agent dispatch"):
+            validate(self.config, self.secrets)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -41,6 +41,12 @@ REPOS = "ss-fleet-repos"
 MEDICAL = "ss-fleet-medical"
 SENTRY_TOKEN = ("medical", "sentry-auth-token")
 MEDICAL_IRC_PASSWORD = ("medical", "irc-password")
+# Stargate's agent dispatch defaults (docs/agent-dispatch.md), each overridable under agentDispatch.
+DISPATCH_DEFAULTS = {"pollIntervalSeconds": 120, "answerTimeoutSeconds": 300,
+                     "retryLadderSeconds": [3600, 10800, 21600, 43200]}
+# The gateway variable holding the rear admiral agent's API bearer; Stargate's configuration names only the variable.
+DISPATCH_TOKEN_ENV = "SUBSPACE_DISPATCH_TOKEN"
+JWT = r"[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+"
 FIREWALL = f"{PREFIX}firewall.service"
 TOOL_HOME = APP / "toolchains"
 TOOL_ENV = {"MISE_DATA_DIR": str(TOOL_HOME), "MISE_GLOBAL_CONFIG_FILE": str(ETC / "toolchains.toml"),
@@ -330,6 +336,42 @@ def api_config(value):
     return cfg
 
 
+def dispatch_seconds(value, label, low, high):
+    require(type(value) is int and low <= value <= high, f"{label} must be a whole number of seconds from {low} to {high}.")
+    return value
+
+
+def agent_dispatch_config(value, api, agents):
+    """Stargate's agent dispatch on the rear admiral's gateway, or None while it is off (the default).
+
+    Timings default to Stargate's own and use its ranges, so the generated block always passes its check.
+    """
+    value = fields(value, "agentDispatch", "enabled pollIntervalSeconds answerTimeoutSeconds retryLadderSeconds")
+    settings = {
+        "pollIntervalSeconds": dispatch_seconds(value.get("pollIntervalSeconds", DISPATCH_DEFAULTS["pollIntervalSeconds"]),
+                                                "agentDispatch.pollIntervalSeconds", 30, 3600),
+        "answerTimeoutSeconds": dispatch_seconds(value.get("answerTimeoutSeconds", DISPATCH_DEFAULTS["answerTimeoutSeconds"]),
+                                                 "agentDispatch.answerTimeoutSeconds", 60, 3600),
+    }
+    ladder = value.get("retryLadderSeconds", DISPATCH_DEFAULTS["retryLadderSeconds"])
+    require(isinstance(ladder, list) and len(ladder) <= 10,
+            "agentDispatch.retryLadderSeconds must be an array of at most 10 waits ([] means a single round).")
+    settings["retryLadderSeconds"] = [dispatch_seconds(wait, "Each agentDispatch.retryLadderSeconds entry", 60, 604800)
+                                      for wait in ladder]
+    if not boolean(value.get("enabled", False)):
+        return None
+    require(api is not None, "Agent dispatch is on, but this fleet has no Subspace API registration. The rear admiral's "
+            "gateway polls the API for issues: set api.url (with apiToken) or switch agentDispatch.enabled off.")
+    rear, captains = agents[0], agents[1:]
+    require(captains, "Agent dispatch is on, but the fleet has no captains to offer issues to. Add a captain or switch "
+            "agentDispatch.enabled off.")
+    require(rear["harness"]["type"] == "opencode",
+            "Agent dispatch is on, but the rear admiral uses claude-sdk. Dispatch runs in the rear admiral's gateway, "
+            "which for a Claude Agent SDK rear admiral runs as the rear admiral's own Linux user, so its model could read "
+            "the dispatcher's API token. Use an OpenCode rear admiral or switch agentDispatch.enabled off.")
+    return settings
+
+
 def harness_config(value, inherited):
     value = fields(value, "harness", "type model family permissions allowedTools")
     backend = pattern(value.get("type", inherited["type"]), r"opencode|claude-sdk", "harness type (opencode or claude-sdk)")
@@ -523,7 +565,7 @@ def history_password(irc, private):
 
 
 def validate(config, credentials, check_files=True):
-    cfg = fields(config, "fleet", "slug name rearAdmiral captains harness crew repositories stakeholders usage medical irc stargate dashboard proxy agentsview api operatorUsers toolchains maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
+    cfg = fields(config, "fleet", "slug name rearAdmiral captains harness crew repositories stakeholders usage medical irc stargate dashboard proxy agentsview api agentDispatch operatorUsers toolchains maintenance githubPolicy", ["slug", "name", "rearAdmiral", "captains", "irc"])
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     require(isinstance(cfg["captains"], list), "Captains must be an array.")
     officers = [member(person) for person in [cfg["rearAdmiral"], *cfg["captains"]]]
@@ -606,6 +648,7 @@ def validate(config, credentials, check_files=True):
         listeners += [irc["port"], irc["compose"]["tlsPort"], 8097]
     require(len(set(listeners)) == len(listeners), "Fleet listeners need distinct ports.")
     api = api_config(cfg["api"]) if "api" in cfg else None
+    dispatch = agent_dispatch_config(cfg.get("agentDispatch", {}), api, agents)
     operators = cfg.get("operatorUsers", [])
     require(isinstance(operators, list), "operatorUsers must be an array.")
     operators = [pattern(user, r"[a-z_][a-z0-9_-]{0,31}", "Linux operator username") for user in operators]
@@ -616,7 +659,7 @@ def validate(config, credentials, check_files=True):
             "githubPolicy.protectedBranches must be an array of branch patterns.")
     protected = [pattern(branch, r"[a-zA-Z0-9*?._/-]{1,120}", "GitHub protected branch pattern") for branch in protected]
 
-    private = fields(credentials, "secrets", "proxyKey ircPasswords ircOperatorPassword ircHistoryPassword apiToken", ["proxyKey", "ircPasswords"])
+    private = fields(credentials, "secrets", "proxyKey ircPasswords ircOperatorPassword ircHistoryPassword apiToken rearAdmiralApiToken", ["proxyKey", "ircPasswords"])
     proxy_key = pattern(private["proxyKey"], r"[a-zA-Z0-9_=-]{20,256}", "proxy client key")
     passwords = private["ircPasswords"]
     require(isinstance(passwords, dict), "ircPasswords must be an object.")
@@ -643,9 +686,21 @@ def validate(config, credentials, check_files=True):
             string(password, "IRC password", 256)
     token = private.get("apiToken", "")
     if api:
-        pattern(token, r"[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+", "API bearer JWT")
+        pattern(token, JWT, "API bearer JWT")
     else:
         require(token == "", "An API token requires API configuration.")
+    dispatch_token = private.get("rearAdmiralApiToken") or None
+    if dispatch:
+        require(dispatch_token is not None, "Agent dispatch is on: supply rearAdmiralApiToken in the secrets file, a "
+                "bearer token for the rear admiral's own Subspace API agent identity (rank rearAdmiral, in this fleet).")
+        require(isinstance(dispatch_token, str) and len(dispatch_token) <= 16384 and re.fullmatch(JWT, dispatch_token),
+                "Invalid rearAdmiralApiToken: expected a bearer JWT.")
+        # The dispatcher must act as the rear admiral; an administrator's token is refused by Stargate.
+        require(dispatch_token != token, "rearAdmiralApiToken must be the rear admiral agent's own token, not apiToken, "
+                "which belongs to an organisation administrator.")
+    else:
+        require(dispatch_token is None, "rearAdmiralApiToken is only for agent dispatch. Remove it, or switch "
+                "agentDispatch.enabled on.")
     require(not any(repo["private"] for repo in repositories.values()) or len(applications) == len(agents),
             "Private repositories require a distinct GitHub App for the rear admiral and every captain.")
     for person in agents:
@@ -661,6 +716,7 @@ def validate(config, credentials, check_files=True):
         "stargate": {**source({key: stargate[key] for key in ("repo", "ref") if key in stargate},
                               "Stargate source", STARGATE_REPO, STARGATE_REF), "api": stargate_api},
         "dashboard": dashboard, "agentsview": view, "api": api,
+        "agentDispatch": dispatch and {**dispatch, "token": dispatch_token},
         "proxy": {"port": proxy_port, "requestRetries": retries, "key": proxy_key},
         "passwords": passwords, "operatorPassword": operator_password, "token": token, "listeners": listeners,
         "historyPassword": history_password(irc, private),
@@ -1429,6 +1485,31 @@ def stakeholder_settings(cfg, tokens, backend, user, data, environment):
     return settings, writable
 
 
+def agent_dispatch_settings(cfg):
+    """Stargate's agentDispatch block for the rear admiral's gateway, and the environment it reads.
+
+    The block names only the token's variable; the token goes in the gateway's private runtime settings.
+    """
+    dispatch = cfg["agentDispatch"]
+    if not dispatch:
+        return None, {}
+    rear, captains = cfg["members"][0], cfg["members"][1:]
+    # The dispatcher finds captains in the API's fleet roster by agent name; an unlisted name is its own IRC
+    # account. Register each captain under its member ID or its name, and both map to its account here.
+    accounts = {}
+    for person in captains:
+        for name in (person["id"], person["name"]):
+            if re.fullmatch(r"[A-Za-z0-9-]{1,64}", name) and name != person["account"]:
+                accounts[name] = person["account"]
+    return {
+        "enabled": True, "fleet": cfg["slug"],
+        "api": {"baseUrl": cfg["api"]["url"], "tokenEnv": DISPATCH_TOKEN_ENV},
+        "messaging": {"type": "irc", "registration": rear["id"], "channel": cfg["irc"]["commandChannel"]},
+        "captainAccounts": accounts,
+        **{key: dispatch[key] for key in DISPATCH_DEFAULTS},
+    }, {DISPATCH_TOKEN_ENV: dispatch["token"]}
+
+
 def render(cfg, extra, prune=False):
     slug_path = STATE / "slug"
     if slug_path.exists():
@@ -1537,6 +1618,10 @@ def render(cfg, extra, prune=False):
             integrations, paths = stakeholder_settings(cfg, tokens, registrations[rear["id"]]["backend"], user, data, environment)
             settings.update(integrations)
             writable.extend(paths)
+            dispatch, dispatch_env = agent_dispatch_settings(cfg)
+            if dispatch:
+                settings["agentDispatch"] = dispatch
+                environment.update(dispatch_env)
             dashboard_socket = data / "dashboard.sock"
             dashboard_user = user
             if cfg["stargate"]["api"]:
@@ -1766,6 +1851,12 @@ def main(args):
             print(f"Standard IRC channels: {' '.join(cfg['irc']['channels'])} (Starbase, fleet command, then one "
                   "ship channel per captain)." + ("" if cfg["irc"]["mode"] == "local" else
                                                    " Register them on the IRC server before installing."))
+            if dispatch := cfg["agentDispatch"]:
+                print(f"Agent dispatch is on: the rear admiral checks {cfg['api']['url']} every "
+                      f"{dispatch['pollIntervalSeconds']} seconds as its own API agent and offers issues in "
+                      f"{cfg['irc']['commandChannel']}.")
+            else:
+                print("Agent dispatch is off.")
             if not cfg["repositories"] and len(cfg["members"]) > 1:
                 print("No repositories are configured, so captains have no crew: crew work in Git worktrees of "
                       "their captain's checkouts.")
