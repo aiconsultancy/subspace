@@ -7,6 +7,7 @@ use crate::model::{
 use crate::test_support;
 
 mod limits;
+mod review;
 
 fn network() -> NetworkId {
     NetworkId("local".into())

@@ -5,20 +5,12 @@ use super::{
 };
 use chrono::{DateTime, Utc};
 
+mod record;
+pub(super) use record::Record;
+use record::{incoming, merge, same};
+
 use crate::model::{Casemapping, Reaction, ReactionChange};
 use crate::reactions::agent_stop::is_agent_stop_reaction;
-
-/// The latest operation one person made with one reaction. `reactor.time`
-/// is when their current addition started, for display; `latest` is when
-/// their newest operation happened, for telling newer from older.
-#[derive(Debug)]
-pub(super) struct Record {
-    pub(super) reactor: Reactor,
-    latest: DateTime<Utc>,
-    /// `reactor.nick` folded with the network's case mapping.
-    pub(super) folded: String,
-    pub(super) added: bool,
-}
 
 #[derive(Debug)]
 pub(super) struct Group {
@@ -37,8 +29,9 @@ impl Group {
     }
 }
 
-/// Applies `reaction` to its group; whether anything changed.
-pub(super) fn record(groups: &mut Vec<Group>, reaction: &Reaction) -> bool {
+/// Applies `reaction` to its group; whether anything changed. `stamp` is
+/// the book's clock, newer than any record's.
+pub(super) fn record(groups: &mut Vec<Group>, reaction: &Reaction, stamp: u64) -> bool {
     let added = reaction.change == ReactionChange::Added;
     let index = groups
         .iter()
@@ -54,98 +47,78 @@ pub(super) fn record(groups: &mut Vec<Group>, reaction: &Reaction) -> bool {
             groups.len() - 1
         }
     };
-    let changed = upsert(&mut groups[index], reaction);
+    let can_show = can_show(groups, index);
+    let changed = upsert(
+        &mut groups[index],
+        incoming(reaction, stamp),
+        can_show,
+        reaction.casemapping,
+    );
     if groups[index].records.is_empty() {
         groups.remove(index);
     }
     changed
 }
 
-/// Whether a new group fits, dropping the oldest group that only remembers
-/// removals when every place is taken.
+/// Whether one more person may show in the group at `index`: below the
+/// people limit, and the group already shows or another group fits.
+fn can_show(groups: &[Group], index: usize) -> bool {
+    let shown_groups = groups.iter().filter(|group| group.shown() > 0).count();
+    let group = &groups[index];
+    group.shown() < MAX_REACTORS_PER_REACTION
+        && (group.shown() > 0 || shown_groups < MAX_REACTIONS_PER_MESSAGE)
+}
+
+/// Whether a new group fits. An addition that could not show is refused
+/// before anything is dropped; otherwise, when every place is taken, the
+/// group only remembering removals whose newest operation is oldest goes.
 fn room_for_group(groups: &mut Vec<Group>, added: bool) -> bool {
     let limit = MAX_REACTIONS_PER_MESSAGE;
-    if groups.len() >= limit * REMOVALS_FACTOR {
-        let oldest = groups
-            .iter()
-            .enumerate()
-            .filter(|(_, group)| group.shown() == 0)
-            .min_by_key(|(_, group)| group.latest())
-            .map(|(index, _)| index);
-        match oldest {
-            Some(index) => groups.remove(index),
-            None => return false,
-        };
-    }
     let shown = groups.iter().filter(|group| group.shown() > 0).count();
-    !added || shown < limit
+    if added && shown >= limit {
+        return false;
+    }
+    if groups.len() < limit * REMOVALS_FACTOR {
+        return true;
+    }
+    let oldest = groups
+        .iter()
+        .enumerate()
+        .filter(|(_, group)| group.shown() == 0)
+        .min_by_key(|(_, group)| group.latest())
+        .map(|(index, _)| index);
+    oldest.map(|index| groups.remove(index)).is_some()
 }
 
-/// Brings one person's record up to `reaction` unless it is older than
-/// what is held; whether anything changed.
-fn upsert(group: &mut Group, reaction: &Reaction) -> bool {
-    let incoming = Record {
-        reactor: Reactor {
-            nick: reaction.nick.clone(),
-            account: reaction.account.clone(),
-            own: reaction.own,
-            time: reaction.time,
-        },
-        latest: reaction.time,
-        folded: reaction.casemapping.fold(&reaction.nick),
-        added: reaction.change == ReactionChange::Added,
-    };
-    let mapping = reaction.casemapping;
-    match group
+/// Brings one person's record up to `incoming` unless it is older than
+/// what is held; whether anything changed. Of several records that match,
+/// the one that most recently took the nick is that person.
+fn upsert(group: &mut Group, incoming: Record, can_show: bool, mapping: Casemapping) -> bool {
+    let held = group
         .records
         .iter_mut()
-        .find(|held| same(held, &incoming, mapping))
-    {
-        Some(held) => merge(held, incoming),
-        None => insert(group, incoming),
+        .filter(|held| same(held, &incoming, mapping))
+        .max_by_key(|held| held.assigned);
+    match held {
+        Some(held) => merge(held, incoming, can_show),
+        None => insert(group, incoming, can_show),
     }
-}
-
-/// Another operation by someone already held. One older than their newest
-/// changes nothing, except that an older addition may move a shown
-/// person's place back to when they first reacted.
-fn merge(held: &mut Record, incoming: Record) -> bool {
-    let own = held.reactor.own || incoming.reactor.own;
-    let time = incoming.reactor.time;
-    let changed = match (held.added, incoming.added) {
-        (true, true) if time < held.reactor.time => {
-            held.reactor.time = time;
-            true
-        }
-        _ if time < held.latest => false,
-        (was, now) => {
-            held.latest = time;
-            if now && !was {
-                held.reactor.time = time;
-            }
-            held.added = now;
-            was != now
-        }
-    };
-    let marked = own != held.reactor.own;
-    held.reactor.own = own;
-    changed || marked
 }
 
 /// A new person: shown if there is room, a removal remembered if there is
-/// room for it, dropping the oldest remembered removal first.
-fn insert(group: &mut Group, incoming: Record) -> bool {
-    let limit = MAX_REACTORS_PER_REACTION;
-    if incoming.added && group.shown() >= limit {
+/// room for it, dropping the oldest remembered removal (by when it was
+/// removed) first.
+fn insert(group: &mut Group, incoming: Record, can_show: bool) -> bool {
+    if incoming.added && !can_show {
         return false;
     }
-    if group.records.len() >= limit * REMOVALS_FACTOR {
+    if group.records.len() >= MAX_REACTORS_PER_REACTION * REMOVALS_FACTOR {
         let oldest = group
             .records
             .iter()
             .enumerate()
             .filter(|(_, record)| !record.added)
-            .min_by_key(|(_, record)| record.reactor.time)
+            .min_by_key(|(_, record)| record.latest)
             .map(|(index, _)| index);
         match oldest {
             Some(index) => group.records.remove(index),
@@ -179,17 +152,4 @@ pub(super) fn summaries(groups: &[Group]) -> Vec<ReactionSummary> {
         .collect();
     shown.sort_by_key(|summary| summary.reactors.first().map(|reactor| reactor.time));
     shown
-}
-
-/// The same person: both ours, the same account when both are known, or
-/// the same nick when neither has an account.
-fn same(one: &Record, other: &Record, mapping: Casemapping) -> bool {
-    if one.reactor.own && other.reactor.own {
-        return true;
-    }
-    match (&one.reactor.account, &other.reactor.account) {
-        (Some(one), Some(other)) => mapping.fold(one) == mapping.fold(other),
-        (None, None) => one.folded == other.folded,
-        _ => false,
-    }
 }
