@@ -497,7 +497,10 @@ because IRC on their own VM is unreachable from the first fleet's API.
 shows. The desktop needs the first fleet's tunnel, which carries the API.
 Every fleet's tunnel uses the same local ports for its dashboard, AgentsView
 and Fleet API, so to look at another fleet's dashboard, stop the first fleet's
-tunnel and start that fleet's for a while.
+tunnel and start that fleet's for a while. For the same reason the API records
+the tunnel's Fleet API address, `http://127.0.0.1:8484`, for the first fleet
+only. Give a further fleet an HTTPS address with `--fleet-api-url` for the
+desktop to show its live state.
 
 The shared server and every fleet must reach each other over a private
 network such as a tailnet or a cloud virtual network, and the desktop must be
@@ -649,8 +652,10 @@ accounts in Ergo.
    manage, so install each further fleet with `--no-api` and the same
    `--irc remote` options and its own `--target`, then register it with the
    first fleet's API. The registration holds no secrets: the fleet's IRC
-   server, its standard channels, each captain's ship and channel, and each
-   officer's name, IRC nick, model and account subject.
+   server, its standard channels, each captain's ship and channel, each
+   officer's name, IRC nick, model and account subject, and the fleet's
+   Stargate Fleet API address if you gave it one with `--fleet-api-url` (its
+   tunnel's loopback address is the first fleet's, so it is never sent).
 
    ```sh
    ssh azureuser@fleet-two.example.ts.net sudo -n subspace-setup fleet-registration > fleet-two.json
@@ -947,7 +952,11 @@ does the same as `./install.sh providers`.
    installs the latest Stargate release (v0.40.1 or later), turns on its
    private Fleet API on the VM's loopback port 8484, and saves its token in
    `~/.subspace/targets/<target>/stargate-api.token`. The tunnel forwards the
-   port, so the **Stargate API address** is `http://127.0.0.1:8484`.
+   port, so the **Stargate API address** is `http://127.0.0.1:8484`. The
+   installer records that address in the Subspace API with the fleet, which
+   is where the desktop app learns it; the desktop app asks for the fleet's
+   token once and keeps it on your computer. The token is never stored in the
+   Subspace API.
    - Fleet Console is built into Subspace on macOS and Windows, with its
      permissions allowed, so there is nothing to install. On macOS the
      installer fills in its Stargate API address and token, even before the
@@ -958,7 +967,10 @@ does the same as `./install.sh providers`.
      above. For a copy you installed under another Board ID, add
      `--fleet-console <id>`.
    - Through Tailscale or Cloudflare instead of the tunnel, use that HTTPS
-     address. The token is still required, and stays on your computer.
+     address, and record it with the fleet by running the install command
+     again with `--fleet-api-url https://fleet.example.ts.net:8484` (your own
+     address; `--fleet-api-url tunnel` goes back to the tunnel's). The token is
+     still required, and stays on your computer.
 
 Open the dashboard at <http://127.0.0.1:8070> and AgentsView at
 <http://127.0.0.1:8080> while the tunnel runs. They show prompts and code, so

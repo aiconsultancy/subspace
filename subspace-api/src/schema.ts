@@ -50,6 +50,7 @@ export const fleets = pgTable(
     ircWebsocketUrl: text("irc_websocket_url"),
     starbaseChannel: text("starbase_channel"),
     commandChannel: text("command_channel"),
+    fleetApiUrl: text("fleet_api_url"),
     legacyRearAdmiralName: text("rear_admiral_name"),
     legacyCaptainNames: jsonb("captain_names").$type<readonly string[]>(),
     vmHost: text("vm_host"),

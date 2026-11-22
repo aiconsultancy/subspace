@@ -180,6 +180,20 @@ characters, so the desktop joins each as one channel. The
 fleet's `agents` repeat each linked ship's channel as `shipChannel`. An
 initiative's `channels` are its own channels beyond its fleet's standard ones.
 
+A fleet also records `fleetApiUrl`, the address at which a desktop reaches
+the fleet's Stargate Fleet API to show its live state. The fleet installer
+sends it when it registers the fleet. It is an absolute `https` URL on any
+host, or `http` only on `localhost`, `127.0.0.1` or `[::1]`, such as the local
+end of an SSH tunnel. It carries no credentials, query or fragment and is at
+most 2,048 characters. The API stores it with a lower-case scheme and host and
+no trailing slash. It is optional on create; an edit that leaves it out keeps
+it, and `null` clears it. Like the fleet's other fields, only a human
+organisation administrator can set it, never an agent, because the desktop
+sends the fleet's token to that address. The token itself is never stored in or
+returned by this API: the desktop app asks for the fleet's token once and keeps
+it on the user's own machine. Fleet responses, including the fleet embedded in
+initiative responses, report it.
+
 Each agent may record `ircNick`, its nick on the fleet's IRC server, which
 fleet IRC servers tie to the account of the same name. Desktop clients mark an
 agent's rank in IRC only by this nick, never by its name. A nick starts with a

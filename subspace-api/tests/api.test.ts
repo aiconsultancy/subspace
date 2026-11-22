@@ -60,6 +60,7 @@ type Item = { id: string; name: string; version: number };
 type Page<T> = { items: T[]; nextCursor: string | null };
 type Fleet = Item & {
   slug: string;
+  fleetApiUrl: string | null;
   irc: { host: string; port: number; tls: boolean; websocketUrl: string | null };
 };
 type Issue = Item & { identifier: string; title: string; state: { id: string; type: string } };
@@ -141,10 +142,32 @@ describe.skipIf(!baseUrl)("desktop API against Compose PostgreSQL", () => {
       (await json<Page<Fleet>>(200, "/fleets", ordinary)).items.some(({ id }) => id === fleet.id),
     ).toBe(true);
     expect((await json<Fleet>(200, "/fleets/example", admin)).id).toBe(fleet.id);
+    expect(fleet.fleetApiUrl).toBeNull();
     expect(
       (await json<Fleet>(200, `/fleets/${fleet.id}`, admin, "PATCH", { vmHost: "vm.example.com" }))
         .id,
     ).toBe(fleet.id);
+    for (const fleetApiUrl of [
+      "http://fleet.example.com:7400",
+      "https://operator@fleet.example.com",
+      "https://fleet.example.com/?token=x",
+    ])
+      await json(400, `/fleets/${fleet.id}`, admin, "PATCH", { fleetApiUrl });
+    await json(403, `/fleets/${fleet.id}`, ordinary, "PATCH", {
+      fleetApiUrl: "https://elsewhere.example.com",
+    });
+    const pointed = await json<Fleet>(200, `/fleets/${fleet.id}`, admin, "PATCH", {
+      fleetApiUrl: "HTTPS://Fleet.Example.com/",
+    });
+    expect(pointed.fleetApiUrl).toBe("https://fleet.example.com");
+    const unchanged = await json<Fleet>(200, `/fleets/${fleet.id}`, admin, "PATCH", {
+      fleetApiUrl: "https://fleet.example.com",
+    });
+    expect(unchanged.version).toBe(pointed.version);
+    expect(
+      (await json<Fleet>(200, `/fleets/${fleet.id}`, admin, "PATCH", { name: "Example Fleet" }))
+        .fleetApiUrl,
+    ).toBe("https://fleet.example.com");
     await json(409, "/fleets", admin, "POST", data);
     await json(404, `/fleets/${fleet.id}`, other);
     await json(404, `/initiatives/${initiativeId}/fleet`, other, "PUT", { fleetId: fleet.id });
@@ -162,6 +185,20 @@ describe.skipIf(!baseUrl)("desktop API against Compose PostgreSQL", () => {
     expect(result.fleetId).toBe(fleet.id);
     const mine = await json<Page<{ fleet: Fleet }>>(200, "/me/initiatives", admin);
     expect(mine.items[0]?.fleet.id).toBe(fleet.id);
+    expect(mine.items[0]?.fleet.fleetApiUrl).toBe("https://fleet.example.com");
+    const cleared = await json<Fleet>(200, `/fleets/${fleet.id}`, admin, "PATCH", {
+      fleetApiUrl: null,
+    });
+    expect(cleared.fleetApiUrl).toBeNull();
+    expect(
+      (
+        await json<Fleet>(201, "/fleets", admin, "POST", {
+          ...data,
+          slug: "example-loopback",
+          fleetApiUrl: "http://127.0.0.1:7400/",
+        })
+      ).fleetApiUrl,
+    ).toBe("http://127.0.0.1:7400");
     const unassigned = await json<{ fleetId: null }>(
       200,
       `/initiatives/${initiativeId}/fleet`,

@@ -25,6 +25,49 @@ export const IrcChannel = Schema.String.check(
   Schema.isMaxLength(64),
   Schema.isPattern(/^#[^\p{White_Space}\p{Cc},:]+$/u),
 );
+/** Hosts a plain-`http` Fleet API address may name: only this machine. */
+const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const fleetApiUrlShape = /^[Hh][Tt][Tt][Pp][Ss]?:\/\/[^\s/?#@\\]+(?:\/[^\s?#\\]*)?$/u;
+const fleetApiUrlLimit = 2048;
+/**
+ * Returns a Fleet API address in its stored form, or undefined when it is not
+ * one. An address is an absolute `https` URL on any host, or `http` only on
+ * loopback, with no credentials, query or fragment. The stored form has a
+ * lower-case scheme and host and no trailing slash.
+ */
+export function normaliseFleetApiUrl(value: string): string | undefined {
+  if (!fleetApiUrlShape.test(value)) return undefined;
+  if (Array.from(value).some((c) => c.charCodeAt(0) < 33 || c.charCodeAt(0) === 127))
+    return undefined;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return undefined;
+  }
+  if (url.username || url.password || url.search || url.hash || !url.hostname) return undefined;
+  const plainLoopback = url.protocol === "http:" && loopbackHosts.has(url.hostname);
+  if (url.protocol !== "https:" && !plainLoopback) return undefined;
+  const normalised = `${url.origin}${url.pathname}`.replace(/\/+$/u, "");
+  return normalised.length <= fleetApiUrlLimit ? normalised : undefined;
+}
+/**
+ * The address of a fleet's Stargate Fleet API, which the desktop reads for the
+ * fleet's live state. The desktop sends the fleet's token there, so plain
+ * `http` is accepted only on loopback, such as the SSH tunnel's local end.
+ */
+export const FleetApiUrl = Schema.String.check(
+  Schema.isMaxLength(fleetApiUrlLimit),
+  Schema.isPattern(fleetApiUrlShape),
+  Schema.makeFilter((value) => normaliseFleetApiUrl(value) !== undefined, {
+    expected:
+      "an absolute https URL, or http on localhost, 127.0.0.1 or [::1], without credentials, query or fragment",
+  }),
+);
+const normaliseFields = <T extends { fleetApiUrl?: string | null }>(fields: T): T =>
+  typeof fields.fleetApiUrl === "string"
+    ? { ...fields, fleetApiUrl: normaliseFleetApiUrl(fields.fleetApiUrl) ?? fields.fleetApiUrl }
+    : fields;
 const editable = {
   slug: Slug.check(Schema.makeFilter((slug) => !isUuid(slug), { expected: "a slug, not a UUID" })),
   name: Name,
@@ -35,6 +78,7 @@ const editable = {
   vmHost: Schema.optional(Schema.NullOr(Host)),
   starbaseChannel: Schema.optional(Schema.NullOr(IrcChannel)),
   commandChannel: Schema.optional(Schema.NullOr(IrcChannel)),
+  fleetApiUrl: Schema.optional(Schema.NullOr(FleetApiUrl)),
 };
 export const CreateFleet = Schema.Struct(editable).annotate({
   parseOptions: { onExcessProperty: "error" },
@@ -49,6 +93,7 @@ export const UpdateFleet = Schema.Struct({
   vmHost: editable.vmHost,
   starbaseChannel: editable.starbaseChannel,
   commandChannel: editable.commandChannel,
+  fleetApiUrl: editable.fleetApiUrl,
   version: Schema.optional(Version),
 });
 export const ShipName = Line(64);
@@ -89,6 +134,7 @@ export const Fleet = Schema.Struct({
   vmHost: Schema.NullOr(Host),
   starbaseChannel: Schema.NullOr(Schema.String),
   commandChannel: Schema.NullOr(Schema.String),
+  fleetApiUrl: Schema.NullOr(Schema.String),
   rearAdmiralName: Schema.NullOr(Schema.String),
   captainNames: Schema.Array(Schema.String),
   irc: Schema.Struct({
@@ -188,6 +234,7 @@ export function loadFleetDtos(db: Db, organisationId: string, rows: FleetRow[]) 
             vmHost: row.vmHost,
             starbaseChannel: row.starbaseChannel,
             commandChannel: row.commandChannel,
+            fleetApiUrl: row.fleetApiUrl,
             rearAdmiralName: roster.find(({ rank }) => rank === "rearAdmiral")?.name ?? null,
             captainNames: roster.filter(({ rank }) => rank === "captain").map(({ name }) => name),
             irc: {
@@ -304,7 +351,7 @@ export const createFleet = (member: Member, payload: typeof CreateFleet.Type) =>
       Effect.gen(function* () {
         const [row] = yield* tx
           .insert(fleets)
-          .values({ ...payload, organisationId: member.organisationId })
+          .values({ ...normaliseFields(payload), organisationId: member.organisationId })
           .onConflictDoNothing({ target: [fleets.organisationId, fleets.slug] })
           .returning();
         if (!row) return yield* Effect.fail(problem(409, duplicateFleet));
@@ -323,7 +370,8 @@ export const updateFleet = (member: Member, reference: string, payload: typeof U
   Effect.gen(function* () {
     if (member.role !== "admin" || member.agentRank)
       return yield* Effect.fail(problem(403, "Fleet changes require organisation admin access."));
-    const { version, ...fields } = payload;
+    const { version, ...given } = payload;
+    const fields = normaliseFields(given);
     if (!Object.keys(fields).length)
       return yield* Effect.fail(validationProblem("fleet", "Supply at least one fleet field."));
     const db = yield* Database;

@@ -170,7 +170,8 @@ class Subspace:
                     raise Refusal(409, "A fleet already has that slug.")
                 for key in ("starbaseChannel", "commandChannel"):
                     self.channel(body.get(key))
-                fleet = {"id": self.identity(body["slug"]), "version": 1, **body}
+                fleet = {"id": self.identity(body["slug"]), "version": 1, **body,
+                         "fleetApiUrl": self.fleet_api_url(body.get("fleetApiUrl"))}
                 self.fleets[fleet["id"]] = fleet
                 return dict(fleet)
             case "PATCH", ["fleets", reference]:
@@ -178,6 +179,8 @@ class Subspace:
                 fleet = self.fleet_by(reference) or self.missing()
                 for key in ("starbaseChannel", "commandChannel"):
                     self.channel(body.get(key, fleet.get(key)))
+                if "fleetApiUrl" in body:
+                    body = {**body, "fleetApiUrl": self.fleet_api_url(body["fleetApiUrl"])}
                 fleet.update(body, version=fleet["version"] + 1)
                 return dict(fleet)
             case "GET", ["agents"]:
@@ -245,6 +248,20 @@ class Subspace:
     def channel(self, value):
         if value is not None and not re.fullmatch(self.CHANNEL, value):
             raise Refusal(400, "Invalid channel.")
+
+    @staticmethod
+    def fleet_api_url(value):
+        """The API's stored form of a Fleet API address: https anywhere, http only on loopback, no credentials,
+        query or fragment; lower-case scheme and host, no default port, no trailing slash."""
+        if value is None:
+            return None
+        parts = urlsplit(value)
+        scheme, host = parts.scheme.lower(), parts.hostname
+        if (not host or scheme not in ("http", "https") or parts.username is not None or "?" in value or "#" in value
+                or (scheme == "http" and host not in ("localhost", "127.0.0.1", "::1"))):
+            raise Refusal(400, "Invalid fleetApiUrl.")
+        port = "" if parts.port in (None, {"https": 443, "http": 80}[scheme]) else f":{parts.port}"
+        return f"{scheme}://{f'[{host}]' if ':' in host else host}{port}{parts.path}".rstrip("/")
 
     def versioned(self, row, body):
         if body.get("version") is not None and body["version"] != row["version"]:

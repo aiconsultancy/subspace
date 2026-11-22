@@ -234,6 +234,8 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual([(row["ship"], row["channel"], row["ircNick"]) for row in registration["captains"]],
                          [("Lyra", "#fleet-two-lyra", "fleet-two-lyra"), ("Vega", "#fleet-two-vega", "fleet-two-vega")])
         self.assertNotIn("Password", fleet_setup.json.dumps(registration))
+        # Its Fleet API is off, so the bundle says it has no address.
+        self.assertIsNone(registration["fleetApiUrl"])
         # The first fleet's VM registers it, with its initiative, and a re-run changes nothing.
         fleet_setup.write_json(fleet_setup.INPUTS / "answers.json", {"api": True, "slug": "fleet-one", "initiativeId": "own"})
         (fleet_setup.INPUTS / "api.env").write_text("AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\n")
@@ -262,6 +264,10 @@ class SetupInputsTests(unittest.TestCase):
             {**registration, "captains": [captain, captain]},
             {**registration, "rearAdmiral": {**registration["rearAdmiral"], "name": "Rear Admiral Nova"}},
             {**registration, "rearAdmiral": {**registration["rearAdmiral"], "ircNick": "9nova"}},
+            {**registration, "fleetApiUrl": "http://fleet-two.example.com:8484"},
+            {**registration, "fleetApiUrl": "https://operator@fleet-two.example.com"},
+            # The desktop's loopback ports carry the first fleet's tunnel.
+            {**registration, "fleetApiUrl": "http://127.0.0.1:8484"},
             # A registration from an older installer, with names but no records, is refused.
             {**{key: value for key, value in registration.items() if key not in ("rearAdmiral", "captains")},
              "rearAdmiralName": "Nova", "captainNames": ["Lyra"]},
@@ -271,6 +277,64 @@ class SetupInputsTests(unittest.TestCase):
                 with self.assertRaises(fleet_setup.SetupError):
                     fleet_setup.register_fleet(value)
                 token.assert_not_called()
+
+    def test_further_fleet_registration_carries_only_a_fleet_api_address_it_knows(self):
+        argv = ["--name", "Fleet Two", "--rear-admiral", "Nova", "--captains", "Lyra",
+                "--irc", "remote", "--irc-host", "irc.example.com", "--no-api"]
+        fleet_setup.write_json(fleet_setup.INPUTS / "api.env", {})
+        (fleet_setup.INPUTS / "api.env").write_text("AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\n")
+
+        def bundle(extra):
+            answers, _, config, secrets, _ = self.generate(argv + extra, stargate_api=True)
+            fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+            fleet_setup.write_json(fleet_setup.INPUTS / "fleet.secrets.json", secrets)
+            return fleet_setup.fleet_registration(answers)
+
+        # Without an address of its own, the bundle leaves it out: the tunnel's loopback end is the first fleet's.
+        self.assertNotIn("fleetApiUrl", bundle([]))
+        registration = bundle(["--fleet-api-url", "HTTPS://Fleet-Two.Example.ts.net/"])
+        self.assertEqual(registration["fleetApiUrl"], "https://fleet-two.example.ts.net")
+        fleet_setup.write_json(fleet_setup.INPUTS / "answers.json", {"api": True, "slug": "fleet-one", "initiativeId": "own"})
+        api = fixture.Subspace()
+        with fake_api(api), patch.object(fleet_setup, "api_token", return_value="admin"):
+            fleet_setup.register_fleet(registration)
+            writes = len(api.writes)
+            fleet_setup.register_fleet(registration)
+            self.assertEqual(len(api.writes), writes, "a re-run changes nothing")
+            self.assertEqual(api.fleet_by("fleet-two")["fleetApiUrl"], "https://fleet-two.example.ts.net")
+            # A bundle without one keeps what the API has; one from a fleet whose Fleet API is off clears it.
+            fleet_setup.register_fleet({key: value for key, value in registration.items() if key != "fleetApiUrl"})
+            self.assertEqual(len(api.writes), writes)
+            fleet_setup.register_fleet({**registration, "fleetApiUrl": None})
+            self.assertIsNone(api.fleet_by("fleet-two")["fleetApiUrl"])
+
+    def test_the_fleet_api_address_is_the_tunnel_s_end_unless_given(self):
+        api_block = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"]}
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        api = fixture.Subspace()
+        for extra, stargate_api, address in (
+                ([], True, "http://127.0.0.1:8484"),
+                (["--fleet-api-url", "https://fleet.example.ts.net:8484/"], True, "https://fleet.example.ts.net:8484"),
+                (["--fleet-api-url", "tunnel"], True, "http://127.0.0.1:8484"),
+                (["--fleet-api-url", "https://fleet.example.ts.net:8484/"], False, None)):
+            _, _, config, secrets, _ = self.generate(argv + extra, api_block, stargate_api)
+            with self.subTest(extra=extra, stargate_api=stargate_api), fake_api(api):
+                fleet_setup.register_own("admin", config, secrets)
+                writes = len(api.writes)
+                fleet_setup.register_own("admin", config, secrets)
+                self.assertEqual(len(api.writes), writes, "a re-run changes nothing")
+                self.assertEqual(api.fleet_by("example-fleet")["fleetApiUrl"], address)
+        # A later run keeps the saved answer; 'tunnel' goes back to the tunnel's end.
+        saved = {"fleetApiUrl": "https://fleet.example.ts.net"}
+        self.assertEqual(fleet_setup.gather(fleet_setup.parse_args(["--non-interactive", *argv]), saved)["fleetApiUrl"],
+                         "https://fleet.example.ts.net")
+        self.assertNotIn("fleetApiUrl", fleet_setup.gather(
+            fleet_setup.parse_args(["--non-interactive", *argv, "--fleet-api-url", "tunnel"]), saved))
+        for extra in (["--fleet-api-url", "http://fleet.example.ts.net:8484"],
+                      ["--fleet-api-url", "https://fleet.example.ts.net/?token=x"],
+                      ["--fleet-api-url", "https://fleet.example.ts.net", "--stargate-api", "off"]):
+            with self.subTest(extra=extra), self.assertRaises(fleet_setup.SetupError):
+                answers_for(argv + extra)
 
     def test_setup_registers_the_fleet_its_ships_and_officers_without_dispatch(self):
         api_block = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"]}

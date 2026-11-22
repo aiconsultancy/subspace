@@ -57,12 +57,15 @@ def register(cfg):
     if not cfg["api"]:
         return
     api = Api(cfg)
+    fields = fleet_records.fleet_fields(cfg)
     try:
-        fleet = fleet_records.register(api.request, fleet_records.fleet_fields(cfg), fleet_records.roster(cfg))
+        fleet = fleet_records.register(api.request, fields, fleet_records.roster(cfg))
     except fleet_records.Refused as error:
         raise Invalid(str(error)) from None
     fleet_id = pattern(fleet.get("id"), UUID, "API fleet UUID")
     print(f"Fleet {cfg['slug']} registered as {fleet_id}, with its standard channels, ships and officers.")
+    if fields["fleetApiUrl"]:
+        print(f"Desktops reach its Stargate Fleet API at {fields['fleetApiUrl']}; the desktop app asks for its token once.")
     for initiative in cfg["api"]["initiatives"]:
         current = api.request("GET", f"/initiatives/{initiative}")
         if current.get("fleetId") != fleet_id:
