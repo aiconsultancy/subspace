@@ -22,6 +22,7 @@ use super::{KEY, mount, seed};
 use crate::Github;
 
 mod checks;
+mod newer;
 mod privacy;
 mod refresh;
 
