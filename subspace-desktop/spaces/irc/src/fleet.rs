@@ -108,8 +108,9 @@ pub(crate) struct Roster {
 impl Roster {
     /// The roles of `fleets`, the fleets whose IRC server the network is.
     /// Pass none for a network that serves no fleet.
+    /// A fleet that several initiatives share counts once.
     pub(crate) fn new<'a>(fleets: impl IntoIterator<Item = &'a Fleet>) -> Self {
-        let (agents, channels) = fleets.into_iter().map(Names::of).fold(
+        let (agents, channels) = distinct(fleets).into_iter().map(Names::of).fold(
             (Vec::new(), Vec::new()),
             |(mut agents, mut channels), names| {
                 agents.extend(names.agents);
@@ -224,6 +225,16 @@ fn recorded_or(recorded: Option<&str>, slug: Option<&str>, role: &str) -> Option
     recorded
         .map(str::to_owned)
         .or_else(|| slug.map(|slug| format!("#{slug}-{role}")))
+}
+
+/// `fleets` with each fleet once, by its id, in their first order: two
+/// initiatives of one fleet bring the same fleet twice, which is no clash.
+fn distinct<'a>(fleets: impl IntoIterator<Item = &'a Fleet>) -> Vec<&'a Fleet> {
+    let mut seen = std::collections::HashSet::new();
+    fleets
+        .into_iter()
+        .filter(|fleet| seen.insert(fleet.id.as_str()))
+        .collect()
 }
 
 /// The entry named `name`, ignoring ASCII case.

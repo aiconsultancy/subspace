@@ -412,6 +412,34 @@ mod tests {
     }
 
     #[test]
+    fn two_initiatives_of_one_fleet_give_its_roles_once() {
+        let fleet = serde_json::json!({
+            "id": "aurora", "slug": "aurora", "ircHost": "irc.example.com", "ircPort": 6697,
+            "ircTls": true,
+            "agents": [{"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra"}]
+        });
+        let initiatives: Vec<subspace_api_client::model::MemberInitiative> =
+            serde_json::from_value(serde_json::json!([
+                {"id": "one", "name": "One", "channels": "", "fleetId": "aurora", "fleet": fleet},
+                {"id": "two", "name": "Two", "channels": "", "fleetId": "aurora", "fleet": fleet}
+            ]))
+            .unwrap();
+        let mut network = config();
+        network.host = "irc.example.com".into();
+        network.port = 6697;
+        network.tls = true;
+        let networks = [network.clone()];
+        let fleets = super::fleets_on(&initiatives, &networks, &network.id, false);
+        assert_eq!(fleets.len(), 2, "one per initiative");
+        let roster = crate::fleet::Roster::new(fleets);
+        assert_eq!(
+            roster.rank("aurora-lyra"),
+            Some(crate::fleet::Rank::Captain),
+            "the shared fleet is no clash with itself"
+        );
+    }
+
+    #[test]
     fn only_channel_tokens_are_used_in_their_original_order() {
         assert_eq!(
             channel_names(

@@ -235,3 +235,16 @@ fn ranks_have_their_marks_tones_and_avatars() {
     assert_eq!(Rank::Crew.mark(), "CREW");
     assert_eq!(Rank::RearAdmiral.note(), "rear admiral");
 }
+
+#[test]
+fn a_fleet_that_two_initiatives_share_keeps_its_roles() {
+    let (one, two) = (aurora(), aurora());
+    let roster = Roster::new([&one, &two]);
+    assert_eq!(roster.rank("aurora-lyra"), Some(Rank::Captain));
+    assert_eq!(roster.rank("aurora-admiral"), Some(Rank::RearAdmiral));
+    assert_eq!(
+        roster.channel("#aurora-starbase"),
+        Some(&ChannelKind::Starbase)
+    );
+    assert_eq!(roster.channel("#aurora-lyra").cloned(), ship("aurora-lyra"));
+}
