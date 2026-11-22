@@ -9504,6 +9504,7 @@ dependencies = [
  "serde_json",
  "subspace-actions-board",
  "subspace-api-client",
+ "subspace-client-fleet",
  "subspace-decisions-board",
  "subspace-descriptor",
  "subspace-framework",
@@ -9650,6 +9651,26 @@ dependencies = [
  "subspace-core",
  "subspace-dashboard",
  "subspace-lucide",
+]
+
+[[package]]
+name = "subspace-client-fleet"
+version = "0.12.1"
+dependencies = [
+ "gpui-kit",
+ "rand 0.10.3",
+ "reqwest",
+ "rustls",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "subspace-api-client",
+ "subspace-framework",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "ureq",
+ "url",
 ]
 
 [[package]]
@@ -10129,6 +10150,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "subspace-client-fleet",
  "subspace-framework",
  "tempfile",
  "url",

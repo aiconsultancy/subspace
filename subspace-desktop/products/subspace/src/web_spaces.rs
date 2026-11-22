@@ -10,7 +10,7 @@ include!(concat!(env!("OUT_DIR"), "/web_spaces.rs"));
 
 /// Fleet Console, under the board ID the installers and docs name.
 pub(crate) const FLEET_CONSOLE: BuiltIn = BuiltIn {
-    id: "fleet-console",
+    id: subspace_web_board::builtin::FLEET_CONSOLE_ID,
     title: "Fleet Console",
     files: FLEET_CONSOLE_FILES,
 };
