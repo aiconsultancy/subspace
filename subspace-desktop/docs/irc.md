@@ -36,6 +36,67 @@ message history and manually joined channels.
 
 See the [change record](changes/subspace-api-accounts/README.md).
 
+## Fleet roles
+
+Channels reads fleet roles from the same memberships (`fleet.rs`). A
+connection carries a fleet's roles when it is the one an initiative of that
+fleet would use, by the rule above; any other connection, such as a
+local-only one, has none. A fleet that several initiatives share counts once,
+by its id. The hub builds each network's `Roster` once and forgets it when
+the catalogue or the configured networks change.
+
+An agent's rank comes from the Subspace API, never from its name. The
+fleet's `agents` give each agent's `rank` (`rearAdmiral`, `captain` or
+`crew`) and, when the API knows it, its `ircNick`, which fleet IRC servers
+tie to the account of the same name. An agent without a known nick is not
+marked. A sender, member or completion row has a rank only when its server
+account equals that nick, ignoring ASCII case (`Roster::verified`), the same
+rule as request status trust; a missing account is unknown. Nicks and
+channels compare ignoring ASCII case, as Ergo's `ascii` casemapping does.
+
+The fleet's channels come from its record: `starbaseChannel`,
+`commandChannel` and each ship's `channel` (repeated on its captain as
+`shipChannel`). Without a record the standard names stand in:
+`#<slug>-starbase`, `#<slug>-command` and, for a captain, `#<nick>` (the
+installer names a captain's nick and ship channel both `<slug>-<id>`). A
+crew member talks in its captain's ship channel and the rear admiral in the
+Starbase. An initiative joins its fleet's recorded channels, then its own
+(`initiative_channels`); a guessed standard name is never joined.
+
+Nothing is guessed. A nick or channel that two roles claim, such as the rear
+admiral and a captain with one nick, or a ship whose channel is the
+Starbase's, is unknown and draws as a plain person or channel, and a ship
+channel whose captain is unknown is a plain channel.
+
+- **Transcript.** A captain or the rear admiral has the shared agent avatar
+  (`avatar::agent`) in the gutter and a name in blue or the accent, followed
+  by a `CAPTAIN` or `REAR ADMIRAL` pill (`badge::Pill::hue`) in the same tone,
+  named *captain* or *rear admiral*. Crew keep a person's avatar and tone
+  and a muted `CREW` pill.
+- **Members and completion.** The member list shows the small agent avatar
+  and its note, and the `@` completion row's trailing mark, says `captain`,
+  `rear admiral` or `crew`.
+- **Heading.** A ship's channel leads with its captain's small agent avatar,
+  the Starbase and the command channel with a glyph, and a ship's channel
+  shows its captain's status (see [Design](#design)).
+
+### Direct messages are for people only
+
+All communication with a fleet's agents happens in channels, where everyone
+can see it (an owner decision). When a private conversation would start with
+a nick the roster knows as an agent (the member list, a nick reference, a
+notification for a closed conversation, `/msg`, `/query`, `/notice`, or text
+and `/me` in an older private conversation), Channels opens and sends
+nothing and shows a notice above the composer (`compose/agents.rs`) naming
+the agent's channel, with **Go to** that channel and **Dismiss**. An older
+private conversation with an agent stays readable. This is a client-side
+rule: the server still delivers a private message sent another way. Stargate
+answers one unless its registration sets `dmPolicy: "redirect"`, which makes
+every connection answer a direct message with a notice pointing to its
+first channel and start no turn.
+
+See the [change record](changes/channels-fleet-roles/README.md).
+
 
 ## Configuration
 
@@ -323,7 +384,7 @@ Unread and notification behaviour are unchanged in this slice. See the
 [count change record](changes/irc-reply-count/README.md).
 
 **Join…** is available only while the selected network is connected; its
-tooltip says why otherwise. Commands that need the server while a network is
+menu entry says why otherwise. Commands that need the server while a network is
 disconnected or still connecting (input, joins, leaving a channel) leave a
 **Not connected** error line instead of being dropped. Your user modes read as
 `Your user modes are +Zi` (`RPL_UMODEIS`) or `Your user modes changed: +w`.
@@ -443,7 +504,8 @@ is the [change record](changes/irc-search-history/spec.md).
 A joined channel's row menu offers **Leave channel**, a channel we are no
 longer in (after a kick or a typed `/part`) offers **Remove from list**, and a
 private conversation's offers **Close conversation**. The toolbar's **More**
-menu has the same items for the selected row. The server row offers none
+menu has the same items for the selected row, after **Connect** or
+**Disconnect** and **Join…**. The server row offers none
 (`spaces/irc/src/remove.rs`).
 
 - **Leave channel** sends `Command::Part`, then `Command::Forget`, and
@@ -653,7 +715,9 @@ rows near the viewport, so a drag that auto-scrolls far past them can lose
 its start; a fix needs a Kit selection adapter for virtual lists. Right-click
 **Copy** on a row copies the selection, or the row's whole text.
 
-The unread **New** divider is also a label: it does not interrupt selection
+The unread divider, **NEW SINCE YOU LEFT · N** with the number of messages
+that arrived since the conversation was last read (spoken as *N new
+messages since you left*), is also a label: it does not interrupt selection
 or add its label to copied text. Unread row fills remain visible behind a
 text selection. Literal links and references retain their native look and
 cards through Kit inline objects. Right-click **Copy** on an issue link
@@ -732,7 +796,12 @@ IRC shows issue references through the `issues` contract
   project keys change. A refused `resolve` drops the scope until the next `changed`.
 - **Looks** (`text/references.rs`, `transcript/line/marks.rs`): references are accent on
   a tint, as `#channel` references are; `Unavailable` is muted and
-  underlined; the keyboard's reference is accent on a strong tint. Formatted
+  underlined; the keyboard's reference is accent on a strong tint. An
+  available issue leads with a dot for its state category (`text/look.rs`):
+  started orange (a started state named for review blue), completed green,
+  cancelled or duplicate muted, and a hollow ring before work starts. A
+  reference still loading or unresolved has no dot. The dot is a child of
+  the inline object, so selection and Copy keep the reference as written. Formatted
   (Markdown) lines show issue references as links (`subspace-irc:issue/…`)
   without an inline muted look.
 - **Hover cards** (`issues/tooltip.rs`) share one observed view for chip hover,
@@ -823,7 +892,9 @@ GitHub client or the PRs board.
   request URL is a chip rather than a link. In a formatted message, code spans
   and fenced code stay text, and `Rendered::refs` lists the chips outside
   code for the keyboard and the hub.
-- **Chip** (`text/references.rs`): the `GitPullRequest` glyph and `repo#n`,
+- **Chip** (`text/references.rs`): the `GitPullRequest` glyph, tinted by an
+  available answer's status (open blue, merged magenta, closed or draft
+  muted; `text/look.rs`), and `repo#n`,
   with the owner only beside another owner's same-named repository in the
   message (`PrRef::label_among`). The node text stays as written, so Copy
   keeps it; Copy link gives `PrRef::url`. No preview row is added under the
@@ -997,10 +1068,16 @@ messages after its anchor.
   `Conversation::heading` gives the pane's toolbar the name in strong text
   and the topic in quiet text (`HeaderFacts::quiet`: the network, or the
   server buffer's status, while there is no topic); its accessible name
-  still says the network. A channel also has a `MemberList` view
+  still says the network. A fleet channel (see [Fleet roles](#fleet-roles))
+  leads with its captain's agent avatar (a ship) or a glyph for its kind,
+  and a ship's channel ends with a pill holding its captain's current nick
+  status (`header::live`), at most 40 characters, named
+  *Captain <nick>: <status>*, and nothing while the captain has none or no
+  member with its nick is signed in to its account. A channel also has a `MemberList` view
   (`members.rs`), which draws the rank groups under captions such as
   `Operators · 1`, each member with a small avatar, the nick and a quiet
-  note (`members::note`: `you`, `owner`, `admin` or `half-operator`), with
+  note (`members::note`: `you`, a fleet's `captain`, `rear admiral` or `crew`,
+  `owner`, `admin` or `half-operator`), with
   the member's status line, if any, under the nick, and
   leaves the heading and the scrolling to its host. Both observe
   the hub and report navigation as events.
@@ -1013,9 +1090,12 @@ messages after its anchor.
   `Irc::text_edge`, refreshed each render), rows keep the theme's row
   height (not `comfortable_rows`), and `row_trailing` draws unread and user
   counts at caption size, as `NavRow`'s count. The pane's toolbar leads with the initiative picker and the heading
-  of the conversation in front, and trails with **Connect** or
-  **Disconnect**, **Join…** and **More** (`toolbar.rs`) between the two dock
-  switches. The inspector is titled **Members**, with the count for a
+  of the conversation in front, and trails with a search button, which
+  opens find in the conversation (`find_in_page::Open`), and **More**
+  (`toolbar.rs`). **More** holds **Connect** or **Disconnect** and **Join…**
+  for the network, then the selected buffer's removal. Join is also in the
+  navigator's header, and the command palette offers Join, Connect and
+  Disconnect. The inspector is titled **Members**, with the count for a
   channel, and holds the focused channel's `MemberList`. While the navigator
   is hidden, `view/conversations.rs` adds a menu of every network's
   conversations at the start of the toolbar. Before a network is configured

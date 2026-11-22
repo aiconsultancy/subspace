@@ -14,6 +14,7 @@ mod context;
 mod conversation;
 mod dock;
 mod editor;
+mod fleet;
 mod hub;
 mod initiatives;
 mod issues;
@@ -424,11 +425,17 @@ impl Irc {
         }
     }
 
-    /// Opens a private conversation with `nick` and shows it.
+    /// Opens a private conversation with `nick` and shows it. A fleet agent
+    /// gets none: the conversation in front says where the agent talks.
     fn open_query(&mut self, network: &NetworkId, nick: &str, cx: &mut Context<Self>) {
         let Some(hub) = self.hub.clone() else {
             return;
         };
+        let roster = hub.read(cx).roster(network, cx);
+        if let Some(notice) = compose::AgentNotice::refusing(&roster, nick) {
+            self.refuse_query(network, notice, cx);
+            return;
+        }
         let buffer = hub.update(cx, |hub, cx| {
             hub.send(Command::Query {
                 network: network.clone(),
@@ -440,6 +447,29 @@ impl Irc {
         });
         view::sync(self, cx);
         view::reveal(self, &buffer, cx);
+    }
+
+    /// Shows `notice` above the composer of the conversation in front on
+    /// `network`, in place of a private conversation with an agent.
+    fn refuse_query(
+        &mut self,
+        network: &NetworkId,
+        notice: compose::AgentNotice,
+        cx: &mut Context<Self>,
+    ) {
+        let front = self
+            .dock
+            .focused
+            .as_ref()
+            .filter(|buffer| &buffer.network == network)
+            .and_then(|buffer| self.dock.open.get(buffer))
+            .map(|hosted| hosted.entity.clone());
+        if let Some(conversation) = front {
+            conversation.update(cx, |conversation, cx| {
+                conversation.draft.agent_notice = Some(notice);
+                cx.notify();
+            });
+        }
     }
 
     /// A row's buffer state, copied out of the hub for list hooks.

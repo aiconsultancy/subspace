@@ -483,7 +483,7 @@ export const mcpTools = {
     "Create a ship in a fleet.",
     false,
     Schema.Struct({ fleetId: Uuid, ...CreateShip.fields }),
-    (member, { fleetId, name }) => createShip(member, fleetId, name),
+    (member, { fleetId, name, channel }) => createShip(member, fleetId, name, channel),
   ),
   subspace_rename_ship: tool(
     "Rename a ship.",

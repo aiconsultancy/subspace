@@ -60,8 +60,9 @@ fn with_the_navigator_hidden_connection_acts_on_the_named_conversation(cx: &mut 
         assert_eq!(board.toolbar_buffer(), Some(&channel("#subspace")));
     });
     let before = hub.read_with(cx, |hub, _| hub.sent().len());
-    cx.update(|window, cx| window.click("irc-connection", cx));
+    cx.update(|window, cx| window.click("irc-more", cx));
     settle(cx);
+    super::remove::choose("Disconnect", cx);
     hub.read_with(cx, |hub, _| {
         assert_eq!(
             hub.sent()[before..],

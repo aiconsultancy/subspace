@@ -22,6 +22,14 @@ import {
   Uuid,
 } from "./validation";
 
+/**
+ * The agent's IRC nick, which fleet IRC servers tie to the account of the
+ * same name: a letter, then letters, digits, `-` or `_`.
+ */
+export const IrcNick = Schema.String.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[A-Za-z][A-Za-z0-9_-]*$/u),
+);
 const Registration = Schema.Struct({
   name: Name.check(Schema.isMaxLength(64), Schema.isPattern(/^[A-Za-z0-9-]+$/u)),
   rank: AgentRank,
@@ -31,6 +39,7 @@ const Registration = Schema.Struct({
   shipId: Schema.optional(Schema.NullOr(Uuid)),
   defaultModel: Line(100),
   serviceTokenClientId: Line(200),
+  ircNick: Schema.optional(Schema.NullOr(IrcNick)),
 });
 const Edit = Schema.Struct({ ...Registration.fields, version: Schema.optional(Version) });
 const Lifecycle = Schema.Struct({ version: Schema.optional(Version) });
@@ -44,6 +53,7 @@ const Agent = Schema.Struct({
   shipId: Schema.NullOr(Uuid),
   defaultModel: Line(120),
   serviceTokenClientId: Line(256),
+  ircNick: Schema.NullOr(Schema.String),
   isActive: Schema.Boolean,
   deactivatedAt: Schema.NullOr(Timestamp),
   deactivatedByUserId: Schema.NullOr(Uuid),
@@ -64,6 +74,7 @@ function dto(agent: Member) {
     shipId: agent.agentShipId,
     defaultModel: agent.agentModel!,
     serviceTokenClientId: agent.subject,
+    ircNick: agent.agentIrcNick,
     isActive: agent.active,
     deactivatedAt: dateTimeOrNull(agent.deactivatedAt),
     deactivatedByUserId: agent.deactivatedById,
@@ -233,6 +244,8 @@ function registrationFields(member: Member, data: typeof Registration.Type, old?
       agentFleetId: fleet?.id ?? null,
       agentShipId: ship?.id ?? null,
       agentModel: data.defaultModel,
+      // Left out of an edit, the nick stays as it is; null clears it.
+      agentIrcNick: data.ircNick,
       subject,
     };
   });
@@ -294,13 +307,15 @@ function changeAgent(member: Member, change: AgentChange, id?: string) {
               and(
                 eq(users.organisationId, member.organisationId),
                 sql`(${users.subject} = ${registration.subject} or
-            (${users.agentRank} is not null and lower(${users.displayName}) = lower(${registration.displayName})))`,
+            (${users.agentRank} is not null and lower(${users.displayName}) = lower(${registration.displayName})) or
+            (${registration.agentIrcNick ?? null}::text is not null and
+              lower(${users.agentIrcNick}) = lower(${registration.agentIrcNick ?? null}::text)))`,
                 id ? sql`${users.id} <> ${id}` : undefined,
               ),
             );
           if (conflict)
             return yield* Effect.fail(
-              problem(409, "An account subject or agent name is already registered."),
+              problem(409, "An account subject, agent name or IRC nick is already registered."),
             );
         }
         const [saved] = old

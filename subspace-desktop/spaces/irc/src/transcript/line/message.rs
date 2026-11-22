@@ -29,14 +29,17 @@ pub(crate) fn message(
     let issues = markup::issues(&original.line.text, &context.mentions, rendered.as_ref());
     let identifiers = identifiers(original, context, rendered.as_ref(), issues.clone());
     let spoken = spoken(entry, rendered.as_ref());
-    let leading = message_gutter(entry, &nick, continues, &group, cx);
+    let rank = context
+        .roster
+        .verified(&nick, entry.line.account.as_deref());
+    let leading = message_gutter(entry, (&nick, rank), continues, &group, cx);
     let column = v_flex()
         .relative()
         .flex_1()
         .min_w_0()
         .gap_0p5()
         .when(!continues, |column| {
-            column.child(header(entry, &nick, &tokens, cx))
+            column.child(header(entry, &nick, rank, &tokens, cx))
         })
         .when(!entry.line.text.is_empty(), |column| {
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))

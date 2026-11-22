@@ -8,17 +8,15 @@ use gpui_kit::component::text::{
     InlineElement, InlineRenderContext, MarkdownNode, MarkdownParseContext, MarkdownPlugin,
     markdown_ast,
 };
-use gpui_kit::component::{Icon, Sizable as _};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, ClickEvent, FontWeight, HighlightStyle, Hsla, InteractiveElement as _, InteractiveText,
     MouseButton, MouseDownEvent, ParentElement as _, SharedString, StatefulInteractiveElement as _,
     Styled as _, StyledText, UnderlineStyle, Window, div, px,
 };
-use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, rich};
 
-use super::{Opens, RefHandlers, targets};
+use super::{Opens, RefHandlers, look, targets};
 use crate::markup::{self, Ref};
 use crate::style::RunStyle;
 
@@ -112,6 +110,7 @@ impl MarkdownPlugin for References {
             .clone();
         let tokens = Tokens::current(cx);
         let run = self.style(&found, occurrence);
+        let look = look::of(&self.handlers.look, &found, cx);
         // Copy keeps the text as written; a pull request shows `repo#n`.
         let text = node.as_text().to_owned();
         let (label, styled) = self.label(node, shown, reference_style(run, &tokens), cx);
@@ -125,9 +124,14 @@ impl MarkdownPlugin for References {
             .when_some(reference_fill(run, &tokens), |trigger, fill| {
                 trigger.bg(fill)
             })
-            .when_some(pull_request_glyph(&found), |trigger, glyph| {
-                trigger.flex().items_center().gap_0p5().child(glyph)
-            })
+            .when_some(
+                look::glyph(&found, look.clone(), &tokens),
+                |trigger, glyph| trigger.flex().items_center().gap_0p5().child(glyph),
+            )
+            .when_some(
+                look::state(look, node.source_range(), &tokens),
+                |trigger, dot| trigger.flex().items_center().gap_1().child(dot),
+            )
             .child(div().child(self.hover(&found, styled)).test_text(label))
             .on_mouse_down(MouseButton::Right, self.mark_link(copied_link(&found, url)))
             .on_click(self.activation(found.clone()));
@@ -159,12 +163,6 @@ fn copied_link(found: &Opens, url: String) -> String {
         Opens::Ref(Ref::PullRequest(found)) => found.url.clone(),
         _ => url,
     }
-}
-
-/// A pull request chip leads with the pull request glyph.
-fn pull_request_glyph(found: &Opens) -> Option<Icon> {
-    matches!(found, Opens::Ref(Ref::PullRequest(_)))
-        .then(|| Icon::from(IconName::GitPullRequest).xsmall())
 }
 
 impl References {
@@ -347,7 +345,7 @@ fn reference_style(style: RunStyle, tokens: &Tokens) -> HighlightStyle {
 mod tests {
     use subspace_framework::dashboard::Tokens;
 
-    use super::{copied_link, pull_request_glyph, reference_fill, reference_style};
+    use super::{copied_link, reference_fill, reference_style};
     use crate::markup::{PrRef, Ref};
     use crate::style::RunStyle;
     use crate::text::Opens;
@@ -374,13 +372,6 @@ mod tests {
             copied_link(&url, "https://example.org".into()),
             "https://example.org"
         );
-    }
-
-    #[test]
-    fn only_a_pull_request_chip_leads_with_the_pull_request_glyph() {
-        assert!(pull_request_glyph(&pull_request()).is_some());
-        assert!(pull_request_glyph(&Opens::Ref(Ref::Issue("TST-12".into()))).is_none());
-        assert!(pull_request_glyph(&Opens::Url("https://example.org".into())).is_none());
     }
 
     #[test]
@@ -483,6 +474,7 @@ mod tests {
                 let refs = References::new(RefHandlers {
                     open: Arc::new(|_, _, _| {}),
                     tooltip: Arc::new(|_, _, _| None),
+                    look: Arc::new(|_, _| None),
                     styled: Some(styled),
                 });
                 let url = subspace_framework::dashboard::links::safe_url(raw).unwrap();
@@ -516,6 +508,7 @@ mod tests {
         let refs = References::new(RefHandlers {
             open: Arc::new(|_, _, _| {}),
             tooltip: Arc::new(|_, _, _| None),
+            look: Arc::new(|_, _| None),
             styled: Some(styled),
         });
         let found = Opens::Url(url);

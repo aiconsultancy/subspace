@@ -198,6 +198,14 @@ record. [Change records](changes/README.md) explains the convention.
   the plus after the last Space tab and its menu of the Spaces that are off.
 - [Decisions Space](changes/decisions-space/intent.md): a read-only Space
   listing every decision, built on the workspace shell.
+- [Fleet roles in Channels](changes/channels-fleet-roles/README.md): rank
+  marks for captains and the rear admiral, a ship channel's live status,
+  connection commands in **More**, state dots on references and a counted
+  unread divider.
+- [Agent identity in Channels](changes/channels-agent-identity/README.md):
+  ranks from the API's agent nicks and the fleet's recorded channels, agent
+  avatars and coloured marks, no private conversation with an agent, and
+  the base pull request's review fixes.
 - [Bundled Inter and JetBrains Mono](changes/bundled-fonts/README.md): the
   fonts the Subspace App embeds for Twilight Two, and why themes that name no
   font keep the platform's fonts.

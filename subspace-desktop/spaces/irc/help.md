@@ -12,7 +12,8 @@ agent_tools/{bridge,read,write,read/search},notice,store,store/{mapping,links},
 hub/persist,state/merge,state/directory,reveal,commands,context,issues,issues/{follow,tooltip},
 markup/issue,conversation/keys,transcript/focus,transcript/line/marks,
 thread_status,thread_status/model,thread_status/trust,state/folding,
-transcript/status,transcript/replies}.rs;
+transcript/status,transcript/replies,fleet,conversation/header,text/look,
+text/references}.rs;
 scripts/irc-thread-status-fixture.py;
 subspace-framework/services/search
 (records, migration); subspace-framework/board-kit/dashboard/src/
@@ -83,12 +84,17 @@ channel you are working in.
 The toolbar at the top of the pane names the conversation in front in strong
 text, with its topic beside it in quieter text (its network while it has no
 topic). The initiative picker, when you have one, comes before
-that name. **Connect** or **Disconnect**, **Join…** and **More** are on the
-right. The switches at the two ends of the status bar, at the bottom of the
+that name. A fleet's ship channel leads with its captain's avatar, and the
+Starbase or command channel with a glyph. A ship's channel ends with a pill
+holding its captain's current status, such as *Lyra is delegating NAV-2*,
+while the captain has one and is signed in to its own account; a long
+status ends in an ellipsis. The
+search button and **More** are on the right; **More** holds **Connect** or
+**Disconnect** and **Join…**. The switches at the two ends of the status bar, at the bottom of the
 window, show or hide the navigator and the inspector. While the navigator is
 hidden, a menu at the start of the toolbar names the conversation in front and lists every network's
-conversations; choose one to show it. **Connect** or **Disconnect**, **Join…**
-and **More** then act on that conversation and its network.
+conversations; choose one to show it. The commands in **More** then act on
+that conversation and its network.
 
 Drag the inner edge of the navigator or the inspector to resize it, and
 double-click the edge to go back to the default width. Every Space shares
@@ -151,7 +157,7 @@ restart.
 The line comes from progress notices that the agent's gateway marks for that
 request. Channels uses them only when the IRC server confirms they come from
 the account of the agent your request addresses: start the request with the
-agent's nick, as `astra:` or `@astra`, or ask it in a private conversation.
+agent's nick, as `astra:` or `@astra`.
 Those notices are then not shown as messages, counted as replies or unread,
 or notified. Questions, answer instructions, final replies, ordinary notices
 and any notice from another account stay as messages, as before.
@@ -174,6 +180,22 @@ that stays the same for that nick (your own nick uses the strong text colour)
 and the local time (`HH:MM`) in monospace. Further messages from the same person within
 five minutes follow without repeating them; point at one to see its time.
 The message or line under the pointer is shaded, as in Slack.
+A fleet's captains and rear admiral have a round avatar with their rank's
+mark (an arrow for a captain, a diamond for the rear admiral) and their name
+in blue or the accent colour, followed by a **CAPTAIN** or **REAR ADMIRAL**
+pill in the same colour; crew have a muted **CREW** pill. Channels knows them
+from your Subspace initiatives: the Subspace API records each agent's rank
+and IRC nick, and a message or member is marked only when the server says it
+is signed in to the account of that nick. Their names never decide it.
+Anyone else, and every nick on another connection, shows as a person.
+
+All communication with a fleet's agents happens in channels, where everyone
+can see it: private messages are for people only. Choosing an agent in the
+member list or a reference to it, `/msg`, `/query` or `/notice` to it, or a
+message in an older private conversation with it opens and sends nothing;
+instead a short notice above the message box names the agent's channel (a
+captain's ship channel, or the Starbase for the rear admiral) with a button
+to go there. An older private conversation with an agent stays readable.
 `/me` actions are italic and notices are muted and marked **Notice**. Lines
 that mention you have a highlighted background. Each day starts with
 **Today**, **Yesterday** or the date between two hairlines.
@@ -193,7 +215,8 @@ and an image shows as a link, so nothing loads from the internet. `http`,
 `https` and `mailto` links open in your browser.
 `#channel` names are links: choosing one shows the channel, or joins it when it
 is not in the list. `@nick`, or a member's nick and a colon at the start of a
-message, is highlighted; choosing it opens a private conversation.
+message, is highlighted; choosing it opens a private conversation, or for a
+fleet agent says where it talks.
 
 To copy part of the conversation, drag from any point in one line to any
 point in another, as in Slack. Every message, server line and joined or left
@@ -232,11 +255,10 @@ Subspace API is temporarily unreachable.
 
 | Control | What it does |
 | --- | --- |
-| **Connect** / **Disconnect** | Connects or disconnects the network of the selected row or group, or while the navigator is hidden the network of the conversation in front. Disabled until you select one. |
-| **Join…** | Opens **Join a channel on** the selected network, or while the navigator is hidden the network of the conversation in front. The **+** in the navigator's header does the same. |
+| Search | Opens **Find** in the conversation in front, as `⌘F` does. |
 | **Show navigator** / **Hide navigator** | The first button of the status bar shows or hides the list of networks and buffers. |
 | **Show inspector** / **Hide inspector** | The last button of the status bar shows or hides the member list. |
-| **More** | Acts on the selected row, or while the navigator is hidden on the conversation in front. **Leave channel** leaves the selected channel and removes it from the list; for a channel you are no longer in, it reads **Remove from list**. **Close conversation** removes the selected private conversation from the list. Each is disabled for other kinds of row, as is **Leave channel** for a channel you are in while its network is not connected. |
+| **More** | Acts on the selected row, or while the navigator is hidden on the conversation in front. **Connect** or **Disconnect** connects or disconnects its network, and is disabled until you select one. **Join…** opens **Join a channel on** that network; the **+** in the navigator's header does the same. The command palette offers all three too. **Leave channel** leaves the selected channel and removes it from the list; for a channel you are no longer in, it reads **Remove from list**. **Close conversation** removes the selected private conversation from the list. Each is disabled for other kinds of row, as is **Leave channel** for a channel you are in while its network is not connected. |
 
 The board has no filters. Reload (`r`) connects every network that is
 disconnected or failed.
@@ -249,8 +271,10 @@ button of the toolbar opens the member list in the inspector, whose title
 counts the members, such as **Members · 4**. It follows the conversation you
 are working in and lists **Operators**, **Voiced** and **Members**, each
 sorted by nick with a small avatar and the nick. A quiet note follows where
-Channels knows more: **you** for your own nick, and **owner**, **admin** or
-**half-operator** among the operators. A member with a status line, as an
+Channels knows more: **you** for your own nick, **captain** or **rear
+admiral** for a fleet's agents, and **owner**, **admin** or
+**half-operator** among the operators. Completing `@` names shows the same
+note. A member with a status line, as an
 agent has while it works, shows it under the nick, in quiet text and cut with an ellipsis when it
 is longer than the row; point at it to read it whole. Away members are
 dimmed. Choose a member to open a private conversation with them, or × to
@@ -498,6 +522,11 @@ within the last hour. Tracker cards show sub-issue progress, open pull requests
 and known checks, merged pull requests and a due date. Missing facts are omitted.
 The cards have no controls and do not take keyboard focus.
 
+Once its summary arrives, an inline reference leads with a dot for its
+state: orange while started, blue in review, green when done, grey when
+cancelled, and a hollow ring before work starts. Copying it copies the
+identifier as written.
+
 Until a summary arrives the reference shows `Loading SUB-827…`. An unavailable
 reference turns grey and underlined, and its note says
 `SUB-827 isn't available with Subspace API.` The note never says whether such
@@ -511,7 +540,8 @@ are not stored with your messages or searchable.
 ### Pull request references
 
 Channels shows a GitHub pull request as an inline chip: the pull request glyph
-and `repo#number`, such as `api#421`. The owner appears only when the same
+and `repo#number`, such as `api#421`. Once its details arrive, the glyph is
+blue while open, magenta once merged and grey when closed or a draft. The owner appears only when the same
 message also names another owner's repository of that name
 (`octo-org/api#421` beside `acme/api#5`). These become chips:
 
@@ -612,8 +642,9 @@ reaches its size limit.
 
 ### Notifications and read state
 
-Opening a channel or private conversation marks it read. A **New** line and
-a tinted background show which messages were unread when you opened it.
+Opening a channel or private conversation marks it read. A **NEW SINCE YOU
+LEFT** line with the number of new messages, and a tinted background, show
+which messages were unread when you opened it.
 With `draft/read-marker`, the read position syncs with your other clients,
 and reading elsewhere clears unread counts here.
 

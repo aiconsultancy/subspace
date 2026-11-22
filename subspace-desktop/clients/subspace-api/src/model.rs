@@ -14,7 +14,7 @@ pub use decision::{
     DecisionListItem, DecisionMakerType, DecisionMember, DecisionProvenance, DecisionScope,
     DecisionStatus, DecisionSummary,
 };
-pub use initiative::{Fleet, MemberInitiative};
+pub use initiative::{Fleet, FleetAgent, FleetShip, MemberInitiative};
 pub use media::IssueMedia;
 pub(crate) use media::MediaBinding;
 pub use person::{Agent, Person};
