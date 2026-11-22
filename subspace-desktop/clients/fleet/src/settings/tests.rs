@@ -121,7 +121,14 @@ fn a_pasted_token_is_saved_replaced_and_cleared_from_settings(cx: &mut TestAppCo
         "second-token"
     );
 
+    // A token pasted, then the saved one cleared: the field empties too, so
+    // the pasted token cannot be saved by mistake or stay in the page.
+    type_token(handle, "pasted-token", cx);
     click(handle, "fleet-clear-aurora", cx);
+    let typed = page.read_with(cx, |page, cx| {
+        page.input("aurora").unwrap().read(cx).value()
+    });
+    assert!(typed.is_empty());
     assert_eq!(state(&service, cx), FleetState::NoToken);
     assert!(store.load("aurora").unwrap().is_none());
     assert_eq!(

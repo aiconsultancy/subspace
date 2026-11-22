@@ -139,6 +139,23 @@ const SAMPLE_REASONS = {
     title: "Sample fleet: no API token",
     body: `Run stargate api token on the fleet VM and save it as the API token in ${SETTINGS_PATH}, then choose Retry.`,
   },
+  // A fleet the Subspace API assigns, whose token is set in Subspace.
+  "api-no-token": {
+    title: "Sample fleet: your fleet's token is not saved",
+    body: `Paste the fleet's Fleet API token in ${SUBSPACE_FLEETS}. Fleet Console connects as soon as it is saved.`,
+  },
+  "api-token-address": {
+    title: "Sample fleet: your fleet's address changed",
+    body: `Its token was saved for another address and is not sent to the new one. Check the new address, then paste the fleet's token again in ${SUBSPACE_FLEETS}.`,
+  },
+  "api-token-checking": {
+    title: "Sample fleet: reading your fleet's token",
+    body: "Fleet Console connects as soon as Subspace has it.",
+  },
+  "api-token-store": {
+    title: "Sample fleet: your fleet's token could not be read",
+    body: "Unlock your system keychain, then choose Retry.",
+  },
 };
 
 /**

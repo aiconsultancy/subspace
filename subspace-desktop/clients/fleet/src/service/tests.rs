@@ -211,3 +211,15 @@ fn a_refused_token_is_reported_by_the_followed_fleet(cx: &mut TestAppContext) {
     assert!(until(cx, |cx| state(&service, cx)
         == FleetState::Followed(Link::TokenRefused)));
 }
+
+#[gpui_kit::test]
+fn the_shared_service_asks_for_the_initiatives_that_name_the_fleets(cx: &mut TestAppContext) {
+    // Fleet Console can be the first Space shown: nothing else has loaded
+    // the initiatives when its page asks for the fleets.
+    cx.update(|cx| {
+        let catalog = subspace_api_client::initiatives::Catalog::shared(cx);
+        assert_eq!(catalog.read(cx).hint(), None);
+        FleetApi::shared(cx);
+        assert_eq!(catalog.read(cx).hint(), Some("Checking initiatives…"));
+    });
+}

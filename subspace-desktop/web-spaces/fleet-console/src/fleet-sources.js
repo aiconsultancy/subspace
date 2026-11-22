@@ -98,9 +98,20 @@ export function resolveFleets({ present, allowed, capabilities, settings, secret
     local: localFleets({ list, secrets, allowed, normalizeEndpoint }),
   });
   if (!fleets.some((entry) => entry.token)) {
-    return { mode: "sample", reason: fromSettings.problem ?? "no-endpoint", motion, perfReadout, fleets: [], canStore };
+    return { mode: "sample", reason: sampleReason(fromSettings.problem, fleets), motion, perfReadout, fleets: [], canStore };
   }
   return { mode: "live", reason: null, motion, perfReadout, fleets, canStore, defaultProblem: fromSettings.problem };
+}
+
+/**
+ * Why sample mode: the Settings fleet's problem, unless Fleet Console has no
+ * Settings fleet at all and the Subspace API assigns a fleet, whose token is
+ * then what is missing (`api-no-token`, `api-token-address`, and so on).
+ */
+export function sampleReason(settingsProblem, fleets) {
+  const api = fleets.find((entry) => entry.origin === "api");
+  if ((settingsProblem ?? "no-endpoint") === "no-endpoint" && api) return `api-${api.problem ?? "no-token"}`;
+  return settingsProblem ?? "no-endpoint";
 }
 
 /** The name to show: the person's name for the fleet, else what Stargate reports, else its host. */

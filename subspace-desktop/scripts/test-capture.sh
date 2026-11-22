@@ -124,6 +124,22 @@ while IFS= read -r address; do
     if curl -s --max-time 1 -o /dev/null "$address"; then fail "a fixture server is still listening"; fi
 done <"$fixture/open/urls.txt"
 grep -Fxq hosts.yml "$fixture/open/gh.txt" || fail "the fixture gh accounts are missing"
+# Settings > Fleets: the aurora fleet's token is saved for the Fleet API fixture's address.
+fleet_address="$(jq -r '.webBoards["fleet-console"].settings.endpoint' "$fixture/open/config.json")"
+jq -e --arg address "$fleet_address" '."fleet-api:aurora" | fromjson | .v == 1 and .endpoint == $address and .token == "fixture-fleet"' \
+    "$fixture/open/fleet-api-tokens.json" >/dev/null || fail "the aurora token is not saved for the Fleet API fixture"
+rm -rf "$fixture/open"
+TMPDIR="$fixture/tmp" CAPTURE_FLEET_API=1 CAPTURE_FLEET_TOKEN=none \
+    bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null
+test ! -e "$fixture/open/fleet-api-tokens.json" || fail "CAPTURE_FLEET_TOKEN=none saved a token"
+rm -rf "$fixture/open"
+TMPDIR="$fixture/tmp" CAPTURE_FLEET_API=1 CAPTURE_FLEET_TOKEN=moved \
+    bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null
+jq -e '."fleet-api:aurora" | fromjson | .endpoint == "https://aurora-old.example.test" and .token == "fixture-fleet-moved"' \
+    "$fixture/open/fleet-api-tokens.json" >/dev/null || fail "CAPTURE_FLEET_TOKEN=moved did not save a token for the old address"
+if TMPDIR="$fixture/tmp" CAPTURE_FLEET_TOKEN=other bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null 2>&1; then
+    fail "an unknown fleet token scenario was accepted"
+fi
 rm -rf "$fixture/open"
 TMPDIR="$fixture/tmp" CAPTURE_NO_GH=1 CAPTURE_FEATURES=space-lab,component-gallery \
     bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null

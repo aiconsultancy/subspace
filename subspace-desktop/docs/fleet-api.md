@@ -56,8 +56,10 @@ never in a URL, a log line, an error message or UI state.
 
 `FleetApi::shared(cx)` returns the process's one service, a GPUI entity. It
 follows the initiatives catalogue (`subspace_api_client::initiatives::Catalog`)
-for the fleets the person's initiatives belong to, reads each fleet's saved
-token in the background, and reports each fleet's `FleetState`:
+for the fleets the person's initiatives belong to, and asks it to read them
+when it has none yet, so a Space shown first, such as Fleet Console, gets
+the fleets without another Space loading them. It reads each fleet's saved
+token in the background and reports each fleet's `FleetState`:
 
 | State | Meaning |
 | --- | --- |
@@ -131,7 +133,8 @@ Subspace API records and its state. Paste the token and choose **Save
 token**; **Test connection** reads the fleet once with the pasted token, or
 the saved one, and reports in the Fleet Console's words; **Clear token**
 forgets it. Saving and clearing apply at once; Settings' Save and Cancel do
-not undo them. The token field is masked and emptied when a save starts.
+not undo them. The token field is masked and emptied when a save or a clear
+starts.
 While the page is open every fleet is followed, so the state is the live one.
 
 ## The built-in Fleet Console
@@ -148,7 +151,10 @@ See the Fleet Console's [README](../web-spaces/fleet-console/README.md#fleets).
 
 `scripts/fleet_api_test_server.py` serves a fictional fleet on loopback;
 `--refuse-events` answers the stream with 503, as Stargate does with eight
-streams open. `scripts/subspace_api_test_server.py --fleet` records the
+streams open, and `--log-requests` prints each request with a fingerprint of
+its token. `scripts/subspace_api_test_server.py --fleet` records the
 aurora fleet's `fleetApiUrl`, by default the Fleet API fixture's port, or
 the address `--fleet-api-url` names, which `make capture` passes with
-`CAPTURE_FLEET=1 CAPTURE_FLEET_API=1`.
+`CAPTURE_FLEET=1 CAPTURE_FLEET_API=1`; `CAPTURE_FLEET_TOKEN` saves the
+token for that address, saves none, or saves one for another address
+([Fleet fixture](capture.md#fleet-fixture)).

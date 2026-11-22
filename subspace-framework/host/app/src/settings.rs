@@ -29,6 +29,8 @@ mod mcp_draft;
 #[cfg(test)]
 mod mcp_page_tests;
 #[cfg(test)]
+mod navigation_layout_tests;
+#[cfg(test)]
 mod navigation_tests;
 #[cfg(test)]
 mod notification_tests;

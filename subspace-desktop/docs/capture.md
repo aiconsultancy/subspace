@@ -102,6 +102,20 @@ fictional token `fixture-fleet` into `webBoards.fleet-console`, and the app
 adds its built-in Fleet Console to that entry at start, with its permissions
 allowed, so Fleet Console shows the fleet live, not in sample mode.
 
+With `CAPTURE_FLEET=1` as well, the Subspace API fixture's aurora fleet
+records the Fleet API fixture's address as its `fleetApiUrl`, and the
+capture saves the fleet's token for that address in **Settings › Fleets**
+(`fleet-api-tokens.json`). `CAPTURE_FLEET_TOKEN` chooses that token:
+`saved` (the default), `none` (no token saved), or `moved`, which saves the
+fictional `fixture-fleet-moved` for `https://aurora-old.example.test`, so the
+fleet shows **Address changed** and the token must never reach the fixture.
+The fixture prints one line per request, with a fingerprint of its
+`Authorization` header (the first 12 hex digits of its SHA-256, or `none`),
+never the header itself; `CAPTURE_KEEP_LOG=1` keeps that log as
+`fleet-api.log`. To show only the API's fleet in Fleet Console, without its
+own Settings fleet at the same address, pass
+`CAPTURE_CONFIG='{"webBoards":{"fleet-console":{}}}'`.
+
 Crew work names issues of the demo world's projects `NAV`, `MAP`, `WARP` and
 `RELAY`. `CAPTURE_FLEET=1` adds those projects to the Subspace API fixture as
 a busy team's tracker: 58 issues in every workflow state, trackers with their
