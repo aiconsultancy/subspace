@@ -151,3 +151,22 @@ fn the_label_reads_latest_activity_as_relative_time() {
     assert!(label.contains("latest activity 4m ago"), "{label}");
     assert!(!label.contains(&at), "no raw timestamp: {label}");
 }
+
+#[test]
+fn only_an_answer_without_a_summary_gives_a_reason() {
+    use subspace_framework::contracts::issues::ResolutionState;
+    assert_eq!(super::absence(None), None, "not asked yet");
+    assert_eq!(super::absence(Some(&ResolutionState::Pending)), None);
+    assert_eq!(
+        super::absence(Some(&ResolutionState::Unavailable)),
+        Some("Unavailable")
+    );
+    assert_eq!(
+        super::absence(Some(&ResolutionState::SignedOut)),
+        Some("Signed out")
+    );
+    assert_eq!(
+        super::absence(Some(&ResolutionState::Failed)),
+        Some("Couldn't load")
+    );
+}

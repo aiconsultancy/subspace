@@ -5,6 +5,7 @@
 mod hover;
 mod interaction;
 mod previews;
+mod reserved;
 mod summaries;
 
 use std::collections::HashMap;
@@ -43,6 +44,9 @@ impl Tracker {
         request
             .identifiers()
             .iter()
+            // `TST-30` is never answered until it has an answer: the state
+            // every reference has before its first answer.
+            .filter(|id| *id != "TST-30" || self.answers.contains_key(*id))
             .map(|id| {
                 let state = self.answers.get(id).cloned();
                 Resolution::new(id, state.unwrap_or(ResolutionState::Pending))

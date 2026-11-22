@@ -746,7 +746,8 @@ IRC shows issue references through the `issues` contract
   children or focus. Pending, Unavailable, SignedOut and Failed keep plain
   Kit tooltip notes. The keyboard card floats through `anchored::floating`.
 - **Issue chips** (`issues/preview.rs`, `issues/tile/`) use the same batched
-  lookup as the hover card. Every available issue is a compact chip, including
+  lookup as the hover card. Every available issue is a compact chip in its
+  reserved slot (below), including
   a message with one available issue; the row always wraps. Chips retain their
   full accessible names and native activation. A and B cards appear only on
   hover or reference keyboard focus. Ordinary hover cards have a state edge,
@@ -762,6 +763,24 @@ IRC shows issue references through the `issues` contract
   after seven days; future activity says *just now* without a recent dot.
   Activity within an hour has a success dot. Missing or malformed optional
   dates are omitted. See the [change record](changes/subspace-api-accounts/README.md).
+- **Reserved chip slots** (`issues/preview.rs`, `issues::tile::reserved`):
+  every issue reference the scope recognises outside code gets a slot in the
+  chip row from the message's first frame, before any answer, so an answer
+  never changes the row's height and nothing above or below it moves. The
+  slot is the chip's own surface (`card_button` in `reference_card::surface`),
+  inert and named by the tooltip note. With no answer yet or `Pending`, it
+  shows the known key between static skeleton marks in `Tokens::line`, the
+  shared list skeleton's colour; nothing animates, so reduced motion needs no
+  case. `Unavailable`, `SignedOut` and `Failed` keep the slot as a muted
+  `CircleSlash` chip with the key and **Unavailable**, **Signed out** or
+  **Couldn't load**; the inline reference still opens the issue, and the
+  hover note gives the reason. An answer already held, including one from an
+  earlier round, draws its chip on the first frame. Slots wrap in the same
+  row as chips; a loading slot is as wide as a chip with a full-length title,
+  so a short-titled chip can be narrower than its slot. Only recognition
+  changes the reservation: a scope that arrives later, changes or is
+  withdrawn still adds or removes slots. See the
+  [change record](changes/channels-reserve-issue-tile-space/README.md).
 - **Opening an issue** works from a chip, resolved reference click or `Enter` on a resolved
   reference. The shell opens the issue in the answering board after it checks
   the profile on the navigation request.

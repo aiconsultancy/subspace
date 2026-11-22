@@ -26,7 +26,8 @@ pub(crate) fn message(
     let id: SharedString = format!("irc-line:{}", entry.seq).into();
     let group: SharedString = format!("{id}:hover").into();
     let rendered = markup::rich(&entry.line.text, &context.mentions);
-    let identifiers = identifiers(original, context, rendered.as_ref());
+    let issues = markup::issues(&original.line.text, &context.mentions, rendered.as_ref());
+    let identifiers = identifiers(original, context, rendered.as_ref(), issues.clone());
     let spoken = spoken(entry, rendered.as_ref());
     let leading = message_gutter(entry, &nick, continues, &group, cx);
     let column = v_flex()
@@ -41,13 +42,7 @@ pub(crate) fn message(
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
         })
         .children(thread_facts(entry, context, &tokens))
-        .children(crate::issues::tiles(
-            entry,
-            &identifiers,
-            context,
-            &tokens,
-            cx,
-        ))
+        .children(crate::issues::tiles(entry, &issues, context, &tokens, cx))
         .children(attachments(original, context, &tokens, cx))
         .children(marks::focus_card(entry, context));
     let row = h_flex()
@@ -108,8 +103,14 @@ pub(crate) fn displayed(entry: &Entry, hub: Option<&crate::hub::Hub>) -> Option<
     })
 }
 
-fn identifiers(entry: &Entry, context: &RowContext, rendered: Option<&Rendered>) -> Vec<String> {
-    let mut keys = markup::issues(&entry.line.text, &context.mentions, rendered);
+/// Every key the row asks the hub about: its `issues`, then its pull
+/// requests and uploads.
+fn identifiers(
+    entry: &Entry,
+    context: &RowContext,
+    rendered: Option<&Rendered>,
+    mut keys: Vec<String>,
+) -> Vec<String> {
     keys.extend(markup::pull_requests(
         &entry.line.text,
         &context.mentions,
