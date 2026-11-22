@@ -170,8 +170,13 @@ A fleet records its standard IRC channels: `starbaseChannel` (people, the
 rear admiral and the captains) and `commandChannel` (the rear admiral and its
 captains), each optional and set on create or with `PATCH`. A ship records its
 captain's ship channel in `channel`, set when the ship is created or renamed;
-a rename that leaves `channel` out keeps it, and `null` clears it. Channel
-names start with `#` and hold no spaces, commas or control characters. The
+a rename that leaves `channel` out keeps it, and `null` clears it. Because a
+ship's channel decides every member's autojoin, as the fleet's channels do,
+only a human organisation administrator may set or change it; a member who
+creates a ship with a channel, or renames one with a different channel,
+receives 403. Channel
+names start with `#` and hold no whitespace, commas, colons or control
+characters, so the desktop joins each as one channel. The
 fleet's `agents` repeat each linked ship's channel as `shipChannel`. An
 initiative's `channels` are its own channels beyond its fleet's standard ones.
 

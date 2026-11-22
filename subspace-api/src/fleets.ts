@@ -17,10 +17,13 @@ const Websocket = Schema.String.check(
   Schema.isMaxLength(2048),
   Schema.isPattern(/^wss?:\/\/[^\s/@?#]+(?:[/?#][^\s]*)?$/u),
 );
-/** An IRC channel name: `#`, then no spaces, commas or control characters. */
+/**
+ * An IRC channel name that the desktop joins as one channel: `#`, then no whitespace, commas,
+ * colons or control characters, as the desktop's autojoin rule requires.
+ */
 export const IrcChannel = Schema.String.check(
   Schema.isMaxLength(64),
-  Schema.isPattern(/^#[^\s,\p{Cc}]+$/u),
+  Schema.isPattern(/^#[^\p{White_Space}\p{Cc},:]+$/u),
 );
 const editable = {
   slug: Slug.check(Schema.makeFilter((slug) => !isUuid(slug), { expected: "a slug, not a UUID" })),
@@ -363,10 +366,14 @@ export const listShips = (member: Member, id: string) =>
     return rows.sort(byShip).map(shipDto);
   });
 
+const shipChannelAdminOnly = "Setting a ship's channel requires organisation admin access.";
+
 export const createShip = (member: Member, id: string, name: string, channel?: string | null) =>
   Effect.gen(function* () {
     if (member.agentRank)
       return yield* Effect.fail(problem(403, "Only humans may manage fleets and ships."));
+    if (channel != null && member.role !== "admin")
+      return yield* Effect.fail(problem(403, shipChannelAdminOnly));
     const db = yield* Database;
     const [fleet] = yield* db
       .select({ id: fleets.id })
@@ -394,6 +401,8 @@ export const renameShip = (member: Member, id: string, payload: typeof RenameShi
         if (payload.version !== undefined && payload.version !== old.version)
           return yield* Effect.fail(stale("ship", old.version));
         const channel = payload.channel === undefined ? old.channel : payload.channel;
+        if (old.channel !== channel && member.role !== "admin")
+          return yield* Effect.fail(problem(403, shipChannelAdminOnly));
         if (old.name === payload.name && old.channel === channel) return shipDto(old);
         const [ship] = yield* tx
           .update(ships)

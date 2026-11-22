@@ -209,7 +209,15 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       name: "Aurora",
       channel: "#two words",
     });
-    const ship = await call<Versioned>(201, `/fleets/${registered.id}/ships`, "member", "POST", {
+    await call(403, `/fleets/${registered.id}/ships`, "member", "POST", {
+      name: "Aurora",
+      channel: "#example-zeta",
+    });
+    await call(201, `/fleets/${registered.id}/ships`, "member", "POST", {
+      name: "Member ship",
+      channel: null,
+    });
+    const ship = await call<Versioned>(201, `/fleets/${registered.id}/ships`, "admin", "POST", {
       name: "Aurora",
       channel: "#example-zeta",
     });
@@ -254,13 +262,51 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       serviceTokenClientId: "roster-admiral@example.test",
       fleetId: registered.id,
     });
-    await call(200, `/ships/${ship.id}`, "member", "PATCH", {
+    await call(403, `/ships/${ship.id}`, "member", "PATCH", {
       version: ship.version,
       name: "Borealis",
+      channel: "#example-other",
+    });
+    await call(403, `/ships/${ship.id}`, "member", "PATCH", {
+      version: ship.version,
+      name: "Borealis",
+      channel: null,
+    });
+    const renamed = await call<Versioned>(200, `/ships/${ship.id}`, "member", "PATCH", {
+      version: ship.version,
+      name: "Borealis",
+      channel: "#example-zeta",
     });
     await call(409, `/ships/${ship.id}`, "admin", "PATCH", {
       version: ship.version,
       name: "Stale",
+    });
+    await call(200, `/ships/${ship.id}`, "admin", "PATCH", {
+      version: renamed.version,
+      name: "Borealis",
+      channel: "#example-moved",
+    });
+    await call(200, `/ships/${ship.id}`, "admin", "PATCH", {
+      version: renamed.version + 1,
+      name: "Borealis",
+      channel: "#example-zeta",
+    });
+    const shipTool = { fleetId: registered.id, name: "Tool ship", channel: "#example-tool" };
+    expect(await tool("subspace_create_ship", shipTool, "member")).toMatchObject({
+      isError: true,
+    });
+    const toolShip = await tool<Versioned>("subspace_create_ship", shipTool, "admin");
+    expect(toolShip.isError).toBe(false);
+    const toolRename = { shipId: toolShip.structuredContent.id, name: "Tool ship renamed" };
+    expect(
+      await tool(
+        "subspace_rename_ship",
+        { ...toolRename, channel: "#example-elsewhere" },
+        "member",
+      ),
+    ).toMatchObject({ isError: true });
+    expect(await tool("subspace_rename_ship", toolRename, "member")).toMatchObject({
+      isError: false,
     });
     expect(await call(200, `/agents/${linked.userId}`)).toMatchObject({
       fleetId: registered.id,
@@ -316,11 +362,15 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       ],
       ships: [
         { id: ship.id, name: "Borealis", channel: "#example-zeta" },
+        { name: "Member ship", channel: null },
+        { name: "Tool ship renamed", channel: "#example-tool" },
         { name: "zenith", channel: null },
       ],
     });
     expect(await call(200, `/fleets/${registered.id}/ships`, "member")).toMatchObject([
       { id: ship.id, fleetId: registered.id, name: "Borealis" },
+      { fleetId: registered.id, name: "Member ship" },
+      { fleetId: registered.id, name: "Tool ship renamed" },
       { fleetId: registered.id, name: "zenith" },
     ]);
     await call(404, `/fleets/${registered.id}/ships`, "other");

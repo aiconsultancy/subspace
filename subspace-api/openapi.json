@@ -648,7 +648,7 @@
                       {
                         "type": "string",
                         "maxLength": 64,
-                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
                       },
                       {
                         "type": "null"
@@ -663,7 +663,7 @@
                       {
                         "type": "string",
                         "maxLength": 64,
-                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
                       },
                       {
                         "type": "null"
@@ -1017,7 +1017,7 @@
                       {
                         "type": "string",
                         "maxLength": 64,
-                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
                       },
                       {
                         "type": "null"
@@ -1032,7 +1032,7 @@
                       {
                         "type": "string",
                         "maxLength": 64,
-                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
                       },
                       {
                         "type": "null"
@@ -1296,6 +1296,7 @@
             }
           }
         },
+        "description": "Any human member may create a ship. Setting its channel requires a human organisation administrator, as the channel decides every member's autojoin; a member who supplies one receives 403.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1312,7 +1313,7 @@
                       {
                         "type": "string",
                         "maxLength": 64,
-                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
                       },
                       {
                         "type": "null"
@@ -1449,6 +1450,7 @@
             }
           }
         },
+        "description": "Any human member may rename a ship. Changing its channel requires a human organisation administrator; a member who supplies a different channel receives 403. Leaving channel out keeps it, and null clears it.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1465,7 +1467,7 @@
                       {
                         "type": "string",
                         "maxLength": 64,
-                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
                       },
                       {
                         "type": "null"
