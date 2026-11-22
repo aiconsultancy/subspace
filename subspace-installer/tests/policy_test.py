@@ -8,6 +8,9 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fixture  # noqa: E402
+import fleet_records  # noqa: E402
 from github_policy import PolicyError, check_push, cli_permissions
 from network import rules
 import roles
@@ -678,6 +681,128 @@ class AgentDispatchTests(unittest.TestCase):
         rear_entry = runtime.irc_officer(cfg, rear, registration(rear))
         self.assertIn(command, rear_entry["channels"])
         self.assertIn(captain["account"], rear_entry["fleetPolicy"]["agentAccounts"])
+
+
+class FleetRecordsTests(unittest.TestCase):
+    """The fleet's standard channels, ships and officers in the Subspace API (fleetctl register)."""
+
+    def setUp(self):
+        self.config = example_config()
+        self.config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra",
+                                        "harness": {"family": "claude"}})
+        self.config["api"] = {"url": "http://127.0.0.1:3000"}
+        self.secrets = {**officer_secrets("example-lyra"), "apiToken": "header.payload.admin"}
+        self.api = fixture.Subspace()
+        self.said = []
+
+    def register(self, config=None):
+        cfg = validate(config or self.config, self.secrets)
+        before = len(self.api.writes)
+        fleet_records.register(self.api.call, fleet_records.fleet_fields(cfg), fleet_records.roster(cfg), self.said.append)
+        return self.api.writes[before:]
+
+    def test_the_fleet_its_ships_and_officers_are_recorded_once(self):
+        writes = self.register()
+        self.assertEqual(writes, [("POST", "/fleets"), ("POST", "/agents"), ("POST", "/fleets/<id>/ships"),
+                                  ("POST", "/agents"), ("POST", "/fleets/<id>/ships"), ("POST", "/agents")])
+        self.assertEqual(self.api.summary(), {
+            "fleets": {"example-fleet": {"name": "Example Fleet", "starbaseChannel": "#example-fleet-starbase",
+                                         "commandChannel": standard_channels.command("example-fleet")}},
+            "ships": [("Lyra", "#example-fleet-lyra"), ("Orion", "#example-fleet-orion")],
+            # The rear admiral keeps its own name; a captain is named by its account, its ship by the ship's name.
+            "agents": [("Atlas", "rearAdmiral", "example-atlas", None, True),
+                       ("example-lyra", "captain", "example-lyra", "Lyra", True),
+                       ("example-orion", "captain", "example-orion", "Orion", True)],
+        })
+        agents = {row["name"]: row for row in self.api.agents.values()}
+        self.assertEqual(agents["Atlas"]["serviceTokenClientId"], "example-atlas@agents.example.com")
+        self.assertEqual((agents["Atlas"]["defaultModel"], agents["example-lyra"]["defaultModel"]),
+                         ("gpt-5.4", runtime.FAMILIES["claude"]))
+        self.assertEqual(self.register(), [], "a re-run changes nothing")
+
+    def test_a_changed_roster_is_reconciled(self):
+        self.register()
+        lyra = dict(self.config["captains"].pop())
+        self.secrets["ircPasswords"].pop("example-lyra")
+        self.config["rearAdmiral"]["name"] = "Nova"
+        self.config["captains"][0]["name"] = "Orion Two"
+        self.register()
+        summary = self.api.summary()
+        # A retired captain is deactivated and its ship no longer names a channel for the desktop to join.
+        self.assertIn(("example-lyra", "captain", "example-lyra", "Lyra", False), summary["agents"])
+        self.assertIn(("Lyra", None), summary["ships"])
+        # A renamed ship keeps its record; the rear admiral's record takes its new name.
+        self.assertIn(("Orion Two", "#example-fleet-orion"), summary["ships"])
+        self.assertEqual(len(summary["ships"]), 2)
+        self.assertIn(("Nova", "rearAdmiral", "example-atlas", None, True), summary["agents"])
+        # The captain's return reactivates its record and gives its ship its channel again.
+        self.config["captains"].append(lyra)
+        self.secrets["ircPasswords"]["example-lyra"] = "fixture-password"
+        self.register()
+        self.assertIn(("example-lyra", "captain", "example-lyra", "Lyra", True), self.api.summary()["agents"])
+        self.assertIn(("Lyra", "#example-fleet-lyra"), self.api.summary()["ships"])
+        self.assertEqual(len(self.api.agents), 3)
+        self.assertEqual(self.register(), [])
+
+    def test_existing_agents_are_found_across_pages_and_by_account_subject(self):
+        self.api.page = 1
+        self.register()
+        # An agent an administrator registered by hand, without a nick, is taken over rather than duplicated.
+        [orion] = [row for row in self.api.agents.values() if row["name"] == "example-orion"]
+        orion["ircNick"] = None
+        self.register()
+        self.assertEqual(orion["ircNick"], "example-orion")
+        self.assertEqual(len(self.api.agents), 3)
+
+    def test_records_that_belong_to_someone_else_are_refused(self):
+        self.register()
+        cases = {
+            "already named Atlas": lambda api: api.agents.update(x={
+                "userId": "x", "name": "atlas", "rank": "crew", "fleetId": None, "shipId": None, "ircNick": None,
+                "serviceTokenClientId": "someone@example.com", "defaultModel": "m", "isActive": True, "version": 1}),
+            "under another account subject": lambda api: next(
+                row for row in api.agents.values() if row["name"] == "Atlas").update(serviceTokenClientId="other@example.com"),
+            "belongs to another fleet": lambda api: next(
+                row for row in api.agents.values() if row["name"] == "Atlas").update(fleetId="another-fleet"),
+        }
+        for message, change in cases.items():
+            api = self.api = fixture.Subspace()
+            self.assertTrue(self.register())
+            change(api)
+            with self.subTest(message=message), self.assertRaisesRegex(fleet_records.Refused, message):
+                self.register()
+
+    def test_the_api_s_refusals_are_explained(self):
+        self.api.admin = False
+        with self.assertRaisesRegex(fleet_records.Refused, "human organisation administrator"):
+            self.register()
+        self.api = fixture.Subspace()
+        self.config["rearAdmiral"]["serviceTokenClientId"] = "00000000-0000-4000-8000-00000000000a"
+        with self.assertRaisesRegex(fleet_records.Refused, "example-atlas's serviceTokenClientId.*Entra object ID"):
+            self.register()
+
+    def test_names_the_api_cannot_hold_are_refused_before_installing(self):
+        cases = [
+            (("rearAdmiral", "name"), "Rear Admiral Atlas", "letters, digits and hyphens"),
+            (("captains", 0, "account"), "example_orion", "without underscores"),
+            (("captains", 0, "name"), "O" * 65, "at most 64"),
+            (("captains", 1, "name"), "orion", "ship names must differ"),
+        ]
+        for path, value, message in cases:
+            config = json.loads(json.dumps(self.config))
+            secrets = json.loads(json.dumps(self.secrets))
+            target = config
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            if path[-1] == "account":
+                secrets["ircPasswords"][value] = secrets["ircPasswords"].pop("example-orion")
+            with self.subTest(path=path), self.assertRaisesRegex(Invalid, message):
+                validate(config, secrets)
+            # A fleet without the API registers nothing, so its names are not the API's business.
+            config.pop("api")
+            secrets.pop("apiToken")
+            validate(config, secrets)
 
 
 if __name__ == "__main__":
