@@ -213,4 +213,5 @@ fn search_finds_listed_channels_as_not_joined() {
 }
 
 mod activity;
+mod captions;
 mod fleets;
