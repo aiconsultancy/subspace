@@ -10,9 +10,22 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from github_policy import PolicyError, check_push, cli_permissions
 from network import rules
+import roles
 from roles import default_permissions
+import runtime
 from runtime import Invalid, repository_config, toolchain_config, validate
 import workspaces
+
+
+def example_config():
+    return json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+
+
+def officer_secrets(*extra):
+    """Passwords for the example's rear admiral and captain, plus any extra accounts."""
+    return {"proxyKey": "fixture-model-proxy-key", "ircPasswords": {
+        account: "fixture-password" for account in ("example-atlas", "example-orion", *extra)
+    }}
 
 
 class FleetPolicyTests(unittest.TestCase):
@@ -71,30 +84,200 @@ class FleetPolicyTests(unittest.TestCase):
         with self.assertRaises(Invalid):
             repository_config([{"id": "project", "url": "https://example.com/project.git", "private": True}])
 
-    def test_private_repository_requires_distinct_apps_for_crew(self):
-        example = Path(__file__).resolve().parents[1] / "fleet.example.json"
-        config = json.loads(example.read_text())
+    def test_private_repositories_need_apps_for_officers_only(self):
+        config = example_config()
         config["crew"] = {"claude": {"count": 0}, "codex": {"count": 1}}
         config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git", "private": True}]
-        secrets = {"proxyKey": "fixture-model-proxy-key", "ircPasswords": {
-            account: "fixture-password" for account in ("example-atlas", "example-orion", "example-orion-codex-1")
-        }}
         apps = [
             {"appId": index, "installationId": index, "clientId": f"fixture-{index}",
              "botId": index, "botLogin": f"fixture-{index}[bot]"}
-            for index in range(1, 4)
+            for index in range(1, 3)
         ]
-        config["rearAdmiral"]["githubApp"], config["captains"][0]["githubApp"] = apps[:2]
-        with self.assertRaisesRegex(Invalid, "distinct GitHub App for every active agent"):
-            validate(config, secrets)
-        config["captains"][0]["crewGitHubApps"] = {"codex-1": apps[1]}
+        config["rearAdmiral"]["githubApp"] = apps[0]
+        with self.assertRaisesRegex(Invalid, "rear admiral and every captain"):
+            validate(config, officer_secrets())
+        config["captains"][0]["githubApp"] = apps[0]
         with self.assertRaisesRegex(Invalid, "distinct GitHub App identity"):
-            validate(config, secrets)
-        config["captains"][0]["crewGitHubApps"]["codex-1"] = apps[2]
+            validate(config, officer_secrets())
+        config["captains"][0]["githubApp"] = apps[1]
         config["captains"][0]["crewNames"] = {"codex-1": "Rigel"}
-        crew = validate(config, secrets)["members"][-1]
-        self.assertEqual(crew["githubApp"], apps[2])
-        self.assertEqual(crew["name"], "Rigel")
+        captain = validate(config, officer_secrets())["members"][1]
+        self.assertEqual(captain["githubApp"], apps[1])
+        self.assertEqual([(worker["id"], worker["name"]) for worker in captain["crew"]], [("rigel", "Rigel")])
+        self.assertNotIn("githubApp", captain["crew"][0])
+
+    def test_crew_run_under_their_captain_without_irc_accounts(self):
+        config = example_config()
+        config["repositories"] = [
+            {"id": "project", "url": "https://github.com/example/project.git"},
+            {"id": "library", "url": "https://github.com/example/library.git"},
+        ]
+        cfg = validate(config, officer_secrets())
+        self.assertEqual([person["id"] for person in cfg["members"]], ["atlas", "orion"])
+        crew = cfg["members"][1]["crew"]
+        self.assertEqual([worker["id"] for worker in crew], ["claude-1", "claude-2", "codex-1", "codex-2"])
+        self.assertEqual({worker["family"]: worker["model"] for worker in crew},
+                         {"claude": "claude-sonnet-5-5", "codex": "gpt-5.4"})
+        self.assertEqual(crew[0]["agent"], "orion-crew-claude-1")
+        self.assertEqual(crew[0]["branch"], "crew/example-fleet-orion-claude-1")
+        self.assertEqual(cfg["members"][0]["crew"], [])
+        # Operators supply IRC passwords for the rear admiral and captains only.
+        with self.assertRaisesRegex(Invalid, "Crew have no IRC accounts"):
+            validate(config, officer_secrets("example-orion-codex-1"))
+        # Without repositories there is nothing for crew worktrees to come from.
+        config["repositories"] = []
+        self.assertEqual(validate(config, officer_secrets())["members"][1]["crew"], [])
+
+    def test_unsupported_crew_combinations_are_refused(self):
+        repositories = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        cases = [
+            ({"crew": {"claude": {"type": "claude-sdk"}}}, "claude-sdk crew are not supported"),
+            ({"crew": {"codex": {"type": "opencode"}}}, "Remove crew type"),
+            ({"crew": {"codex": {"permissions": [{"action": "*", "resource": "*", "effect": "allow"}]}}},
+             "Stargate's crew coding profile"),
+            ({"captain": {"crewGitHubApps": {}}}, "Remove crewGitHubApps"),
+            ({"captain": {"harness": {"type": "claude-sdk", "family": "claude"}}}, "cannot host crew"),
+            ({"captain": {"crewNames": {"claude-1": "Codex 1"}}}, "distinct IDs"),
+            ({"captain": {"crewNames": {"claude-1": "Orion"}}}, "distinct IDs"),
+            ({"captain": {"crewNames": {"claude-1": "Ægir"}}}, "ASCII"),
+            ({"captain": {"crewNames": {"claude-3": "Rigel"}}}, "only enabled crew slots"),
+            ({"rearAdmiral": {"crew": {"codex": {"count": 1}}}}, "Only captains may declare crew"),
+            ({"repositories": [{"id": "9lives", "url": "https://github.com/example/nine.git"}]}, "start with a lowercase letter"),
+            ({"repositories": [{"id": "default", "url": "https://github.com/example/default.git"}]}, "reserved"),
+            ({"repositories": [{"id": f"repo{index}", "url": f"https://github.com/example/r{index}.git"} for index in range(10)]},
+             "at most 9 repositories"),
+            ({"crew": {"claude": {"count": 10}, "codex": {"count": 10}},
+              "repositories": [{"id": f"repo{index}", "url": f"https://github.com/example/r{index}.git"} for index in range(3)]},
+             "must not exceed 50"),
+        ]
+        for change, message in cases:
+            with self.subTest(message=message):
+                config = example_config()
+                config["repositories"] = change.get("repositories", repositories)
+                if "crew" in change:
+                    config["crew"] = change["crew"]
+                config["captains"][0].update(change.get("captain", {}))
+                config["rearAdmiral"].update(change.get("rearAdmiral", {}))
+                with self.assertRaisesRegex(Invalid, message):
+                    validate(config, officer_secrets())
+        # A Claude Agent SDK captain is valid without crew.
+        config = example_config()
+        config["captains"][0].update(harness={"type": "claude-sdk", "family": "claude"},
+                                     crew={"claude": {"count": 0}, "codex": {"count": 0}})
+        self.assertEqual(validate(config, officer_secrets())["members"][1]["crew"], [])
+
+    def test_crew_plugin_options_give_each_member_a_worktree_per_repository(self):
+        config = example_config()
+        config["crew"] = {"claude": {"count": 1}, "codex": {"count": 1, "model": "gpt-5.5"}}
+        config["repositories"] = [
+            {"id": "project", "url": "https://github.com/example/project.git"},
+            {"id": "library", "url": "https://github.com/example/library.git"},
+        ]
+        cfg = validate(config, officer_secrets())
+        captain = cfg["members"][1]
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        options = runtime.crew_options(cfg, captain, home, 4097, "ses_fixture")
+        self.assertEqual(options["namespace"], "example-fleet-orion")
+        self.assertEqual(options["captainDirectory"], f"{home}/workspace/project")
+        self.assertEqual(options["projectDirectory"], options["captainDirectory"])
+        self.assertEqual(options["worktrees"], {"claude-1": f"{home}/worktrees/claude-1/project",
+                                                "codex-1": f"{home}/worktrees/codex-1/project"})
+        self.assertEqual(options["projects"], {"library": {
+            "projectDirectory": f"{home}/workspace/library",
+            "worktrees": {"claude-1": f"{home}/worktrees/claude-1/library", "codex-1": f"{home}/worktrees/codex-1/library"},
+        }})
+        self.assertEqual(options["stateDirectory"], f"{home}/.local/stargate-crew")
+        self.assertEqual(options["mesijCommand"], "/opt/subspace-fleet/bin/mesij")
+        self.assertEqual(options["captainSessionID"], "ses_fixture")
+        team = options["team"]
+        self.assertEqual(team["captain"], {"id": "orion", "agent": "build", "model": "openai-proxy/gpt-5.4"})
+        self.assertEqual(team["modelProviders"], ["claude-proxy", "openai-proxy"])
+        self.assertEqual(team["historyAPI"], {"url": "http://127.0.0.1:4097",
+                                              "headersEnv": {"authorization": "OPENCODE_AUTHORIZATION"}})
+        self.assertEqual([(worker["id"], worker["agent"], worker["model"], worker["permissionProfile"]) for worker in team["crew"]], [
+            ("claude-1", "orion-crew-claude-1", "claude-proxy/claude-sonnet-5-5", "coding"),
+            ("codex-1", "orion-crew-codex-1", "openai-proxy/gpt-5.5", "coding"),
+        ])
+        # Stargate requires distinct, non-nested captain and worker directories.
+        paths = [options["captainDirectory"], *options["worktrees"].values(),
+                 *(path for project in options["projects"].values() for path in project["worktrees"].values())]
+        for index, path in enumerate(paths):
+            for other in paths[index + 1:]:
+                self.assertFalse(Path(path).is_relative_to(other) or Path(other).is_relative_to(path))
+
+    def test_captain_engine_hosts_crew_agents_and_the_pinned_plugin(self):
+        config = example_config()
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        cfg = validate(config, officer_secrets())
+        captain = cfg["members"][1]
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        documents = roles.role_documents(cfg, captain, Path("/references/atlas"), home)
+        saved = {}
+
+        def save(name, settings, _user):
+            saved[name] = settings
+            return Path(f"/etc/subspace-fleet/{name}.json")
+
+        with patch.object(runtime, "directory"), patch.object(runtime, "save_settings", side_effect=save), \
+                patch.object(runtime, "serve_unit", return_value="subspace-fleet-engine-orion.service"):
+            _, backend, headers, _ = runtime.render_engine(
+                cfg, captain, home, home / "workspace/project", 4097, b"seed", documents, None)
+            engine = saved["opencode-orion"]
+            self.assertNotIn("plugins", engine)
+            self.assertNotIn("sessionID", backend)
+            _, backend, _, _ = runtime.render_engine(
+                cfg, captain, home, home / "workspace/project", 4097, b"seed", documents, "ses_fixture")
+        engine = saved["opencode-orion"]
+        self.assertEqual(engine["default_agent"], "build")
+        self.assertEqual(set(engine["providers"]), {"claude-proxy", "openai-proxy"})
+        self.assertIn("anthropic-compatible", engine["providers"]["claude-proxy"]["package"])
+        self.assertIn("openai-compatible/responses", engine["providers"]["openai-proxy"]["package"])
+        crew_agent = engine["agents"]["orion-crew-codex-2"]
+        self.assertEqual((crew_agent["model"], crew_agent["mode"]), ("openai-proxy/gpt-5.4", "primary"))
+        self.assertIn("Codex 2 (`codex-2`)", crew_agent["system"])
+        self.assertIn(f"{home}/worktrees/codex-2/project", crew_agent["system"])
+        self.assertNotIn("ship channel", crew_agent["system"])
+        [plugin] = engine["plugins"]
+        self.assertEqual(plugin["package"], f"/opt/subspace-fleet/src/stargate-{runtime.STARGATE_REF}")
+        self.assertEqual(plugin["options"]["captainSessionID"], "ses_fixture")
+        self.assertEqual(backend["sessionID"], "ses_fixture")
+        self.assertEqual((backend["agent"], backend["enforcePermissions"]), ("build", True))
+        self.assertEqual(backend["permissions"][-len(runtime.CREW_GRANTS):], runtime.CREW_GRANTS)
+        self.assertEqual(engine["permissions"], captain["harness"]["permissions"])
+        environment = saved["engine-orion"]["environment"]
+        self.assertEqual(environment["OPENCODE_AUTHORIZATION"], next(iter(headers.values())))
+        self.assertIn("fleet-crew", documents["skills"])
+        self.assertIn("stargate_crew", documents["instructions"])
+
+    def test_crew_worktrees_are_added_to_the_captain_checkout(self):
+        captain = {"id": "orion", "role": "captain", "crew": [
+            {"id": "claude-1", "branch": "crew/example-fleet-orion-claude-1"},
+            {"id": "codex-1", "branch": "crew/example-fleet-orion-codex-1"},
+        ]}
+        home = Path("/agents/orion")
+        checkout = home / "workspace/project"
+        calls = []
+
+        def git(user, *args, output=False, env=None, shared=False):
+            calls.append((user, args))
+            if args[-2:] == ("rev-parse", "HEAD"):
+                return "a" * 40
+            if "--git-common-dir" in args:
+                return str(checkout / ".git")
+            return "" if output else None
+
+        source = "https://github.com/example/project.git"
+        with patch.object(workspaces, "clone"), patch.object(workspaces, "check_origin"), \
+                patch.object(workspaces, "as_user"), patch.object(workspaces, "git", side_effect=git):
+            workspaces.prepare_member(captain, home, "project", source, Path("/cache/project.git"), "repos", Path("/opt/fixture/github_app.py"))
+        added = [args for user, args in calls if "worktree" in args and "add" in args]
+        self.assertEqual(added, [
+            ("-C", checkout, "worktree", "add", "--quiet", "-b", "crew/example-fleet-orion-claude-1",
+             home / "worktrees/claude-1/project", "a" * 40),
+            ("-C", checkout, "worktree", "add", "--quiet", "-b", "crew/example-fleet-orion-codex-1",
+             home / "worktrees/codex-1/project", "a" * 40),
+        ])
+        self.assertTrue(all(user == "ss-orion" for user, args in calls if args[:2] == ("-C", checkout)))
 
     def test_stargate_fleet_api_is_an_operator_listener(self):
         example = Path(__file__).resolve().parents[1] / "fleet.example.json"

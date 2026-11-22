@@ -311,15 +311,15 @@ if [[ ${source[2]} == local ]]; then
     checkout_source irc "${source[3]}" "${source[4]}"
     [[ -f $app/src/irc-${source[4]}/subspace-irc/compose.yaml ]] || die 'Pinned Subspace revision has no IRC Compose file.'
 fi
-for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py; do
+for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.py agent_files.py workspaces.py network.py roles.py medical.py sessions.py; do
     install_file "$here/lib/$program" "$app/lib/$program" 0755
 done
 install -d -m 0755 "$app/lib/git-hooks"
 install_file "$here/lib/git-hooks/pre-push" "$app/lib/git-hooks/pre-push" 0755
 for role in rear-admiral captain crew; do
     install -d -m 0755 "$app/lib/roles/$role"
-    for template in AGENTS.md SKILL.md; do
-        install_file "$here/lib/roles/$role/$template" "$app/lib/roles/$role/$template" 0644
+    for template in "$here/lib/roles/$role/"*.md; do
+        install_file "$template" "$app/lib/roles/$role/${template##*/}" 0644
     done
 done
 if [[ $(readlink /usr/local/bin/subspace-fleetctl) != "$app/lib/fleetctl.py" ]]; then
@@ -334,11 +334,22 @@ if [[ ${source[2]} == local ]]; then
     "$app/lib/runtime.py" irc config --quiet
 fi
 start_services
+if "$no_systemd"; then
+    printf 'Captains with crew pin their root session once their OpenCode engine runs (runtime.py commission).\n'
+else
+    rm -f -- "$state/pending"
+    # Crew need their captain's root session, created on the running engine before the gateway starts.
+    python3 "$app/lib/runtime.py" commission "$prune_secrets"
+    if [[ -e $state/pending ]]; then
+        python3 "$app/lib/runtime.py" check
+        start_services
+        rm -f -- "$state/pending"
+    fi
+fi
 if "$prune_secrets"; then
     python3 "$app/lib/runtime.py" prune-app-keys
 fi
 if ! "$no_systemd"; then
-    rm -f -- "$state/pending"
     "$app/lib/fleetctl.py" register
 fi
 printf 'Fleet installation complete.\n'

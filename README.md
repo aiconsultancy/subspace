@@ -133,12 +133,13 @@ flowchart LR
   CLIProxyAPI for models, the Stargate dashboard and AgentsView. Fleets default
   to OpenCode as the agent harness. The installer can register its fleet with
   the API.
-- **A GitHub App per agent.** Every captain and the rear admiral has its own
-  GitHub App, so each one commits, comments and opens pull requests under its
-  own identity. The installer provisions each agent's App metadata and private
-  key as owner-only files under `~/.config/subspace/` in that agent's Linux
-  home, from a secrets directory the operator supplies, and wires up Git
-  credentials, the commit identity and a scoped `gh` wrapper.
+- **A GitHub App per captain and rear admiral.** Every captain and the rear
+  admiral has its own GitHub App, so each one commits, comments and opens pull
+  requests under its own identity. Crew run under their captain's Linux user
+  and commit as their captain. The installer provisions each App's metadata
+  and private key as owner-only files under `~/.config/subspace/` in its
+  agent's Linux home, from a secrets directory the operator supplies, and
+  wires up Git credentials, the commit identity and a scoped `gh` wrapper.
 
 Our reference deployment ran on Azure, with credentials such as the agents'
 GitHub App keys in Azure Key Vault. The public version uses per-agent
@@ -298,8 +299,8 @@ configurable.
   resources, so agents can inspect real infrastructure. Agents also have
   GitHub access to read CI and troubleshoot failures. The public equivalent is
   per-agent read-only credentials (a kubeconfig, a read-only database user and
-  GitHub App permissions), which the installer provisions into each agent's
-  home.
+  GitHub App permissions), which the installer provisions into the rear
+  admiral's and each captain's home; crew use their captain's.
 - **Medical ship.** The optional installer service watches selected Sentry
   projects for unresolved errors and fatal issues and posts links to fleet
   IRC. It can address a captain or the rear admiral for read-only triage.

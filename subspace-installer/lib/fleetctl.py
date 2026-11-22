@@ -85,9 +85,11 @@ def register(cfg):
 
 
 def attach(member):
-    member = pattern(member, r"[a-z][a-z0-9-]{0,28}", "member ID")
+    member = pattern(member, r"[a-z][a-z0-9-]{0,19}", "rear-admiral or captain ID")
     units = (ETC / "units").read_text().splitlines()
-    require(f"subspace-fleet-engine-{member}.service" in units, "No installed OpenCode engine for this member.")
+    require(f"subspace-fleet-engine-{member}.service" in units,
+            "No installed OpenCode engine for this member. Crew run on their captain's server: "
+            "attach to the captain and open the crew member's session from its session list.")
     settings = ETC / f"engine-{member}.json"
     require(settings.is_file(), "Unknown fleet member.")
     os.execvp("runuser", ["runuser", "--pty", "-u", f"ss-{member}", "--",
@@ -111,7 +113,7 @@ def main():
     assign = sub.add_parser("assign", help="assign an initiative to a fleet")
     assign.add_argument("initiative")
     assign.add_argument("fleet", help="fleet slug, UUID, or 'none'")
-    tty = sub.add_parser("attach", help="open a fleet member's OpenCode tmux session")
+    tty = sub.add_parser("attach", help="open the rear admiral's or a captain's OpenCode tmux session (crew sessions are on the captain's server)")
     tty.add_argument("member")
     sub.add_parser("api-token", help="print the Stargate Fleet API token for an operator's client")
     args = parser.parse_args()

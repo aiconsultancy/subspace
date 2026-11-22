@@ -3,17 +3,23 @@
 A fleet is one Linux VM. Human **admirals** use **Starbase** to work out what
 to build with the **rear admiral**, who coordinates the **captains** and talks
 to stakeholders. Each captain has a ship channel and a **crew**. The default
-crew is two Claude-family and two Codex-family workers. Each captain gets a
-checkout of the configured repositories. Each crew member gets a dedicated
-Git worktree per repository. Agents have separate Linux accounts.
+crew is two Claude-family and two Codex-family workers.
 
-Stargate routes IRC conversations to the agents. The installer defaults to
-OpenCode V2, using CLIProxyAPI for models. Configure the model and harness
-per role and crew family. The dashboard shows the primary Stargate gateway,
-and AgentsView indexes OpenCode session databases for local browsing and
-search. The installer can run a [medical ship](#medical-ship) to flag Sentry
-errors and enable [quota notices](#crew-quota) so the rear admiral can
-wind down crew as a model family's budget runs low.
+The rear admiral and the captains each have their own Linux user, IRC
+account and GitHub App. Each captain gets a checkout of the configured
+repositories. Crew run under their captain's Linux user, inside the captain's
+OpenCode server, through Stargate's crew plugin. Each crew member has one Git
+worktree per repository, commits as its captain and is reached only through
+its captain: crew have no IRC accounts.
+
+Stargate routes IRC conversations to the rear admiral and captains. The
+installer defaults to OpenCode V2, using CLIProxyAPI for models. Configure
+the model and harness per role and the model per crew family. The dashboard
+shows the primary Stargate gateway, and AgentsView indexes OpenCode session
+databases, including crew sessions, for local browsing and search. The
+installer can run a [medical ship](#medical-ship) to flag Sentry errors and
+enable [quota notices](#crew-quota) so the rear admiral can wind down crew as
+a model family's budget runs low.
 
 A fleet can use an existing IRC network or host Ergo using the pinned
 [Subspace IRC Compose project](../subspace-irc/). The desktop's Channels Space
@@ -41,17 +47,18 @@ sudo ./install.sh --config ~/fleet.json
 sudo systemctl status subspace-fleet-gateway.service
 ```
 
-For remote IRC, register a SASL account for every officer and crew member
-and supply their passwords in `ircPasswords`. The default accounts for
-captain `example-orion` are `example-orion-claude-1`,
-`example-orion-claude-2`, `example-orion-codex-1` and
-`example-orion-codex-2`. Add trusted human SASL accounts to
-`irc.allowedAccounts`. Ask the IRC operator to register the ship, Starbase
-and any initiative channels and grant access to the appropriate accounts.
-For local IRC, [pin a revision that contains the Compose project](#local-irc-and-tls).
+For remote IRC, register a SASL account for the rear admiral and each
+captain, such as `example-atlas` and `example-orion`, and supply their
+passwords in `ircPasswords`. Crew have no IRC accounts. Add trusted human
+SASL accounts to `irc.allowedAccounts`. Ask the IRC operator to register the
+ship, Starbase and any initiative channels and grant access to the
+appropriate accounts. For local IRC,
+[pin a revision that contains the Compose project](#local-irc-and-tls).
 
 The installer validates JSON, installs base tooling and verified release
-binaries, checks Stargate's configuration, and starts systemd services.
+binaries, checks Stargate's configuration, and starts systemd services. It
+then [pins each crew-hosting captain's root session](#captain-sessions) and
+restarts the services that use it.
 `--dry-run` requires Python 3 and validates the inputs without writing to the
 host. `--no-systemd` prepares units and validates configuration and Compose
 without activating systemd services or writing to the Subspace API.
@@ -59,8 +66,10 @@ without activating systemd services or writing to the Subspace API.
 ### Model provider sign-in
 
 Select exact CLIProxyAPI model IDs. OpenCode routes the `codex` family to
-the OpenAI-compatible Responses endpoint and the `claude` family to the
-Anthropic-compatible Messages endpoint. Verify the model IDs on your proxy.
+the OpenAI-compatible Responses endpoint, as provider `openai-proxy`, and the
+`claude` family to the Anthropic-compatible Messages endpoint, as provider
+`claude-proxy`. A captain's OpenCode server defines the provider for its own
+family and for each crew family it hosts. Verify the model IDs on your proxy.
 Run the provider login as the proxy user on the VM.
 
 ```sh
@@ -81,20 +90,45 @@ describe the available logins.
 
 ### Crew and repositories
 
-Set fleet-wide `crew.claude` and `crew.codex` defaults, or override either
-under a captain's `crew`. Set a count from 0 to 10 per family. Crew IDs are
-`<captain-id>-<family>-<number>`. Keep the corresponding IRC accounts and
-passwords in step when adding or removing slots. Use the same IDs for
-per-agent credential directories. To override a crew display name, set the
-captain's `crewNames` map, for example `"crewNames": {"codex-1": "Rigel"}`.
-
 List repositories in order as `{"id":"project","url":"https://github.com/example/project.git"}`
-objects under `repositories`. The first is each agent's default working
-directory. An empty list gives each agent an empty workspace. The rear
-admiral gets read-only reference checkouts under
-`/var/lib/subspace-fleet/references/<rear-admiral-id>/` that the mirror
-service refreshes. The rear admiral can inspect them from its own Linux
-account, including Git history.
+objects under `repositories`. Every captain gets a checkout of each one under
+`/var/lib/subspace-fleet/agents/<captain-id>/workspace/<repository-id>`, and
+the first is each agent's default working directory. An empty list gives each
+agent an empty workspace and gives captains no crew. Repository IDs start
+with a lowercase letter, `default` is reserved, and a captain with crew takes
+at most nine repositories. The rear admiral gets read-only reference
+checkouts under `/var/lib/subspace-fleet/references/<rear-admiral-id>/` that
+the mirror service refreshes. The rear admiral can inspect them from its own
+Linux account, including Git history. `subspace-setup --repositories` fills
+this list from comma-separated HTTPS URLs, optionally written as `ID=URL`.
+
+Set fleet-wide `crew.claude` and `crew.codex` defaults, or override either
+under a captain's `crew`. Each family takes a `count` from 0 to 10 and a
+`model`. Crew run inside their captain's OpenCode server, as the captain's
+Linux user, through Stargate's crew plugin:
+
+- Each crew member has one permanent worktree per repository, under
+  `/var/lib/subspace-fleet/agents/<captain-id>/worktrees/<crew-id>/<repository-id>`.
+  Each worktree belongs to the captain's checkout of that repository and
+  starts on the branch `crew/<fleet-slug>-<captain-id>-<crew-id>`.
+- Crew display names default to `Claude 1`, `Codex 1` and so on, which give
+  the crew IDs `claude-1` and `codex-1`. To rename one, set the captain's
+  `crewNames` map by slot, for example `"crewNames": {"codex-1": "Rigel"}`,
+  which gives the crew ID `rigel`. Names use ASCII letters, digits, spaces,
+  hyphens and underscores.
+- Claude-family crew use `crew.claude.model` through `claude-proxy`, and
+  Codex-family crew use `crew.codex.model` through `openai-proxy`, both
+  served by CLIProxyAPI. The default is two of each.
+- Crew have no Linux user, IRC account, GitHub App, cloud credentials or
+  OpenCode engine of their own. Their captain delegates to them and receives
+  their hand-backs through Stargate's `stargate_crew` tool, with
+  `stargate_mail` and `stargate_dm` for messages.
+- A captain's crew roster and first repository are fixed once its
+  [session is pinned](#captain-sessions), because Stargate keeps crew
+  identities and worktrees permanent. The installer refuses a later change.
+  Restore the recorded roster, or give a new roster to a new captain. Adding
+  repositories after the first is allowed. A changed crew model applies to
+  crew sessions created afterwards.
 
 Public checkouts and crew worktrees share a read-only Git object cache.
 The installer refreshes its refs before creating a worktree and preserves
@@ -102,42 +136,89 @@ existing branches and work in progress. Backing objects are retained because
 active or retired worktrees may still refer to them.
 
 For a private GitHub repository, set `"private": true` and use an HTTPS
-GitHub URL. Give each active agent a distinct GitHub App installed on that
-repository with at least Contents read access. The installer mints a
-repository-scoped read token for bootstrap and keeps private objects in
-individual checkouts and backing repositories. For crew, put the App
-metadata in the captain's `crewGitHubApps` map keyed by slot, for example
-`"codex-1"`, and give the key file the full agent ID directory, for example
-`orion-codex-1/github-app.pem`. Use a new repository ID when its URL or
-visibility changes.
+GitHub URL. Give the rear admiral and every captain a distinct GitHub App
+installed on that repository with at least Contents read access. Crew use
+their captain's. The installer mints a repository-scoped read token for
+bootstrap and keeps private objects in the captain's own checkouts, which its
+crew's worktrees share. Use a new repository ID when its URL or visibility
+changes.
 
 The `opencode` harness uses `permissions`. Select `claude-sdk` with
-`family: "claude"` in a harness or under `crew.claude` to use the Claude
-Agent SDK. Its `allowedTools` defaults to an empty list. Each SDK agent
-runs its own Stargate process as its Linux user. SDK crew get tagged in
-their captain's channel and have their own registration, while OpenCode
-crew are nested under their captain in Stargate. The primary dashboard
-shows registrations in the rear admiral's gateway. The pinned revision
-has a Codex SDK adapter. The OpenAI Agents SDK (`openai-sdk`) is currently
-unavailable.
+`family: "claude"` in a rear-admiral or captain harness to use the Claude
+Agent SDK. Its `allowedTools` defaults to an empty list. Each SDK agent runs
+its own Stargate process as its Linux user. Stargate's crew plugin runs
+inside an OpenCode server, so a `claude-sdk` captain cannot host crew: set
+its crew counts to 0. Crew take no harness `type`, so Claude Agent SDK crew
+are refused. The primary dashboard shows registrations in the rear admiral's
+gateway. The pinned revision has a Codex SDK adapter. The OpenAI Agents SDK
+(`openai-sdk`) is currently unavailable.
+
+### Captain sessions
+
+Stargate's crew plugin gives captain authority to one root OpenCode session.
+For each captain with crew, the installer renders the plugin's configuration
+into the captain's OpenCode profile: the team, with one native agent per crew
+member, the worktrees for each repository, a private state directory under
+the captain's home and the pinned Mesij command, `/opt/subspace-fleet/bin/mesij`.
+After the services start, it creates the captain's root session through the
+engine's authenticated loopback API, with the `build` agent, the captain's
+checkout of the first repository and the captain's permissions. Creating a
+session starts no model turn. The session ID goes into both the gateway's
+`backend.sessionID` and the plugin's `captainSessionID`, and the installer
+restarts the services to load the plugin.
+
+The record lives in `/etc/subspace-fleet/sessions/<captain-id>.json`, owned
+by root with mode `0600`. The installer first reserves the ID in
+`<captain-id>.pending.json` beside it, before it creates the session, so an
+interrupted run retries the same ID instead of creating a second root. Later runs check the session's identity, agent,
+directory and permissions, update its permissions when you change the
+captain's policy, and never replace a missing root. The gateway does not
+start until every captain with crew has a confirmed record.
 
 ### Instructions, permissions and toolchains
 
 The installer renders role-specific OpenCode `AGENTS.md` and
-`skills/fleet-*/SKILL.md` under each agent's `~/.config/opencode/`
-using the fleet name, agent name and assigned channel. Edit the templates in
+`skills/fleet-*/SKILL.md` under the rear admiral's and each captain's
+`~/.config/opencode/` using the fleet name, agent name and assigned channel.
+A captain with crew also gets the `fleet-crew` skill, and each crew member's
+own instructions become its native agent's system prompt in the captain's
+OpenCode profile. Captains assign work and receive hand-backs through
+`stargate_crew` and its mail and DM tools. Crew work in their worktrees and
+report to their captain, never in a ship channel. Edit the templates in
 `lib/roles/` and re-run the installer to customise them. Claude SDK agents
 receive the same role guidance and skill procedure in their system prompt.
 
 The default OpenCode policy grants read, glob, grep, skills and Git inspection.
-Captains and crew can edit their checkout, stage and commit locally, and run
-common build and test commands. External paths, publication and other shell
+Captains can edit their checkout, stage and commit locally, and run common
+build and test commands. External paths, publication and other shell
 commands require an explicit grant. Build and test commands can execute code
 from the project, so use trusted repositories. Supply an ordered
 `harness.permissions` array to replace the starter policy across the fleet
-or for a single agent or crew family. Rules use `action`, `resource` and
-`effect`. Put narrower rules after broader ones. See
-[OpenCode permissions](https://opencode.ai/docs/permissions/).
+or for the rear admiral or a single captain. Rules use `action`, `resource`
+and `effect`. Put narrower rules after broader ones. See
+[OpenCode permissions](https://opencode.ai/docs/permissions/). A captain with
+crew also gets `stargate_crew`, `stargate_mail` and `stargate_history`, and
+`stargate_model` for `get`, on its pinned session.
+
+Crew take no `permissions`. Stargate creates each crew session with its
+crew `coding` profile and curated tool access: reading, searching, skills,
+web fetch and search, edits, shell, browser and code execution, sub-agents
+and the Stargate crew tools, with reads of `*.env`, `*.env.*`, `*.key` and
+`*.pem` files denied. That profile also allows paths outside the worktree.
+It is broader than the captain's starter policy, and tool rules are not an
+operating-system boundary in either case.
+
+**Crew share their captain's Linux user.** A crew member can read and change
+whatever its captain can: the captain's checkouts and every crew worktree,
+its GitHub App key and token helper, its cloud credentials and its OpenCode
+session database. Treat a captain and its crew as one trust boundary, give
+them the same repositories and credentials only, and keep secrets you would
+not give the captain out of its home. The separation that matters for
+security is unchanged: each captain and the rear admiral still has its own
+Linux user, home (mode `0700`), credential files (mode `0600`), OpenCode
+server password and firewall identity, so a captain and its crew cannot read
+the rear admiral's or another captain's files, and the agents still cannot
+reach operator services or the cloud metadata service.
 
 The base tools include Git, Bun, a C/C++ build toolchain, and system Python with
 virtual environments. Mise installs Node 24 by default. Use `toolchains` to
@@ -154,10 +235,10 @@ The rear admiral joins Starbase and each ship channel. Captains join all
 ship channels. Allowlisted humans wake the rear admiral in Starbase and
 the owning captain in its ship channel. Tag an agent by its current IRC
 nick to wake it elsewhere. Stargate verifies the sender's SASL account
-and keeps human authority separate from agent requests. Crew join their
-captain's ship channel. Stargate uses IRC message IDs for strict wake rules.
-A separate legacy `irc.commandChannel` is optional and uses mention-only
-wakes.
+and keeps human authority separate from agent requests. Crew are not on
+IRC: ask the captain, who relays to its crew through Stargate's crew tools.
+Stargate uses IRC message IDs for strict wake rules. A separate legacy
+`irc.commandChannel` is optional and uses mention-only wakes.
 
 ### Local IRC and TLS
 
@@ -191,10 +272,13 @@ use that same TLS endpoint in remote mode. They can trust a private CA with
 
 ## GitHub Apps per fleet member
 
-Create a GitHub App and installation for each fleet member who uses GitHub.
-Grant access to the assigned repositories and the GitHub permissions the
-member needs. Git pushes need Contents write. Issue and pull request
-operations use Issues and Pull requests permissions as appropriate. See
+Create a GitHub App and installation for the rear admiral and for each
+captain that uses GitHub. Crew have no App of their own: they commit and
+push from their worktrees as their captain, with the captain's Git identity,
+App and token helper. Grant each App access to the configured repositories
+and the GitHub permissions its member and, for a captain, its crew need.
+Git pushes need Contents write. Issue and pull request operations use Issues
+and Pull requests permissions as appropriate. See
 [GitHub's installation authentication guide](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
 
 Add `githubApp` to that member's fleet entry. The identifiers below are
@@ -219,8 +303,8 @@ before installing. Dispatch uses the same directory convention and accepts
 an optional `secretsDir` path per inventory entry. It transfers the keys in
 the same private SSH bundle as the fleet config.
 
-Each enabled Linux user gets `~/.config/subspace/github-app.json` and
-`github-app.pem` with mode `0600`. The installer keeps root-only copies
+Each enabled rear-admiral or captain Linux user gets
+`~/.config/subspace/github-app.json` and `github-app.pem` with mode `0600`. The installer keeps root-only copies
 under `/etc/subspace-fleet/github-apps` for upgrades. Git uses the assigned bot
 name and noreply email for commits and mints installation tokens for
 `https://github.com` credentials. Use HTTPS Git remotes for that helper.
@@ -234,10 +318,11 @@ To use it from an operator shell, run
 `sudo -H -u ss-orion /opt/subspace-fleet/bin/subspace-github gh ...`.
 
 Git credentials request repository-scoped Contents access. The rear admiral
-uses read access. Captain and crew Apps default to write access for pushing
-feature branches. Set an App's `contents` to `"read"` for a read-only
-installation. The installer provides a Git pre-push hook in managed
-checkouts for App users and preserves existing hooks.
+uses read access. Captain Apps default to write access for pushing feature
+branches, which their crew share. Set an App's `contents` to `"read"` for a
+read-only installation. The installer provides a Git pre-push hook in managed
+checkouts for App users, which the crew worktrees share, and preserves
+existing hooks.
 The hook blocks deletions and non-fast-forward changes to
 `githubPolicy.protectedBranches` (defaults to `main`, `master` and
 `release/*`). A repository-level `core.hooksPath` takes precedence.
@@ -257,7 +342,8 @@ Rotate or revoke a retired member's App key from the App settings.
 
 The reference deployment used Azure managed identity and Key Vault. The
 public installer provisions individual credential files into
-`~/.config/subspace/cloud/` for each agent. Put `kubeconfig` and
+`~/.config/subspace/cloud/` for the rear admiral and each captain. A
+captain's crew use, and can read, the captain's files. Put `kubeconfig` and
 `database-dsn` in `<secrets-dir>/<agent-id>/` or its `cloud/` subdirectory,
 and use `cloud/` for other client configurations. Supply owner-only regular
 files.
@@ -281,7 +367,8 @@ agent.
 ## Stakeholder messaging
 
 Only the rear admiral connects to Slack or Teams. Either transport can
-be configured independently. Captains and crew coordinate over IRC.
+be configured independently. Captains coordinate over IRC, and crew only
+through their captain.
 Step-by-step guides: [Slack](../docs/slack.md) and [Teams](../docs/teams.md).
 
 - Set `stakeholders.slack` to an `appId` and explicit `users` and
@@ -381,12 +468,15 @@ the selection to watch both. On upgrade, remove any previous
 Stargate writes the current state to `quota.json` in the primary gateway's
 data directory and posts to Slack as the rear admiral's bot. Slack intake
 ignores bot messages. An admiral relays the notice to the rear admiral in
-Slack or Starbase, and the rear admiral directs the captains.
+Slack or Starbase, and the rear admiral directs the captains, who control
+their crew's assignments through `stargate_crew`.
 
-- At 25% or less remaining, run at most one worker from that family per
-  captain and hold extra work as in-flight work finishes.
-- At 15% or less remaining, pause launches and resumes for that family,
-  checkpoint active work at its next safe point and keep task claims.
+- At 25% or less remaining, each captain keeps at most one crew member of
+  that family working and holds further assignments as in-flight work
+  finishes.
+- At 15% or less remaining, captains pause new assignments and resumed work
+  for that family, have active crew checkpoint at their next safe point and
+  keep task claims.
 - Above 25% after a warning, Stargate posts “Quota restored.” and the rear
   admiral tells captains to resume normal staffing.
 
@@ -397,9 +487,11 @@ Slack or Starbase, and the rear admiral directs the captains.
 | Field | Meaning and default |
 | --- | --- |
 | `slug`, `name` | Stable fleet ID and display label. Keep the slug fixed on a VM. Use up to 35 lowercase ASCII letters, digits and hyphens, starting with a letter or digit. |
-| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git` and `githubApp`. IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens. Keep IDs and SASL accounts unique. Choose short enough slug/IDs that each derived channel fits 50 characters, or specify a channel. An empty captain array is valid. |
-| Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. Each fleet member has its own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. |
-| `harness` | Default `{"type":"opencode","model":"gpt-5.4"}` with the [role's starter permissions](#instructions-permissions-and-toolchains). Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). |
+| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp` and `harness`. Captains also take optional `crew` and `crewNames`. IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique. Choose short enough slug/IDs that each derived channel fits 50 characters, or specify a channel. An empty captain array is valid. |
+| Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
+| `harness` | Default `{"type":"opencode","model":"gpt-5.4"}` with the [role's starter permissions](#instructions-permissions-and-toolchains). Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
+| `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
+| `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out. See [crew and repositories](#crew-and-repositories). |
 | `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. |
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Starbase defaults to the rear-admiral channel if set, then `irc.commandChannel` (default `#<slug>-command`). A separately named command channel is shared by officers. Captain channels default to `#<slug>-<id>`. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
@@ -415,9 +507,10 @@ Slack or Starbase, and the rear admiral directs the captains.
 | `api` | Optional `url` (origin or ending in `/api`), `vmHost` and `initiatives` (array of UUIDs). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. |
 
 The mode-0600 secrets JSON has `proxyKey` (a random proxy client key),
-`ircPasswords` (map by SASL account), `ircOperatorPassword` for local IRC,
-`ircHistoryPassword` for PostgreSQL IRC history, and optional `apiToken`
-(bearer JWT).
+`ircPasswords` (map by SASL account: the rear admiral, each captain and, in
+local mode, any allowlisted human; crew have none), `ircOperatorPassword`
+for local IRC, `ircHistoryPassword` for PostgreSQL IRC history, and optional
+`apiToken` (bearer JWT).
 A named `fleet.json` looks for `fleet.secrets.json` beside it unless
 `--secrets` is supplied. Installed copies live in `/etc/subspace-fleet/`. The
 gateway receives IRC passwords and its OpenCode authentication headers, plus
@@ -435,8 +528,11 @@ ssh -N -L 8070:127.0.0.1:8070 -L 8080:127.0.0.1:8080 operator@fleet.example.com
 `sudo subspace-fleetctl api-token` prints the Stargate Fleet API token for a
 desktop or other operator client when `stargate.api` is set.
 
-`attach` allocates a PTY, creates or reuses the selected member's tmux session
-and connects its OpenCode TUI to its own server. Use the dashboard on
+`attach` allocates a PTY, creates or reuses the selected rear admiral's or
+captain's tmux session and connects its OpenCode TUI to its own server.
+Crew sessions live on their captain's server: attach to the captain and open
+them from the session list. Do not type into a session while Stargate or a
+crew task is using it. Use the dashboard on
 `http://127.0.0.1:8070` and AgentsView on `http://127.0.0.1:8080` through
 the tunnel. These pages can show prompts, tool output and private code.
 Add the SSH account to `operatorUsers` before opening a tunnel. A trusted
@@ -446,8 +542,9 @@ account. If it forwards to the dashboard, set its upstream Host header to
 
 The installer loads its own `inet subspace_fleet` nftables table before
 starting fleet services. Its socket UID rules allow only root and the
-listed operators to reach the dashboard and AgentsView. Active fleet agents
-and Stargate can also reach CLIProxyAPI, which still requires its client key
+listed operators to reach the dashboard and AgentsView. The rear admiral's
+and captains' Linux users, which their crew share, and Stargate can also
+reach CLIProxyAPI, which still requires its client key
 and a distinct key for enabled management access. Incoming connections to
 all three ports from other interfaces are rejected. Keep this table when
 reloading a site-managed firewall. Apply your site's SSH and deliberate IRC
@@ -497,19 +594,22 @@ sudo ./install.sh uninstall
 Dispatch streams the installer and private config to a temporary remote
 directory over SSH, cleans it up on exit and returns failure if any host
 fails. Each run has a new private log directory, with one log per host.
-Re-running with identical inputs leaves binaries, units and workspaces in
-place. An upgrade reusing a pre-crew configuration keeps its original roster.
-An external config without a companion secrets JSON can reuse the installed
-JSON on upgrade. Pass an updated secrets JSON when changing the SASL roster.
-To enable crew, provide the updated config and matching IRC passwords.
-Update a source SHA or run a newer installer to upgrade the runtime
-pins in [releases.tsv](lib/releases.tsv). Schedule upgrades during an operator
+Re-running with identical inputs leaves binaries, units, workspaces and
+pinned captain sessions in place. An external config without a companion
+secrets JSON can reuse the installed JSON on upgrade. Pass an updated secrets
+JSON when adding or removing the rear admiral or a captain. Crew need no IRC
+passwords; their roster is fixed once the captain's session is pinned (see
+[crew and repositories](#crew-and-repositories)). Update a source SHA or run
+a newer installer to upgrade the runtime pins in
+[releases.tsv](lib/releases.tsv), which include Mesij for Stargate's crew
+mail. Schedule upgrades during an operator
 maintenance window since changes restart fleet services. Removed captains'
 services stop and their workspaces and queues remain on disk.
 
 Uninstall disables and removes the fleet units, stops local IRC, and removes
-the installed programs. It preserves Linux accounts, Git workspaces, API
-registrations, config, OAuth sessions, and the Docker volume. Back up
+the installed programs. It preserves Linux accounts, Git workspaces and crew
+worktrees, crew state, pinned session records, API registrations, config,
+OAuth sessions, and the Docker volume. Back up
 `/etc/subspace-fleet/` and `/var/lib/subspace-fleet/` and, for local IRC,
 the Ergo volume. Keep backups private. The installer leaves OS packages in
 place.
@@ -521,13 +621,18 @@ From the repository root, run
 `subspace-installer/tests/smoke.sh`. The Ubuntu container installs pinned
 binaries, checks rendered units, exercises a second no-op install, and runs
 the application processes against local fixtures without model calls. It
-also checks crew worktrees, credential ownership and mode, and local Ergo
-channel seed generation. It verifies role provisioning, local service access
-rules, normal credential retention and explicit pruning, the Node toolchain,
-read-only reference checkouts and fresh worktree bases. It exercises nftables
-when permitted by the container and checks rule generation otherwise. Run
-`python3 -B subspace-installer/tests/policy_test.py` for the offline policy
-checks.
+pins the captain's root session on its running engine and checks both
+Stargate pins, that crew have no Linux user, engine or IRC registration, and
+one worktree per repository per crew member under the captain. It also checks
+credential ownership and mode, and local Ergo channel seed generation. It
+verifies role provisioning, local service access rules, normal credential
+retention and explicit pruning, the Node toolchain, read-only reference
+checkouts and fresh worktree bases. It exercises nftables when permitted by
+the container and checks rule generation otherwise. For the offline checks,
+run `python3 -B subspace-installer/tests/policy_test.py`,
+`python3 -B subspace-installer/tests/sessions_test.py`,
+`python3 -B subspace-installer/tests/setup_test.py` and
+`python3 -B subspace-installer/tests/medical_test.py`.
 
 ## Licence
 

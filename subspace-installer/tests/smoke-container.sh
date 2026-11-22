@@ -50,8 +50,8 @@ python3 -B /installer/tests/medical_test.py
     cd -- /
     find etc/subspace-fleet opt/subspace-fleet/bin etc/systemd/system -type f -print0 | sort -z | xargs -0 sha256sum
 ) > "$work/before"
-crew_checkout=$state/agents/orion-claude-1/workspace/sample
-runuser -u ss-orion-claude-1 -- touch "$crew_checkout/worker-draft"
+crew_checkout=$state/agents/orion/worktrees/claude-1/sample
+runuser -u ss-orion -- touch "$crew_checkout/worker-draft"
 
 # Upgrades restore an older install's modified watcher without disturbing dependencies.
 stargate=$(dirname "$(dirname "$(jq -r .entrypoint "$etc/gateway.json")")")
@@ -82,13 +82,27 @@ run_as() {
 python3 /installer/tests/fixture.py serve "$work" >"$work/services.log" 2>&1 &
 pids+=("$!")
 run_as proxy ss-fleet-proxy "$app/bin/cli-proxy-api" --local-model --config "$etc/proxy.json"
-members=(atlas orion orion-claude-1 orion-claude-2 orion-codex-1 orion-codex-2)
+members=(atlas orion)
 for member in "${members[@]}"; do
     run_as "$member" "ss-$member" "$app/lib/runtime.py" engine "$etc/engine-$member.json"
 done
 for member in "${members[@]}"; do
     runuser -u "ss-$member" -- "$app/lib/runtime.py" share-database "$etc/engine-$member.json"
 done
+# Pin the captain's root session on its running engine, as install.sh does after starting services,
+# then restart that engine so it loads Stargate's crew plugin with the pinned session.
+"$app/lib/runtime.py" commission false
+test "$(stat -c '%U %a' "$etc/sessions/orion.json")" = 'root 600'
+kill "${pids[-1]}" 2>/dev/null || true
+wait "${pids[-1]}" 2>/dev/null || true
+unset 'pids[-1]'
+run_as orion ss-orion "$app/lib/runtime.py" engine "$etc/engine-orion.json"
+runuser -u ss-orion -- "$app/lib/runtime.py" share-database "$etc/engine-orion.json"
+"$app/lib/runtime.py" check
+if "$app/lib/runtime.py" commission false | grep -q Pinned; then
+    printf 'A second commission pinned the captain session again.\n' >&2
+    exit 1
+fi
 run_as gateway ss-fleet-gateway "$app/lib/runtime.py" gateway "$etc/gateway.json" start
 run_as dashboard ss-fleet-gateway "$app/lib/dashboard.py" 127.0.0.1 8070 "$state/gateway/data/dashboard.sock"
 run_as view ss-fleet-view env AGENTSVIEW_DATA_DIR="$state/view" AGENTSVIEW_TELEMETRY_ENABLED=0 \
@@ -197,7 +211,8 @@ grep -Fxq 'Next revision' "$state/references/atlas/sample/README.md"
 grep -Fxq sample "$crew_checkout/README.md"
 
 python3 /installer/tests/fixture.py local "$work"
-grep -Fxq 'Next revision' "$state/agents/lyra-codex-1/workspace/sample/README.md"
+grep -Fxq 'Next revision' "$state/agents/lyra/worktrees/codex-1/sample/README.md"
+id ss-lyra-codex-1 >/dev/null 2>&1 && { printf 'Crew got a Linux user.\n' >&2; exit 1; }
 python3 /installer/tests/fixture.py addons "$work"
 "$installer" upgrade --no-systemd --config "$work/addons.json" --secrets "$secrets" --secrets-dir "$work/fleet.secrets"
 mapfile -t units < "$etc/units"

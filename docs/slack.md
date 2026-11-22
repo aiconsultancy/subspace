@@ -1,8 +1,8 @@
 # Connect a fleet to Slack
 
 The fleet's **rear admiral** can talk to your stakeholders in Slack: answer
-questions, send screenshots and gather requirements. Captains and crew stay on
-IRC. Stargate uses Slack **Socket Mode**, an outbound connection from the
+questions, send screenshots and gather requirements. Captains stay on IRC,
+and crew work only through their captain. Stargate uses Slack **Socket Mode**, an outbound connection from the
 fleet VM to Slack, so the VM still needs no inbound ports.
 
 Coding agents: walk the user through the Slack steps. Never ask them to paste

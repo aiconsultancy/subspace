@@ -24,7 +24,8 @@ from urllib.parse import urlsplit
 from agent_files import collect_cloud, private_directory, private_file, provision_cloud, write_private
 from network import rules
 from roles import default_permissions, provision_role, role_documents
-from workspaces import prepare_workspaces, prune_worktrees
+import sessions
+from workspaces import crew_worktree, prepare_workspaces, prune_worktrees
 
 
 APP = Path("/opt/subspace-fleet")
@@ -54,7 +55,20 @@ ACCOUNT = r"[a-zA-Z][a-zA-Z0-9_-]{0,31}"
 ERGO_ACCOUNT = r"[a-z][a-z0-9_-]{0,31}"
 UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 FAMILIES = {"claude": "claude-sonnet-5-5", "codex": "gpt-5.4"}
+# OpenCode provider IDs per model family, as in Stargate's OpenCode template.
+PROVIDERS = {"claude": "claude-proxy", "codex": "openai-proxy"}
 MODEL = r"[a-zA-Z0-9][a-zA-Z0-9._/:#-]{0,127}"
+SESSIONS = ETC / "sessions"
+MESIJ = APP / "bin/mesij"
+CREW_ID = r"[a-z0-9][a-z0-9_-]{0,31}"
+# Stargate's crew plugin accepts up to nine repositories and fifty member contexts per captain.
+MAX_CREW_REPOSITORIES = 9
+MAX_CREW_CONTEXTS = 50
+# The captain's pinned root needs the crew tools; Stargate checks ownership on every call.
+CREW_GRANTS = [
+    *({"action": action, "resource": "*", "effect": "allow"} for action in ("stargate_crew", "stargate_mail", "stargate_history")),
+    {"action": "stargate_model", "resource": "get", "effect": "allow"},
+]
 
 
 class Invalid(ValueError):
@@ -171,10 +185,13 @@ def source(value, label, repo, ref=None):
 
 
 def member(value):
-    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewGitHubApps crewNames", ["id", "name", "account"])
+    require(not isinstance(value, dict) or "crewGitHubApps" not in value,
+            "Remove crewGitHubApps: crew run as their captain and commit and push with the captain's githubApp.")
+    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames", ["id", "name", "account"])
     pattern(value["id"], r"[a-z][a-z0-9-]{0,19}", "member ID")
     require(not value["id"].startswith("fleet-"), "Member IDs cannot start with fleet-.")
     require(value["id"] != SENTRY_TOKEN[0], "The medical member ID is reserved for integration credentials.")
+    require(value["id"] not in {"all", "captain"}, "The member IDs all and captain are reserved for crew messaging.")
     string(value["name"], "member name")
     pattern(value["account"], ACCOUNT, "SASL account")
     if "channel" in value:
@@ -321,15 +338,48 @@ def harness_config(value, inherited):
 
 
 def crew_config(value, inherited):
+    """Crew counts and models per family. Crew run in their captain's OpenCode server."""
     value = fields(value, "crew", "claude codex")
     teams = {}
     for family in FAMILIES:
-        defaults = inherited[family]
-        team = fields(value.get(family, {}), f"{family} crew", "count type model allowedTools permissions")
-        count = team.get("count", defaults["count"])
+        team = value.get(family, {})
+        require(isinstance(team, dict), f"{family} crew must be an object.")
+        require("type" not in team, "Crew have no harness type: they run inside their captain's OpenCode server "
+                "through Stargate's crew plugin, so claude-sdk crew are not supported. Remove crew type.")
+        require(not {"permissions", "allowedTools"} & team.keys(), "Crew tool access comes from Stargate's crew "
+                "coding profile. Remove crew permissions and allowedTools.")
+        team = fields(team, f"{family} crew", "count model")
+        count = team.get("count", inherited[family]["count"])
         require(type(count) is int and 0 <= count <= 10, "Crew count per family must be between 0 and 10.")
-        teams[family] = {"count": count, **harness_config({key: val for key, val in team.items() if key != "count"}, defaults)}
+        model = pattern(team.get("model", inherited[family]["model"]), MODEL, "crew CLIProxyAPI model ID")
+        teams[family] = {"count": count, "model": model}
     return teams
+
+
+def crew_id(name):
+    """Stargate derives a crew ID from its display name (agentIDForName)."""
+    return re.sub(r"[^a-z0-9_-]+", "-", name.strip().lower()).strip("-")
+
+
+def crew_roster(captain, teams, names, slug):
+    roster = []
+    for family, team in teams.items():
+        for slot in range(1, team["count"] + 1):
+            key = f"{family}-{slot}"
+            name = string(names.get(key, f"{family.title()} {slot}"), "crew display name").strip()
+            require(name.isascii() and re.fullmatch(CREW_ID, crew_id(name)),
+                    "Crew names use ASCII letters, digits, spaces, hyphens and underscores, and shorten to "
+                    "an ID of at most 32 characters.")
+            member_id = crew_id(name)
+            roster.append({
+                "id": member_id, "slot": key, "family": family, "name": name, "model": team["model"],
+                # Native OpenCode agent and initial worktree branch, both namespaced by fleet and captain.
+                "agent": f"{captain['id']}-crew-{member_id}", "branch": f"crew/{slug}-{captain['id']}-{member_id}",
+            })
+    ids = [person["id"] for person in roster]
+    require(len(set(ids)) == len(ids) and not set(ids) & {captain["id"], "captain", "all"},
+            "Crew names must give distinct IDs that differ from the captain's ID, captain and all.")
+    return roster
 
 
 def repository_config(value):
@@ -337,7 +387,9 @@ def repository_config(value):
     repos = {}
     for row in value:
         row = fields(row, "repository", "id url private", ["id", "url"])
-        name = pattern(row["id"], r"[a-z0-9][a-z0-9_-]{0,39}", "repository ID")
+        # IDs are also Stargate crew project keys: lowercase, starting with a letter, never "default".
+        name = pattern(row["id"], r"[a-z][a-z0-9_-]{0,39}", "repository ID (start with a lowercase letter)")
+        require(name != "default", "The repository ID default is reserved by Stargate's crew plugin.")
         require(name not in repos, "Repository IDs must be unique.")
         address = url(row["url"], "repository Git URL", loopback_http=True)
         require(urlsplit(address).path not in {"", "/"}, "Repository Git URL must include a path.")
@@ -433,7 +485,7 @@ def medical_config(value, irc, agents):
     target = None
     room = irc["starbaseChannel"]
     if "target" in value:
-        target = next((person for person in agents if person["id"] == value["target"] and person["role"] != "crew"), None)
+        target = next((person for person in agents if person["id"] == value["target"]), None)
         require(target is not None, "Medical target must be a captain or rear-admiral ID.")
         room = target["channel"]
     room = channel(value.get("channel", room))
@@ -457,7 +509,7 @@ def validate(config, credentials, check_files=True):
     slug = pattern(cfg["slug"], r"[a-z0-9][a-z0-9-]{0,34}", "fleet slug")
     require(isinstance(cfg["captains"], list), "Captains must be an array.")
     officers = [member(person) for person in [cfg["rearAdmiral"], *cfg["captains"]]]
-    require(not {"crew", "crewGitHubApps", "crewNames"} & officers[0].keys(), "Only captains may declare crew.")
+    require(not {"crew", "crewNames"} & officers[0].keys(), "Only captains may declare crew.")
     irc = irc_config(cfg["irc"], slug, check_files)
     starbase = irc.get("starbaseChannel", officers[0].get("channel", irc["commandChannel"]))
     require(officers[0].get("channel", starbase) == starbase, "Rear-admiral channel and Starbase must agree.")
@@ -469,39 +521,38 @@ def validate(config, credentials, check_files=True):
     require(len(set(channels)) == len(channels) <= 20, "Use distinct Starbase, command and captain channels (at most 20).")
     irc.update(starbaseChannel=starbase, channels=channels)
     hull = harness_config(cfg.get("harness", {}), {"type": "opencode", "family": "codex", "model": FAMILIES["codex"], "permissions": None})
-    crew = crew_config(cfg.get("crew", {}), {
-        family: {"type": "opencode", "family": family, "model": model, "permissions": hull["permissions"], "count": 2}
-        for family, model in FAMILIES.items()
-    })
+    crew = crew_config(cfg.get("crew", {}), {family: {"count": 2, "model": model} for family, model in FAMILIES.items()})
+    repositories = repository_config(cfg.get("repositories", []))
     agents = []
     for index, (person, room) in enumerate(zip(officers, officer_rooms, strict=True)):
         role = "captain" if index else "rear_admiral"
-        agents.append({**person, "role": role, "channel": room, "harness": harness_config(person.get("harness", {}), hull)})
-        if role == "captain":
-            crew_apps = person.get("crewGitHubApps", {})
-            crew_names = person.get("crewNames", {})
-            require(isinstance(crew_apps, dict), "crewGitHubApps must be an object keyed by crew slot.")
-            require(isinstance(crew_names, dict), "crewNames must be an object keyed by crew slot.")
-            slots = set()
-            for family, team in crew_config(person.get("crew", {}), crew).items():
-                for slot in range(1, team["count"] + 1):
-                    short_id = f"{family}-{slot}"
-                    slots.add(short_id)
-                    agent_id = f"{person['id']}-{short_id}"
-                    require(len(agent_id) <= 29, "Shorten the captain ID to fit its derived crew Linux usernames.")
-                    account_name = pattern(f"{person['account']}-{short_id}", ACCOUNT, "derived crew SASL account; shorten the captain account")
-                    name = string(crew_names.get(short_id, f"{person['name']} {short_id}"[:100]), "crew display name")
-                    worker = {"id": agent_id, "crewId": short_id, "captain": person["id"], "name": name,
-                              "account": account_name, "channel": room, "role": "crew", "harness": team.copy()}
-                    if short_id in crew_apps:
-                        worker["githubApp"] = github_app(crew_apps[short_id])
-                    agents.append(worker)
-            require(crew_apps.keys() <= slots, "crewGitHubApps may name only enabled crew slots.")
-            require(crew_names.keys() <= slots, "crewNames may name only enabled crew slots.")
+        officer = {key: val for key, val in person.items() if key not in ("crew", "crewNames")}
+        agents.append({**officer, "role": role, "channel": room, "crew": [],
+                       "harness": harness_config(person.get("harness", {}), hull)})
+        if role != "captain":
+            continue
+        crew_names = person.get("crewNames", {})
+        require(isinstance(crew_names, dict), "crewNames must be an object keyed by crew slot.")
+        teams = crew_config(person.get("crew", {}), crew)
+        slots = {f"{family}-{slot}" for family, team in teams.items() for slot in range(1, team["count"] + 1)}
+        require(crew_names.keys() <= slots, "crewNames may name only enabled crew slots.")
+        if not slots:
+            continue
+        require(agents[-1]["harness"]["type"] == "opencode",
+                f"Captain {person['id']} uses claude-sdk, which cannot host crew: crew run inside their captain's "
+                "OpenCode server through Stargate's crew plugin. Set this captain's crew counts to 0.")
+        # Crew work in Git worktrees of their captain's checkouts, so a fleet without repositories has none.
+        if repositories:
+            require(len(repositories) <= MAX_CREW_REPOSITORIES,
+                    f"Captains with crew support at most {MAX_CREW_REPOSITORIES} repositories.")
+            roster = crew_roster(person, teams, crew_names, slug)
+            require(len(roster) * len(repositories) <= MAX_CREW_CONTEXTS,
+                    f"Crew times repositories must not exceed {MAX_CREW_CONTEXTS} per captain (Stargate's crew limit).")
+            agents[-1]["crew"] = roster
     applications = [person["githubApp"] for person in agents if "githubApp" in person]
     for key in ("appId", "installationId", "botId"):
         require(len({app[key] for app in applications}) == len(applications), "Each fleet member needs a distinct GitHub App identity.")
-    require(len({person["id"] for person in agents}) == len(agents), "Officer and derived crew IDs must be unique.")
+    require(len({person["id"] for person in agents}) == len(agents), "Rear-admiral and captain IDs must be unique.")
     accounts = {person["account"].lower() for person in agents}
     require(len(accounts) == len(agents), "Member SASL accounts must be unique.")
     require(not accounts.intersection(name.lower() for name in irc["allowedAccounts"]), "Human and fleet SASL accounts must differ.")
@@ -550,7 +601,9 @@ def validate(config, credentials, check_files=True):
             pattern(account, ERGO_ACCOUNT, "local Ergo account")
     else:
         require(operator_password is None, "An IRC operator password requires local mode.")
-    require(required <= passwords.keys() <= permitted, "Supply an IRC password per member. Local mode also accepts passwords for allowlisted humans.")
+    require(required <= passwords.keys(), "Supply an IRC password for the rear admiral and every captain.")
+    require(passwords.keys() <= permitted, "ircPasswords names an account that is not the rear admiral's or a captain's. "
+            "Crew have no IRC accounts. Local mode also accepts passwords for allowlisted humans.")
     for password in passwords.values():
         if irc["mode"] == "local":
             ergo_password(password)
@@ -561,9 +614,8 @@ def validate(config, credentials, check_files=True):
         pattern(token, r"[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+", "API bearer JWT")
     else:
         require(token == "", "An API token requires API configuration.")
-    repositories = repository_config(cfg.get("repositories", []))
     require(not any(repo["private"] for repo in repositories.values()) or len(applications) == len(agents),
-            "Private repositories require a distinct GitHub App for every active agent.")
+            "Private repositories require a distinct GitHub App for the rear admiral and every captain.")
     for person in agents:
         if person["harness"]["permissions"] is None:
             references = STATE / "references" / person["id"] if cfg.get("repositories") else None
@@ -755,11 +807,11 @@ def account(user, home, mode=0o700):
 
 
 def serve_unit(name, description, command, user, after=(), env=None, user_paths=(), post_start=None, *,
-               oneshot=False, toolchain=True, credential=None, service_options=()):
+               oneshot=False, toolchain=True, credential=None, service_options=(), unit_options=()):
     dependencies = " ".join(["network-online.target", FIREWALL, *after])
     lines = [
         "[Unit]", f"Description={description}", f"After={dependencies}", f"Requires={FIREWALL}",
-        f"Wants={' '.join(['network-online.target', *after])}",
+        f"Wants={' '.join(['network-online.target', *after])}", *unit_options,
         "", "[Service]", "Type=oneshot" if oneshot else "Type=simple", f"User={user}",
         *([f"Environment=PATH={FLEET_PATH}"] if toolchain else []), "LogNamespace=subspace-fleet",
         "UMask=0077", "NoNewPrivileges=yes", "PrivateTmp=yes", "ProtectSystem=strict",
@@ -839,32 +891,102 @@ def configure_git(person, user, prune, protected):
             run("git", "config", "--global", "--replace-all", "--", key, value, user=user)
 
 
-def render_engine(cfg, person, home, workspace, engine_port, seed):
+def model_ref(family, model):
+    return f"{PROVIDERS[family]}/{model}"
+
+
+def model_provider(cfg, family, models):
+    settings = {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}/v1", "apiKey": "{env:CLIPROXYAPI_API_KEY}"}
+    if family == "claude":
+        package = "@opencode/ai/providers/anthropic-compatible"
+    else:
+        package = "@opencode/ai/providers/openai-compatible/responses"
+        settings.update(encoding="none", transport="http")
+    return {"name": f"Fleet model proxy, {family.title()} family", "package": package, "settings": settings,
+            "models": {model: {"name": model} for model in models}}
+
+
+def captain_permissions(person):
+    """The captain root's stored grants: its harness policy plus the crew tools when it hosts crew."""
+    permissions = person["harness"]["permissions"]
+    return [*permissions, *CREW_GRANTS] if person["crew"] else permissions
+
+
+def crew_options(cfg, person, home, engine_port, session_id):
+    """Stargate crew plugin options: one worktree per repository per crew member, under the captain."""
+    repos = list(cfg["repositories"])
+
+    def project(repo):
+        return {"projectDirectory": str(home / "workspace" / repo),
+                "worktrees": {worker["id"]: str(crew_worktree(home, worker, repo)) for worker in person["crew"]}}
+
+    harness = person["harness"]
+    default = project(repos[0])
+    options = {
+        "namespace": f"{cfg['slug']}-{person['id']}",
+        "stateDirectory": str(home / ".local/stargate-crew"),
+        "captainDirectory": default["projectDirectory"],
+        **default,
+        "mesijCommand": str(MESIJ),
+        "team": {
+            "captain": {"id": person["id"], "agent": sessions.CAPTAIN_AGENT,
+                        "model": model_ref(harness["family"], harness["model"])},
+            "historyScope": "team",
+            "toolAccess": "curated",
+            # The plugin reads crew history through this captain's own authenticated loopback engine.
+            "historyAPI": {"url": f"http://{LOOPBACK}:{engine_port}",
+                           "headersEnv": {"authorization": "OPENCODE_AUTHORIZATION"}},
+            "modelProviders": sorted({PROVIDERS[harness["family"]], *(PROVIDERS[w["family"]] for w in person["crew"])}),
+            "crew": [{
+                "id": worker["id"], "name": worker["name"], "agent": worker["agent"],
+                "model": model_ref(worker["family"], worker["model"]),
+                "role": f"{worker['family'].title()}-family implementation and review",
+                "permissionProfile": "coding",
+            } for worker in person["crew"]],
+        },
+        "captainSessionID": session_id,
+    }
+    if len(repos) > 1:
+        options["projects"] = {repo: project(repo) for repo in repos[1:]}
+    return options
+
+
+def pinned_session(person, workspace):
+    """The captain's confirmed root session, after checking it still fits the configured crew."""
+    if not person["crew"]:
+        return None
+    try:
+        record = sessions.SessionRecord(SESSIONS, person["id"]).load()
+        if not record or not record.get("confirmed"):
+            return None
+        require(record.get("directory") == str(workspace),
+                "its first repository is fixed once its session is pinned, because Stargate's crew state names "
+                "that checkout. Restore the original first repository.")
+        sessions.check_roster(record, [worker["id"] for worker in person["crew"]])
+        return pattern(record.get("sessionID"), sessions.SESSION_ID.pattern, "pinned captain session ID")
+    except (Invalid, sessions.SessionError) as error:
+        raise Invalid(f"Captain {person['id']}: {error}") from None
+
+
+def render_engine(cfg, person, home, workspace, engine_port, seed, documents, session_id):
     agent_id = person["id"]
     user = f"ss-{agent_id}"
     database_dir = STATE / "sessions" / agent_id
     directory(database_dir, 0o2750, user, VIEW)
     harness = person["harness"]
-    model = harness["model"]
-    proxy_settings = {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}/v1",
-                      "apiKey": "{env:CLIPROXYAPI_API_KEY}"}
-    if harness["family"] == "claude":
-        provider = "@opencode/ai/providers/anthropic-compatible"
-    else:
-        provider = "@opencode/ai/providers/openai-compatible/responses"
-        proxy_settings.update(encoding="none", transport="http")
+    # One provider per model family on this server: the captain's and its crew's.
+    catalogue = {harness["family"]: [harness["model"]]}
+    for worker in person["crew"]:
+        models = catalogue.setdefault(worker["family"], [])
+        if worker["model"] not in models:
+            models.append(worker["model"])
     engine = {
-        "model": f"fleet-proxy/{model}", "permissions": harness["permissions"],
-        "providers": {"fleet-proxy": {
-            "name": "Fleet model proxy",
-            "package": provider, "settings": proxy_settings,
-            "models": {model: {"name": model}},
-        }},
+        "model": model_ref(harness["family"], harness["model"]), "permissions": harness["permissions"],
+        "providers": {PROVIDERS[family]: model_provider(cfg, family, models) for family, models in catalogue.items()},
     }
-    config_path = save_settings(f"opencode-{agent_id}", engine, user)
     password = hmac.new(seed, agent_id.encode(), hashlib.sha256).hexdigest()
+    header = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
     environment = {
-        "OPENCODE_CONFIG": str(config_path),
         "OPENCODE_DB": str(database_dir / "opencode.db"),
         "OPENCODE_PASSWORD": password,
         "CLIPROXYAPI_API_KEY": cfg["proxy"]["key"],
@@ -872,6 +994,28 @@ def render_engine(cfg, person, home, workspace, engine_port, seed):
         "OPENCODE_DISABLE_MODELS_FETCH": "true",
         "OPENCODE_DISABLE_TERMINAL_TITLE": "true",
     }
+    auth_var = "ENGINE_" + agent_id.upper().replace("-", "_")
+    backend = {"type": "opencode", "url": f"http://{LOOPBACK}:{engine_port}", "directory": str(workspace),
+               "permissions": harness["permissions"], "headersEnv": {"authorization": auth_var}}
+    if person["crew"]:
+        # Crew sessions run on this server, as this captain's Linux user, each with its own native agent.
+        environment["OPENCODE_AUTHORIZATION"] = header
+        engine["default_agent"] = sessions.CAPTAIN_AGENT
+        engine["agents"] = {sessions.CAPTAIN_AGENT: {"model": engine["model"], "mode": "primary"}}
+        for worker in person["crew"]:
+            engine["agents"][worker["agent"]] = {
+                "model": model_ref(worker["family"], worker["model"]), "mode": "primary",
+                "description": f"{worker['name']}, {person['name']}'s {worker['family'].title()}-family crew member",
+                "system": documents["crew"][worker["id"]],
+            }
+        if session_id:
+            engine["plugins"] = [{
+                "package": str(APP / "src" / f"stargate-{cfg['stargate']['ref']}"),
+                "options": crew_options(cfg, person, home, engine_port, session_id),
+            }]
+            backend["sessionID"] = session_id
+        backend.update(agent=sessions.CAPTAIN_AGENT, permissions=captain_permissions(person), enforcePermissions=True)
+    environment["OPENCODE_CONFIG"] = str(save_settings(f"opencode-{agent_id}", engine, user))
     settings = save_settings(f"engine-{agent_id}", {
         "environment": environment, "port": engine_port, "directory": str(workspace), "slug": cfg["slug"],
     }, user)
@@ -880,10 +1024,6 @@ def render_engine(cfg, person, home, workspace, engine_port, seed):
         f"{APP}/lib/runtime.py engine {settings}", user, [f"{PREFIX}proxy.service"],
         user_paths=[home, database_dir], post_start=f"{APP}/lib/runtime.py share-database {settings}",
     )
-    auth_var = "ENGINE_" + agent_id.upper().replace("-", "_")
-    header = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
-    backend = {"type": "opencode", "url": f"http://{LOOPBACK}:{engine_port}", "directory": str(workspace),
-               "permissions": harness["permissions"], "headersEnv": {"authorization": auth_var}}
     return unit, backend, {auth_var: header}, database_dir
 
 
@@ -896,31 +1036,28 @@ def irc_agent(cfg, person, backend):
     }, {password_var: cfg["passwords"][person["account"]]}
 
 
-def irc_officer(cfg, person, registration, crew):
+def irc_officer(cfg, person, registration):
     server = {key: cfg["irc"][key] for key in ("host", "port", "tls")}
     if "caFile" in cfg["irc"]:
         server["caFile"] = str(ETC / "irc-ca.pem")
     room = person["channel"]
     role = person["role"]
-    channels = [room]
-    if role != "crew":
-        channels += [name for name in cfg["irc"]["channels"] if name not in (room, cfg["irc"]["starbaseChannel"])]
-    ship = {person["account"], *(entry["account"] for entry in crew)}
-    candidates = [member for member in cfg["members"] if member["account"] not in ship]
-    candidates.sort(key=lambda member: (member["role"] == "crew", member["channel"] != room))
+    channels = [room, *(name for name in cfg["irc"]["channels"] if name not in (room, cfg["irc"]["starbaseChannel"]))]
+    candidates = [member for member in cfg["members"] if member["account"] != person["account"]]
+    candidates.sort(key=lambda member: member["channel"] != room)
     peers = [member["account"] for member in candidates[:50]]
     medical = cfg["medical"]
     if medical and medical["target"] and medical["target"]["id"] == person["id"]:
         peers = [medical["account"], *peers[:49]]
-    access = {"allCallWords": [], "channelRequests": "nick-mention", "peerCaptains": peers}
-    if role != "crew":
-        access["humanWakeChannels"] = [{"channel": room, "replies": "all"}]
+    access = {"allCallWords": [], "channelRequests": "nick-mention", "peerCaptains": peers,
+              "humanWakeChannels": [{"channel": room, "replies": "all"}]}
     return {
-        **registration, "server": server, "channels": channels, "crew": crew, "access": access,
-        # Route by authenticated account, including same-ship crew in strict mode.
+        # Crew have no IRC registrations: their captain reaches them through Stargate's crew plugin.
+        **registration, "server": server, "channels": channels, "access": access,
+        # Route by authenticated account in strict mode.
         "features": {"botMode": False},
         "fleetPolicy": {"role": role, "humanAccounts": cfg["irc"]["allowedAccounts"],
-                        "agentAccounts": sorted(ship | set(peers)), "assignedCheckout": registration["backend"]["directory"],
+                        "agentAccounts": sorted({person["account"], *peers}), "assignedCheckout": registration["backend"]["directory"],
                         "capabilities": ["read_code"] if role == "rear_admiral" else ["read_code", "implement"]},
     }
 
@@ -1253,7 +1390,7 @@ def render(cfg, extra, prune=False):
         run("mkdir", "-p", "--", home / "workspace", user=user)
         configure_git(person, user, prune, cfg["protectedBranches"])
         references = STATE / "references" / agent_id if cfg["repositories"] else None
-        documents[agent_id] = role_documents(cfg, person, references)
+        documents[agent_id] = role_documents(cfg, person, references, home)
         subprocess.run(
             ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "role"],
             input=json_text(documents[agent_id]), text=True, check=True,
@@ -1265,8 +1402,8 @@ def render(cfg, extra, prune=False):
                 input=json_text(files), text=True, check=True,
             )
     references = reconcile_workspaces(cfg, homes)
-    sessions, engines = [], []
-    registrations, environments = {}, {}
+    databases, engines = [], []
+    registrations, environments, awaiting = {}, {}, {}
     for person in cfg["members"]:
         agent_id = person["id"]
         home = homes[agent_id]
@@ -1277,8 +1414,13 @@ def render(cfg, extra, prune=False):
                 workspace = references
             workspace /= next(iter(cfg["repositories"]))
         if harness["type"] == "opencode":
-            unit, backend, headers, database = render_engine(cfg, person, home, workspace, ports[agent_id], seed)
-            sessions.append(database)
+            session_id = pinned_session(person, workspace)
+            if person["crew"]:
+                # The gateway waits until this captain's root session is pinned (runtime.py commission).
+                awaiting[agent_id] = SESSIONS / f"{agent_id}.json"
+            unit, backend, headers, database = render_engine(
+                cfg, person, home, workspace, ports[agent_id], seed, documents[agent_id], session_id)
+            databases.append(database)
             units.append(unit)
             engines.append(unit)
         else:
@@ -1304,17 +1446,14 @@ def render(cfg, extra, prune=False):
     for person in cfg["members"]:
         agent_id = person["id"]
         native = person["harness"]["type"] != "opencode"
-        if not native and person["role"] == "crew":
-            continue  # Nested under its captain, including a Claude captain.
-        crew = [member for member in cfg["members"] if member.get("captain") == agent_id and member["harness"]["type"] == "opencode"]
         group = ("gateway" if person is rear else f"gateway-agent-{agent_id}") if native else default_group
         user = f"ss-{agent_id}" if native else GATEWAY
         home = homes[agent_id] if native else gateway_home
-        opts = groups.setdefault(group, {"user": user, "home": home, "irc": [], "environment": {}})
-        nested = [{**registrations[child["id"]], "id": child["crewId"], "channels": [child["channel"]]} for child in crew]
-        opts["irc"].append(irc_officer(cfg, person, registrations[agent_id], nested))
-        for child in [person, *crew]:
-            opts["environment"].update(environments[child["id"]])
+        opts = groups.setdefault(group, {"user": user, "home": home, "irc": [], "environment": {}, "awaiting": []})
+        opts["irc"].append(irc_officer(cfg, person, registrations[agent_id]))
+        opts["environment"].update(environments[agent_id])
+        if agent_id in awaiting:
+            opts["awaiting"].append(awaiting[agent_id])
 
     checks = []
     for group, options in groups.items():
@@ -1341,12 +1480,15 @@ def render(cfg, extra, prune=False):
             "entrypoint": str(APP / "src" / f"stargate-{cfg['stargate']['ref']}" / "src/main.ts"),
         }, user)
         checks.append([user, str(runtime_path)])
-        units.append(serve_unit(group, "Stargate fleet gateway", f"{APP}/lib/runtime.py gateway {runtime_path} start", user, after, user_paths=writable))
+        units.append(serve_unit(
+            group, "Stargate fleet gateway", f"{APP}/lib/runtime.py gateway {runtime_path} start", user, after,
+            user_paths=writable, unit_options=[f"ConditionPathExists={path}" for path in options["awaiting"]],
+        ))
     write(ETC / "gateway-checks.json", json_text(checks))
     dash = cfg["dashboard"]
     bind = dash["bind"]
     units.append(serve_unit("dashboard", "Stargate dashboard", f"{APP}/lib/dashboard.py {bind} {dash['port']} {dashboard_socket}", dashboard_user, [f"{PREFIX}gateway.service"]))
-    units.append(render_view(cfg, sessions, view_home))
+    units.append(render_view(cfg, databases, view_home))
     units.insert(0, render_firewall(cfg))
     toolchains(cfg["toolchains"])
     units.extend(maintenance_units(cfg))
@@ -1361,6 +1503,33 @@ def render(cfg, extra, prune=False):
     else:
         retired_path.unlink(missing_ok=True)
     write(path, "".join(f"{unit}\n" for unit in units))
+
+
+def commission(prune):
+    """Pin every crew-hosting captain's root session on its running engine; re-render once if any is new."""
+    cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True))
+    pinned = []
+    for person in cfg["members"]:
+        if not person["crew"]:
+            continue
+        settings = read_json(ETC / f"engine-{person['id']}.json")
+        harness = person["harness"]
+        client = sessions.OpenCode(f"http://{LOOPBACK}:{settings['port']}", settings["environment"]["OPENCODE_PASSWORD"])
+        expected = {
+            "directory": settings["directory"], "title": f"{cfg['slug']}/{person['id']}",
+            "crew": [worker["id"] for worker in person["crew"]],
+            "model": {"providerID": PROVIDERS[harness["family"]], "id": harness["model"]},
+            "permissions": captain_permissions(person),
+        }
+        try:
+            _, new = sessions.ensure(client, sessions.SessionRecord(SESSIONS, person["id"]), expected)
+        except sessions.SessionError as error:
+            raise Invalid(f"Captain {person['id']}: {error}") from None
+        if new:
+            pinned.append(person["id"])
+    if pinned:
+        render(cfg, read_json(ETC / "extra-secrets.json", private=True), prune)
+        print(f"Pinned the root session of {', '.join(pinned)}. Fleet services restart to load the crew plugin.")
 
 
 def engine(path, attach=False):
@@ -1455,13 +1624,15 @@ def main(args):
     if verb in {"prepare", "plan", "render"}:
         config, private = read_json(tail[0]), read_json(tail[1], private=True)
         cache = ETC / "extra-secrets.json"
-        if verb != "render" and Path(tail[0]).resolve() == ETC / "fleet.json" and not cache.exists():
-            # Installed configurations predating crew continue with their original roster.
-            config.setdefault("crew", {"claude": {"count": 0}, "codex": {"count": 0}})
         cfg = validate(config, private)
         slug_path = STATE / "slug"
         if slug_path.exists() and os.access(slug_path, os.R_OK):
             require(slug_path.read_text().strip() == cfg["slug"], "Fleet slug is immutable on this VM.")
+        if os.access(SESSIONS, os.R_OK | os.X_OK):
+            # Refuse a changed crew roster or first repository before anything is installed.
+            for person in cfg["members"]:
+                if person["crew"]:
+                    pinned_session(person, STATE / "agents" / person["id"] / "workspace" / next(iter(cfg["repositories"])))
         prune = tail[-1] == "true"
         if verb == "render":
             render(cfg, read_json(cache, private=True), prune)
@@ -1475,9 +1646,6 @@ def main(args):
         saved_people = []
         if saved_config and not prune:
             saved_people = [saved_config["rearAdmiral"], *saved_config["captains"]]
-            for captain in saved_config["captains"]:
-                for slot, app in captain.get("crewGitHubApps", {}).items():
-                    saved_people.append({"id": f"{captain['id']}-{slot}", "githubApp": app})
         if saved_config and previous and "slack" not in previous:
             tokens = previous["tokens"]
             previous["slack"] = {saved_config["rearAdmiral"]["id"]: {
@@ -1499,8 +1667,14 @@ def main(args):
                 sources.extend(cfg["irc"]["compose"][key] for key in ("repo", "ref"))
             (stage / "sources").write_text("\n".join(sources) + "\n")
         else:
-            count = sum(person["role"] == "crew" for person in cfg["members"])
-            print(f"Fleet {cfg['slug']} has {len(cfg['members']) - count - 1} captains, {count} crew and one rear admiral. IRC mode is {cfg['irc']['mode']}.")
+            count = sum(len(person["crew"]) for person in cfg["members"])
+            print(f"Fleet {cfg['slug']} has {len(cfg['members']) - 1} captains, {count} crew and one rear admiral. "
+                  f"IRC mode is {cfg['irc']['mode']}. Crew run as their captain and have no IRC accounts.")
+            if not cfg["repositories"] and len(cfg["members"]) > 1:
+                print("No repositories are configured, so captains have no crew: crew work in Git worktrees of "
+                      "their captain's checkouts.")
+    elif verb == "commission":
+        commission(tail[0] == "true")
     elif verb == "engine":
         engine(tail[0], attach="attach" in tail[1:])
     elif verb == "gateway":
@@ -1534,7 +1708,7 @@ def main(args):
 if __name__ == "__main__":
     try:
         main(sys.argv[1:])
-    except Invalid as exc:
+    except (Invalid, sessions.SessionError) as exc:
         sys.exit(f"subspace-fleet: {exc}")
     except (OSError, ValueError, subprocess.CalledProcessError):
         sys.exit("subspace-fleet: runtime command or configuration failed.")

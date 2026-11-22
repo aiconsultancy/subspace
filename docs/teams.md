@@ -1,8 +1,9 @@
 # Connect a fleet to Microsoft Teams
 
 The fleet's **rear admiral** can talk to your stakeholders in Microsoft Teams.
-**Teams bots cannot message each other**, a Teams limitation, so captains and
-crew cannot coordinate through Teams; they stay on IRC. This guide connects
+**Teams bots cannot message each other**, a Teams limitation, so captains
+cannot coordinate through Teams; they stay on IRC, and crew work only through
+their captain. This guide connects
 the rear admiral. In our reference setup a captain also has its own Teams
 bot for working with people, which this installer doesn't configure. If your
 stakeholders use Slack, [Slack](slack.md) is simpler.

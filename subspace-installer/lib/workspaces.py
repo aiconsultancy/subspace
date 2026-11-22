@@ -102,41 +102,47 @@ def refresh_reference(user, dest, source, mirror, helper, member):
         git(member, "config", "--global", "--add", "safe.directory", dest)
 
 
+def crew_worktree(home, worker, repo_id):
+    """A crew member's permanent worktree of one repository, under its captain's home."""
+    return home / "worktrees" / worker["id"] / repo_id
+
+
 def prepare_member(person, home, repo_id, source, mirror, cache_user, helper):
-    agent_id = person["id"]
-    user = f"ss-{agent_id}"
+    user = f"ss-{person['id']}"
     dest = home / "workspace" / repo_id
     start = mirror or source
     options = ("--shared",) if mirror else ()
     auth = private_credentials(helper, source) if mirror is None else None
-    if person["role"] == "crew":
-        backing = home / f".{repo_id}.git"
-        clone(user, start, backing, *options, "--bare", env=auth)
-        if git(user, "-C", backing, "remote", "get-url", "origin", output=True) == str(start):
-            git(user, "-C", backing, "remote", "set-url", "origin", source)
-        check_origin(user, backing, source)
-        worktrees = git(user, "-C", backing, "worktree", "list", "--porcelain", output=True)
-        if f"worktree {dest}" not in worktrees.splitlines():
-            if mirror:
-                base = git(cache_user, "-C", mirror, "rev-parse", "HEAD", output=True)
-            else:
-                git(user, "-C", backing, "fetch", "--quiet", "origin", "HEAD", env=auth)
-                base = "FETCH_HEAD"
-            branches = git(user, "-C", backing, "branch", "--list", f"crew/{agent_id}", output=True)
-            branch = ["-b", f"crew/{agent_id}", dest, base] if not branches else [dest, f"crew/{agent_id}"]
-            git(user, "-C", backing, "worktree", "add", "--quiet", *branch)
-        common = git(user, "-C", dest, "rev-parse", "--path-format=absolute", "--git-common-dir", output=True)
-        if common != str(backing):
-            raise ValueError(f"Crew checkout {dest} is outside its assigned repository.")
-        git_dir = backing
-    else:
-        clone(user, start, dest, *options, env=auth)
-        if git(user, "-C", dest, "remote", "get-url", "origin", output=True) == str(start):
-            git(user, "-C", dest, "remote", "set-url", "origin", source)
-        check_origin(user, dest, source)
-        git_dir = dest / ".git"
+    clone(user, start, dest, *options, env=auth)
+    if git(user, "-C", dest, "remote", "get-url", "origin", output=True) == str(start):
+        git(user, "-C", dest, "remote", "set-url", "origin", source)
+    check_origin(user, dest, source)
     hook = helper.parent / "git-hooks/pre-push"
-    as_user(user, "/usr/bin/python3", Path(__file__), "hook", git_dir, hook, "on" if "githubApp" in person else "off")
+    # Crew worktrees share this checkout's hooks, configuration and credentials.
+    as_user(user, "/usr/bin/python3", Path(__file__), "hook", dest / ".git", hook, "on" if "githubApp" in person else "off")
+    for worker in person.get("crew", ()):
+        prepare_crew(user, dest, crew_worktree(home, worker, repo_id), worker["branch"], mirror, cache_user, auth)
+
+
+def prepare_crew(user, checkout, dest, branch, mirror, cache_user, auth):
+    """Add a crew member's worktree of the captain's checkout once; never reset or move existing work."""
+    registered = git(user, "-C", checkout, "worktree", "list", "--porcelain", output=True).splitlines()
+    if f"worktree {dest}" not in registered:
+        if dest.exists() or dest.is_symlink():
+            raise ValueError(f"{dest} exists but is not a worktree of {checkout}. Move it aside.")
+        as_user(user, "/usr/bin/mkdir", "-p", "--", dest.parent)
+        if mirror:
+            base = git(cache_user, "-C", mirror, "rev-parse", "HEAD", output=True)
+        else:
+            git(user, "-C", checkout, "fetch", "--quiet", "origin", "HEAD", env=auth)
+            base = git(user, "-C", checkout, "rev-parse", "FETCH_HEAD", output=True)
+        existing = git(user, "-C", checkout, "branch", "--list", branch, output=True)
+        target = [dest, branch] if existing else ["-b", branch, dest, base]
+        git(user, "-C", checkout, "worktree", "add", "--quiet", *target)
+    # Stargate requires each worker to share its project checkout's Git common directory.
+    common = git(user, "-C", dest, "rev-parse", "--path-format=absolute", "--git-common-dir", output=True)
+    if common != str(checkout / ".git"):
+        raise ValueError(f"Crew worktree {dest} belongs to another repository.")
 
 
 def manage_hook(git_dir, source, enabled):
@@ -165,12 +171,12 @@ def prepare_workspaces(repos, people, homes, cache, cache_user, references, help
 
 
 def prune_worktrees(repos, people, homes, days):
+    """Forget records of crew worktrees that no longer exist; existing directories are never removed."""
     for person in people:
         if person["role"] == "rear_admiral":
             continue
-        home = homes[person["id"]]
         for repo_id in repos:
-            path = home / (f".{repo_id}.git" if person["role"] == "crew" else f"workspace/{repo_id}")
+            path = homes[person["id"]] / "workspace" / repo_id
             if path.is_dir():
                 git(f"ss-{person['id']}", "-C", path, "worktree", "prune", f"--expire={days}.days.ago")
 

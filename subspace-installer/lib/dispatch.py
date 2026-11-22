@@ -19,9 +19,10 @@ PACKAGE = Path(__file__).resolve().parents[1]
 FILES = (
     "install.sh", "lib/runtime.py", "lib/fleetctl.py", "lib/dashboard.py", "lib/github_app.py", "lib/github_policy.py",
     "lib/git-hooks/pre-push",
-    "lib/agent_files.py", "lib/workspaces.py", "lib/network.py", "lib/roles.py", "lib/medical.py",
+    "lib/agent_files.py", "lib/workspaces.py", "lib/network.py", "lib/roles.py", "lib/medical.py", "lib/sessions.py",
     "lib/releases.tsv",
     *(f"lib/roles/{role}/{template}" for role in ("rear-admiral", "captain", "crew") for template in ("AGENTS.md", "SKILL.md")),
+    "lib/roles/captain/CREW.md",
 )
 REMOTE = """
 set -eu

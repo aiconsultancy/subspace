@@ -7,8 +7,8 @@
   ],
   "harness": { "type": "opencode", "family": "codex", "model": "gpt-5.4" },
   "crew": {
-    "claude": { "count": 2, "type": "opencode", "model": "claude-sonnet-5-5" },
-    "codex": { "count": 2, "type": "opencode", "model": "gpt-5.4" }
+    "claude": { "count": 2, "model": "claude-sonnet-5-5" },
+    "codex": { "count": 2, "model": "gpt-5.4" }
   },
   "repositories": [],
   "operatorUsers": [],
