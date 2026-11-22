@@ -481,9 +481,63 @@ class InstalledFleet(unittest.TestCase):
             runtime.commission(False, existing=True)
         render.assert_not_called()
         self.assertEqual(servers[4097].sessions[session_id]["permissions"],
-                         runtime.captain_permissions(runtime.validate(*crew_fleet("orion", "vega"))["members"][1]))
+                         runtime.captain_permissions(cfg := runtime.validate(*crew_fleet("orion", "vega")),
+                                                     cfg["members"][1]))
         # Unconfirmed captains are left to the full commission after the restart.
         self.assertEqual(len(servers[4098].creates), 1)
+
+    def test_agent_dispatch_pins_the_rear_admiral_and_lets_captains_answer(self):
+        config, secrets = crew_fleet("orion")
+        config["api"] = {"url": "https://subspace.example.com"}
+        config["agentDispatch"] = {"enabled": True, "pollIntervalSeconds": 60}
+        secrets.update(apiToken="aaa.bbb.admin", rearAdmiralApiToken="aaa.bbb.rear")
+        extra = {"tokens": {}, "cloud": {}}
+        for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
+            (self.etc / name).write_text(json.dumps(value))
+            (self.etc / name).chmod(0o600)
+        servers = {4096: FakeOpenCode(), 4097: FakeOpenCode()}
+        for port, member, directory in ((4096, "atlas", "references/atlas/project"),
+                                        (4097, "orion", "agents/orion/workspace/project")):
+            (self.etc / f"engine-{member}.json").write_text(json.dumps({
+                "port": port, "directory": str(self.state / directory),
+                "environment": {"OPENCODE_PASSWORD": "fixture-password"}}))
+        self.start(patch.object(runtime.sessions, "OpenCode",
+                                side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])]))
+        self.render(config, secrets)
+        served, _ = self.gateway()
+        self.assertNotIn("sessionID", served["atlas"])
+        stargate = json.loads((self.etc / "stargate.json").read_text())
+        self.assertEqual(stargate["agentDispatch"]["messaging"],
+                         {"type": "irc", "registration": "atlas", "channel": "#example-fleet-command"})
+        self.assertEqual(stargate["agentDispatch"]["pollIntervalSeconds"], 60)
+        self.assertNotIn("aaa.bbb.rear", json.dumps(stargate))
+        runner = json.loads((self.etc / "gateway.json").read_text())
+        self.assertEqual(runner["environment"]["SUBSPACE_DISPATCH_TOKEN"], "aaa.bbb.rear")
+
+        with patch.object(runtime, "directory") as directories:
+            runtime.commission(False)
+        rear_session = json.loads((self.etc / "sessions/atlas.json").read_text())["sessionID"]
+        captain_session = json.loads(self.store.confirmed.read_text())["sessionID"]
+        # The rear admiral's root is created with its own policy, no crew grants.
+        self.assertEqual(servers[4096].sessions[rear_session]["permissions"],
+                         runtime.validate(config, secrets)["members"][0]["harness"]["permissions"])
+        self.assertIn(runtime.DISPATCH_GRANT, servers[4097].sessions[captain_session]["permissions"])
+        stargate = json.loads((self.etc / "stargate.json").read_text())
+        rear, orion = stargate["irc"]
+        self.assertEqual(rear["backend"]["sessionID"], rear_session)
+        self.assertEqual(orion["fleetControl"]["targets"],
+                         [{"id": "atlas", "account": "example-atlas", "role": "rear_admiral",
+                           "channel": "#example-fleet-orion", "sessionID": rear_session}])
+        self.assertEqual(orion["fleetChannels"], {"home": "#example-fleet-orion", "command": "#example-fleet-command"})
+        self.assertNotIn("fleetControl", rear)
+        engine = json.loads((self.etc / "opencode-orion.json").read_text())
+        self.assertEqual(engine["plugins"][1]["options"]["socketPath"], orion["fleetControl"]["socketPath"])
+        unit = (self.systemd / "subspace-fleet-gateway.service").read_text()
+        self.assertIn(f"ReadWritePaths={self.state}/fleet-control/orion", unit.splitlines())
+        directories.assert_any_call(self.state / "fleet-control/orion", 0o2750, runtime.GATEWAY, "ss-orion")
+        # A clean re-run changes nothing.
+        self.render(config, secrets)
+        self.assertEqual(self.events, [])
 
 
 if __name__ == "__main__":

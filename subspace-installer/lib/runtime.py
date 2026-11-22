@@ -47,6 +47,10 @@ DISPATCH_DEFAULTS = {"pollIntervalSeconds": 120, "answerTimeoutSeconds": 300,
 # The gateway variable holding the rear admiral agent's API bearer; Stargate's configuration names only the variable.
 DISPATCH_TOKEN_ENV = "SUBSPACE_DISPATCH_TOKEN"
 JWT = r"[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+"
+# Captains answer dispatch offers with Stargate's fleet plugin, through a per-captain socket that the gateway
+# owns under STATE/fleet-control/<captain-id>/.
+DISPATCH_GRANT = {"action": "fleet_answer_offer", "resource": "*", "effect": "allow"}
+FLEET_ACTIONS = ("fleet_verify_instruction", "fleet_dispatch", "fleet_status", "fleet_review", "fleet_answer_offer")
 FIREWALL = f"{PREFIX}firewall.service"
 TOOL_HOME = APP / "toolchains"
 TOOL_ENV = {"MISE_DATA_DIR": str(TOOL_HOME), "MISE_GLOBAL_CONFIG_FILE": str(ETC / "toolchains.toml"),
@@ -368,8 +372,34 @@ def agent_dispatch_config(value, api, agents):
     require(rear["harness"]["type"] == "opencode",
             "Agent dispatch is on, but the rear admiral uses claude-sdk. Dispatch runs in the rear admiral's gateway, "
             "which for a Claude Agent SDK rear admiral runs as the rear admiral's own Linux user, so its model could read "
-            "the dispatcher's API token. Use an OpenCode rear admiral or switch agentDispatch.enabled off.")
+            "the dispatcher's API token; and captains recognise their rear admiral by its pinned OpenCode session, which "
+            "a Claude Agent SDK harness cannot have. Use an OpenCode rear admiral or switch agentDispatch.enabled off.")
+    # Stargate's answer tool needs a captain with a pinned OpenCode root, which only crew-hosting captains have.
+    require(any(person["crew"] for person in captains),
+            "Agent dispatch is on, but no captain can answer an offer: Stargate's fleet_answer_offer tool needs a captain "
+            "with a pinned OpenCode session, and only captains with crew (an OpenCode harness, crew counts above 0 and "
+            "at least one repository) have one. Give a captain crew or switch agentDispatch.enabled off.")
     return settings
+
+
+def fleet_ipc_policy(rules, label):
+    """Stargate's fleet IPC check (src/fleet/permissions.ts): rules that could match a fleet tool must be
+    exact, '*' or a literal prefix followed by '*', and allow or deny, never ask."""
+    literal = r"[A-Za-z0-9_./:@%#=-]+"
+
+    def supported(value):
+        return value == "*" or re.fullmatch(literal, value) or (value.endswith("*") and re.fullmatch(literal, value[:-1]))
+
+    for rule in rules:
+        action = rule["action"]
+        if supported(action):
+            prefix = action[:-1] if action.endswith("*") else None
+            if not any(name == action or (prefix is not None and name.startswith(prefix)) for name in FLEET_ACTIONS):
+                continue
+        require(supported(action) and supported(rule["resource"]) and rule["effect"] in ("allow", "deny"),
+                f"{label}: agent dispatch gives this captain Stargate's fleet tools, which accept only explicit allow or "
+                f"deny rules with exact, '*' or prefix-'*' patterns for fleet actions. Change the rule for {action!r} "
+                "(an ask, or a pattern with other wildcards, cannot authorise a fleet tool).")
 
 
 def harness_config(value, inherited):
@@ -707,6 +737,8 @@ def validate(config, credentials, check_files=True):
         if person["harness"]["permissions"] is None:
             references = STATE / "references" / person["id"] if cfg.get("repositories") else None
             person["harness"]["permissions"] = default_permissions(person["role"], references)
+        if dispatch and person["crew"]:
+            fleet_ipc_policy(person["harness"]["permissions"], f"Captain {person['id']}'s harness.permissions")
     return {
         "slug": slug, "name": string(cfg["name"], "fleet name"), "members": agents, "irc": irc, "medical": medical,
         "repositories": repositories,
@@ -994,10 +1026,13 @@ def model_provider(cfg, family, models):
             "models": {model: {"name": model} for model in models}}
 
 
-def captain_permissions(person):
-    """The captain root's stored grants: its harness policy plus the crew tools when it hosts crew."""
+def captain_permissions(cfg, person):
+    """The captain root's stored grants: its harness policy plus the crew tools when it hosts crew, and the
+    dispatch answer tool when agent dispatch is on."""
     permissions = person["harness"]["permissions"]
-    return [*permissions, *CREW_GRANTS] if person["crew"] else permissions
+    if not person["crew"]:
+        return permissions
+    return [*permissions, *CREW_GRANTS, *([DISPATCH_GRANT] if cfg["agentDispatch"] else [])]
 
 
 def crew_options(cfg, person, home, engine_port, session_id):
@@ -1067,6 +1102,44 @@ def captain_pins(cfg):
     return pins
 
 
+def rear_workspace(cfg):
+    """The rear admiral's working directory: its reference checkout of the first repository, if any."""
+    rear = cfg["members"][0]["id"]
+    first = next(iter(cfg["repositories"]), None)
+    return STATE / "references" / rear / first if first else STATE / "agents" / rear / "workspace"
+
+
+def rear_pin(cfg):
+    """The rear admiral's pinned root session while agent dispatch is on, or None.
+
+    Captains name it in their fleetControl target, which is how they recognise their rear admiral's offers.
+    """
+    if not cfg["agentDispatch"]:
+        return None
+    return pinned_session(cfg["members"][0], rear_workspace(cfg))
+
+
+def fleet_socket(agent_id):
+    return STATE / "fleet-control" / agent_id / "fleet.sock"
+
+
+def fleet_control(cfg, person, pin, rear_session, gateway_home):
+    """Stargate fleetControl for a captain that answers dispatch offers, or None.
+
+    It needs the captain's own pin and the rear admiral's, whose target entry (role rear_admiral) is how the
+    captain recognises dispatch requests. The target channel is the captain's ship, where the rear admiral listens.
+    """
+    if not (cfg["agentDispatch"] and person["role"] == "captain" and pin and rear_session):
+        return None
+    rear = cfg["members"][0]
+    return {
+        "socketPath": str(fleet_socket(person["id"])),
+        "statePath": str(gateway_home / "fleet-control" / "evidence.sqlite"),
+        "targets": [{"id": rear["id"], "account": rear["account"], "role": "rear_admiral",
+                     "channel": person["channel"], "sessionID": rear_session}],
+    }
+
+
 def ready_marker(agent_id):
     """Written once a captain's engine and gateway configuration carry its pin; the gateway unit waits for it."""
     return SESSIONS / f"{agent_id}.ready"
@@ -1093,7 +1166,7 @@ def publish_ready(pins):
             sessions.write_durable(marker, f"{session_id}\n")
 
 
-def render_engine(cfg, person, home, workspace, engine_port, seed, documents, session_id):
+def render_engine(cfg, person, home, workspace, engine_port, seed, documents, session_id, answers_offers=False):
     agent_id = person["id"]
     user = f"ss-{agent_id}"
     database_dir = STATE / "sessions" / agent_id
@@ -1138,8 +1211,18 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
                 "package": str(APP / "src" / f"stargate-{cfg['stargate']['ref']}"),
                 "options": crew_options(cfg, person, home, engine_port, session_id),
             }]
+            if answers_offers:
+                # Stargate's fleet plugin gives the pinned root fleet_answer_offer, over the gateway's socket.
+                engine["plugins"].append({
+                    "package": str(APP / "src" / f"stargate-{cfg['stargate']['ref']}" / "src/fleet"),
+                    "options": {"socketPath": str(fleet_socket(agent_id))},
+                })
             backend["sessionID"] = session_id
-        backend.update(agent=sessions.CAPTAIN_AGENT, permissions=captain_permissions(person), enforcePermissions=True)
+        backend.update(agent=sessions.CAPTAIN_AGENT, permissions=captain_permissions(cfg, person), enforcePermissions=True)
+    elif person["role"] == "rear_admiral" and session_id:
+        # Agent dispatch pins the rear admiral's IRC registration to one root, which captains name as their
+        # rear admiral. Slack and Teams keep their own sessions (render passes them an unpinned copy).
+        backend["sessionID"] = session_id
     environment["OPENCODE_CONFIG"] = str(save_settings(f"opencode-{agent_id}", engine, user))
     settings = save_settings(f"engine-{agent_id}", {
         "environment": environment, "port": engine_port, "directory": str(workspace), "slug": cfg["slug"],
@@ -1516,6 +1599,7 @@ def render(cfg, extra, prune=False):
         require(slug_path.read_text().strip() == cfg["slug"], "Fleet slug is immutable on this VM.")
     write(slug_path, cfg["slug"] + "\n")
     pins = captain_pins(cfg)
+    rear_session = rear_pin(cfg)
     withdraw_ready(pins)
     tokens = {**extra["tokens"], **extra.get("slack", {}).get(cfg["members"][0]["id"], {})}
     if "reportChannel" not in cfg["integrations"]["usage"]:
@@ -1566,8 +1650,10 @@ def render(cfg, extra, prune=False):
                 workspace = references
             workspace /= next(iter(cfg["repositories"]))
         if harness["type"] == "opencode":
+            pin = rear_session if person["role"] == "rear_admiral" else pins.get(agent_id)
             unit, backend, headers, database = render_engine(
-                cfg, person, home, workspace, ports[agent_id], seed, documents[agent_id], pins.get(agent_id))
+                cfg, person, home, workspace, ports[agent_id], seed, documents[agent_id], pin,
+                answers_offers=bool(fleet_control(cfg, person, pin, rear_session, gateway_home)))
             databases.append(database)
             units.append(unit)
             engines.append(unit)
@@ -1601,8 +1687,19 @@ def render(cfg, extra, prune=False):
         group = ("gateway" if person is rear else f"gateway-agent-{agent_id}") if native else default_group
         user = f"ss-{agent_id}" if native else GATEWAY
         home = homes[agent_id] if native else gateway_home
-        opts = groups.setdefault(group, {"user": user, "home": home, "irc": [], "environment": {}, "ready": []})
-        opts["irc"].append(irc_officer(cfg, person, registrations[agent_id]))
+        opts = groups.setdefault(group, {"user": user, "home": home, "irc": [], "environment": {}, "ready": [],
+                                         "writable": []})
+        entry = irc_officer(cfg, person, registrations[agent_id])
+        if control := fleet_control(cfg, person, pins.get(agent_id), rear_session, gateway_home):
+            # This captain answers dispatch offers with Stargate's fleet plugin. The socket directory belongs to the
+            # gateway and admits only this captain's engine group; the evidence ledger is the gateway's alone.
+            directory(STATE / "fleet-control", 0o711)
+            directory(fleet_socket(agent_id).parent, 0o2750, GATEWAY, f"ss-{agent_id}")
+            directory(gateway_home / "fleet-control", 0o2770, GATEWAY)
+            entry.update(fleetControl=control, fleetChannels={"home": person["channel"],
+                                                              "command": cfg["irc"]["commandChannel"]})
+            opts["writable"].append(fleet_socket(agent_id).parent)
+        opts["irc"].append(entry)
         opts["environment"].update(environments[agent_id])
         if person["crew"]:
             opts["ready"].append(ready_marker(agent_id))
@@ -1613,9 +1710,12 @@ def render(cfg, extra, prune=False):
         data = home / ("gateway" if user != GATEWAY else "data")
         is_primary = group == "gateway"
         settings = {"dataDirectory": str(data), "dashboard": is_primary, "irc": options["irc"]}
-        writable = [home]
+        writable = [home, *options["writable"]]
         if is_primary:
-            integrations, paths = stakeholder_settings(cfg, tokens, registrations[rear["id"]]["backend"], user, data, environment)
+            # Slack and Teams keep their own sessions; a pinned root has one chat owner, the rear admiral's IRC.
+            stakeholder_backend = {key: value for key, value in registrations[rear["id"]]["backend"].items()
+                                   if key != "sessionID"}
+            integrations, paths = stakeholder_settings(cfg, tokens, stakeholder_backend, user, data, environment)
             settings.update(integrations)
             writable.extend(paths)
             dispatch, dispatch_env = agent_dispatch_settings(cfg)
@@ -1672,7 +1772,9 @@ def commission(prune, existing=False):
     cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True))
     pinned, failed = [], []
     for person in cfg["members"]:
-        if not person["crew"]:
+        # Captains with crew, and the rear admiral while agent dispatch is on (captains name its root).
+        rear = person["role"] == "rear_admiral"
+        if not (person["crew"] or rear and cfg["agentDispatch"]):
             continue
         store = sessions.SessionRecord(SESSIONS, person["id"])
         try:
@@ -1685,7 +1787,7 @@ def commission(prune, existing=False):
                 "directory": settings["directory"], "title": f"{cfg['slug']}/{person['id']}",
                 "crew": [worker["id"] for worker in person["crew"]],
                 "model": {"providerID": PROVIDERS[harness["family"]], "id": harness["model"]},
-                "permissions": captain_permissions(person),
+                "permissions": person["harness"]["permissions"] if rear else captain_permissions(cfg, person),
             }
             if existing:
                 _, new = sessions.ensure(client, store, expected, wait=lambda c, i: sessions.wait_until_ready(c, i, 2),
@@ -1695,7 +1797,7 @@ def commission(prune, existing=False):
         except (Invalid, sessions.SessionError) as error:
             if not existing:
                 # Keep going: one captain's failure must not hold back the others' pins.
-                failed.append(f"Captain {person['id']}: {error}")
+                failed.append(f"{'Rear admiral' if rear else 'Captain'} {person['id']}: {error}")
             continue
         if new:
             pinned.append(person["id"])
@@ -1811,6 +1913,7 @@ def main(args):
         if os.access(SESSIONS, os.R_OK | os.X_OK):
             # Refuse a changed crew roster or first repository before anything is installed.
             captain_pins(cfg)
+            rear_pin(cfg)
         prune = tail[-1] == "true"
         if verb == "render":
             render(cfg, read_json(cache, private=True), prune)

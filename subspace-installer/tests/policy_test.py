@@ -492,6 +492,8 @@ class AgentDispatchTests(unittest.TestCase):
     def setUp(self):
         self.config = example_config()
         self.config["api"] = {"url": "https://subspace.example.com"}
+        # Crew need a repository; only a captain with crew has the pinned root that answers offers.
+        self.config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
         self.secrets = {**officer_secrets(), "apiToken": ADMIN_JWT}
 
     def enable(self, **settings):
@@ -559,9 +561,89 @@ class AgentDispatchTests(unittest.TestCase):
             validate(self.config, {**self.secrets, "rearAdmiralApiToken": ADMIN_JWT})
         with self.assertRaisesRegex(Invalid, "Invalid rearAdmiralApiToken"):
             validate(self.config, {**self.secrets, "rearAdmiralApiToken": "not a token"})
+        crewless = json.loads(json.dumps(self.config))
+        crewless["repositories"] = []
+        with self.assertRaisesRegex(Invalid, "no captain can answer an offer"):
+            validate(crewless, self.secrets)
+        asking = json.loads(json.dumps(self.config))
+        asking["captains"][0]["harness"] = {"permissions": [{"action": "*", "resource": "*", "effect": "ask"}]}
+        with self.assertRaisesRegex(Invalid, "Captain orion's harness.permissions.*explicit allow or deny"):
+            validate(asking, self.secrets)
+        # Rules that cannot reach a fleet tool may still ask.
+        asking["captains"][0]["harness"]["permissions"] = [
+            {"action": "*", "resource": "*", "effect": "deny"}, {"action": "shell", "resource": "git *", "effect": "ask"}]
+        validate(asking, self.secrets)
         del self.config["agentDispatch"]
         with self.assertRaisesRegex(Invalid, "only for agent dispatch"):
             validate(self.config, self.secrets)
+
+    def test_captains_answer_offers_through_the_fleet_plugin(self):
+        self.enable()
+        cfg = validate(self.config, self.secrets)
+        rear, captain = cfg["members"]
+        gateway = Path("/var/lib/subspace-fleet/gateway")
+        self.assertIn(runtime.DISPATCH_GRANT, runtime.captain_permissions(cfg, captain))
+        # Nothing until both the captain's and the rear admiral's roots are pinned.
+        self.assertIsNone(runtime.fleet_control(cfg, captain, "ses_captain", None, gateway))
+        self.assertIsNone(runtime.fleet_control(cfg, captain, None, "ses_rear", gateway))
+        self.assertIsNone(runtime.fleet_control(cfg, rear, "ses_rear", "ses_rear", gateway))
+        control = runtime.fleet_control(cfg, captain, "ses_captain", "ses_rear", gateway)
+        self.assertEqual(control, {
+            "socketPath": "/var/lib/subspace-fleet/fleet-control/orion/fleet.sock",
+            "statePath": "/var/lib/subspace-fleet/gateway/fleet-control/evidence.sqlite",
+            # The rear_admiral target is how the captain recognises dispatch requests and records offers.
+            "targets": [{"id": "atlas", "account": "example-atlas", "role": "rear_admiral",
+                         "channel": "#example-fleet-orion", "sessionID": "ses_rear"}],
+        })
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        documents = roles.role_documents(cfg, captain, Path("/references/atlas"), home)
+        saved = {}
+
+        def save(name, settings, _user):
+            saved[name] = settings
+            return Path(f"/etc/subspace-fleet/{name}.json")
+
+        with patch.object(runtime, "directory"), patch.object(runtime, "save_settings", side_effect=save), \
+                patch.object(runtime, "serve_unit", return_value="subspace-fleet-engine-orion.service"):
+            _, backend, _, _ = runtime.render_engine(cfg, captain, home, home / "workspace/project", 4097, b"seed",
+                                                     documents, "ses_captain", answers_offers=True)
+            crew_plugin, fleet_plugin = saved["opencode-orion"]["plugins"]
+            self.assertEqual(fleet_plugin, {
+                "package": f"/opt/subspace-fleet/src/stargate-{runtime.STARGATE_REF}/src/fleet",
+                "options": {"socketPath": control["socketPath"]},
+            })
+            self.assertIn(runtime.DISPATCH_GRANT, backend["permissions"])
+            # The rear admiral's IRC registration is pinned to the root that captains name.
+            _, backend, _, _ = runtime.render_engine(cfg, rear, Path("/var/lib/subspace-fleet/agents/atlas"),
+                                                     Path("/references/atlas/project"), 4096, b"seed",
+                                                     roles.role_documents(cfg, rear, Path("/references/atlas"), home),
+                                                     "ses_rear")
+            self.assertEqual(backend["sessionID"], "ses_rear")
+            self.assertNotIn("plugins", saved["opencode-atlas"])
+        runtime.fleet_ipc_policy(runtime.captain_permissions(cfg, captain), "fixture")
+
+    def test_dispatch_wakes_only_the_addressed_captain(self):
+        """Stargate addresses each request to one captain's @nick; answers and status lines are NOTICEs."""
+        self.enable()
+        cfg = validate(self.config, self.secrets)
+        rear, captain = cfg["members"]
+
+        def registration(person):
+            return {"id": person["id"], "account": person["account"], "backend": {"directory": "/workspace"}}
+
+        entry = runtime.irc_officer(cfg, captain, registration(captain))
+        command = cfg["irc"]["commandChannel"]
+        self.assertIn(command, entry["channels"])
+        self.assertEqual(entry["access"]["channelRequests"], "nick-mention")
+        self.assertEqual(entry["access"]["humanWakeChannels"], [{"channel": captain["channel"], "replies": "all"}])
+        self.assertEqual(entry["access"]["allCallWords"], [])
+        # The rear admiral is an enrolled peer, so its addressed request is admitted; an enrolled peer that is
+        # also the rear_admiral target is exempt from the peer turn limit.
+        self.assertIn(rear["account"], entry["access"]["peerCaptains"])
+        self.assertIn(rear["account"], entry["fleetPolicy"]["agentAccounts"])
+        rear_entry = runtime.irc_officer(cfg, rear, registration(rear))
+        self.assertIn(command, rear_entry["channels"])
+        self.assertIn(captain["account"], rear_entry["fleetPolicy"]["agentAccounts"])
 
 
 if __name__ == "__main__":
