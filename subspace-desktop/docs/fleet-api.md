@@ -162,7 +162,11 @@ so nothing asks to unlock the keychain without the person asking. The fleet
 stays **Keychain locked** while it is read again, the page hears
 `subspace:fleets-changed` only if the read finds something new, and the
 service reads one fleet's token again at most once every five seconds,
-whoever asks.
+whoever asks; a **Retry** asked sooner is read once, when those five seconds
+end, and never again on a timer. A read still running when the person saves
+or clears the fleet's token, or when the fleet leaves the initiatives, is
+dropped when it lands (each of those starts a new token generation for the
+fleet), so a cleared or replaced token never comes back.
 See the Fleet Console's [README](../web-spaces/fleet-console/README.md#fleets).
 
 ## Fixtures

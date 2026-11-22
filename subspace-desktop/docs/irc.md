@@ -181,8 +181,13 @@ in `live.rs` and `live/`.
   followed, and drops it when the fleet is no longer shown or the Space is
   hidden. The service opens at most one stream per fleet and closes it with
   the last handle. What the service says of each shown fleet goes to
-  `Hub::fleets`, only when it changed, where the navigator, the headers and
-  the inspector read it. The hub holds only what Channels draws (each
+  the hub as the view's share (`Hub::fleet_views`), only when it changed;
+  `Hub::fleets`, where the navigator, the headers and the inspector read
+  it, is the union of every view's share, so a hidden view never empties
+  what a shown one publishes, and a closed view's share goes with it. The
+  board reaches the fleet service only once a fleet is on show, so a
+  Channels that shows no fleet never starts it, reads no token and never
+  asks to unlock the keychain. The hub holds only what Channels draws (each
   ship as `ShipLive`), so an activity line or a sample time redraws
   nothing. A fleet with no address, no token, a changed address or no
   answer keeps today's behaviour everywhere.
@@ -202,7 +207,11 @@ in `live.rs` and `live/`.
   detail that Stargate kept after a failed read (`detailStale`), or that
   the overview or the detail marks unavailable, gives no crew lines (the
   overview's totals stand in), and a kept overview (`overviewStale`) shows
-  no ships.
+  no ships. Each says so: the Ship and Starbase tabs say **Not current**
+  for a kept overview and **Waiting** before the first one, and **Not
+  listed** only when a current overview lacks the ship; the crew says its
+  detail is kept from an earlier read rather than that it has not
+  arrived.
 - **A ship's dot** follows its crew: a crew member is working while one of
   its contexts has a current task, as Stargate counts `busy`. From the
   ship's detail once it arrives, else the overview's `crew.busy`. A ship
@@ -225,7 +234,10 @@ in `live.rs` and `live/`.
   queued work) and **Done** (the captain's done jobs), each only when the
   API gives it; **Crew**, each member with a dot, the task's phase and
   summary, and how long (`dates::age`); **In play here**, the issues and pull
-  requests the conversation's tiles show, in order, with their state; and
+  requests the conversation's tiles show, in order, with their state, or
+  **Loading** until answered and **Unavailable** when they cannot be shown
+  (the section asks for its own answers, as a tile's message may be out of
+  view); and
   **Here now**, the channel's members. **Starbase**: **Ships**, one row
   each with the captain's icon, name, state and `avatar::crew_meter`.
   While the fleet is not live the tab says why in one sentence

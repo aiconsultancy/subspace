@@ -142,11 +142,17 @@ unknown key gets); later answers carry the counts. A list refresh (every
 section, or the favourites' sections) marks those reads stale once, when
 its first section lands, so each is read again at most once per refresh,
 when next asked, however many sections land or pull requests are opened.
-Until then a stale read lends only its counts to the list's item, and only
-while the list's combined state and last update match the read's. A read
-of a pull request the board neither opened nor lists is checked again once
-per refresh too, so one the account can no longer read stops answering. A
-signed-out account starts no read.
+A read answers whole only when it started after the last section listing
+the pull request landed, so a later section of the same refresh wins over
+a read that began before it; an older read lends only its counts to the
+list's item, and only while the list's combined state and last update
+match the read's. A read of a pull request the board neither opened nor
+lists is checked again once per refresh too, so one the account can no
+longer read stops answering. A refusal (from a reference read or the
+board's own detail read) answers ahead of a pull request the account
+opened or listed before it, until a later read succeeds, so a pull request
+it lost access to stops showing its summary. A signed-out account starts
+no read.
 
 ```rust
 // In the requester's contracts():
