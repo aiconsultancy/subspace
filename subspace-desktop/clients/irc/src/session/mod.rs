@@ -38,7 +38,7 @@ use crate::model::{Anchor, BufferKey, Command, Event, NetworkConfig, NetworkId, 
 use crate::proto::Message;
 
 pub use input::{COMMANDS, CommandHelp, FirstArgument, private_recipients};
-pub(crate) use isupport::Casemapping;
+pub use isupport::Casemapping;
 pub use lines::{KEPT_CLIENT_TAGS, PROGRESS_TAG};
 pub use metadata::status_text;
 pub use send::{
@@ -105,12 +105,22 @@ pub(crate) fn configure_autojoin(
 pub struct Output {
     pub send: Vec<Message>,
     pub events: Vec<Event>,
-    /// Reactions and refused reaction commands, reported after `events`.
-    pub updates: Vec<Update>,
+    /// Reactions, refused reaction commands and support changes.
+    pub updates: Updates,
     pub written: Vec<Event>,
     pub unwritten: Vec<Event>,
     pub quit: bool,
     pub(crate) fatal: Option<String>,
+}
+
+/// Updates for owners, reported after the events: `now` at once, and
+/// `written` once `send` is written, such as a local echo, or `unwritten`
+/// instead if writing it fails.
+#[derive(Debug, Default, PartialEq)]
+pub struct Updates {
+    pub now: Vec<Update>,
+    pub written: Vec<Update>,
+    pub unwritten: Vec<Update>,
 }
 
 impl Output {
@@ -244,10 +254,14 @@ impl Session {
         self.canonicalise(&mut out.events);
         self.canonicalise(&mut out.written);
         self.canonicalise(&mut out.unwritten);
-        let buffers = out
-            .updates
-            .iter_mut()
-            .flat_map(spelling::update_buffers_mut);
+        let buffers = [
+            &mut out.updates.now,
+            &mut out.updates.written,
+            &mut out.updates.unwritten,
+        ]
+        .into_iter()
+        .flatten()
+        .flat_map(spelling::update_buffers_mut);
         canonical_names(&mut self.spellings, &self.isupport, buffers);
         history::track(&mut self.anchors, &out.events);
         out

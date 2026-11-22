@@ -76,7 +76,7 @@ fn allow_ctcp_reply(session: &mut Session, nick: &str) -> bool {
 }
 
 pub(super) fn tagmsg(session: &mut Session, message: &Message, out: &mut Output) {
-    out.updates.extend(reactions::live(session, message));
+    out.updates.now.extend(reactions::live(session, message));
     typing(session, message, out);
 }
 

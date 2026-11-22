@@ -7,6 +7,8 @@ use crate::model::{
 };
 use crate::session::{Carry, Output, Session};
 
+mod support;
+
 fn react(buffer: BufferKey, msgid: &str, reaction: &str) -> Command {
     Command::React {
         buffer,
@@ -23,9 +25,12 @@ fn unreact(buffer: BufferKey, msgid: &str, reaction: &str) -> Command {
     }
 }
 
+/// The reactions reported, including those that wait for a written send.
 fn reactions(out: &Output) -> Vec<&Reaction> {
     out.updates
+        .now
         .iter()
+        .chain(&out.updates.written)
         .filter_map(|update| match update {
             Update::Reaction(reaction) => Some(reaction),
             _ => None,
@@ -34,7 +39,7 @@ fn reactions(out: &Output) -> Vec<&Reaction> {
 }
 
 fn refusal(out: &Output) -> Option<&ReactionError> {
-    match out.updates.as_slice() {
+    match out.updates.now.as_slice() {
         [Update::ReactionRefused { error, .. }] => Some(error),
         _ => None,
     }
@@ -45,7 +50,21 @@ fn reacting_and_unreacting_send_one_tagmsg_naming_the_message() {
     let mut session = in_channel(ALL_CAPS);
     let added = command(&mut session, react(channel("#c"), "m1", "👍"));
     assert_eq!(sent(&added), ["@+draft/react=👍;+draft/reply=m1 TAGMSG #c"]);
-    assert!(added.updates.is_empty(), "echo-message returns it instead");
+    assert!(
+        added.updates.now.is_empty(),
+        "echo-message returns it instead"
+    );
+    assert!(added.updates.written.is_empty());
+    assert!(
+        matches!(
+            added.updates.unwritten.as_slice(),
+            [Update::ReactionRefused {
+                error: ReactionError::ConnectionLost,
+                ..
+            }]
+        ),
+        "a failed write is answered"
+    );
     let removed = command(&mut session, unreact(channel("#c"), "m1", "👍"));
     assert_eq!(
         sent(&removed),
@@ -67,6 +86,7 @@ fn without_echo_message_our_reaction_is_echoed_locally() {
     let mut session = in_channel(PLAIN_CAPS);
     let out = command(&mut session, react(channel("#c"), "m1", "🛑"));
     assert_eq!(sent(&out).len(), 1);
+    assert!(out.updates.now.is_empty(), "the echo waits for the write");
     let echoed = reactions(&out);
     assert_eq!(echoed.len(), 1);
     let echo = echoed[0];

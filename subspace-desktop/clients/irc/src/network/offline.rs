@@ -105,7 +105,7 @@ fn describe(command: &Command, name: &str) -> Option<Reply> {
 }
 
 /// A reaction command's refusal without a session: nothing is sent.
-pub(super) fn refuse_reaction(command: &Command) -> Option<Update> {
+pub(crate) fn refuse_reaction(command: &Command) -> Option<Update> {
     match command {
         Command::React { buffer, msgid, .. } | Command::Unreact { buffer, msgid, .. } => {
             Some(Update::ReactionRefused {

@@ -1,5 +1,6 @@
 //! Server feature advertisement and IRC name comparison.
 
+/// How a network compares nicks and channel names (ISUPPORT `CASEMAPPING`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Casemapping {
     Ascii,
@@ -37,6 +38,9 @@ pub struct Isupport {
     pub param_modes: String,
     pub set_param_modes: String,
     pub whox: bool,
+    /// `CLIENTTAGDENY`: client-only tags (without `+`) the server refuses;
+    /// `*` is every tag and `-name` exempts one.
+    pub client_tag_deny: Vec<String>,
 }
 
 impl Default for Isupport {
@@ -53,6 +57,7 @@ impl Default for Isupport {
             param_modes: "k".into(),
             set_param_modes: "l".into(),
             whox: false,
+            client_tag_deny: Vec::new(),
         }
     }
 }
@@ -99,12 +104,28 @@ impl Isupport {
             }
             "NICKLEN" => self.nicklen = value.parse().ok().filter(|&limit| limit > 0),
             "-NICKLEN" => self.nicklen = None,
+            "CLIENTTAGDENY" => {
+                self.client_tag_deny = value
+                    .split(',')
+                    .filter(|tag| !tag.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+            }
+            "-CLIENTTAGDENY" => self.client_tag_deny.clear(),
             _ => {}
         }
     }
 
     pub fn fold(&self, name: &str) -> String {
         self.casemapping.fold(name)
+    }
+
+    /// Whether `CLIENTTAGDENY` lets clients send the client-only `tag`
+    /// (named without `+`).
+    pub fn allows_tag(&self, tag: &str) -> bool {
+        let listed = |name: &str| self.client_tag_deny.iter().any(|held| held == name);
+        let denied = listed("*") || listed(tag);
+        !denied || listed(&format!("-{tag}"))
     }
 
     pub fn channel<'a>(&self, target: &'a str) -> Option<&'a str> {

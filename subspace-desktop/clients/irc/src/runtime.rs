@@ -45,8 +45,8 @@ impl Runtime {
     /// [`Runtime::drain_updates`] instead, never both.
     pub fn drain(&self) -> Vec<Event> {
         self.drain_updates()
-            .iter()
-            .filter_map(network::event_of)
+            .into_iter()
+            .filter_map(network::into_event)
             .collect()
     }
 
@@ -94,18 +94,24 @@ async fn manage(mut commands: UnboundedReceiver<Command>, events: EventSink) {
 fn route(networks: &mut BTreeMap<NetworkId, Handle>, command: Command, events: &EventSink) {
     match command {
         Command::Configure(configs) => configure(networks, configs, events),
-        command => forward(networks, command),
+        command => forward(networks, command, events),
     }
 }
 
-fn forward(networks: &BTreeMap<NetworkId, Handle>, command: Command) {
+/// Hands `command` to its network. A reaction that no network takes, as
+/// for a network not configured or stopping, is answered as not connected.
+fn forward(networks: &BTreeMap<NetworkId, Handle>, command: Command, events: &EventSink) {
     let handle = network_of(&command).and_then(|network| networks.get(network));
     let command = match command {
         Command::Connect(_) => NetCommand::Connect,
         command => NetCommand::Session(command),
     };
-    if let Some(handle) = handle {
-        let _ = handle.commands.send(command);
+    let unsent = match handle {
+        Some(handle) => handle.commands.send(command).err().map(|error| error.0),
+        None => Some(command),
+    };
+    if let Some(NetCommand::Session(command)) = unsent {
+        events.extend_updates(network::refuse_reaction(&command));
     }
 }
 
@@ -179,4 +185,42 @@ fn spawn(config: NetworkConfig, events: &EventSink) -> Handle {
 fn stop(handle: Handle) -> JoinHandle<()> {
     let _ = handle.commands.send(NetCommand::Shutdown);
     handle.task
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::forward;
+    use crate::model::{BufferKey, Command, NetworkId, ReactionError, Target, Update};
+    use crate::network::EventSink;
+
+    #[test]
+    fn a_reaction_no_network_takes_is_refused() {
+        let events = EventSink::default();
+        let buffer = BufferKey {
+            network: NetworkId("gone".into()),
+            target: Target::Channel("#c".into()),
+        };
+        let react = Command::Unreact {
+            buffer: buffer.clone(),
+            msgid: "m1".into(),
+            reaction: "👍".into(),
+        };
+        forward(&BTreeMap::new(), react, &events);
+        forward(
+            &BTreeMap::new(),
+            Command::Connect(buffer.network.clone()),
+            &events,
+        );
+        let reported: Vec<Update> = events.0.lock().unwrap().drain(..).collect();
+        assert_eq!(
+            reported,
+            [Update::ReactionRefused {
+                buffer,
+                msgid: "m1".into(),
+                error: ReactionError::NotConnected,
+            }]
+        );
+    }
 }

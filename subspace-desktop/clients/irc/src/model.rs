@@ -12,7 +12,7 @@ mod replies;
 mod send_result;
 pub use config::{NetworkConfig, Sasl};
 pub use listing::ListedChannel;
-pub use reaction::{Reaction, ReactionChange, ReactionError, Update};
+pub use reaction::{Casemapping, Reaction, ReactionChange, ReactionError, Update};
 pub use replies::ThreadRoots;
 pub use send_result::SendResult;
 

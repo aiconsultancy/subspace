@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod cleanroom_acceptance;
 mod offline;
+pub(crate) use offline::refuse_reaction;
 mod secrets;
 #[cfg(test)]
 mod tests;
@@ -57,15 +58,15 @@ impl EventSink {
     pub fn events(&self) -> Vec<Event> {
         self.0
             .lock()
-            .map(|queue| queue.iter().filter_map(event_of).collect())
+            .map(|queue| queue.iter().cloned().filter_map(into_event).collect())
             .unwrap_or_default()
     }
 }
 
 /// The event an update carries, if it is one.
-pub(crate) fn event_of(update: &Update) -> Option<Event> {
+pub(crate) fn into_event(update: Update) -> Option<Event> {
     match update {
-        Update::Event(event) => Some(event.clone()),
+        Update::Event(event) => Some(event),
         _ => None,
     }
 }
@@ -368,16 +369,18 @@ impl Link {
 
     async fn deliver(&mut self, output: Output) -> Option<End> {
         self.events.extend(output.events);
-        self.events.extend_updates(output.updates);
+        self.events.extend_updates(output.updates.now);
         let bytes: Vec<u8> = output.send.iter().flat_map(codec::encode).collect();
         if !bytes.is_empty()
             && let Err(error) = self.write_output(&bytes).await
         {
             self.events.extend(output.unwritten);
+            self.events.extend_updates(output.updates.unwritten);
             return Some(self.lost(error));
         }
         self.session.written(&output.written);
         self.events.extend(output.written);
+        self.events.extend_updates(output.updates.written);
         output
             .fatal
             .map(End::Fatal)

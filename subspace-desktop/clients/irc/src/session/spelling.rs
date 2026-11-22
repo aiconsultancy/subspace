@@ -78,5 +78,6 @@ pub(super) fn update_buffers_mut(update: &mut Update) -> Vec<&mut BufferKey> {
         Update::Event(event) => buffers_mut(event),
         Update::Reaction(reaction) => vec![&mut reaction.buffer],
         Update::ReactionRefused { buffer, .. } => vec![buffer],
+        Update::ReactionSupport { .. } => Vec::new(),
     }
 }

@@ -3,7 +3,8 @@
 
 use chrono::{DateTime, Utc};
 
-use super::BufferKey;
+use super::{BufferKey, NetworkId};
+pub use crate::session::Casemapping;
 
 /// Whether a reaction was added or taken back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,18 +38,28 @@ pub struct Reaction {
     pub id: Option<String>,
     /// Replayed from `chathistory` rather than live.
     pub history: bool,
+    /// How the network compares nicks and accounts (`CASEMAPPING`).
+    pub casemapping: Casemapping,
 }
 
 /// Why a reaction was not sent. Nothing is written when one is returned.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ReactionError {
-    /// The connection has not enabled `message-tags`.
+    /// The connection has not enabled `message-tags`, or the server's
+    /// `CLIENTTAGDENY` blocks reaction tags.
     #[error("This server does not support reactions.")]
     Unsupported,
-    /// The network is not connected and registered.
+    /// The network is not connected and registered, or is not configured.
     #[error("Not connected.")]
     NotConnected,
+    /// The write failed: the reaction may or may not have reached the
+    /// server.
+    #[error("The connection failed while sending the reaction.")]
+    ConnectionLost,
+    /// The buffer's channel or nick is not one valid destination.
+    #[error("This conversation cannot take reactions.")]
+    InvalidTarget,
     /// The message has no server `msgid`, so nothing can name it.
     #[error("This message cannot take reactions: it has no message ID.")]
     NoMessageId,
@@ -73,10 +84,17 @@ pub enum Update {
     Event(super::Event),
     Reaction(Reaction),
     /// A [`super::Command::React`] or [`super::Command::Unreact`] that sent
-    /// nothing.
+    /// nothing, or ([`ReactionError::ConnectionLost`]) whose write failed.
     ReactionRefused {
         buffer: BufferKey,
         msgid: String,
         error: ReactionError,
+    },
+    /// Whether `network` can send and receive reactions now: reported with
+    /// every capability change and when `CLIENTTAGDENY` changes. A UI hides
+    /// reactions while it is false.
+    ReactionSupport {
+        network: NetworkId,
+        supported: bool,
     },
 }

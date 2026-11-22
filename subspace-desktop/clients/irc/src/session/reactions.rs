@@ -47,48 +47,84 @@ fn request(command: Command) -> Option<Request> {
     })
 }
 
-/// Sends the request's `TAGMSG`, with a local echo when the server will not
-/// echo it, or reports why nothing was sent.
+/// Sends the request's `TAGMSG`, or reports why nothing was sent. The local
+/// echo (without `echo-message`) is reported only once the write succeeds;
+/// a failed write answers [`ReactionError::ConnectionLost`] instead.
 fn send(session: &Session, request: Request, out: &mut Output) {
     match prepare(session, &request) {
         Ok(message) => {
             out.send(message);
-            out.updates.extend(local_echo(session, request));
+            out.updates
+                .unwritten
+                .push(refused(&request, ReactionError::ConnectionLost));
+            out.updates.written.extend(local_echo(session, request));
         }
-        Err(error) => out.updates.push(Update::ReactionRefused {
-            buffer: request.buffer,
-            msgid: request.msgid,
-            error,
-        }),
+        Err(error) => out.updates.now.push(refused(&request, error)),
+    }
+}
+
+fn refused(request: &Request, error: ReactionError) -> Update {
+    Update::ReactionRefused {
+        buffer: request.buffer.clone(),
+        msgid: request.msgid.clone(),
+        error,
+    }
+}
+
+/// Whether this connection can send reactions: `message-tags` and no
+/// `CLIENTTAGDENY` for either reaction tag.
+pub(super) fn supported(session: &Session) -> bool {
+    session.has_cap(reactions::CAPABILITY)
+        && [REACT_TAG, UNREACT_TAG]
+            .iter()
+            .all(|tag| session.isupport.allows_tag(tag.trim_start_matches('+')))
+}
+
+/// [`Update::ReactionSupport`] for this connection.
+pub(super) fn support(session: &Session) -> Update {
+    Update::ReactionSupport {
+        network: session.network(),
+        supported: supported(session),
     }
 }
 
 /// The `TAGMSG` for `request`, after every check.
 fn prepare(session: &Session, request: &Request) -> Result<Message, ReactionError> {
-    let target = conversation(&request.buffer.target);
-    let enabled: Vec<String> = session.caps.enabled.iter().cloned().collect();
     if !session.registered() {
         return Err(ReactionError::NotConnected);
     }
-    reactions::check_reaction(
-        &enabled,
-        target.is_some(),
-        Some(&request.msgid),
-        &request.reaction,
-    )?;
+    if !supported(session) {
+        return Err(ReactionError::Unsupported);
+    }
+    let target = destination(session, &request.buffer.target)?;
+    let enabled = [reactions::CAPABILITY.to_owned()];
+    reactions::check_reaction(&enabled, true, Some(&request.msgid), &request.reaction)?;
     let tag = match request.change {
         ReactionChange::Added => REACT_TAG,
         ReactionChange::Removed => UNREACT_TAG,
     };
-    Ok(Message::new("TAGMSG", [target.unwrap_or_default()])
+    Ok(Message::new("TAGMSG", [target])
         .with_tag(tag, &request.reaction)
         .with_tag(REPLY, &request.msgid))
 }
 
-fn conversation(target: &Target) -> Option<&str> {
+/// The buffer's one destination: a channel name the server calls a channel,
+/// or a nick that is not one, without spaces, commas or controls.
+fn destination<'a>(session: &Session, target: &'a Target) -> Result<&'a str, ReactionError> {
+    let valid = |name: &str| {
+        !name.is_empty()
+            && !name.starts_with(':')
+            && !name
+                .chars()
+                .any(|c| c == ',' || c.is_whitespace() || c.is_control())
+    };
     match target {
-        Target::Channel(name) | Target::Query(name) => Some(name),
-        Target::Server => None,
+        Target::Server => Err(ReactionError::NoConversation),
+        Target::Channel(name) if valid(name) && session.isupport.channel(name) == Some(name) => {
+            Ok(name)
+        }
+        Target::Query(nick) if valid(nick) && session.isupport.channel(nick).is_none() => Ok(nick),
+        _ => Err(ReactionError::InvalidTarget),
     }
 }
 
@@ -101,11 +137,12 @@ fn local_echo(session: &Session, request: Request) -> Option<Update> {
             reaction: request.reaction,
             change: request.change,
             nick: session.reg.nick.clone(),
-            account: None,
+            account: session.reg.account.clone(),
             own: true,
             time: session.now,
             id: None,
             history: false,
+            casemapping: session.isupport.casemapping,
         })
     })
 }
@@ -133,24 +170,33 @@ fn parse(session: &Session, message: &Message, target: Target, history: bool) ->
     let msgid = reactions::validate_msgid(msgid).ok()?;
     let reaction = reactions::validate_reaction(reaction).ok()?;
     let nick = message.nick()?;
+    let account = message
+        .tag("account")
+        .filter(|account| !account.is_empty() && *account != "*");
     Some(Reaction {
         buffer: session.buffer(target),
         msgid: msgid.to_owned(),
         reaction: reaction.to_owned(),
         change,
         nick: nick.to_owned(),
-        account: message
-            .tag("account")
-            .filter(|account| !account.is_empty() && *account != "*")
-            .map(str::to_owned),
-        own: session.is_own(nick),
+        account: account.map(str::to_owned),
+        own: ours(session, nick, account),
         time: message
             .tag("time")
             .and_then(lines::parse_time)
             .unwrap_or(session.now),
         id: message.tag("msgid").map(str::to_owned),
         history,
+        casemapping: session.isupport.casemapping,
     })
+}
+
+/// Ours: the same account when both are known, else our current nick.
+fn ours(session: &Session, nick: &str, account: Option<&str>) -> bool {
+    match (account, session.reg.account.as_deref()) {
+        (Some(theirs), Some(mine)) => session.fold(theirs) == session.fold(mine),
+        _ => session.is_own(nick),
+    }
 }
 
 /// The reaction and whether it was added; `None` unless a `TAGMSG` has

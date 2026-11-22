@@ -185,7 +185,7 @@ pub(super) fn deliver(
         .collect();
     let reacted = reactions::history(session, messages, &buffer_target);
     let buffer = session.buffer(buffer_target);
-    out.updates.extend(reacted);
+    out.updates.now.extend(reacted);
     out.event(match requested {
         Some(Pending { merge: true, .. }) => Event::Backfill { buffer, lines },
         _ => Event::History {

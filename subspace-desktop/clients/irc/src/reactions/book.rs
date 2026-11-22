@@ -4,17 +4,21 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use super::agent_stop::is_agent_stop_reaction;
 use super::validate_reaction;
-use crate::model::{Event, NetworkId, Reaction, ReactionChange};
-use crate::session::Casemapping;
+use crate::model::{BufferKey, Casemapping, Event, NetworkId, Reaction};
 
-/// Messages with reactions kept; the least recently changed goes first.
+/// Messages with reactions (or remembered removals) kept; the least
+/// recently changed goes first.
 pub const MAX_MESSAGES: usize = 2048;
-/// Distinct reactions kept per message; later new ones are ignored.
+/// Distinct reactions shown per message; later new ones are ignored.
 pub const MAX_REACTIONS_PER_MESSAGE: usize = 20;
-/// People kept per reaction; later ones are ignored.
+/// People shown per reaction; later ones are ignored.
 pub const MAX_REACTORS_PER_REACTION: usize = 100;
+/// Each limit again for remembered removals.
+const REMOVALS_FACTOR: usize = 2;
+
+mod groups;
+use groups::{Group, record, summaries};
 
 /// Someone who reacted.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +27,7 @@ pub struct Reactor {
     pub account: Option<String>,
     /// We reacted.
     pub own: bool,
+    /// When they reacted.
     pub time: DateTime<Utc>,
 }
 
@@ -45,32 +50,33 @@ impl ReactionSummary {
     pub fn mine(&self) -> bool {
         self.reactors.iter().any(|reactor| reactor.own)
     }
-
-    fn first(&self) -> Option<DateTime<Utc>> {
-        self.reactors.first().map(|reactor| reactor.time)
-    }
 }
 
-type Key = (NetworkId, String);
+type Key = (BufferKey, String);
 
 #[derive(Debug, Default)]
 struct Entry {
     touched: u64,
-    reactions: Vec<ReactionSummary>,
+    groups: Vec<Group>,
 }
 
-/// Reactions per message (`msgid`, per network), each in first-reacted
-/// order. Reactions for messages not loaded yet are kept too, so a later
-/// history page finds them. Bounded by [`MAX_MESSAGES`],
-/// [`MAX_REACTIONS_PER_MESSAGE`] and [`MAX_REACTORS_PER_REACTION`].
+/// Reactions per message (`msgid` within one buffer), each in first-reacted
+/// order. It keeps the latest operation per message, reaction and person,
+/// so an older replay never overwrites a newer change: a history page that
+/// still holds an addition later removed leaves it removed. Reactions for
+/// messages not loaded yet are kept too, so a later history page finds
+/// them. Bounded by [`MAX_MESSAGES`], [`MAX_REACTIONS_PER_MESSAGE`] and
+/// [`MAX_REACTORS_PER_REACTION`].
 ///
 /// Feed it every [`crate::Update::Reaction`] with [`ReactionBook::apply`]
 /// and every event with [`ReactionBook::observe`], so nick changes follow.
-/// The same person is matched by account when both sides have one, else by
-/// nick, ignoring case.
+/// People are the same when both are ours, or both have the same account,
+/// or neither has an account and their nicks match under the network's
+/// case mapping.
 #[derive(Debug, Default)]
 pub struct ReactionBook {
     messages: BTreeMap<Key, Entry>,
+    mappings: BTreeMap<NetworkId, Casemapping>,
     clock: u64,
 }
 
@@ -79,34 +85,43 @@ impl ReactionBook {
         Self::default()
     }
 
-    /// Adds or removes one reaction. Invalid reactions are ignored, as are
-    /// duplicates and removals of reactions not held.
+    /// Records one added or removed reaction. Invalid reactions are
+    /// ignored, as are operations older than the one held for that person.
     pub fn apply(&mut self, reaction: &Reaction) {
         if validate_reaction(&reaction.reaction).is_err() || reaction.msgid.is_empty() {
             return;
         }
-        let key = (reaction.buffer.network.clone(), reaction.msgid.clone());
-        match reaction.change {
-            ReactionChange::Added => self.add(key, reaction),
-            ReactionChange::Removed => self.remove(&key, reaction),
+        self.mappings
+            .insert(reaction.buffer.network.clone(), reaction.casemapping);
+        let key = (reaction.buffer.clone(), reaction.msgid.clone());
+        let fresh = !self.messages.contains_key(&key);
+        evict_for(&mut self.messages, &key);
+        let entry = self.messages.entry(key.clone()).or_default();
+        if record(&mut entry.groups, reaction) {
+            self.clock += 1;
+            entry.touched = self.clock;
+        }
+        if fresh && entry.groups.is_empty() {
+            self.messages.remove(&key);
         }
     }
 
     /// The reactions on one message, in first-reacted order.
-    pub fn reactions(&self, network: &NetworkId, msgid: &str) -> &[ReactionSummary] {
+    pub fn reactions(&self, buffer: &BufferKey, msgid: &str) -> Vec<ReactionSummary> {
         self.messages
-            .get(&(network.clone(), msgid.to_owned()))
-            .map_or(&[], |entry| entry.reactions.as_slice())
+            .get(&(buffer.clone(), msgid.to_owned()))
+            .map(|entry| summaries(&entry.groups))
+            .unwrap_or_default()
     }
 
     /// Whether we reacted to the message with `reaction`.
-    pub fn reacted(&self, network: &NetworkId, msgid: &str, reaction: &str) -> bool {
-        self.reactions(network, msgid)
+    pub fn reacted(&self, buffer: &BufferKey, msgid: &str, reaction: &str) -> bool {
+        self.reactions(buffer, msgid)
             .iter()
             .any(|summary| summary.reaction == reaction && summary.mine())
     }
 
-    /// How many messages hold reactions.
+    /// How many messages hold reactions or remembered removals.
     pub fn len(&self) -> usize {
         self.messages.len()
     }
@@ -124,59 +139,47 @@ impl ReactionBook {
         } = event
             && *old_nick != member.nick
         {
-            self.rename(&buffer.network, old_nick, &member.nick);
+            let account = member.account.as_deref();
+            self.rename(&buffer.network, old_nick, &member.nick, account);
         }
     }
 
-    /// Someone on `network` is now known as `new`.
-    pub fn rename(&mut self, network: &NetworkId, old: &str, new: &str) {
-        let old = fold(old);
-        let held = self
+    /// Someone on `network` with `account`, if known, is now known as
+    /// `new`. Entries under `old` with another known account keep their
+    /// nick: they were someone else.
+    pub fn rename(&mut self, network: &NetworkId, old: &str, new: &str, account: Option<&str>) {
+        let mapping = self.mapping(network);
+        let old = mapping.fold(old);
+        let account = account.map(|account| mapping.fold(account));
+        let records = self
             .messages
             .iter_mut()
-            .filter(|((id, _), _)| id == network)
-            .flat_map(|(_, entry)| entry.reactions.iter_mut());
-        for summary in held {
-            summary
-                .reactors
-                .iter_mut()
-                .filter(|reactor| fold(&reactor.nick) == old)
-                .for_each(|reactor| new.clone_into(&mut reactor.nick));
-            dedupe(&mut summary.reactors);
-        }
-    }
-
-    fn add(&mut self, key: Key, reaction: &Reaction) {
-        self.clock += 1;
-        evict_for(&mut self.messages, &key);
-        let entry = self.messages.entry(key.clone()).or_default();
-        entry.touched = self.clock;
-        add_reactor(&mut entry.reactions, reaction);
-        if entry.reactions.is_empty() {
-            self.messages.remove(&key);
-        }
-    }
-
-    fn remove(&mut self, key: &Key, reaction: &Reaction) {
-        let Some(entry) = self.messages.get_mut(key) else {
-            return;
-        };
-        let person = reactor(reaction);
-        entry.reactions.iter_mut().for_each(|summary| {
-            if summary.reaction == reaction.reaction {
-                summary.reactors.retain(|held| !same(held, &person));
+            .filter(|((buffer, _), _)| buffer.network == *network)
+            .flat_map(|(_, entry)| entry.groups.iter_mut())
+            .flat_map(|group| group.records.iter_mut());
+        for record in records {
+            let theirs = record
+                .reactor
+                .account
+                .as_deref()
+                .map(|held| mapping.fold(held));
+            if record.folded == old && (theirs.is_none() || theirs == account) {
+                new.clone_into(&mut record.reactor.nick);
+                record.folded = mapping.fold(new);
             }
-        });
-        entry
-            .reactions
-            .retain(|summary| !summary.reactors.is_empty());
-        if entry.reactions.is_empty() {
-            self.messages.remove(key);
         }
+    }
+
+    fn mapping(&self, network: &NetworkId) -> Casemapping {
+        self.mappings
+            .get(network)
+            .copied()
+            .unwrap_or(Casemapping::Rfc1459)
     }
 }
 
-/// Makes room for `key` by dropping the least recently changed message.
+/// Makes room for a new `key` by dropping the least recently changed
+/// message.
 fn evict_for(messages: &mut BTreeMap<Key, Entry>, key: &Key) {
     if messages.len() < MAX_MESSAGES || messages.contains_key(key) {
         return;
@@ -188,73 +191,6 @@ fn evict_for(messages: &mut BTreeMap<Key, Entry>, key: &Key) {
     if let Some(oldest) = oldest {
         messages.remove(&oldest);
     }
-}
-
-fn add_reactor(reactions: &mut Vec<ReactionSummary>, reaction: &Reaction) {
-    let person = reactor(reaction);
-    let index = match reactions
-        .iter()
-        .position(|summary| summary.reaction == reaction.reaction)
-    {
-        Some(index) => index,
-        None if reactions.len() >= MAX_REACTIONS_PER_MESSAGE => return,
-        None => {
-            reactions.push(ReactionSummary {
-                reaction: reaction.reaction.clone(),
-                reactors: Vec::new(),
-                stops_agent: is_agent_stop_reaction(&reaction.reaction),
-            });
-            reactions.len() - 1
-        }
-    };
-    insert_reactor(&mut reactions[index].reactors, person);
-    reactions.sort_by_key(ReactionSummary::first);
-}
-
-/// Adds `person` in time order unless they already reacted; a held entry
-/// learns that it is ours.
-fn insert_reactor(reactors: &mut Vec<Reactor>, person: Reactor) {
-    if let Some(held) = reactors.iter_mut().find(|held| same(held, &person)) {
-        held.own |= person.own;
-        return;
-    }
-    if reactors.len() < MAX_REACTORS_PER_REACTION {
-        let at = reactors.partition_point(|held| held.time <= person.time);
-        reactors.insert(at, person);
-    }
-}
-
-/// Keeps the earliest entry for each person.
-fn dedupe(reactors: &mut Vec<Reactor>) {
-    let mut kept: Vec<Reactor> = Vec::with_capacity(reactors.len());
-    for reactor in reactors.drain(..) {
-        match kept.iter_mut().find(|held| same(held, &reactor)) {
-            Some(held) => held.own |= reactor.own,
-            None => kept.push(reactor),
-        }
-    }
-    *reactors = kept;
-}
-
-fn reactor(reaction: &Reaction) -> Reactor {
-    Reactor {
-        nick: reaction.nick.clone(),
-        account: reaction.account.clone(),
-        own: reaction.own,
-        time: reaction.time,
-    }
-}
-
-/// The same person: equal accounts when both are known, else equal nicks.
-fn same(one: &Reactor, other: &Reactor) -> bool {
-    match (&one.account, &other.account) {
-        (Some(one), Some(other)) => one.eq_ignore_ascii_case(other),
-        _ => fold(&one.nick) == fold(&other.nick),
-    }
-}
-
-fn fold(nick: &str) -> String {
-    Casemapping::Rfc1459.fold(nick)
 }
 
 #[cfg(test)]
