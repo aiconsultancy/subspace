@@ -1809,7 +1809,7 @@ def commission(prune, existing=False):
             # a captain's readiness marker is only written once a render completes.
             (STATE / "pending").unlink(missing_ok=True)
             raise
-        print(f"Pinned the root session of {', '.join(pinned)}. Fleet services restart to load the crew plugin.")
+        print(f"Pinned the root session of {', '.join(pinned)}. Fleet services restart to load the new pins.")
     require(not failed, " ".join(failed) + " The gateway keeps serving the rest of the fleet without "
             "unpinned captains. Fix the cause and run the installer again.")
 
