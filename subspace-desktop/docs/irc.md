@@ -297,7 +297,9 @@ them: `cap-notify`, `sasl` (PLAIN, EXTERNAL), `server-time`, `message-tags`,
 `invite-notify`, `setname`, `chghost`, `standard-replies`,
 `draft/chathistory` (with `draft/event-playback`), `draft/read-marker` and
 `draft/multiline` and `draft/metadata-2` (requires `batch`), plus the
-`+typing` client tag. It reads ISUPPORT
+`+typing` client tag and reactions (`+draft/react` and `+draft/unreact`
+with `message-tags`; see [Reactions protocol](#reactions-protocol)). It
+reads ISUPPORT
 (`CHANTYPES`, `PREFIX`, `NETWORK`, `CASEMAPPING`, `CHATHISTORY`), answers
 `PING`, falls back to another nick on collision and reconnects with backoff.
 Opening the TCP connection and the TLS handshake each time out after 15
@@ -444,6 +446,87 @@ a Space can read a machine-readable marker that another client added:
 client-only tags, so every other one, and a longer value, is dropped rather
 than held and stored. A multiline message takes them from its opening
 `BATCH` only. They are stored with the line.
+
+### Reactions protocol
+
+The runtime sends and reads IRCv3 reactions (the work-in-progress
+[react client tag](https://ircv3.net/specs/client-tags/react)): a `TAGMSG`
+to the conversation with `+draft/react=<reaction>` or
+`+draft/unreact=<reaction>`, and `+draft/reply=<msgid>` naming the message.
+The Space does not show them yet; this is the client layer only.
+
+- **Support.** Reactions need `message-tags`, which the runtime already
+  requests, and no `CLIENTTAGDENY` that blocks `draft/react`,
+  `draft/unreact` or `draft/reply`. The runtime reports `Update::ReactionSupport { network,
+  supported }` with every capability report and when `CLIENTTAGDENY`
+  changes, so a UI can hide reactions. `reactions::reactions_supported`
+  answers from the capability list alone.
+- **Sending.** `Command::React` and `Command::Unreact` (checked first with
+  `reactions::check_reaction`, which returns the same typed error) send
+  exactly one `TAGMSG`, such as
+  `@+draft/react=👍;+draft/reply=<msgid> TAGMSG #channel`. Without a
+  registered connection, support, one valid destination (a channel the
+  server calls a channel, or a nick that is not one, without spaces or
+  commas), a valid `msgid` (at most 128 bytes, no spaces or controls) or a
+  valid reaction (1 to 32 characters, no controls or surrounding spaces)
+  nothing is sent, and the runtime answers `Update::ReactionRefused` with a
+  `ReactionError`. A reaction for a network that is not configured is
+  refused as `NotConnected`. Without `echo-message` the runtime echoes our
+  reaction locally, but only after the write succeeds; a failed write is
+  answered with `ConnectionLost` (it may or may not have arrived).
+- **Receiving.** A reaction is a `Reaction` (message, reaction, added or
+  removed, nick, account, ours, time, live or history, and the network's
+  case mapping), reported as
+  `Update::Reaction`. Updates come in one order with the events through
+  `Runtime::drain_updates`; `Runtime::drain` still returns events only, so
+  existing owners are unchanged (it drops the updates, so use one drain or
+  the other). Reactions are not new `Event` variants because the Channels
+  Space matches `Event` exhaustively. Network input is untrusted: a `TAGMSG`
+  with both tags, without a nick or reply `msgid`, or with an invalid value
+  is ignored. A reaction is ours when its account is ours, both being
+  known (our account comes from `RPL_LOGGEDIN`), else when its nick is our
+  current nick. `+reply` is read when `+draft/reply` is missing, as Stargate
+  does; unprefixed `+react` is not read, as the draft says.
+- **Aggregation.** `reactions::ReactionBook` holds, per buffer and
+  `msgid`, each reaction and who reacted (nick, account, ours) in
+  first-reacted order: `reactions(&buffer, msgid)` and `reacted(&buffer,
+  msgid, reaction)`. It keeps the latest operation per message, reaction
+  and person by time, so an older replay never overwrites a newer change,
+  and remembers removals for that. Each person's place is when their
+  current addition started; an older replayed addition can only move a
+  shown person's place earlier. When a message's places for remembered
+  removals run out, the oldest group holding only removals is dropped. It follows nick changes through
+  `observe` (`Event::MemberChanged`) or `rename`, skipping entries with
+  another known account and merging nobody, and keeps reactions to
+  messages not loaded yet. Each reaction's `stops_agent` marks Stargate's
+  default stop reactions. People are the same when both are ours, when both
+  have the same account, or when neither has an account and their nicks
+  match under the network's case mapping. It keeps at most 2,048 messages
+  (dropping the least recently changed), 20 shown reactions per message and
+  100 shown people per reaction, with as many again remembered removals.
+  Local echoes carry the local clock, so a large clock skew against the
+  server can misorder our own operations.
+- **Agent stop reactions.** `reactions::agent_stop` describes, as data only,
+  the reactions that stop an agent in Stargate (`main` at `da242f8`, the
+  same behaviour as v0.43.0): ✋ and 🛑 by default, ignoring skin tones and
+  the variation selector, as a `TAGMSG` naming the message with
+  `+draft/reply` (or `+reply`), from a person with an account, on the
+  request or an agent message answering it, while the turn is active and
+  the gateway's `reactions` feature is on. History reactions never stop a
+  turn, and an unreact does not undo a stop. A fleet can configure other
+  stop reactions in `irc[].stopReactions`, which the client cannot see.
+
+Ergo 2.19.1 relays a `TAGMSG` only to clients with `message-tags`, and
+echoes it only with `echo-message` as well. It stores a `TAGMSG` in history
+only when it carries a tag listed in `history.tagmsg-storage.whitelist`,
+and replays it in `chathistory` only to clients with
+`draft/event-playback`, which the runtime requests. Our `ircd.yaml.tmpl`
+lists `+draft/react`, `+draft/unreact` and `+react`, so removals are
+replayed too. History recorded before `+draft/unreact` was listed holds
+additions without their removals, so a reaction taken back then can
+return when that history loads, unless the client saw the removal.
+
+See the [reactions change record](changes/irc-client-reactions/README.md).
 
 ### Loaded reply counts
 

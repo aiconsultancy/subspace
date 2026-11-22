@@ -11,6 +11,8 @@ const MAX_UNDERSCORES: usize = 3;
 pub(super) struct Registration {
     pub(super) nick: String,
     pub(super) registered: bool,
+    /// Our account, from `RPL_LOGGEDIN` (900).
+    pub(super) account: Option<String>,
     next_alternative: usize,
     underscores: usize,
 }
@@ -20,6 +22,7 @@ impl Registration {
         Self {
             nick,
             registered: false,
+            account: None,
             next_alternative: 0,
             underscores: 0,
         }

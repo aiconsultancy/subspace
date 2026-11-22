@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 
 use super::input::{Input, parse_input};
-use super::{Output, Session, history, lines, listing, membership, send};
+use super::{Output, Session, history, lines, listing, membership, reactions, send};
 use crate::model::{BufferKey, Command, Event, LineKind, Target, Typing};
 use crate::proto::{Message, parse};
 
@@ -64,6 +64,9 @@ pub(super) fn handle(session: &mut Session, command: Command, out: &mut Output) 
             out.send.extend(messages);
         }
         Command::ListChannels { .. } => listing::request(session, out),
+        command @ (Command::React { .. } | Command::Unreact { .. }) => {
+            reactions::command(session, command, out);
+        }
         Command::Configure(_) | Command::Connect(_) => {}
     }
 }

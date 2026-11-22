@@ -2,8 +2,9 @@
 //! the client's real answer to a command under given capabilities.
 use chrono::{DateTime, Utc};
 
-use crate::model::{Command, Event, NetworkConfig};
+use crate::model::{BufferKey, Command, Event, NetworkConfig, Reaction, ReactionChange, Update};
 use crate::proto::{parse, serialise};
+use crate::session::Casemapping;
 use crate::session::{Carry, Session};
 
 /// A session registered on a server offering `caps` (a `CAP LS` value,
@@ -21,6 +22,27 @@ pub struct Answer {
     pub wire: Vec<String>,
     pub events: Vec<Event>,
     pub lost: Vec<Event>,
+    /// Reaction updates after the write succeeded, and if it failed.
+    pub updates: Vec<Update>,
+    pub lost_updates: Vec<Update>,
+}
+
+/// A live reaction from `nick`, added at the Unix epoch on an ASCII
+/// network, for owners' tests; set its public fields to vary it.
+pub fn reaction(buffer: BufferKey, msgid: &str, reaction: &str, nick: &str) -> Reaction {
+    Reaction {
+        buffer,
+        msgid: msgid.to_owned(),
+        reaction: reaction.to_owned(),
+        change: ReactionChange::Added,
+        nick: nick.to_owned(),
+        account: None,
+        own: false,
+        time: DateTime::UNIX_EPOCH,
+        id: None,
+        history: false,
+        casemapping: Casemapping::Ascii,
+    }
 }
 
 impl Rehearsal {
@@ -70,10 +92,13 @@ impl Rehearsal {
         let out = self.session.command(command, self.now);
         self.session.written(&out.written);
         let reported = |after: Vec<Event>| out.events.iter().cloned().chain(after).collect();
+        let updated = |after: Vec<Update>| out.updates.now.iter().cloned().chain(after).collect();
         Answer {
             wire: out.send.iter().map(serialise).collect(),
             events: reported(out.written.clone()),
             lost: reported(out.unwritten.clone()),
+            updates: updated(out.updates.written.clone()),
+            lost_updates: updated(out.updates.unwritten.clone()),
         }
     }
 }

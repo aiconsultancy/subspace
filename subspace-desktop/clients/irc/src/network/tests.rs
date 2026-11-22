@@ -80,19 +80,15 @@ async fn status(
 ) -> ConnectionStatus {
     let found = tokio::time::timeout(WAIT, async {
         loop {
-            let next = events
-                .0
-                .lock()
-                .unwrap()
-                .iter()
-                .skip(*seen)
-                .enumerate()
-                .find_map(|(index, event)| match event {
-                    Event::Status { status, .. } if matches(status) => {
-                        Some((index, status.clone()))
-                    }
-                    _ => None,
-                });
+            let next =
+                events.events().iter().skip(*seen).enumerate().find_map(
+                    |(index, event)| match event {
+                        Event::Status { status, .. } if matches(status) => {
+                            Some((index, status.clone()))
+                        }
+                        _ => None,
+                    },
+                );
             if let Some((index, status)) = next {
                 *seen += index + 1;
                 return status;
@@ -286,7 +282,7 @@ async fn a_dropped_connection_ends_its_pending_history_request() {
         complete: false,
     };
     assert!(
-        events.0.lock().unwrap().contains(&ended),
+        events.events().contains(&ended),
         "the pending request was not answered"
     );
     commands.send(NetCommand::Shutdown).unwrap();
