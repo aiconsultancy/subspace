@@ -125,7 +125,12 @@ conversation between people and captains that names fixture issues and links
 the GitHub fixture's pull requests, and stays connected so the server keeps
 it as chat history. Pass `CAPTURE_IRC_CONFIG` a config for that server with
 `#aurora-lyra` in its channels, with `CAPTURE_FLEET=1` so the issue tiles
-resolve.
+resolve. `CAPTURE_FLEET=1` also lists the aurora fleet's initiative,
+never selected, so Channels marks its captains and rear admiral on any
+loopback connection. `--status` gives `aurora-lyra` a nick status, and
+`--late-after <s>` posts three more lines that many seconds after the
+capture build joins, so a capture that shows another buffer meanwhile finds
+them new; restart the server and the fixture before each capture.
 
 Run `python3 scripts/fleet_api_test_server.py --port 18484` to serve the same
 fleet for an installed copy of the app, and `--snapshot` to print it as one

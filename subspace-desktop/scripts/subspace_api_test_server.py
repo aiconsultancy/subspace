@@ -282,6 +282,16 @@ FLEET_PEOPLE = dict(mira='Mira Fenwick', tavi='Tavi Quill', sela='Sela Bracken')
 FLEET_CAPTAINS = {'lyra': ('aurora-lyra', 'aurora'), 'orion': ('aurora-orion', 'aurora'),
                   'castor': ('aurora-castor', 'aurora'), 'vega': ('aurora-vega', 'aurora'),
                   'rigel': ('borealis-rigel', 'borealis')}
+# --fleet: the aurora fleet's initiative, so Channels knows its roles: on the
+# fleet's connection (any loopback one in a capture) aurora-admiral is the
+# rear admiral, aurora-lyra and the other ships' nicks are captains, and
+# #aurora-starbase and #aurora-<ship> are its channels. Never selected, so
+# it joins nothing.
+FLEET_INITIATIVE = dict(
+    id='5d1f0c2e-5b7a-4f0e-9a51-2a8f3c6d7e10', name='Fallow Reach', channels='#aurora-starbase, #aurora-lyra',
+    fleetId='aurora', fleet=dict(id='aurora', slug='aurora', name='Aurora', ircHost='irc.example.test', ircPort=6697,
+                                 ircTls=True, ircWebsocketUrl=None, rearAdmiralName='Admiral',
+                                 captainNames=['Lyra', 'Orion', 'Vega', 'Castor'], vmHost=None))
 FLEET_LABELS = dict(bug='#e5484d', feature='#5b5bd6', performance='#f76b15', docs='#30a46c',
                     design='#ab4aba', reliability='#008c95')
 # Per project: key, name, lead, then issues as (title, state type, label,
@@ -1326,7 +1336,7 @@ class Handler(BaseHTTPRequestHandler):
             return 200, dict(items=[
                 dict(id='ca2aabe7-68bd-4e82-9b76-d577ddf987ac', name='Design Studio', channels='#design, #releases'),
                 dict(id='47d093d1-2498-4943-b0fd-b816d3b83425', name='Observatory', channels='#data, #forecast'),
-            ])
+            ] + ([FLEET_INITIATIVE] if fixture.fleet else []))
         if method == 'GET' and path == '/api/v1/projects':
             return 200, page(fixture.projects, query, 'projects')
         match = re.fullmatch(r'/api/v1/projects/([^/]+)/workflow-states', path)
