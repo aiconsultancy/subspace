@@ -56,7 +56,60 @@ API a Space uses.
   `fleets()` and its permission, and the wording for API fleets.
 - Fixture script tests: `fleetApiUrl` and `--fleet-api-url`, and
   `--refuse-events`.
-- Screenshots of Settings › Fleets are not captured yet (see Tasks).
+- Fixture script tests: `CAPTURE_FLEET_TOKEN` (`saved`, `none`, `moved`)
+  and the Fleet API fixture's `--log-requests`.
+- Captured from the debug capture build and verified against it (see
+  [Verification](#verification)).
+
+## Verification
+
+The app was run in the capture harness (`make capture`, fixture HOME and
+loopback servers only), in Twilight Two at 1440 x 900 with the bundled
+fonts. Every capture used `CAPTURE_FLEET=1 CAPTURE_FLEET_API=1`, a first
+`resize:1440,900` step and `CAPTURE_KEEP_LOG=1`; each line names its other
+options and steps. The fixture's log fingerprints each request's
+`Authorization` header (the first 12 hex digits of its SHA-256):
+`fixture-fleet` is `f9d1c18ab98b`, the moved token `fixture-fleet-moved` is
+`52bc5967f59b` and `wrong-token` is `68de4003731e`.
+
+Running it found four faults, fixed here:
+
+- Settings › Application had no visible Fleets row: the Application and
+  Spaces trees split the column equally, so the eleventh row was clipped
+  below Web Spaces, reachable only by scrolling a tree with no scroll bar.
+  The Framework's navigation column now gives the Application tree its full
+  height (`settings/navigation_layout_tests.rs`).
+- Fleet Console, shown first, stayed in sample mode with the API fleet's
+  token saved, and nothing reached the Fleet API: nothing had asked the
+  initiatives catalogue for the person's fleets. `FleetApi::shared` now
+  asks it (`service/tests.rs`).
+- With no token, Fleet Console's sample banner said it had no Stargate
+  address and pointed at its own settings. It now says what the
+  initiatives' fleet needs and points at Settings › Fleets
+  (`fleet-sources.js` `sampleReason`; `fleets.test.js`,
+  `connection.test.js`).
+- **Clear token** left a pasted, unsaved token in the field, where Save
+  would store it. Clearing now empties the field (`settings/tests.rs`).
+
+| Image | What it shows | How |
+| --- | --- | --- |
+| [Before](evidence/settings-navigation-before.png), [after](evidence/settings-navigation-after.png) | Settings' navigation column without and with the Fleets row (cropped). | Settings opened; before is the `feat/fleet-api-client` build. |
+| [Live](evidence/settings-fleets-live.png) | Aurora with its recorded address, **Status: Live**. | `OpenSettings`, Fleets. Log: the page's event stream with `f9d1c18ab98b`. |
+| [No token](evidence/settings-fleets-no-token.png) | **No token**, "Paste the fleet's Fleet API token and save it.", the token field, Save token and Test connection. | `CAPTURE_FLEET_TOKEN=none`. |
+| [Saved](evidence/settings-fleets-saved.png) | After pasting and saving: **Live**, the field emptied, "Saved. Subspace sends this token only to …". | `none`, then `type:fixture-fleet` and Save token. |
+| [Cleared](evidence/settings-fleets-cleared.png) | After Clear token with a token pasted: **No token**, "Token cleared from this computer." and an empty field. | `type:wrong-token`, then Clear token. |
+| [Address changed](evidence/settings-fleets-address-changed.png) | **Address changed** in red, what to do, and the address the token was saved for. | `CAPTURE_FLEET_TOKEN=moved`. Log: no request at all, so none with `52bc5967f59b`. |
+| [Address changed, Test](evidence/settings-fleets-address-changed-test.png) | Test connection with the saved token refuses to send it to the new address. | `moved`, Test connection. Log: no request. |
+| [Test, good](evidence/settings-fleets-test-connection.png) | "Connected to “aurora”: 4 ships, Stargate 0.43.0." | Test connection with the saved token. Log: `GET /api/v1/fleet 200` with `f9d1c18ab98b`. |
+| [Test, refused](evidence/settings-fleets-test-refused.png) | The masked pasted token and "Stargate refused the token (401) …". | `type:wrong-token`, Test connection. Log: `GET /api/v1/fleet 401` with `68de4003731e`. |
+| [Narrow](evidence/settings-fleets-narrow.png) | The page at 900 x 600: both trees and the page scroll, nothing overlaps. | Live, then `resize:900,600`. |
+| [Fleet Console, live](evidence/fleet-console-api-fleet-live.png) | The API's aurora fleet live at fleet tier. | `CAPTURE_CONFIG='{"webBoards":{"fleet-console":{}}}'` (no Settings fleet of its own), Fleet Console first. Log: the page's reads with `f9d1c18ab98b`. |
+| [Fleet Console, no token](evidence/fleet-console-no-token.png) | Sample mode whose banner points at Subspace Settings › Fleets. | As above with `CAPTURE_FLEET_TOKEN=none`. Log: no request. |
+| [Fleet Console, address changed](evidence/fleet-console-address-changed.png) | The banner says the address changed and to paste the token again in Settings › Fleets. | As above with `moved`. Log: no request. |
+
+Not verified: the system keychain in a release build (capture builds keep
+tokens in `fleet-api-tokens.json`), a real Stargate, more than one fleet,
+and Fleet Console's own fleet beside an API fleet at another address.
 
 ## Tasks
 
@@ -66,7 +119,6 @@ API a Space uses.
 - [x] Fleet service with one stream per fleet.
 - [x] Settings › Fleets.
 - [x] Fleet Console: `fleets.get` for the built-in Space and its sources.
-- [ ] Capture Settings › Fleets in Twilight Two for the pull request
-      (`CAPTURE_FLEET=1 CAPTURE_FLEET_API=1`, with a seeded
-      `fleet-api-tokens.json`).
+- [x] Capture Settings › Fleets and Fleet Console in Twilight Two, and fix
+      what running them found.
 - [ ] Use the service in Channels (a later change).

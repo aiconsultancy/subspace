@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Offline checks of the Stargate Fleet API fixture. Works with python3 -I and uses only the stdlib."""
 
+import contextlib
+import hashlib
 import importlib.util
+import io
 import json
 import re
 import threading
@@ -63,6 +66,22 @@ class FleetFixtureTests(unittest.TestCase):
             busy.shutdown()
             busy.server_close()
             worker.join()
+
+    def test_a_request_log_fingerprints_the_token_without_printing_it(self):
+        self.server.log_requests = True
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            self.get('/api/v1/fleet')
+            self.get('/api/v1/fleet', token='other-token')
+            self.get('/api/v1/fleet', token=None)
+        lines = printed.getvalue().splitlines()
+        given = hashlib.sha256(f'Bearer {TOKEN}'.encode()).hexdigest()[:12]
+        other = hashlib.sha256(b'Bearer other-token').hexdigest()[:12]
+        self.assertEqual(lines, [f'request GET /api/v1/fleet 200 auth={given}',
+                                 f'request GET /api/v1/fleet 401 auth={other}',
+                                 'request GET /api/v1/fleet 401 auth=none'])
+        self.assertNotIn(TOKEN, printed.getvalue())
+        self.assertNotIn('other-token', printed.getvalue())
 
     def test_every_route_needs_the_token_and_is_not_cached(self):
         for token in (None, 'wrong'):

@@ -28,7 +28,10 @@ to it), Shift+P shows or hides the frame-time readout.
   gives each token only for the address it was saved for. A fleet whose
   address changed since its token was saved, or that has no token, shows
   why and points to Settings › Fleets; a fleet without an address is left
-  out. They are read again when Subspace sends `subspace:fleets-changed`.
+  out. When no fleet has a token and Fleet Console has no Settings fleet of
+  its own, the sample banner says what your initiatives' fleet needs, again
+  pointing to Settings › Fleets. They are read again when Subspace sends
+  `subspace:fleets-changed`.
 - **The first fleet** is the one in Settings (`endpoint` and `token`). With
   only that fleet, Fleet Console opens on it, as it always has, and the
   inspector offers **Add fleet**.

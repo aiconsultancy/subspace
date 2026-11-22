@@ -26,6 +26,9 @@ use model::app_items;
 
 const TREE_ROW_HEIGHT_REM: f32 = 2.;
 const TREE_DEPTH_INDENT_REM: f32 = 0.875;
+/// The least height, in rows, the Spaces heading and tree keep when the
+/// dialog is too short for both trees.
+const SPACES_MIN_ROWS: f32 = 3.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NavIcon {
@@ -210,21 +213,25 @@ impl Settings {
                 "Application",
                 &tokens,
             ))
+            // Every Application row shows: the tree asks for its full height
+            // and, as elements do by default, shrinks (then scrolls) only once
+            // the Spaces below are down to their minimum. An equal split hid
+            // an extension's row.
             .child(
                 navigation_tree(&self.navigation.state, self.navigation.icons.clone())
-                    .flex_1()
                     .min_h_0()
-                    .max_h(rems(
-                        (app_items(crate::account::shared(cx).is_some()).len()
-                            + usize::from(self.terminal.is_some())
-                            + self.extensions.len()) as f32
+                    .h(rems(
+                        (app_rows(
+                            crate::account::shared(cx).is_some(),
+                            self.terminal.is_some(),
+                        ) + self.extensions.len()) as f32
                             * TREE_ROW_HEIGHT_REM,
                     )),
             )
             .children((!self.boards.is_empty()).then(|| {
                 v_flex()
                     .flex_1()
-                    .min_h_0()
+                    .min_h(rems(SPACES_MIN_ROWS * TREE_ROW_HEIGHT_REM))
                     .pt_3()
                     .child(group_heading("settings-boards-heading", "Spaces", &tokens))
                     .child(
@@ -238,6 +245,11 @@ impl Settings {
             }))
             .into_any_element()
     }
+}
+
+/// The Application pages the tree lists before any extension.
+pub(in crate::settings) fn app_rows(account: bool, terminal: bool) -> usize {
+    app_items(account).len() + usize::from(terminal)
 }
 
 fn group_heading(
