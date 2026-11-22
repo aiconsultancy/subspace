@@ -67,7 +67,8 @@ class SetupInputsTests(unittest.TestCase):
         rear = irc_officer(cfg, cfg["members"][0], {"account": "example-fleet-atlas", "backend": {"directory": "/w"}})
         self.assertEqual(rear["channels"], standard)
         self.assertEqual(rear["access"]["humanWakeChannels"], [{"channel": "#example-fleet-starbase", "replies": "all"}])
-        self.assertIn("#aurora-nav", config["irc"]["compose"]["channels"])
+        # The demo's own fleets' channels are seeded beside this fleet's standard set.
+        self.assertIn("#aurora-starbase", config["irc"]["compose"]["channels"])
         self.assertIn("admiral", secrets["ircPasswords"])
         self.assertEqual(cfg["operators"], ["operator"])
         self.assertEqual(len(set(secrets["ircPasswords"].values())), len(secrets["ircPasswords"]))
