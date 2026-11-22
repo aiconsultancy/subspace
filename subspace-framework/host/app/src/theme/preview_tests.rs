@@ -4,6 +4,7 @@ use std::sync::Arc;
 mod bundled;
 mod defaults;
 mod font_overrides;
+mod new_install;
 mod selection;
 
 use gpui_kit::component::{Theme, try_parse_color};
