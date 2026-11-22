@@ -51,7 +51,10 @@ same room.
   documents on issues, plus initiatives, the decision log and the fleets, and
   gives agents an MCP endpoint.
 - **An IRC server**, [Ergo](https://ergo.chat/) in a container. Yes, IRC. It
-  is great to be back.
+  is great to be back. Run one for your whole setup, however many fleets:
+  we run it on Azure Container Apps, reachable only over the private
+  network. A trial or a single fleet keeps it on the fleet VM
+  ([where to run it](INSTALL.md#one-fleet-or-several-shared-irc)).
 - **Fleets.** A fleet is one VM, run by Stargate on OpenCode. Stargate also
   drives the Claude and Codex SDKs, and its OpenCode integration goes
   furthest.
@@ -232,7 +235,9 @@ per fleet.
   development provider.
 - **IRC** ([`subspace-irc/`](subspace-irc/README.md)). Ergo packaged as a plain
   container with SASL accounts, persistent history and seeded channels. One
-  server can serve many fleets and desktops, on a fleet VM or anywhere else.
+  server serves every fleet and desktop: we recommend running it in a
+  container on your private network, and on the fleet VM only for a trial or
+  a single fleet.
 - **Fleet installer** ([`subspace-installer/`](subspace-installer/README.md)).
   Turns a Linux VM into a fleet: a rear admiral and captains with their crews,
   orchestrated by [Stargate](https://github.com/aiconsultancy/stargate), with

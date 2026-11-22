@@ -22,8 +22,12 @@ enable [quota notices](#crew-quota) so the rear admiral can wind down crew as
 a model family's budget runs low.
 
 A fleet can use an existing IRC network or host Ergo using the pinned
-[Subspace IRC Compose project](../subspace-irc/). The desktop's Channels Space
-and each fleet connect to IRC independently. The optional Subspace API stores
+[Subspace IRC Compose project](../subspace-irc/README.md). Ergo on the fleet
+VM suits a trial or a single fleet; with several fleets, run one shared
+server for all of them, as
+[One fleet or several](../INSTALL.md#one-fleet-or-several-shared-irc)
+recommends. The desktop's Channels Space and each fleet connect to IRC
+independently. The optional Subspace API stores
 the fleet's advertised IRC endpoint and which initiatives belong to it.
 
 ## Quick start
@@ -305,7 +309,9 @@ available to other machines, set `irc.compose.serverName` to its TLS name,
 private or deliberately exposed interface IP. Set `irc.advertise` to the
 corresponding host, port and `"tls": true` for desktop clients. Other fleets
 use that same TLS endpoint in remote mode. They can trust a private CA with
-`irc.caFile`.
+`irc.caFile`. For several fleets, we recommend a shared server of its own
+rather than one fleet's Ergo:
+[Run the shared IRC server in a container](../INSTALL.md#run-the-shared-irc-server-in-a-container).
 
 ## GitHub Apps per fleet member
 
