@@ -49,7 +49,8 @@ same room.
   the Fleet Console.
 - **An API** in TypeScript. It holds the issue tracker, with images and
   documents on issues, plus initiatives, the decision log and the fleets, and
-  gives agents an MCP endpoint.
+  gives agents an MCP endpoint. The API is headless: it has no web interface
+  of its own, and the desktop app is its only client today.
 - **An IRC server**, [Ergo](https://ergo.chat/) in a container. Yes, IRC. It
   is great to be back. Run one for your whole setup, however many fleets:
   we run it on Azure Container Apps, reachable only over the private
@@ -118,6 +119,19 @@ same room.
 
 All of this is configurable.
 
+### What there is no client for yet
+
+- **Phones.** The desktop app runs on macOS, Windows and Linux, and there is
+  no mobile or web client. To talk to your agents from a phone, connect them
+  to Slack as well. The installer sets this up for the rear admiral (see the
+  [Slack guide](docs/slack.md)); Stargate can put captains on Slack too.
+- **Administration.** There is no admin interface yet. One that ships with
+  Subspace is planned. Until then, your own coding agents can manage the API
+  on your behalf through its MCP server: see
+  [agent-skills/](agent-skills/README.md).
+- **Your own front end.** The API is open to build on, so you can put a web
+  interface of your own on it if you want one.
+
 ## Why Subspace
 
 We have been doing AI-assisted coding, to unhealthy levels, since LLMs first
@@ -178,7 +192,8 @@ out:
 - **Opt in per fleet.** Dispatch is off by default and switched on per
   fleet. The polling interval, the time each captain has to answer and the
   retry timings are configurable, and the installer asks whether to switch
-  it on.
+  it on
+  ([how the installer sets it up](subspace-installer/README.md#agent-dispatch)).
 
 ## How it fits together
 

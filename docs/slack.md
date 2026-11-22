@@ -28,7 +28,7 @@ scratch**) in your workspace, or open the existing app. Then:
    | `files:read`, `files:write` | Reading attachments and uploading screenshots or evidence |
 
    Optionally add `users:read`, used to verify who pressed a button. Stargate's
-   [Slack scopes guide](https://github.com/aiconsultancy/stargate/blob/df03d10b039c126a2fc0b5522bf7841ef07bc799/docs/slack-scopes.md)
+   [Slack scopes guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/slack-scopes.md)
    explains every scope and the broader development set.
 2. **Socket Mode:** turn it on.
 3. **Basic Information > App-Level Tokens:** generate a token, for example

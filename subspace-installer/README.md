@@ -297,13 +297,17 @@ The rear admiral joins every standard channel. Each captain joins its own
 ship channel, fleet command and the other ship channels. Allowlisted humans
 wake the rear admiral in Starbase and the owning captain in its ship channel.
 Elsewhere, fleet command included, tag an agent by its current IRC nick to
-wake it; the rear admiral tags a captain the same way. Stargate verifies the
+wake it; the rear admiral tags a captain the same way. Direct messages are
+for people only: the installer sets Stargate's `dmPolicy` to `redirect`, so a
+direct message to the rear admiral or a captain starts no turn, and the agent
+answers a signed-in sender with a notice pointing at its own channel
+(Starbase for the rear admiral, the ship channel for a captain). Stargate verifies the
 sender's SASL account and keeps human authority separate from agent
 requests. Crew are not on IRC: ask the captain, who relays to its crew
 through Stargate's crew tools. Stargate uses IRC message IDs for strict wake
-rules. A Stargate with agent dispatch should post its offers to fleet
-command; the pinned revision has no dispatcher, so the installer does not
-configure one yet.
+rules. [Agent dispatch](#agent-dispatch) posts its offers and assignment
+notices to fleet command, each addressed to one captain's nick, so it wakes
+only that captain.
 
 ### Local IRC and TLS
 
@@ -336,6 +340,143 @@ use that same TLS endpoint in remote mode. They can trust a private CA with
 `irc.caFile`. For several fleets, we recommend a shared server of its own
 rather than one fleet's Ergo:
 [Run the shared IRC server in a container](../INSTALL.md#run-the-shared-irc-server-in-a-container).
+
+## Subspace API registration
+
+With `api` set, `subspace-fleetctl register`, which the installer runs after
+each install or upgrade, records the fleet in the Subspace API as the
+desktop needs it: the desktop marks an agent's rank in Channels only by the
+IRC nick on its API agent record, and joins the channels the fleet and its
+ships record plus the initiative's own.
+
+- **The fleet**: its name, the IRC endpoint the desktop uses
+  (`irc.advertise`, else the gateway's), `vmHost`, and its standard
+  `starbaseChannel` and `commandChannel`.
+- **One ship per captain**, named after the ship, the captain's `name`, and
+  recording its ship channel, `#<slug>-<captain-id>`.
+- **The rear admiral's agent record**, rank `rearAdmiral`, named with its
+  own `name`, and **one per captain**, rank `captain`, on its ship. A captain
+  has no name of its own, so its agent name is its account,
+  `<slug>-<captain-id>`. Each record has `ircNick` (the officer's IRC
+  account), `defaultModel` (its harness model) and `serviceTokenClientId`,
+  the account subject the API knows it by: by default
+  `<account>@agents.example.com`, which suits the API's development sign-in.
+  With WorkOS or Entra, set the member's `serviceTokenClientId` to its
+  provider subject (an Entra object ID, for example).
+- **Crew have no records.** They are not on IRC, and the API records crew
+  work under their captain with the crew member's name and model.
+
+The API keeps the rear admiral's name as its agent name, which allows only
+letters, digits and hyphens (at most 64), and is unique in the organisation
+ignoring case, as is every agent's IRC nick. Ship names are one line of at
+most 64 characters, distinct in the fleet, and a captain's account, its agent
+name, has no underscores. `--dry-run` refuses a fleet with `api` that breaks
+these rules. The `apiToken` must belong to a human organisation
+administrator: only one may register fleets and agents.
+
+Registration is idempotent. Existing records are found by IRC nick, else by
+account subject, and changed only where they differ, so a re-run writes
+nothing. A renamed ship keeps its record. A captain removed from the roster
+has its agent record deactivated and its ship's channel cleared (the API
+cannot delete ships); add the captain back and its record is reactivated. The
+installer refuses, naming the record, to take over an agent with the same IRC
+nick under another account subject, an agent of another fleet, or an agent
+name already in use.
+
+`subspace-setup` registers the same records with the API on its VM before it
+runs the installer, so [agent dispatch](#agent-dispatch) can sign the rear
+admiral in, and `subspace-setup register-fleet` registers a further fleet's
+from its `subspace-setup fleet-registration` output. Setup gives the fleet's
+initiative no channels of its own: the standard channels belong to the fleet
+and its ships.
+
+## Agent dispatch
+
+Stargate's dispatcher runs in the rear admiral's gateway and hands out
+Subspace issues: it offers each unassigned issue flagged *Ready for agents*
+to the captains in fleet command, one at a time, and tells a captain in
+fleet command about an issue assigned to it. See the
+[repository README](../README.md#agent-dispatch) for what people see and
+[Stargate's guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/agent-dispatch.md)
+for the details. It is off by default. `subspace-setup` asks whether to
+switch it on (`--agent-dispatch`); in `fleet.json` it is:
+
+```json
+{
+  "agentDispatch": {
+    "enabled": true,
+    "pollIntervalSeconds": 120,
+    "answerTimeoutSeconds": 300,
+    "retryLadderSeconds": [3600, 10800, 21600, 43200]
+  }
+}
+```
+
+The timings are Stargate's defaults and may be left out: the poll interval
+(30 to 3,600 seconds), the time each captain has to answer an offer (60 to
+3,600 seconds) and the waits between rounds (at most ten, each 60 to
+604,800 seconds; `[]` means one round).
+
+With it on, the installer writes Stargate's `agentDispatch` block into the
+primary gateway's `/etc/subspace-fleet/stargate.json`: the fleet's slug, the
+API at `api.url`, the rear admiral's IRC registration, the fleet's command
+channel and the timings. Captains are found in the API's fleet roster by
+agent name; an agent named after the captain's member ID or name is mapped to
+its IRC account, and any other name must be the IRC account itself.
+
+**Credential.** The dispatcher calls the API as the rear admiral, so
+assignments, comments and flag changes are recorded as the rear admiral's.
+Give it a bearer token for the rear admiral's own API agent identity, not the
+administrator's `apiToken`. The installer registers the rear admiral's agent
+record (rank `rearAdmiral`, in this fleet) and each captain's (rank
+`captain`) whether or not dispatch is on (see
+[Subspace API registration](#subspace-api-registration)); put a token for the
+rear admiral's account subject in the secrets file as `rearAdmiralApiToken`.
+The token needs no other scope: it is an ordinary member's token
+for that agent identity, and the API limits a fleet agent's assignments and
+*Ready for agents* changes to its own fleet. The installer passes it to the
+gateway only through its private runtime settings, as
+`SUBSPACE_DISPATCH_TOKEN`, and never prints it. Stargate reads it when the
+gateway starts and has no refresh of its own, so use a long-lived token, or
+renew it and re-run the installer. `subspace-setup`, on an API with
+development sign-in, registers the agents first and mints the rear admiral's
+token for its account subject (by default `<account>@agents.example.com`) on
+each run; a development token lasts eight hours. The gateway's
+Linux user must be able to reach the API: `subspace-setup` lets it, and no
+agent, through to the API's port.
+
+**Answers.** A captain accepts or declines an offer only with Stargate's
+`fleet_answer_offer` tool, which needs a pinned OpenCode root. So with
+dispatch on, the installer also:
+
+- pins the rear admiral's root session, as it does for a captain with crew
+  ([Captain sessions](#captain-sessions)), and binds only its IRC
+  registration to it; Slack and Teams keep their own sessions. Captains name
+  that root as their rear admiral, which is how they recognise its offers;
+- gives each captain with crew Stargate's `fleetControl` with the rear
+  admiral as its `rear_admiral` target, `fleetChannels` so that offers count
+  only in fleet command, the fleet plugin in its OpenCode server and
+  `fleet_answer_offer` in its policy. The plugin reaches the gateway through
+  `/var/lib/subspace-fleet/fleet-control/<captain-id>/fleet.sock`, in a
+  directory the gateway owns and only that captain's engine group can enter;
+  the gateway keeps its evidence ledger under its own home.
+
+Captains without crew, and `claude-sdk` captains, cannot answer: their offers
+time out and go to the next captain, but they are still told about issues
+assigned to them. Requests are addressed to one captain's current nick and
+answers and status lines are notices, so the usual
+[wake rules](#channels) hold: nothing else wakes a captain in fleet command,
+and the rear admiral's requests are exempt from the captain's peer turn
+limit, though they count towards it.
+
+The installer refuses to switch dispatch on without an `api` registration,
+without captains, without a captain with crew, on a `claude-sdk` rear
+admiral (its gateway would run as the rear admiral's own user, so its model
+could read the token, and it cannot be pinned), without
+`rearAdmiralApiToken` or with the administrator's token in its place, and
+when a captain's `harness.permissions` has rules that Stargate's fleet tools
+reject: an `ask`, or a pattern other than an exact name, `*` or a prefix
+followed by `*`, for a rule that could match a fleet tool.
 
 ## GitHub Apps per fleet member
 
@@ -442,14 +583,14 @@ Step-by-step guides: [Slack](../docs/slack.md) and [Teams](../docs/teams.md).
   `channels` arrays of Slack IDs. Supply Socket Mode app and bot tokens
   as `<secrets-dir>/<rear-admiral-id>/slack-app-token` and
   `slack-bot-token`, both mode `0600`. See
-  [Stargate's Slack scope list](https://github.com/aiconsultancy/stargate/blob/df03d10b039c126a2fc0b5522bf7841ef07bc799/docs/slack-scopes.md).
+  [Stargate's Slack scope list](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/slack-scopes.md).
 - Set `stakeholders.teams` to an Azure Bot `botClientId` and `tenantId`
   plus an explicit `users` array of Entra object IDs and optional
   `channels`. The supported Bot Framework backend uses an Azure
   user-assigned managed identity at runtime. Route the bot's HTTPS
   `/api/messages` callback to `/var/lib/subspace-fleet/teams/bot.sock`.
   Set `socketGroup` to an existing Linux group for the trusted reverse
-  proxy. Follow [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/df03d10b039c126a2fc0b5522bf7841ef07bc799/docs/teams.md).
+  proxy. Follow [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/teams.md).
 
 ## Medical ship
 
@@ -547,14 +688,14 @@ their crew's assignments through `stargate_crew`.
 - Above 25% after a warning, Stargate posts “Quota restored.” and the rear
   admiral tells captains to resume normal staffing.
 
-[Stargate's quota guide](https://github.com/aiconsultancy/stargate/blob/df03d10b039c126a2fc0b5522bf7841ef07bc799/docs/usage.md).
+[Stargate's quota guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/usage.md).
 
 ## Configuration reference
 
 | Field | Meaning and default |
 | --- | --- |
 | `slug`, `name` | Stable fleet ID and display label. Keep the slug fixed on a VM. Use up to 35 lowercase ASCII letters, digits and hyphens, starting with a letter or digit. |
-| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp` and `harness`. Captains also take optional `crew` and `crewNames`. IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
+| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew` and `crewNames`. IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
 | `harness` | Default `{"type":"opencode","model":"gpt-5.4"}` with the [role's starter permissions](#instructions-permissions-and-toolchains). Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
@@ -563,7 +704,7 @@ their crew's assignments through `stargate_crew`.
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<slug>-<id>` for a captain. Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
-| `stargate` | Optional `repo` and `ref`. Defaults to the [pinned upstream Stargate revision](https://github.com/aiconsultancy/stargate/commit/df03d10b039c126a2fc0b5522bf7841ef07bc799). `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. |
+| `stargate` | Optional `repo` and `ref`. Defaults to the [Stargate pin](#stargate-pin): Stargate's latest release when this installer was released, and never older than v0.43.0, the first with [agent dispatch](#agent-dispatch). `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
 | `dashboard` | `bind` defaults to `127.0.0.1`. `port` defaults to 8070. The listener proxies only the Stargate read-only dashboard socket. |
 | `proxy`, `agentsview` | Loopback-only by default. Proxy `port` defaults to 8317 and `requestRetries` to 2. AgentsView `port` defaults to 8080. |
 | `operatorUsers` | Existing Linux usernames that may access the local operator interfaces and model proxy. Root always has access. Defaults to an empty array. |
@@ -571,13 +712,15 @@ their crew's assignments through `stargate_crew`.
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
 | `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. |
-| `api` | Optional `url` (origin or ending in `/api`), `vmHost` and `initiatives` (array of UUIDs). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. |
+| `api` | Optional `url` (origin or ending in `/api`), `vmHost` and `initiatives` (array of UUIDs). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
+| `agentDispatch` | Optional [agent dispatch](#agent-dispatch): `enabled` (default `false`), `pollIntervalSeconds` (120), `answerTimeoutSeconds` (300) and `retryLadderSeconds` (`[3600, 10800, 21600, 43200]`). On, it needs `api`, a captain with crew, an OpenCode rear admiral and `rearAdmiralApiToken`. |
 
 The mode-0600 secrets JSON has `proxyKey` (a random proxy client key),
 `ircPasswords` (map by SASL account: the rear admiral, each captain and, in
 local mode, any allowlisted human; crew have none), `ircOperatorPassword`
 for local IRC, `ircHistoryPassword` for PostgreSQL IRC history, and optional
-`apiToken` (bearer JWT).
+`apiToken` (bearer JWT) and `rearAdmiralApiToken` (the rear admiral agent's
+bearer JWT, only with [agent dispatch](#agent-dispatch) on).
 A named `fleet.json` looks for `fleet.secrets.json` beside it unless
 `--secrets` is supplied. Installed copies live in `/etc/subspace-fleet/`. The
 gateway receives IRC passwords and its OpenCode authentication headers, plus
@@ -618,8 +761,10 @@ reloading a site-managed firewall. Apply your site's SSH and deliberate IRC
 listener policy separately, including Docker-published ports.
 
 The API integration looks up the fleet by slug and creates or patches its
-registration. It applies the listed initiative assignments after startup.
-An API failure leaves the fleet running and can be retried independently.
+registration, with its ships and officers (see
+[Subspace API registration](#subspace-api-registration)). It applies the
+listed initiative assignments after startup. An API failure leaves the fleet
+running and can be retried independently.
 
 ```sh
 sudo subspace-fleetctl register
@@ -680,6 +825,84 @@ OAuth sessions, and the Docker volume. Back up
 `/etc/subspace-fleet/` and `/var/lib/subspace-fleet/` and, for local IRC,
 the Ergo volume. Keep backups private. The installer leaves OS packages in
 place.
+
+## Stargate pin
+
+The installer pins Stargate by commit: `STARGATE_REF` in
+[lib/runtime.py](lib/runtime.py), with the release whose tag names that
+commit beside it in `STARGATE_RELEASE`. Every fleet installed with the
+default `stargate` settings gets exactly that commit. The installer generates
+Stargate's configuration, units and plugin options, which must match the
+pinned version, so the pin only moves deliberately and after testing; it
+never follows Stargate's releases on its own.
+
+Each Subspace release carries Stargate's latest release. Three things keep it
+so:
+
+- **The check.** From the repository root,
+  `python3 scripts/stargate-pin.py` reports the pin and Stargate's latest
+  release, `--check` also fails when the pin is behind, and `--update` moves
+  `STARGATE_RELEASE` and `STARGATE_REF` to the latest release and changes
+  nothing else. It asks only GitHub's API, about `aiconsultancy/stargate`,
+  with `GH_TOKEN` or `GITHUB_TOKEN` when set. It exits 0 when the pin is
+  current or held, 1 when it is behind, 2 when the pin, the hold or GitHub's
+  answer is malformed, 3 when GitHub cannot be reached and 4 when GitHub
+  answers with an error. It never passes a pin it could not check.
+- **The bump pull request.** The daily `stargate-bump` workflow
+  (`.github/workflows/stargate-bump.yml`) finds a newer release, moves the
+  pin, runs the installer's offline tests and opens a pull request from
+  `automation/stargate-pin`, or updates the open one. Its description gives
+  the releases from and to, the release notes of each release in between,
+  the test results and a checklist. The workflow never merges, and leaves
+  the branch alone once someone else has pushed to it.
+- **The release gate.** The app's release pull request gets a
+  `stargate-pin` check, started by the release workflow beside its
+  `lockfiles` check, which fails while the pin is behind; see
+  [Releases](../subspace-desktop/docs/ways-of-working.md#releases).
+
+### Merge a bump
+
+Before merging the bump pull request, check the new release against what
+broke the installer before, using its release notes and Stargate's source at
+the new commit:
+
+- the configuration keys the installer generates for Stargate;
+- the service, unit and path names it refers to, such as the `src/main.ts`
+  and `src/fleet` entrypoints;
+- the options it passes to Stargate's crew plugin;
+- the Fleet API's CORS origins (`FLEET_API_ORIGINS`, `stargate.api.corsOrigins`);
+- the Mesij version Stargate expects, against the `mesij` rows in
+  [releases.tsv](lib/releases.tsv);
+- the documentation links that name the old commit, which the pull request
+  lists.
+
+Fix anything that needs it on the same branch. Then run the
+[verification](#verification) checks and install a test fleet on a VM from
+the branch before merging. The workflow's token starts no `pull_request`
+checks on the pull request it opens: push a commit to the branch, or close
+and reopen the pull request, to start them.
+
+### Hold a release back
+
+When Stargate's latest release cannot be adopted yet, add
+`subspace-installer/stargate-hold.json` in a reviewed pull request:
+
+```json
+{
+  "pinned": "v0.43.0",
+  "holding": "v0.44.0",
+  "reason": "v0.44.0 renames the crew plugin's options; adopting it is tracked in #123.",
+  "until": "2026-12-31"
+}
+```
+
+`pinned` is the pin's release, `holding` the release not adopted yet, and
+`until` the last day the hold applies. While all three match, the check and
+the release gate pass with the reason as a warning, and no bump pull request
+is opened. A newer Stargate release than `holding`, or the day after
+`until`, ends the hold, and the check fails again until the pin moves or the
+hold is renewed in another reviewed change. A hold that no longer describes
+the pin is reported and ignored. Remove the file when the pin moves.
 
 ## Verification
 

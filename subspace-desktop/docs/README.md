@@ -225,3 +225,6 @@ record. [Change records](changes/README.md) explains the convention.
   Space Lab, in its display name and every identifier, with no migration.
 - [Space Lab store race](changes/space-lab-store-race/intent.md): Space Lab's
   project folders created without a start-up race.
+- [Twilight Two for new installs](changes/default-twilight-two/README.md): a
+  new install opens in Twilight Two, recorded at its first start, while an
+  existing install keeps the theme it shows.
