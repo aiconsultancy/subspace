@@ -13,8 +13,8 @@ take the names from here, so the command channel can be renamed in one edit.
 """
 
 STARBASE_SUFFIX = "starbase"
-# The command channel's suffix. The owner has yet to choose between "command"
-# and "fleet-command"; change it here and nowhere else.
+# The command channel's suffix, #<slug>-command. To rename the channel, change it here and nowhere
+# else in the code (the documentation names #<slug>-command).
 COMMAND_SUFFIX = "command"
 # Stargate refuses channel names over 50 bytes (a common IRC CHANNELLEN); Ergo allows 64.
 MAX_CHANNEL_BYTES = 50
