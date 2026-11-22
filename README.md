@@ -423,16 +423,12 @@ Select an image to see it full size.
 
 <table>
 <tr>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-approved.png"><img src="docs/assets/screenshots/fleet-captain-review-approved.png" width="400" alt="GitHub approval from a captain’s app, with a Go verdict and a list of release checks"></a><br>A captain approves a Release Please pull request after checking the version bump and matching lockfiles.</td>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-changes.png"><img src="docs/assets/screenshots/fleet-captain-review-changes.png" width="400" alt="GitHub review from a captain’s app, with a No go verdict and a blocking finding about duplicate Effect versions"></a><br>A captain requests changes on a dependency update that would load two copies of Effect.</td>
-</tr>
-<tr>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-tested.png"><img src="docs/assets/screenshots/fleet-captain-review-tested.png" width="400" alt="GitHub approval from another captain’s app, after running the crate tests and Clippy on the exact commit"></a><br>Another captain runs the crate tests and Clippy on the exact commit before it approves.</td>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-teams.png"><img src="docs/assets/screenshots/fleet-captain-teams.png" width="400" alt="A captain’s Teams reply compares memory-based and CPU-only autoscaling for staging and production"></a><br>A captain works through a staging and production capacity plan in Microsoft Teams.</td>
 </tr>
 <tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-teams.png"><img src="docs/assets/screenshots/fleet-captain-teams.png" width="400" alt="A captain’s Teams reply compares memory-based and CPU-only autoscaling for staging and production"></a><br>A captain works through a staging and production capacity plan in Microsoft Teams.</td>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-rear-admiral-slack-asked.png"><img src="docs/assets/screenshots/fleet-rear-admiral-slack-asked.png" width="400" alt="An admiral asks Kirk about the Stargate repository in Slack, and Kirk shows that it is thinking"></a><br>An admiral asks the rear admiral for its take on Stargate in Slack.</td>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-rear-admiral-slack-review.png"><img src="docs/assets/screenshots/fleet-rear-admiral-slack-review.png" width="400" alt="Kirk’s Slack reply highlights Stargate’s security and restart handling, then flags the pace of change and a breaking rename"></a><br>The rear admiral replies in the thread with what looks good and what it would watch.</td>
 </tr>
 </table>
 
