@@ -21,14 +21,14 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "fields::input",
         source: FIELDS,
-        used_in: "Native inputs sized by role in Board Lab, Web and the host.",
+        used_in: "Native inputs sized by role in Space Lab, Web and the host.",
         samples: role_inputs,
         kit: None,
     },
     Item {
         name: "fields::labelled_input",
         source: FIELDS,
-        used_in: "Labelled form fields in Actions and IRC dialogs, Board Lab and the host.",
+        used_in: "Labelled form fields in Actions and IRC dialogs, Space Lab and the host.",
         samples: labelled_inputs,
         kit: None,
     },

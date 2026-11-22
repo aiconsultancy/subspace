@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bundle a pinned, checksum-verified mise CLI into a macOS app's
-# Contents/Resources/bin so Board Lab can provision runtimes without relying
+# Contents/Resources/bin so Space Lab can provision runtimes without relying
 # on a host install.
 #
 # Usage: bash scripts/bundle-mise.sh APP_BUNDLE_PATH

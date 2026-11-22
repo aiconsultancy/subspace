@@ -1192,11 +1192,11 @@
     "sha256": "8672e068290705b5b06183470da445c32e82aa55d00b8cef12f9dfb1a2ecbac2"
   },
   {
-    "card": "inconsistencies-board-lab-row-actions",
+    "card": "inconsistencies-space-lab-row-actions",
     "theme": "one-dark",
     "width": 1600,
     "height": 1200,
-    "url": "./visual-native/one-dark-inconsistencies-board-lab-row-actions.png",
+    "url": "./visual-native/one-dark-inconsistencies-space-lab-row-actions.png",
     "sha256": "c975091c53264e2925e954b24e8227b32a71f209b7dd08cef3631b9f8f63d67c"
   },
   {
@@ -1288,11 +1288,11 @@
     "sha256": "658170d65956520c92f36399f1977c5a5b725574765f252c7a73f9bd532f42d2"
   },
   {
-    "card": "inconsistencies-board-lab-row-actions",
+    "card": "inconsistencies-space-lab-row-actions",
     "theme": "cupertino-dark",
     "width": 1600,
     "height": 1200,
-    "url": "./visual-native/cupertino-dark-inconsistencies-board-lab-row-actions.png",
+    "url": "./visual-native/cupertino-dark-inconsistencies-space-lab-row-actions.png",
     "sha256": "f32ab92f936ae9992ef448d04bc64d0f23fa7b04cff814ce9129e2d1a01dae38"
   },
   {

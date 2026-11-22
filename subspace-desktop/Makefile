@@ -39,7 +39,7 @@ run: ## Run the debug desktop app with the terminal (FEATURES= without it)
 
 .PHONY: run-unreleased
 run-unreleased: FEATURES = terminal unreleased-spaces
-run-unreleased: ## Run the debug app with the terminal and the unreleased Spaces, Board Lab and the Component gallery (off until turned on)
+run-unreleased: ## Run the debug app with the terminal and the unreleased Spaces, Space Lab and the Component gallery (off until turned on)
 	MISE_ENV=$(if $(findstring terminal,$(FEATURES)),terminal) SUBSPACE_BUILD_FEATURES="$(FEATURES)" mise run run -- $(ARGS)
 
 capture: ## macOS/Linux screenshots from an isolated fixture build, with the terminal (OUT=dir STEPS='wait:5000;shot:main')

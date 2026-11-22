@@ -128,7 +128,7 @@ stale.
 - **What**: `RETAIN_WHEN_DISABLED = true` keeps the view alive, without a tab
   or refresh, when Settings disables the board, so shells or workers it owns
   do not end silently.
-- **Use it when**: the board owns processes (Board Lab). Otherwise
+- **Use it when**: the board owns processes (Space Lab). Otherwise
   leave it false.
 - **Tests**: `only_boards_that_own_processes_stay_hidden_when_disabled`.
 
@@ -200,7 +200,7 @@ its states: `workspace::Navigator`, `workspace::Toolbar`,
   `can_navigate`. Change selection from outside the list's keys with
   `list::update`, so the hooks still run.
 - **Use it when**: the board shows items with details. Boards with another
-  layout (Board Lab, Web) draw their own view with the same widgets.
+  layout (Space Lab, Web) draw their own view with the same widgets.
 - **Example**: `spaces/github/src/lib.rs`; `spaces/irc/src/view.rs` for avatars
   and attention rows.
 
@@ -320,7 +320,7 @@ terminal panel is an example.
   under Experiments. List live ones in `live_features`; others need a restart.
 - **Use it when**: shipping an experiment or a capability that people can turn
   off.
-- **Example**: `spaces/board-lab/src/lib.rs`.
+- **Example**: `spaces/space-lab/src/lib.rs`.
 - **Reference**: [Features and experiments](feature-flags.md#register-a-board-feature).
 
 ### What `Services` holds
@@ -634,7 +634,7 @@ Things that look like board-to-board communication but are not:
 - The web board bridge (`spaces/web/src/bridge/protocol.rs`: `info`,
   `settings.get`, `badge.set`, `context.set`, `notify`) connects a web page to
   its own board, not to other boards.
-- IRC's `Process` and Board Lab's `ProjectLifecycle` globals are private to
+- IRC's `Process` and Space Lab's `ProjectLifecycle` globals are private to
   their boards.
 
 `DashboardEvent::Navigate` asks the shell to open a link in the board that

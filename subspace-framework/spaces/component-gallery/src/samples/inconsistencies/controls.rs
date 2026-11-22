@@ -43,7 +43,7 @@ pub(in crate::samples) fn selected_button_row(
 ) -> Vec<Sample> {
     let labels = ["Keep", "Replace", "Clear"];
     vec![shared_segmented(
-        "gallery-sample:board-lab-button-row",
+        "gallery-sample:space-lab-button-row",
         labels,
         0,
         tokens,

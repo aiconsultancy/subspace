@@ -1,0 +1,16 @@
+# Space Lab (alpha)
+
+Opt-in native dashboards backed by managed Python, Node or Bun code.
+Real package imports and API calls require explicit provisioning and access.
+
+Workers continue across board switches. Close the project or quit Subspace to
+stop them. Crashed workers require Restart; saved code takes effect only through
+Apply & Restart.
+
+Use private Project Settings for API tokens. Selected values are readable by
+runtime code and must not be shared in source. Storage is file-backed initially,
+not keychain encryption. Do not give untrusted projects credentials.
+
+This is an alpha, not a production security guarantee or a whole-chat sandbox.
+Execution requires macOS ARM64, with no unsandboxed fallback. Legacy fixture
+recipes and saved snapshots remain available and are labelled as such.

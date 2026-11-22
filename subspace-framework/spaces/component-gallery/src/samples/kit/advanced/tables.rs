@@ -25,7 +25,7 @@ const ROWS: [(&str, &str, u32); 8] = [
     ("Another fixture", "actions", 7),
     ("Old fixture", "irc", 3),
     ("New fixture", "issues", 21),
-    ("Large fixture", "board-lab", 40),
+    ("Large fixture", "space-lab", 40),
     ("Small fixture", "web", 1),
     ("Shared fixture", "terminal", 9),
     ("Last fixture", "component-gallery", 5),

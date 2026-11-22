@@ -9,7 +9,7 @@ const originalCards = {
   input: {
     name: 'fields::input',
     source: 'board-kit/dashboard/src/fields.rs',
-    usedIn: 'Native inputs sized by role in Board Lab, Web and the host.',
+    usedIn: 'Native inputs sized by role in Space Lab, Web and the host.',
   },
   'error-box': {
     name: 'feedback::error_box',

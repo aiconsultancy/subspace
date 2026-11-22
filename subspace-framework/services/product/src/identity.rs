@@ -121,15 +121,15 @@ mod tests {
 
     #[test]
     fn parse_identity_accepts_product_and_board_names() {
-        let id = parse_identity("board-lab").unwrap();
-        assert_eq!(id.as_str(), "board-lab");
+        let id = parse_identity("space-lab").unwrap();
+        assert_eq!(id.as_str(), "space-lab");
     }
 
     #[test]
     fn parse_identity_rejects_unsafe_values() {
         for name in [
             "",
-            "board lab",
+            "space lab",
             "../etc",
             "foo/bar",
             r"foo\bar",
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn parse_display_name_rejects_blank_or_control_text() {
-        assert_eq!(parse_display_name("Board Lab").unwrap(), "Board Lab");
+        assert_eq!(parse_display_name("Space Lab").unwrap(), "Space Lab");
         assert_eq!(
             parse_display_name(" Subspace").unwrap_err(),
             ProductError::UnsafeDisplayName {

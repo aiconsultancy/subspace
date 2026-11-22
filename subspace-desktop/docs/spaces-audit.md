@@ -8,7 +8,7 @@ Space uses today. The Framework's side is in
 compare the tool and declared-contract tables with the compiled registrations,
 in the release configuration and with the unreleased Spaces built in.
 
-Board Lab (`board-lab`) and the Component gallery (`component-gallery`) are
+Space Lab (`space-lab`) and the Component gallery (`component-gallery`) are
 not ready to ship. Each is in the app only with its Cargo feature of the same
 name (`unreleased-spaces` turns on both), which release and packaging builds
 leave off; built in, each starts off. Their rows below describe such a build.
@@ -34,12 +34,12 @@ compiled catalog.
 | Copilot Agents | `github_copilot_agents_write` | `github_agent_task` |
 | IRC, running app only | `irc_read` | `networks`, `buffers`, `messages`, `members`, `search` |
 | IRC, running app only | `irc_write` | `message`, `join`, `part`, `connect`, `disconnect` |
-| Board Lab alpha, `board-lab` builds on macOS ARM64 | `board_lab_project_inspect` | `schemas`, `list`, `project`, `source`, `state`, `settings_names` |
-| Board Lab alpha, `board-lab` builds on macOS ARM64 | `board_lab_project_edit` | `create`, `save`, `edit_file`, `apply`, `start`, `stop`, `close`, `set_value`, `invoke`, `export` |
-| Board Lab alpha, legacy fixtures | `board_lab_inspect` | — |
-| Board Lab alpha, legacy fixtures | `board_lab_edit` | — |
-| Board Lab alpha, legacy fixtures | `board_lab_run` | — |
-| Board Lab alpha, legacy fixtures | `board_lab_environment` | — |
+| Space Lab alpha, `space-lab` builds on macOS ARM64 | `space_lab_project_inspect` | `schemas`, `list`, `project`, `source`, `state`, `settings_names` |
+| Space Lab alpha, `space-lab` builds on macOS ARM64 | `space_lab_project_edit` | `create`, `save`, `edit_file`, `apply`, `start`, `stop`, `close`, `set_value`, `invoke`, `export` |
+| Space Lab alpha, legacy fixtures | `space_lab_inspect` | — |
+| Space Lab alpha, legacy fixtures | `space_lab_edit` | — |
+| Space Lab alpha, legacy fixtures | `space_lab_run` | — |
+| Space Lab alpha, legacy fixtures | `space_lab_environment` | — |
 
 Terminal advertises no tools.
 
@@ -50,9 +50,9 @@ a second connection under your nick. To reach IRC from another harness, turn on
 **Serve MCP over HTTP** and connect the harness to the app's URL. See
 [IRC](irc.md#agent-tools).
 
-Release builds do not include Board Lab or its tools; a build with the
-`board-lab` feature includes it, off by default. Its tools take one flat
-object with an `action` field, not a write batch. See [Board Lab](board-lab.md)
+Release builds do not include Space Lab or its tools; a build with the
+`space-lab` feature includes it, off by default. Its tools take one flat
+object with an `action` field, not a write batch. See [Space Lab](space-lab.md)
 for enablement, provisioning and execution limits. Unsupported platforms do
 not include these tools.
 
@@ -200,7 +200,7 @@ Framework-owned latest values, and the globals already serve them.
 The state of `feat/subspace-desktop` at the time of writing (November 2026).
 ✓ implemented, – not applicable, ✗ a gap to implement, ○ worth considering.
 Column names: PRs (`github`), Agents (`github-copilot-agents`), Actions,
-IRC, Lab (`board-lab`), Gallery (`component-gallery`) and Web (configured
+IRC, Lab (`space-lab`), Gallery (`component-gallery`) and Web (configured
 web boards). The terminal is a Framework panel, not a board; see
 [Terminal](terminal.md). The Issues board's audit follows this table.
 
@@ -270,7 +270,7 @@ publishes nothing. See the [developer page](decisions.md) and the completed
 3. Run-time fields from the app manifest (`with_field_source`).
 4. Status shows networks and how many are connected; a live connection has no
    reload spinner.
-5. Board Lab does not override `keys`, so its help shows the list keys
+5. Space Lab does not override `keys`, so its help shows the list keys
    (`j`, `k`, Enter, Esc) although it is not a list board.
 6. Session logs only (`logs.rs`); the task list reloads on each launch.
 7. Copilot Agents monitors tasks and plays alerts from the view's load loop,
@@ -334,7 +334,7 @@ palette commands, chat context and the diagnostic config path. Remaining:
   failed runs on favourite repositories and full-text indexing of run logs.
 - **PRs**: consider notifications (review requested, checks failed) and a
   badge.
-- **Board Lab**: override `keys` with its own keys; add palette commands;
+- **Space Lab**: override `keys` with its own keys; add palette commands;
   consider `quit_warnings` for running project workers and reporting its
   project browser dialogs through `modal`.
 - **Board-to-board**: the [delivery plan](changes/board-contracts/tasks.md)

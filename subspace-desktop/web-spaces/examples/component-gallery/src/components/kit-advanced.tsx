@@ -285,7 +285,7 @@ function SettingsSample() {
 
 const ROWS = [
   ['Sample fixture', 'github', 12], ['Another fixture', 'actions', 7], ['Old fixture', 'irc', 3], ['New fixture', 'issues', 21],
-  ['Large fixture', 'board-lab', 40], ['Small fixture', 'web', 1], ['Shared fixture', 'terminal', 9], ['Last fixture', 'component-gallery', 5],
+  ['Large fixture', 'space-lab', 40], ['Small fixture', 'web', 1], ['Shared fixture', 'terminal', 9], ['Last fixture', 'component-gallery', 5],
 ] as const;
 function FixtureTable({ sortable = false }: { sortable?: boolean }) {
   const [sort, setSort] = useState<{ column: number; descending: boolean } | null>(null);

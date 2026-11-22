@@ -115,7 +115,7 @@ board can bundle up to three PNG/WebP screenshots, each at most 512 KiB. Request
 one by its exact catalog ID:
 
 ```json
-{"action":"image","board_id":"board-lab","image_id":"dashboard"}
+{"action":"image","board_id":"space-lab","image_id":"dashboard"}
 ```
 
 The Copilot SDK receives a binary image result and MCP receives an image content
@@ -126,14 +126,16 @@ files or fetch URLs. Native Help resolves the same embedded screenshots offline.
 The equivalent generated CLI commands use underscore field names:
 
 ```sh
-subspace board_help get --board_id board-lab --json
-subspace board_help image --board_id board-lab --image_id dashboard --json
+subspace board_help get --board_id space-lab --json
+subspace board_help image --board_id space-lab --image_id dashboard --json
 ```
 
-Board Lab's legacy single-argument tools have separate full-name CLI commands,
-such as `subspace board-lab-inspect --action environments --json`. Project action
-tools retain the `board-lab` group, for example `subspace board-lab list`. Agent
-tool names are unchanged.
+Space Lab's legacy single-argument tools have separate full-name CLI commands,
+such as `subspace space-lab-inspect --action environments --json`. Project action
+tools retain the `space-lab` group, for example `subspace space-lab list`. Agent
+and MCP callers use the underscore tool names, such as `space_lab_inspect` and
+`space_lab_project_inspect`; before the rename to Space Lab these were
+`board_lab_*`.
 
 ## Protocol
 
