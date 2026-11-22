@@ -10,7 +10,7 @@ use subspace_api_client::Error;
 use subspace_api_client::model::DecisionListItem;
 use subspace_framework::dashboard::{ListState, Row, Tokens, list, prefs, workspace};
 
-use crate::load::{self, Answer, Directory, Failure, Found, Lease, Plan, Stop};
+use crate::load::{self, Answer, Directory, Failure, Found, Leased, Plan, Stop};
 use crate::model::{self, Choice, Maker, ProjectChoice, View};
 use crate::state::{self, Listing, Session, Status};
 use crate::{Decisions, listing, search, words};
@@ -94,21 +94,22 @@ impl Decisions {
             directory: directory || self.session.account.is_none(),
             stop: self.stop.clone(),
         };
-        let (reader, lease) = (self.reader.list.clone(), self.reader.lease.clone());
+        let reader = self.reader.list.clone();
         self.listing.status = Status::Loading;
-        let read = cx.background_spawn(async move {
-            let lease = lease();
-            (lease, reader(&plan))
-        });
+        let read = cx.background_spawn(async move { reader(&plan) });
         self._read = Some(cx.spawn(async move |this, cx| {
-            let (lease, answer) = read.await;
-            _ = this.update(cx, |this, cx| this.finish_read(number, &lease, answer, cx));
+            let answer = read.await;
+            _ = this.update(cx, |this, cx| this.finish_read(number, answer, cx));
         }));
         self.sync_lines(cx);
     }
 
-    fn finish_read(&mut self, number: u64, lease: &Lease, answer: Answer, cx: &mut Context<Self>) {
-        if self.landed(number == self.reads, lease, cx) {
+    fn finish_read(&mut self, number: u64, answer: Leased<Answer>, cx: &mut Context<Self>) {
+        let (lease, answer) = answer.split(|error| Answer {
+            directory: None,
+            found: Err(error),
+        });
+        if self.landed(number == self.reads, lease.as_ref(), cx) {
             self.apply(answer, Instant::now(), cx);
         }
     }

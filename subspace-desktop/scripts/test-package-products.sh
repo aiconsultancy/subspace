@@ -149,17 +149,22 @@ cmp "$fixture/previous.tar.gz" "$host_archive"
 cmp "$fixture/previous.tar.gz.sha256" "$host_archive.sha256"
 # An inherited feature list never puts an unreleased Space in a release.
 : >"$fixture/cargo.log"
-for features in unreleased-spaces 'terminal space-lab' 'terminal,subspace/component-gallery' $'terminal\nsubspace-framework/component-gallery'; do
+# Cargo reads every whitespace character as a separator, so must the guard. A
+# character it cannot place (a no-break space here) stops the build too.
+refused='release builds (must not include unreleased Spaces|refuse an unexpected character)'
+for features in unreleased-spaces 'terminal space-lab' 'terminal,subspace/component-gallery' \
+    $'terminal\nsubspace-framework/component-gallery' $'terminal,space-lab\r' $'terminal\tspace-lab' \
+    $'terminal\vspace-lab' $'terminal\fsubspace/space-lab' $'terminal\xc2\xa0space-lab'; do
     if SUBSPACE_BUILD_FEATURES="$features" bash "$fixture/scripts/package-release.sh" "$host_target" "$version" 2>"$fixture/unreleased.err"; then
         echo "expected SUBSPACE_BUILD_FEATURES='$features' to stop the release archive" >&2
         exit 1
     fi
-    grep -Fq 'release builds must not include unreleased Spaces' "$fixture/unreleased.err"
+    grep -Eq "$refused" "$fixture/unreleased.err"
     if SUBSPACE_BUILD_FEATURES="$features" bash "$fixture/scripts/package-macos.sh" 'fixture signing identity' 'fixture notary profile' 2>"$fixture/unreleased.err"; then
         echo "expected SUBSPACE_BUILD_FEATURES='$features' to stop the macOS app" >&2
         exit 1
     fi
-    grep -Fq 'release builds must not include unreleased Spaces' "$fixture/unreleased.err"
+    grep -Eq "$refused" "$fixture/unreleased.err"
 done
 test ! -s "$fixture/cargo.log"
 cmp "$fixture/previous.tar.gz" "$host_archive"

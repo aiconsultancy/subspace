@@ -99,6 +99,60 @@ fn the_docks_yield_so_the_pane_keeps_its_least_width(cx: &mut TestAppContext) {
     );
 }
 
+/// Docks whose content cannot shrink, each with a marker past a wide spacer.
+struct Overflowing;
+
+impl Render for Overflowing {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(px(560.)).h(px(400.)).child(
+            Workspace::new("overflow-workspace")
+                .navigator(beyond_spacer("navigator-overflow"))
+                .pane(div().size_full())
+                .inspector(beyond_spacer("inspector-overflow")),
+        )
+    }
+}
+
+/// A row wider than a yielding dock, ending in a marker named `id`.
+fn beyond_spacer(id: &'static str) -> impl IntoElement {
+    div()
+        .flex()
+        .child(div().flex_shrink_0().w(px(OVERFLOW_SPACER_PX)).h(px(10.)))
+        .child(
+            div()
+                .id(id)
+                .test_support()
+                .flex_shrink_0()
+                .w(px(10.))
+                .h(px(10.)),
+        )
+}
+
+/// Wider than either dock once both yield in a 560 px workspace.
+const OVERFLOW_SPACER_PX: f32 = 300.;
+
+#[gpui_kit::test]
+fn a_yielding_dock_clips_content_that_cannot_shrink(cx: &mut TestAppContext) {
+    cx.update(gpui_kit::init);
+    let (_, cx) = cx.add_window_view(|_, _| Overflowing);
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        let navigator = window.find("workspace-navigator-slot").bounds();
+        assert!(
+            width(navigator) < OVERFLOW_SPACER_PX,
+            "the navigator yielded"
+        );
+        assert!(
+            !window.find("navigator-overflow").visible(),
+            "the navigator's content does not draw over the pane"
+        );
+        assert!(
+            !window.find("inspector-overflow").visible(),
+            "the inspector's content stays inside its dock"
+        );
+    });
+}
+
 #[gpui_kit::test]
 fn a_workspace_narrower_than_the_pane_gives_the_pane_all_of_it(cx: &mut TestAppContext) {
     let (frame, _) = frame(200., cx);

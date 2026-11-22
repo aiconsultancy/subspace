@@ -10,6 +10,7 @@ pub(crate) mod focus;
 mod line;
 pub(crate) mod replies;
 mod scroll;
+mod status;
 mod targets;
 mod viewport;
 
@@ -53,7 +54,7 @@ pub(crate) fn rows<Tz: TimeZone>(buffer: &Buffer, target: &Target, zone: &Tz) ->
         .then_some(Row::History)
         .into_iter()
         .chain(
-            lines::items(&buffer.entries, zone, conversation)
+            lines::items(&buffer.entries, &buffer.folded, zone, conversation)
                 .into_iter()
                 .flat_map(|item| {
                     with_unread_divider(item, buffer, first_unread)

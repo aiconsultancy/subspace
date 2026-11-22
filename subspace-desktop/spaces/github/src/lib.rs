@@ -276,6 +276,9 @@ struct ComposerState {
     entity: Entity<Composer>,
     key: String,
     mode: Mode,
+    /// Whether this draft is being sent. Other writes, such as an
+    /// assignment, also set the board's `writing`, but leave the draft free.
+    sending: bool,
     _subscription: Subscription,
 }
 
@@ -959,6 +962,7 @@ impl Github {
             entity,
             key: item.key.clone(),
             mode,
+            sending: false,
             _subscription: subscription,
         });
         self.ensure_detail(cx);
@@ -979,8 +983,9 @@ impl Github {
         let Some(open) = &self.composer else {
             return false;
         };
-        // A draft being sent keeps its mode until GitHub answers.
-        if self.writing {
+        // A draft being sent keeps its mode until GitHub answers. Another
+        // write in flight, such as an assignment, leaves the draft free.
+        if open.sending {
             return true;
         }
         if open.key == key {
@@ -1028,7 +1033,7 @@ impl Github {
             });
             return;
         }
-        self.writing = true;
+        self.start_sending();
         entity.update(cx, |composer, cx| composer.set_busy(true, cx));
         let number = model::split_key(&key).map_or(0, |(_, number)| number);
         cx.spawn(async move |this, cx| {
@@ -1048,7 +1053,7 @@ impl Github {
                 })
                 .await;
             _ = this.update(cx, |this, cx| {
-                this.writing = false;
+                this.finish_sending(&entity);
                 match result {
                     Ok(detail) => {
                         this.apply_detail(detail, &login, cx);
@@ -1065,6 +1070,27 @@ impl Github {
             });
         })
         .detach();
+    }
+
+    /// Marks the board as writing and the open draft as the one sending.
+    fn start_sending(&mut self) {
+        self.writing = true;
+        if let Some(open) = self.composer.as_mut() {
+            open.sending = true;
+        }
+    }
+
+    /// Ends the send once GitHub has answered, freeing the composer that
+    /// sent if it is still open.
+    fn finish_sending(&mut self, sent: &Entity<Composer>) {
+        self.writing = false;
+        if let Some(open) = self
+            .composer
+            .as_mut()
+            .filter(|open| open.entity.entity_id() == sent.entity_id())
+        {
+            open.sending = false;
+        }
     }
 
     /// Closes the composer that sent, but not one opened since, as under

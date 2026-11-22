@@ -7,12 +7,20 @@ use subspace_client_irc::{BufferKey, Event, Line, LineKind, Member, NetworkId, T
 
 use super::{
     Attention, AttentionKind, Entry, HISTORY_MAX, HistoryState, IrcState, LINE_CAP, Topic, counts,
-    typing_expiry,
+    folding, typing_expiry,
 };
 
 mod status;
 
+/// Applies `event`, then folds any request progress it made trustworthy.
 pub(super) fn event(state: &mut IrcState, event: Event, now: DateTime<Utc>) -> Option<Attention> {
+    let scope = folding::scope(&event);
+    let attention = dispatch(state, event, now);
+    scope.iter().for_each(|scope| folding::refold(state, scope));
+    attention
+}
+
+fn dispatch(state: &mut IrcState, event: Event, now: DateTime<Utc>) -> Option<Attention> {
     match event {
         Event::NickStatus {
             network,
@@ -38,7 +46,7 @@ pub(super) fn event(state: &mut IrcState, event: Event, now: DateTime<Utc>) -> O
         } => self::typing(state, buffer, nick, typing, now),
         Event::ChannelList { network, channels } => listed(state, &network, channels, now),
         Event::Sent { id, result, .. } => {
-            state.sends.insert(id, result);
+            state.sends.answers.insert(id, result);
         }
         other => membership(state, other),
     }
@@ -209,14 +217,17 @@ fn typing(
 }
 
 /// A live line: appended, counted, and reported when it may need attention.
+/// Trusted progress folds into its request's status line and never counts.
 fn append(state: &mut IrcState, line: Line) -> Option<Attention> {
     if super::merge::known(state, &line) {
         return None;
     }
     let highlight = super::is_highlight(&line, &state.highlights);
     let key = line.buffer.clone();
+    folding::make_room(state, &key);
     let seq = state.next_seq;
     state.next_seq += 1;
+    let arrival = crate::thread_status::arrival(state, &line, seq);
     let buffer = state.buffers.entry(key.clone()).or_default();
     // A line ends its sender's typing notice but not their status, which
     // the gateway clears itself when the turn ends.
@@ -231,15 +242,10 @@ fn append(state: &mut IrcState, line: Line) -> Option<Attention> {
         line,
         highlight,
     };
-    let unread = counts::count(buffer, &key, &entry);
+    let unread = counts::count(buffer, &key, &entry, arrival.folds());
     let attention = unread.then(|| attention(&entry)).flatten();
     buffer.entries.push_back(entry);
-    let cap = LINE_CAP + buffer.history.extra;
-    while buffer.entries.len() > cap {
-        if let Some(dropped) = buffer.entries.pop_front() {
-            buffer.unread_entries.remove(&dropped.seq);
-        }
-    }
+    folding::arrived(state, &key, &arrival);
     attention
 }
 

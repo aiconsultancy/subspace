@@ -66,7 +66,17 @@ impl ActionsApi for Client {
     }
 
     fn actions_jobs(&self, login: &str, repo: &str, run_id: u64) -> Result<Page<Job>, Error> {
-        let endpoint = format!("actions/runs/{run_id}/jobs");
+        self.actions_attempt_jobs(login, repo, run_id, 0)
+    }
+
+    fn actions_attempt_jobs(
+        &self,
+        login: &str,
+        repo: &str,
+        run_id: u64,
+        attempt: u64,
+    ) -> Result<Page<Job>, Error> {
+        let (endpoint, query) = request::jobs_endpoint(run_id, attempt);
         request::page(
             self,
             login,
@@ -74,7 +84,7 @@ impl ActionsApi for Client {
                 repo,
                 endpoint: &endpoint,
                 key: "jobs",
-                query: &[("filter", "latest")],
+                query,
                 max_pages: MAX_LIST_PAGES,
             },
         )

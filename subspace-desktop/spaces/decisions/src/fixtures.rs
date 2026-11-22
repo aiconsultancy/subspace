@@ -12,7 +12,7 @@ use subspace_api_client::{DecisionQuery, Error};
 
 pub(crate) use accounts::{Accounts, OTHER_DECISION, OTHER_NAME, Who, reader_for};
 
-use crate::load::{Answer, Directory, Found, Lease, Plan, Reader};
+use crate::load::{Answer, Directory, Found, Lease, Leased, Plan, Reader};
 use crate::words::People;
 
 /// The signed-in person, who recorded every fixture decision.
@@ -304,18 +304,16 @@ fn steady() -> Lease {
 /// Reads that answer from the fixture decisions at once.
 pub(crate) fn reader() -> Reader {
     Reader {
-        list: Arc::new(answer),
-        detail: Arc::new(|id: &str| detail(id).ok_or(Error::NotFound)),
-        lease: Arc::new(steady),
+        list: Arc::new(|plan: &Plan| Leased::Read(steady(), answer(plan))),
+        detail: Arc::new(|id: &str| Leased::Read(steady(), detail(id).ok_or(Error::NotFound))),
     }
 }
 
 /// Reads that fail with `error`.
 pub(crate) fn failing(error: Error) -> Reader {
     Reader {
-        list: Arc::new(move |plan: &Plan| refused(plan, error)),
-        detail: Arc::new(move |_: &str| Err(error)),
-        lease: Arc::new(steady),
+        list: Arc::new(move |plan: &Plan| Leased::Read(steady(), refused(plan, error))),
+        detail: Arc::new(move |_: &str| Leased::Read(steady(), Err(error))),
     }
 }
 

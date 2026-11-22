@@ -8,7 +8,7 @@ use subspace_api_client::Error;
 use subspace_api_client::model::DecisionListItem;
 
 use super::{answer, item_value, keeps, me, project, refused};
-use crate::load::{Answer, Directory, Found, Lease, Plan, Reader};
+use crate::load::{Answer, Directory, Found, Lease, Leased, Plan, Reader};
 
 /// The other account's name and its one decision.
 pub(crate) const OTHER_NAME: &str = "second-operator";
@@ -46,28 +46,38 @@ impl Accounts {
         *self.signed_in.lock().unwrap()
     }
 
-    fn lease(&self) -> Lease {
-        let (taken, _) = self.current();
+    /// Who is signed in, and a lease on that same account generation, as a
+    /// read's client and its lease are one.
+    fn client(&self) -> (Lease, Who) {
+        let (taken, who) = self.current();
         let accounts = self.clone();
-        Lease::new(move || accounts.current().0 != taken)
+        (Lease::new(move || accounts.current().0 != taken), who)
     }
 }
 
-/// Reads that answer as whoever `accounts` has signed in when they run.
+/// Reads that answer as whoever `accounts` has signed in when they run,
+/// each under a lease on that account.
 pub(crate) fn reader_for(accounts: &Accounts) -> Reader {
-    let (list, detail, lease) = (accounts.clone(), accounts.clone(), accounts.clone());
+    let (list, detail) = (accounts.clone(), accounts.clone());
     Reader {
-        list: Arc::new(move |plan: &Plan| match list.current().1 {
-            Who::Operator => answer(plan),
-            Who::Other => other_answer(plan),
-            Who::SignedOut => refused(plan, Error::SignInNeeded),
+        list: Arc::new(move |plan: &Plan| {
+            let (lease, who) = list.client();
+            let answer = match who {
+                Who::Operator => answer(plan),
+                Who::Other => other_answer(plan),
+                Who::SignedOut => refused(plan, Error::SignInNeeded),
+            };
+            Leased::Read(lease, answer)
         }),
-        detail: Arc::new(move |id: &str| match detail.current().1 {
-            Who::Operator => super::detail(id).ok_or(Error::NotFound),
-            Who::Other => Err(Error::NotFound),
-            Who::SignedOut => Err(Error::SignInNeeded),
+        detail: Arc::new(move |id: &str| {
+            let (lease, who) = detail.client();
+            let found = match who {
+                Who::Operator => super::detail(id).ok_or(Error::NotFound),
+                Who::Other => Err(Error::NotFound),
+                Who::SignedOut => Err(Error::SignInNeeded),
+            };
+            Leased::Read(lease, found)
         }),
-        lease: Arc::new(move || lease.lease()),
     }
 }
 

@@ -268,6 +268,35 @@ fn the_failed_job_log_picker_offers_and_reads_only_the_selected_runs_jobs(cx: &m
 }
 
 #[gpui_kit::test]
+fn the_failed_job_log_picker_offers_no_job_of_an_earlier_attempt(cx: &mut TestAppContext) {
+    start(cx);
+    let window = cx.add_window(board);
+    window
+        .update(cx, |board, _, cx| {
+            board.detail = RunDetail {
+                target: Some(target(1, 1)),
+                jobs: vec![job(7, "failure")],
+                ..RunDetail::default()
+            };
+            board.list.select(FIRST.into());
+            // A refresh moves run 1 on to attempt 2 before its jobs are read:
+            // attempt 1's failed job is not offered.
+            if let Some(data) = board.data.get_mut("ann")
+                && let Some(first) = data.runs[0].run.as_mut()
+            {
+                first.attempt = 2;
+            }
+            assert!(menus::picker_values(board, Picker::Log).is_empty());
+            board.load_job_log(7, cx);
+            assert!(
+                board.open.is_none(),
+                "attempt 1's log is not read into attempt 2's tab"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui_kit::test]
 fn the_writes_act_on_the_run_the_opened_tab_shows(cx: &mut TestAppContext) {
     start(cx);
     let window = cx.add_window(board);

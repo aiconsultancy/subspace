@@ -28,4 +28,7 @@ Back to the [change record](intent.md).
       `make interfaces` (see [delivery](delivery.md#checks)).
 - [x] Captures of the changes visible in the UI
       (see [delivery](delivery.md#screenshots)).
+- [x] Fix the first review round's findings (R1 to R14), each with a test
+      or a hand check (see
+      [delivery](delivery.md#review-of-this-pull-request)).
 - [ ] Model reviews of this pull request.

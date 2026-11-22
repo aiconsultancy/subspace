@@ -54,8 +54,14 @@ On the rebased branch:
 - `SUBSPACE_FIXTURE_SPACE_LAB=1 make interfaces`: failed at first on the
   target check from `main`, which replaced the saved metadata with `--about`
   output before reading the board list, so it could not pass on any build.
-  The script now keeps the metadata in its own file; then it passed, with
-  Space Lab built in and turned on.
+  This branch kept the metadata in its own file; then it passed, with Space
+  Lab built in and turned on. `main` later fixed the same fault by reading the
+  board list first (`1779b73`); merging `main` in took that fix instead.
+
+Then `main` moved to `b2c9e69`, and merging it in conflicted in
+`scripts/test-package-products.sh` and `scripts/test-product-interfaces.sh`.
+Both resolve to `main`'s version with the rename applied. On the merged branch
+the checks above ran again; their results are in the pull request.
 
 Not run: `make run-unreleased` by hand (the captures stand in for Settings;
 **Add a Space** was not checked) and `MISE_ENV=terminal make check-terminal`

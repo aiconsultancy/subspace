@@ -628,7 +628,7 @@ export const mcpTools = {
     (member, args) => getIssue(member, args.issue),
   ),
   subspace_create_issue: tool(
-    "Create an issue in a project identified by its key or UUID.",
+    "Create an issue in a project identified by its key or UUID. A fleet agent that sets a non-null assigneeId or sends readyForAgents receives 403 when the project belongs to another fleet.",
     false,
     NewIssueInProject,
     (member, { project, projectId, ...payload }) =>
@@ -640,7 +640,7 @@ export const mcpTools = {
       }),
   ),
   subspace_update_issue: tool(
-    "Patch an issue using its current version.",
+    "Patch an issue using its current version. A fleet agent that sets a non-null assigneeId or sends readyForAgents receives 403 when the issue's project belongs to another fleet.",
     false,
     Schema.Struct({ ...issue, changes: EditIssue }),
     (member, args) => editIssue(member, args.issue, args.changes),
@@ -676,7 +676,7 @@ export const mcpTools = {
     (member, { issue, ...input }) => previewMove(member, issue, input),
   ),
   subspace_move_issue: tool(
-    "Move an issue using a current preview token.",
+    "Move an issue using a current preview token. A fleet agent receives 403 when the source or destination project belongs to another fleet.",
     false,
     Schema.Struct({ ...issue, ...MoveRequest.fields }),
     (member, { issue, ...input }) => moveIssue(member, issue, input),

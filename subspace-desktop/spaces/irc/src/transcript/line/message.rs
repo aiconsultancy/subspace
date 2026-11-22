@@ -40,11 +40,7 @@ pub(crate) fn message(
         .when(!entry.line.text.is_empty(), |column| {
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
         })
-        .children(crate::transcript::replies::metadata(
-            entry,
-            &context.replies,
-            &tokens,
-        ))
+        .children(thread_facts(entry, context, &tokens))
         .children(crate::issues::tiles(
             entry,
             &identifiers,
@@ -75,6 +71,19 @@ pub(crate) fn message(
     let row = filled(row, RowFill::of(selected, unread, &tokens));
     let row = message_frame(id, row, continues);
     (row, identifiers)
+}
+
+/// What a message's thread says under it: the reply count, then the live
+/// status line of a request still in progress.
+fn thread_facts(entry: &Entry, context: &RowContext, tokens: &Tokens) -> Vec<AnyElement> {
+    crate::transcript::replies::metadata(entry, &context.replies, tokens)
+        .into_iter()
+        .chain(crate::transcript::status::line(
+            entry,
+            &context.statuses,
+            tokens,
+        ))
+        .collect()
 }
 
 /// The message's upload thumbnails, from its text as sent.

@@ -90,7 +90,7 @@ impl BoundRead {
     }
 }
 
-fn verified_account_id(data: &Value) -> Result<&str, Error> {
+pub(crate) fn verified_account_id(data: &Value) -> Result<&str, Error> {
     data["viewer"]["id"]
         .as_str()
         .filter(|id| {

@@ -2060,6 +2060,7 @@
             }
           }
         },
+        "description": "An agent registered to a fleet that changes parentId receives 403 when the initiative, or the new parent, belongs to another fleet. An initiative belongs to its own fleet, or else to the fleet of its nearest ancestor with one.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -16984,6 +16985,7 @@
             }
           }
         },
+        "description": "An agent registered to a fleet that sets a non-null assigneeId, or sends readyForAgents, receives 403 when the issue's project belongs to another fleet. A project belongs to its initiative's fleet, or else to the fleet of that initiative's nearest ancestor with one.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -17950,6 +17952,7 @@
             }
           }
         },
+        "description": "An agent registered to a fleet that sets a non-null assigneeId, or sends readyForAgents, receives 403 when the issue's project belongs to another fleet. A project belongs to its initiative's fleet, or else to the fleet of that initiative's nearest ancestor with one.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -19656,6 +19659,7 @@
             }
           }
         },
+        "description": "An agent registered to a fleet receives 403 when the source or destination project belongs to another fleet. The preview does not apply this check.",
         "requestBody": {
           "content": {
             "application/json": {

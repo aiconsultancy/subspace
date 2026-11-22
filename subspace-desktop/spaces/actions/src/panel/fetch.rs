@@ -27,19 +27,20 @@ impl Actions {
         self.requests
     }
 
-    /// The selection's jobs, while they are the selected run's. None while
-    /// they still belong to an earlier selection.
+    /// The selection's jobs, while they are the selected run's at the
+    /// attempt it now stands at. None while they still belong to an earlier
+    /// selection, or to an earlier attempt of the same run, such as when a
+    /// refresh moved the run on before its jobs were read again.
     pub(crate) fn selected_detail(&self) -> Option<&RunDetail> {
         let run = self.selected()?.run.as_ref()?;
-        let shown = self.detail.target.as_ref()?;
-        same_run(shown, run).then_some(&self.detail)
+        (self.detail.target.as_ref() == Some(run)).then_some(&self.detail)
     }
 
     /// Reads job `id`'s log for the selected run and shows it in that run's
-    /// tab, which it opens. The job must be one of the selected run's loaded
-    /// jobs, so a pick offered for an earlier selection reads nothing. Only
-    /// the tab's newest log read is shown, and a failed read says so where
-    /// the log goes, keeping the jobs.
+    /// tab, which it opens. The job must be one of the jobs loaded for the
+    /// selected run's current attempt, so a pick offered for an earlier
+    /// selection or attempt reads nothing. Only the tab's newest log read is
+    /// shown, and a failed read says so where the log goes, keeping the jobs.
     pub(crate) fn load_job_log(&mut self, id: u64, cx: &mut Context<Self>) {
         let Some(record) = self.selected().cloned() else {
             return;
@@ -253,8 +254,10 @@ fn finish(detail: &mut RunDetail, result: &Result<Loaded, String>) {
 }
 
 fn fetch(client: &Client, login: &str, target: &RunTarget) -> Result<Loaded, String> {
+    // The attempt the run was read at: a re-run started since has jobs of
+    // its own, which must not answer for this attempt.
     let jobs = client
-        .actions_jobs(login, &target.repo, target.id)
+        .actions_attempt_jobs(login, &target.repo, target.id, target.attempt)
         .map_err(|error| error.to_string())?;
     let path = target.path.split('@').next().unwrap_or(&target.path);
     let definition = client.actions_workflow_definition(login, &target.repo, &target.sha, path);

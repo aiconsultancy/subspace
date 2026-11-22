@@ -68,6 +68,12 @@ out:
   member and get it done.
 - **In the open.** Offers, answers and requests go to the fleet's channel,
   so people watch them in the Channels Space and can step in.
+- **Own fleet only.** The API refuses a fleet agent's assignment or *Ready
+  for agents* change on an issue whose project belongs to another fleet,
+  even when the project moved after the dispatcher last read it. It also
+  refuses the agent's moves of issues into or out of another fleet's
+  projects. Projects that belong to no fleet stay open to every fleet, and
+  comments are not restricted.
 - **Opt in per fleet.** Dispatch is off by default and switched on per
   fleet. The polling interval, the time each captain has to answer and the
   retry timings are configurable, and the installer asks whether to switch

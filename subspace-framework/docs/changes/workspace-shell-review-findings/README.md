@@ -81,14 +81,39 @@ The [design guide](../../design-guide.md) now describes the dock widths,
 the navigator's keyboard operation, a right-click on the selected row, the
 blocked list menu and a Space added for after a restart.
 
+### Review of this pull request
+
+The first review round of pull request #32 (head `7c62e5f`) raised three
+findings that the Framework answers. Their IDs are those of the Subspace
+App's record.
+
+| ID | Severity | Location in #32 | Outcome | Test |
+| --- | --- | --- | --- | --- |
+| R5 | Medium | `subspace-desktop/spaces/actions/src/panel/fetch.rs:257` | Fixed in the GitHub client: the new default trait method `ActionsApi::actions_attempt_jobs` reads one attempt's jobs, and attempt 0 reads the latest. Non-breaking | `clients/github` `actions/tests/reads.rs`: `an_attempts_jobs_come_from_that_attempt_and_attempt_zero_reads_the_latest` |
+| R10 | Medium (GPT-6.2 Sol), low (Claude Opus 5.5) | `board-kit/dashboard/src/workspace/row_parts.rs:94` | Fixed: the navigator's list keys step between its rows in draw order and stop at the first and last rows | `workspace::interaction_tests`: `the_list_keys_stop_at_the_first_and_the_last_row` |
+| R11 | Low | `board-kit/dashboard/src/workspace/resize.rs:103` | Fixed for the docks: dock content that cannot shrink is clipped when the docks yield. The detail panel is not clipped: its resize handle sits outside its wrapper, and as the trailing panel it spills off the window | `workspace::layout_tests`: `a_yielding_dock_clips_content_that_cannot_shrink` |
+
+The design guide also describes the list keys stopping at the ends.
+
 Checks, screenshots and the findings outside the Framework are recorded in
 the Subspace App's change record,
 `subspace-desktop/docs/changes/workspace-shell-review-findings/delivery.md`.
+
+### Second review round (#35)
+
+| ID | Severity | Location | Outcome | Test |
+| --- | --- | --- | --- | --- |
+| Q1 | High | `clients/github/src/work.rs` (new) | Fixed | `Client::pin_work` and `PinnedWork` pin one verified work credential for a Copilot operation, keyed by its node ID; non-breaking. `tests/work_pin.rs`: `a_pinned_operation_sends_every_request_with_the_credential_it_verified`, `a_rejected_pinned_credential_is_not_retried_with_another`, `a_credential_of_another_account_is_not_pinned`, `a_credential_verified_once_is_pinned_again_without_a_lookup_even_offline` |
+| Q5 | Medium | `board-kit/dashboard/src/workspace/row_order.rs` | Fixed | `two_navigators_in_one_window_each_keep_their_own_row_order` |
+| Q6 | Low | `board-kit/dashboard/src/workspace/row_order.rs` | Fixed | Navigator interaction tests |
+| Q7 | Low | `clients/github/src/actions.rs` | Fixed | `the_default_attempt_read_gives_the_latest_jobs_only_for_attempt_zero` |
+| Q8 | Low | `clients/github/src/actions/request.rs` | Not changed | GitHub's documentation does not show the attempt endpoint leaving out carried-over jobs |
 
 ## Tasks
 
 - [x] S1 to S4 in the shared kit, each with a headless test.
 - [x] S6 to S9 and S11 in the host app, each with a test.
 - [x] S5 and S10 checked and recorded as not defects.
+- [x] Review fixes R5, R10 and R11, each with a headless test.
 - [x] Build, test, `make check` and `mise run quality` in the Framework
       (recorded in the Subspace App's record).

@@ -101,7 +101,8 @@ nothing to this control.
   the start of the toolbar, a `menu_button` that names the current view.
 - Navigator rows are tree items (`Role::TreeItem`) in a tree
   (`Role::Tree`) named after the Space. Tab reaches them, the list keys
-  (down or j, up or k) move between them, and Enter or Space chooses one.
+  (down or j, up or k) move between them and stop at the first and the
+  last row, and Enter or Space chooses one.
   A click chooses a row without taking the keyboard focus, so j and k keep
   driving the list. A row reached from the keyboard shows its focus as an
   accent border on its fill.

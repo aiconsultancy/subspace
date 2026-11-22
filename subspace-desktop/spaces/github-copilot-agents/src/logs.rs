@@ -72,6 +72,15 @@ pub(crate) fn cache_key(session_id: &str, updated_at: &str) -> String {
     format!("{session_id}@{updated_at}")
 }
 
+/// The cache file's key for `key` as read by the work account whose node
+/// ID is `account_id`, so a log one account read is never taken from the
+/// cache for another. Node IDs are case-sensitive and never reused, unlike
+/// logins, and the `id:` prefix keeps every entry an earlier build keyed by
+/// login, or by nothing, from ever matching.
+pub(crate) fn account_key(account_id: &str, key: &str) -> String {
+    format!("id:{account_id}/{key}")
+}
+
 /// The cached log for `key`, when the file holds exactly that one.
 pub(crate) fn cached(key: &str) -> Option<SessionLog> {
     let text = prefs::read_cache(CACHE_FILE)?;
@@ -87,13 +96,20 @@ pub(crate) fn encode(key: &str, log: &SessionLog) -> Option<String> {
     encode_entries(key, log, prefs::read_cache(CACHE_FILE).as_deref())
 }
 
-pub(crate) fn scope(app: &str, login: &str) -> Option<full_text::Scope> {
-    (!login.trim().is_empty()).then(|| full_text::Scope {
+/// The tenant of this Space's search scopes. Earlier builds named the
+/// scope by login under the tenant `github`, and one of them indexed a log
+/// under whichever account held the credential afterwards; with another
+/// tenant no scope those builds filled is ever activated again.
+const SCOPE_TENANT: &str = "github-account-id";
+
+/// The search scope of the work account whose node ID is `account_id`.
+pub(crate) fn scope(app: &str, account_id: &str) -> Option<full_text::Scope> {
+    (!account_id.trim().is_empty()).then(|| full_text::Scope {
         app: app.into(),
         board: "github-copilot-agents".into(),
         endpoint: subspace_framework::client_github::API_URL.into(),
-        tenant: "github".into(),
-        account: login.to_ascii_lowercase(),
+        tenant: SCOPE_TENANT.into(),
+        account: account_id.to_owned(),
     })
 }
 
@@ -267,7 +283,49 @@ mod tests {
     use subspace_framework::client_github::copilot_agent_sessions::{LogEntry, SessionLog};
     use subspace_framework::dashboard::Body;
 
-    use super::{HEADING, LogState, OpenLog, UNAVAILABLE, cache_key, log_section};
+    use super::{
+        HEADING, LogState, OpenLog, UNAVAILABLE, account_key, cache_key, log_section, scope,
+    };
+
+    #[test]
+    fn a_cached_log_is_kept_apart_for_each_work_account() {
+        let key = cache_key("s1", "2026-10-01T09:00:00Z");
+        assert_ne!(account_key("U_dev", &key), account_key("U_other", &key));
+        assert_ne!(
+            account_key("U_dev", &key),
+            account_key("u_dev", &key),
+            "node IDs are case-sensitive"
+        );
+        assert_ne!(
+            account_key("U_dev", &key),
+            key,
+            "an unbound entry never matches"
+        );
+        assert_ne!(
+            account_key("u_dev", &key),
+            format!("u_dev/{key}"),
+            "an entry an earlier build keyed by login never matches"
+        );
+    }
+
+    /// The search scope is the account's node ID under a tenant no earlier
+    /// build used, so a scope keyed by login, which an earlier build may
+    /// have filled with another account's log, is never activated again.
+    #[test]
+    fn a_search_scope_is_keyed_by_node_id_apart_from_earlier_builds() {
+        let current = scope("app", "U_dev").unwrap();
+        assert_eq!(current.account, "U_dev");
+        assert_ne!(current.tenant, "github");
+        let earlier = subspace_framework::dashboard::full_text::Scope {
+            app: "app".into(),
+            board: "github-copilot-agents".into(),
+            endpoint: subspace_framework::client_github::API_URL.into(),
+            tenant: "github".into(),
+            account: "u_dev".into(),
+        };
+        assert_ne!(scope("app", "u_dev").unwrap(), earlier);
+        assert!(scope("app", " ").is_none());
+    }
 
     fn log(entries: Vec<LogEntry>, truncated: bool) -> SessionLog {
         SessionLog { entries, truncated }

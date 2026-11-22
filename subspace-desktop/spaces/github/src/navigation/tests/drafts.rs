@@ -105,3 +105,40 @@ fn a_review_action_on_another_pull_request_keeps_the_draft(cx: &mut TestAppConte
         Some((KEY.into(), Mode::Comment, "Half-written review".into()))
     );
 }
+
+#[gpui_kit::test]
+fn another_write_in_flight_leaves_the_draft_free_to_change_mode(cx: &mut TestAppContext) {
+    let (board, cx) = mount(cx, None);
+    draft(&board, "Ship it once the tests pass", cx);
+    board.update_in(cx, |board, window, cx| {
+        // An assignment is in flight; the draft itself is not sending.
+        board.writing = true;
+        board.compose(Mode::Approve, window, cx)
+    });
+    assert_eq!(
+        draft_text(&board, cx),
+        Some((
+            KEY.into(),
+            Mode::Approve,
+            "Ship it once the tests pass".into()
+        ))
+    );
+}
+
+#[gpui_kit::test]
+fn a_draft_being_sent_keeps_its_mode_until_github_answers(cx: &mut TestAppContext) {
+    let (board, cx) = mount(cx, None);
+    draft(&board, "Ship it once the tests pass", cx);
+    board.update_in(cx, |board, window, cx| {
+        board.start_sending();
+        board.compose(Mode::Approve, window, cx)
+    });
+    assert_eq!(
+        draft_text(&board, cx),
+        Some((
+            KEY.into(),
+            Mode::Comment,
+            "Ship it once the tests pass".into()
+        ))
+    );
+}

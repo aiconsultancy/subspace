@@ -10,7 +10,10 @@ compose/suggest,compose/offer,join,listing,toolbar,hub,hub/running,config,setup,
 editor/{draft,validate,form,view,network_view},agent_tools,
 agent_tools/{bridge,read,write,read/search},notice,store,store/{mapping,links},
 hub/persist,state/merge,state/directory,reveal,commands,context,issues,issues/{follow,tooltip},
-markup/issue,conversation/keys,transcript/focus,transcript/line/marks}.rs;
+markup/issue,conversation/keys,transcript/focus,transcript/line/marks,
+thread_status,thread_status/model,thread_status/trust,state/folding,
+transcript/status,transcript/replies}.rs;
+scripts/irc-thread-status-fixture.py;
 subspace-framework/services/search
 (records, migration); subspace-framework/board-kit/dashboard/src/
 {lib,chat_input,chat_input/completion,notifications}.rs (LIST_KEYS, recall
@@ -20,7 +23,9 @@ clients/irc/src/session/input.rs (COMMANDS);
 clients/irc/src/session/listing.rs (LIST); docs/irc.md;
 docs/changes/irc-board; docs/changes/irc-mention-notifications;
 docs/changes/irc-search-history; docs/changes/irc-issue-references;
-docs/changes/channel-list. The channel list was checked against a local Ergo
+docs/changes/channel-list; docs/changes/irc-thread-status (request status
+lines: checked by tests and the local fixture only, not against a deployed
+gateway). The channel list was checked against a local Ergo
 server's LIST reply. Linux OS
 notification delivery checked against a local Ergo server. Not checked in
 this pass: a live public network, SASL against a real account and macOS
@@ -133,6 +138,34 @@ beneath it. This counts only replies loaded on this computer, including
 replies to replies. Loading older history can increase the count. It works
 in channels and private conversations. Replies still appear inline; the
 count does not open a pane yet.
+
+A request to an agent can show one live status line beneath it, such as
+**astra · Using a tool**, while the agent works on it. It reads **Receipt
+unconfirmed**, **Accepted**, **Queued**, **Thinking**, **Using a tool**,
+**Waiting to retry**, **Waiting for your answer** when the agent asked you
+something, **Answer received** or **Writing a reply**, and updates in place.
+Each request has its own line, also when two requests share a thread. The
+line goes away when that request finishes or fails, and stays away after a
+restart.
+
+The line comes from progress notices that the agent's gateway marks for that
+request. Channels uses them only when the IRC server confirms they come from
+the account of the agent your request addresses: start the request with the
+agent's nick, as `astra:` or `@astra`, or ask it in a private conversation.
+Those notices are then not shown as messages, counted as replies or unread,
+or notified. Questions, answer instructions, final replies, ordinary notices
+and any notice from another account stay as messages, as before.
+
+Channels trusts a notice only when it comes from the account named after
+the agent your request addresses, so if someone else takes the agent's nick,
+their notices cannot change or end the request. An agent whose account has
+a different name gets no status line, and its notices stay as messages. On
+a Subspace fleet's IRC server each nick belongs to the account of the same
+name, so this always holds there.
+
+While the network is disconnected, after reconnecting or restarting, or when
+the agent reports losing its own connection, the line shows when it was
+last updated and a **Stale** pill until the agent reports again.
 
 Opening a row shows its conversation. Message text is at most 760 px wide,
 so a wide window does not stretch its lines. Messages are grouped by sender: the

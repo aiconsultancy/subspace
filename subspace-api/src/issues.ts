@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { withCrew } from "./crew";
 import { Database } from "./db";
 import { estimatePoints } from "./estimates";
+import { requireFleetOwnership } from "./fleet-ownership";
 import { memberKind, type Member } from "./identity";
 import {
   type CommentInput,
@@ -864,6 +865,7 @@ export const createIssue = (member: Member, payload: typeof NewIssue.Type) =>
         const { project } = yield* readProject(tx, member, projectId);
         if (project.archivedAt)
           return yield* Effect.fail(problem(409, "Unarchive the project before adding issues."));
+        yield* requireFleetOwnership(tx, member, project.id, editable);
         const stateId = editable.stateId ?? project.defaultStateId;
         const state = yield* validateState(tx, member, project.id, stateId);
         if (
@@ -962,6 +964,7 @@ export const editIssue = (member: Member, reference: string, payload: typeof Edi
           return yield* Effect.fail(problem(409, "The issue version is stale.", issue.version));
         if (Object.keys(payload).length === 1)
           return yield* Effect.fail(problem(400, "Supply an issue field to update."));
+        yield* requireFleetOwnership(tx, member, issue.projectId, editable);
         if (
           (editable.type ?? issue.type) === "tracker" &&
           (editable.stateId ||

@@ -1,7 +1,6 @@
 //! Assembles received multiline components into one IRC message.
 
 use crate::proto::Message;
-use crate::session::send::REPLY;
 
 const CONCAT: &str = "draft/multiline-concat";
 
@@ -17,7 +16,9 @@ pub(super) fn combine(opening: &Message, messages: Vec<Message>) -> Option<Messa
         text.push_str(message.trailing());
     }
     first.params = vec![target, text];
-    first.tags.remove(REPLY);
+    // Client-only tags, the reply reference among them, come from the
+    // opening `BATCH` alone, as the multiline specification requires.
+    first.tags.retain(|key, _| !key.starts_with('+'));
     first.tags.extend(opening.tags.clone());
     first.tags.remove("batch");
     first.tags.remove(CONCAT);

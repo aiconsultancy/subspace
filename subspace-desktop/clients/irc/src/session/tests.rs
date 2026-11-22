@@ -8,6 +8,7 @@ use crate::proto::{parse, serialise};
 
 mod anchors;
 mod autojoin;
+mod client_tags;
 mod forget;
 mod history;
 mod listing;

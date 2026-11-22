@@ -18,6 +18,7 @@ use subspace_core::http::status as http_status;
 use subspace_core::http::{Error, plain_https_url};
 
 use crate::Client;
+use crate::PinnedWork;
 use crate::copilot_agents::validate_task_id;
 use crate::transport;
 
@@ -87,48 +88,75 @@ fn read_capped(mut response: Response<Body>, max: usize) -> Result<Limited, Erro
     Ok(Limited { bytes, truncated })
 }
 
+/// The credential itself when it is an OAuth token: a Subspace sign-in or
+/// a gh CLI token. An environment or config-file token is refused here,
+/// before any request leaves the process.
+fn require_oauth(credential: &Credential, sign_in_offered: bool) -> Result<(), Error> {
+    match credential.source {
+        Source::GhCli { .. } | Source::SignedIn { .. } => Ok(()),
+        _ => Err(Error::Status {
+            status: http_status::FORBIDDEN,
+            message: needs_oauth_login(sign_in_offered),
+        }),
+    }
+}
+
 impl Client {
     /// The Copilot API base for the work account. GraphQL answers it, and
     /// the answer is kept for the run, so one process asks once.
     pub fn copilot_api_url(&self) -> Result<String, Error> {
         match self.copilot_api.get() {
             Some(url) => Ok(url.clone()),
-            None => self.resolve_copilot_api(),
+            None => self.pin_work()?.copilot_api_url(),
         }
     }
 
-    fn resolve_copilot_api(&self) -> Result<String, Error> {
-        let login = self.work_login()?;
-        let data: Endpoints = self.graphql(Some(&login), ENDPOINT_QUERY, json!({}), false)?;
+    /// One session document, read with one pinned work credential
+    /// ([`Client::pin_work`]). It carries the pull request number and state
+    /// the REST task artifact may be missing.
+    // qual:api
+    pub fn copilot_agent_session(&self, session_id: &str) -> Result<CopilotAgentSession, Error> {
+        validate_task_id(session_id)?;
+        self.pin_work()?.copilot_agent_session(session_id)
+    }
+
+    /// One session's log, parsed, read with one pinned work credential
+    /// ([`Client::pin_work`]). `max_bytes` never goes above
+    /// [`MAX_LOG_BYTES`]; a log the cap cut says so.
+    // qual:api
+    pub fn copilot_agent_session_log(
+        &self,
+        session_id: &str,
+        max_bytes: usize,
+    ) -> Result<SessionLog, Error> {
+        validate_task_id(session_id)?;
+        self.pin_work()?
+            .copilot_agent_session_log(session_id, max_bytes)
+    }
+}
+
+impl PinnedWork<'_> {
+    /// The Copilot API base, asked of GraphQL with the pinned credential
+    /// unless this run already knows it.
+    fn copilot_api_url(&self) -> Result<String, Error> {
+        if let Some(url) = self.client.copilot_api.get() {
+            return Ok(url.clone());
+        }
+        let data: Endpoints = self.graphql(ENDPOINT_QUERY, json!({}))?;
         let url = plain_https_url(&data.viewer.copilot_endpoints.api)
             .map_err(|_| transport::unexpected("Copilot API URL"))?;
-        Ok(self.copilot_api.get_or_init(|| url).clone())
+        Ok(self.client.copilot_api.get_or_init(|| url).clone())
     }
 
-    /// The OAuth token of `login`: its Subspace sign-in or gh CLI token. An
-    /// environment or config-file token is refused here, before any request
-    /// leaves the process.
-    fn oauth_credential(&self, login: &str) -> Result<Credential, Error> {
-        let credential = self.credentials.github(Some(login))?;
-        match credential.source {
-            Source::GhCli { .. } | Source::SignedIn { .. } => Ok(credential),
-            _ => Err(Error::Status {
-                status: http_status::FORBIDDEN,
-                message: needs_oauth_login(self.credentials.sign_in_offered()),
-            }),
-        }
-    }
-
-    /// One session document. It carries the pull request number and state
-    /// the REST task artifact may be missing.
+    /// One session document, with the pinned credential.
     // qual:api
     pub fn copilot_agent_session(&self, session_id: &str) -> Result<CopilotAgentSession, Error> {
         let body = self.copilot_read(session_id, "", transport::JSON, MAX_SESSION_BYTES)?;
         serde_json::from_slice(&body.bytes).map_err(|_| transport::unexpected("session"))
     }
 
-    /// One session's log, parsed. `max_bytes` never goes above
-    /// [`MAX_LOG_BYTES`]; a log the cap cut says so.
+    /// One session's log, parsed, with the pinned credential. `max_bytes`
+    /// never goes above [`MAX_LOG_BYTES`]; a log the cap cut says so.
     // qual:api
     pub fn copilot_agent_session_log(
         &self,
@@ -155,27 +183,28 @@ impl Client {
         max: usize,
     ) -> Result<Limited, Error> {
         validate_task_id(session_id)?;
-        let login = self.work_login()?;
-        let credential = self.oauth_credential(&login)?;
+        require_oauth(&self.credential, self.client.credentials.sign_in_offered())?;
         let base = self.copilot_api_url()?;
         let url = format!("{base}/agents/sessions/{session_id}{suffix}");
-        let account = transport::account_label(&credential, Some(login.as_str()));
-        let response = transport::get_copilot(&url, &credential, &account, accept)?;
+        let response = self.checked(transport::get_copilot(
+            &url,
+            &self.credential,
+            &self.account(),
+            accept,
+        ))?;
         read_capped(response, max)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use std::time::Duration;
 
     use subspace_core::config::Config;
     use subspace_core::credentials::{Credentials, Environment, Runner};
     use subspace_core::http::Error;
 
-    use super::{MAX_LOG_BYTES, needs_oauth_login};
-    use crate::Client;
+    use super::{MAX_LOG_BYTES, needs_oauth_login, require_oauth};
 
     struct EnvToken;
     impl Environment for EnvToken {
@@ -194,8 +223,8 @@ mod tests {
     #[test]
     fn an_environment_token_is_refused_with_what_to_do_about_it() {
         let credentials = Credentials::new(&Config::default(), EnvToken, NoRunner);
-        let client = Client::new(Arc::new(credentials));
-        let error = client.oauth_credential("work_emu").unwrap_err();
+        let credential = credentials.github(Some("work_emu")).unwrap();
+        let error = require_oauth(&credential, credentials.sign_in_offered()).unwrap_err();
         assert!(matches!(error, Error::Status { status: 403, .. }));
         assert_eq!(error.to_string(), needs_oauth_login(false));
         assert!(!needs_oauth_login(false).contains("Sign in with GitHub"));

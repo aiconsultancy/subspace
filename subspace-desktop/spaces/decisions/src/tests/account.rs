@@ -7,12 +7,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
+use subspace_api_client::Error;
 use subspace_framework::dashboard::{Dashboard as _, ReturnLocation};
 
 use crate::fixtures::{Accounts, OTHER_DECISION, OTHER_NAME, Who, reader_for};
-use crate::load::Plan;
+use crate::load::{Leased, Plan, Reader};
 use crate::tests::{has, label, mount_with, press, render, rows, select, selected};
-use crate::{Decisions, page, search};
+use crate::{Decisions, menus, page, search};
 
 /// Lets the Space's account watch run.
 fn watch(cx: &mut VisualTestContext) {
@@ -29,6 +30,13 @@ fn return_to(
         .update(|window, cx| board.update(cx, |board, cx| board.return_to(&place.key, window, cx)));
     render(cx);
     returned
+}
+
+/// Reads with `reader` from now on, and reloads.
+fn reload_with(board: &Entity<Decisions>, reader: Reader, cx: &mut VisualTestContext) {
+    board.update(cx, |board, _| board.reader = reader);
+    cx.update(|window, cx| board.update(cx, |board, cx| board.reload(window, cx)));
+    render(cx);
 }
 
 fn tags(board: &Entity<Decisions>, cx: &mut VisualTestContext) -> BTreeSet<String> {
@@ -124,11 +132,75 @@ fn an_answer_read_for_the_previous_account_is_dropped(cx: &mut TestAppContext) {
         }
         answer
     });
-    board.update(cx, |board, _| board.reader = reader);
-    cx.update(|window, cx| board.update(cx, |board, cx| board.reload(window, cx)));
-    render(cx);
+    reload_with(&board, reader, cx);
 
     shows_the_other_account(&board, cx);
+}
+
+#[gpui_kit::test]
+fn a_read_that_can_make_no_client_keeps_watching_the_shown_account(cx: &mut TestAppContext) {
+    let accounts = Accounts::default();
+    let (board, cx) = mount_with(reader_for(&accounts), cx);
+    let shown = rows(&board, cx);
+    assert!(!shown.is_empty());
+    // The next list read can make no client, so it reads nothing for any
+    // account and refuses.
+    let mut reader = reader_for(&accounts);
+    let operator = reader.list.clone();
+    let first = Arc::new(AtomicBool::new(true));
+    reader.list = Arc::new(move |plan: &Plan| {
+        if first.swap(false, Ordering::SeqCst) {
+            return Leased::Unread(Error::InvalidRequest);
+        }
+        operator(plan)
+    });
+    reload_with(&board, reader, cx);
+    assert_eq!(
+        rows(&board, cx),
+        shown,
+        "an unexpected failure keeps the list"
+    );
+
+    // What stays was read for the operator, so a switch still drops it.
+    accounts.switch(Who::Other);
+    watch(cx);
+
+    shows_the_other_account(&board, cx);
+}
+
+#[gpui_kit::test]
+fn the_frame_that_finds_the_account_changed_draws_no_previous_search_or_menu(
+    cx: &mut TestAppContext,
+) {
+    let accounts = Accounts::default();
+    let (board, cx) = mount_with(reader_for(&accounts), cx);
+    cx.update(|window, cx| {
+        board.update(cx, |board, cx| {
+            board
+                .search
+                .update(cx, |input, cx| input.set_value("relay", window, cx));
+            menus::open(board, menus::Kind::Tag, window, cx);
+        });
+    });
+    render(cx);
+    assert!(cx.update(|_, cx| board.read(cx).menu.is_some()));
+
+    // The account changes, and a frame is drawn before the account watch
+    // next runs.
+    accounts.switch(Who::Other);
+    board.update(cx, |_, cx| cx.notify());
+    render(cx);
+
+    let (field, menu, host) = cx.update(|_, cx| {
+        let board = board.read(cx);
+        (
+            board.search.read(cx).value().to_string(),
+            board.menu.is_some(),
+            board.menu_anchors.view().is_some(),
+        )
+    });
+    assert!(field.is_empty(), "the previous account's search is cleared");
+    assert!(!menu && !host, "and its menu closed");
 }
 
 #[gpui_kit::test]

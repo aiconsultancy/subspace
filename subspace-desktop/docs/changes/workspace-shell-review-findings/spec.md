@@ -22,6 +22,10 @@ and test.
   reads the list for the new account while shown, or when next shown; the
   next read always reads the directory again. The view, maker and project
   choices stay. The guide no longer tells the person to reload.
+- **A read's lease (R1).** Each read takes its lease from the client that
+  runs it, so no answer lands without one. A read that can make no client
+  reads nothing and has no lease, and the Space goes on watching the shown
+  account.
 - **Superseded reads (S16).** A newer list read stops the one it supersedes
   before its next page.
 - **Search (S14).** Committing a search clears the listed rows before the
@@ -66,7 +70,10 @@ as a tree, a right-click on the selected row does not choose it again, the
 current after it, zoomed Help hides the dock switches, Twilight Two's
 Markdown colours meet normal-text contrast, and the close notice points to
 the rail when navigation is vertical. [Settings](../../settings.md) says
-where to add a closed Space again.
+where to add a closed Space again. After this pull request's review, the
+navigator's list keys stop at the first and last rows rather than leaving
+the tree (R10), dock content that cannot shrink is clipped when the docks
+yield (R11), and the GitHub client reads the jobs of one run attempt (R5).
 
 ## Pull requests
 
@@ -109,6 +116,10 @@ where to add a closed Space again.
   Branch and actor give way first, then status; the age keeps its width.
 - **Quick selection (S28).** One jobs read runs at a time; rows passed over
   are never read.
+- **Jobs of the attempt shown (R5, R6).** Jobs are read for the attempt the
+  tab shows, from GitHub's jobs list for that attempt; attempt 0 reads the
+  latest. The failed-job log picker offers jobs only when the whole run,
+  attempt included, matches the selection.
 
 ## Copilot Agents
 
@@ -118,6 +129,13 @@ where to add a closed Space again.
   filter menu opens there.
 - **The work login (O3).** Every list load reads the work login again; a
   failed load keeps the last one.
+- **One work account per read (R2, R3).** The task list, a shown or
+  prefetched log, the log cache and the search index all use one work
+  account, checked before and after each read. A read during an account
+  change is refused, the list with a message, and is neither cached nor
+  indexed; nothing is read without a work account. Logs are cached apart for
+  each work account. A switch away and back within one request is not
+  caught ([delivery](delivery.md#review-of-this-pull-request)).
 - **Log prefetch (S35).** Selecting a session prefetches its log only when
   this Space's search policy is on. The
   [guide](../../github-copilot-agents.md) and the in-app guide describe the
@@ -129,14 +147,18 @@ where to add a closed Space again.
   and `package-macos.sh` first call `refuse_unreleased_features` in
   `scripts/product.sh`, which refuses a `SUBSPACE_BUILD_FEATURES` naming
   `board-lab`, `component-gallery` or `unreleased-spaces`. A local
-  `make install-macos` still allows them.
+  `make install-macos` still allows them. The guard splits the list on
+  commas and on any whitespace, as Cargo does, and refuses a name with a
+  character a feature name does not use (R13).
 - **Board Lab fixture target (F2).** `scripts/test-product-interfaces.sh`
   checks the Rust target before it compares the Space list, and exits 2
-  naming the target.
-- **Hooks on every commit (S33).** The root `AGENTS.md` runs the commit
-  hooks on each commit with `git rebase --exec 'prek run --last-commit'`,
-  then the push hooks on the range, and says why one ranged run is not
-  enough.
+  naming the target. It reads the Space list before that check, whose
+  `--about` output replaces the metadata (R12).
+- **Hooks on every commit (S33, R14).** The root `AGENTS.md` checks out
+  each commit in turn, merge commits included, and runs
+  `prek run --last-commit` there, then returns to the branch and runs the
+  push hooks on the range. It says why one ranged run is not enough, and
+  why `git rebase --exec` is not either: it flattens merge commits.
 - **Screenshot pairs (S38).** The desktop `AGENTS.md` asks for before and
   after in the same theme; when the before build lacks the prescribed
   theme, the pair is taken in a shared theme and the after state added in

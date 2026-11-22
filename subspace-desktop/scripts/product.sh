@@ -155,10 +155,17 @@ UNRELEASED_FEATURES=(unreleased-spaces space-lab component-gallery)
 # with or without a package prefix, such as `subspace/space-lab` or
 # `subspace-framework/component-gallery`.
 refuse_unreleased_features() {
-    local requested=() feature unreleased
-    # Cargo splits a feature list on commas and whitespace, newlines included.
-    IFS=$' \t\n,' read -r -d '' -a requested <<<"${SUBSPACE_BUILD_FEATURES:-}" || true
+    local features="${SUBSPACE_BUILD_FEATURES:-}" requested=() feature unreleased
+    # Cargo splits a feature list on commas and on any whitespace, carriage
+    # returns and vertical tabs included. Split on every whitespace character
+    # the locale knows, and refuse a name with any other character outside a
+    # feature name's, which Cargo might also read as a separator.
+    read -r -a requested <<<"${features//[[:space:],]/ }" || true
     for feature in ${requested[@]+"${requested[@]}"}; do
+        if [[ "$feature" == *[![:alnum:]_+./:?-]* ]]; then
+            echo "release builds refuse an unexpected character in SUBSPACE_BUILD_FEATURES: '$feature'" >&2
+            return 2
+        fi
         for unreleased in "${UNRELEASED_FEATURES[@]}"; do
             if [[ "${feature##*/}" = "$unreleased" ]]; then
                 echo "release builds must not include unreleased Spaces: SUBSPACE_BUILD_FEATURES names '$feature'" >&2
