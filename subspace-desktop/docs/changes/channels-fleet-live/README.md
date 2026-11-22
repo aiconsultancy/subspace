@@ -14,6 +14,141 @@ the findings carried from pull requests 66 and 68.
 
 Desktop only: no Framework, API or Stargate change.
 
+## Spec
+
+### What the Fleet API gives
+
+Checked against Stargate's `main` at commit
+`edfb0c05cceb4d5b00e4e0159d9b6378261f6964` (`src/dashboard/api/v1/types.ts`).
+The client's models (`clients/fleet/src/model.rs`) agree with it; `main`
+adds fields the client ignores, as its models are additive: a captain's
+`requests` (per-request progress), a context's `observed` and
+`pullRequestKnown`, a task's `kind`, a feature's `defaultEnabled` and the
+gateway's `bunVersion`. Nothing is retyped or removed, so no client change
+was needed; none of those fields is shown yet. A captain's `activity` is
+`running`, `queued` or `idle`; its `queue` counts jobs `queued`, `running`,
+`responding`, `done` and `failed`; a ship's `crew` counts people, busy
+members (any context with a current task) and members with queued work.
+
+### Following and matching
+
+- `live/watch.rs`: the board follows each fleet whose navigator group or
+  front conversation it shows, while the Space is in front and the fleet is
+  `Ready` or followed, through `FleetApi::shared` (one stream per fleet),
+  and drops the handle when it is no longer shown. Under test it reads only
+  a service a test installed (`FleetApi::current`), so no test opens the
+  token store. What the service says goes to `Hub::fleets` only on change.
+- `live/ship.rs`: a ship's channel's captain is the roster's (the Subspace
+  API's agent of rank captain); its Fleet API ship is the one whose
+  registration ID equals that captain's API nick, ignoring ASCII case.
+  Names, models, tasks and phases are bounded, stripped of control
+  characters and drawn as text; 24 crew lines at most.
+
+### Surfaces
+
+| Surface | Live | Not live |
+| --- | --- | --- |
+| A ship row's dot (`rows::activity::ship`) | Filled while any crew member has a task; tooltip `3 crew working` then `Wren · <task>` per working member; named `aurora-lyra: 3 crew working` | The captain's vouched status, as before |
+| Header pill | The vouched status or the Fleet API's word for the captain, then `N of M crew busy` | The vouched status, as before |
+| Ship tab | Card (captain's avatar with crew ring under the Icons setting, name, `captain · <model>`, state pill, Crew busy, Queued, Done when given), Crew, In play here, Here now | One sentence why (the state's label and help, and Settings › Fleets for No token and Address changed), then In play here and Here now |
+| Starbase tab | Ships: icon, name, state, crew meter | One sentence why |
+| People tab | Today's member list | Today's member list |
+
+The inspector's tabs follow the design guide's *Inspector tabs*; a later
+change adds **Thread**. The navigator's fleet groups gain `Ships` and
+`Channels` captions through `ListDashboard::group_captions`.
+
+### Left out of the mock-up, and what each needs
+
+- **Last decision**: the Decisions data has no record tied to a channel or
+  a ship that Channels can reach without new API work; it needs the
+  Subspace API to link decisions to an initiative's channel or ship.
+- **Open <ship> in Fleet Console**: the built-in Fleet Console takes no
+  request to open on a ship; it needs a navigation contract (or a page
+  route the bridge can set) answered by the Fleet Console.
+- **`delegating`** as the captain's state: Stargate's captain activity is
+  `running`, `queued` or `idle`; the per-request stage is in `main`'s new
+  `requests`, which the client could read additively.
+- **The crew's issue key apart from the task** (`NAV-7 reviewing diff`):
+  the API gives the task's summary and phase, not its issue; it would need
+  a task's issue identifier.
+- **Queued as jobs**: the card's Queued counts crew with queued work, as
+  the API's `crew.queued` does.
+- **Starbase stakeholders and Ready for agents**, and the rear admiral's
+  card: not in this piece's scope; stakeholders need an API that records
+  them.
+
+## Changes from the owner during the piece
+
+- **A network named once** (`feat(irc): name a network that holds one
+  fleet once in the navigator`): a network holding exactly one fleet is one
+  group named after the fleet, with the network's other channels under
+  **Other** and the Server row last; with several fleets the network's own
+  group comes last under its own name, or `<name> network` when it equals a
+  fleet's name. The demo and fixture IRC network is **Acme IRC**: Channels'
+  fixtures and tests (`spaces/irc/src/fixtures.rs` and the tests that named
+  `Local Ergo`), `scripts/irc-agent-status-fixture.py`,
+  `scripts/irc-thread-status-fixture.py`, `docs/irc.md`'s example and the
+  local stack's desktop configuration (`scripts/local-stack/desktop-irc-config.py`:
+  `Acme IRC` and `Acme IRC (TLS)`, ids unchanged). The Framework's
+  notification tests keep `Local Ergo` as a sample label, and the installer
+  README's "Local Ergo" is the server, not a network name.
+- **Check bars from GitHub** (`feat(github): give a listed pull request's
+  tile its check counts`): a pull request the PRs Space holds only from a
+  list answers at once and is read once for its check runs, deduplicated,
+  bounded by the keys asked about and read again at most once per list
+  refresh. Widening every list query was not chosen: every list would pay
+  for counts no tile shows.
+- **No accent edge on a selected tab** (`fix(framework): show the selected
+  tab by its surface, with no accent edge`). The sweep for accent lines on
+  one edge in `board-kit` and Channels found only functional marks, left as
+  they are: the drag insertion mark in `tabs/dock/group.rs` and the glass
+  finish's rim (`glass.rs`), a ring round the whole control.
+
+## Captures
+
+Captured on macOS with `make capture` at 1440 x 900, in Twilight Two unless
+named, with `CAPTURE_FLEET=1 CAPTURE_FLEET_API=1` (the Fleet API fixture's
+aurora fleet, its token saved for the fixture's address), against a fresh
+loopback Ergo 2.19.1 (`scripts/irc-test-server.sh` with
+`IRC_TEST_LISTEN=127.0.0.1:16947`) and `scripts/irc-history-fixture.py
+--status --repeats`, both stopped by their port and process id after each
+run, and a Channels config naming that server as the network **Acme IRC**
+(id `acme`) with the aurora channels. Every name, issue and message is
+fictional. Steps begin `wait:9000;click:70,215;wait:4000`, choosing the
+ship `lyra`.
+
+![A ship's channel with the fleet live: the navigator's one Aurora group with Ships and Other captions and the Server row last, the header pill "Lyra is delegating NAV-2 to Juniper · 2 of 4 crew busy", and the Ship tab with the card, Crew, In play here and Here now](evidence/ship-live.png)
+
+![The ship row's dot hovered: "2 crew working", then Wren and Quill and what each is on](evidence/dot-tooltip.png)
+
+![Pull request tiles with check bars, 1/5 for 492 and 5/5 for 489, which the PRs Space never opened: it read each once for its check runs](evidence/pr-tile-check-bar.png)
+
+![The Starbase's Starbase tab: Ships, one row each with the captain's icon, name, state and crew meter](evidence/starbase-ships.png)
+
+![The Ship tab with Icons Large: the captain's avatar at full size with its crew ring](evidence/ship-icons-large.png)
+
+![The Ship tab with Icons Off: no captain icon in the card or the navigator, which close up around the text](evidence/ship-icons-off.png)
+
+![No token saved (CAPTURE_FLEET_TOKEN=none): the Ship tab says "No token" and what to do in Settings › Fleets, shows no figure, and the dots fall back to the captain's status](evidence/ship-no-token.png)
+
+![The same ship channel in Cupertino Light: the selected conversation tab has no accent line; it takes the content surface and the stronger text](evidence/ship-live-cupertino-light.png)
+
+The selected tab in every capture has no accent edge. In Cupertino Light
+the selected tab's surface is close to the bar's, so it is told apart
+mostly by its text; see *Not verified*.
+
+## Not verified
+
+- A light theme's contrast between a selected and an unselected
+  conversation tab was checked by eye only; it is weaker than in Twilight
+  Two.
+- The loading skeleton capped in a narrow column (finding 11) has no render
+  test and no capture.
+- A real Stargate: only the fixture, which follows `main`'s types.
+- Polling (`Live (polling)`) and every not-live link state are covered by
+  tests, not captures; only **No token** was captured.
+
 ## Findings carried from pull request 66
 
 Four low findings from the reviews of the Fleet API client.

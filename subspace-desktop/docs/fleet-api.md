@@ -104,6 +104,15 @@ ID, name and recorded address, the checked `address` and the `state`);
 `FleetApi::directory_revision()` only when a fleet, its address or its token
 changes.
 
+Channels follows each fleet its navigator or the conversation in front
+shows, while the Space is in front and the fleet is `Ready` or followed,
+and drops the handle as soon as it no longer shows it; it reads the
+overview and each ship's detail for a ship's dot, its header and its
+inspector ([Live fleet state](irc.md#live-fleet-state)). A Space that must
+not open the token store, such as one under test, reads the service with
+`FleetApi::current(cx)`, and a test installs one over
+`TokenStore::memory()` with `FleetApi::install`.
+
 For a one-shot read, `FleetApi::client(fleet)` hands out a ready
 `FleetClient` (or the state that explains why not); run its blocking
 `fleet()` and `ship(id)` in `cx.background_spawn`.
