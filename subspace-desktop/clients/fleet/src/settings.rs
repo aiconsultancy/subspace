@@ -2,8 +2,8 @@
 //! with the address the Subspace API records and its state, a field to
 //! paste and save its token, **Test connection** and **Clear token**.
 //! Saving and clearing apply at once, outside Settings' Save and Cancel.
-//! The field is masked and emptied as soon as a save starts, so a token
-//! never stays in the page.
+//! The field is masked and emptied as soon as a save or a clear starts, so a
+//! token never stays in the page.
 
 use std::collections::BTreeMap;
 
@@ -31,11 +31,7 @@ const NO_FLEETS: &str = "None of your initiatives is assigned to a fleet yet. Si
 pub fn create(window: &mut Window, cx: &mut App) -> AnyView {
     let service = FleetApi::shared(cx);
     let catalog = subspace_api_client::initiatives::Catalog::shared(cx);
-    catalog.update(cx, |catalog, cx| {
-        if !catalog.has_memberships() {
-            catalog.refresh(cx);
-        }
-    });
+    crate::service::load_initiatives(&catalog, cx);
     cx.new(|cx| FleetSettings::new(service, window, cx)).into()
 }
 
@@ -132,10 +128,7 @@ impl FleetSettings {
             );
             return;
         };
-        if let Some(row) = self.rows.get(fleet) {
-            row.input
-                .update(cx, |input, cx| input.set_value("", window, cx));
-        }
+        self.empty_field(fleet, window, cx);
         let address = self
             .service
             .read(cx)
@@ -174,7 +167,17 @@ impl FleetSettings {
         .detach();
     }
 
-    pub(crate) fn clear(&mut self, fleet: &str, cx: &mut Context<Self>) {
+    /// Empties the fleet's token field, so a pasted token does not stay in
+    /// the page once it is saved or the saved one is cleared.
+    fn empty_field(&self, fleet: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(row) = self.rows.get(fleet) {
+            row.input
+                .update(cx, |input, cx| input.set_value("", window, cx));
+        }
+    }
+
+    pub(crate) fn clear(&mut self, fleet: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.empty_field(fleet, window, cx);
         let task = self
             .service
             .update(cx, |service, cx| service.clear_token(fleet, cx));
@@ -332,7 +335,9 @@ impl FleetSettings {
                             "Clear token",
                         )
                         .disabled(working)
-                        .on_click(cx.listener(move |this, _, _, cx| this.clear(&clear, cx)))
+                        .on_click(
+                            cx.listener(move |this, _, window, cx| this.clear(&clear, window, cx)),
+                        )
                     })),
             )
     }

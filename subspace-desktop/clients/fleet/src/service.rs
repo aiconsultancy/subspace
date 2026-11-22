@@ -74,6 +74,7 @@ impl FleetApi {
             return session.0.clone();
         }
         let catalog = Catalog::shared(cx);
+        load_initiatives(&catalog, cx);
         let service = cx.new(|cx| {
             let mut service = Self::new(Arc::new(TokenStore::system()));
             service._catalog = Some(cx.observe(&catalog, |this: &mut Self, catalog, cx| {
@@ -212,6 +213,17 @@ impl FleetApi {
         self.reconcile(cx);
         cx.notify();
     }
+}
+
+/// Asks the catalogue for the person's initiatives, and so their fleets,
+/// unless it has them. Fleet Console can be the first Space shown and ask for
+/// the fleets before any other Space has loaded the initiatives.
+pub(crate) fn load_initiatives(catalog: &Entity<Catalog>, cx: &mut App) {
+    catalog.update(cx, |catalog, cx| {
+        if !catalog.has_memberships() {
+            catalog.refresh(cx);
+        }
+    });
 }
 
 #[cfg(test)]
