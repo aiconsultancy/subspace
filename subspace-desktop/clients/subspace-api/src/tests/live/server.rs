@@ -65,9 +65,20 @@ impl Server {
             .count()
     }
 
+    pub(crate) fn count_if(&self, keep: impl Fn(&Seen) -> bool) -> usize {
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|seen| keep(seen))
+            .count()
+    }
+
     pub(crate) fn peer(&self) -> Peer {
         self.peers
-            .recv_timeout(Duration::from_secs(5))
+            // A reconnection can wait out the hub's backoff, several
+            // seconds, before a busy machine adds its own delay.
+            .recv_timeout(Duration::from_secs(15))
             .expect("no SSE stream connected")
     }
 }

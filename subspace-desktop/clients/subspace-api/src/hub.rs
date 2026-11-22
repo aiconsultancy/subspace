@@ -129,6 +129,13 @@ impl Hub {
         self.0.follow_uploads(&mut state);
         state.view()
     }
+    /// Whether no live read of the open issue or the list head is out or
+    /// owed, so a test can wait for the catch-up after `ready` to land.
+    #[cfg(test)]
+    pub(crate) fn live_reads_settled(&self) -> bool {
+        let state = lock(&self.0.state);
+        !state.live_reads.issue.pending() && !state.live_reads.list.pending()
+    }
     /// A hub's data and queued requests belong to its original account.
     pub fn account_changed(&self) -> bool {
         self.0.client.account_changed()

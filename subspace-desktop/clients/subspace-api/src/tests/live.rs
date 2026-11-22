@@ -29,7 +29,6 @@ const JWT: &str = "fixture-access";
 const UPDATES: &str = "/api/v1/updates";
 const DETAIL: &str = "/api/v1/issues/SUB-1";
 const GROUPS: &str = "/api/v1/issues/groups";
-const PULL_REQUESTS: &str = "/api/v1/issues/SUB-1/pull-requests";
 
 fn sse(_: &Seen) -> (u16, String) {
     (200, String::new())
@@ -86,22 +85,29 @@ fn hub(server: &Server) -> Hub {
     hub
 }
 
+/// Reads of the list head. Count reads ask for no rows, and polling while
+/// the stream connects reads only the open issue.
+fn list_heads(server: &Server) -> usize {
+    server.count_if(|seen| {
+        seen.method == "GET"
+            && route(&seen.path) == GROUPS
+            && !seen.path.contains("limitPerGroup=0")
+    })
+}
+
 /// Sends `ready` and waits until the hub has caught up after it. A few
-/// tenths of a second after `ready` the hub reads the open issue and the
-/// list head again, and once the issue read is back it reads the issue's
-/// pull requests and starts its media lists again. A test that acts before
-/// that has landed races it, and a busy machine delays it further, so wait
-/// for those reads rather than a fixed time.
+/// tenths of a second after `ready` the hub reads the list head and the open
+/// issue again, in the same step; the issue read waits for any poll already
+/// out, and once back it starts the issue's media lists again. A test that
+/// acts before that has landed races it, and a busy machine delays it, so
+/// wait for the list head read and for both reads to be back rather than
+/// for a fixed time.
 fn ready_and_caught_up(server: &Server, hub: &Hub, peer: &mut Peer) {
-    let reads = [DETAIL, GROUPS, PULL_REQUESTS];
-    let before = reads.map(|path| server.count("GET", path));
+    let heads = list_heads(server);
     peer.ready();
     wait(hub, |snapshot| snapshot.live() == LiveStatus::Live);
     wait(hub, |_| {
-        reads
-            .iter()
-            .zip(before)
-            .all(|(path, seen)| server.count("GET", path) > seen)
+        list_heads(server) > heads && hub.live_reads_settled()
     });
 }
 

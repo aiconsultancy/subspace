@@ -1,7 +1,7 @@
 //! Hints refresh what is shown even when the issue's version did not move:
 //! the API keeps the version for comments, threads, attachments, links,
 //! summaries, documents and reviews.
-use super::{DETAIL, GROUPS, PULL_REQUESTS, UPDATES, hub, ready_and_caught_up, sse, version, wait};
+use super::{DETAIL, GROUPS, UPDATES, hub, ready_and_caught_up, sse, version, wait};
 use super::{Server, server::Seen};
 use crate::{
     hub::Hub,
@@ -20,6 +20,7 @@ use std::{
 
 const ACTIVITY: &str = "/api/v1/issues/SUB-1/activity";
 const ATTACHMENTS: &str = "/api/v1/issues/SUB-1/attachments";
+const PULL_REQUESTS: &str = "/api/v1/issues/SUB-1/pull-requests";
 
 /// What the loopback API serves; the test moves it as another person would.
 #[derive(Default)]
@@ -217,6 +218,9 @@ fn a_burst_during_a_read_gives_one_read_and_one_trailing_read() {
     wait(&hub, |snapshot| {
         snapshot.issue().unwrap().detail().unwrap().fields.title == "Renamed during the read"
     });
+    // The read in flight answers with the new title; the hints during it
+    // owe one trailing read, which follows it.
+    wait(&hub, |_| server.count("GET", DETAIL) == details + 2);
     std::thread::sleep(Duration::from_millis(2000));
     assert_eq!(server.count("GET", DETAIL), details + 2);
     assert_eq!(shown.peak.load(Ordering::SeqCst), 1, "one read in flight");
