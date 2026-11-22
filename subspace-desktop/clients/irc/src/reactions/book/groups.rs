@@ -12,7 +12,7 @@ use record::{incoming, merge, same};
 use crate::model::{Casemapping, Reaction, ReactionChange};
 use crate::reactions::agent_stop::is_agent_stop_reaction;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct Group {
     reaction: String,
     pub(super) records: Vec<Record>,

@@ -9,7 +9,7 @@ use crate::model::{Casemapping, Reaction, ReactionChange};
 /// The latest operation one person made with one reaction. `reactor.time`
 /// is when their current addition started, for display; `latest` is when
 /// their newest operation happened, for telling newer from older.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in crate::reactions::book) struct Record {
     pub(in crate::reactions::book) reactor: Reactor,
     pub(super) latest: DateTime<Utc>,

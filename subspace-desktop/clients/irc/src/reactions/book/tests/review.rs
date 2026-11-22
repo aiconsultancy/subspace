@@ -105,7 +105,9 @@ fn forgetting_a_conversation_drops_its_reactions() {
         &[reaction("m1", "👍", "alice", 1), elsewhere.clone()],
     );
     book.observe(&Event::Line(line(room(), "m1")));
+    assert_eq!(book.reacted_messages(&room()), ["m1"]);
     book.forget(&room());
+    assert!(book.reacted_messages(&room()).is_empty());
     assert!(shown(&book, "m1").is_empty());
     assert_eq!(book.reactions(&elsewhere.buffer, "m1").len(), 1);
     assert_eq!(book.len(), 1);

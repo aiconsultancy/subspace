@@ -62,7 +62,7 @@ impl ReactionSummary {
 
 type Key = (BufferKey, String);
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct Entry {
     touched: u64,
     /// The message has been seen loaded, so it counts against
@@ -89,7 +89,7 @@ struct Entry {
 /// People are the same when both are ours, or both have the same account,
 /// or neither has an account and their nicks match under the network's
 /// case mapping.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ReactionBook {
     messages: BTreeMap<Key, Entry>,
     mappings: BTreeMap<NetworkId, Casemapping>,
@@ -98,7 +98,7 @@ pub struct ReactionBook {
 }
 
 /// Message IDs seen loaded, oldest first, bounded by [`MAX_SEEN_IDS`].
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct Seen {
     ids: BTreeSet<Key>,
     order: VecDeque<Key>,
@@ -159,6 +159,15 @@ impl ReactionBook {
             .get(&(buffer.clone(), msgid.to_owned()))
             .map(|entry| summaries(&entry.groups))
             .unwrap_or_default()
+    }
+
+    /// The messages in `buffer` that show reactions, by message ID.
+    pub fn reacted_messages(&self, buffer: &BufferKey) -> Vec<&str> {
+        self.messages
+            .iter()
+            .filter(|((held, _), entry)| held == buffer && !summaries(&entry.groups).is_empty())
+            .map(|((_, msgid), _)| msgid.as_str())
+            .collect()
     }
 
     /// Whether we reacted to the message with `reaction`.
