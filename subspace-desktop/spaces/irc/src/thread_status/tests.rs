@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use subspace_client_irc::{BufferKey, ConnectionStatus, Event, Line, LineKind, Member};
 
-use super::{PROGRESS_TAG, Shown, statuses};
+use super::{PROGRESS_TAG, Settled, Shown, statuses};
 use crate::fixtures::{at, channel, config, line, member, message, network_id};
 use crate::state::IrcState;
 
@@ -10,6 +10,7 @@ mod endings;
 mod lifecycle;
 mod markers;
 mod retention;
+mod settled;
 mod trust;
 
 /// The fixture ship's account, as the server reports it: named after its
@@ -110,8 +111,33 @@ fn live(state: &mut IrcState, lines: impl IntoIterator<Item = Line>) {
     }
 }
 
-/// The status line under `request` in `buffer`, as the transcript shows it.
-fn status(state: &IrcState, buffer: &BufferKey, request: &str) -> Option<Shown> {
+/// What a running line says: who, what and whether it is stale.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Seen {
+    agent: String,
+    label: &'static str,
+    stale: Option<DateTime<Utc>>,
+}
+
+/// The running status line under `request` in `buffer`, as the transcript
+/// shows it; `None` once it settled.
+fn status(state: &IrcState, buffer: &BufferKey, request: &str) -> Option<Seen> {
+    shown_line(state, buffer, request)
+        .filter(|shown| shown.settled.is_none())
+        .map(|shown| Seen {
+            agent: shown.agent,
+            label: shown.label,
+            stale: shown.stale,
+        })
+}
+
+/// How `request` in the room settled, once it ended.
+fn settled(state: &IrcState, request: &str) -> Option<Settled> {
+    shown_line(state, &room(), request).and_then(|shown| shown.settled)
+}
+
+/// The whole status line under `request` in `buffer`, running or settled.
+fn shown_line(state: &IrcState, buffer: &BufferKey, request: &str) -> Option<Shown> {
     let held = state.buffer(buffer)?;
     let connected = state
         .network(&network_id())
@@ -124,6 +150,7 @@ fn status(state: &IrcState, buffer: &BufferKey, request: &str) -> Option<Shown> 
     statuses(held, connected.as_ref()).get(&seq).cloned()
 }
 
+/// The running line's label under `request`; `None` once it settled.
 fn label(state: &IrcState, request: &str) -> Option<&'static str> {
     status(state, &room(), request).map(|shown| shown.label)
 }
@@ -137,8 +164,8 @@ fn is_folded(state: &IrcState, buffer: &BufferKey, id: &str) -> bool {
     })
 }
 
-fn shown(label: &'static str, stale: Option<DateTime<Utc>>) -> Shown {
-    Shown {
+fn shown(label: &'static str, stale: Option<DateTime<Utc>>) -> Seen {
+    Seen {
         agent: "astra".into(),
         label,
         stale,

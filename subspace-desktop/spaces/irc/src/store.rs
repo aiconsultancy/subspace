@@ -209,8 +209,9 @@ pub(crate) struct Restored {
     pub buffer: BufferKey,
     /// Its newest lines, oldest first; maybe none.
     pub lines: Vec<Line>,
-    /// The message IDs of its newest ended requests, oldest first.
-    pub ended: Vec<String>,
+    /// Its newest ended requests by message ID, with how each ended,
+    /// oldest first.
+    pub ended: Vec<(String, crate::thread_status::Ending)>,
 }
 
 /// The buffer `lines` (oldest first) and `ended` (newest first) restore,
@@ -221,7 +222,14 @@ fn restored(lines: Vec<Line>, ended: Vec<Ended>) -> Option<Restored> {
         .first()
         .map(|line| line.buffer.clone())
         .or_else(|| ended.first().map(|ended| ended.buffer.clone()))?;
-    let ended = ended.into_iter().rev().map(|ended| ended.request).collect();
+    let ended = ended
+        .into_iter()
+        .rev()
+        .map(|ended| {
+            let ending = ended.ending();
+            (ended.request, ending)
+        })
+        .collect();
     Some(Restored {
         buffer,
         lines,

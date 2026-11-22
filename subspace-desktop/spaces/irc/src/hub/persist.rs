@@ -62,9 +62,11 @@ impl Recall {
             .take_endings()
             .into_iter()
             .flat_map(|(buffer, ids)| {
-                ids.into_iter().map(move |request| Ended {
+                ids.into_iter().map(move |(request, ending)| Ended {
                     buffer: buffer.clone(),
                     request,
+                    outcome: ending.outcome,
+                    at: ending.at,
                 })
             })
             .collect();

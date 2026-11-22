@@ -1,7 +1,8 @@
 //! Request status lines on the real transcript: trusted progress folds into
-//! one line under each request and updates in place; a lookalike from
-//! another account, questions and final replies stay messages; the line
-//! goes stale while the network is down.
+//! one line under each request and updates in place, with a clock and a
+//! stage meter; a lookalike from another account, questions and final
+//! replies stay messages; the line goes stale while the network is down and
+//! settles into `Done in …` when the request ends.
 
 use chrono::Local;
 use gpui_kit::test::TestWindowExt as _;
@@ -142,6 +143,16 @@ fn assert_one_line_per_request(hub: &Entity<Hub>, cx: &mut VisualTestContext) {
         );
         assert_eq!(status(window, "second").as_deref(), Some("astra: Queued"));
         assert_eq!(
+            window.find("irc-status:first:meter").label(),
+            Some("Stage 2 of 5: working"),
+            "the stage meter"
+        );
+        assert_eq!(
+            window.find("irc-status:second:meter").label(),
+            Some("Stage 1 of 5: accepted")
+        );
+        assert!(window.find("irc-status:first:clock").visible());
+        assert_eq!(
             status(window, "third").as_deref(),
             Some("astra: Receipt unconfirmed"),
             "a second request in the same thread has its own line"
@@ -262,7 +273,15 @@ fn trusted_progress_folds_into_one_line_per_request(cx: &mut TestAppContext) {
     lose_the_connection(&hub, cx);
     finish_the_second_request(&hub, cx);
     cx.update(|window, _| {
-        assert_eq!(status(window, "second"), None, "the matching request ended");
+        assert_eq!(
+            status(window, "second").as_deref(),
+            Some("astra: Done in 11 m"),
+            "the matching request settled"
+        );
+        assert!(
+            window.try_find("irc-status:second:clock").is_none(),
+            "a settled line has no clock"
+        );
         assert_eq!(
             status(window, "first"),
             Some(stale("Using a tool", 10)),
@@ -308,3 +327,5 @@ fn untrusted_progress_stays_a_notice_without_a_status_line(cx: &mut TestAppConte
         assert!(has_row(window, held, "astra-first-7"));
     });
 }
+
+mod clock;

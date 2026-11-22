@@ -44,7 +44,7 @@ pub(crate) fn message(
         .when(!entry.line.text.is_empty(), |column| {
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
         })
-        .children(thread_facts(entry, context, &tokens))
+        .children(thread_facts(entry, context, &tokens, cx))
         .children(crate::issues::tiles(entry, &issues, context, &tokens, cx))
         .children(attachments(original, context, &tokens, cx))
         .children(marks::focus_card(entry, context));
@@ -71,15 +71,17 @@ pub(crate) fn message(
     (row, identifiers)
 }
 
-/// What a message's thread says under it: the reply count, then the live
-/// status line of a request still in progress.
-fn thread_facts(entry: &Entry, context: &RowContext, tokens: &Tokens) -> Vec<AnyElement> {
+/// What a message's thread says under it: the reply count, then the status
+/// line of a request in progress or its settled line once it ended.
+fn thread_facts(entry: &Entry, context: &RowContext, tokens: &Tokens, cx: &App) -> Vec<AnyElement> {
     crate::transcript::replies::metadata(entry, &context.replies, tokens)
         .into_iter()
         .chain(crate::transcript::status::line(
             entry,
             &context.statuses,
+            context.now,
             tokens,
+            cx,
         ))
         .collect()
 }

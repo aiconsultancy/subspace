@@ -9,11 +9,14 @@ use super::super::{Ended, Link, Op};
 use super::{count, recent_message, service};
 use crate::fixtures::{channel, query};
 
-/// An ending of request `request` in `buffer`.
+/// An ending of request `request` in `buffer`, stored without its outcome
+/// or time, as before they were kept.
 fn ended(buffer: &BufferKey, request: &str) -> Ended {
     Ended {
         buffer: buffer.clone(),
         request: request.into(),
+        outcome: None,
+        at: None,
     }
 }
 
@@ -41,15 +44,18 @@ fn endings_commit_with_lines_and_restore_with_or_without_them() {
         .find(|restored| restored.buffer == room)
         .unwrap();
     assert_eq!(held.lines.len(), 1, "an ending record is not a line");
-    let mut ids = held.ended.clone();
-    ids.sort();
+    let mut ids: Vec<&str> = held.ended.iter().map(|(id, _)| id.as_str()).collect();
+    ids.sort_unstable();
     assert_eq!(ids, ["first", "second"]);
     let private = restored
         .iter()
         .find(|restored| restored.buffer == carol)
         .unwrap();
     assert!(private.lines.is_empty(), "no line survives there");
-    assert_eq!(private.ended, ["direct"]);
+    assert_eq!(
+        private.ended,
+        [("direct".to_owned(), crate::thread_status::Ending::default())]
+    );
     assert!(link.run(vec![Op::Forget(room.clone())], now).is_empty());
     assert_eq!(count(&link, Some(mapping::parent_id(&room))), 0);
     assert_eq!(count(&link, None), 1, "the endings go with their buffer");
@@ -80,4 +86,39 @@ fn an_older_request_record_loads_as_nothing() {
     assert_eq!(restored.len(), 1);
     assert_eq!(restored[0].lines.len(), 1);
     assert!(restored[0].ended.is_empty());
+}
+
+#[test]
+fn an_ending_keeps_its_outcome_and_server_time() {
+    use crate::thread_status::{Ending, Outcome};
+    let (_root, service) = service();
+    let link = Link::new(service);
+    let room = channel("#subspace");
+    let now = chrono::Utc::now();
+    let time = crate::fixtures::at(43);
+    let mut ending = ended(&room, "first");
+    ending.outcome = Some(Outcome::Completed);
+    ending.at = Some(time);
+    let ops = vec![Op::Commit {
+        ended: vec![ending, ended(&room, "older")],
+        lines: Vec::new(),
+    }];
+    assert!(link.run(ops, now).is_empty());
+    let restored = link.restore().unwrap().unwrap();
+    let mut held = restored[0].ended.clone();
+    held.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(
+        held,
+        [
+            (
+                "first".to_owned(),
+                Ending {
+                    outcome: Some(Outcome::Completed),
+                    at: Some(time),
+                }
+            ),
+            ("older".to_owned(), Ending::default()),
+        ],
+        "an ending stored without them loads without them"
+    );
 }

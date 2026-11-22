@@ -17,7 +17,7 @@
 
 use subspace_client_irc::{Line, LineKind, Target};
 
-use super::requests::{Arrival, Asked, Notice};
+use super::requests::{Arrival, Asked, Ending, Notice};
 use super::{Phase, marker};
 use crate::state::{Buffer, IrcState};
 
@@ -67,7 +67,13 @@ fn notice(line: &Line, seq: i64) -> Option<Notice> {
     Some(Notice {
         seq,
         request: line.reply_to.clone()?,
-        ended: marker.phase == Phase::Finished,
+        ending: match marker.phase {
+            Phase::Finished(outcome) => Some(Ending {
+                outcome: Some(outcome),
+                at: Some(line.time),
+            }),
+            _ => None,
+        },
         account: line.account.clone(),
     })
 }

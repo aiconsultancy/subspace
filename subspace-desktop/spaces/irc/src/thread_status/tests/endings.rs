@@ -7,10 +7,11 @@ use subspace_client_irc::{BufferKey, Event, Line};
 use super::{connected, is_folded, joined, label, live, notice_from, progress, request, room};
 use crate::fixtures::{at, config, member};
 use crate::state::IrcState;
+use crate::thread_status::Ending;
 
 /// After a restart: the stored `lines` and endings of the room, then the
 /// room joined with another account holding astra's nick.
-fn restarted(room: &BufferKey, lines: Vec<Line>, ended: &[String]) -> IrcState {
+fn restarted(room: &BufferKey, lines: Vec<Line>, ended: &[(String, Ending)]) -> IrcState {
     let mut state = IrcState::new(&[config()], Vec::new());
     state.restore_buffer(room, lines, ended);
     state.apply(connected(), at(30));
@@ -38,7 +39,7 @@ fn taken(state: &mut IrcState) -> Vec<String> {
         .take_endings()
         .into_iter()
         .find(|(key, _)| *key == room())
-        .map(|(_, ended)| ended)
+        .map(|(_, ended)| ended.into_iter().map(|(id, _)| id).collect())
         .unwrap_or_default()
 }
 
@@ -83,7 +84,11 @@ fn after_a_restart_a_nick_taken_over_cannot_fold_spoof_or_end_a_request() {
 #[test]
 fn a_stored_ending_keeps_a_request_finished_with_no_surviving_line() {
     let room = room();
-    let mut state = restarted(&room, Vec::new(), &["first".to_owned()]);
+    let mut state = restarted(
+        &room,
+        Vec::new(),
+        &[("first".to_owned(), Ending::default())],
+    );
     assert!(
         state
             .buffer(&room)
@@ -112,6 +117,10 @@ fn a_stored_ending_keeps_a_request_finished_with_no_surviving_line() {
 #[test]
 fn endings_for_a_buffer_without_lines_do_not_bring_it_back() {
     let mut state = IrcState::new(&[config()], Vec::new());
-    state.restore_buffer(&room(), Vec::new(), &["first".to_owned()]);
+    state.restore_buffer(
+        &room(),
+        Vec::new(),
+        &[("first".to_owned(), Ending::default())],
+    );
     assert!(state.buffer(&room()).is_none());
 }
