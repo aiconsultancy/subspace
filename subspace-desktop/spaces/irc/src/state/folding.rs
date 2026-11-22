@@ -1,19 +1,16 @@
-//! Keeps each buffer's folded request progress and its requests'
-//! bindings current ([`crate::thread_status`]) after the events that can
-//! change them, in proportion to what they change:
+//! Keeps each buffer's folded request progress current
+//! ([`crate::thread_status`]) after the events that can change it, in
+//! proportion to what they change:
 //!
-//! - a live line is taken in by itself: a request is bound to the account
-//!   reported for its agent as it arrives, a notice binds an unbound
-//!   request when it is the agent's first answer, and progress folds or
-//!   not, without reading the buffer again ([`arrived`]); dropping the
-//!   oldest lines stops folding the notices of a request no longer held,
-//!   and counts them as any notice ([`make_room`]);
+//! - a live line is taken in by itself: progress folds or not, without
+//!   reading the buffer again ([`arrived`]); dropping the oldest lines stops
+//!   folding the notices of a request no longer held, and counts them as
+//!   history would ([`make_room`]);
 //! - history, backfill and lines restored from the store fold their buffer
 //!   again from its held lines ([`Scope::Buffer`]).
 //!
-//! Member list changes change nothing: a request is bound only as it
-//! arrives live or by its agent's first answer, never later from the
-//! member lists.
+//! Member list changes change nothing: trust depends only on the request
+//! and the notice.
 
 use subspace_client_irc::{BufferKey, Event};
 
@@ -45,10 +42,10 @@ pub(super) fn refold(state: &mut IrcState, scope: &Scope) {
     }
 }
 
-/// Folds what is trusted in buffer `key` from its held lines, binding each
-/// unbound request its agent's earliest notice answers, and takes folded
-/// lines out of the unread count.
+/// Folds what is trusted in buffer `key` from its held lines, and takes
+/// folded lines out of the unread count.
 fn rebuild(state: &mut IrcState, key: &BufferKey) {
+    adopt(state, key);
     let Some(buffer) = state.buffers.get_mut(key) else {
         return;
     };
@@ -75,11 +72,14 @@ pub(super) fn make_room(state: &mut IrcState, key: &BufferKey) {
 
 /// Forgets line `entry`, no longer held: it is no longer unread or folded,
 /// and when it was a request, its progress notices no longer fold, so they
-/// show, can be found and count against the read marker as ordinary
-/// notices.
+/// show, can be found and count against the read marker as history lines
+/// do.
 fn dropped(buffer: &mut Buffer, entry: &Entry) {
     buffer.unread_entries.remove(&entry.seq);
     buffer.folded.remove(&entry.seq);
+    if let Some(request) = entry.line.reply_to.as_deref() {
+        buffer.requests.forget_notice(request, entry.seq);
+    }
     let unfolded = entry
         .line
         .id
@@ -96,11 +96,22 @@ fn dropped(buffer: &mut Buffer, entry: &Entry) {
 /// and folds the buffer again when a request it holds anew has held
 /// progress.
 pub(super) fn arrived(state: &mut IrcState, key: &BufferKey, arrival: &Arrival) {
+    adopt(state, key);
     let again = state
         .buffers
         .get_mut(key)
         .is_some_and(|buffer| buffer.requests.arrive(arrival, &mut buffer.folded));
     if again {
         rebuild(state, key);
+    }
+}
+
+/// Gives buffer `key` the endings the store kept for it while it held no
+/// lines ([`IrcState::parked`]).
+fn adopt(state: &mut IrcState, key: &BufferKey) {
+    if let Some(buffer) = state.buffers.get_mut(key)
+        && let Some(ended) = state.parked.remove(key)
+    {
+        buffer.requests.load(&ended);
     }
 }

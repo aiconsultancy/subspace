@@ -15,8 +15,9 @@ use crate::state::Buffer;
 use crate::thread_status::PROGRESS_TAG;
 use crate::{Irc, view};
 
-/// The fixture ship's account, as the server reports it.
-const SHIP: &str = "fleet-astra";
+/// The fixture ship's account, as the server reports it: named after its
+/// nick, as fleet servers require.
+const SHIP: &str = "astra";
 
 fn joined(nick: &str, account: &str) -> Event {
     let mut member: Member = member(nick, "");
@@ -287,7 +288,7 @@ fn untrusted_progress_stays_a_notice_without_a_status_line(cx: &mut TestAppConte
             request(&room, "first", None, 4),
             notice(("nova", "nova"), &room, "first", "tool", 5),
             unvouched,
-            progress(&room, "first", "reply", 7),
+            notice(("astra", "impostor"), &room, "first", "reply", 7),
         ]
         .map(Event::Line),
     );
@@ -299,7 +300,7 @@ fn untrusted_progress_stays_a_notice_without_a_status_line(cx: &mut TestAppConte
         assert_eq!(
             status(window, "first"),
             None,
-            "astra's first answer carries no account, so nothing binds"
+            "neither notice comes from the account named astra"
         );
         let held = hub.read(cx).state.buffer(&room).unwrap();
         assert!(has_row(window, held, "nova-first-5"));

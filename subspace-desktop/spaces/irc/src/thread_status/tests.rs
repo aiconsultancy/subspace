@@ -5,15 +5,16 @@ use super::{PROGRESS_TAG, Shown, statuses};
 use crate::fixtures::{at, channel, config, line, member, message, network_id};
 use crate::state::IrcState;
 
-mod binding;
+mod accounts;
+mod endings;
 mod lifecycle;
 mod markers;
-mod pinning;
 mod retention;
 mod trust;
 
-/// The fixture ship's account, as the server reports it.
-const SHIP: &str = "fleet-astra";
+/// The fixture ship's account, as the server reports it: named after its
+/// nick, as fleet servers require.
+const SHIP: &str = "astra";
 
 fn room() -> BufferKey {
     channel("#ops")

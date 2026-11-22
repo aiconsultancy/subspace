@@ -5,26 +5,24 @@
 //! ([`super::marker`]) that replies to a request this buffer holds: a
 //! message or action, and in a private conversation our own. The request
 //! names the agent it asks: a channel request's first word is `nick:`,
-//! `nick,` or `@nick`, and a private conversation's is its partner; a
-//! request that asks its own sender is none. The request is bound to an
-//! account ([`Requests`]): the one the member lists (`WHOX`,
-//! `extended-join` and `account-notify`) report for that nick when the
-//! request arrives live, or else the server `account` tag on the earliest
-//! progress notice that nick sends on it, never the requester's own. The
-//! notice's `account` tag, which only the server sets, must name that
-//! account, whoever holds the nick by then. Without a binding nothing
-//! folds.
+//! `nick,` or `@nick`, and a private conversation's is its partner. The
+//! notice's `account` tag, which only the server sets, must equal that
+//! nick, ignoring ASCII case. A request that asks its own sender, by nick
+//! or by the sender's account, is none.
+//!
+//! Owner decision, 21 November 2026: a notice is trusted when its server
+//! account equals the addressed nick. Fleet IRC servers are private and
+//! tie each nick to the account of the same name, so only the agent's own
+//! account can send as its nick there.
 
-use chrono::{DateTime, Utc};
-use subspace_client_irc::{BufferKey, Line, LineKind, Target};
+use subspace_client_irc::{Line, LineKind, Target};
 
 use super::requests::{Arrival, Asked, Notice};
 use super::{Phase, marker};
 use crate::state::{Buffer, IrcState};
 
 /// What live `line`, to be held as `seq`, brings to its buffer's requests:
-/// progress, trusted or not, or a request with the account the member
-/// lists report now for the agent it asks.
+/// progress, trusted or not, or a request.
 pub(crate) fn arrival(state: &IrcState, line: &Line, seq: i64) -> Arrival {
     if let Some(notice) = notice(line, seq) {
         let trusted = state
@@ -33,18 +31,14 @@ pub(crate) fn arrival(state: &IrcState, line: &Line, seq: i64) -> Arrival {
         return Arrival::Progress { notice, trusted };
     }
     request(line).map_or(Arrival::Other, |(id, nick)| {
-        let account = reported_account(state, &line.buffer, &nick).map(str::to_owned);
         Arrival::Request(Asked {
             id: id.to_owned(),
             nick,
-            requester: line.account.clone(),
-            account,
         })
     })
 }
 
-/// Every request `held` holds. Only a live arrival reads the member lists,
-/// so none carries a reported account.
+/// Every request `held` holds.
 pub(crate) fn asked(held: &Buffer) -> Vec<Asked> {
     held.entries
         .iter()
@@ -53,23 +47,17 @@ pub(crate) fn asked(held: &Buffer) -> Vec<Asked> {
             Some(Asked {
                 id: id.to_owned(),
                 nick,
-                requester: entry.line.account.clone(),
-                account: None,
             })
         })
         .collect()
 }
 
-/// Every progress notice `held` holds, oldest first by server time; of two
-/// at the same time, the earlier held.
+/// Every progress notice `held` holds.
 pub(crate) fn notices(held: &Buffer) -> Vec<Notice> {
-    let mut found: Vec<(DateTime<Utc>, Notice)> = held
-        .entries
+    held.entries
         .iter()
-        .filter_map(|entry| Some((entry.line.time, notice(&entry.line, entry.seq)?)))
-        .collect();
-    found.sort_by_key(|(time, _)| *time);
-    found.into_iter().map(|(_, notice)| notice).collect()
+        .filter_map(|entry| notice(&entry.line, entry.seq))
+        .collect()
 }
 
 /// `line` as progress on the request it answers. `None` when it is no
@@ -80,22 +68,21 @@ fn notice(line: &Line, seq: i64) -> Option<Notice> {
         seq,
         request: line.reply_to.clone()?,
         ended: marker.phase == Phase::Finished,
-        from: line.from.as_deref().map(str::to_ascii_lowercase),
         account: line.account.clone(),
     })
 }
 
 /// `line` as a request: a message or action with a message ID that asks
-/// an agent other than its sender. Its ID, and the nick it asks in ASCII
-/// lower case.
+/// an agent other than its sender, by nick or by the sender's account. Its
+/// ID, and the nick it asks in ASCII lower case.
 fn request(line: &Line) -> Option<(&str, String)> {
     let eligible = matches!(line.kind, LineKind::Privmsg | LineKind::Action);
     let id = line.id.as_deref().filter(|id| eligible && !id.is_empty())?;
     let nick = addressee(line)?.to_ascii_lowercase();
-    let own = line
-        .from
-        .as_deref()
-        .is_some_and(|from| from.eq_ignore_ascii_case(&nick));
+    let own = [line.from.as_deref(), line.account.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|sender| sender.eq_ignore_ascii_case(&nick));
     (!own).then_some((id, nick))
 }
 
@@ -115,25 +102,5 @@ fn addressee(request: &Line) -> Option<String> {
             (!nick.is_empty()).then(|| nick.to_owned())
         }
         Target::Server => None,
-    }
-}
-
-/// The account the server reports for `nick` in the member lists buffer
-/// `buffer` may use: its own channel's, or, for a private conversation,
-/// every channel's on its network.
-fn reported_account<'s>(state: &'s IrcState, buffer: &BufferKey, nick: &str) -> Option<&'s str> {
-    state
-        .buffers()
-        .filter(|(key, _)| shares_members(key, buffer))
-        .flat_map(|(_, held)| held.members.iter())
-        .filter(|member| member.nick.eq_ignore_ascii_case(nick))
-        .find_map(|member| member.account.as_deref())
-}
-
-/// Whether buffer `key`'s member list speaks for `buffer`'s people.
-fn shares_members(key: &BufferKey, buffer: &BufferKey) -> bool {
-    match &buffer.target {
-        Target::Channel(_) => key == buffer,
-        _ => key.network == buffer.network && matches!(key.target, Target::Channel(_)),
     }
 }

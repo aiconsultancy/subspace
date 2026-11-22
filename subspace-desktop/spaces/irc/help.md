@@ -156,13 +156,12 @@ Those notices are then not shown as messages, counted as replies or unread,
 or notified. Questions, answer instructions, final replies, ordinary notices
 and any notice from another account stay as messages, as before.
 
-Channels ties each request to one account: the agent's account as the
-request arrives, when the server reports it then, or else the account on the
-agent's first progress notice for it. Once tied, the choice stays, also
-after a restart while Channels keeps your messages, so if someone else later
-takes the agent's nick, their notices cannot change or end the request.
-When neither account is known, nothing is hidden: the agent's notices stay
-as messages.
+Channels trusts a notice only when it comes from the account named after
+the agent your request addresses, so if someone else takes the agent's nick,
+their notices cannot change or end the request. An agent whose account has
+a different name gets no status line, and its notices stay as messages. On
+a Subspace fleet's IRC server each nick belongs to the account of the same
+name, so this always holds there.
 
 While the network is disconnected, after reconnecting or restarting, or when
 the agent reports losing its own connection, the line shows when it was

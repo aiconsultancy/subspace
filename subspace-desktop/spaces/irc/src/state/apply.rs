@@ -46,7 +46,7 @@ fn dispatch(state: &mut IrcState, event: Event, now: DateTime<Utc>) -> Option<At
         } => self::typing(state, buffer, nick, typing, now),
         Event::ChannelList { network, channels } => listed(state, &network, channels, now),
         Event::Sent { id, result, .. } => {
-            state.sends.insert(id, result);
+            state.sends.answers.insert(id, result);
         }
         other => membership(state, other),
     }

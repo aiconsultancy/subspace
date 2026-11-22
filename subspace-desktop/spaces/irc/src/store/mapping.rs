@@ -9,15 +9,14 @@ use subspace_framework::dashboard::full_text::{Document, IndexMetadata, Scope};
 
 use super::links;
 use crate::state::is_message;
-use crate::thread_status::Kept;
 
 /// IRC keeps one local scope: messages belong to this computer's profile,
 /// not to a service account. The network is the `project` filter.
 const LOCAL: &str = "local";
 pub(crate) const CHANNEL_KIND: &str = "Channel message";
 pub(crate) const PRIVATE_KIND: &str = "Private message";
-/// A request's bound account and ending, stored beside its buffer's lines.
-pub(crate) const REQUEST_KIND: &str = "Channels request";
+/// A request that ended, stored beside its buffer's lines.
+pub(crate) const ENDING_KIND: &str = "Channels request ending";
 
 /// The board's one search scope in app `app`.
 pub(crate) fn scope(app: &str) -> Scope {
@@ -131,44 +130,49 @@ pub(crate) fn metadata(line: &Line) -> IndexMetadata {
     }
 }
 
-/// The line a record holds, back from its payload. A request record holds
+/// The line a record holds, back from its payload. An ending record holds
 /// none.
 pub(crate) fn line(document: &Document) -> Option<Line> {
     let payload = document
         .payload
         .as_deref()
-        .filter(|_| document.kind != REQUEST_KIND)?;
+        .filter(|_| document.kind != ENDING_KIND)?;
     serde_json::from_str(payload).ok()
 }
 
-/// The record of request `kept` in buffer `buffer` at `now`: one per
-/// request, under the buffer's parent, so removing the buffer deletes it
-/// with the lines. It has no text, so no search finds it.
-pub(crate) fn request_document(
-    buffer: &BufferKey,
-    kept: &Kept,
-    now: DateTime<Utc>,
-) -> Option<Document> {
+/// A request that completed or failed, by a trusted notice, as the store
+/// keeps it: the buffer, so it restores without any surviving line, and the
+/// request's message ID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Ended {
+    pub buffer: BufferKey,
+    pub request: String,
+}
+
+/// The record of `ended` at `now`: one per request, under its buffer's
+/// parent, so removing the buffer deletes it with the lines. It has no
+/// text, so no search finds it.
+pub(crate) fn ending_document(ended: &Ended, now: DateTime<Utc>) -> Option<Document> {
     Some(Document {
-        id: format!("request:{}:{}", buffer.network.0, kept.request),
+        id: format!("ended:{}:{}", ended.buffer.network.0, ended.request),
         title: String::new(),
         body: String::new(),
         metadata: String::new(),
-        parent_id: Some(parent_id(buffer)),
-        kind: REQUEST_KIND.to_owned(),
+        parent_id: Some(parent_id(&ended.buffer)),
+        kind: ENDING_KIND.to_owned(),
         url: None,
         navigation: String::new(),
         refreshed_at: now.timestamp(),
-        payload: Some(serde_json::to_string(kept).ok()?),
+        payload: Some(serde_json::to_string(ended).ok()?),
     })
 }
 
-/// The request binding and ending a request record holds.
-pub(crate) fn kept(document: &Document) -> Option<Kept> {
+/// The ending an ending record holds.
+pub(crate) fn ended(document: &Document) -> Option<Ended> {
     let payload = document
         .payload
         .as_deref()
-        .filter(|_| document.kind == REQUEST_KIND)?;
+        .filter(|_| document.kind == ENDING_KIND)?;
     serde_json::from_str(payload).ok()
 }
 

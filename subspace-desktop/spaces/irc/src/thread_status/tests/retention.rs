@@ -2,11 +2,12 @@
 //! older replay never replaces a newer stage, and progress whose request
 //! is no longer held shows as an ordinary notice.
 
+use chrono::{DateTime, Utc};
 use subspace_client_irc::{Event, Line};
 
 use super::{is_folded, joined, label, live, progress, request, room, ship};
 use crate::fixtures::{at, message};
-use crate::state::LINE_CAP;
+use crate::state::{Buffer, IrcState, LINE_CAP};
 use crate::thread_status::shown_entry;
 
 /// `count` ordinary messages from bob, each with its own message ID.
@@ -79,34 +80,72 @@ fn an_older_replayed_stage_does_not_replace_a_newer_one() {
     assert_eq!(label(&state, "first"), Some("Answer received"));
 }
 
-#[test]
-fn progress_whose_request_is_dropped_shows_as_a_notice() {
+/// The room after its request "first" was dropped by the line cap while
+/// two folded notices on it, the second a mention, stayed held, read up to
+/// `marker` when one is given.
+fn dropped_request(marker: Option<DateTime<Utc>>) -> IrcState {
     let mut state = joined(vec![ship()]);
+    if let Some(time) = marker {
+        state.apply(
+            Event::ReadMarker {
+                buffer: room(),
+                time,
+            },
+            at(0),
+        );
+    }
     live(&mut state, [request(&room(), "first", 1)]);
-    live(&mut state, chatter(0, LINE_CAP - 2));
-    let mut mention = progress(&room(), "first", "tool", 30);
+    live(&mut state, chatter(0, LINE_CAP - 3));
+    let mut mention = progress(&room(), "first", "reply", 31);
     mention.highlight = true;
-    live(&mut state, [mention]);
-    assert!(is_folded(&state, &room(), "astra-first-30"));
+    live(
+        &mut state,
+        [progress(&room(), "first", "tool", 30), mention],
+    );
+    assert!(is_folded(&state, &room(), "astra-first-31"));
     let highlights = state.buffer(&room()).map(|held| held.highlights);
     assert_eq!(highlights, Some(0), "folded progress never counts");
     live(&mut state, chatter(LINE_CAP, 1));
-    assert!(
-        !is_folded(&state, &room(), "astra-first-30"),
-        "its request is no longer held"
-    );
-    let held = state.buffer(&room()).unwrap();
-    assert_eq!(held.highlights, 1, "counted at once, as any notice");
+    state
+}
+
+/// The sequence and position of the line with message ID `id`.
+fn held_at(held: &Buffer, id: &str) -> (usize, i64) {
     let position = held
         .entries
         .iter()
-        .position(|entry| entry.line.id.as_deref() == Some("astra-first-30"))
+        .position(|entry| entry.line.id.as_deref() == Some(id))
         .unwrap();
-    let seq = held.entries[position].seq;
-    assert!(held.unread_entries.contains(&seq));
+    (position, held.entries[position].seq)
+}
+
+#[test]
+fn progress_whose_request_is_dropped_shows_without_new_unread_activity() {
+    let state = dropped_request(None);
+    for id in ["astra-first-30", "astra-first-31"] {
+        assert!(!is_folded(&state, &room(), id), "{id}: request not held");
+    }
+    let held = state.buffer(&room()).unwrap();
+    let (position, seq) = held_at(held, "astra-first-31");
+    assert!(
+        !held.unread_entries.contains(&seq),
+        "without a read marker, restored progress is not news"
+    );
+    assert_eq!(held.highlights, 0);
     assert_eq!(
         shown_entry(held, seq),
         Some((position, seq)),
         "Search reveals the notice itself"
     );
+}
+
+#[test]
+fn progress_whose_request_is_dropped_counts_against_a_read_marker() {
+    let state = dropped_request(Some(at(25)));
+    let held = state.buffer(&room()).unwrap();
+    for id in ["astra-first-30", "astra-first-31"] {
+        let (_, seq) = held_at(held, id);
+        assert!(held.unread_entries.contains(&seq), "{id} is newer");
+    }
+    assert_eq!(held.highlights, 1, "the mention highlights at once");
 }

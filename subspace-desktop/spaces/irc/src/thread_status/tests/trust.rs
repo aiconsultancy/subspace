@@ -51,7 +51,7 @@ fn only_the_addressed_ships_server_account_is_trusted() {
 }
 
 #[test]
-fn a_request_without_an_addressee_or_a_binding_folds_nothing() {
+fn a_request_without_an_addressee_or_a_notice_without_an_account_folds_nothing() {
     let mut unaddressed = joined(vec![ship()]);
     let mut plain = request(&room(), "first", 1);
     plain.text = "please handle first".into();
@@ -62,24 +62,19 @@ fn a_request_without_an_addressee_or_a_binding_folds_nothing() {
     assert!(!is_folded(&unaddressed, &room(), "astra-first-2"));
     assert_eq!(label(&unaddressed, "first"), None);
 
-    let mut unbound = joined(vec![member("astra", "+")]);
+    let mut unvouched = joined(vec![member("astra", "+")]);
     live(
-        &mut unbound,
+        &mut unvouched,
         [
             request(&room(), "first", 1),
             notice_from(("astra", None), &room(), "first", "tool", 2),
-            progress(&room(), "first", "reply", 3),
         ],
     );
     assert!(
-        !is_folded(&unbound, &room(), "astra-first-2"),
-        "the agent's first answer carries no account"
+        !is_folded(&unvouched, &room(), "astra-first-2"),
+        "a notice without an account tag"
     );
-    assert!(
-        !is_folded(&unbound, &room(), "astra-first-3"),
-        "a later account does not bind"
-    );
-    assert_eq!(label(&unbound, "first"), None);
+    assert_eq!(label(&unvouched, "first"), None);
 
     let mut mentioned = joined(vec![ship()]);
     let mut at_mention = request(&room(), "first", 1);
@@ -124,7 +119,7 @@ fn label_in(state: &IrcState, buffer: &BufferKey, request: &str) -> Option<&'sta
 }
 
 #[test]
-fn history_progress_is_taken_out_of_unread_once_it_binds() {
+fn history_progress_is_taken_out_of_unread_as_it_folds() {
     let mut state = joined(vec![member("astra", "+")]);
     state.apply(
         Event::ReadMarker {
@@ -148,7 +143,7 @@ fn history_progress_is_taken_out_of_unread_once_it_binds() {
     assert_eq!(
         state.buffer(&room()).map(|held| held.unread),
         Some(1),
-        "the agent's first answer binds the request; the lookalike counts"
+        "the agent's progress folds; the lookalike counts"
     );
     assert!(is_folded(&state, &room(), "astra-first-2"));
     assert!(!is_folded(&state, &room(), "nova-first-3"));

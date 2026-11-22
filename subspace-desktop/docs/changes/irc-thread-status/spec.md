@@ -100,6 +100,10 @@ message and changes no status.
 
 ## Trust
 
+Owner decision, 21 November 2026: a notice is trusted when its server
+account equals the addressed nick. This overrides reviewer findings on the
+trust model.
+
 Anyone can send a client-only tag, so Channels folds a marked notice only
 when the server vouches for its sender. Every condition must hold:
 
@@ -110,88 +114,79 @@ when the server vouches for its sender. Every condition must hold:
    addresses one nick: `nick:`, `nick,` or `@nick`, the forms the composer
    completes. In a private conversation it is the conversation's partner.
    A request that addresses no one, or only further on in its text, has no
-   expected ship. Nor does a request that addresses its own sender (compared
-   case-insensitively in ASCII): it is not a request, so a member cannot
-   fold their own tagged notices.
-3. **The account the request is bound to.** Each request has at most one
-   binding, set once, from the first of these that applies:
-   1. **As it arrives live:** the account the IRC server reports for that
-      nick in the member lists: the channel's own, or, for a private
-      conversation, those of the network's channels. The client fills them
-      from `WHOX` after each join, `extended-join` and `account-notify`
-      (`Member::account`); only the server sets them.
-   2. **Otherwise, the agent's first answer:** the server `account` tag on
-      the earliest progress notice on that request (by server time; of two
-      at the same time, the earlier held) whose sender nick is the nick the
-      request asks, compared case-insensitively in ASCII. It is the server's
-      own record of who held the nick when the agent first answered, so it
-      is as strong as the first source, and it works for a request first
-      seen from history or backfill, such as one sent before Channels
-      joined. If that notice carries no `account` tag, the request stays
-      unbound; a later notice does not bind it.
+   expected ship. Nor does a self-addressed request: one whose sender's nick
+   is the addressed nick, or whose sender's `account` tag, when it has one,
+   is the addressed nick (compared case-insensitively in ASCII). It is not a
+   request, so a member cannot fold their own tagged notices, from this nick
+   or another nick on the same account.
+3. **The notice comes from the account named after that nick.** The
+   notice's `account` tag, which only the server sets (`account-tag`),
+   equals the addressed nick, compared case-insensitively in ASCII. Who
+   holds the nick, and what the member lists say, play no part.
 
-   An account equal to the requester's own (the request line's `account`
-   tag, when it has one) is never a binding, from either source. The member
-   lists are never read after a request arrives: a request without a
-   binding from these two sources stays unbound, and its notices stay
-   ordinary notices.
-4. **The notice comes from the bound account.** The notice's `account`
-   tag, which only the server sets (`account-tag`), names the bound
-   account, compared case-insensitively in ASCII, whoever holds the nick by
-   then.
+**Why the account and the nick must match.** Account names are unique on
+an IRC server, and only the server sets the `account` tag. Fleet IRC
+servers tie each nick to the account of the same name (Ergo's
+`force-nick-equals-account` with strict nick reservation, in
+`subspace-irc/ircd.yaml.tmpl`), so only the agent's own account can use its
+nick there, and they are reached only over a private network. A notice
+from the account named after the addressed nick is therefore from the
+agent, live, from history, from a bouncer replay or after a restart, and
+no other account can fold, change or end a request's status, even one that
+holds the agent's nick on a server without that tie.
 
-**Where the expected account comes from.** Channels has no other trustworthy
-source. The Subspace API's fleet record (`Fleet::rear_admiral_name`,
-`Fleet::captain_names`) and the issue assignee's `agent.ship` give agent
-*names*, not IRC accounts; the fleet installer happens to derive accounts as
-`<fleet slug>-<name>`, but that is installer configuration, not data the
-API publishes, so Channels does not assume it. Captain notifications address
-`@<ship>` by name and prove nothing about accounts. The request's addressee
-is therefore the only per-request indication of the expected ship, and only
-the server's account data turns it into an identity. The nick is used to
-look the account up, never as proof of identity. If the API later publishes
-each agent's IRC account, the rule can also require the account to belong to
-the initiative's fleet.
+**Where else the expected account could come from.** Channels has no other
+trustworthy source. The Subspace API's fleet record
+(`Fleet::rear_admiral_name`, `Fleet::captain_names`) and the issue
+assignee's `agent.ship` give agent *names*, not IRC accounts. Captain
+notifications address `@<ship>` by name and prove nothing about accounts.
+If the API later publishes each agent's IRC account, the rule can also
+require the account to belong to the initiative's fleet.
 
-**When there is no trustworthy source, nothing folds.** Examples: the
-server does not offer `account-tag`, the ship was not in the channel (or,
-for a private conversation, in any channel we share) when the request
-arrived and its first answer carries no account, the request addresses no
-one or its sender, or the request is not loaded.
+**When the rule does not hold, nothing folds.** Examples: the server does
+not offer `account-tag`, the agent is not logged in, its account is not
+named after its nick (on servers other than the fleet's, such an agent gets
+no status lines, and its progress stays as ordinary notices), the request
+addresses no one or itself, or the request is not loaded.
 
-**Bindings and endings.** They are held in the Space's state, per buffer
-(`thread_status::Requests`, in `Buffer::requests`), so folding again from
-the held lines uses them, and member events cannot change them: a ship
-leaving, or another account taking its nick, changes nothing about requests
-already bound. A binding outlives its request line, so a request that loads
-again keeps it; each buffer remembers up to twice `HISTORY_MAX` bindings
-and endings, the oldest forgotten first.
+**Endings.** A request that completed or failed, by a trusted notice, is
+kept as ended in the Space's state, per buffer (`thread_status::Requests`,
+in `Buffer::requests`), apart from its lines, so it stays ended after the
+notice is dropped. Each buffer remembers up to twice `HISTORY_MAX` endings,
+the oldest forgotten first.
 
-**They are stored.** Each request whose binding or ending changes is
-written to the Channels store as one record (kind `Channels request`, id
-`request:<network>:<msgid>`, payload `{"request", "pin", "ended"}`) under
-its buffer's record parent, so removing the buffer deletes them with its
-lines. The record has no title, body or metadata, so no search finds it.
-On start, each buffer's newest twice-`HISTORY_MAX` request records load
-into `Requests` before its lines fold, so a stored binding wins over
-anything the lines would bind, and a stored ending keeps a finished request
-finished, also when a partial reload or a Search reload brings back its
-earlier progress without its ending. An older store without these records,
-or a record without `pin` or `ended`, loads with none (`serde(default)`);
-Subspace has no users or installs yet, so there is no migration. With
-**Cache Channels** off nothing is stored, and bindings and endings last
-only while Channels runs. Request records follow the store's retention
-like lines, counted from their last write.
+**Endings are stored.** Each ending is written to the Channels store as one
+record (kind `Channels request ending`, id `ended:<network>:<msgid>`,
+payload `{"buffer", "request"}`) under its buffer's record parent, so
+removing the buffer deletes it with the lines. The record has no title,
+body or metadata, so no search finds it. Endings go in the same write as
+the lines waiting with them, before those lines, in batches of up to 100
+records, each one store transaction: a write cut short between batches can
+leave an ending without its notice, never a notice without an ending
+written before it. Should an ending still be missing, a finished request
+only shows its last stage again until its completed notice reloads. On
+start, each buffer's newest twice-`HISTORY_MAX` endings load into
+`Requests`, also when none of its lines survive: the record names its
+buffer, and endings for a buffer that holds no lines wait
+(`IrcState::parked`) until it does, without adding it to the list. A
+finished request therefore stays finished after a restart, a partial
+reload or a Search reload. An older store without these records, or with
+the records of an earlier draft of this change, loads with none; Subspace
+has no users or installs yet, so there is no migration. With **Cache
+Channels** off nothing is stored, and endings last only while Channels
+runs. Ending records follow the store's retention like lines, counted from
+their write.
 
-**Stability.** A live line is taken in by itself: a request is bound as it
-arrives or by its agent's first answer, and a notice folds or not, without
-reading the buffer again. A history page, backfill or restore folds its
-buffer again from the held lines (`state/folding.rs`). Member list changes
-fold nothing again. A notice stays folded while it and its request are
-held: when the line cap drops the request, its notices stop folding, show,
-can be found from Search, and count against the read marker at once as
-ordinary notices, unread and highlighted as a read-marker recount would
-count them; they fold again if the request loads again.
+**Stability.** A live line is taken in by itself, without reading the
+buffer again. A history page, backfill or restore folds its buffer again
+from the held lines (`state/folding.rs`). Member list changes fold nothing
+again. A notice stays folded while it and its request are held: when the
+line cap drops the request, its notices stop folding, show, and can be
+found from Search as ordinary notices, counted as history is, unread and
+highlighted only when newer than a known read marker, so restored progress
+never reads as new activity; they fold again if the request loads again.
+Untrusted progress notices are remembered by the request ID they name only
+while they are held.
 
 **Counting.** A trusted notice never counts as unread and never notifies,
 live or from history. A live notice is checked before it is counted. History
@@ -232,7 +227,7 @@ characters with an ellipsis (`thread_status::model::agent_name`).
 - **Endings are final.** `completed` or `failed` clears only the matching
   request, and no other notice, later or loaded from older history, reopens
   it. The ending is kept apart from the notice (`thread_status::Requests`)
-  and stored (see **They are stored** under Trust), so it holds after the
+  and stored (see **Endings are stored** under Trust), so it holds after the
   notice is dropped by the line cap, after a restart, and when a partial
   or Search reload brings back earlier progress without it. A final
   reply without a reply tag in the main room, or any untagged or `PRIVMSG`
@@ -271,18 +266,15 @@ characters with an ellipsis (`thread_status::model::agent_name`).
 - Requests that do not address the ship in their first word, such as
   messages in a channel where Stargate wakes on every human message, fold
   nothing: Channels has no expected account for them.
-- A request first seen without a reported account binds to the account on
-  its agent's first answer. On a server that lets another account take a
-  nick, a different account holding the nick when the agent first answers
-  binds instead; that answer is still the server's record of who held the
-  nick. A stored binding is never replaced.
-- With **Cache Channels** off, bindings and endings are not stored: after a
-  restart a request binds again by its agent's earliest held answer.
+- An agent whose account is not named after its nick gets no status lines
+  on servers other than the fleet's: its progress stays as ordinary
+  notices. The owner accepts this.
 - A progress notice for a request that is not loaded stays a notice until
   the request loads and folding runs again.
-- Nicks are compared in ASCII, not by the network's `CASEMAPPING`: the
-  Space has no case mapping, as the agent status change also decided. A
-  request to `bot{` on an RFC 1459 network does not reach `bot[`, so its
+- Nicks and accounts are compared in ASCII, not by the network's
+  `CASEMAPPING`: the Space has no case mapping, as the agent status change
+  also decided, and the owner's decision above settles it. A request to
+  `bot{` on an RFC 1459 network does not match an account `bot[`, so its
   progress stays visible as notices.
 - Progress received on the current connection counts as current, however
   old, also when it comes from history replayed on join: that is how

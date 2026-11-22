@@ -340,23 +340,19 @@ are in the [change record](changes/irc-thread-status/spec.md).
 
 - **Trust.** A notice folds only when it replies to a message or action
   this buffer holds (in a private conversation, our own), and its
-  server-set `account` tag names the account that request is bound to.
-  The request asks a ship: the nick its first word addresses (`nick:`,
-  `nick,` or `@nick`), or a private conversation's partner; a request that
-  addresses its own sender asks no one. Its binding is set once, from the
-  first source that applies: the account the member lists (`WHOX`,
-  `extended-join`, `account-notify`) report for that nick when the request
-  arrives live; otherwise the server `account` tag on the earliest progress
-  notice (by server time) that nick sends on the request, which also binds
-  a request first seen from history or backfill. An account equal to the
-  requester's own `account` tag is never a binding. Member lists are not
-  read after a request arrives, and without a binding nothing folds. From
-  then on only that account's notices fold, whoever holds the nick later.
-  Bindings and endings (`thread_status::Requests`) are stored: see
-  [Message history and search](#message-history-and-search).
-  Untrusted, unrecognised and uncorrelated notices, questions, answer
-  instructions and final replies stay ordinary messages, counted and
-  notified as before.
+  server-set `account` tag equals the nick that request asks, ignoring
+  ASCII case. The request asks a ship: the nick its first word addresses
+  (`nick:`, `nick,` or `@nick`), or a private conversation's partner. A
+  request whose sender's nick, or sender's `account` tag, is the addressed
+  nick asks no one. Member lists play no part, so whoever holds the nick
+  later, only the account named after it folds. Owner decision, 21
+  November 2026: this overrides reviewer findings on the trust model.
+  Fleet IRC servers are private and tie each nick to the account of the
+  same name (`force-nick-equals-account`), so only the agent itself can
+  send as its nick there. On other servers, an agent whose account is not
+  named after its nick gets no status lines. Untrusted, unrecognised and
+  uncorrelated notices, questions, answer instructions and final replies
+  stay ordinary messages, counted and notified as before.
 - **One line per request**, keyed by the request's own message ID, so two
   requests in one thread each have one. The newest trusted notice by
   server time (of two at the same time, the later one held) sets
@@ -383,8 +379,8 @@ are in the [change record](changes/irc-thread-status/spec.md).
   the buffer again; a history page, backfill or restore folds its buffer
   again; member list changes fold nothing again. A line stays folded while
   it and its request are held: when the line cap drops the request, its
-  notices show as ordinary notices again, counted unread and highlighted at
-  once against the read marker. Folded
+  notices show as ordinary notices again, counted as history is: unread and
+  highlighted only when newer than a known read marker. Folded
   notices make no row, are not replies, never count as unread and never
   notify, live or from history. They are stored and searchable; opening one
   from Search shows its request.
@@ -413,11 +409,13 @@ is the [change record](changes/irc-search-history/spec.md).
   network as the `project` filter; and an exact `ReferenceIdentity::github`
   (`mentioned-pull-request` or `mentioned-issue`) for each GitHub pull
   request or issue URL in it, so `related_items` for that item lists the
-  message. Beside them, each agent request whose binding or ending changed
-  is one record of kind `Channels request` under the same buffer, holding
-  only its message ID, bound account and whether it ended, with no
-  searchable text (see [Request status lines](#request-status-lines)). The
-  restore loads each buffer's newest 20,000 of them before its lines fold.
+  message. Beside them, each agent request that completed or failed is one
+  record of kind `Channels request ending` under the same buffer, holding
+  only the buffer and the request's message ID, with no searchable text
+  (see [Request status lines](#request-status-lines)). Endings are written
+  in the same batches as the lines waiting with them, before those lines.
+  The restore loads each buffer's newest 20,000 endings, also when none of
+  its lines survive.
 - **When it is written**: in order on the background executor, in batches of
   at most 100, about a second after new lines arrive and when the board stops
   (`hub/persist.rs`).

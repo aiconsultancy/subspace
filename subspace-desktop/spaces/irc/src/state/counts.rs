@@ -1,6 +1,8 @@
 //! Unread and highlight counts, kept against the buffer's read marker.
 //! Folded request progress ([`Buffer::folded`]) never counts.
 
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use subspace_client_irc::{BufferKey, Target};
 
@@ -63,18 +65,20 @@ pub(super) fn recount(buffer: &mut Buffer) {
 }
 
 /// Counts the lines numbered `seqs`, which were folded and show again, such
-/// as progress whose request was dropped, against the current read marker
-/// as [`recount`] would, so a later recount changes nothing.
+/// as progress whose request was dropped, as history counts: unread only
+/// when newer than a known read marker, so restored progress never reads as
+/// new activity.
 pub(super) fn unfolded(buffer: &mut Buffer, seqs: &[i64]) {
     if seqs.is_empty() {
         return;
     }
+    let seqs: HashSet<i64> = seqs.iter().copied().collect();
     let marker = buffer.read_marker;
     let counted: Vec<(i64, bool)> = buffer
         .entries
         .iter()
         .filter(|entry| seqs.contains(&entry.seq))
-        .filter(|entry| unread(&entry.line.buffer, entry, marker, true, false))
+        .filter(|entry| unread(&entry.line.buffer, entry, marker, false, false))
         .map(|entry| (entry.seq, entry.highlight))
         .collect();
     for (seq, highlight) in counted {

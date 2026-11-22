@@ -16,14 +16,14 @@ pub(crate) mod tests;
 use chrono::{DateTime, Utc};
 use subspace_client_irc::{BufferKey, Line};
 use subspace_framework::dashboard::full_text::{
-    Document, Filters, Policy, RecordQuery, Scope, Service,
+    Document, Filters, IndexMetadata, Policy, RecordQuery, Scope, Service,
 };
 use subspace_framework::dashboard::search_adapter::inactive_scope;
 
-pub(crate) use mapping::{Navigation, document_id, navigation, scope, stored};
+pub(crate) use mapping::{Ended, Navigation, document_id, navigation, scope, stored};
 
 use crate::state::LINE_CAP;
-use crate::thread_status::{Kept, REMEMBERED};
+use crate::thread_status::REMEMBERED;
 
 /// The most records one write publishes, as the store allows.
 const BATCH: usize = 100;
@@ -35,10 +35,13 @@ const PAGE: usize = 1000;
 /// One operation on the store, run in the order the hub queued it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Op {
-    /// Stores these lines; lines that are not stored are skipped.
+    /// Stores these lines; lines that are not stored are skipped. Only
+    /// tests queue lines without endings; the hub always sends a `Commit`.
+    #[cfg(test)]
     Publish(Vec<Line>),
-    /// Stores the bindings and endings of these requests of a buffer.
-    Requests(BufferKey, Vec<Kept>),
+    /// Stores these request endings, then these lines, in the same batches,
+    /// so each batch of up to `BATCH` records commits as one.
+    Commit { ended: Vec<Ended>, lines: Vec<Line> },
     /// Deletes every record of this buffer.
     Forget(BufferKey),
 }
@@ -97,42 +100,43 @@ impl Link {
 
     fn apply(&self, op: &Op, now: DateTime<Utc>) -> Result<(), String> {
         match op {
-            Op::Publish(lines) => self.publish(lines, now),
-            Op::Requests(buffer, kept) => self.keep_requests(buffer, kept, now),
+            #[cfg(test)]
+            Op::Publish(lines) => self.publish(&[], lines, now),
+            Op::Commit { ended, lines } => self.publish(ended, lines, now),
             Op::Forget(buffer) => self.forget(buffer),
         }
     }
 
-    fn publish(&self, lines: &[Line], now: DateTime<Utc>) -> Result<(), String> {
-        let records: Vec<(Line, _)> = lines
-            .iter()
-            .filter_map(|line| Some((line.clone(), mapping::document(line, now)?)))
-            .collect();
-        for batch in records.chunks(BATCH) {
-            let documents: Vec<_> = batch.iter().map(|(_, document)| document.clone()).collect();
-            self.service.upsert(&self.scope, &documents)?;
-            let metadata: Vec<_> = batch
-                .iter()
-                .map(|(line, document)| (document.id.clone(), mapping::metadata(line)))
-                .collect();
-            self.service.index_metadata_batch(&self.scope, &metadata)?;
-        }
-        Ok(())
+    /// Writes `ended`, then `lines`, in batches of at most `BATCH` records,
+    /// each one store transaction, with the lines' link metadata after it.
+    /// An ending goes before the lines it may concern, so a write cut short
+    /// can leave an ending without its notice, never the reverse.
+    fn publish(&self, ended: &[Ended], lines: &[Line], now: DateTime<Utc>) -> Result<(), String> {
+        let endings = ended.iter().filter_map(|ended| {
+            Some((mapping::ending_document(ended, now)?, None::<IndexMetadata>))
+        });
+        let messages = lines.iter().filter_map(|line| {
+            let document = mapping::document(line, now)?;
+            Some((document, Some(mapping::metadata(line))))
+        });
+        let records: Vec<(Document, Option<IndexMetadata>)> = endings.chain(messages).collect();
+        records
+            .chunks(BATCH)
+            .try_for_each(|batch| self.write(batch))
     }
 
-    fn keep_requests(
-        &self,
-        buffer: &BufferKey,
-        kept: &[Kept],
-        now: DateTime<Utc>,
-    ) -> Result<(), String> {
-        let documents: Vec<_> = kept
+    /// One batch: its records, then the link metadata of its lines.
+    fn write(&self, batch: &[(Document, Option<IndexMetadata>)]) -> Result<(), String> {
+        let documents: Vec<Document> = batch.iter().map(|(document, _)| document.clone()).collect();
+        self.service.upsert(&self.scope, &documents)?;
+        let metadata: Vec<(String, IndexMetadata)> = batch
             .iter()
-            .filter_map(|kept| mapping::request_document(buffer, kept, now))
+            .filter_map(|(document, metadata)| Some((document.id.clone(), metadata.clone()?)))
             .collect();
-        documents
-            .chunks(BATCH)
-            .try_for_each(|batch| self.service.upsert(&self.scope, batch))
+        if metadata.is_empty() {
+            return Ok(());
+        }
+        self.service.index_metadata_batch(&self.scope, &metadata)
     }
 
     fn forget(&self, buffer: &BufferKey) -> Result<(), String> {
@@ -146,8 +150,8 @@ impl Link {
     }
 
     /// Each stored buffer's newest `LINE_CAP` lines, oldest first, with its
-    /// newest `REMEMBERED` request bindings and endings, oldest first.
-    /// `None` when the store is off.
+    /// newest `REMEMBERED` request endings, oldest first, also when no line
+    /// survives. `None` when the store is off.
     pub fn restore(&self) -> Result<Option<Vec<Restored>>, String> {
         self.scoped(Self::read_all)
     }
@@ -158,20 +162,11 @@ impl Link {
             .groups(&self.scope, &Filters::default(), MAX_BUFFERS)?;
         let mut buffers = Vec::new();
         for group in groups {
-            let lines =
-                ordered(self.read_records(&group.parent_id, None, LINE_CAP, mapping::line)?);
-            if let Some(first) = lines.first() {
-                let kind = Some(mapping::REQUEST_KIND);
-                let mut requests =
-                    self.read_records(&group.parent_id, kind, REMEMBERED, mapping::kept)?;
-                requests.reverse();
-                let buffer = first.buffer.clone();
-                buffers.push(Restored {
-                    buffer,
-                    lines,
-                    requests,
-                });
-            }
+            let parent = group.parent_id.as_str();
+            let lines = ordered(self.read_records(parent, None, LINE_CAP, mapping::line)?);
+            let kind = Some(mapping::ENDING_KIND);
+            let ended = self.read_records(parent, kind, REMEMBERED, mapping::ended)?;
+            buffers.extend(restored(lines, ended));
         }
         Ok(buffers)
     }
@@ -212,10 +207,26 @@ impl Link {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Restored {
     pub buffer: BufferKey,
-    /// Its newest lines, oldest first.
+    /// Its newest lines, oldest first; maybe none.
     pub lines: Vec<Line>,
-    /// Its newest request bindings and endings, oldest first.
-    pub requests: Vec<Kept>,
+    /// The message IDs of its newest ended requests, oldest first.
+    pub ended: Vec<String>,
+}
+
+/// The buffer `lines` (oldest first) and `ended` (newest first) restore,
+/// filed under the lines' spelling, else the newest ending's. `None` when
+/// both are empty.
+fn restored(lines: Vec<Line>, ended: Vec<Ended>) -> Option<Restored> {
+    let buffer = lines
+        .first()
+        .map(|line| line.buffer.clone())
+        .or_else(|| ended.first().map(|ended| ended.buffer.clone()))?;
+    let ended = ended.into_iter().rev().map(|ended| ended.request).collect();
+    Some(Restored {
+        buffer,
+        lines,
+        ended,
+    })
 }
 
 /// Restored lines, oldest first by their exact time, all filed under the

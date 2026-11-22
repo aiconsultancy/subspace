@@ -19,7 +19,7 @@ mod trust;
 use subspace_client_irc::{Line, LineKind, Target};
 
 pub(crate) use model::{Shown, Statuses, shown_entry, statuses};
-pub(crate) use requests::{Arrival, Kept, REMEMBERED, Requests};
+pub(crate) use requests::{Arrival, REMEMBERED, Requests};
 pub(crate) use trust::{arrival, asked, notices};
 
 /// The client-only tag that marks request progress on a `NOTICE`. Its value

@@ -9,9 +9,8 @@
       `+draft/reply` naming the individual request.
 - [x] Keep client-only tags on lines in the IRC client, live, in history and
       from the opening multiline batch.
-- [x] Trust only the addressed ship's server-authenticated account, bound
-      once per request, on a request Channels holds; record the rule and
-      its sources in `spec.md`.
+- [x] Trust only the server account named after the addressed nick, on a
+      request Channels holds; record the rule and its reasons in `spec.md`.
 - [x] Keep one status per request message ID: every stage, endings that stay
       final, staleness on a disconnect, reopening.
 - [x] Fold trusted notices out of rows, reply counts, unread counts and
@@ -57,11 +56,21 @@
       agent's name; replace the fixture's config atomically. Leave case
       mapping open, with the reason.
 - [x] Add binding, storage, eviction-counting and agent-name tests.
-- [ ] Build and test the round-2 fixes: `cargo test` and `make check`.
-- [ ] Run the fixture against a fresh local Ergo server again.
 - [ ] Owner: commit (signed), push and open the pull request, with the
       captures embedded by commit-pinned URLs.
-- [ ] Both model reviews (round 3) clear the final head.
+- [x] Build and test the round-2 fixes and run the fixture; commit them.
+- [x] Owner decision, 21 November 2026: trust a notice when its server
+      account equals the addressed nick. Remove bindings, their storage and
+      every trust read of the member lists; keep stored endings.
+- [x] Address the round-3 review (see Review findings, round 3, in
+      `delivery.md`): forget unfolded notices as they leave, count unfolded
+      progress as history, restore endings without surviving lines, write
+      endings with their lines, and use a set when unfolding.
+- [x] Replace the binding tests with tests of the account rule and of
+      stored endings.
+- [ ] Build and test the round-3 fixes: `cargo test` and `make check`.
+- [ ] Run the fixture against a fresh local Ergo server again.
+- [ ] Both model reviews (round 4) clear the final head.
 
 ### Board checklist: irc
 
@@ -81,9 +90,9 @@ Settings and configuration
 - [x] No new setting or feature flag.
 
 Data caching and refresh
-- [x] Stored lines keep their client tags; request bindings and endings
-      are stored beside them and load before the lines fold; folding and
-      statuses rebuild from held lines, with no I/O in render.
+- [x] Stored lines keep their client tags; request endings are stored
+      beside them and restore with or without them; folding and statuses
+      rebuild from held lines, with no I/O in render.
 
 Search
 - [x] Folded progress stays searchable; opening it shows its request.
