@@ -24,6 +24,9 @@ function port(name: string, fallback: number) {
   return value;
 }
 
+// An agent's name is its IRC nick and account, <fleet>-<captain-id> or
+// <fleet>-admiral. A captain's ship is named after it, which gives its ship
+// channel #<fleet>-<captain-id> (the standard fleet channels).
 const fleets = [
   {
     slug: "aurora",
@@ -32,9 +35,11 @@ const fleets = [
     ircPort: port("SEED_IRC_PLAIN_PORT", 6667),
     ircTls: false,
     agents: [
-      { handle: "aurora-admiral", name: "Rear-Admiral-Vega", rank: "rearAdmiral", ship: null },
-      { handle: "aurora-lyra", name: "Captain-Lyra", rank: "captain", ship: "Lattice" },
-      { handle: "aurora-orion", name: "Captain-Orion", rank: "captain", ship: "Plover" },
+      { handle: "aurora-admiral", name: "aurora-admiral", rank: "rearAdmiral", ship: null },
+      { handle: "aurora-lyra", name: "aurora-lyra", rank: "captain", ship: "Lyra" },
+      { handle: "aurora-orion", name: "aurora-orion", rank: "captain", ship: "Orion" },
+      { handle: "aurora-vega", name: "aurora-vega", rank: "captain", ship: "Vega" },
+      { handle: "aurora-castor", name: "aurora-castor", rank: "captain", ship: "Castor" },
     ],
   },
   {
@@ -44,8 +49,8 @@ const fleets = [
     ircPort: port("SEED_IRC_TLS_PORT", 6697),
     ircTls: true,
     agents: [
-      { handle: "borealis-admiral", name: "Rear-Admiral-Polaris", rank: "rearAdmiral", ship: null },
-      { handle: "borealis-rigel", name: "Captain-Rigel", rank: "captain", ship: "Lantern" },
+      { handle: "borealis-admiral", name: "borealis-admiral", rank: "rearAdmiral", ship: null },
+      { handle: "borealis-rigel", name: "borealis-rigel", rank: "captain", ship: "Rigel" },
     ],
   },
 ] as const;
