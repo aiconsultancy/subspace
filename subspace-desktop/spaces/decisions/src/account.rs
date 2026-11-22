@@ -40,11 +40,22 @@ impl Decisions {
     /// Whether an answer read under `lease` may be shown: it is still
     /// `wanted`, and neither it nor what the Space holds was read for an
     /// account that has since changed. An answer read for a previous account
-    /// drops everything, as the account change does.
-    pub(crate) fn landed(&mut self, wanted: bool, lease: &Lease, cx: &mut Context<Self>) -> bool {
+    /// drops everything, as the account change does. An answer without a
+    /// lease, a read that could make no client, read nothing for any
+    /// account: it may show its refusal, and the Space keeps watching the
+    /// account what it holds was read for.
+    pub(crate) fn landed(
+        &mut self,
+        wanted: bool,
+        lease: Option<&Lease>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if self.follow_account(cx) || !wanted {
             return false;
         }
+        let Some(lease) = lease else {
+            return true;
+        };
         if lease.moved() {
             self.forget_account(cx);
             return false;
@@ -96,14 +107,23 @@ impl Decisions {
 
     /// Clears the search field and closes a menu after an account change.
     pub(crate) fn tidy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.clear_controls(window, cx) {
+            cx.notify();
+        }
+    }
+
+    /// What `tidy` does, without asking for a frame, so that a render that
+    /// finds the account changed draws neither the previous account's
+    /// search nor its open menu. True when there was something to clear.
+    pub(crate) fn clear_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !std::mem::take(&mut self.tidy) {
-            return;
+            return false;
         }
         self.menu_anchors.dismiss(window, cx);
         self.menu = None;
         self.search
             .update(cx, |input, cx| input.set_value("", window, cx));
-        cx.notify();
+        true
     }
 
     /// Whether what the Space holds was read for an account that is no

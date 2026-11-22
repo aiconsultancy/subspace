@@ -94,6 +94,10 @@ pub struct CopilotAgents {
     /// The work login GitHub named, once a list load asked for it. The
     /// navigator's footer and the status bar read it.
     login: Option<String>,
+    /// The work account the list on show was read as, verified for the
+    /// credential that read it. Each log read is checked against it before
+    /// it is indexed or shown (see `logs::load`).
+    identity: Option<load::WorkIdentity>,
     /// Whether the navigator shows.
     navigator_open: bool,
     /// Whether the inspector shows the selection beside the pane.

@@ -4,9 +4,9 @@
 //! Its body is a tree of destinations, as a desktop sidebar is: each row is a
 //! tree item that says whether it is selected. A row with a click handler is
 //! a tab stop; the list keys move between rows (`SelectNext`,
-//! `SelectPrevious`) and Enter or Space chooses one, as a click does. A click
-//! chooses a row without taking the keyboard focus, so the list keys still
-//! move the Space's own list after it.
+//! `SelectPrevious`), stopping at the first and the last, and Enter or Space
+//! chooses one, as a click does. A click chooses a row without taking the
+//! keyboard focus, so the list keys still move the Space's own list after it.
 
 use std::rc::Rc;
 
@@ -22,7 +22,7 @@ use subspace_lucide::SvgIcon;
 use super::row_parts::{
     ClickHandler, MenuBuilder, count_mark, fill, row_focus, with_handlers, with_menu,
 };
-use super::{header, text_edge};
+use super::{header, row_order, text_edge};
 use crate::row_menu::GroupedMenu;
 use crate::tokens::Tokens;
 use crate::truncated;
@@ -77,7 +77,10 @@ impl ParentElement for Navigator {
 }
 
 impl RenderOnce for Navigator {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // The rows draw after this, each taking its place in this navigator's
+        // own row order.
+        row_order::begin(window, cx);
         let tokens = Tokens::current(cx);
         let tree_label = self.title.clone();
         // The Space's name takes the accent, so it reads as where you are.
@@ -274,7 +277,7 @@ impl NavRow {
 impl RenderOnce for NavRow {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let tokens = Tokens::current(cx);
-        let focus = row_focus(&self.key, window, cx);
+        let (focus, rows) = row_focus(&self.key, self.on_click.is_some(), window, cx);
         let ring = focus.is_focused(window) && window.last_input_was_keyboard();
         let group = SharedString::from(format!("nav-row:{}", self.key));
         let title_id = SharedString::from(format!("nav-row-title:{}", self.key));
@@ -307,7 +310,7 @@ impl RenderOnce for NavRow {
             .child(truncated::text(title_id, self.label).flex_1())
             .children(self.count.map(|count| count_mark(count, mono, &tokens)))
             .children(self.trailing);
-        let row = with_handlers(row, self.on_click.clone());
+        let row = with_handlers(row, focus, rows, self.on_click.clone());
         // The selected row is already the one its menu acts on.
         let select = self.on_click.filter(|_| !self.selected);
         with_menu(row, self.menu, select)

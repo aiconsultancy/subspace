@@ -20,7 +20,8 @@ pub(super) fn start(
     submission
         .remaining()
         .map_err(|error| Error::Network(error.to_string()))?;
-    let login = client.work_login()?;
+    let work = client.pin_work()?;
+    let login = work.login().to_owned();
     submission
         .remaining()
         .map_err(|error| Error::Network(error.to_string()))?;
@@ -44,7 +45,7 @@ pub(super) fn start(
     )?;
     let id = raw.get("id").and_then(Value::as_str).unwrap_or_default();
     validate_task_id(id).map_err(|_| transport::unexpected("task creation response"))?;
-    let pulls = client.resolve_pull_artifacts(&login, &repo, std::slice::from_ref(&raw));
+    let pulls = work.resolve_pull_artifacts(&repo, std::slice::from_ref(&raw));
     Ok(to_task(&repo, &raw, input.subject.clone(), &pulls))
 }
 

@@ -38,6 +38,31 @@ pub trait ActionsApi {
         repo: &str,
         run_id: u64,
     ) -> Result<Page<Job>, subspace_core::http::Error>;
+    /// The jobs of attempt `attempt` of run `run_id`. A re-run is a new
+    /// attempt with jobs of its own, so a caller that read one attempt's run
+    /// asks for that attempt's jobs, not whichever attempt is newest by the
+    /// time the read lands. Attempt 0, which a run without `run_attempt`
+    /// maps to, reads the run's latest jobs.
+    ///
+    /// The default, for an implementation that cannot read one attempt,
+    /// reads the latest jobs for attempt 0 and fails with HTTP 501 (Not
+    /// Implemented) for any other, rather than answer for one attempt with
+    /// another's jobs.
+    fn actions_attempt_jobs(
+        &self,
+        login: &str,
+        repo: &str,
+        run_id: u64,
+        attempt: u64,
+    ) -> Result<Page<Job>, subspace_core::http::Error> {
+        match attempt {
+            0 => self.actions_jobs(login, repo, run_id),
+            _ => Err(subspace_core::http::Error::Status {
+                status: ureq::http::StatusCode::NOT_IMPLEMENTED.as_u16(),
+                message: "This GitHub client cannot read the jobs of one run attempt.".into(),
+            }),
+        }
+    }
     fn actions_job_log(
         &self,
         login: &str,

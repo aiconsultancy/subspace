@@ -83,6 +83,9 @@ invoke __product_metadata
 version="$(jq -er .version "$fixture/output")"
 framework_version="$(jq -er .subspace_version "$fixture/output")"
 test "$(jq -r .binary_name "$fixture/output")" = subspace
+# Read the board list now: the Board Lab target check below overwrites the
+# output with `--about`.
+boards="$(jq -c .boards "$fixture/output")"
 # Neither unreleased Space (Board Lab, the Component gallery) is in the
 # default build.
 expected_boards='["github","github-copilot-agents","irc","issues","decisions","actions"]'
@@ -97,7 +100,7 @@ if [[ "${SUBSPACE_FIXTURE_BOARD_LAB:-0}" == 1 ]]; then
     fi
     expected_boards='["github","github-copilot-agents","irc","issues","decisions","board-lab","actions"]'
 fi
-test "$(jq -c .boards "$fixture/output")" = "$expected_boards"
+test "$boards" = "$expected_boards"
 invoke --version
 # A local debug build marks its version: Subspace v<version>-dev-<host>-<unix time>.
 shown="$(cat "$fixture/output")"

@@ -12,6 +12,26 @@ const JOB_LOG_BYTES: usize = 1024 * 1024;
 const LOG_BUFFER_DIVISOR: usize = 16;
 const LOG_TRUNCATION_MARKER: &str = "\n\n[Subspace truncated this log at 1 MB.]\n";
 
+/// The run-wide jobs read keeps only each job's latest attempt.
+const LATEST_JOBS: &[(&str, &str)] = &[("filter", "latest")];
+/// One attempt's jobs read takes no filter: GitHub has none for it.
+const ATTEMPT_JOBS: &[(&str, &str)] = &[];
+
+/// The endpoint and query for run `run_id`'s jobs: attempt `attempt`'s, or
+/// the latest jobs for attempt 0, an attempt the run did not name.
+pub(super) fn jobs_endpoint(
+    run_id: u64,
+    attempt: u64,
+) -> (String, &'static [(&'static str, &'static str)]) {
+    match attempt {
+        0 => (format!("actions/runs/{run_id}/jobs"), LATEST_JOBS),
+        attempt => (
+            format!("actions/runs/{run_id}/attempts/{attempt}/jobs"),
+            ATTEMPT_JOBS,
+        ),
+    }
+}
+
 pub(super) fn job_log(
     client: &Client,
     login: &str,

@@ -371,8 +371,13 @@ shows **Loading the session log…**, then the log as Markdown.
   are on by default.
 - One log is open at a time. The logs you show are kept in
   `github-copilot-agents-session-log.json`: up to 8 logs, at most 4 MB in
-  total, the oldest dropped first. While the open task still runs, each watcher
-  round reads the log again.
+  total, the oldest dropped first, each under the GitHub account that read it.
+  A kept log shows again without asking GitHub, also offline, once the work
+  account's credential has been checked since Subspace started. While the open
+  task still runs, each watcher round reads the log again.
+- A log is shown only for the GitHub account the list shows. If the work
+  account's credential changed to another account, the log reads **Log
+  unavailable.** and the list loads again for the new account.
 - While session logs are on and this Space's full-text search policy is on,
   loading a task's sessions (selecting it with the inspector shown, or opening
   it) also reads its last session log for the search index, without showing
@@ -484,7 +489,7 @@ config file, not in the Keychain.
 | The views and repositories are missing. | The navigator is hidden. Choose **Show navigator** at the leading end of the status bar. |
 | **Cannot load sessions** | Read the error and choose **Retry**. |
 | `Open GitHub Agents in browser` | GitHub did not supply a task page or a pull request. The GitHub Agents home page opens instead. |
-| **Log unavailable.** | The read failed, or the answer held no log. The log needs an OAuth sign-in: sign in as the work account with **Sign in with GitHub** or `gh auth login`, and unset `GH_TOKEN` and `GITHUB_TOKEN`. The endpoint is undocumented. |
+| **Log unavailable.** | The read failed, the answer held no log, or the work credential now belongs to another account than the list shows (the list then loads again). The log needs an OAuth sign-in: sign in as the work account with **Sign in with GitHub** or `gh auth login`, and unset `GH_TOKEN` and `GITHUB_TOKEN`. The endpoint is undocumented. |
 | No alert for a task. | Press `m` to monitor it. Check that **Background updates** and the global automatic refresh are on. A task seen for the first time does not alert. |
 | An agent tool refuses a repository. | Star it with **Repositories…** in the PRs board, or add it in Settings and save. |
 | A task start returned an unclear result. | Do not start it again. Read this board and keep any returned GitHub link. |

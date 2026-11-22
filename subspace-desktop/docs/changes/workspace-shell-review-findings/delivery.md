@@ -52,16 +52,66 @@ the file.
 | S31 | GPT-6.2 Sol, low | `spaces/github-copilot-agents/src/shell.rs:56` | Fixed | `shell/tests/opened.rs`: `a_filter_key_on_an_opened_task_shows_the_list_and_opens_the_menu_there` |
 | O3 | Claude Opus 5.5, low | `spaces/github-copilot-agents/src/load.rs` (line given as 17220, beyond the file) | Fixed | `load/detail_tests.rs`: `each_loaded_list_renames_the_account_and_a_failed_one_keeps_it` |
 | S32 | GPT-6.2 Sol, low | `spaces/board-lab/help.md:523` | Left | Board Lab is being renamed to Space Lab on a parallel branch that rewrites this guide; fixing it there avoids a conflict |
-| S33 | GPT-6.2 Sol, medium | `AGENTS.md:78` (repository root) | Fixed | Checked by hand with prek 0.5.10 in a scratch repository: a ranged run, and a per-commit `--from-ref c^ --to-ref c` run, both miss a key added and later removed, because prek checks the files in the checkout; `git rebase --exec 'prek run --last-commit'` finds it |
+| S33 | GPT-6.2 Sol, medium | `AGENTS.md:78` (repository root) | Fixed | Checked by hand with prek 0.5.10 in a scratch repository: a ranged run, and a per-commit `--from-ref c^ --to-ref c` run, both miss a key added and later removed, because prek checks the files in the checkout. The root `AGENTS.md` now checks out each commit in turn, merge commits included, and runs `prek run --last-commit` there. The first version used `git rebase --exec`, which flattens merge commits and misses a key added in a merge resolution (R14) |
 | S34 | GPT-6.2 Sol, medium | `docs/changes/unreleased-spaces/spec.md:69` | Fixed | A new block in `scripts/test-package-products.sh` |
 | S35 | GPT-6.2 Sol, medium | `docs/github-copilot-agents.md:159` | Fixed, in code and docs | `logs/load.rs`: `tests::a_prefetch_reads_no_log_the_search_index_would_not_keep` |
 | S37 | GPT-6.2 Sol, low | `subspace-desktop/AGENTS.md:291` | Not a defect | The project's own guidance to compare screenshots with the design guide's anatomy image, which reviewers are given |
 | S38 | GPT-6.2 Sol, low | `subspace-desktop/AGENTS.md:335` | Fixed | Guidance only: before and after in the same theme, with the fallback stated |
 | S39 | GPT-6.2 Sol, low | `docs/subspace/boards.md:12` | Fixed | `scripts/check-board-docs.py` and `scripts/check-docs-index.py` |
-| F2 | Fleet review, nit | `scripts/test-product-interfaces.sh:89` | Fixed | No automated test: nothing drives the script with a stub binary |
+| F2 | Fleet review, nit | `scripts/test-product-interfaces.sh:89` | Fixed | No automated test: nothing drives the script with a stub binary. The first version of the fix overwrote the board metadata with the `--about` output before the board list was read (R12); fixed |
 
 Of #29's 44 findings, 39 are fixed (three of them with another finding),
 3 are not a defect and 2 are left. N1, found here, is fixed too.
+
+## Review of this pull request
+
+The first review round covered head `7c62e5f` against `main`, merge base
+`40b9ebd`. Claude Opus 5.5 at high effort cleared it with four low findings
+(R8 to R11). GPT-6.2 Sol at high effort did not: it raised two high findings
+(R1, R2), seven medium (R3, R5, R6, R10, R12, R13, R14) and two low (R4,
+R7). Both reviewers raised R10. The R IDs are this record's; locations are
+against `7c62e5f`, with paths as in the table above.
+
+| ID | Reviewer and severity | Location in #32 | Outcome | Covering test or reason |
+| --- | --- | --- | --- | --- |
+| R1 | GPT-6.2 Sol, high | `spaces/decisions/src/load.rs:113` | Fixed | `load::tests::a_read_is_leased_on_the_account_of_its_own_client`, `load::tests::a_read_that_can_make_no_client_reads_nothing_and_has_no_lease`, `tests::account::a_read_that_can_make_no_client_keeps_watching_the_shown_account` |
+| R2 | GPT-6.2 Sol, high | `spaces/github-copilot-agents/src/logs/load.rs:168` | Fixed, one gap left | `logs::load::tests::a_log_is_indexed_under_the_account_it_was_read_as`, `logs::load::tests::a_log_read_while_the_work_account_changed_is_not_indexed`, `logs::tests::a_cached_log_is_kept_apart_for_each_work_account`. The index scope had come from the default credential, not the work login. Left: a switch from one account to another and back again entirely within one request still passes the check before and after the read; closing it needs the Framework GitHub client to report the login it used, which is the owner's decision |
+| R3 | GPT-6.2 Sol, medium | `spaces/github-copilot-agents/src/load.rs:267` | Fixed | `load::tests::an_answer_is_named_with_the_account_it_was_read_as`, `load::tests::an_answer_read_while_the_work_account_changed_is_refused`, `load::tests::nothing_is_read_without_a_work_account` |
+| R4 | GPT-6.2 Sol, low | `spaces/decisions/src/render.rs:23` | Fixed | `tests::account::the_frame_that_finds_the_account_changed_draws_no_previous_search_or_menu` |
+| R5 | GPT-6.2 Sol, medium | `spaces/actions/src/panel/fetch.rs:257` | Fixed, with a Framework addition | `subspace-framework/clients/github`: `an_attempts_jobs_come_from_that_attempt_and_attempt_zero_reads_the_latest`. The new default method `ActionsApi::actions_attempt_jobs` is non-breaking |
+| R6 | GPT-6.2 Sol, medium | `spaces/actions/src/panel/fetch.rs:35` | Fixed | `panel/fetch/runtime_tests.rs`: `the_failed_job_log_picker_offers_no_job_of_an_earlier_attempt` |
+| R7 | GPT-6.2 Sol, low | `spaces/github/src/inspector/status_rows.rs:106` | Fixed | `a_check_link_on_an_ipv6_host_names_the_whole_address` |
+| R8 | Claude Opus 5.5, low | `spaces/github/src/lib.rs:983` | Fixed | `another_write_in_flight_leaves_the_draft_free_to_change_mode`, `a_draft_being_sent_keeps_its_mode_until_github_answers` |
+| R9 | Claude Opus 5.5, low | `spaces/irc/src/commands.rs:60` | Fixed | `with_the_navigator_hidden_the_palette_offers_what_the_toolbar_acts_on` |
+| R10 | GPT-6.2 Sol, medium; Claude Opus 5.5, low | `subspace-framework/board-kit/dashboard/src/workspace/row_parts.rs:94` | Fixed | `workspace::interaction_tests::the_list_keys_stop_at_the_first_and_the_last_row`; the design guide is updated |
+| R11 | Claude Opus 5.5, low | `subspace-framework/board-kit/dashboard/src/workspace/resize.rs:103` | Fixed for the docks | `workspace::layout_tests::a_yielding_dock_clips_content_that_cannot_shrink`. Left: the detail panel is not clipped, because its resize handle sits outside its wrapper, and as the trailing panel what it cannot shrink spills off the window rather than over another zone |
+| R12 | GPT-6.2 Sol, medium | `scripts/test-product-interfaces.sh:92` | Fixed | No automated test, as F2; checked by hand with a stub `cargo` and a fake binary, with the Board Lab target check on and off and an x86_64 refusal |
+| R13 | GPT-6.2 Sol, medium | `scripts/product.sh:159` | Fixed | `scripts/test-package-products.sh`: new refusal cases for a carriage return, tab, vertical tab, form feed and no-break space, which fail without the fix |
+| R14 | GPT-6.2 Sol, medium | `AGENTS.md:84` (repository root) | Fixed | Guidance only. Reproduced by hand in a scratch repository: `git rebase --exec` flattened a merge, missed a key added in its resolution and rewrote the hashes |
+
+All 14 are fixed; R2 leaves the narrow gap above and R11 covers the docks
+only.
+
+### Second review round (#35)
+
+#32 was merged at `7c62e5f` before the fixes above were pushed, so they went
+to `main` through #35. Its first review covered head `e6968d3` against
+`main`, merge base `7c62e5f`. Claude Opus 5.5 (high) cleared it with three
+low findings; GPT-6.2 Sol (high) did not, with two high findings on the
+Copilot Agents account binding. IDs Q1 to Q10.
+
+| ID | Reviewer and severity | Location in #35 | Outcome | Covering test or reason |
+| --- | --- | --- | --- | --- |
+| Q1 | GPT-6.2 Sol, high | `spaces/github-copilot-agents/src/load.rs:288` | Fixed | The before-and-after login check did not bind the request to the credential that ran it. The Framework's new `Client::pin_work` resolves the work credential once, verifies it with a `viewer` read sent with that credential, and every request of the operation uses it; results, cache and search scope are keyed by the verified node ID. Framework `tests/work_pin.rs`: `a_pinned_operation_sends_every_request_with_the_credential_it_verified`, `a_rejected_pinned_credential_is_not_retried_with_another`, `a_credential_of_another_account_is_not_pinned`. The task-start write path is not pinned (an open question) |
+| Q2 | GPT-6.2 Sol, high | `spaces/github-copilot-agents/src/logs/load.rs:169` | Fixed | A read takes its search activation ticket at dispatch, and an overtaken read neither indexes nor activates its scope; a log read as another account than the Space shows is refused. `logs::load::tests`: `an_overtaken_read_neither_indexes_nor_activates_its_account_scope`, `no_ticket_is_taken_while_the_index_takes_no_logs`, `a_read_as_another_account_than_the_space_shows_is_refused`; `load::detail_tests`: `a_log_read_as_another_account_than_the_space_shows_is_not_shown`, `a_list_read_as_another_account_closes_the_open_log` |
+| Q3 | GPT-6.2 Sol, medium; Claude Opus 5.5, low | `spaces/github-copilot-agents/src/logs/load.rs:275` | Fixed | One pin per operation; a cache hit needs no further lookup, and a token verified once this run is pinned again without a request, offline included. `a_credential_verified_once_is_pinned_again_without_a_lookup_even_offline` (Framework), `a_cached_log_is_shown_without_a_request`, `a_log_another_account_cached_is_read_again` |
+| Q4 | GPT-6.2 Sol, medium | `spaces/github-copilot-agents/src/logs.rs:96` | Fixed | Search scopes and cache keys now use the account's node ID, so entries an earlier build wrote are never activated or matched. `logs::tests::a_search_scope_is_keyed_by_node_id_apart_from_earlier_builds` |
+| Q5 | GPT-6.2 Sol, medium | `subspace-framework/board-kit/dashboard/src/workspace/row_order.rs:33` | Fixed | Each navigator keeps its own row order. `workspace::interaction_tests::two_navigators_in_one_window_each_keep_their_own_row_order` |
+| Q6 | GPT-6.2 Sol, low | `subspace-framework/board-kit/dashboard/src/workspace/row_order.rs:43` | Fixed | A set beside the ordered rows makes registration linear; covered by the navigator interaction tests |
+| Q7 | GPT-6.2 Sol, low | `subspace-framework/clients/github/src/actions.rs:55` | Fixed | The default attempt read refuses a nonzero attempt (status 501). `actions::tests::default_attempt::the_default_attempt_read_gives_the_latest_jobs_only_for_attempt_zero` |
+| Q8 | Claude Opus 5.5, low | `subspace-framework/clients/github/src/actions/request.rs:22` | Not changed | GitHub documents the endpoint only as listing the jobs of one attempt; nothing shows it leaving out jobs a partial re-run carried over. Settling it needs a live partial re-run |
+| Q9 | Claude Opus 5.5, low | `AGENTS.md` (hook recipe) | Fixed | The recipe stops with a message from a detached HEAD instead of failing after the loop; checked by hand in a scratch repository |
+| Q10 | GPT-6.2 Sol, low | `AGENTS.md:85` | Fixed | The recipe now says it is for the pull request's author, and that reviewers do not run it |
 
 ## Checks
 
@@ -80,6 +130,8 @@ All on the final working tree, one build at a time, on macOS (aarch64).
 The build needed three fixes the editing pass could not see, none of which
 changes an outcome above: a type in the navigator row's handler helper, a
 missing trait import in the S22 test, and a redundant closure in the S19 test.
+
+Rerun after the review fixes: see the pull request.
 
 ## Screenshots
 

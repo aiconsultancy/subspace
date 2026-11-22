@@ -11,7 +11,7 @@ use super::{channel_events, inject, mount, settings};
 use crate::config::Settings;
 use crate::fixtures::{channel, config, network_id};
 use crate::hub::Hub;
-use crate::{Irc, dock, rows, view};
+use crate::{Irc, commands, dock, rows, view};
 
 fn home() -> NetworkId {
     NetworkId("home".into())
@@ -72,6 +72,31 @@ fn with_the_navigator_hidden_connection_acts_on_the_named_conversation(cx: &mut 
             "the network of the conversation the toolbar names"
         );
     });
+}
+
+#[gpui_kit::test]
+fn with_the_navigator_hidden_the_palette_offers_what_the_toolbar_acts_on(cx: &mut TestAppContext) {
+    let (board, _, cx) = showing_subspace(cx);
+    // The unconnected network's header is selected, then hidden: the palette
+    // follows #subspace on the connected fixture network, as Join… does.
+    board.update(cx, |board, cx| {
+        list::update(board, cx, |list| list.select(rows::group_key(&home())));
+        dock::toggle_buffers(board, cx);
+    });
+    settle(cx);
+    let labels = board.update(cx, |board, cx| {
+        commands::commands(board, cx)
+            .into_iter()
+            .map(|command| command.label.to_string())
+            .collect::<Vec<_>>()
+    });
+    let offered = |label: &str| labels.iter().any(|known| known == label);
+    assert!(offered("Join channel…"), "{labels:?}");
+    assert!(offered("Disconnect from Local Ergo"), "{labels:?}");
+    assert!(
+        !offered("Connect to Home Ergo"),
+        "not the hidden selection's network: {labels:?}"
+    );
 }
 
 #[gpui_kit::test]

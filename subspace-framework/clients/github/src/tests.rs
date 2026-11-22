@@ -24,6 +24,7 @@ mod package_reads;
 mod repositories;
 mod request_budget;
 mod work_account;
+mod work_pin;
 
 struct Env(Arc<Mutex<String>>);
 
