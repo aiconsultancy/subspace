@@ -135,9 +135,12 @@ window start, so it answers before it is first opened. Summaries hold pull
 request content: they stay in memory and the types do not implement `Debug`.
 A summary's check counts (`PullRequestDetails::check_counts`, passed of
 total, a skipped or neutral check counting as passed) come only from check
-runs the board already holds: a pull request it opened or read for a
-resolution has them, one it knows only from a list has the combined state
-alone, and no read is made for the counts.
+runs the board has read: a pull request it opened or read for a resolution
+has them. One it knows only from a list answers at once with the combined
+state alone and is read once for its runs (the same deduplicated read an
+unknown key gets); later answers carry the counts. A list refresh marks
+those reads stale, so each is read again at most once per refresh, when
+next asked.
 
 ```rust
 // In the requester's contracts():
