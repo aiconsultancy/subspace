@@ -2,7 +2,7 @@
 
 use chrono::TimeDelta;
 
-use super::{Output, Session, describe, history, lines, listing};
+use super::{Output, Session, describe, history, lines, listing, reactions};
 use crate::model::{Event, LineKind, Target, Typing};
 use crate::proto::{Message, ctcp};
 
@@ -76,6 +76,11 @@ fn allow_ctcp_reply(session: &mut Session, nick: &str) -> bool {
 }
 
 pub(super) fn tagmsg(session: &mut Session, message: &Message, out: &mut Output) {
+    out.updates.extend(reactions::live(session, message));
+    typing(session, message, out);
+}
+
+fn typing(session: &Session, message: &Message, out: &mut Output) {
     let nick = message.nick().unwrap_or_default();
     if message.nick().is_some_and(|nick| session.is_own(nick)) {
         return;

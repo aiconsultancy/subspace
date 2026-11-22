@@ -116,7 +116,7 @@ async fn send_over(failure: Failure, lines: &[&str]) -> (Option<End>, Vec<Event>
         lines: lines.iter().map(|line| line.to_string()).collect(),
     };
     let end = link.command(Some(NetCommand::Session(send))).await;
-    let reported = events.0.lock().unwrap().iter().cloned().collect();
+    let reported = events.events();
     let written = String::from_utf8_lossy(&wire.lock().unwrap()).into_owned();
     (end, reported, written)
 }

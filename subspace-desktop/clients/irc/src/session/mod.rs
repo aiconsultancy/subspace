@@ -18,6 +18,7 @@ mod membership;
 mod messages;
 mod metadata;
 mod numerics;
+mod reactions;
 mod registration;
 mod send;
 mod send_all;
@@ -33,10 +34,11 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use chrono::{DateTime, Utc};
 
-use crate::model::{Anchor, BufferKey, Command, Event, NetworkConfig, NetworkId, Target};
+use crate::model::{Anchor, BufferKey, Command, Event, NetworkConfig, NetworkId, Target, Update};
 use crate::proto::Message;
 
 pub use input::{COMMANDS, CommandHelp, FirstArgument, private_recipients};
+pub(crate) use isupport::Casemapping;
 pub use lines::{KEPT_CLIENT_TAGS, PROGRESS_TAG};
 pub use metadata::status_text;
 pub use send::{
@@ -103,6 +105,8 @@ pub(crate) fn configure_autojoin(
 pub struct Output {
     pub send: Vec<Message>,
     pub events: Vec<Event>,
+    /// Reactions and refused reaction commands, reported after `events`.
+    pub updates: Vec<Update>,
     pub written: Vec<Event>,
     pub unwritten: Vec<Event>,
     pub quit: bool,
@@ -240,6 +244,11 @@ impl Session {
         self.canonicalise(&mut out.events);
         self.canonicalise(&mut out.written);
         self.canonicalise(&mut out.unwritten);
+        let buffers = out
+            .updates
+            .iter_mut()
+            .flat_map(spelling::update_buffers_mut);
+        canonical_names(&mut self.spellings, &self.isupport, buffers);
         history::track(&mut self.anchors, &out.events);
         out
     }
@@ -288,10 +297,20 @@ impl Session {
     }
 
     fn canonicalise(&mut self, events: &mut [Event]) {
-        for buffer in events.iter_mut().flat_map(spelling::buffers_mut) {
-            if let Some(name) = spelling::name_mut(&mut buffer.target) {
-                *name = self.spellings.canonical(self.isupport.fold(name), name);
-            }
+        let buffers = events.iter_mut().flat_map(spelling::buffers_mut);
+        canonical_names(&mut self.spellings, &self.isupport, buffers);
+    }
+}
+
+/// Gives each buffer the first spelling seen for its name.
+fn canonical_names<'a>(
+    spellings: &mut spelling::Spellings,
+    isupport: &isupport::Isupport,
+    buffers: impl Iterator<Item = &'a mut BufferKey>,
+) {
+    for buffer in buffers {
+        if let Some(name) = spelling::name_mut(&mut buffer.target) {
+            *name = spellings.canonical(isupport.fold(name), name);
         }
     }
 }

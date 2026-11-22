@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use super::{Output, Session, describe, lines};
+use super::{Output, Session, describe, lines, reactions};
 use crate::model::{Anchor, BufferKey, Event, Line, LineKind, Target};
 use crate::proto::Message;
 
@@ -183,7 +183,9 @@ pub(super) fn deliver(
         .iter()
         .filter_map(|message| describe::history_line(session, message, &buffer_target))
         .collect();
+    let reacted = reactions::history(session, messages, &buffer_target);
     let buffer = session.buffer(buffer_target);
+    out.updates.extend(reacted);
     out.event(match requested {
         Some(Pending { merge: true, .. }) => Event::Backfill { buffer, lines },
         _ => Event::History {

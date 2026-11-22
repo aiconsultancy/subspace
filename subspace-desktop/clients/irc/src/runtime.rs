@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinHandle;
 
-use crate::model::{Command, Event, NetworkConfig, NetworkId};
+use crate::model::{Command, Event, NetworkConfig, NetworkId, Update};
 use crate::network::{self, EventSink, NetCommand};
 
 const THREAD_NAME: &str = "subspace-irc";
@@ -40,12 +40,23 @@ impl Runtime {
         let _ = self.commands.send(command);
     }
 
-    /// Every event reported since the last drain, oldest first.
+    /// Every event reported since the last drain, oldest first. Reaction
+    /// updates are dropped: an owner that reads reactions calls
+    /// [`Runtime::drain_updates`] instead, never both.
     pub fn drain(&self) -> Vec<Event> {
+        self.drain_updates()
+            .iter()
+            .filter_map(network::event_of)
+            .collect()
+    }
+
+    /// Every event and reaction update reported since the last drain,
+    /// oldest first, in one order.
+    pub fn drain_updates(&self) -> Vec<Update> {
         self.events
             .0
             .lock()
-            .map(|mut events| events.drain(..).collect())
+            .map(|mut updates| updates.drain(..).collect())
             .unwrap_or_default()
     }
 }
@@ -116,7 +127,9 @@ fn network_of(command: &Command) -> Option<&NetworkId> {
         | Command::LoadAround { buffer, .. }
         | Command::MarkRead { buffer, .. }
         | Command::Typing { buffer, .. }
-        | Command::Reply { buffer, .. } => Some(&buffer.network),
+        | Command::Reply { buffer, .. }
+        | Command::React { buffer, .. }
+        | Command::Unreact { buffer, .. } => Some(&buffer.network),
         Command::Configure(_) => None,
     }
 }

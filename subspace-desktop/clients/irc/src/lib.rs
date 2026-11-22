@@ -10,6 +10,7 @@ pub mod format;
 pub mod model;
 mod network;
 mod proto;
+pub mod reactions;
 pub mod runtime;
 mod session;
 #[cfg(any(test, feature = "test-support"))]
@@ -17,7 +18,8 @@ pub mod test_support;
 
 pub use model::{
     Anchor, BufferKey, Command, ConnectionStatus, Event, Line, LineKind, ListedChannel, Member,
-    NetworkConfig, NetworkId, Sasl, SendResult, Target, ThreadRoots, Typing,
+    NetworkConfig, NetworkId, Reaction, ReactionChange, ReactionError, Sasl, SendResult, Target,
+    ThreadRoots, Typing, Update,
 };
 pub use runtime::Runtime;
 pub use session::{

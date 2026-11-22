@@ -3,7 +3,10 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::model::{BufferKey, Command, Event, Line, LineKind, NetworkConfig, SendResult, Target};
+use crate::model::{
+    BufferKey, Command, Event, Line, LineKind, NetworkConfig, ReactionError, SendResult, Target,
+    Update,
+};
 
 /// What a command gets while disconnected or connecting.
 enum Reply {
@@ -87,6 +90,8 @@ fn describe(command: &Command, name: &str) -> Option<Reply> {
             lines: Vec::new(),
         }),
         Command::MarkRead { .. }
+        | Command::React { .. }
+        | Command::Unreact { .. }
         | Command::Anchors { .. }
         | Command::Typing { .. }
         | Command::Forget { .. }
@@ -97,6 +102,20 @@ fn describe(command: &Command, name: &str) -> Option<Reply> {
         | Command::Disconnect { .. } => return None,
     };
     Some(reply)
+}
+
+/// A reaction command's refusal without a session: nothing is sent.
+pub(super) fn refuse_reaction(command: &Command) -> Option<Update> {
+    match command {
+        Command::React { buffer, msgid, .. } | Command::Unreact { buffer, msgid, .. } => {
+            Some(Update::ReactionRefused {
+                buffer: buffer.clone(),
+                msgid: msgid.clone(),
+                error: ReactionError::NotConnected,
+            })
+        }
+        _ => None,
+    }
 }
 
 fn target(buffer: &BufferKey) -> &str {
