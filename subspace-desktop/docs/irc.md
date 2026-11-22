@@ -428,12 +428,14 @@ The Space does not show them yet; this is the client layer only.
   reaction. People are matched by account when both sides have one, else by
   nick ignoring case.
 - **Agent stop reactions.** `reactions::agent_stop` describes, as data only,
-  the reactions that stop an agent in Stargate v0.43.0: ✋ and 🛑 by
-  default, ignoring skin tones and the variation selector, from a person
-  with an account, on the request or an agent message answering it, while
-  the turn is active. History reactions never stop a turn, and an unreact
-  does not undo a stop. A fleet can configure other stop reactions, which
-  the client cannot see.
+  the reactions that stop an agent in Stargate (`main` at `da242f8`, the
+  same behaviour as v0.43.0): ✋ and 🛑 by default, ignoring skin tones and
+  the variation selector, as a `TAGMSG` naming the message with
+  `+draft/reply` (or `+reply`), from a person with an account, on the
+  request or an agent message answering it, while the turn is active and
+  the gateway's `reactions` feature is on. History reactions never stop a
+  turn, and an unreact does not undo a stop. A fleet can configure other
+  stop reactions in `irc[].stopReactions`, which the client cannot see.
 
 Ergo 2.19.1 relays a `TAGMSG` only to clients with `message-tags`, and
 echoes it only with `echo-message` as well. Our `ircd.yaml.tmpl` stores a

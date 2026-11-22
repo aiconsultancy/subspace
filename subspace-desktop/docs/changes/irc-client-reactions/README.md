@@ -58,9 +58,13 @@ What was checked against sources rather than memory:
   `+react`, and replays it only with `draft/event-playback`. Ergo does not
   advertise `CLIENTTAGDENY`. So an unreact is not stored: a removed
   reaction can come back from history.
-- **Stargate v0.43.0** (the installer's pin, commit `fcf6ac7`), read only:
-  `docs/irc.md` "Stop by reaction" and `routeIrcStop` and `reactionKey` in
-  `src/irc/routing.ts`. The installer does not override `stopReactions`.
+- **Stargate `main` at `da242f8`**, read only on 22 November 2026, 74
+  commits after the installer's pinned v0.43.0 (`fcf6ac7`): `docs/irc.md`
+  "Stop by reaction", `routeIrcStop` and `reactionKey` in
+  `src/irc/routing.ts`, the `stopReactions` setting (now in
+  `src/irc/config.ts`, formerly `src/config.ts`) and its caller in
+  `src/irc/ship.ts`. The stop behaviour is unchanged from v0.43.0. The
+  installer does not override `stopReactions`.
 
 Not verified: no run against a live Ergo server or a Stargate gateway; the
 client's handling of a `CLIENTTAGDENY` that blocks reactions (it does not
