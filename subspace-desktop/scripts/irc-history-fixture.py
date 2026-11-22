@@ -8,6 +8,9 @@ the issue identifiers resolve through the Issues Space and the pull request
 links through the GitHub fixture. Each speaker connects under its own nick,
 joins the channel, and stays connected (answering PING) until interrupted, so
 the member list is populated and the server keeps the lines as chat history.
+The agents (`aurora-*`) register and sign in to the account of their own nick
+before they join, as fleet servers require, so their lines carry the account
+that Channels needs before it marks a rank; people stay signed out.
 
   python3 scripts/irc-history-fixture.py --server 127.0.0.1:16667
 
@@ -64,6 +67,17 @@ def channels_for(nick):
             or name == ship or (name == CHANNEL and nick in dict(LINES))]
 
 
+def is_agent(nick):
+    return nick.startswith('aurora-')
+
+
+def sign_in(nick):
+    """NickServ lines that register `nick`'s account on the fresh test server,
+    or sign in to it when a previous run registered it. Fixture-only words."""
+    secret = f'{nick}-fixture'
+    return f'PRIVMSG NickServ :REGISTER {secret}\r\nPRIVMSG NickServ :IDENTIFY {nick} {secret}\r\n'
+
+
 def connect(server, nick, caps=()):
     host, port = server.rsplit(':', 1)
     sock = socket.create_connection((host, int(port)), timeout=10)
@@ -80,6 +94,8 @@ def connect(server, nick, caps=()):
         for line in buffer.split(b'\r\n'):
             if line.startswith(b'PING'):
                 sock.sendall(b'PONG' + line[4:] + b'\r\n')
+    if is_agent(nick):
+        sock.sendall(sign_in(nick).encode())
     sock.sendall(f'JOIN {",".join(channels_for(nick))}\r\n'.encode())
     sock.settimeout(None)
     return sock

@@ -25,6 +25,8 @@ pub(crate) struct Person {
     pub away: bool,
     /// The fleet rank the Space knows for the nick.
     pub rank: Option<Rank>,
+    /// The member's server account, which must be the nick for a rank.
+    pub account: Option<String>,
 }
 
 impl Person {
@@ -34,6 +36,7 @@ impl Person {
             prefix: None,
             away: false,
             rank: None,
+            account: None,
         }
     }
 
@@ -43,6 +46,7 @@ impl Person {
             prefix: member.prefixes.chars().next(),
             away: member.away,
             rank: None,
+            account: member.account.clone(),
         }
     }
 }
@@ -237,7 +241,7 @@ impl Facts {
     /// The same facts with each person's fleet rank from `roster`.
     pub fn ranked(mut self, roster: &Roster) -> Self {
         for person in self.people.iter_mut().chain(self.everyone.iter_mut()) {
-            person.rank = roster.rank(&person.nick);
+            person.rank = roster.verified(&person.nick, person.account.as_deref());
         }
         self
     }

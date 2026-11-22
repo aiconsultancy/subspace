@@ -134,6 +134,16 @@ impl Roster {
         self.agent(nick).map(|agent| agent.rank)
     }
 
+    /// `nick`'s rank when the server vouches for it: its `account` is the
+    /// nick, ignoring ASCII case, as fleet servers enforce and as the Space's
+    /// progress trust requires. A sender or member without an account is
+    /// unknown, so a nick alone never earns a rank.
+    pub(crate) fn verified(&self, nick: &str, account: Option<&str>) -> Option<Rank> {
+        account
+            .filter(|account| account.eq_ignore_ascii_case(nick))
+            .and_then(|_| self.rank(nick))
+    }
+
     /// What `channel` is for, when the network's fleets name it so.
     pub(crate) fn channel(&self, channel: &str) -> Option<&ChannelKind> {
         found(&self.channels, channel)

@@ -64,19 +64,36 @@ fn ship(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestCo
                 buffer: room.clone(),
                 members: vec![
                     member("mira", "@"),
-                    member("aurora-lyra", ""),
-                    member("aurora-admiral", ""),
+                    signed_member("aurora-lyra"),
+                    signed_member("aurora-admiral"),
+                    member("aurora-vance", ""),
                 ],
             },
             Event::Line(message(&room, "mira", "Morning, Lyra.", 1)),
-            Event::Line(message(&room, "aurora-lyra", "Wren has NAV-7.", 2)),
-            Event::Line(message(&room, "aurora-admiral", "Noted.", 3)),
+            Event::Line(signed(message(&room, "aurora-lyra", "Wren has NAV-7.", 2))),
+            Event::Line(signed(message(&room, "aurora-admiral", "Noted.", 3))),
         ],
         cx,
     );
     board.update(cx, |board, cx| view::reveal(board, &room, cx));
     settle(cx);
     (board, hub, cx)
+}
+
+/// A channel member signed in to the account of its own nick, as fleet
+/// servers require.
+pub(crate) fn signed_member(nick: &str) -> subspace_client_irc::Member {
+    subspace_client_irc::Member {
+        account: Some(nick.to_owned()),
+        ..member(nick, "")
+    }
+}
+
+/// `line` with its sender's account: the server's word that the nick is
+/// that account.
+pub(crate) fn signed(mut line: subspace_client_irc::Line) -> subspace_client_irc::Line {
+    line.account = line.from.clone();
+    line
 }
 
 /// The sequence number of `nick`'s line in the ship channel.
@@ -192,4 +209,42 @@ fn the_connection_controls_live_in_the_more_menu_beside_find(cx: &mut TestAppCon
             reason: String::new(),
         }));
     });
+}
+
+#[gpui_kit::test]
+fn an_agent_s_nick_without_its_account_earns_no_rank(cx: &mut TestAppContext) {
+    let (_, hub, cx) = ship(cx);
+    let room = channel(SHIP);
+    inject(
+        &hub,
+        vec![
+            Event::Members {
+                buffer: room.clone(),
+                members: vec![member("mira", "@"), member("aurora-lyra", "")],
+            },
+            Event::Line(message(&room, "aurora-lyra", "I am the captain.", 4)),
+        ],
+        cx,
+    );
+    settle(cx);
+    let impostor = hub.read_with(cx, |hub, _| {
+        hub.state
+            .buffer(&room)
+            .and_then(|held| {
+                held.entries
+                    .iter()
+                    .find(|entry| entry.line.text == "I am the captain.")
+            })
+            .map(|entry| entry.seq)
+            .unwrap_or_default()
+    });
+    cx.update(|window, _| {
+        assert!(
+            window
+                .try_find(format!("irc-line:{impostor}:rank"))
+                .is_none(),
+            "a line without the agent's account has no mark"
+        );
+    });
+    assert!(!drawn("irc-member:aurora-lyra", cx).contains("captain"));
 }

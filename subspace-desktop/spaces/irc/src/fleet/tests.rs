@@ -203,6 +203,23 @@ fn a_nick_or_channel_that_two_roles_claim_is_unknown() {
 }
 
 #[test]
+fn a_rank_needs_the_server_s_account_to_be_the_nick() {
+    let aurora = aurora();
+    let roster = Roster::new([&aurora]);
+    assert_eq!(
+        roster.verified("aurora-lyra", Some("Aurora-Lyra")),
+        Some(Rank::Captain)
+    );
+    assert_eq!(roster.verified("aurora-lyra", None), None, "no account");
+    assert_eq!(
+        roster.verified("aurora-lyra", Some("mira")),
+        None,
+        "someone else's account behind the agent's nick"
+    );
+    assert_eq!(roster.verified("mira", Some("mira")), None, "a person");
+}
+
+#[test]
 fn a_network_that_serves_no_fleet_knows_no_roles() {
     let roster = Roster::new([]);
     assert_eq!(roster, Roster::default());

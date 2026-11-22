@@ -39,7 +39,9 @@ pub(crate) fn message(
             column.child(header(
                 entry,
                 &nick,
-                context.roster.rank(&nick),
+                context
+                    .roster
+                    .verified(&nick, entry.line.account.as_deref()),
                 &tokens,
                 cx,
             ))

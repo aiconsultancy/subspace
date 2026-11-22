@@ -337,7 +337,8 @@ impl Conversation {
             Target::Channel(name) => self.roster.channel(name).cloned(),
             _ => None,
         };
-        let live = header::live(kind.as_ref(), &network.statuses);
+        let members = held.map(|held| held.members.as_slice()).unwrap_or_default();
+        let live = header::live(kind.as_ref(), &network.statuses, members);
         Some(header::HeaderFacts {
             title,
             network: context,

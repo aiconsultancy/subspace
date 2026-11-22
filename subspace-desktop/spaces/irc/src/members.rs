@@ -226,7 +226,10 @@ fn spoken(member: &Member, status: Option<&str>) -> String {
 /// away.
 fn content(ours: &Ours<'_>, member: &Member, status: Option<&str>) -> Div {
     let tokens = ours.tokens;
-    let role = note(member, ours.nick, ours.roster.rank(&member.nick));
+    let rank = ours
+        .roster
+        .verified(&member.nick, member.account.as_deref());
+    let role = note(member, ours.nick, rank);
     let name = h_flex()
         .w_full()
         .min_w_0()

@@ -10,6 +10,15 @@ fn person(nick: &str, prefix: Option<char>) -> Person {
         prefix,
         away: false,
         rank: None,
+        account: None,
+    }
+}
+
+/// `person` signed in to the account of its own nick.
+fn signed(nick: &str, prefix: Option<char>) -> Person {
+    Person {
+        account: Some(nick.into()),
+        ..person(nick, prefix)
     }
 }
 
@@ -85,15 +94,17 @@ fn a_fleet_agent_s_row_notes_its_rank_as_the_member_list_does() {
     let aurora: subspace_api_client::model::Fleet = serde_json::from_value(serde_json::json!({
         "id": "aurora", "slug": "aurora", "agents": [
             {"name": "Vance", "rank": "rearAdmiral", "ircNick": "aurora-admiral"},
-            {"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra"}
+            {"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra"},
+            {"name": "Orion", "rank": "captain", "ircNick": "aurora-orion"}
         ]
     }))
     .unwrap();
     let roster = crate::fleet::Roster::new([&aurora]);
     let facts = Facts {
         people: vec![
-            person("aurora-lyra", Some('@')),
-            person("aurora-admiral", None),
+            signed("aurora-lyra", Some('@')),
+            signed("aurora-admiral", None),
+            person("aurora-orion", None),
             person("lyra", None),
         ],
         ..Facts::default()
@@ -112,6 +123,11 @@ fn a_fleet_agent_s_row_notes_its_rank_as_the_member_list_does() {
         Some("aurora-admiral, rear admiral")
     );
     assert_eq!(spoken("@lyra").as_deref(), Some("lyra"), "a person");
+    assert_eq!(
+        spoken("@aurora-o").as_deref(),
+        Some("aurora-orion"),
+        "no account, no rank"
+    );
 }
 
 #[test]

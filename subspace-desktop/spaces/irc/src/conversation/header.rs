@@ -7,7 +7,7 @@ use gpui_kit::{
     AnyElement, App, FontWeight, InteractiveElement as _, IntoElement as _, ParentElement as _,
     Role, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, div,
 };
-use subspace_client_irc::Target;
+use subspace_client_irc::{Member, Target};
 use subspace_framework::dashboard::badge::{Pill, PillTone};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, Tone, avatar, truncated};
@@ -37,12 +37,28 @@ pub(super) struct Live {
 }
 
 /// The live status of a ship channel's captain from the network's nick
-/// `statuses`; nothing for any other channel, or while the captain has no
-/// status.
-pub(super) fn live(kind: Option<&ChannelKind>, statuses: &Statuses) -> Option<Live> {
+/// `statuses`; nothing for any other channel, while the captain has no
+/// status, or while no channel member with the captain's nick is signed in
+/// to the account of that nick, so a status shows only for the agent the
+/// server vouches for.
+pub(super) fn live(
+    kind: Option<&ChannelKind>,
+    statuses: &Statuses,
+    members: &[Member],
+) -> Option<Live> {
     let Some(ChannelKind::Ship { captain }) = kind else {
         return None;
     };
+    let vouched = members.iter().any(|member| {
+        member.nick.eq_ignore_ascii_case(captain)
+            && member
+                .account
+                .as_deref()
+                .is_some_and(|account| account.eq_ignore_ascii_case(captain))
+    });
+    if !vouched {
+        return None;
+    }
     statuses.get(captain).map(|text| Live {
         text: text.to_owned(),
         spoken: format!("Captain {captain}: {text}"),
@@ -168,6 +184,8 @@ fn title(target: &Target, facts: &HeaderFacts, named: bool, cx: &App) -> AnyElem
 
 #[cfg(test)]
 mod tests {
+    use subspace_client_irc::Member;
+
     use super::{HeaderFacts, Live, live};
     use crate::fleet::ChannelKind;
     use crate::state::Statuses;
@@ -188,18 +206,33 @@ mod tests {
             captain: "aurora-lyra".into(),
         };
         let mut statuses = Statuses::default();
-        assert_eq!(live(Some(&ship), &statuses), None, "no invented idle state");
+        let lyra = |account: Option<&str>| Member {
+            nick: "Aurora-Lyra".into(),
+            prefixes: String::new(),
+            away: false,
+            account: account.map(str::to_owned),
+        };
+        let signed = [lyra(Some("aurora-lyra"))];
+        assert_eq!(
+            live(Some(&ship), &statuses, &signed),
+            None,
+            "no invented idle state"
+        );
         statuses.set("Aurora-Lyra", Some("Lyra is delegating NAV-2"));
         statuses.set("aurora-admiral", Some("Reviewing the plan"));
         assert_eq!(
-            live(Some(&ship), &statuses),
+            live(Some(&ship), &statuses, &signed),
             Some(Live {
                 text: "Lyra is delegating NAV-2".into(),
                 spoken: "Captain aurora-lyra: Lyra is delegating NAV-2".into(),
             })
         );
-        assert_eq!(live(Some(&ChannelKind::Starbase), &statuses), None);
-        assert_eq!(live(None, &statuses), None);
+        for unvouched in [lyra(None), lyra(Some("mira"))] {
+            assert_eq!(live(Some(&ship), &statuses, &[unvouched]), None);
+        }
+        assert_eq!(live(Some(&ship), &statuses, &[]), None, "not here");
+        assert_eq!(live(Some(&ChannelKind::Starbase), &statuses, &signed), None);
+        assert_eq!(live(None, &statuses, &signed), None);
     }
 
     #[test]
