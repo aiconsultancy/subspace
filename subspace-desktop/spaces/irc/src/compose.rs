@@ -1,7 +1,9 @@
 //! One retained composer per buffer: Enter sends the text (or `/command`)
 //! to the runtime, typing notices are throttled, Up and Down recall sent
 //! lines, a list above the input completes `@members`, `/commands`, their
-//! arguments and `#channels`, and Tab completes a bare nick.
+//! arguments and `#channels`, and Tab completes a bare nick. A fleet
+//! channel answers `/ask` itself, and a slim row under the input names the
+//! keys.
 
 use std::time::{Duration, Instant};
 
@@ -21,7 +23,9 @@ use subspace_framework::dashboard::{ChatInput, ChatInputEvent};
 use crate::conversation::Conversation;
 
 mod agents;
+mod ask;
 mod complete;
+mod hints;
 mod offer;
 mod paste;
 mod recall;
@@ -112,6 +116,7 @@ impl Draft {
             .children(uploads.then(|| crate::uploads::outgoing::controls(&self.entity, tray, cx)))
             .child(self.list.clone())
             .child(self.entity.clone())
+            .child(hints::row(uploads, cx))
             .into_any_element()
     }
 }
@@ -220,17 +225,52 @@ fn submit(
     if refuse_agent(conversation, &text, cx) {
         return;
     }
-    conversation.send(
-        Command::Input {
-            buffer: conversation.buffer.clone(),
-            text: text.clone(),
-        },
-        cx,
-    );
+    if let Some(asked) = ask::ask(&text, &conversation.buffer, &conversation.roster) {
+        send_ask(conversation, asked, text, window, cx);
+        return;
+    }
+    let command = Command::Input {
+        buffer: conversation.buffer.clone(),
+        text: text.clone(),
+    };
+    sent(conversation, command, text, window, cx);
+}
+
+/// Sends `/ask` as its message, or keeps the draft and says why not.
+fn send_ask(
+    conversation: &mut Conversation,
+    asked: ask::Asked,
+    text: String,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    match asked {
+        ask::Asked::Send(command) => sent(conversation, command, text, window, cx),
+        ask::Asked::Refused(reason) => conversation
+            .draft
+            .entity
+            .update(cx, |input, cx| input.set_error(reason.to_owned(), cx)),
+    }
+}
+
+/// Sends `command` for draft `text`, which joins the recalled lines, and
+/// empties the composer.
+fn sent(
+    conversation: &mut Conversation,
+    command: Command,
+    text: String,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    conversation.send(command, cx);
     let draft = &mut conversation.draft;
     draft.typing_since = None;
     draft.recall.push(text);
-    draft.entity.update(cx, |input, cx| input.clear(window, cx));
+    draft.entity.update(cx, |input, cx| {
+        // Sent: an earlier refusal, such as an empty `/ask`, no longer holds.
+        input.set_busy(false, cx);
+        input.clear(window, cx);
+    });
 }
 
 /// Keeps a draft that would message a fleet agent privately, and shows why.

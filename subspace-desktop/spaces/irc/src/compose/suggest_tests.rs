@@ -33,6 +33,7 @@ fn facts() -> Facts {
         everyone: vec![person("galactica-captain", None), person("apollo", None)],
         channels: vec!["#ship-galactica".into(), "#ship-pegasus".into()],
         joined: vec!["#ship-galactica".into()],
+        ask: None,
     }
 }
 
@@ -252,4 +253,38 @@ fn a_private_conversation_offers_the_other_person() {
     let state = joined_state();
     let facts = Facts::gather(&state, &query("starbuck"));
     assert_eq!(inserts(suggest("@", 1, &facts)), ["@starbuck "]);
+}
+
+#[test]
+fn a_fleet_channel_offers_ask_before_the_irc_client_s_commands() {
+    let facts = facts().asking(Some("aurora-lyra"));
+    let offer = suggest("/", 1, &facts).unwrap_or_else(|| panic!("an offer"));
+    let labels: Vec<String> = offer
+        .choices
+        .iter()
+        .map(|choice| choice.item.label().to_string())
+        .collect();
+    assert_eq!(labels.first().map(String::as_str), Some("/ask"));
+    assert!(labels.len() > 1, "the client's commands follow");
+    let ask = &offer.choices[0];
+    assert_eq!(ask.insert, "/ask ");
+    assert_eq!(
+        ask.item.spoken_label().as_ref(),
+        "/ask <text>, Ask aurora-lyra and track the answer, a command of this channel"
+    );
+    assert_eq!(
+        inserts(suggest("/as", 3, &facts))
+            .first()
+            .map(String::as_str),
+        Some("/ask ")
+    );
+    assert!(
+        !inserts(suggest("/jo", 3, &facts)).contains(&"/ask ".to_owned()),
+        "only when the name matches"
+    );
+}
+
+#[test]
+fn ask_is_not_offered_outside_a_fleet_channel() {
+    assert!(!inserts(suggest("/", 1, &facts())).contains(&"/ask ".to_owned()));
 }
