@@ -1,5 +1,5 @@
-//! A pull request's tile under the message that keeps it: its status glyph
-//! and `#n`, the title, then its status when not open, the repository and
+//! A pull request's tile under the message that keeps it: its status glyph,
+//! tinted as the inline reference's, and `#n`, the title, then its status when not open, the repository and
 //! the lines added and removed, and its checks as a small bar with
 //! `passed/total`. Only what the answering Space gives is shown, and a
 //! missing fact leaves no gap.
@@ -72,7 +72,11 @@ pub(super) fn label(details: &PullRequestDetails) -> String {
 
 /// The tile's content.
 pub(super) fn tile(details: &PullRequestDetails, tokens: &Tokens, cx: &App) -> Div {
-    let (glyph, tone, _) = status(details.status);
+    let (glyph, _, _) = status(details.status);
+    let tone = match crate::text::look::pull_request(details.status) {
+        crate::text::Look::Tint(tone) => tone,
+        _ => Tone::Muted,
+    };
     let slot = Slot {
         lead: Lead {
             mark: Some(

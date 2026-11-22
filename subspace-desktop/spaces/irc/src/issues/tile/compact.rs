@@ -6,11 +6,14 @@
 
 use chrono::{DateTime, NaiveDate, Utc};
 use gpui_kit::component::h_flex;
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::rems;
 use gpui_kit::{
     AnyElement, App, Div, IntoElement as _, ParentElement as _, SharedString, Styled as _, div,
 };
 use subspace_framework::contracts::issues::IssueSummary;
 use subspace_framework::dashboard::avatar::{self, AgentIcons, AgentRank};
+use subspace_framework::dashboard::density::REFERENCE_REM;
 use subspace_framework::dashboard::{Tokens, Tone};
 
 use super::{activity, facts};
@@ -18,6 +21,9 @@ use crate::tiles::{self, Lead, Slot};
 
 /// What separates the facts on the second line.
 const SEPARATOR: &str = " · ";
+/// How narrow an assignee may get on a full line before the line clips:
+/// room for the icon and a few letters.
+const ASSIGNEE_MIN_REM: f32 = 64. / REFERENCE_REM;
 
 /// One fact on an issue tile's second line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,8 +133,11 @@ fn meta(identifier: &str, parts: &[Part], icons: AgentIcons, tokens: &Tokens) ->
         .min_w_0()
         .children(parts.iter().enumerate().map(|(index, part)| {
             let separator = (index > 0).then_some(SEPARATOR);
+            // Only the assignee gives way when the line is full, so the
+            // state and the due date stay whole.
+            let shrinks = matches!(part, Part::Assignee { .. });
             h_flex()
-                .flex_shrink_0()
+                .when(!shrinks, |part| part.flex_shrink_0())
                 .children(separator)
                 .child(part_element(identifier, part, icons, tokens))
         }))
@@ -143,9 +152,11 @@ fn part_element(identifier: &str, part: &Part, icons: AgentIcons, tokens: &Token
             .into_any_element(),
         Part::Text(text) => div().child(text.clone()).into_any_element(),
         Part::Assignee { name, rank } => h_flex()
+            .min_w(rems(ASSIGNEE_MIN_REM))
+            .overflow_hidden()
             .gap_1()
             .children(rank.and_then(|rank| agent_icon(identifier, name, rank, icons)))
-            .child(name.clone())
+            .child(div().min_w_0().text_ellipsis().child(name.clone()))
             .into_any_element(),
     }
 }
