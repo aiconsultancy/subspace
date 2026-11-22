@@ -154,7 +154,9 @@ unreachable, and what to do about it.
 
 Fleet Console is built into the Subspace App on macOS and Windows (Linux does
 not show web Spaces yet). The build embeds this folder's package files, the
-same files `make package-web-space` puts in a ZIP, and at each start the app
+files `make package-web-space` puts in a ZIP by its default rules, and fails,
+as that script does, on a link, a special file or a name that is not portable;
+it does not apply the script's size limits. At each start the app
 writes them to `web-board-apps/fleet-console` beside its config file and keeps
 a `webBoards.fleet-console` entry pointing at them, marked `"builtIn": true`.
 It is in the tab strip from the first start, in sample mode until it has an

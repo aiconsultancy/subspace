@@ -8,6 +8,8 @@
 //! - a local-folder install: the canonical folder it was copied from;
 //! - a website: its origin.
 //!
+//! - a Space built into the app: its board ID.
+//!
 //! A ZIP install, and an entry whose source was not recorded, are strict:
 //! the owner is the app identity grants use (folder and manifest), so a
 //! reinstall starts with none.
@@ -48,6 +50,35 @@ impl Owner {
             adopts_ownerless: named.is_some(),
             prefix: named.unwrap_or_else(|| identity.clone()),
             identity,
+        }
+    }
+
+    /// The owner of the app with grant identity `identity` that board `id`'s
+    /// raw config entry `entry` shows from `source`. A Space built into the
+    /// app owns its secrets by its board ID, so an app update that changes
+    /// its files or moves its folder keeps them.
+    pub(crate) fn of_entry(
+        identity: &str,
+        source: &WebBoardSource,
+        id: &str,
+        entry: Option<&Map<String, Value>>,
+    ) -> Self {
+        entry
+            .filter(|entry| {
+                matches!(source, WebBoardSource::Folder(_)) && crate::builtin::is_built_in(entry)
+            })
+            .map_or_else(
+                || Self::new(identity, source, entry.and_then(recorded).as_ref()),
+                |_| Self::built_in(identity, id),
+            )
+    }
+
+    /// The owner of built-in Space `id` whose grant identity is `identity`.
+    fn built_in(identity: &str, id: &str) -> Self {
+        Self {
+            prefix: digest(&format!("built-in\0{id}")),
+            identity: short(identity).to_owned(),
+            adopts_ownerless: false,
         }
     }
 

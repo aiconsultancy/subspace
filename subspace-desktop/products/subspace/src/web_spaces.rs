@@ -91,4 +91,30 @@ mod tests {
             assert!(!packaged(name, is_dir), "{name}");
         }
     }
+
+    #[test]
+    fn the_build_refuses_files_the_app_could_not_write() {
+        use super::super::web_spaces_build::{package_files, portable};
+        for name in ["index.html", "a b-c_d@(1)+,[x]{y}.js", "CONSOLE.js"] {
+            assert!(portable(name), "{name}");
+        }
+        for name in [
+            "a\\b.js", "a:b.js", "con.js", "COM1", "lpt9.txt", "end.", "end ", ".GIT", "é.js",
+        ] {
+            assert!(!portable(name), "{name}");
+        }
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("index.html"), "x").unwrap();
+        std::fs::write(root.path().join(".hidden"), "x").unwrap();
+        assert_eq!(package_files(root.path()).unwrap(), ["index.html"]);
+        std::fs::write(root.path().join("a:b.js"), "x").unwrap();
+        assert!(package_files(root.path()).is_err());
+        std::fs::remove_file(root.path().join("a:b.js")).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("index.html", root.path().join("link.html")).unwrap();
+            let error = package_files(root.path()).unwrap_err().to_string();
+            assert!(error.contains("link.html"), "{error}");
+        }
+    }
 }

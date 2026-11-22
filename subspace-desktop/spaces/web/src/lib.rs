@@ -69,7 +69,7 @@ impl WebBoard {
         Self::watch(cx);
         Self {
             start: source::start(&config),
-            bridge: bridge::Bridge::new(&config, source::recorded(&config.id, cx).as_ref()),
+            bridge: bridge::Bridge::new(&config, source::entry(&config.id, cx).as_ref()),
             config,
             focus: cx.focus_handle(),
             page: None,

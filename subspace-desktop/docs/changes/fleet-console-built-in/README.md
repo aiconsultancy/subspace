@@ -28,10 +28,13 @@ installs yet, so nothing is migrated.
 - **Whose entry.** A new entry, or one with neither `url` nor `path` (as
   `install.sh` and `make capture` write to set the address and token before
   the app starts), becomes the built-in one, with every permission the
-  manifest asks for allowed: it is the app's own code. A built-in entry only
-  gets its `path` refreshed; grants the user turned off stay off. An entry
-  with a `url`, a `managedSource` or a `path` of its own is the user's and is
-  left alone. Turning the Space off hides it; removing it resets it at the
+  manifest asks for allowed: it is the app's own code. A built-in entry gets
+  its `path` refreshed, and when an update changes the manifest or the folder
+  each grant carries over by permission name, so grants the user turned off
+  stay off and new permissions start allowed; its page's secrets belong to the
+  Space's ID, so they survive updates too. An entry with a `url`, a
+  `managedSource` or a `path` of its own is the user's and is left alone,
+  files and all. Turning the Space off hides it; removing it resets it at the
   next start.
 - **Fleet API fixture.** `scripts/fleet_api_test_server.py` serves Stargate's
   Fleet API v1 on loopback (`GET /api/v1/fleet`, ship and crew detail and the

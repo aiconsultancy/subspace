@@ -12,12 +12,11 @@ pub(crate) mod theme;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use subspace_framework::core::config::web_boards::{WebBoard, WebBoardSource};
 use subspace_framework::dashboard::settings::FieldKind;
 
 use crate::app::{app_origin, same_origin};
-use crate::install::ManagedSource;
 use crate::manifest::{self, Manifest, Permission};
 use issues::IssueCall;
 use protocol::{Context, Message, Operation};
@@ -61,16 +60,16 @@ pub(crate) enum Effect {
 }
 
 impl Bridge {
-    /// The bridge of folder app `board`, with `managed` its recorded install
-    /// source, if any.
-    pub(crate) fn new(board: &WebBoard, managed: Option<&ManagedSource>) -> Option<Self> {
+    /// The bridge of folder app `board`, with `entry` its raw entry in the
+    /// config file, if any, which says where it was installed from.
+    pub(crate) fn new(board: &WebBoard, entry: Option<&Map<String, Value>>) -> Option<Self> {
         let WebBoardSource::Folder(root) = &board.source else {
             return None;
         };
         let manifest = manifest::read(root).ok()??;
         let identity = manifest.identity(root);
         Some(Self {
-            owner: secrets::Owner::new(&identity, &board.source, managed),
+            owner: secrets::Owner::of_entry(&identity, &board.source, &board.id, entry),
             identity,
             manifest,
             root: root.clone(),
