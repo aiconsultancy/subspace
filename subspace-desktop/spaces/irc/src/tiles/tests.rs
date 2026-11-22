@@ -246,3 +246,20 @@ fn candidates_are_issues_and_pull_requests_once_each_in_order() {
     let keys: Vec<_> = found.iter().filter_map(TileRef::of).collect();
     assert_eq!(keys, vec![issue("NAV-7"), pr("acme/web#492")]);
 }
+
+#[test]
+fn what_is_in_play_keeps_the_order_a_message_names_it() {
+    // A pull request named before eight issues in one message keeps its
+    // place under the inspector's cap of eight.
+    let mut named = vec![pr("acme/web#492")];
+    named.extend((1..=8).map(|n| issue(&format!("NAV-{n}"))));
+    let mut owners = TileOwners::default();
+    owners.claim([(1, named.as_slice())]);
+    let play = owners.in_play();
+    assert_eq!(play.first(), Some(&pr("acme/web#492")));
+    assert_eq!(play, named);
+    assert!(
+        play[..8].contains(&pr("acme/web#492")),
+        "within the cap of eight"
+    );
+}
