@@ -120,16 +120,17 @@ CAPTURE_THEME="Twilight Two" CAPTURE_FLEET_API=1 CAPTURE_FLEET=1 \
 ```
 
 For the Channels image, start `scripts/irc-test-server.sh`, then
-`scripts/irc-history-fixture.py`, which posts a fictional `#aurora-nav`
+`scripts/irc-history-fixture.py`, which posts a fictional `#aurora-lyra`
 conversation between people and captains that names fixture issues and links
 the GitHub fixture's pull requests, and stays connected so the server keeps
 it as chat history. Pass `CAPTURE_IRC_CONFIG` a config for that server with
-`#aurora-nav` in its channels, with `CAPTURE_FLEET=1` so the issue tiles
+`#aurora-lyra` in its channels, with `CAPTURE_FLEET=1` so the issue tiles
 resolve.
 
 Run `python3 scripts/fleet_api_test_server.py --port 18484` to serve the same
-fleet for a Fleet Console opened in a browser or an installed copy, and
-`--snapshot` to print it as one JSON document.
+fleet for an installed copy of the app, and `--snapshot` to print it as one
+JSON document. Like Stargate, the fixture answers only the app's own web
+Space origins, so a Fleet Console opened in a browser cannot read it.
 
 ## Decisions fixture
 

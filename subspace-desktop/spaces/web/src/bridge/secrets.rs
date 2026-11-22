@@ -189,21 +189,24 @@ pub(crate) fn save(
     let mut file = SettingsFile::open(&path).map_err(|_| NOT_SAVED)?;
     let entry = file.web_board(id).ok_or(NOT_SAVED)?;
     let saved = persisted(id, &entry, &path).ok_or(NOT_SAVED)?;
-    let owner = Owner::new(
-        &bridge.identity,
-        &saved.source,
-        owner::recorded(&entry).as_ref(),
-    );
-    if !bridge.allows(Permission::SaveSecrets, &saved) || owner != bridge.owner {
+    if !bridge.allows(Permission::SaveSecrets, &saved) || !bridge.owns(&saved, &entry) {
         return Err(CHANGED);
     }
-    check(&bridge.manifest, &owner, &saved, write)?;
-    let forms = owner.forms(&write.key);
+    check(&bridge.manifest, &bridge.owner, &saved, write)?;
+    let forms = bridge.owner.forms(&write.key);
     let value = write.value.as_deref();
     file.update_web_board(id, Some(written(entry, &forms, value)))
         .map_err(|_| NOT_SAVED)?;
     apply(id, &forms, value, cx);
     Ok(())
+}
+
+impl Bridge {
+    /// Whether `board`, defined by raw config entry `entry`, still gives this
+    /// app's page secrets the owner they have now.
+    fn owns(&self, board: &WebBoard, entry: &Map<String, Value>) -> bool {
+        Owner::of_entry(&self.identity, &board.source, &board.id, Some(entry)) == self.owner
+    }
 }
 
 /// Board `id` as the opened file defines it. The write that follows is

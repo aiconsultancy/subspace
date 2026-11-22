@@ -722,7 +722,8 @@ def jobs_json(run):
     done = status == "completed"
     test_conclusion = conclusion if done else None
     if conclusion == "skipped":
-        return [job(1, name, "completed", "skipped", ["Set up job"]) for name in ("build", "test")]
+        return [job(index, name, "completed", "skipped", ["Set up job"])
+                for index, name in enumerate(("build", "test"), start=1)]
     if workflow_id == 104:
         return [
             job(1, "build", "completed", "success", ["Checkout", "Install", "Build"]),

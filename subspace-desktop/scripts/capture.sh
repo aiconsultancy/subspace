@@ -163,10 +163,16 @@ state_dir, config_dir, theme, state_extra, config_extra, fleet_api = sys.argv[1:
 state = {"appearance.theme": theme} if theme else {}
 state.update(json.loads(state_extra or "{}"))
 config = {"repos": ["acme/web", "acme/api", "acme/design-system"]}
+boards = {}
 if fleet_api:
     # The app adds its built-in Fleet Console to this entry at start.
-    config["webBoards"] = {"fleet-console": {"settings": {"endpoint": fleet_api}, "secrets": {"token": "fixture-fleet"}}}
-config.update(json.loads(config_extra or "{}"))
+    boards["fleet-console"] = {"settings": {"endpoint": fleet_api}, "secrets": {"token": "fixture-fleet"}}
+extra = json.loads(config_extra or "{}")
+# CAPTURE_CONFIG's web Spaces join these by ID; its own fleet-console entry replaces the one above.
+boards.update(extra.pop("webBoards", None) or {})
+config.update(extra)
+if boards:
+    config["webBoards"] = boards
 for directory, name, value in ((state_dir, "state.json", state), (config_dir, "config.json", config)):
     path = os.path.join(directory, name)
     with open(path, "w") as file:

@@ -371,6 +371,7 @@ installed it from, and a page sees only the secrets its own app saved:
 | A GitHub release | The repository and asset name | Yes, for the same asset |
 | A local folder | The folder it was copied from | Yes, when imported again from that folder |
 | A ZIP file, or a `path` written into the config file | The app folder and its manifest, as grants are | No: a reinstall or a changed manifest starts with none |
+| Built into the app, such as Fleet Console | The Space's ID | Yes, through every app update |
 
 Installing an app from another source in the Space starts it with none of
 its own, and the earlier app's stay hidden. Secrets saved by an earlier
@@ -485,7 +486,10 @@ Grants bind to the canonical app folder and the exact manifest bytes,
 including whitespace. Changing either needs new grants, so replacing or
 updating an imported web Space, which installs a new private folder, starts
 with every permission off. Restart after a manifest change in a manually
-configured folder, then review permissions. The running old bridge refuses
+configured folder, then review permissions. A web Space built into the app
+is the exception: when an app update changes its manifest or moves its
+folder, each permission keeps the choice made for it and a new one starts
+allowed. The running old bridge refuses
 calls once the manifest identity changes. Settings reads the current manifest
 each time it opens. Changing only JavaScript or other app files does not
 change the manifest fingerprint. Install updates only from a source you

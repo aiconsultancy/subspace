@@ -1,6 +1,7 @@
 // The desktop's Stargate Fleet API fixture (scripts/fleet_api_test_server.py),
 // which `make capture` serves on loopback, read through the console's own
-// contract, reducer, model and inspector. Skipped where python3 is missing.
+// contract, reducer, model and inspector. Skipped where python3 or the
+// fixture is missing; a fixture that fails fails the tests.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -18,7 +19,10 @@ const script = join(dirname(fileURLToPath(import.meta.url)), "../../../scripts/f
 
 function snapshot() {
   const run = spawnSync("python3", ["-I", script, "--snapshot"], { encoding: "utf8" });
-  return run.status === 0 ? JSON.parse(run.stdout) : null;
+  if (run.error?.code === "ENOENT") return null;
+  if (run.error) throw run.error;
+  if (run.status !== 0) throw new Error(`The Fleet API fixture exited with ${run.status}: ${run.stderr}`);
+  return JSON.parse(run.stdout);
 }
 
 const fixture = existsSync(script) ? snapshot() : null;
