@@ -31,8 +31,9 @@ pub(in crate::issues) enum Part {
     /// The issue is marked Ready for agents.
     Ready,
     Text(String),
-    /// Who it is assigned to, with an agent's rank when it has one the
-    /// agent icon can show.
+    /// Who it is with: its assignee, with an agent's rank when it has one
+    /// the agent icon can show, or else its owner, never with an icon. The
+    /// name is untrusted, so it is the part that gives way on a full line.
     Assignee {
         name: String,
         rank: Option<AgentRank>,
@@ -71,7 +72,10 @@ fn person(summary: &IssueSummary) -> Option<Part> {
             name: name.clone(),
             rank: rank(summary),
         }),
-        None => summary.owner().map(|owner| Part::Text(owner.name.clone())),
+        None => summary.owner().map(|owner| Part::Assignee {
+            name: owner.name.clone(),
+            rank: None,
+        }),
     }
 }
 
@@ -88,10 +92,12 @@ fn rank(summary: &IssueSummary) -> Option<AgentRank> {
     }
 }
 
-/// `done of total` and its spoken form, for a tracker with sub-items.
+/// `done of total` and its spoken form, for a tracker with sub-items; none
+/// for an issue the tracker does not flag as a tracker, whatever it counts.
 pub(in crate::issues) fn progress(summary: &IssueSummary) -> Option<(u32, u32, String)> {
     summary
         .progress()
+        .filter(|_| summary.tracker)
         .filter(|progress| progress.total > 0)
         .map(|progress| {
             let words = format!("{} of {}", progress.done, progress.total);
@@ -133,8 +139,9 @@ fn meta(identifier: &str, parts: &[Part], icons: AgentIcons, tokens: &Tokens) ->
         .min_w_0()
         .children(parts.iter().enumerate().map(|(index, part)| {
             let separator = (index > 0).then_some(SEPARATOR);
-            // Only the assignee gives way when the line is full, so the
-            // state and the due date stay whole.
+            // Only the person (the assignee, or else the owner) gives way
+            // when the line is full, so the state and the due date stay
+            // whole.
             let shrinks = matches!(part, Part::Assignee { .. });
             h_flex()
                 .when(!shrinks, |part| part.flex_shrink_0())
@@ -234,6 +241,9 @@ mod tests {
             ]
         );
         assert_eq!(progress(&issue), Some((1, 2, "1 of 2".into())));
+        let mut plain = issue.clone();
+        plain.tracker = false;
+        assert_eq!(progress(&plain), None, "only a tracker shows a meter");
     }
 
     #[test]
@@ -242,7 +252,14 @@ mod tests {
         let issue = issue().with_owner(Some(owner));
         assert_eq!(
             parts(&issue, today()),
-            [text("In progress"), text("Rosa Fixture")]
+            [
+                text("In progress"),
+                Part::Assignee {
+                    name: "Rosa Fixture".into(),
+                    rank: None
+                }
+            ],
+            "the owner gives way with an ellipsis, as an assignee does"
         );
     }
 
