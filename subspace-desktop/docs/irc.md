@@ -535,13 +535,17 @@ The runtime sends and reads IRCv3 reactions (the work-in-progress
 [react client tag](https://ircv3.net/specs/client-tags/react)): a `TAGMSG`
 to the conversation with `+draft/react=<reaction>` or
 `+draft/unreact=<reaction>`, and `+draft/reply=<msgid>` naming the message.
-The Space does not show them yet; this is the client layer only.
+Channels shows them as described in
+[Reactions in Channels](#reactions-in-channels).
 
 - **Support.** Reactions need `message-tags`, which the runtime already
   requests, and no `CLIENTTAGDENY` that blocks `draft/react`,
-  `draft/unreact` or `draft/reply`. The runtime reports `Update::ReactionSupport { network,
-  supported }` with every capability report and when `CLIENTTAGDENY`
-  changes, so a UI can hide reactions. `reactions::reactions_supported`
+  `draft/unreact` or `draft/reply`, on a registered connection. The runtime
+  reports `Update::ReactionSupport { network, supported }` once the
+  connection is welcomed, with every later capability report, when
+  `CLIENTTAGDENY` changes, and as `false` when the connection ends, so a UI
+  can hide reactions; nothing reports support during capability
+  negotiation. `reactions::reactions_supported`
   answers from the capability list alone.
 - **Sending.** `Command::React` and `Command::Unreact` (checked first with
   `reactions::check_reaction`, which returns the same typed error) send
@@ -551,7 +555,8 @@ The Space does not show them yet; this is the client layer only.
   server calls a channel, or a nick that is not one, without spaces or
   commas), a valid `msgid` (at most 128 bytes, no spaces or controls) or a
   valid reaction (1 to 32 characters, no controls or surrounding spaces)
-  nothing is sent, and the runtime answers `Update::ReactionRefused` with a
+  nothing is sent; a destination too long for the `TAGMSG` to fit one line
+  is refused as `InvalidTarget` rather than cut short, and the runtime answers `Update::ReactionRefused` with a
   `ReactionError`. A reaction for a network that is not configured is
   refused as `NotConnected`. Without `echo-message` the runtime echoes our
   reaction locally, but only after the write succeeds; a failed write is
@@ -566,8 +571,9 @@ The Space does not show them yet; this is the client layer only.
   Space matches `Event` exhaustively. Network input is untrusted: a `TAGMSG`
   with both tags, without a nick or reply `msgid`, or with an invalid value
   is ignored. A reaction is ours when its account is ours, both being
-  known (our account comes from `RPL_LOGGEDIN`), else when its nick is our
-  current nick. `+reply` is read when `+draft/reply` is missing, as Stargate
+  known (our account comes from `RPL_LOGGEDIN`). Live traffic without
+  accounts falls back to our current nick; history never does, since
+  someone else may have held that nick then. `+reply` is read when `+draft/reply` is missing, as Stargate
   does; unprefixed `+react` is not read, as the draft says.
 - **Aggregation.** `reactions::ReactionBook` holds, per buffer and
   `msgid`, each reaction and who reacted (nick, account, ours) in
@@ -577,20 +583,32 @@ The Space does not show them yet; this is the client layer only.
   and remembers removals for that. Each person's place is when their
   current addition started; an older replayed addition can only move a
   shown person's place earlier. When a message's places for remembered
-  removals run out, the oldest group holding only removals is dropped. It follows nick changes through
+  removals run out, the oldest group holding only removals is dropped, and
+  a remembered removal gives way by when it was removed. A remembered
+  removal never becomes visible past the display limits, and an addition
+  that could not show drops nothing. Of two operations at the same server
+  time, a live one wins over one from history, and an older replayed
+  addition never moves a place back across a known removal. It follows nick changes through
   `observe` (`Event::MemberChanged`) or `rename`, skipping entries with
   another known account and merging nobody, and keeps reactions to
   messages not loaded yet. Each reaction's `stops_agent` marks Stargate's
   default stop reactions. People are the same when both are ours, when both
   have the same account, or when neither has an account and their nicks
-  match under the network's case mapping. It keeps at most 2,048 messages
-  (dropping the least recently changed), 20 shown reactions per message and
-  100 shown people per reaction, with as many again remembered removals.
+  match under the network's current case mapping; after an accountless
+  rename leaves two records with one nick, the one that most recently took
+  the nick is that person. It keeps at most 2,048 loaded messages (dropping
+  the least recently changed), and apart from them 256 messages not seen
+  loaded yet, at most 64 per conversation, so reactions naming unknown
+  messages never displace loaded ones; `observe` marks the messages of
+  lines as loaded, and `mark_seen` does it for lines an owner loads itself.
+  `forget` drops a conversation, and `reacted_messages` lists the messages
+  in one that show reactions. It shows 20 reactions per message and 100
+  people per reaction, with as many again remembered removals.
   Local echoes carry the local clock, so a large clock skew against the
   server can misorder our own operations.
 - **Agent stop reactions.** `reactions::agent_stop` describes, as data only,
   the reactions that stop an agent in Stargate (`main` at `da242f8`, the
-  same behaviour as v0.43.0): ✋ and 🛑 by default, ignoring skin tones and
+  same behaviour as v0.43.0, and unchanged at `d4842b8`): ✋ and 🛑 by default, ignoring skin tones and
   the variation selector, as a `TAGMSG` naming the message with
   `+draft/reply` (or `+reply`), from a person with an account, on the
   request or an agent message answering it, while the turn is active and
@@ -609,6 +627,50 @@ additions without their removals, so a reaction taken back then can
 return when that history loads, unless the client saw the removal.
 
 See the [reactions change record](changes/irc-client-reactions/README.md).
+
+### Reactions in Channels
+
+Channels reads the runtime with `drain_updates`, and the hub keeps one
+`ReactionBook` (`reactions.rs`), fed every reaction and every event before
+the event applies; a reaction to a line the conversation already holds,
+such as one restored from the store, marks that message loaded first.
+Removing a conversation drops its reactions. Each conversation rebuilds
+what its messages show on every sync and measures again only the rows
+whose reactions changed (`conversation/reacting.rs`), so a row appearing or
+growing moves nothing else; tiles keep their fixed box.
+
+- **Pills** (`transcript/reactions.rs`): under a message, one small pill per
+  reaction with its count, in the book's order, wrapping, with the rest
+  after ten behind **+N**. Ours is a latched button with semibold text; no
+  edge line marks anything. The tooltip and accessible name say who
+  reacted (`👍 from alice, bob and you`), with names cleaned and cut as
+  status lines' are. Selecting a pill sends `Command::React` or
+  `Command::Unreact` to the message's own conversation. Ours shows only once
+  the client reports it (the echo, or the local echo after a successful
+  write); a `ReactionRefused` shows as a brief notice above the composer.
+- **Adding** (`reactions/choices.rs`): **Add reaction** ends a row with
+  pills, and `r` on a keyboard-focused message opens the same menu at the
+  message. It offers six common reactions, ticked when ours; there is no
+  emoji picker and the stop reactions are never among them.
+- **Stop reactions** (`reactions/stop.rs`): in a channel, on a held request
+  whose status line is trusted (the agent's account is named after the
+  nick asked) and still running and current, or on that agent's own reply
+  to it (its nick and account both name that nick), the menu lists ✋ and 🛑
+  apart under `Stop <ship>`. Choosing one sends an ordinary reaction; once
+  the client reports it, the notice says it was sent and that the status
+  line shows the result when Stargate reports it. A ✋ or 🛑 pill on any
+  request to a verified agent, or its reply, says it asked the agent to
+  stop and never sends one when selected; elsewhere they are ordinary.
+  This follows Stargate `main` at `d4842b8` (`routeIrcStop`,
+  `src/irc/ship.ts`): a person with an account, on the request or an agent
+  message answering it, while the turn is active. A fleet's own
+  `stopReactions` and whether our account counts as a person are not
+  visible to the app.
+- **Support**: without `Update::ReactionSupport` true for the network, the
+  controls go and the pills stay read-only; a message without a `msgid`
+  cannot take a reaction. The Thread tab shows the pills read-only.
+
+See the [change record](changes/channels-reactions/README.md).
 
 ### Loaded reply counts
 

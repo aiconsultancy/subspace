@@ -91,7 +91,9 @@ data), `cargo fmt`, Clippy with warnings denied and `mise run quality`.
 - [x] Bounded per-message aggregation.
 - [x] Stargate stop reactions as data.
 - [x] Developer documentation.
-- [ ] The Channels Space shows reactions (separate UI work).
+- [x] The Channels Space shows reactions:
+      [Channels reactions](../channels-reactions/README.md), which also
+      closes the twelve findings left open here.
 
 No UI change, so no screenshots and no board checklist items change.
 

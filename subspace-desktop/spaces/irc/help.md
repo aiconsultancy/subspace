@@ -15,7 +15,8 @@ thread_status,thread_status/model,thread_status/trust,state/folding,
 transcript/status,transcript/replies,fleet,fleet/places,conversation/header,
 conversation/clock,rows/sections,rows/groups,rows/activity,view/navigator,compose/ask,
 compose/hints,text/look,
-text/references}.rs;
+text/references,reactions,reactions/choices,reactions/stop,
+conversation/reacting,transcript/reactions}.rs;
 scripts/irc-thread-status-fixture.py;
 subspace-framework/services/search
 (records, migration); subspace-framework/board-kit/dashboard/src/
@@ -27,6 +28,8 @@ clients/irc/src/session/listing.rs (LIST); docs/irc.md;
 docs/changes/irc-board; docs/changes/irc-mention-notifications;
 docs/changes/irc-search-history; docs/changes/irc-issue-references;
 docs/changes/channel-list; docs/changes/channels-navigator-and-requests;
+docs/changes/channels-reactions (reactions: checked by tests and captures
+against a loopback Ergo server, not against a deployed gateway);
 docs/changes/irc-thread-status (request status
 lines: checked by tests and the local fixture only, not against a deployed
 gateway). The channel list was checked against a local Ergo
@@ -678,6 +681,40 @@ message. Commands and attachments can't be sent as a reply; cancel the reply
 first. When the server can't mark replies (it lacks `message-tags`) or the
 network is not connected, the tab says so in place of the action.
 
+### React to a message
+
+Reactions show under a message as small pills, each a reaction and how
+many people chose it, in the order they were first added. Yours has a
+filled pill and bold text. Hover a pill to see who reacted. Select a pill to
+add your reaction, or select one that is yours to take it back. After ten
+pills, **+N** lists the rest.
+
+To add a reaction, choose **Add reaction** at the end of a message's pills,
+or focus the message (`Shift+Tab` from the message input, then `↑` or `↓`)
+and press `r`. The menu offers a few common reactions; a ticked one is yours,
+and choosing it again takes it back. A reaction goes to the conversation the
+message is in. Your reaction appears once the server has it; if it can't be
+sent, a short note above the message input says why.
+
+Reactions need a server that supports them (IRCv3 `message-tags`). Without
+that, or while the network is disconnected, the pills stay but you can't
+add or take back a reaction. A message without a server message ID can't
+take one.
+
+**Stop an agent.** On a request to a fleet agent that is still running, or
+the agent's reply to it, **Add reaction** also lists ✋ **Raised hand** and
+🛑 **Stop sign** apart, under **Stop** and the agent's name. Choosing one
+asks Stargate to stop the agent's turn, if you are signed in to an account
+on the server. The note above the message input then says only that the
+reaction was sent; the request's status line shows whether the agent
+stopped, when Stargate reports it. Taking the reaction back does not undo a
+stop. A ✋ or 🛑 pill on such a message says it asked the agent to stop;
+selecting it sends nothing, so a stray click never stops an agent. Elsewhere
+✋ and 🛑 are ordinary reactions. A fleet can configure other stop
+reactions, which Subspace can't see, so only ✋ and 🛑 are marked.
+
+The inspector's **Thread** tab shows the same pills, read-only.
+
 ### Move through messages with the keyboard
 
 In the message input, `Shift+Tab` moves to the newest message. `↑` and `↓`
@@ -830,6 +867,7 @@ the message input is ordinary text input.
 | `Tab` / `Shift+Tab` on a message | Next or previous link or reference in it |
 | `Enter` on a link or reference | Open it |
 | `Enter` on a message with replies or a request | Open its thread in the inspector |
+| `r` on a message | Add or take back a reaction |
 | `Esc` on a message | Back to the message input |
 
 ### Shared keys

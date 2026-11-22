@@ -157,7 +157,9 @@ loopback connection. `--status` gives `aurora-lyra` a nick status, and
 capture build joins, so a capture that shows another buffer meanwhile finds
 them new; `--thread` adds two requests to `aurora-lyra` with its threaded
 progress notices and replies, one finished and one still working, for the
-Thread tab; restart the server and the fixture before each capture.
+Thread tab; `--reactions` has people react to some lines and, with
+`--thread`, sela react with ✋ to the running request; restart the server
+and the fixture before each capture.
 
 Run `python3 scripts/fleet_api_test_server.py --port 18484` to serve the same
 fleet for an installed copy of the app, and `--snapshot` to print it as one
