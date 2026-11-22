@@ -28,6 +28,10 @@ pub(super) struct HeaderFacts {
     pub live: Option<Live>,
 }
 
+/// The most characters of a status the live pill shows; a longer one ends
+/// in an ellipsis, and its accessible name keeps the whole status.
+const LIVE_MAX_CHARS: usize = 40;
+
 /// A ship's captain's current status, for the header's live pill.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Live {
@@ -60,9 +64,18 @@ pub(super) fn live(
         return None;
     }
     statuses.get(captain).map(|text| Live {
-        text: text.to_owned(),
+        text: shortened(text, LIVE_MAX_CHARS),
         spoken: format!("Captain {captain}: {text}"),
     })
+}
+
+/// `text` cut to at most `max` characters, the last an ellipsis when cut.
+fn shortened(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let kept: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{}…", kept.trim_end())
 }
 
 /// The glyph, its tone and its name for a fleet channel's `kind`.
@@ -178,7 +191,15 @@ fn title(target: &Target, facts: &HeaderFacts, named: bool, cx: &App) -> AnyElem
                 .text_size(tokens.secondary_size())
                 .text_color(tokens.muted),
         )
-        .children(facts.live.as_ref().map(live_pill))
+        .children(facts.live.as_ref().map(|live| {
+            // The pill shares the row with the topic: the topic gives way
+            // first, then the pill is clipped rather than pushing the row.
+            div()
+                .flex()
+                .min_w_0()
+                .overflow_hidden()
+                .child(live_pill(live))
+        }))
         .into_any_element()
 }
 
@@ -233,6 +254,35 @@ mod tests {
         assert_eq!(live(Some(&ship), &statuses, &[]), None, "not here");
         assert_eq!(live(Some(&ChannelKind::Starbase), &statuses, &signed), None);
         assert_eq!(live(None, &statuses, &signed), None);
+    }
+
+    #[test]
+    fn a_long_status_ends_in_an_ellipsis_and_is_still_said_whole() {
+        let ship = ChannelKind::Ship {
+            captain: "aurora-lyra".into(),
+        };
+        let long =
+            "Lyra is delegating NAV-2 to Juniper while Wren reviews NAV-7 and Quill runs the tests";
+        let mut statuses = Statuses::default();
+        statuses.set("aurora-lyra", Some(long));
+        let signed = [Member {
+            nick: "aurora-lyra".into(),
+            prefixes: String::new(),
+            away: false,
+            account: Some("aurora-lyra".into()),
+        }];
+        let Some(live) = live(Some(&ship), &statuses, &signed) else {
+            panic!("a vouched captain's status shows");
+        };
+        assert!(live.text.chars().count() <= super::LIVE_MAX_CHARS);
+        assert!(live.text.ends_with('…'));
+        let whole = statuses.get("aurora-lyra").unwrap_or_default();
+        assert!(whole.chars().count() > super::LIVE_MAX_CHARS);
+        assert!(
+            live.spoken.ends_with(whole),
+            "the accessible name keeps it all"
+        );
+        assert_eq!(super::shortened("Short", 40), "Short");
     }
 
     #[test]
