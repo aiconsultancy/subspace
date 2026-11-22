@@ -48,6 +48,8 @@ export const fleets = pgTable(
     ircPort: integer("irc_port"),
     ircTls: boolean("irc_tls"),
     ircWebsocketUrl: text("irc_websocket_url"),
+    starbaseChannel: text("starbase_channel"),
+    commandChannel: text("command_channel"),
     legacyRearAdmiralName: text("rear_admiral_name"),
     legacyCaptainNames: jsonb("captain_names").$type<readonly string[]>(),
     vmHost: text("vm_host"),
@@ -69,6 +71,7 @@ export const ships = pgTable(
     organisationId: organisationId(),
     fleetId: uuid("fleet_id").notNull(),
     name: text().notNull(),
+    channel: text(),
     version: integer().notNull().default(1),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -101,6 +104,7 @@ export const users = pgTable(
     agentFleetId: uuid("agent_fleet_id"),
     agentShipId: uuid("agent_ship_id"),
     agentModel: text("agent_model"),
+    agentIrcNick: text("agent_irc_nick"),
     registeredById: uuid("registered_by_id"),
     deactivatedById: uuid("deactivated_by_id"),
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
@@ -135,6 +139,9 @@ export const users = pgTable(
     uniqueIndex("user_agent_name")
       .on(table.organisationId, sql`lower(${table.displayName})`)
       .where(sql`${table.agentRank} is not null`),
+    uniqueIndex("user_agent_irc_nick")
+      .on(table.organisationId, sql`lower(${table.agentIrcNick})`)
+      .where(sql`${table.agentIrcNick} is not null`),
     foreignKey({
       columns: [table.organisationId, table.registeredById],
       foreignColumns: [table.organisationId, table.id],

@@ -339,7 +339,9 @@ const fleetLive = HttpApiBuilder.group(api, "fleets", (handlers) =>
     )
     .handle("createShip", ({ params, payload }) =>
       handleDb(
-        Effect.flatMap(CurrentMember, (member) => createShip(member, params.fleetId, payload.name)),
+        Effect.flatMap(CurrentMember, (member) =>
+          createShip(member, params.fleetId, payload.name, payload.channel),
+        ),
       ),
     )
     .handle("renameShip", ({ params, payload }) =>

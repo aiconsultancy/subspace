@@ -1,0 +1,200 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "d6af40c5-77c3-414e-bd5c-5e56956d3325",
+  "prevIds": [
+    "cbca2eb1-e917-4eeb-bafa-8df99f268361"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "fleets",
+        "starbase_channel"
+      ],
+      "writes": [
+        "s|col|public.fleets.starbase_channel",
+        "n|col|public.fleets.starbase_channel",
+        "e|col|public.fleets.starbase_channel"
+      ],
+      "reads": [
+        "n|tbl|public.fleets",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "fleets",
+        "command_channel"
+      ],
+      "writes": [
+        "s|col|public.fleets.command_channel",
+        "n|col|public.fleets.command_channel",
+        "e|col|public.fleets.command_channel"
+      ],
+      "reads": [
+        "n|tbl|public.fleets",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "ships",
+        "channel"
+      ],
+      "writes": [
+        "s|col|public.ships.channel",
+        "n|col|public.ships.channel",
+        "e|col|public.ships.channel"
+      ],
+      "reads": [
+        "n|tbl|public.ships",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "users",
+        "agent_irc_nick"
+      ],
+      "writes": [
+        "s|col|public.users.agent_irc_nick",
+        "n|col|public.users.agent_irc_nick",
+        "e|col|public.users.agent_irc_nick"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "users",
+        "user_agent_irc_nick"
+      ],
+      "writes": [
+        "s|idx|public.user_agent_irc_nick",
+        "n|idx|public.user_agent_irc_nick",
+        "e|idx|public.user_agent_irc_nick",
+        "n|rel|public.user_agent_irc_nick"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.users.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "fleets",
+        "name": "starbase_channel",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "fleets",
+        "name": "command_channel",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "ships",
+        "name": "channel",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "users",
+        "name": "agent_irc_nick",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "users",
+        "name": "user_agent_irc_nick",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "lower(\"agent_irc_nick\")",
+            "isExpression": true,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": "\"agent_irc_nick\" is not null",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}

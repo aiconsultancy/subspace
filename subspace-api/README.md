@@ -166,6 +166,22 @@ with `PATCH /api/v1/ships/{shipId}`. The fleet reports its agents in rank and
 name order, and its ships in name order. The deprecated leadership fields
 `rearAdmiralName` and `captainNames` come from linked agents.
 
+A fleet records its standard IRC channels: `starbaseChannel` (people, the
+rear admiral and the captains) and `commandChannel` (the rear admiral and its
+captains), each optional and set on create or with `PATCH`. A ship records its
+captain's ship channel in `channel`, set when the ship is created or renamed;
+a rename that leaves `channel` out keeps it, and `null` clears it. Channel
+names start with `#` and hold no spaces, commas or control characters. The
+fleet's `agents` repeat each linked ship's channel as `shipChannel`. An
+initiative's `channels` are its own channels beyond its fleet's standard ones.
+
+Each agent may record `ircNick`, its nick on the fleet's IRC server, which
+fleet IRC servers tie to the account of the same name. Desktop clients mark an
+agent's rank in IRC only by this nick, never by its name. A nick starts with a
+letter and holds letters, digits, `-` and `_`, at most 64 characters, and is
+unique within the organisation, ignoring case. An edit that leaves `ircNick`
+out keeps it; `null` clears it. The fleet's `agents` report it.
+
 Agent registration and editing accept `fleetId` and `shipId`. An ID takes
 precedence over its text field. Legacy fleet names resolve within the caller's
 organisation. A ship name creates a ship only within a matched fleet. Captains
@@ -197,7 +213,7 @@ share the REST services and their version and authorisation checks.
 
 Human organisation administrators register and deactivate API agent identities under
 `/api/v1/agents`. Register an agent with `name`, `rank`, `fleet`, `defaultModel`,
-`serviceTokenClientId` and `ship` for captains. The ranks are `rearAdmiral`,
+`serviceTokenClientId`, `ship` for captains and, optionally, `ircNick`. The ranks are `rearAdmiral`,
 `captain` and `crew`. The `serviceTokenClientId` field carries the verified
 provider subject for the agent in that organisation. Use the WorkOS `sub`,
 the Entra `oid` or the email used by local dev sign-in. Authenticate as that

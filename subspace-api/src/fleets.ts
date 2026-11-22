@@ -17,6 +17,11 @@ const Websocket = Schema.String.check(
   Schema.isMaxLength(2048),
   Schema.isPattern(/^wss?:\/\/[^\s/@?#]+(?:[/?#][^\s]*)?$/u),
 );
+/** An IRC channel name: `#`, then no spaces, commas or control characters. */
+export const IrcChannel = Schema.String.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^#[^\s,\p{Cc}]+$/u),
+);
 const editable = {
   slug: Slug.check(Schema.makeFilter((slug) => !isUuid(slug), { expected: "a slug, not a UUID" })),
   name: Name,
@@ -25,6 +30,8 @@ const editable = {
   ircTls: Schema.Boolean,
   ircWebsocketUrl: Schema.optional(Schema.NullOr(Websocket)),
   vmHost: Schema.optional(Schema.NullOr(Host)),
+  starbaseChannel: Schema.optional(Schema.NullOr(IrcChannel)),
+  commandChannel: Schema.optional(Schema.NullOr(IrcChannel)),
 };
 export const CreateFleet = Schema.Struct(editable).annotate({
   parseOptions: { onExcessProperty: "error" },
@@ -37,15 +44,23 @@ export const UpdateFleet = Schema.Struct({
   ircTls: Schema.optional(Schema.Boolean),
   ircWebsocketUrl: editable.ircWebsocketUrl,
   vmHost: editable.vmHost,
+  starbaseChannel: editable.starbaseChannel,
+  commandChannel: editable.commandChannel,
   version: Schema.optional(Version),
 });
 export const ShipName = Line(64);
-export const CreateShip = Schema.Struct({ name: ShipName });
-export const RenameShip = Schema.Struct({ name: ShipName, version: Schema.optional(Version) });
+const ShipChannel = Schema.optional(Schema.NullOr(IrcChannel));
+export const CreateShip = Schema.Struct({ name: ShipName, channel: ShipChannel });
+export const RenameShip = Schema.Struct({
+  name: ShipName,
+  channel: ShipChannel,
+  version: Schema.optional(Version),
+});
 export const Ship = Schema.Struct({
   id: Uuid,
   fleetId: Uuid,
   name: Schema.String,
+  channel: Schema.NullOr(Schema.String),
   createdAt: Timestamp,
   updatedAt: Timestamp,
   version: Version,
@@ -56,6 +71,8 @@ const FleetAgent = Schema.Struct({
   rank: AgentRank,
   shipId: Schema.NullOr(Uuid),
   ship: Schema.NullOr(Schema.String),
+  ircNick: Schema.NullOr(Schema.String),
+  shipChannel: Schema.NullOr(Schema.String),
   available: Schema.Boolean,
 });
 export const Fleet = Schema.Struct({
@@ -67,6 +84,8 @@ export const Fleet = Schema.Struct({
   ircTls: Schema.NullOr(Schema.Boolean),
   ircWebsocketUrl: Schema.NullOr(Websocket),
   vmHost: Schema.NullOr(Host),
+  starbaseChannel: Schema.NullOr(Schema.String),
+  commandChannel: Schema.NullOr(Schema.String),
   rearAdmiralName: Schema.NullOr(Schema.String),
   captainNames: Schema.Array(Schema.String),
   irc: Schema.Struct({
@@ -79,7 +98,9 @@ export const Fleet = Schema.Struct({
   updatedAt: Timestamp,
   version: Version,
   agents: Schema.Array(FleetAgent),
-  ships: Schema.Array(Schema.Struct({ id: Uuid, name: Schema.String })),
+  ships: Schema.Array(
+    Schema.Struct({ id: Uuid, name: Schema.String, channel: Schema.NullOr(Schema.String) }),
+  ),
 }).annotate({ identifier: "Fleet" });
 export const FleetRef = Schema.String.check(
   Schema.isMinLength(1),
@@ -94,10 +115,19 @@ const byName = (a: { name: string }, b: { name: string }) =>
   compare(a.name.toUpperCase(), b.name.toUpperCase());
 const byShip = (a: ShipRow, b: ShipRow) => byName(a, b) || compare(a.id, b.id);
 
-export const shipDto = ({ id, fleetId, name, createdAt, updatedAt, version }: ShipRow) => ({
+export const shipDto = ({
   id,
   fleetId,
   name,
+  channel,
+  createdAt,
+  updatedAt,
+  version,
+}: ShipRow) => ({
+  id,
+  fleetId,
+  name,
+  channel,
   createdAt: dateTime(createdAt),
   updatedAt: dateTime(updatedAt),
   version,
@@ -116,7 +146,7 @@ export function loadFleetDtos(db: Db, organisationId: string, rows: FleetRow[]) 
       .from(users)
       .where(and(eq(users.organisationId, organisationId), inArray(users.agentFleetId, ids)));
     const shipsByFleet = Map.groupBy(shipRows.sort(byShip), ({ fleetId }) => fleetId);
-    const shipsById = new Map(shipRows.map((ship) => [ship.id, ship.name]));
+    const shipsById = new Map(shipRows.map((ship) => [ship.id, ship]));
     const agentsByFleet = Map.groupBy(agents, ({ agentFleetId }) => agentFleetId);
     return new Map(
       rows.map((row) => {
@@ -129,8 +159,11 @@ export function loadFleetDtos(db: Db, organisationId: string, rows: FleetRow[]) 
                   rank: agent.agentRank,
                   shipId: agent.agentShipId,
                   ship:
-                    (agent.agentShipId ? shipsById.get(agent.agentShipId) : undefined) ??
+                    (agent.agentShipId ? shipsById.get(agent.agentShipId)?.name : undefined) ??
                     agent.agentShip,
+                  ircNick: agent.agentIrcNick,
+                  shipChannel:
+                    (agent.agentShipId ? shipsById.get(agent.agentShipId)?.channel : null) ?? null,
                   available: agent.active,
                 },
               ]
@@ -150,6 +183,8 @@ export function loadFleetDtos(db: Db, organisationId: string, rows: FleetRow[]) 
             ircTls: row.ircTls,
             ircWebsocketUrl: row.ircWebsocketUrl,
             vmHost: row.vmHost,
+            starbaseChannel: row.starbaseChannel,
+            commandChannel: row.commandChannel,
             rearAdmiralName: roster.find(({ rank }) => rank === "rearAdmiral")?.name ?? null,
             captainNames: roster.filter(({ rank }) => rank === "captain").map(({ name }) => name),
             irc: {
@@ -162,7 +197,11 @@ export function loadFleetDtos(db: Db, organisationId: string, rows: FleetRow[]) 
             updatedAt: dateTime(row.updatedAt),
             version: row.version,
             agents: roster,
-            ships: (shipsByFleet.get(row.id) ?? []).map(({ id, name }) => ({ id, name })),
+            ships: (shipsByFleet.get(row.id) ?? []).map(({ id, name, channel }) => ({
+              id,
+              name,
+              channel,
+            })),
           },
         ];
       }),
@@ -324,7 +363,7 @@ export const listShips = (member: Member, id: string) =>
     return rows.sort(byShip).map(shipDto);
   });
 
-export const createShip = (member: Member, id: string, name: string) =>
+export const createShip = (member: Member, id: string, name: string, channel?: string | null) =>
   Effect.gen(function* () {
     if (member.agentRank)
       return yield* Effect.fail(problem(403, "Only humans may manage fleets and ships."));
@@ -336,7 +375,7 @@ export const createShip = (member: Member, id: string, name: string) =>
     if (!fleet) return yield* Effect.fail(problem(404, "Fleet not found."));
     const [ship] = yield* db
       .insert(ships)
-      .values({ organisationId: member.organisationId, fleetId: id, name })
+      .values({ organisationId: member.organisationId, fleetId: id, name, channel })
       .onConflictDoNothing()
       .returning();
     if (!ship) return yield* Effect.fail(problem(409, duplicateShip));
@@ -354,10 +393,11 @@ export const renameShip = (member: Member, id: string, payload: typeof RenameShi
         if (!old) return yield* Effect.fail(problem(404, "Ship not found."));
         if (payload.version !== undefined && payload.version !== old.version)
           return yield* Effect.fail(stale("ship", old.version));
-        if (old.name === payload.name) return shipDto(old);
+        const channel = payload.channel === undefined ? old.channel : payload.channel;
+        if (old.name === payload.name && old.channel === channel) return shipDto(old);
         const [ship] = yield* tx
           .update(ships)
-          .set({ name: payload.name, version: old.version + 1, updatedAt: sql`now()` })
+          .set({ name: payload.name, channel, version: old.version + 1, updatedAt: sql`now()` })
           .where(shipScope(member, id))
           .returning()
           .pipe(

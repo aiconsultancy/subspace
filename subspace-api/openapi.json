@@ -642,6 +642,36 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "starbaseChannel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "commandChannel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -982,6 +1012,36 @@
                       }
                     ]
                   },
+                  "starbaseChannel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "commandChannel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "version": {
                     "anyOf": [
                       {
@@ -1246,6 +1306,21 @@
                     "type": "string",
                     "maxLength": 64,
                     "minLength": 1
+                  },
+                  "channel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -1384,6 +1459,21 @@
                     "type": "string",
                     "maxLength": 64,
                     "minLength": 1
+                  },
+                  "channel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\s,\\p{Cc}]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "version": {
                     "anyOf": [
@@ -31302,6 +31392,16 @@
                             "maxLength": 256,
                             "minLength": 1
                           },
+                          "ircNick": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "isActive": {
                             "type": "boolean"
                           },
@@ -31354,6 +31454,7 @@
                           "shipId",
                           "defaultModel",
                           "serviceTokenClientId",
+                          "ircNick",
                           "isActive",
                           "deactivatedAt",
                           "deactivatedByUserId",
@@ -31551,6 +31652,16 @@
                       "maxLength": 256,
                       "minLength": 1
                     },
+                    "ircNick": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "isActive": {
                       "type": "boolean"
                     },
@@ -31603,6 +31714,7 @@
                     "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
+                    "ircNick",
                     "isActive",
                     "deactivatedAt",
                     "deactivatedByUserId",
@@ -31782,6 +31894,21 @@
                     "type": "string",
                     "maxLength": 200,
                     "minLength": 1
+                  },
+                  "ircNick": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -31894,6 +32021,16 @@
                       "maxLength": 256,
                       "minLength": 1
                     },
+                    "ircNick": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "isActive": {
                       "type": "boolean"
                     },
@@ -31946,6 +32083,7 @@
                     "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
+                    "ircNick",
                     "isActive",
                     "deactivatedAt",
                     "deactivatedByUserId",
@@ -32136,6 +32274,16 @@
                       "maxLength": 256,
                       "minLength": 1
                     },
+                    "ircNick": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "isActive": {
                       "type": "boolean"
                     },
@@ -32188,6 +32336,7 @@
                     "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
+                    "ircNick",
                     "isActive",
                     "deactivatedAt",
                     "deactivatedByUserId",
@@ -32368,6 +32517,21 @@
                     "maxLength": 200,
                     "minLength": 1
                   },
+                  "ircNick": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "version": {
                     "anyOf": [
                       {
@@ -32491,6 +32655,16 @@
                       "maxLength": 256,
                       "minLength": 1
                     },
+                    "ircNick": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "isActive": {
                       "type": "boolean"
                     },
@@ -32543,6 +32717,7 @@
                     "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
+                    "ircNick",
                     "isActive",
                     "deactivatedAt",
                     "deactivatedByUserId",
@@ -32760,6 +32935,16 @@
                       "maxLength": 256,
                       "minLength": 1
                     },
+                    "ircNick": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "isActive": {
                       "type": "boolean"
                     },
@@ -32812,6 +32997,7 @@
                     "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
+                    "ircNick",
                     "isActive",
                     "deactivatedAt",
                     "deactivatedByUserId",
@@ -39826,6 +40012,26 @@
               }
             ]
           },
+          "starbaseChannel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "commandChannel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "rearAdmiralName": {
             "anyOf": [
               {
@@ -39953,6 +40159,26 @@
                     }
                   ]
                 },
+                "ircNick": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "shipChannel": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "available": {
                   "type": "boolean"
                 }
@@ -39963,6 +40189,8 @@
                 "rank",
                 "shipId",
                 "ship",
+                "ircNick",
+                "shipChannel",
                 "available"
               ],
               "additionalProperties": false
@@ -39980,11 +40208,22 @@
                 },
                 "name": {
                   "type": "string"
+                },
+                "channel": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
                 "id",
-                "name"
+                "name",
+                "channel"
               ],
               "additionalProperties": false
             }
@@ -39999,6 +40238,8 @@
           "ircTls",
           "ircWebsocketUrl",
           "vmHost",
+          "starbaseChannel",
+          "commandChannel",
           "rearAdmiralName",
           "captainNames",
           "irc",
@@ -40297,6 +40538,16 @@
           "name": {
             "type": "string"
           },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "createdAt": {
             "type": "string"
           },
@@ -40313,6 +40564,7 @@
           "id",
           "fleetId",
           "name",
+          "channel",
           "createdAt",
           "updatedAt",
           "version"
