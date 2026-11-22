@@ -1,6 +1,8 @@
 //! Applies the desktop initiative selection to the verified IRC runtime.
 
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use gpui_kit::{Context, Entity, Subscription};
 use subspace_api_client::initiatives::{Catalog, IdentityObservation};
@@ -26,6 +28,9 @@ pub(crate) struct InitiativeIrc {
     /// The server initiatives use when their fleet names none.
     default: Endpoint,
     loopback_fixture: bool,
+    /// Each network's fleet roles, built once for the catalogue and the
+    /// networks as they are, and forgotten when either changes.
+    rosters: RefCell<HashMap<NetworkId, Rc<Roster>>>,
     _subscription: Option<Subscription>,
 }
 
@@ -37,6 +42,7 @@ impl InitiativeIrc {
             network: None,
             default: Endpoint::configured(),
             loopback_fixture,
+            rosters: RefCell::default(),
             _subscription: None,
         }
     }
@@ -112,19 +118,33 @@ impl InitiativeIrc {
     /// The fleet roles on `network`: those of the catalogue's fleets whose
     /// IRC server it is, as an initiative of that fleet would pick it among
     /// `networks`. None for a network that serves no fleet.
+    /// Built once until the catalogue or the networks change.
     pub(crate) fn roster(
         &self,
         networks: &[NetworkConfig],
         network: &NetworkId,
         cx: &gpui_kit::App,
-    ) -> Roster {
+    ) -> Rc<Roster> {
+        if let Some(held) = self.rosters.borrow().get(network) {
+            return Rc::clone(held);
+        }
         let memberships = self.catalog.read(cx).memberships();
-        Roster::new(fleets_on(
+        let roster = Rc::new(Roster::new(fleets_on(
             memberships,
             networks,
             network,
             self.loopback_fixture,
-        ))
+        )));
+        self.rosters
+            .borrow_mut()
+            .insert(network.clone(), Rc::clone(&roster));
+        roster
+    }
+
+    /// Forgets the built rosters, after the catalogue or the networks
+    /// changed.
+    pub(crate) fn forget_rosters(&self) {
+        self.rosters.borrow_mut().clear();
     }
 }
 
@@ -159,6 +179,7 @@ impl Hub {
         self.initiatives.sync_selection(cx);
         self.initiatives._subscription =
             Some(cx.observe(&self.initiatives.catalog, |hub, _, cx| {
+                hub.initiatives.forget_rosters();
                 // Any change is applied, so a selection that went with its
                 // scope also takes its autojoin with it. Without initiative
                 // channels (a NETT organisation that does not serve them),

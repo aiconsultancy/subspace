@@ -67,6 +67,7 @@ impl Hub {
             self.captain_notifications.pause();
         }
         self.applied = settings;
+        self.initiatives.forget_rosters();
         self.save_removed(cx);
         save_directories(self, cx);
         cx.notify();

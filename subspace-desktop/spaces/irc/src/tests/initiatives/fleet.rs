@@ -248,3 +248,25 @@ fn an_agent_s_nick_without_its_account_earns_no_rank(cx: &mut TestAppContext) {
     });
     assert!(!drawn("irc-member:aurora-lyra", cx).contains("captain"));
 }
+
+#[gpui_kit::test]
+fn the_hub_builds_a_network_s_roster_once_until_the_catalogue_changes(cx: &mut TestAppContext) {
+    let (_, hub, cx) = ship(cx);
+    let (first, again) = hub.read_with(cx, |hub, cx| {
+        (hub.roster(&network_id(), cx), hub.roster(&network_id(), cx))
+    });
+    assert!(std::rc::Rc::ptr_eq(&first, &again), "kept, not rebuilt");
+    assert_eq!(first.rank("aurora-lyra"), Some(crate::fleet::Rank::Captain));
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(Vec::new()), cx)
+        })
+    });
+    settle(cx);
+    let after = hub.read_with(cx, |hub, cx| hub.roster(&network_id(), cx));
+    assert_eq!(
+        after.rank("aurora-lyra"),
+        None,
+        "rebuilt for the new catalogue"
+    );
+}

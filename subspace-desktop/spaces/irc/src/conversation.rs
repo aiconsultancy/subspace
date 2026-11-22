@@ -206,12 +206,16 @@ impl Conversation {
     /// Re-reads the buffer after the hub changed, keeping the reader's place.
     fn sync(&mut self, cx: &mut Context<Self>) {
         let previous = (self.replies.clone(), self.statuses.clone());
-        self.refresh_roster(cx);
+        let ranks_changed = self.refresh_roster(cx);
         self.refresh_replies(cx);
         self.refresh_statuses(cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
-        let changed = self.changed_reply_rows(&rows, (&*previous.0, &*previous.1), cx);
+        let changed = if ranks_changed {
+            (0..rows.len()).collect()
+        } else {
+            self.changed_reply_rows(&rows, (&*previous.0, &*previous.1), cx)
+        };
         let revision = self.find_active.then(|| find::revision(self, cx));
         let find_changed = self.scroll.rows() != rows || self.find_source != revision;
         self.find_source = revision;
@@ -256,12 +260,15 @@ impl Conversation {
     }
 
     /// Reads the fleet roles again, keeping the shared one while they are
-    /// unchanged.
-    fn refresh_roster(&mut self, cx: &App) {
+    /// unchanged. True when they changed, so rows that show a rank are
+    /// measured again.
+    fn refresh_roster(&mut self, cx: &App) -> bool {
         let roster = self.hub.read(cx).roster(&self.buffer.network, cx);
-        if *self.roster != roster {
-            self.roster = Rc::new(roster);
+        let changed = *self.roster != *roster;
+        if changed {
+            self.roster = roster;
         }
+        changed
     }
 
     fn refresh_replies(&mut self, cx: &App) {

@@ -76,7 +76,11 @@ pub(crate) struct Hub {
 
 impl Hub {
     /// The fleet roles on `network`, from the initiatives catalogue.
-    pub(crate) fn roster(&self, network: &NetworkId, cx: &App) -> crate::fleet::Roster {
+    pub(crate) fn roster(
+        &self,
+        network: &NetworkId,
+        cx: &App,
+    ) -> std::rc::Rc<crate::fleet::Roster> {
         self.initiatives.roster(&self.applied.networks, network, cx)
     }
 }

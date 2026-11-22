@@ -18,6 +18,8 @@
 //! that serves no fleet, and a nick or channel that two roles claim, are
 //! unknown and draw as a plain person or channel.
 
+use std::collections::HashMap;
+
 use subspace_api_client::model::{AgentRank, Fleet, FleetAgent};
 use subspace_framework::dashboard::Tone;
 use subspace_framework::dashboard::avatar::AgentRank as AvatarRank;
@@ -274,16 +276,13 @@ fn found<'a, T>(entries: &'a [(String, T)], name: &str) -> Option<&'a T> {
 /// `entries` without every name that more than one entry claims, so a clash
 /// is unknown rather than either role.
 fn unclaimed_twice<T>(entries: Vec<(String, T)>) -> Vec<(String, T)> {
-    let names: Vec<String> = entries
-        .iter()
-        .map(|(name, _)| name.to_ascii_lowercase())
-        .collect();
+    let mut claims: HashMap<String, usize> = HashMap::new();
+    for (name, _) in &entries {
+        *claims.entry(name.to_ascii_lowercase()).or_default() += 1;
+    }
     entries
         .into_iter()
-        .filter(|(name, _)| {
-            let name = name.to_ascii_lowercase();
-            names.iter().filter(|other| **other == name).count() == 1
-        })
+        .filter(|(name, _)| claims.get(&name.to_ascii_lowercase()) == Some(&1))
         .collect()
 }
 
