@@ -120,24 +120,47 @@ def prepare_member(person, home, repo_id, source, mirror, cache_user, helper):
     hook = helper.parent / "git-hooks/pre-push"
     # Crew worktrees share this checkout's hooks, configuration and credentials.
     as_user(user, "/usr/bin/python3", Path(__file__), "hook", dest / ".git", hook, "on" if "githubApp" in person else "off")
+    remote_head = []
+
+    def start_point():
+        # Resolved at most once per repository, and only when a new crew branch needs it.
+        if not remote_head:
+            if mirror:
+                remote_head.append(git(cache_user, "-C", mirror, "rev-parse", "HEAD", output=True))
+            else:
+                git(user, "-C", dest, "fetch", "--quiet", "origin", "HEAD", env=auth)
+                remote_head.append(git(user, "-C", dest, "rev-parse", "FETCH_HEAD", output=True))
+        return remote_head[0]
+
     for worker in person.get("crew", ()):
-        prepare_crew(user, dest, crew_worktree(home, worker, repo_id), worker["branch"], mirror, cache_user, auth)
+        prepare_crew(user, dest, crew_worktree(home, worker, repo_id), worker["branch"], start_point)
 
 
-def prepare_crew(user, checkout, dest, branch, mirror, cache_user, auth):
+def registered_worktrees(user, checkout):
+    """Map each registered worktree path to its porcelain attribute lines, such as prunable or locked."""
+    entries = {}
+    for block in git(user, "-C", checkout, "worktree", "list", "--porcelain", output=True).split("\n\n"):
+        lines = block.splitlines()
+        if lines and lines[0].startswith("worktree "):
+            entries[lines[0].removeprefix("worktree ")] = lines[1:]
+    return entries
+
+
+def prepare_crew(user, checkout, dest, branch, start_point):
     """Add a crew member's worktree of the captain's checkout once; never reset or move existing work."""
-    registered = git(user, "-C", checkout, "worktree", "list", "--porcelain", output=True).splitlines()
-    if f"worktree {dest}" not in registered:
-        if dest.exists() or dest.is_symlink():
+    registered = registered_worktrees(user, checkout)
+    present = dest.exists() or dest.is_symlink()
+    if str(dest) in registered and not present:
+        # Its directory was deleted: forget only this registration (Git refuses a locked one), keep the
+        # branch and its commits, and add the worktree again below.
+        git(user, "-C", checkout, "worktree", "remove", dest)
+        registered.pop(str(dest))
+    if str(dest) not in registered:
+        if present:
             raise ValueError(f"{dest} exists but is not a worktree of {checkout}. Move it aside.")
         as_user(user, "/usr/bin/mkdir", "-p", "--", dest.parent)
-        if mirror:
-            base = git(cache_user, "-C", mirror, "rev-parse", "HEAD", output=True)
-        else:
-            git(user, "-C", checkout, "fetch", "--quiet", "origin", "HEAD", env=auth)
-            base = git(user, "-C", checkout, "rev-parse", "FETCH_HEAD", output=True)
         existing = git(user, "-C", checkout, "branch", "--list", branch, output=True)
-        target = [dest, branch] if existing else ["-b", branch, dest, base]
+        target = [dest, branch] if existing else ["-b", branch, dest, start_point()]
         git(user, "-C", checkout, "worktree", "add", "--quiet", *target)
     # Stargate requires each worker to share its project checkout's Git common directory.
     common = git(user, "-C", dest, "rev-parse", "--path-format=absolute", "--git-common-dir", output=True)

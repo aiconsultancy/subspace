@@ -140,6 +140,7 @@ class FleetPolicyTests(unittest.TestCase):
             ({"captain": {"crewNames": {"claude-1": "Codex 1"}}}, "distinct IDs"),
             ({"captain": {"crewNames": {"claude-1": "Orion"}}}, "distinct IDs"),
             ({"captain": {"crewNames": {"claude-1": "Ægir"}}}, "ASCII"),
+            ({"captain": {"crewNames": {"claude-1": "R2.D2"}}}, "ASCII letters, digits, spaces, hyphens"),
             ({"captain": {"crewNames": {"claude-3": "Rigel"}}}, "only enabled crew slots"),
             ({"rearAdmiral": {"crew": {"codex": {"count": 1}}}}, "Only captains may declare crew"),
             ({"repositories": [{"id": "9lives", "url": "https://github.com/example/nine.git"}]}, "start with a lowercase letter"),
@@ -278,6 +279,60 @@ class FleetPolicyTests(unittest.TestCase):
              home / "worktrees/codex-1/project", "a" * 40),
         ])
         self.assertTrue(all(user == "ss-orion" for user, args in calls if args[:2] == ("-C", checkout)))
+
+    def test_private_crew_worktrees_fetch_the_remote_head_once(self):
+        captain = {"id": "orion", "role": "captain", "crew": [
+            {"id": "claude-1", "branch": "crew/example-fleet-orion-claude-1"},
+            {"id": "codex-1", "branch": "crew/example-fleet-orion-codex-1"},
+        ]}
+        home = Path("/agents/orion")
+        checkout = home / "workspace/project"
+        calls = []
+
+        def git(user, *args, output=False, env=None, shared=False):
+            calls.append(args)
+            if args[-2:] == ("rev-parse", "FETCH_HEAD"):
+                return "b" * 40
+            if "--git-common-dir" in args:
+                return str(checkout / ".git")
+            return "" if output else None
+
+        source = "https://github.com/example/private.git"
+        with patch.object(workspaces, "clone"), patch.object(workspaces, "check_origin"), \
+                patch.object(workspaces, "as_user"), patch.object(workspaces, "private_credentials", return_value={}), \
+                patch.object(workspaces, "git", side_effect=git):
+            workspaces.prepare_member(captain, home, "project", source, None, "repos", Path("/opt/fixture/github_app.py"))
+        self.assertEqual(sum("fetch" in args for args in calls), 1)
+        self.assertEqual(sum("add" in args for args in calls if "worktree" in args), 2)
+
+    def test_a_deleted_crew_worktree_is_added_again_on_its_branch(self):
+        home = Path("/agents/orion")
+        checkout = home / "workspace/project"
+        dest = home / "worktrees/claude-1/project"
+        branch = "crew/example-fleet-orion-claude-1"
+        listing = (f"worktree {checkout}\nHEAD {'a' * 40}\nbranch refs/heads/main\n\n"
+                   f"worktree {dest}\nHEAD {'a' * 40}\nbranch refs/heads/{branch}\n"
+                   "prunable gitdir file points to non-existent location\n")
+        calls = []
+
+        def git(user, *args, output=False, env=None, shared=False):
+            calls.append(args)
+            if args[-2:] == ("list", "--porcelain"):
+                return listing.strip()
+            if args[-3:-1] == ("branch", "--list"):
+                return f"  {branch}"
+            if "--git-common-dir" in args:
+                return str(checkout / ".git")
+            return "" if output else None
+
+        def start_point():
+            raise AssertionError("An existing branch needs no start point.")
+
+        with patch.object(workspaces, "as_user"), patch.object(workspaces, "git", side_effect=git):
+            workspaces.prepare_crew("ss-orion", checkout, dest, branch, start_point)
+        worktree = [args[2:] for args in calls if args[2:3] == ("worktree",)]
+        self.assertEqual(worktree, [("worktree", "list", "--porcelain"), ("worktree", "remove", dest),
+                                    ("worktree", "add", "--quiet", dest, branch)])
 
     def test_stargate_fleet_api_is_an_operator_listener(self):
         example = Path(__file__).resolve().parents[1] / "fleet.example.json"

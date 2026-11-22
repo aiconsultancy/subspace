@@ -273,28 +273,38 @@ def gather(args, saved):
 
 
 def parse_repositories(value):
-    """'URL' or 'ID=URL' items. The ID defaults to the repository's name."""
+    """'URL' or 'ID=URL' items as [ID, URL, named]. The ID defaults to the repository's name."""
     rows = []
     for item in (part.strip() for part in value.split(",")):
         if not item:
             continue
         named = re.fullmatch(r"([a-z][a-z0-9_-]{0,39})=(.+)", item)
         url = named.group(2) if named else item
+        try:
+            path = urlsplit(url).path
+        except ValueError:
+            path = ""
         name = named.group(1) if named else re.sub(
-            r"[^a-z0-9_-]+", "-", urlsplit(url).path.rstrip("/").rpartition("/")[2].removesuffix(".git").lower()).strip("-")
-        rows.append([name, url])
+            r"[^a-z0-9_-]+", "-", path.rstrip("/").rpartition("/")[2].removesuffix(".git").lower()).strip("-")
+        rows.append([name, url, bool(named)])
     return rows
 
 
 def check_repositories(rows):
-    for name, url in rows:
-        parts = urlsplit(url)
-        require(parts.scheme == "https" and parts.hostname and parts.path.strip("/") and not parts.username
+    for index, (name, url, _named) in enumerate(rows, 1):
+        try:
+            parts = urlsplit(url)
+            host = parts.hostname
+        except ValueError:
+            parts, host = None, None
+        # Name a rejected item by position and host only: the URL may carry credentials.
+        require(parts and parts.scheme == "https" and host and parts.path.strip("/") and not parts.username
                 and not parts.password and not parts.query and not parts.fragment,
-                f"Repository {url} needs an HTTPS Git URL without credentials, a query or a fragment.")
+                f"Repository {index} ({host or 'no host'}) needs an HTTPS Git URL without credentials, "
+                "a query or a fragment.")
         require(REPO_ID.fullmatch(name) and name != "default",
                 f"Give repository {url} an ID that starts with a letter, as ID=URL (for example web={url}).")
-    require(len({name for name, _ in rows}) == len(rows) and len({url for _, url in rows}) == len(rows),
+    require(len({row[0] for row in rows}) == len(rows) and len({row[1] for row in rows}) == len(rows),
             "Repository IDs and URLs must be unique.")
     require(len(rows) <= MAX_REPOSITORIES, f"Use at most {MAX_REPOSITORIES} repositories, the crew limit.")
 
@@ -506,9 +516,11 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
             config[key] = previous[key]
     repositories = previous.get("repositories", [])
     if "repositories" in answers:
-        # This run's answer replaces the list; a repository that stays keeps its ID and visibility.
+        # This run's answer replaces the list; a repository that stays keeps its visibility, and its ID
+        # unless this answer names one.
         known = {row.get("url"): row for row in repositories if isinstance(row, dict)}
-        repositories = [known.get(url, {"id": name, "url": url}) for name, url in answers["repositories"]]
+        repositories = [{**known[url], "id": name} if named and url in known else known.get(url, {"id": name, "url": url})
+                        for name, url, named in answers["repositories"]]
     config["repositories"] = repositories
     by_id = {person["id"]: person for person in [previous.get("rearAdmiral", {}), *previous.get("captains", [])]
              if isinstance(person, dict) and "id" in person}

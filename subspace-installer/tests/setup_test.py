@@ -128,6 +128,22 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual(replaced["repositories"], [config["repositories"][1]])
         fleet_setup.save_answers(answers)
         self.assertNotIn("repositories", fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+        # An explicit ID=URL answer renames a known repository and keeps its visibility.
+        answers, rear, captains = answers_for([*argv[:7], "--repositories", "shared=https://github.com/example/lib.git"])
+        renamed = fleet_setup.fleet_config(answers, fleet_setup.roster(answers, rear, captains), "a" * 40)
+        self.assertEqual(renamed["repositories"], [{"id": "shared", "url": "https://github.com/example/lib.git",
+                                                    "private": True}])
+
+    def test_a_rejected_repository_url_is_not_echoed(self):
+        fixture = "fixture-not-a-secret"
+        for url in (f"https://user:{fixture}@example.com/a.git", f"https://example.com/a.git?token={fixture}",
+                    f"http://{fixture}@example.com/a.git"):
+            argv = ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion",
+                    "--repositories", f"https://github.com/example/ok.git,{url}"]
+            with self.subTest(url=url), self.assertRaises(fleet_setup.SetupError) as raised:
+                answers_for(argv)
+            self.assertNotIn(fixture, str(raised.exception))
+            self.assertIn("Repository 2 (example.com)", str(raised.exception))
 
     def test_rejects_unsafe_or_ambiguous_answers(self):
         cases = [
