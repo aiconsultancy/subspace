@@ -622,6 +622,32 @@ class AgentDispatchTests(unittest.TestCase):
             self.assertNotIn("plugins", saved["opencode-atlas"])
         runtime.fleet_ipc_policy(runtime.captain_permissions(cfg, captain), "fixture")
 
+    def test_role_guidance_follows_the_dispatch_switch(self):
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        references = Path("/references/atlas")
+        cfg = validate(self.config, self.secrets)
+        for person in cfg["members"]:
+            text = roles.role_documents(cfg, person, references, home)["instructions"]
+            self.assertIn("Agent dispatch is off", text)
+            self.assertNotIn("fleet_answer_offer", text)
+        self.enable(answerTimeoutSeconds=600)
+        cfg = validate(self.config, self.secrets)
+        rear, captain = (roles.role_documents(cfg, person, references, home)["instructions"] for person in cfg["members"])
+        self.assertIn("+stargate/dispatch", rear)
+        self.assertIn("#example-fleet-command", rear)
+        self.assertNotIn("fleet_answer_offer", rear)
+        self.assertIn("fleet_answer_offer", captain)
+        self.assertIn("10 minutes", captain)
+        self.assertIn("untrusted data", captain)
+        crewless = json.loads(json.dumps(self.config))
+        crewless["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra",
+                                     "crew": {"claude": {"count": 0}, "codex": {"count": 0}}})
+        cfg = validate(crewless, {**self.secrets, **officer_secrets("example-lyra"),
+                                  "rearAdmiralApiToken": FIXTURE_JWT})
+        lyra = roles.role_documents(cfg, cfg["members"][2], references, home)["instructions"]
+        self.assertIn("cannot accept offers", lyra)
+        self.assertNotIn("$", lyra)
+
     def test_dispatch_wakes_only_the_addressed_captain(self):
         """Stargate addresses each request to one captain's @nick; answers and status lines are NOTICEs."""
         self.enable()

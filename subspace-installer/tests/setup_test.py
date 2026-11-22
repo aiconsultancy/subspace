@@ -287,6 +287,107 @@ class SetupInputsTests(unittest.TestCase):
             self.assertEqual(fleet_setup.metadata_users({"metadataUsers": []}), ["ss-fleet-gateway"])
 
 
+class AgentDispatchSetupTests(unittest.TestCase):
+    """Setup asks whether to switch on agent dispatch; unattended, it stays off."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        fleet_setup.INPUTS = Path(self.directory.name)
+        self.argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
+                     "--repositories", "https://github.com/example/project.git", "--no-demo"]
+        self.api = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"]}
+
+    def config(self, argv, api_block):
+        answers, rear, captains = answers_for(argv)
+        members = fleet_setup.roster(answers, rear, captains)
+        config = fleet_setup.fleet_config(answers, members, "a" * 40, api_block, False, "b" * 40)
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
+                                            answers["admin"], "header.payload.admin", True,
+                                            "header.payload.rear" if api_block else "")
+        return answers, config, secrets
+
+    def test_unattended_setup_leaves_dispatch_off(self):
+        answers, config, _ = self.config(self.argv, self.api)
+        self.assertIs(answers["agentDispatch"], False)
+        self.assertNotIn("agentDispatch", config)
+        prompts = []
+        args = fleet_setup.parse_args(["--operator", "operator", *self.argv])
+        with patch.object(fleet_setup.sys.stdin, "isatty", return_value=True), \
+                patch("builtins.input", side_effect=lambda text: prompts.append(text) or ""):
+            answers = fleet_setup.gather(args, {})
+        # Asked once, with what switching it on does, and an empty answer keeps the default: off.
+        [question] = [text for text in prompts if "agent dispatch" in text]
+        self.assertIn("Ready for agents", question)
+        self.assertIn("(y/n) [n]", question)
+        self.assertIs(answers["agentDispatch"], False)
+
+    def test_dispatch_on_writes_a_valid_fleet_and_is_saved(self):
+        answers, config, secrets = self.config([*self.argv, "--agent-dispatch"], self.api)
+        self.assertIs(answers["agentDispatch"], True)
+        self.assertEqual(config["agentDispatch"], {"enabled": True})
+        cfg = validate(config, secrets, check_files=False)
+        self.assertEqual(cfg["agentDispatch"]["pollIntervalSeconds"], 120)
+        # The answer is kept for the next run, which keeps it unless a flag changes it.
+        fleet_setup.save_answers(answers)
+        saved = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
+        self.assertIs(saved["agentDispatch"], True)
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
+        self.assertIs(fleet_setup.gather(args, saved)["agentDispatch"], True)
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--no-agent-dispatch"])
+        self.assertIs(fleet_setup.gather(args, saved)["agentDispatch"], False)
+        # Hand-set timings survive a rerun.
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {"agentDispatch": {"enabled": True, "answerTimeoutSeconds": 600}})
+        _, config, _ = self.config([*self.argv, "--agent-dispatch"], self.api)
+        self.assertEqual(config["agentDispatch"], {"enabled": True, "answerTimeoutSeconds": 600})
+        _, config, _ = self.config([*self.argv, "--no-agent-dispatch"], self.api)
+        self.assertEqual(config["agentDispatch"], {"enabled": False, "answerTimeoutSeconds": 600})
+
+    def test_dispatch_needs_the_api(self):
+        with self.assertRaisesRegex(fleet_setup.SetupError, "needs the API on this VM"):
+            answers_for([*self.argv, "--agent-dispatch", "--no-api"])
+
+    def test_agents_are_registered_once_and_the_rear_admiral_gets_its_own_token(self):
+        answers, rear, captains = answers_for([*self.argv, "--agent-dispatch"])
+        members = fleet_setup.roster(answers, rear, captains)
+        calls = []
+        agents = []
+
+        def api(token, method, path, body=None):
+            calls.append((method, path))
+            if path == "/fleets/example-fleet":
+                return {"id": "fleet-uuid"}
+            if path.startswith("/agents?"):
+                return {"items": agents, "nextCursor": None}
+            if method == "POST" and path == "/agents":
+                agents.append({**body, "isActive": True})
+                return body
+            raise AssertionError(path)
+
+        with patch.object(fleet_setup, "api_call", side_effect=api), \
+                patch.object(fleet_setup, "api_token", side_effect=lambda _answers, email=None: f"token-for-{email}"):
+            token = fleet_setup.dispatch_agents(answers, members, "header.payload.admin")
+            self.assertEqual(token, "token-for-example-fleet-atlas@agents.example.com")
+            self.assertEqual([(agent["name"], agent["rank"], agent.get("ship")) for agent in agents], [
+                ("example-fleet-atlas", "rearAdmiral", None), ("example-fleet-orion", "captain", "Orion")])
+            self.assertTrue(all(agent["fleetId"] == "fleet-uuid" for agent in agents))
+            fleet_setup.dispatch_agents(answers, members, "header.payload.admin")
+        self.assertEqual(sum(1 for call in calls if call == ("POST", "/agents")), 2)
+        agents[1]["fleetId"] = "another-fleet"
+        with patch.object(fleet_setup, "api_call", side_effect=api), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "belongs to another fleet"):
+            fleet_setup.dispatch_agents(answers, members, "header.payload.admin")
+
+    def test_only_the_gateway_user_may_also_reach_the_api(self):
+        answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": []}
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "metadata_users", return_value=[]):
+            self.assertIn("3000:ss-fleet-gateway", fleet_setup.isolation_args(answers))
+            self.assertNotIn("--port-user", fleet_setup.isolation_args({**answers, "agentDispatch": False}))
+        with patch.object(fleet_setup.pwd, "getpwnam", side_effect=KeyError), \
+                patch.object(fleet_setup, "metadata_users", return_value=[]):
+            self.assertNotIn("--port-user", fleet_setup.isolation_args(answers))
+
+
 class IrcServerTests(unittest.TestCase):
     def test_private_addresses_only(self):
         import irc_server
