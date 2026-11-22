@@ -87,6 +87,24 @@ was checked against the code and fixed on this branch:
 | Low: test gaps (find button, pending to available, chip copy) | `test(irc): click the find button, see a dot arrive and copy within a chip's row` |
 | Low: the fixture's `#aurora-fleet-command` | `fix(irc): name the fixture's command channel #aurora-command` |
 
+### Review findings on this pull request
+
+Two independent reviews of this pull request found no high findings. Each
+medium and low finding was checked against the code and fixed on this
+branch:
+
+| Finding | Fix |
+| --- | --- |
+| Any member can set a ship's channel, which drives every member's autojoin | `fix(api): require an administrator for a ship's channel and refuse names the desktop cannot join` |
+| The API accepts channel names the desktop will not join, such as one with `:` | The same commit |
+| The demo seed adds no nicks or channels to records that already exist | `fix(api): give existing demo agents their nicks and fleets their channels on a re-run` |
+| A retired agent keeps its rank; a crew member's channel uses the first of several captains; the roster scans lists | `fix(irc): count only active agents, find a crew member's channel without guessing and index the roster` |
+| An attachment, a target list, `/raw`, `/quote`, an unknown command and `irc_write` still reach an agent; the notice is lost when no conversation of the network is in front; **Go to** can join a guessed channel | `fix(irc): refuse every private message to an agent, whatever sends it, and show the notice where the user is` |
+| A continuation stays under a verified agent's avatar after the account changes | `fix(irc): start a new sender group when the server account changes` |
+| Captain notifications go to a derived name, not the ship's recorded channel | `fix(irc): send captain notifications to the ship channel the roster gives` |
+| Choosing an initiative shows the fleet's first channel, not its own | `fix(irc): show an initiative's own first channel when it is chosen` |
+| The docs give the state dot's old colours | `docs(irc): give the state dot's colours and the people-only rule's new reach` |
+
 ### Where the design guide won over the mock-up
 
 - Every colour comes from `Tokens`. The rank pills keep the shared pill's
