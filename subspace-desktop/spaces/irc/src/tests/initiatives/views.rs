@@ -1,13 +1,17 @@
 //! The fleets a view shows, as the hub and the inspector hold them: a
 //! hidden view never empties what a shown one publishes, a view that shows
-//! no fleet never starts the fleet service.
+//! no fleet never starts the fleet service, and every inspector tab starts
+//! at the inspector body's text edge.
 
+use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use subspace_client_fleet::{FleetApi, FleetRecord, TokenStore};
 
 use super::super::remove::settle;
 use super::fleet::ship;
+use super::live::{live, set_fleet};
 use crate::hub::Hub;
+use crate::view;
 
 #[gpui_kit::test]
 fn a_hidden_view_on_the_same_hub_never_empties_the_fleets_a_shown_one_shows(
@@ -52,4 +56,40 @@ fn a_view_that_shows_no_fleet_never_starts_the_fleet_service(cx: &mut TestAppCon
         board.read_with(cx, |board, _| !crate::live::watch::bound(&board.watch)),
         "no fleet on show: the service is not reached"
     );
+}
+
+#[gpui_kit::test]
+fn every_inspector_tab_starts_its_content_at_the_body_s_text_edge(cx: &mut TestAppContext) {
+    let (board, hub, cx) = ship(cx);
+    set_fleet(&hub, live(), cx);
+    let (body, edge) = cx.update(|window, cx| {
+        let body = window.find("workspace-inspector-body").bounds();
+        let tokens = subspace_framework::dashboard::Tokens::current(cx);
+        (
+            body,
+            body.origin.x + subspace_framework::dashboard::workspace::text_edge(&tokens),
+        )
+    });
+    let place = |id: &'static str, cx: &mut VisualTestContext| {
+        cx.update(|window, _| {
+            let bounds = window.find(id).bounds();
+            (bounds.origin.x, bounds.origin.y)
+        })
+    };
+    let (ship_x, ship_y) = place("irc-inspector-subject", cx);
+    assert_eq!(ship_x, edge, "the Ship tab adds no inset of its own");
+    for (tab, id) in [
+        (view::InspectorTab::Thread, "irc-thread-prompt-line"),
+        (view::InspectorTab::People, "irc-members"),
+    ] {
+        board.update(cx, |board, cx| {
+            board.inspector_tab = tab;
+            cx.notify();
+        });
+        settle(cx);
+        let (x, y) = place(id, cx);
+        assert_eq!(x, edge, "{id} starts at the same edge");
+        assert_eq!(y, ship_y, "{id} starts at the same top");
+    }
+    assert!(ship_y > body.origin.y);
 }

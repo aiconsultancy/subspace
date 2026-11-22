@@ -219,9 +219,9 @@ fn people(members: Option<Entity<MemberList>>, cx: &App) -> AnyElement {
     }
 }
 
-/// The subject tab: the ship or the Starbase.
+/// The subject tab: the ship or the Starbase. Like every tab, it starts
+/// at the inspector body's own text edge, with no inset of its own.
 fn subject_body(board: &Irc, front: &Front, cx: &App) -> AnyElement {
-    let tokens = Tokens::current(cx);
     let content = match &front.subject {
         Subject::Ship { captain } => ship::body(board, front, captain, cx),
         Subject::Starbase => starbase::body(front, cx),
@@ -232,8 +232,6 @@ fn subject_body(board: &Irc, front: &Front, cx: &App) -> AnyElement {
         .w_full()
         .min_w_0()
         .gap_4()
-        .px(workspace::text_edge(&tokens))
-        .py_3()
         .child(content)
         .into_any_element()
 }
