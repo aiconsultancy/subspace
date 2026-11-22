@@ -1,6 +1,6 @@
 //! A token-themed Kit Tag with the approved issue-tile pill geometry.
 
-use crate::Tokens;
+use crate::{Tokens, Tone};
 use gpui_kit::component::tag::Tag;
 use gpui_kit::{
     App, ElementId, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, RenderOnce,
@@ -42,6 +42,12 @@ fn foreground(tone: PillTone, tokens: &Tokens) -> gpui_kit::Hsla {
     }
 }
 
+/// The pill's text colour: its named [`Tone`] when it has one, else its
+/// semantic [`PillTone`].
+fn ink(tone: PillTone, hue: Option<Tone>, tokens: &Tokens) -> gpui_kit::Hsla {
+    hue.map_or_else(|| foreground(tone, tokens), |hue| tokens.tone(hue))
+}
+
 /// A small, fully rounded status pill, reusable by any Space.
 #[derive(IntoElement)]
 pub struct Pill {
@@ -49,6 +55,7 @@ pub struct Pill {
     text: SharedString,
     label: SharedString,
     tone: PillTone,
+    hue: Option<Tone>,
 }
 
 impl Pill {
@@ -59,12 +66,24 @@ impl Pill {
             label: text.clone(),
             text,
             tone: PillTone::Muted,
+            hue: None,
         }
     }
 
     pub fn tone(mut self, tone: PillTone) -> Self {
         self.tone = tone;
         self
+    }
+
+    /// Draws the pill in a named theme [`Tone`] rather than a semantic
+    /// [`PillTone`], with the same tinted fill: a role mark such as a
+    /// captain's in `Tone::Blue` or a rear admiral's in `Tone::Accent`.
+    /// It takes precedence over [`Pill::tone`].
+    pub fn hue(self, hue: Tone) -> Self {
+        Self {
+            hue: Some(hue),
+            ..self
+        }
     }
 
     /// A fuller status description for assistive technology.
@@ -77,7 +96,7 @@ impl Pill {
 impl RenderOnce for Pill {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let tokens = Tokens::current(cx);
-        let foreground = foreground(self.tone, &tokens);
+        let foreground = ink(self.tone, self.hue, &tokens);
         let fill = background(foreground);
         div()
             .id(self.id)
@@ -105,9 +124,10 @@ fn background(foreground: gpui_kit::Hsla) -> gpui_kit::Hsla {
 #[cfg(test)]
 mod tests {
     use super::{
-        PADDING_X_PX, PADDING_Y_PX, PillTone, TINT, background, foreground, height, padding,
+        PADDING_X_PX, PADDING_Y_PX, Pill, PillTone, TINT, background, foreground, height, ink,
+        padding,
     };
-    use crate::Tokens;
+    use crate::{Tokens, Tone};
     use gpui_kit::px;
 
     #[test]
@@ -121,5 +141,23 @@ mod tests {
         assert_eq!(foreground(PillTone::Danger, &tokens), tokens.red);
         assert_eq!(background(tokens.yellow), tokens.yellow.opacity(TINT));
         assert_ne!(background(tokens.muted), tokens.pane, "visible on the pane");
+    }
+
+    #[test]
+    fn a_named_hue_takes_its_theme_colour_over_the_semantic_tone() {
+        let tokens = Tokens::with_density(&crate::density::Density::default());
+        assert_eq!(ink(PillTone::Danger, None, &tokens), tokens.red);
+        assert_eq!(
+            ink(PillTone::Danger, Some(Tone::Blue), &tokens),
+            tokens.blue
+        );
+        assert_eq!(
+            ink(PillTone::Muted, Some(Tone::Accent), &tokens),
+            tokens.accent
+        );
+        let pill = Pill::new("rank", "CAPTAIN")
+            .tone(PillTone::Warning)
+            .hue(Tone::Blue);
+        assert_eq!((pill.tone, pill.hue), (PillTone::Warning, Some(Tone::Blue)));
     }
 }

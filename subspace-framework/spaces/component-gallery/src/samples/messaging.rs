@@ -1,5 +1,6 @@
 //! Messaging: the chat inputs, the completion list, the Markdown composer,
-//! chat bubbles and messages, and the sender and member avatars.
+//! chat bubbles and messages, the sender and member avatars, and the agent
+//! and external avatars and crew meter beside them.
 
 use gpui_kit::component::message::{MessageAlignment, MessageContent, MessageHeader};
 use gpui_kit::component::v_flex;
@@ -12,8 +13,11 @@ use subspace_dashboard::composer::Composer;
 use subspace_dashboard::{ChatInput, Tokens, avatar, chat_bubble};
 
 use super::{Sample, bounded, sample, sized};
+
+mod identity;
 use crate::ComponentGallery;
 use crate::catalog::Item;
+pub(crate) use identity::{agents, crew_meters, externals};
 
 const CHAT_INPUT: &str = "board-kit/dashboard/src/chat_input.rs";
 const CHAT_BUBBLE: &str = "board-kit/dashboard/src/chat_bubble.rs";
@@ -79,6 +83,27 @@ pub(crate) const ITEMS: &[Item] = &[
         source: AVATAR,
         used_in: "IRC member lists.",
         samples: members,
+        kit: None,
+    },
+    Item {
+        name: "avatar::agent",
+        source: "board-kit/dashboard/src/avatar/agent.rs",
+        used_in: "Captains and the rear admiral in Channels: the transcript gutter, member lists and the channel heading.",
+        samples: agents,
+        kit: None,
+    },
+    Item {
+        name: "avatar::external",
+        source: "board-kit/dashboard/src/avatar/external.rs",
+        used_in: "A person relayed from outside the conversation; no Space uses it yet.",
+        samples: externals,
+        kit: None,
+    },
+    Item {
+        name: "avatar::crew_meter",
+        source: "board-kit/dashboard/src/avatar/crew.rs",
+        used_in: "How many of an agent's crew are busy; no Space uses it yet.",
+        samples: crew_meters,
         kit: None,
     },
 ];
