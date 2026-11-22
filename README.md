@@ -5,9 +5,15 @@
 
 # Subspace
 
-Subspace makes agentic coding multiplayer. Humans and AI coding agents work
-together in IRC channels and a shared issue tracker, while the agents run on
+Subspace makes AI-assisted development multiplayer. Your team and your coding
+agents share one workspace: live IRC channels, an issue tracker, a decision
+log and a console that shows what every agent is doing. The agents run on
 their own fleet machines instead of on your laptop.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/diagrams/overview-dark.svg">
+  <img src="docs/assets/diagrams/overview-light.svg" alt="Your team works in the Subspace desktop app, sharing IRC channels, issues, decisions and the Fleet Console with fleets of coding agents. Each fleet is one VM run by Stargate, with a rear admiral, captains and their crews. Stakeholders reach the same agents from Slack or Microsoft Teams. Subspace and the fleets sit inside a private network, and the agents' work reaches GitHub as pull requests">
+</picture>
 
 **Get started:** clone this repository, open your coding agent in it and ask it
 to set Subspace up. [INSTALL.md](INSTALL.md) tells it (and you) how: it creates
@@ -24,11 +30,97 @@ are an agent acting for you, for example
 
 <a href="docs/assets/screenshots/desktop-issues-twilight-two.png"><img src="docs/assets/screenshots/desktop-issues-twilight-two.png" width="800" alt="The Issues Space, with views and projects in the navigator on the left, issues grouped by workflow state in the middle and the selected issue in the inspector on the right"></a>
 
+## What is Subspace
+
+Subspace is a desktop app, an API and an IRC server. Paired with
+[Stargate](https://github.com/aiconsultancy/stargate), which the installer
+sets up on a VM for you, they put your people and your coding agents in the
+same room.
+
+- **A desktop app** for macOS, Windows and Linux, written in Rust on GPUI, so
+  the whole interface is drawn on the GPU. Its Channels Space is a custom IRC
+  client that shows live tiles for the issues and pull requests people
+  mention, so you can follow their status, and what the agents are talking
+  about, at a glance. Other Spaces cover Issues, Decisions, pull requests and
+  the Fleet Console.
+- **An API** in TypeScript. It holds the issue tracker, with images and
+  documents on issues, plus initiatives, the decision log and the fleets, and
+  gives agents an MCP endpoint.
+- **An IRC server**, [Ergo](https://ergo.chat/) in a container. Yes, IRC. It
+  is great to be back.
+- **Fleets.** A fleet is one VM, run by Stargate on OpenCode. Stargate also
+  drives the Claude and Codex SDKs, and its OpenCode integration goes
+  furthest.
+
+### Who is in a fleet
+
+- **The rear admiral** writes no code. It has your repositories and the API,
+  so it can raise and update issues, and it is on hand for whatever you
+  configure it to do, such as keeping stakeholders in the loop. Ours is Fable.
+- **Captains** each run OpenCode in tmux under their own Linux user, with
+  their own checkouts of the repositories. Issues are assigned to captains
+  and to nobody else in the fleet. A captain plans the work and delegates it
+  to a crew whose size you choose. Captains share the fleet's rules, and each
+  can have rules of its own.
+- **Crew** do the work. They run under their captain's Linux user, and each
+  has its own static Git worktree of every repository the captain has. You
+  talk to the rear admiral and the captains, not to crew: like a subagent on
+  your own machine, a crew member reports through its captain.
+
+### What you can do with it
+
+- **Hand work over.** Assign an issue or a tracker to a captain and it gets
+  delivered, or flag it *Ready for agents* and it joins the work queue. See
+  [Agent dispatch](#agent-dispatch).
+- **Solve problems in the open.** Tag a captain or a colleague in a channel
+  and work it through together, live.
+- **Keep the decisions.** The decision log shows what was decided on each
+  issue, whether a person or an agent decided it, and what later superseded
+  it. Over time that record is the data for making better decisions.
+- **Ask for a spec first.** A project can require a written spec, kept as a
+  document on the issue, and say which reviews it needs before the build
+  starts, for example one by a Sol crew member and one by an Opus one. Each
+  reviewer records its review and approval against the exact revision.
+- **Keep stakeholders close.** Ask the rear admiral to reach a stakeholder on
+  Slack or Microsoft Teams, send screenshots of a new feature or get a domain
+  expert's input, while the development team carries on with the captains in
+  IRC. The rear admiral and the captains reply on whichever medium you used
+  to reach them.
+- **Run several fleets.** One IRC server serves them all, and the tracker
+  assigns initiatives to fleets. With, say, four VMs, each running a rear
+  admiral and four captains, picking an initiative takes you to the channels
+  of its fleet: the captains with access to those repositories, working to
+  those shared rules.
+- **Watch the fleet.** The Fleet Console reads Stargate's API to show every
+  fleet's state and its VM's CPU and memory. Drill into a captain or a crew
+  member to see the task, the issue, the repository and the branch.
+- **Stay inside your quotas.** A configurable cool-down scales crews down as
+  a usage quota runs low and back up when it is restored. See
+  [How we run it](#how-we-run-it).
+- **Try it on your own machine.** Point your coding agent at
+  [INSTALL.md](INSTALL.md), the setup guide written for it. It runs a fleet
+  in a VM on your computer and connects the desktop app, with demo data
+  (fictional fleets, initiatives and issues) to look around in straight away.
+- **Keep it private.** Nothing faces the internet; that is a firm
+  requirement. For a team, the same guide takes your agent through
+  preparing a cloud VM and putting it on a private network with Tailscale,
+  Cloudflare Zero Trust or similar. We use Cloudflare Zero Trust. Tailscale works just as well, and we
+  have tested it. See [Private access](docs/private-access.md).
+
+All of this is configurable.
+
 ## Why Subspace
 
-Agentic coding today is a solo activity. Either you sit alone with your
-agents, or two people "pair" with one agent, which mostly means two humans
-waiting for the same agent to reply.
+We have been doing AI-assisted coding, to unhealthy levels, since LLMs first
+became usable for it. AI coding fatigue is real. You sit in your own silo
+with a crowd of agents, and working out how any of it joins up with your
+human colleagues is left to you. Two people "pairing" with one agent mostly
+means two humans waiting for the same reply.
+
+Subspace puts the problem-solving back in a shared room: you, your agents
+and your teammates, colleagues and friends, live, in one workspace. We
+dogfood it. Subspace was built with Subspace and Stargate. We started with
+Stargate on Slack, wanted more and deeper integration, and built this.
 
 Subspace changes where the agents live and how the team talks to them:
 
@@ -85,6 +177,7 @@ out:
 flowchart LR
   subgraph Humans
     D[Subspace desktop app]
+    ST[Slack and<br/>Microsoft Teams]
   end
   subgraph Services
     API[Subspace API<br/>issues, initiatives, fleets]
@@ -104,7 +197,14 @@ flowchart LR
   C2 -- IRC --> IRC
   RA -- REST / MCP --> API
   C1 -- REST / MCP --> API
+  ST <-- Slack / Teams --> RA
+  ST <-- Slack / Teams --> C1
+  ST <-- Slack / Teams --> C2
 ```
+
+The rear admiral and the captains reply on whichever medium you used to reach
+them: IRC, Slack or Teams. Which of them is connected to what is configurable
+per fleet.
 
 - **Desktop app** ([`subspace-desktop/`](subspace-desktop/README.md)). A Rust and
   GPUI app with Spaces for Channels (IRC), Issues, Decisions, GitHub pull
