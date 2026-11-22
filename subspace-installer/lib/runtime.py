@@ -25,6 +25,7 @@ from agent_files import collect_cloud, private_directory, private_file, provisio
 from network import rules
 from roles import default_permissions, provision_role, role_documents
 import sessions
+import standard_channels
 from workspaces import crew_worktree, prepare_workspaces, prune_worktrees
 
 
@@ -142,6 +143,16 @@ def channel(value):
     return pattern(value, r"#[a-z0-9][a-z0-9_-]{0,48}", "IRC channel")
 
 
+def not_standard(slug, label, value, expected):
+    """Refusal for a renamed standard channel: every fleet keeps the standard names."""
+    shown = value if isinstance(value, str) and len(value) <= 64 and value.isprintable() else "another name"
+    return (f"{label} is {shown}, but it must be {expected}. Every fleet has the standard channels "
+            f"{standard_channels.summary(slug)}, and the desktop recognises them by name, so they cannot be "
+            "renamed or dropped. Leave the setting out or use the standard name. Extra channels are welcome: "
+            "seed them with irc.compose.channels on local IRC, register them on a shared server, or list them "
+            "on an initiative.")
+
+
 def ip(value):
     return str(ipaddress.ip_address(string(value, "IP address")))
 
@@ -193,9 +204,11 @@ def member(value):
     require(value["id"] != SENTRY_TOKEN[0], "The medical member ID is reserved for integration credentials.")
     require(value["id"] not in {"all", "captain"}, "The member IDs all and captain are reserved for crew messaging.")
     string(value["name"], "member name")
-    pattern(value["account"], ACCOUNT, "SASL account")
-    if "channel" in value:
-        channel(value["channel"])
+    require(isinstance(value["account"], str) and re.fullmatch(ACCOUNT, value["account"]),
+            f"Invalid SASL account for member {value['id']}: start with a letter and use at most "
+            f"{standard_channels.MAX_ACCOUNT} letters, digits, hyphens or underscores, the IRC limit for "
+            "accounts and nicks.")
+    # A member's channel, if given, must be its standard channel; validate() checks it against the roster.
     if "git" in value:
         git = fields(value["git"], "git", "email signingKey")
         if "email" in git:
@@ -241,10 +254,11 @@ def irc_config(value, slug, check_files):
     require(len({name.lower() for name in allowed}) == len(allowed), "Allowed IRC accounts must be unique.")
     irc = {
         "mode": mode, "host": server_host, "port": server_port, "tls": tls, "allowedAccounts": allowed,
-        "commandChannel": channel(value.get("commandChannel", value.get("starbaseChannel", f"#{slug}-command"))),
+        "starbaseChannel": standard_channels.starbase(slug), "commandChannel": standard_channels.command(slug),
     }
-    if "starbaseChannel" in value:
-        irc["starbaseChannel"] = channel(value["starbaseChannel"])
+    for key, label in (("starbaseChannel", "irc.starbaseChannel"), ("commandChannel", "irc.commandChannel")):
+        if key in value:
+            require(value[key] == irc[key], not_standard(slug, label, value[key], irc[key]))
     if "caFile" in value:
         require(tls, "IRC caFile requires TLS.")
         irc["caFile"] = absolute_file(value["caFile"], check_files)
@@ -511,15 +525,22 @@ def validate(config, credentials, check_files=True):
     officers = [member(person) for person in [cfg["rearAdmiral"], *cfg["captains"]]]
     require(not {"crew", "crewNames"} & officers[0].keys(), "Only captains may declare crew.")
     irc = irc_config(cfg["irc"], slug, check_files)
-    starbase = irc.get("starbaseChannel", officers[0].get("channel", irc["commandChannel"]))
-    require(officers[0].get("channel", starbase) == starbase, "Rear-admiral channel and Starbase must agree.")
-    captain_rooms = [channel(person.get("channel", f"#{slug}-{person['id']}")) for person in officers[1:]]
-    officer_rooms = [starbase, *captain_rooms]
-    channels = officer_rooms[:]
-    if irc["commandChannel"] != starbase:
-        channels.append(irc["commandChannel"])
-    require(len(set(channels)) == len(channels) <= 20, "Use distinct Starbase, command and captain channels (at most 20).")
-    irc.update(starbaseChannel=starbase, channels=channels)
+    captain_ids = [person["id"] for person in officers[1:]]
+    trouble = standard_channels.problem(slug, captain_ids)
+    require(trouble is None, trouble)
+    # The rear admiral's room is Starbase; each captain's is its ship channel.
+    officer_rooms = [irc["starbaseChannel"], *(standard_channels.ship(slug, captain_id) for captain_id in captain_ids)]
+    for index, (person, room) in enumerate(zip(officers, officer_rooms, strict=True)):
+        if "channel" in person:
+            label = "rearAdmiral.channel" if index == 0 else f"Captain {person['id']}'s channel"
+            require(person["channel"] == room, not_standard(slug, label, person["channel"], room))
+    channels = standard_channels.standard(slug, captain_ids)
+    for name in channels:
+        channel(name)
+    # Stargate joins at most 20 channels per registration, and the rear admiral joins every standard one.
+    require(len(channels) <= 20, f"Use at most 18 captains: the rear admiral joins Starbase, {irc['commandChannel']} "
+            "and every ship channel, and Stargate joins at most 20 channels.")
+    irc.update(channels=channels)
     hull = harness_config(cfg.get("harness", {}), {"type": "opencode", "family": "codex", "model": FAMILIES["codex"], "permissions": None})
     crew = crew_config(cfg.get("crew", {}), {family: {"count": 2, "model": model} for family, model in FAMILIES.items()})
     repositories = repository_config(cfg.get("repositories", []))
@@ -1730,6 +1751,9 @@ def main(args):
             count = sum(len(person["crew"]) for person in cfg["members"])
             print(f"Fleet {cfg['slug']} has {len(cfg['members']) - 1} captains, {count} crew and one rear admiral. "
                   f"IRC mode is {cfg['irc']['mode']}. Crew run as their captain and have no IRC accounts.")
+            print(f"Standard IRC channels: {' '.join(cfg['irc']['channels'])} (Starbase, fleet command, then one "
+                  "ship channel per captain)." + ("" if cfg["irc"]["mode"] == "local" else
+                                                   " Register them on the IRC server before installing."))
             if not cfg["repositories"] and len(cfg["members"]) > 1:
                 print("No repositories are configured, so captains have no crew: crew work in Git worktrees of "
                       "their captain's checkouts.")

@@ -18,8 +18,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import Request, urlopen
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from standard_channels import command  # noqa: E402
+
 
 FLEET = "00000000-0000-0000-0000-000000000002"
+COMMAND = command("example-fleet")
 INITIATIVE = "00000000-0000-0000-0000-000000000001"
 TOKEN = "fixture.header.signature"
 PROXY = "fixture-proxy-client-key"
@@ -310,8 +314,9 @@ def check_shape():
     etc = Path("/etc/subspace-fleet")
     roster = json.loads((etc / "stargate.json").read_text())["irc"]
     rear, captain = roster
-    assert rear["channels"] == ["#example-fleet-starbase", "#example-fleet-orion"]
-    assert captain["channels"] == ["#example-fleet-orion"]
+    # The standard set: the rear admiral joins all of it, a captain its ship, command and the other ships.
+    assert rear["channels"] == ["#example-fleet-starbase", COMMAND, "#example-fleet-orion"]
+    assert captain["channels"] == ["#example-fleet-orion", COMMAND]
     assert rear["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-starbase", "replies": "all"}]
     assert captain["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-orion", "replies": "all"}]
     assert captain["access"]["channelRequests"] == "nick-mention"
@@ -421,11 +426,10 @@ def check_cloud():
 
 def local():
     config = json.loads((WORK / "fleet.json").read_text())
-    config["irc"] = {"mode": "local", "allowedAccounts": ["operator"], "starbaseChannel": "#starbase",
-                     "commandChannel": "#starbase",
+    config["irc"] = {"mode": "local", "allowedAccounts": ["operator"],
                      "compose": {"operator": "operator", "ref": "0" * 40, "channels": ["#initiative"]}}
-    config["captains"][0]["channel"] = "#orion-work"
-    config["medical"].update(channel="#orion-work", target="orion")
+    config["captains"][0]["channel"] = "#example-fleet-orion"
+    config["medical"].update(channel="#example-fleet-orion", target="orion")
     # Test a second ship's membership without launching local Docker-in-Docker.
     config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra",
                                "crew": {"claude": {"count": 0}, "codex": {"count": 1}}})
@@ -441,7 +445,7 @@ def local():
     )
     subprocess.run(["/opt/subspace-fleet/lib/runtime.py", "check"], check=True)
     etc = Path("/etc/subspace-fleet")
-    expected = ["#example-fleet-lyra", "#initiative", "#orion-work", "#starbase"]
+    expected = sorted([COMMAND, "#example-fleet-lyra", "#example-fleet-orion", "#example-fleet-starbase", "#initiative"])
     assert json.loads((etc / "irc/channels.json").read_text()) == [{"name": name} for name in expected]
     compose = json.loads((etc / "irc/override.json").read_text())["services"]["irc"]
     assert compose["environment"]["IRC_CHANNELS_FILE"] == "/run/subspace/channels.json"
@@ -450,14 +454,15 @@ def local():
     medical_unit = Path("/etc/systemd/system/subspace-fleet-medical.service").read_text()
     assert "After=network-online.target subspace-fleet-firewall.service subspace-fleet-irc.service" in medical_unit
     registrations = json.loads((etc / "stargate.json").read_text())["irc"]
-    assert registrations[1]["channels"] == ["#orion-work", "#example-fleet-lyra"]
-    assert registrations[2]["channels"] == ["#example-fleet-lyra", "#orion-work"]
-    assert registrations[1]["access"]["humanWakeChannels"] == [{"channel": "#orion-work", "replies": "all"}]
+    assert registrations[0]["channels"] == ["#example-fleet-starbase", COMMAND, "#example-fleet-orion", "#example-fleet-lyra"]
+    assert registrations[1]["channels"] == ["#example-fleet-orion", COMMAND, "#example-fleet-lyra"]
+    assert registrations[2]["channels"] == ["#example-fleet-lyra", COMMAND, "#example-fleet-orion"]
+    assert registrations[1]["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-orion", "replies": "all"}]
     assert "example-lyra" in registrations[1]["access"]["peerCaptains"]
     subprocess.run(
         ["/opt/subspace-fleet/bin/bun", str(Path(__file__).with_name("routing.mjs"))], check=True,
     )
-    print("Local mode generated and mounted the configured ship, Starbase and initiative channel seeds.")
+    print("Local mode generated and mounted the standard Starbase, command and ship channel seeds and an initiative channel.")
 
 
 def addons():

@@ -1,7 +1,10 @@
 # $agent, captain in $fleet
 
-Coordinate your ship in $channel. Establish the scope and repository before
-starting work, and report the result and any blocker to the rear admiral. Use
+Coordinate your ship in $channel. The rear admiral and the captains coordinate
+in the fleet command channel, $command, where the rear admiral offers and
+assigns issues; answer there when tagged. Establish the scope and repository
+before starting work, and report the result and any blocker to the rear
+admiral. Use
 the repository's normal review and branch rules for changes.
 
 $crew

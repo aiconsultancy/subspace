@@ -30,14 +30,20 @@ function admitted(name, channel, account, text) {
   ));
 }
 
-assert(admitted("orion", "#orion-work", "operator", "Please review the build."));
-assert(!admitted("lyra", "#orion-work", "operator", "Please review the build."));
-assert(admitted("lyra", "#orion-work", "operator", "@example-lyra: please review."));
-assert(!admitted("lyra", "#orion-work", "example-orion", "Please review the build."));
-assert(admitted("lyra", "#orion-work", "example-orion", "@example-lyra: please review."));
-assert(!admitted("lyra", "#orion-work", "unlisted", "@example-lyra: please review."));
-assert(admitted("atlas", "#starbase", "operator", "Let's plan the next release."));
-assert(!admitted("orion", "#starbase", "operator", "@example-orion: please review."));
-assert(admitted("orion", "#orion-work", "example-medical", "example-orion: Sentry HTTP 500"));
-assert(!admitted("orion", "#orion-work", "example-medical", "Sentry HTTP 500"));
-assert(!admitted("lyra", "#orion-work", "example-medical", "@example-lyra: Sentry HTTP 500"));
+assert(admitted("orion", "#example-fleet-orion", "operator", "Please review the build."));
+assert(!admitted("lyra", "#example-fleet-orion", "operator", "Please review the build."));
+assert(admitted("lyra", "#example-fleet-orion", "operator", "@example-lyra: please review."));
+assert(!admitted("lyra", "#example-fleet-orion", "example-orion", "Please review the build."));
+assert(admitted("lyra", "#example-fleet-orion", "example-orion", "@example-lyra: please review."));
+assert(!admitted("lyra", "#example-fleet-orion", "unlisted", "@example-lyra: please review."));
+assert(admitted("atlas", "#example-fleet-starbase", "operator", "Let's plan the next release."));
+assert(!admitted("orion", "#example-fleet-starbase", "operator", "@example-orion: please review."));
+// The fleet command channel wakes an agent only when it is tagged, by a person or its rear admiral.
+const command = roster.atlas.channels[1];
+assert(!admitted("orion", command, "operator", "Please review the build."));
+assert(admitted("orion", command, "operator", "@example-orion: please review."));
+assert(admitted("orion", command, "example-atlas", "@example-orion: please pick up the issue."));
+assert(!admitted("orion", command, "unlisted", "@example-orion: please review."));
+assert(admitted("orion", "#example-fleet-orion", "example-medical", "example-orion: Sentry HTTP 500"));
+assert(!admitted("orion", "#example-fleet-orion", "example-medical", "Sentry HTTP 500"));
+assert(!admitted("lyra", "#example-fleet-orion", "example-medical", "@example-lyra: Sentry HTTP 500"));

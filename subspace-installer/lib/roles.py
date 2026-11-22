@@ -37,6 +37,7 @@ def role_documents(cfg, person, references, home):
     repositories = list(cfg["repositories"])
     values = {
         "agent": person["name"], "fleet": cfg["name"], "channel": person["channel"],
+        "command": cfg["irc"]["commandChannel"],
         "references": str(references) if references else "your workspace when repositories are configured",
         "repositories": ", ".join(f"`{name}`" for name in repositories),
         "first": repositories[0] if repositories else "",

@@ -55,8 +55,8 @@ For remote IRC, register a SASL account for the rear admiral and each
 captain, such as `example-atlas` and `example-orion`, and supply their
 passwords in `ircPasswords`. Crew have no IRC accounts. Add trusted human
 SASL accounts to `irc.allowedAccounts`. Ask the IRC operator to register the
-ship, Starbase and any initiative channels and grant access to the
-appropriate accounts. For local IRC,
+fleet's [standard channels](#channels) (`--dry-run` lists them) and any
+initiative channels, and grant access to the appropriate accounts. For local IRC,
 [pin a revision that contains the Compose project](#local-irc-and-tls).
 
 The installer validates JSON, installs base tooling and verified release
@@ -272,14 +272,38 @@ tool setup.
 
 ### Channels
 
-The rear admiral joins Starbase and each ship channel. Captains join all
-ship channels. Allowlisted humans wake the rear admiral in Starbase and
-the owning captain in its ship channel. Tag an agent by its current IRC
-nick to wake it elsewhere. Stargate verifies the sender's SASL account
-and keeps human authority separate from agent requests. Crew are not on
-IRC: ask the captain, who relays to its crew through Stargate's crew tools.
-Stargate uses IRC message IDs for strict wake rules. A separate legacy
-`irc.commandChannel` is optional and uses mention-only wakes.
+**Every fleet has the same standard channels**, named from its slug, and the
+desktop recognises them by name:
+
+| Channel | Name | Who is there | What it is for |
+| --- | --- | --- | --- |
+| Starbase | `#<slug>-starbase` | Admirals and the rear admiral | People talk to the rear admiral and to each other. |
+| Fleet command | `#<slug>-command` | The rear admiral and every captain | The rear admiral and the captains coordinate. Agent dispatch offers and assigns issues here and captains answer here. |
+| Ship | `#<slug>-<captain-id>`, one per captain | The captain, the rear admiral and the other captains | The captain's own channel, where people talk to it. |
+
+The installer always creates them: it seeds them on local Ergo, puts them in
+the bundle for a [shared server](../INSTALL.md#one-fleet-or-several-shared-irc),
+and prints them in `--dry-run` so an operator can register them on a server
+it does not manage. Their names are fixed. `irc.starbaseChannel`,
+`irc.commandChannel` and a member's `channel` may be left out or set to the
+standard name; any other value is refused, as is a slug or captain ID that
+makes a name longer than 50 bytes (IRC and Stargate's limit) or a captain ID
+of `starbase` or `command`. Extra channels are welcome: seed initiative
+channels with `irc.compose.channels` on local IRC, register them on a shared
+server, and list them on the initiative. The names are defined once, in
+[`lib/standard_channels.py`](lib/standard_channels.py).
+
+The rear admiral joins every standard channel. Each captain joins its own
+ship channel, fleet command and the other ship channels. Allowlisted humans
+wake the rear admiral in Starbase and the owning captain in its ship channel.
+Elsewhere, fleet command included, tag an agent by its current IRC nick to
+wake it; the rear admiral tags a captain the same way. Stargate verifies the
+sender's SASL account and keeps human authority separate from agent
+requests. Crew are not on IRC: ask the captain, who relays to its crew
+through Stargate's crew tools. Stargate uses IRC message IDs for strict wake
+rules. A Stargate with agent dispatch should post its offers to fleet
+command; the pinned revision has no dispatcher, so the installer does not
+configure one yet.
 
 ### Local IRC and TLS
 
@@ -295,8 +319,8 @@ fit 72 UTF-8 bytes and follow Ergo's passphrase rules. Supply the operator
 password only in `ircOperatorPassword`. To rotate an existing account password,
 change it in Ergo before updating the fleet secrets file and upgrading.
 
-Ergo registers Starbase, the ship channels and any separate command channel
-when the container starts. The installer generates `IRC_CHANNELS_FILE`.
+Ergo registers the fleet's [standard channels](#channels) when the
+container starts. The installer generates `IRC_CHANNELS_FILE`.
 Add the intended initiative channel names to `irc.compose.channels` to seed
 them at the same time. The operator is the founder of seeded channels.
 For existing channels, keep the configured founder consistent. To manage
@@ -530,13 +554,13 @@ their crew's assignments through `stargate_crew`.
 | Field | Meaning and default |
 | --- | --- |
 | `slug`, `name` | Stable fleet ID and display label. Keep the slug fixed on a VM. Use up to 35 lowercase ASCII letters, digits and hyphens, starting with a letter or digit. |
-| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp` and `harness`. Captains also take optional `crew` and `crewNames`. IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique. Choose short enough slug/IDs that each derived channel fits 50 characters, or specify a channel. An empty captain array is valid. |
+| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp` and `harness`. Captains also take optional `crew` and `crewNames`. IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
 | `harness` | Default `{"type":"opencode","model":"gpt-5.4"}` with the [role's starter permissions](#instructions-permissions-and-toolchains). Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out. See [crew and repositories](#crew-and-repositories). |
 | `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. |
-| `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Starbase defaults to the rear-admiral channel if set, then `irc.commandChannel` (default `#<slug>-command`). A separately named command channel is shared by officers. Captain channels default to `#<slug>-<id>`. |
+| `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<slug>-<id>` for a captain. Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
 | `stargate` | Optional `repo` and `ref`. Defaults to the [pinned upstream Stargate revision](https://github.com/aiconsultancy/stargate/commit/df03d10b039c126a2fc0b5522bf7841ef07bc799). `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. |

@@ -1,9 +1,10 @@
 #!/usr/bin/python3
 """Run one Subspace IRC server (Ergo) that several fleets share.
 
-With a shared server, every fleet keeps its own Starbase and ship channels on
-one network. The desktop stays connected to that one network, and picking an
-initiative in Channels joins that initiative's channels on its fleet, so
+With a shared server, every fleet keeps its own standard channels (Starbase,
+fleet command and one ship channel per captain) on one network. The desktop
+stays connected to that one network, and picking an initiative in Channels
+joins that initiative's channels on its fleet, so
 switching between fleets is just switching initiative. Stargate on each fleet
 VM connects its agents to their channels with their own SASL accounts.
 
@@ -28,6 +29,7 @@ import subprocess
 import sys
 
 from fleet_setup import PAYLOAD, SetupError, read_json, require, run, say, write_json, write_private
+import standard_channels  # On the path through fleet_setup, from the installer's lib.
 
 HERE = Path(__file__).resolve().parent
 STATE = Path("/root/irc")
@@ -282,6 +284,10 @@ def add(source):
                 and not re.search(r"\s", row["password"]), f"Invalid password for {row['name']}.")
     for row in bundle.get("channels", []):
         require(CHANNEL.fullmatch(row.get("name", "")), f"Invalid channel {row.get('name')}.")
+    names = {row["name"] for row in bundle.get("channels", [])}
+    require(set(standard_channels.standard(slug, [])) <= names,
+            f"The bundle for fleet {slug} lacks its standard channels ({standard_channels.summary(slug)}). "
+            "Make the bundle again with this version of subspace-setup.")
     conflicts(slug, bundle)
     humans = [name for name in bundle.get("humans", []) if ACCOUNT.fullmatch(name)]
     missing = [name for name in humans if name not in answers["humans"]]
