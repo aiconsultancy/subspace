@@ -17,10 +17,10 @@ use crate::hub::Hub;
 use crate::markup::Ref;
 use crate::{Irc, view};
 
-const SHIP: &str = "#aurora-lyra";
-const NOTICE: &str = "aurora-lyra is a fleet agent. Agents talk in channels, where everyone can see: ask in #aurora-lyra.";
+pub(super) const SHIP: &str = "#aurora-lyra";
+pub(super) const NOTICE: &str = "aurora-lyra is a fleet agent. Agents talk in channels, where everyone can see: ask in #aurora-lyra.";
 
-fn front(
+pub(super) fn front(
     board: &Entity<Irc>,
     buffer: &BufferKey,
     cx: &mut VisualTestContext,
@@ -35,7 +35,7 @@ fn front(
     })
 }
 
-fn notice(cx: &mut VisualTestContext) -> Option<String> {
+pub(super) fn notice(cx: &mut VisualTestContext) -> Option<String> {
     cx.update(|window, _| {
         window
             .try_find("irc-agent-notice")
@@ -44,7 +44,7 @@ fn notice(cx: &mut VisualTestContext) -> Option<String> {
 }
 
 /// No private conversation with `nick` was asked for or held.
-fn no_query(hub: &Entity<Hub>, nick: &str, cx: &mut VisualTestContext) {
+pub(super) fn no_query(hub: &Entity<Hub>, nick: &str, cx: &mut VisualTestContext) {
     hub.read_with(cx, |hub, _| {
         assert!(
             !hub.sent()
@@ -56,14 +56,14 @@ fn no_query(hub: &Entity<Hub>, nick: &str, cx: &mut VisualTestContext) {
     });
 }
 
-fn submit(conversation: &Entity<Conversation>, text: &str, cx: &mut VisualTestContext) {
+pub(super) fn submit(conversation: &Entity<Conversation>, text: &str, cx: &mut VisualTestContext) {
     let input = conversation.read_with(cx, |conversation, _| conversation.composer().clone());
     let text = text.to_owned();
     input.update(cx, |_, cx| cx.emit(ChatInputEvent::Submit(text)));
     settle(cx);
 }
 
-fn sent_input(hub: &Entity<Hub>, cx: &mut VisualTestContext) -> bool {
+pub(super) fn sent_input(hub: &Entity<Hub>, cx: &mut VisualTestContext) -> bool {
     hub.read_with(cx, |hub, _| {
         hub.sent()
             .iter()

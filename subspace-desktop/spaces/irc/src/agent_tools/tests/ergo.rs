@@ -47,7 +47,7 @@ fn hub(config: NetworkConfig, stop: Arc<AtomicBool>) -> (Link, JoinHandle<()>) {
                 state.apply(event, Utc::now());
             }
             for request in requests.try_iter() {
-                serve(&mut state, request)
+                serve(&mut state, request, &super::people)
                     .into_iter()
                     .for_each(|command| runtime.send(command));
             }

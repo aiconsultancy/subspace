@@ -307,10 +307,20 @@ impl Hub {
         if requests.is_empty() {
             return;
         }
-        for request in requests {
-            for command in agent_tools::serve(&mut self.state, request) {
-                self.send(command);
-            }
+        let (initiatives, networks) = (&self.initiatives, &self.applied.networks);
+        let app: &App = cx;
+        let agents = |network: &NetworkId, nick: &str| {
+            let roster = initiatives.roster(networks, network, app);
+            crate::compose::AgentNotice::refusing(&roster, nick, |_| false)
+                .map(|notice| notice.words())
+        };
+        let state = &mut self.state;
+        let commands: Vec<Command> = requests
+            .into_iter()
+            .flat_map(|request| agent_tools::serve(state, request, &agents))
+            .collect();
+        for command in commands {
+            self.send(command);
         }
         cx.notify();
     }

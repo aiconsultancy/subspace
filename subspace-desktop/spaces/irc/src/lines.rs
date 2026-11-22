@@ -56,14 +56,21 @@ fn kind(entry: &Entry, conversation: bool) -> Kind {
     }
 }
 
-/// `next` continues the group `previous` belongs to: the same sender, the
-/// same kind of message (notices stay apart), within [`GROUP_MINUTES`].
+/// `next` continues the group `previous` belongs to: the same sender under
+/// the same server account, the same kind of message (notices stay apart),
+/// within [`GROUP_MINUTES`]. A change of account starts a new group, so a
+/// continuation never sits under an avatar and rank the server no longer
+/// vouches for: a rank is verified from the nick and account alone.
 pub(crate) fn continues(previous: &Entry, next: &Entry) -> bool {
     let (before, after) = (&previous.line, &next.line);
-    let same_sender = match (&before.from, &after.from) {
+    let same = |left: &Option<String>, right: &Option<String>| match (left, right) {
         (Some(left), Some(right)) => left.eq_ignore_ascii_case(right),
+        (None, None) => true,
         _ => false,
     };
+    let same_sender = before.from.is_some()
+        && same(&before.from, &after.from)
+        && same(&before.account, &after.account);
     let notice = |kind: LineKind| kind == LineKind::Notice;
     let gap = after.time - before.time;
     same_sender

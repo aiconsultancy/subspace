@@ -36,7 +36,7 @@ use chrono::{DateTime, Utc};
 use crate::model::{Anchor, BufferKey, Command, Event, NetworkConfig, NetworkId, Target};
 use crate::proto::Message;
 
-pub use input::{COMMANDS, CommandHelp, FirstArgument};
+pub use input::{COMMANDS, CommandHelp, FirstArgument, private_recipients};
 pub use lines::{KEPT_CLIENT_TAGS, PROGRESS_TAG};
 pub use metadata::status_text;
 pub use send::{

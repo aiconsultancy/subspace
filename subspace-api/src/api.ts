@@ -161,13 +161,19 @@ const fleetGroup = HttpApiGroup.make("fleets")
       payload: CreateShip,
       success: Ship.pipe(HttpApiSchema.status(201)),
       error: endpointErrors,
-    }),
+    }).annotate(
+      OpenApi.Description,
+      "Any human member may create a ship. Setting its channel requires a human organisation administrator, as the channel decides every member's autojoin; a member who supplies one receives 403.",
+    ),
     HttpApiEndpoint.patch("renameShip", "/ships/:shipId", {
       params: { shipId: Uuid },
       payload: RenameShip,
       success: Ship,
       error: endpointErrors,
-    }),
+    }).annotate(
+      OpenApi.Description,
+      "Any human member may rename a ship. Changing its channel requires a human organisation administrator; a member who supplies a different channel receives 403. Leaving channel out keeps it, and null clears it.",
+    ),
   )
   .annotate(HttpApi.PayloadParseOptions, { onExcessProperty: "error" })
   .prefix(prefix)

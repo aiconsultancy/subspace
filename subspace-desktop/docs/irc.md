@@ -49,19 +49,28 @@ An agent's rank comes from the Subspace API, never from its name. The
 fleet's `agents` give each agent's `rank` (`rearAdmiral`, `captain` or
 `crew`) and, when the API knows it, its `ircNick`, which fleet IRC servers
 tie to the account of the same name. An agent without a known nick is not
-marked. A sender, member or completion row has a rank only when its server
+marked, and only active agents are: one the API reports as not `available`,
+such as a retired captain, has no rank and is treated as a person. A sender, member or completion row has a rank only when its server
 account equals that nick, ignoring ASCII case (`Roster::verified`), the same
-rule as request status trust; a missing account is unknown. Nicks and
-channels compare ignoring ASCII case, as Ergo's `ascii` casemapping does.
+rule as request status trust; a missing account is unknown. A transcript
+group of one sender breaks where the server account changes, so a
+continuation never sits under an avatar and rank the account no longer
+earns. Nicks and channels compare ignoring ASCII case, as Ergo's `ascii`
+casemapping does. The roster indexes agents and channels by case-folded
+name and each fleet's captains by ship.
 
 The fleet's channels come from its record: `starbaseChannel`,
 `commandChannel` and each ship's `channel` (repeated on its captain as
 `shipChannel`). Without a record the standard names stand in:
 `#<slug>-starbase`, `#<slug>-command` and, for a captain, `#<nick>` (the
 installer names a captain's nick and ship channel both `<slug>-<id>`). A
-crew member talks in its captain's ship channel and the rear admiral in the
-Starbase. An initiative joins its fleet's recorded channels, then its own
-(`initiative_channels`); a guessed standard name is never joined.
+crew member talks in its ship's recorded channel, else in that of its ship's
+one active captain (a ship with several has none), and the rear admiral in
+the Starbase. An initiative joins its fleet's recorded channels, then its own
+(`initiative_channels`); a guessed standard name is never joined. Choosing
+an initiative shows its own first channel, else its fleet's recorded
+Starbase, else the first channel it joins (`focus_channel`), so two
+initiatives of one fleet each land in their own place.
 
 Nothing is guessed. A nick or channel that two roles claim, such as the rear
 admiral and a captain with one nick, or a ship whose channel is the
@@ -84,13 +93,24 @@ channel whose captain is unknown is a plain channel.
 
 All communication with a fleet's agents happens in channels, where everyone
 can see it (an owner decision). When a private conversation would start with
-a nick the roster knows as an agent (the member list, a nick reference, a
-notification for a closed conversation, `/msg`, `/query`, `/notice`, or text
-and `/me` in an older private conversation), Channels opens and sends
+a nick the roster knows as an agent, Channels opens, uploads and sends
 nothing and shows a notice above the composer (`compose/agents.rs`) naming
-the agent's channel, with **Go to** that channel and **Dismiss**. An older
-private conversation with an agent stays readable. This is a client-side
-rule: the server still delivers a private message sent another way. Stargate
+the agent's channel, with **Dismiss** and, when the API records that channel
+or the user's channel list holds it, **Go to** that channel; a standard name
+standing in is only named, as joining it would create it. The composer
+checks what a draft would send, through the IRC client's
+`private_recipients`, the same parse the session sends it with: every nick
+of a `/msg`, `/notice` or `/query` target list, the PRIVMSG or NOTICE that
+`/raw`, `/quote` or an unknown command carries, and text, `/me` or
+attachments in an older private conversation; a channel target is never
+refused. The member list, a nick reference and a notification for a closed
+conversation check the nick, and `irc_write` refuses a message to an
+agent's nick. When nothing of the agent's network is in front, as after a
+notification click while another network shows, Channels shows the agent's
+channel if the list holds it, else the network's server buffer, with the
+notice there. An older private conversation with an agent stays readable.
+This is a client-side rule: the server still delivers a private message
+sent another way. Stargate
 answers one unless its registration sets `dmPolicy: "redirect"`, which makes
 every connection answer a direct message with a notice pointing to its
 first channel and start no turn.
@@ -797,9 +817,11 @@ IRC shows issue references through the `issues` contract
 - **Looks** (`text/references.rs`, `transcript/line/marks.rs`): references are accent on
   a tint, as `#channel` references are; `Unavailable` is muted and
   underlined; the keyboard's reference is accent on a strong tint. An
-  available issue leads with a dot for its state category (`text/look.rs`):
-  started orange (a started state named for review blue), completed green,
-  cancelled or duplicate muted, and a hollow ring before work starts. A
+  available issue leads with a dot for its state category (`text/look.rs`)
+  in the tone of the hover card's `state_glyph`: started yellow (a started
+  state named for review blue), completed the accent, cancelled or duplicate
+  muted, and a hollow ring before work starts (triage orange, backlog muted,
+  unstarted the foreground). A
   reference still loading or unresolved has no dot. The dot is a child of
   the inline object, so selection and Copy keep the reference as written. Formatted
   (Markdown) lines show issue references as links (`subspace-irc:issue/…`)

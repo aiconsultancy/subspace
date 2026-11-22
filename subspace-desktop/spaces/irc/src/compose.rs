@@ -27,7 +27,7 @@ mod paste;
 mod recall;
 mod suggest;
 
-pub(crate) use agents::AgentNotice;
+pub(crate) use agents::{AgentNotice, listed_channel};
 pub(crate) use recall::Recall;
 
 /// While typing continues, an active notice is repeated at most this often.
@@ -210,14 +210,18 @@ fn submit(
     if conversation.draft.oversized {
         return;
     }
+    if text.is_empty() && conversation.tray.is_empty() {
+        return;
+    }
+    // Before the attachment sender: an upload would message the agent too.
+    if refuse_agent(conversation, &text, cx) {
+        return;
+    }
     if crate::uploads::outgoing::submit(conversation, text.clone(), window, cx) {
         conversation.draft.typing_since = None;
         return;
     }
     if text.is_empty() {
-        return;
-    }
-    if refuse_agent(conversation, &text, cx) {
         return;
     }
     conversation.send(
@@ -240,8 +244,12 @@ fn refuse_agent(
     text: &str,
     cx: &mut Context<Conversation>,
 ) -> bool {
-    let notice = agents::direct_target(text, &conversation.buffer.target)
-        .and_then(|nick| AgentNotice::refusing(&conversation.roster, &nick));
+    let nicks = agents::direct_targets(text, &conversation.buffer.target);
+    let state = &conversation.hub.read(cx).state;
+    let network = &conversation.buffer.network;
+    let notice = AgentNotice::refusing_any(&conversation.roster, &nicks, |channel| {
+        agents::listed_channel(state, network, channel).is_some()
+    });
     let refused = notice.is_some();
     if refused {
         conversation.draft.agent_notice = notice;
