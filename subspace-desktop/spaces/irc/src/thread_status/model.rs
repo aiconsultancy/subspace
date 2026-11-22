@@ -54,7 +54,9 @@ impl Shown {
 /// How a finished request's line reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Settled {
-    pub failed: bool,
+    /// How it ended; `None` for an ending stored before outcomes were
+    /// kept.
+    pub outcome: Option<Outcome>,
     /// From the request to the notice that ended it, when the ending's
     /// time is known.
     pub took: Option<TimeDelta>,
@@ -205,18 +207,24 @@ fn live_line(
 /// The quiet line of a request that ended: done or failed, and how long it
 /// took when the ending's time is known.
 fn settled_line(entry: &Entry, agent: String, ending: &Ending) -> Shown {
-    let failed = ending.outcome == Some(Outcome::Failed);
     let took = ending
         .at
         .map(|at| at - entry.line.time)
         .filter(|took| *took >= TimeDelta::zero());
     Shown {
         agent,
-        label: if failed { "Failed" } else { "Done" },
+        label: match ending.outcome {
+            Some(Outcome::Failed) => "Failed",
+            Some(Outcome::Completed) => "Done",
+            None => "Ended",
+        },
         stale: None,
         stage: Stage::Done,
         since: entry.line.time,
-        settled: Some(Settled { failed, took }),
+        settled: Some(Settled {
+            outcome: ending.outcome,
+            took,
+        }),
     }
 }
 

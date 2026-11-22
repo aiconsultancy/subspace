@@ -19,7 +19,7 @@ use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, Tone};
 
 use crate::state::Entry;
-use crate::thread_status::{Settled, Shown, Stage, Statuses};
+use crate::thread_status::{Outcome, Settled, Shown, Stage, Statuses};
 
 /// Seconds in a minute and an hour, for the clock and durations.
 const MINUTE: i64 = 60;
@@ -82,12 +82,13 @@ fn settled_line(id: &str, status: &Shown, settled: Settled, tokens: &Tokens) -> 
     frame(id, spoken, marker)
 }
 
-/// A quiet check once done, a cross in the red tone once failed.
+/// A quiet check once done, a cross in the red tone once failed, and a
+/// quiet plain circle when how it ended is unknown.
 fn settled_glyph(settled: Settled) -> (IconName, Tone) {
-    if settled.failed {
-        (IconName::CircleX, Tone::Red)
-    } else {
-        (IconName::CircleCheck, Tone::Muted)
+    match settled.outcome {
+        Some(Outcome::Failed) => (IconName::CircleX, Tone::Red),
+        Some(Outcome::Completed) => (IconName::CircleCheck, Tone::Muted),
+        None => (IconName::Circle, Tone::Muted),
     }
 }
 
@@ -113,13 +114,17 @@ fn frame(id: &str, spoken: String, marker: Marker) -> AnyElement {
 }
 
 /// `Done in 42 m`, `Failed after 3 m`, or without a duration when the
-/// ending's time is unknown.
+/// ending's time is unknown; `Ended` when how it ended is unknown, as for an
+/// ending stored before outcomes were kept, which never claims success.
 pub(crate) fn settled_text(settled: Settled) -> String {
-    match (settled.failed, settled.took.map(duration)) {
-        (false, Some(took)) => format!("Done in {took}"),
-        (false, None) => "Done".to_owned(),
-        (true, Some(took)) => format!("Failed after {took}"),
-        (true, None) => "Failed".to_owned(),
+    let (word, joint) = match settled.outcome {
+        Some(Outcome::Completed) => ("Done", "in"),
+        Some(Outcome::Failed) => ("Failed", "after"),
+        None => ("Ended", "after"),
+    };
+    match settled.took.map(duration) {
+        Some(took) => format!("{word} {joint} {took}"),
+        None => word.to_owned(),
     }
 }
 
@@ -219,8 +224,9 @@ fn stale(id: &str, at: &str) -> AnyElement {
 mod tests {
     use chrono::TimeDelta;
 
-    use super::{clock, duration, settled_text};
-    use crate::thread_status::Settled;
+    use super::{clock, duration, settled_glyph, settled_text};
+    use crate::thread_status::{Outcome, Settled};
+    use subspace_framework::dashboard::panel::IconName;
 
     #[test]
     fn the_clock_counts_minutes_and_seconds_then_hours() {
@@ -236,14 +242,17 @@ mod tests {
 
     #[test]
     fn a_settled_line_says_how_it_ended_and_how_long_it_took() {
-        let settled = |failed, seconds: Option<i64>| Settled {
-            failed,
+        let settled = |outcome, seconds: Option<i64>| Settled {
+            outcome,
             took: seconds.map(TimeDelta::seconds),
         };
-        assert_eq!(settled_text(settled(false, Some(42 * 60))), "Done in 42 m");
-        assert_eq!(settled_text(settled(true, Some(35))), "Failed after 35 s");
-        assert_eq!(settled_text(settled(false, None)), "Done");
-        assert_eq!(settled_text(settled(true, None)), "Failed");
+        let (done, failed) = (Some(Outcome::Completed), Some(Outcome::Failed));
+        assert_eq!(settled_text(settled(done, Some(42 * 60))), "Done in 42 m");
+        assert_eq!(settled_text(settled(failed, Some(35))), "Failed after 35 s");
+        assert_eq!(settled_text(settled(done, None)), "Done");
+        assert_eq!(settled_text(settled(failed, None)), "Failed");
+        assert_eq!(settled_text(settled(None, None)), "Ended", "never Done");
+        assert_eq!(settled_glyph(settled(None, None)).0, IconName::Circle);
         assert_eq!(duration(TimeDelta::seconds(2 * 3600 + 5 * 60)), "2 h 5 m");
     }
 }

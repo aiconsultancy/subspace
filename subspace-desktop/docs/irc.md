@@ -526,8 +526,11 @@ are in the [change record](changes/irc-thread-status/spec.md).
   them (`store::Ended`'s `outcome` and `at`), so it holds after the notice
   is dropped by the line cap, after a restart, and when a partial or Search
   reload brings back earlier progress without it. An ending record stored
-  before outcomes were kept loads as **Done** without a duration; a held
-  ending notice later fills it in once. A main-room final reply without a
+  before outcomes were kept loads as a neutral **Ended** (a plain circle,
+  never a check) without a duration; a held ending notice later fills it
+  in once. On a restart the stored endings are loaded before the restored
+  notices fold, so a restored notice never turns a Failed request into
+  Done. A main-room final reply without a
   reply tag clears nothing.
 - **Stale.** The line shows the last stage, its time and a **Stale** pill
   when the notice carried `,disconnected`, while the network is not
