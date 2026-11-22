@@ -131,7 +131,7 @@ fn live_checks_refuse_what_the_connection_cannot_do() {
     let error = write::check(&offline, &message_to("bob", "hi"), &people)
         .err()
         .unwrap();
-    assert_eq!(error, "Local Ergo is not connected.");
+    assert_eq!(error, "Acme IRC is not connected.");
     let (result, commands) = write::apply(&offline, &message_to("bob", "hi"), &people);
     assert!(result.is_err() && commands.is_empty());
     assert_eq!(
@@ -177,16 +177,16 @@ fn the_preview_names_who_sends_and_every_line() {
         operation(json!({"action":"part","network":"local","channel":"#old"})),
     ];
     let labels: Vec<String> =
-        std::iter::repeat_n("Local Ergo (local) as subspace".to_owned(), 4).collect();
+        std::iter::repeat_n("Acme IRC (local) as subspace".to_owned(), 4).collect();
     let text = write::describe(&operations, &labels);
     assert!(text.contains("sent as you"));
     assert!(text.contains(
-        "\n1. Local Ergo (local) as subspace: message to #subspace\n   > first\n   > second"
+        "\n1. Acme IRC (local) as subspace: message to #subspace\n   > first\n   > second"
     ));
-    assert!(text.contains("\n2. Local Ergo (local) as subspace: action (/me) in bob\n   > waves"));
-    assert!(text.contains("\n3. Local Ergo (local) as subspace: join #new with a channel key"));
+    assert!(text.contains("\n2. Acme IRC (local) as subspace: action (/me) in bob\n   > waves"));
+    assert!(text.contains("\n3. Acme IRC (local) as subspace: join #new with a channel key"));
     assert!(!text.contains("sesame"));
-    assert!(text.contains("\n4. Local Ergo (local) as subspace: leave #old"));
+    assert!(text.contains("\n4. Acme IRC (local) as subspace: leave #old"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

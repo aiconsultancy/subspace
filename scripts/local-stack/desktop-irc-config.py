@@ -43,8 +43,8 @@ def stack_config(password_file):
 
     networks = []
     for network_id, name, tls, listen_port in (
-        ("aurora", "Aurora (local IRC)", False, port("IRC_PLAIN_PORT", 6667)),
-        ("borealis", "Borealis (local IRC, TLS)", True, port("IRC_TLS_PORT", 6697)),
+        ("aurora", "Acme IRC", False, port("IRC_PLAIN_PORT", 6667)),
+        ("borealis", "Acme IRC (TLS)", True, port("IRC_TLS_PORT", 6697)),
     ):
         networks.append({
             "id": network_id,

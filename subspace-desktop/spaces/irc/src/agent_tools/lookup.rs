@@ -48,7 +48,7 @@ pub(super) fn is_connected(network: &Network) -> bool {
     matches!(network.status, ConnectionStatus::Connected { .. })
 }
 
-/// `Local Ergo (local) as subspace`, for previews and errors.
+/// `Acme IRC (local) as subspace`, for previews and errors.
 pub(super) fn label(network: &Network) -> String {
     format!("{} ({}) as {}", network.name, network.id.0, network.nick)
 }

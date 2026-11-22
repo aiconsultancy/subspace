@@ -89,7 +89,7 @@ mod tests {
             );
         }
         let held = state.buffer(&room).unwrap();
-        let context = reference("Local Ergo", &room, held);
+        let context = reference("Acme IRC", &room, held);
         assert_eq!(
             <crate::Irc as subspace_framework::dashboard::Dashboard>::TITLE,
             "Channels"

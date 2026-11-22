@@ -183,7 +183,7 @@ def write_config(path, host, port, nick, channel):
         "networks": [
             {
                 "id": "local",
-                "name": "Local Ergo",
+                "name": "Acme IRC",
                 "host": host,
                 "port": port,
                 "tls": False,

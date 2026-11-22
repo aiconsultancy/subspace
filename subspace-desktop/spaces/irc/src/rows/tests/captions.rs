@@ -4,6 +4,14 @@ use super::super::{fleet_group_key, row_key};
 use super::fleets::{aurora, joined};
 use crate::fixtures::{channel, network_id};
 
+/// The network's Server buffer.
+fn server() -> subspace_client_irc::BufferKey {
+    subspace_client_irc::BufferKey {
+        network: network_id(),
+        target: subspace_client_irc::Target::Server,
+    }
+}
+
 #[test]
 fn a_fleet_group_captions_its_ships_and_the_channels_after_them() {
     let state = joined([
@@ -19,11 +27,16 @@ fn a_fleet_group_captions_its_ships_and_the_channels_after_them() {
         Some(&vec![
             (row_key(&channel("#aurora-lyra")), "Ships"),
             (row_key(&channel("#aurora-nav")), "Channels"),
+            (super::super::row_key(&server()), "Other"),
         ])
     );
     let plain = joined([channel("#aurora-starbase"), channel("#aurora-nav")]);
     let layout = super::super::layout(&plain, &aurora(), &Default::default());
-    assert!(layout.captions.is_empty(), "no ship, no caption");
+    assert_eq!(
+        layout.captions.get(&fleet),
+        Some(&vec![(super::super::row_key(&server()), "Other")]),
+        "no ship, no Ships caption; the network's rows still under Other"
+    );
 }
 
 #[test]

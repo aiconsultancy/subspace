@@ -268,7 +268,7 @@ mod tests {
     fn facts(topic: Option<&str>) -> HeaderFacts {
         HeaderFacts {
             title: "#subspace".to_owned(),
-            network: "Local Ergo".to_owned(),
+            network: "Acme IRC".to_owned(),
             topic: topic.map(str::to_owned),
             kind: None,
             live: None,
@@ -345,11 +345,11 @@ mod tests {
     #[test]
     fn beside_the_name_the_topic_shows_alone_and_the_network_stands_in_for_none() {
         assert_eq!(facts(Some("Release day")).quiet(), "Release day");
-        assert_eq!(facts(Some("")).quiet(), "Local Ergo");
-        assert_eq!(facts(None).quiet(), "Local Ergo");
+        assert_eq!(facts(Some("")).quiet(), "Acme IRC");
+        assert_eq!(facts(None).quiet(), "Acme IRC");
         assert_eq!(
             facts(Some("Release day")).context(),
-            "Local Ergo · Release day",
+            "Acme IRC · Release day",
             "the tab's tooltip still names the network"
         );
     }

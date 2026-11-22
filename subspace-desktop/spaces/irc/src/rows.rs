@@ -12,6 +12,7 @@ use crate::live::Lives;
 use crate::state::{Buffer, IrcState};
 
 pub(crate) mod activity;
+mod arrange;
 mod groups;
 mod sections;
 
@@ -47,6 +48,8 @@ pub(crate) struct Layout {
     /// The quiet captions inside each fleet group, by group key: each the
     /// row it stands above and its words.
     pub captions: HashMap<SharedString, Vec<(SharedString, &'static str)>>,
+    /// Each network's name, for search.
+    pub network_names: HashMap<NetworkId, SharedString>,
 }
 
 /// The navigator: on each network, one group per fleet holding its
@@ -119,7 +122,7 @@ pub(crate) fn unjoined<'a>(state: &'a IrcState, network: &NetworkId) -> Vec<&'a 
 /// `aurora lyra` finds it, also once it moved into a fleet's group or
 /// `People`.
 pub(crate) fn search(layout: &Layout) -> ItemSearch {
-    let networks = network_names(layout);
+    let networks = &layout.network_names;
     ItemSearch::new(layout.groups.iter().flat_map(move |group| {
         let parent = search_parent(
             &group.name,
@@ -139,18 +142,6 @@ pub(crate) fn search(layout: &Layout) -> ItemSearch {
             (doc, row.clone())
         })
     }))
-}
-
-/// Each network's name, from its own group, which every network has.
-fn network_names(layout: &Layout) -> HashMap<NetworkId, SharedString> {
-    layout
-        .groups
-        .iter()
-        .filter_map(|group| {
-            let network = layout.networks.get(&group.key)?;
-            (group.key == group_key(network)).then(|| (network.clone(), group.name.clone()))
-        })
-        .collect()
 }
 
 /// A search document's parent: its group, and its network when the group

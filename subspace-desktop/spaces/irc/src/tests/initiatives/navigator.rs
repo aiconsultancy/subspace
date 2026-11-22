@@ -72,9 +72,11 @@ fn the_navigator_draws_a_fleet_s_channels_and_people_apart(cx: &mut TestAppConte
     assert_eq!(
         outline(&board, cx),
         [
-            ("Aurora".to_owned(), titles(&["starbase", "lyra"])),
+            (
+                "Aurora".to_owned(),
+                titles(&["starbase", "lyra", "aurora-lyra", "Server"])
+            ),
             ("People".to_owned(), titles(&["mira"])),
-            ("Local Ergo".to_owned(), titles(&["Server", "aurora-lyra"])),
         ]
     );
     let lyra = rows::row_key(&channel("#aurora-lyra"));

@@ -152,7 +152,7 @@ fn rows_show_networks_buffers_and_unread_state(cx: &mut TestAppContext) {
     cx.update(|_, cx| {
         let board = board.read(cx);
         let group = &board.list().groups()[0];
-        assert_eq!(group.name.as_ref(), "Local Ergo");
+        assert_eq!(group.name.as_ref(), "Acme IRC");
         assert_eq!(group.count.as_deref(), Some("Connected"));
         let titles: Vec<&str> = group.rows.iter().map(|row| row.title.as_ref()).collect();
         assert_eq!(titles, ["Server", "#subspace"]);
@@ -187,7 +187,7 @@ fn opening_a_channel_shows_its_lines_members_and_reads_it(cx: &mut TestAppContex
                     title.label() == Some("#subspace")
                         && title.description().is_some_and(|description| {
                             description
-                                .ends_with("Local Ergo · Fixture channel · https://example.org")
+                                .ends_with("Acme IRC · Fixture channel · https://example.org")
                         })
                 })
         );
