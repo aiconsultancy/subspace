@@ -73,7 +73,7 @@ fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor 
             board("decisions", cfg!(debug_assertions)),
             #[cfg(all(feature = "board-lab", target_os = "macos", target_arch = "aarch64"))]
             board("board-lab", false),
-            board("actions", false),
+            board("actions", true),
             #[cfg(feature = "component-gallery")]
             board("component-gallery", false),
         ],
@@ -162,14 +162,14 @@ mod tests {
     }
 
     #[test]
-    fn actions_is_default_off_and_listed_before_the_gallery() {
+    fn actions_is_default_on_and_listed_before_the_gallery() {
         let full = super::subspace_descriptor();
         let actions = full
             .boards
             .iter()
             .find(|board| board.id == "actions")
             .unwrap();
-        assert!(!actions.default_enabled);
+        assert!(actions.default_enabled);
         let ids: Vec<_> = full.boards.iter().map(|board| board.id.as_str()).collect();
         let tail: &[&str] = if cfg!(feature = "component-gallery") {
             &["actions", "component-gallery"]
@@ -355,7 +355,7 @@ mod tests {
         for (id, enabled) in [
             ("github", true),
             ("github-copilot-agents", false),
-            ("actions", false),
+            ("actions", true),
         ] {
             let board = products[0]
                 .boards

@@ -13,7 +13,7 @@ for the repositories that you configure. You can inspect jobs and steps, read
 the log of a failed job, view the job dependency graph, and trigger, re-run,
 cancel, approve or reject after you confirm.
 
-This board is experimental. It can change or be removed. It is off by default in
+This board is experimental. It can change or be removed. It is on by default in
 debug and release builds.
 
 To open this guide, press `?` or choose **Help**. The Help panel shows this
@@ -449,7 +449,7 @@ switch.
 
 | Symptom | Check |
 | --- | --- |
-| The board tab is missing. | Turn on **Enabled** in **Settings > Boards > Actions** and save. The board is off by default. |
+| The board tab is missing. | Turn on **Enabled** in **Settings > Boards > Actions** and save. The board is on by default, so someone turned it off. |
 | **No favourite repositories** | Star repositories with **Repositories…** in the PRs board, or add them in Settings and save. |
 | **Refresh failed; loaded records retained** | Read the source line (`owner/name: Runs`, `Deployments` or `Releases`). Check the token permissions in [Before you start](#before-you-start) and the repository name. Other repositories still load. |
 | No accounts, or the wrong account. | Choose **Sign in with GitHub** in Settings, or run `gh auth login` and reopen Settings. `GH_TOKEN` or `GITHUB_TOKEN` override both. |
