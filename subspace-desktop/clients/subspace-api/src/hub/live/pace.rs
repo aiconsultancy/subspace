@@ -33,12 +33,11 @@ pub(crate) const STABLE: Duration = if cfg!(test) {
 } else {
     Duration::from_secs(60)
 };
-/// A stream must confirm it is ready within this time.
-pub(crate) const READY_TIMEOUT: Duration = if cfg!(test) {
-    Duration::from_secs(3)
-} else {
-    Duration::from_secs(15)
-};
+/// A stream must confirm it is ready within this time. Tests hold a
+/// connected stream before sending `ready` while they check what the hub
+/// does meanwhile, so they get the same limit: a shorter one dropped the
+/// stream under them on a busy machine.
+pub(crate) const READY_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Doublings before the delay reaches `MAX_BACKOFF` (1 s × 2⁵ > 30 s).
 const DOUBLINGS: u32 = 5;

@@ -46,20 +46,20 @@ fn answered_after(mock: &NettMock, suffix: &str, since: f64) -> bool {
     })
 }
 
-/// About a second after the stream turns live, the hub reads the list head
-/// and the open issue once more. A test that acts in that window races
-/// those reads, and a slow machine widens it: a landing issue read starts
-/// the attachment list again, and a list read takes a slow answer meant for
-/// the test's own. Waits until they are back: the list head answered and,
-/// with an issue open, the reads its landing sends.
-fn wait_for_ready_catch_up(mock: &NettMock, issue: bool) {
+/// A few tenths of a second after the stream turns live, the hub reads the
+/// list head and the open issue once more, in the same step. A test that
+/// acts in that window races those reads, and a slow machine widens it: a
+/// landing issue read starts the attachment list again, and a list read
+/// takes a slow answer meant for the test's own. Waits until the mock has
+/// answered the list read after the stream opened, and the hub's live reads
+/// of the issue and the list are neither out nor owed.
+fn wait_for_ready_catch_up(mock: &NettMock, hub: &Hub) {
     let opened = arrivals(mock, "GET", STREAM)
         .last()
         .copied()
         .unwrap_or_default();
     wait("the catch-up after ready", Duration::from_secs(10), &|| {
-        answered_after(mock, "/issues/groups", opened)
-            && (!issue || answered_after(mock, "/issues/OPS-1/pull-requests", opened))
+        answered_after(mock, "/issues/groups", opened) && hub.live_reads_settled()
     });
 }
 
@@ -73,7 +73,7 @@ fn wait_for_live_list(mock: &NettMock, hub: &Hub) {
     wait_for("a live stream", &|| {
         hub.snapshot().list().is_some() && hub.snapshot().live() == LiveStatus::Live
     });
-    wait_for_ready_catch_up(mock, false);
+    wait_for_ready_catch_up(mock, hub);
 }
 
 fn open_live_issue(mock: &NettMock, hub: &Hub) {
@@ -85,5 +85,5 @@ fn open_live_issue(mock: &NettMock, hub: &Hub) {
                 .issue()
                 .is_some_and(|issue| issue.detail().is_some())
     });
-    wait_for_ready_catch_up(mock, true);
+    wait_for_ready_catch_up(mock, hub);
 }

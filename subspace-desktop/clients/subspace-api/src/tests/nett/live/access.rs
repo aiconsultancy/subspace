@@ -155,7 +155,7 @@ fn a_count_already_out_when_access_went_does_not_come_back() {
             && snapshot.list().is_some()
             && snapshot.my_issues_count().is_some()
     });
-    wait_for_ready_catch_up(&mock, false);
+    wait_for_ready_catch_up(&mock, &hub);
     // The list is read again; it and the two counts after it are slow.
     // Access goes once NETT has answered the last count, while its body is
     // still on the way, and the stream's catch-up finds the list refused.
