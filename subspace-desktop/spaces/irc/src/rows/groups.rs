@@ -158,14 +158,17 @@ fn fleet_row(key: &BufferKey, buffer: &Buffer, fleet: &Fleet<'_>, layout: &mut L
     keyed(row, key, layout)
 }
 
-/// Gives every row of `rows` whose title another row also has its channel's
-/// full name from `full` (in the same order), so no two rows of a group read
-/// alike: an initiative's `#lyra` beside the ship `#aurora-lyra`.
+/// Gives every row of `rows` whose title another row also has, ignoring
+/// ASCII case, its channel's full name from `full` (in the same order), so
+/// no two rows of a group read alike: an initiative's `#lyra` or `#Lyra`
+/// beside the ship `#aurora-lyra`. Titles are counted in one pass.
 pub(super) fn unclash(rows: &mut [Row], full: &[&str]) {
-    let titles: Vec<SharedString> = rows.iter().map(|row| row.title.clone()).collect();
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for row in rows.iter() {
+        *counts.entry(row.title.to_ascii_lowercase()).or_default() += 1;
+    }
     for (row, full) in rows.iter_mut().zip(full) {
-        let shared = titles.iter().filter(|title| **title == row.title).count() > 1;
-        if shared {
+        if counts.get(&row.title.to_ascii_lowercase()) > Some(&1) {
             row.title = (*full).to_owned().into();
         }
     }
