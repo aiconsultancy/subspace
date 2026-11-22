@@ -3,6 +3,7 @@
 mod fonts;
 mod identity;
 mod launch;
+mod new_install;
 #[path = "../build/settings.rs"]
 mod settings;
 mod web_spaces;
@@ -37,8 +38,12 @@ fn main() -> ExitCode {
     }
     let mut descriptor = subspace_descriptor::subspace_descriptor();
     identity::adjust_descriptor(&mut descriptor);
-    // Only the desktop shows Spaces; commands leave the config file alone.
+    // Only the desktop shows Spaces and themes; commands leave the config
+    // and state files alone. A new install is told by having neither file,
+    // so its theme is recorded before the built-in web Spaces write the
+    // config file.
     if std::env::args_os().len() == 1 {
+        new_install::record_theme(&descriptor, env!("CARGO_PKG_VERSION"));
         web_spaces::install(&descriptor, env!("CARGO_PKG_VERSION"));
     }
     subspace_framework::shell::launch(

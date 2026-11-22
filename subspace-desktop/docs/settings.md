@@ -267,8 +267,13 @@ Save applies and remembers both choices without a restart. Cancel leaves
 navigation unchanged. The command palette's **Toggle vertical navigation**
 command and the rail's collapse button remain available.
 
-**Cupertino Dark** is the shared default unless a build or product chooses
-another theme. Available saved user choices still win.
+A new Subspace install opens in **Twilight Two**: its first desktop start,
+with no config or state file yet, saves that choice, so Settings shows it
+selected. An install with no saved theme, such as one from before Twilight
+Two, shows **Cupertino Dark**, the shared default, unless a build or product
+chooses another theme. Available saved user choices still win. Subspace does
+not follow the system appearance, so a new install opens in Twilight Two,
+which is dark only, on a light-mode system too.
 **Automatic (Subspace default)** uses the original font fallback stack:
 JetBrains Mono, SF Mono, Menlo, Consolas, then common Linux monospace fonts
 and the system font. Density settings remain separate and unchanged.
