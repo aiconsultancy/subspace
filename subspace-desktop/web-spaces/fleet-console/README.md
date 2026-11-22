@@ -19,6 +19,16 @@ to it), Shift+P shows or hides the frame-time readout.
 
 ## Fleets
 
+- **Your initiatives' fleets** come from Subspace: the fleets the Subspace
+  API assigns to your initiatives, each at the Fleet API address the API
+  records, with the token saved in Subspace's **Settings › Application ›
+  Fleets**, which every Space that shows fleets shares. Fleet Console reads
+  them with `subspace.fleets.get()`, which Subspace answers only for its
+  built-in Fleet Console with the **read its saved secrets** permission, and
+  gives each token only for the address it was saved for. A fleet whose
+  address changed since its token was saved, or that has no token, shows
+  why and points to Settings › Fleets; a fleet without an address is left
+  out. They are read again when Subspace sends `subspace:fleets-changed`.
 - **The first fleet** is the one in Settings (`endpoint` and `token`). With
   only that fleet, Fleet Console opens on it, as it always has, and the
   inspector offers **Add fleet**.
@@ -51,8 +61,8 @@ to it), Shift+P shows or hides the frame-time readout.
   been read), unavailable ships and fleets that cannot be read. Chat context
   names the fleet when there is more than one.
 - Fleets come from one place, `src/fleet-sources.js`, which merges the
-  Settings fleet, the page's fleets and (later) the fleets the Subspace API
-  assigns to initiatives.
+  Settings fleet, the fleets the Subspace API assigns to initiatives and the
+  page's fleets, in that order, one entry per address.
 
 It is plain HTML, CSS and JavaScript modules with no dependencies and no
 build step. The scene is hand-written WebGL2 (signed-distance shapes,
