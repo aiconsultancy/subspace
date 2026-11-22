@@ -240,3 +240,30 @@ fn search_finds_a_fleet_channel_by_its_full_name() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].1.title.as_ref(), "lyra");
 }
+
+#[test]
+fn channels_whose_short_names_clash_keep_their_full_names() {
+    // The initiative names `#lyra`, which would read as the ship `#aurora-lyra`.
+    let rosters = rosters(json!([initiative(
+        "aurora",
+        "Aurora",
+        &["lyra"],
+        "#lyra, #aurora-nav"
+    )]));
+    let state = joined([
+        channel("#aurora-lyra"),
+        channel("#lyra"),
+        channel("#aurora-nav"),
+    ]);
+    let layout = super::super::layout(&state, &rosters);
+    let (_, titles) = outline(&layout)
+        .into_iter()
+        .find(|(name, _)| name == "Aurora")
+        .expect("the fleet's group");
+    assert!(titles.contains(&"#aurora-lyra".to_owned()), "{titles:?}");
+    assert!(titles.contains(&"#lyra".to_owned()), "{titles:?}");
+    assert!(
+        titles.contains(&"nav".to_owned()),
+        "an unclashed name stays short"
+    );
+}

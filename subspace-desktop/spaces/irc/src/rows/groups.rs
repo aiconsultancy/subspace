@@ -44,10 +44,12 @@ fn fleet_groups(
             roster,
             place,
         };
-        let rows = held
+        let mut rows: Vec<Row> = held
             .iter()
             .map(|(key, buffer)| fleet_row(key, buffer, &fleet, layout))
             .collect();
+        let full: Vec<&str> = held.iter().map(|(key, _)| title(key)).collect();
+        unclash(&mut rows, &full);
         let key = fleet_group_key(&network.id, &place.id);
         layout.fleets.insert(key.clone(), place.id.clone());
         let group = status_group(key, &place.name, network, rows);
@@ -116,8 +118,9 @@ fn keyed(row: Row, key: &BufferKey, layout: &mut Layout) -> Row {
     row
 }
 
-/// A fleet channel's row: its name without the fleet's prefix, and for a
-/// ship, its activity recorded for its dot.
+/// A fleet channel's row: its name without the fleet's prefix (see
+/// [`unclash`] for names that would read alike), and for a ship, its
+/// activity recorded for its dot.
 fn fleet_row(key: &BufferKey, buffer: &Buffer, fleet: &Fleet<'_>, layout: &mut Layout) -> Row {
     let mut row = row(key, buffer);
     row.title = short_name(fleet.place.slug.as_deref(), title(key))
@@ -126,6 +129,19 @@ fn fleet_row(key: &BufferKey, buffer: &Buffer, fleet: &Fleet<'_>, layout: &mut L
     let ship = ship_activity(key, buffer, fleet).map(|ship| (row.key.clone(), ship));
     layout.ships.extend(ship);
     keyed(row, key, layout)
+}
+
+/// Gives every row of `rows` whose title another row also has its channel's
+/// full name from `full` (in the same order), so no two rows of a group read
+/// alike: an initiative's `#lyra` beside the ship `#aurora-lyra`.
+pub(super) fn unclash(rows: &mut [Row], full: &[&str]) {
+    let titles: Vec<SharedString> = rows.iter().map(|row| row.title.clone()).collect();
+    for (row, full) in rows.iter_mut().zip(full) {
+        let shared = titles.iter().filter(|title| **title == row.title).count() > 1;
+        if shared {
+            row.title = (*full).to_owned().into();
+        }
+    }
 }
 
 /// A ship channel's activity; `None` for any other channel.
