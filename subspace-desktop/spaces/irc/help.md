@@ -167,8 +167,9 @@ colour. Joins, parts and other membership lines never count as unread.
 A message with replies shows their count and the last reply's local time
 beneath it. This counts only replies loaded on this computer, including
 replies to replies. Loading older history can increase the count. It works
-in channels and private conversations. Replies still appear inline; the
-count does not open a pane yet.
+in channels and private conversations. Replies still appear inline. In a
+ship's channel or a Starbase the count reads `3 replies ›`: choose it to
+open the thread in the inspector (see [Follow a thread](#follow-a-thread)).
 
 A request to an agent can show one live status line beneath it, such as
 **astra · Using a tool**, while the agent works on it. It reads **Receipt
@@ -181,7 +182,9 @@ five steps with the step's name: **accepted**, **working**, **waiting**,
 requests share a thread. When the request finishes, its line settles into a
 quiet **Done in 42 m**, or **Failed after 3 m** when it failed, and keeps it
 after a restart. A request that ended before this version shows **Done**
-without a time.
+without a time. In a ship's channel or a Starbase the line also ends with
+the request's reply count, such as `Done in 42 m · 3 replies ›`, when it has
+replies, and choosing the line opens the request's thread.
 
 The line comes from progress notices that the agent's gateway marks for that
 request. Channels uses them only when the IRC server confirms they come from
@@ -643,6 +646,38 @@ copies the link as written, or `https://github.com/owner/repo/pull/number` for
 a marker. Card details stay in memory only: they are not stored with your
 messages or searchable.
 
+### Follow a thread
+
+In a ship's channel or a Starbase, the inspector has a **Thread** tab between
+**Ship** (or **Starbase**) and **People**. Choose a message's `N replies ›`
+or a request's status line, or press `Enter` on a focused message that has
+either, to open its thread there. Until you do, the tab says how.
+
+The tab shows the message you chose, with its author, time and references.
+For a request it then lists **Status**: each step the agent reported, such as
+**Accepted**, **Working**, **Writing the reply** and **Done**, with when it
+began and how long it took, the last with how long the whole request took.
+These come only from the agent's own progress notices, the ones that also
+drive the status line; a notice from anyone else is a reply, never a step.
+Then come the **Replies**, grouped by author as in the transcript, or **No
+replies yet.** A reply belongs to the thread only when the IRC server's reply
+tag says so. New replies and steps appear as they arrive. Replies still
+appear in the channel too; the tab is another view of them.
+
+Each conversation remembers its thread while Subspace runs, also when you
+switch tabs or conversations. It goes once its first message is no longer
+loaded. If only the end of a request is loaded, the tab says the earlier
+steps are not, with **Load around this message** when the server keeps
+history.
+
+**Reply in thread**, at the foot of the tab, puts the message input into
+reply mode: a line above it says **Replying in thread to** and whose message,
+with × to cancel (`Esc` cancels too). Your reply goes to the channel, where
+everyone sees it, marked as a reply in that thread; it is never a private
+message. Commands and attachments can't be sent as a reply; cancel the reply
+first. When the server can't mark replies (it lacks `message-tags`) or the
+network is not connected, the tab says so in place of the action.
+
 ### Move through messages with the keyboard
 
 In the message input, `Shift+Tab` moves to the newest message. `↑` and `↓`
@@ -788,12 +823,13 @@ the message input is ordinary text input.
 | `Shift+Enter` (`Shift+Return`) or `Option+Enter` | New line in the message input |
 | `Up` / `Down` in the message input | Recall sent lines from an empty or one-line draft, move between a longer draft's lines, or move through the completion list |
 | `Tab` in the message input | Complete a nick, or insert the highlighted choice |
-| `Esc` in the message input | Close the completion list |
+| `Esc` in the message input | Close the completion list, or leave reply mode |
 | `Esc` in **Join a channel** | Cancel |
 | `Shift+Tab` in the message input | Move to the newest message |
 | `↑` / `↓` on a message | Previous or next message |
 | `Tab` / `Shift+Tab` on a message | Next or previous link or reference in it |
 | `Enter` on a link or reference | Open it |
+| `Enter` on a message with replies or a request | Open its thread in the inspector |
 | `Esc` on a message | Back to the message input |
 
 ### Shared keys
