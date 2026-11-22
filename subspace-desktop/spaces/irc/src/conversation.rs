@@ -35,7 +35,7 @@ use subspace_framework::dashboard::ChatInput;
 use subspace_framework::dashboard::Tokens;
 
 use crate::compose::{self, Draft};
-use crate::fleet::Roster;
+use crate::fleet::{ChannelKind, Roster};
 use crate::hub::Hub;
 use crate::markup::{Mentions, Ref};
 use crate::thread_status;
@@ -344,6 +344,19 @@ impl Conversation {
         transcript::row(row, held, (&self.hub, &self.buffer), &context, cx)
     }
 
+    /// A ship channel's ship as its fleet's Fleet API reports it, while
+    /// the board follows the fleet and it is live.
+    fn ship_live(&self, kind: Option<&ChannelKind>, cx: &App) -> Option<crate::live::ShipLive> {
+        let Some(ChannelKind::Ship { captain }) = kind else {
+            return None;
+        };
+        let Target::Channel(channel) = &self.buffer.target else {
+            return None;
+        };
+        let lives = &self.hub.read(cx).fleets;
+        crate::live::fleet_of(lives, &self.roster, channel)?.ship(captain)
+    }
+
     fn header_facts(&self, cx: &App) -> Option<header::HeaderFacts> {
         let state = &self.hub.read(cx).state;
         let held = state.buffer(&self.buffer);
@@ -360,7 +373,8 @@ impl Conversation {
             _ => None,
         };
         let members = held.map(|held| held.members.as_slice()).unwrap_or_default();
-        let live = header::live(kind.as_ref(), &network.statuses, members);
+        let ship = self.ship_live(kind.as_ref(), cx);
+        let live = header::live(kind.as_ref(), &network.statuses, members, ship.as_ref());
         Some(header::HeaderFacts {
             title,
             network: context,

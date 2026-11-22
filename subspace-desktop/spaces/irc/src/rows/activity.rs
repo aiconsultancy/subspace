@@ -6,6 +6,8 @@ use std::collections::HashMap;
 use subspace_client_irc::{Member, NetworkId, Target};
 
 use crate::fleet::ChannelKind;
+use crate::live::ship::bounded;
+use crate::live::{CrewLine, ShipLive};
 use crate::state::{IrcState, Statuses};
 
 /// The dot's word while a ship is working.
@@ -13,53 +15,108 @@ pub(crate) const WORKING: &str = "working";
 /// The dot's word while it is not.
 pub(crate) const IDLE: &str = "idle";
 
+/// The most characters of a crew member's task in the dot's tooltip.
+const TOOLTIP_TASK_CHARS: usize = 60;
+
 /// A ship's activity, as its row's dot shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Activity {
     /// The captain's nick, which names the dot.
     pub captain: String,
-    /// What is at work, one line each: today the captain's status while the
-    /// server vouches for it. Crew activity joins it here.
+    /// What is at work, one line each: with live fleet data each working
+    /// crew member and their task, else the captain's status while the
+    /// server vouches for it.
     pub working: Vec<String>,
+    /// How many of the ship's crew are working, when the fleet's Fleet API
+    /// says; `None` without live data.
+    pub crew: Option<usize>,
 }
 
 impl Activity {
-    /// Whether anything on the ship is at work.
+    /// Whether anything on the ship is at work: with live data, at least
+    /// one of its crew; else the captain's vouched status.
     pub(crate) fn is_working(&self) -> bool {
-        !self.working.is_empty()
+        self.crew.map_or(!self.working.is_empty(), |busy| busy > 0)
     }
 
-    /// The dot's accessible name, such as `aurora-lyra: working`.
+    /// The dot's accessible name, such as `aurora-lyra: working` or, with
+    /// live data, `aurora-lyra: 3 crew working`.
     pub(crate) fn label(&self) -> String {
-        let state = if self.working.is_empty() {
-            IDLE
-        } else {
-            WORKING
-        };
-        format!("{}: {state}", self.captain)
+        format!("{}: {}", self.captain, self.state())
     }
 
-    /// The dot's tooltip: what is at work, a line each, else that nothing
-    /// is.
+    /// The dot's state in words.
+    fn state(&self) -> String {
+        match self.crew {
+            Some(0) => "no crew working".to_owned(),
+            Some(busy) => format!("{busy} crew working"),
+            None if self.working.is_empty() => IDLE.to_owned(),
+            None => WORKING.to_owned(),
+        }
+    }
+
+    /// The dot's tooltip: with live data, how many crew are working, then
+    /// each and what on, a line each; else what is at work, or that
+    /// nothing is.
     pub(crate) fn tooltip(&self) -> String {
-        if self.working.is_empty() {
-            format!("{}: {IDLE}", self.captain)
-        } else {
-            self.working.join("\n")
+        match (self.crew, self.working.is_empty()) {
+            (Some(0), _) => "No crew working".to_owned(),
+            (Some(busy), _) => std::iter::once(format!("{busy} crew working"))
+                .chain(self.working.iter().cloned())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            (None, true) => format!("{}: {IDLE}", self.captain),
+            (None, false) => self.working.join("\n"),
         }
     }
 }
 
-/// Whether a ship is working: the one source of its dot. Today the only
-/// data is the captain's nick status, counted only while the server vouches
-/// for it (`conversation::vouched_status`, the heading pill's rule), so
-/// nothing is invented without one. A later change adds the crew at work to
-/// `working` here.
-pub(crate) fn ship(captain: &str, statuses: &Statuses, members: &[Member]) -> Activity {
+/// Whether a ship is working: the one source of its dot. With live fleet
+/// data (`live`, the Fleet API's ship matched to the roster captain, when
+/// it counts its crew) the dot follows the crew: working while at least one
+/// of them has a task, and the tooltip names each. Without it, the
+/// captain's nick status, counted only while the server vouches for it
+/// (`conversation::vouched_status`, the heading pill's rule), so nothing is
+/// invented without one.
+pub(crate) fn ship(
+    captain: &str,
+    statuses: &Statuses,
+    members: &[Member],
+    live: Option<&ShipLive>,
+) -> Activity {
+    match live.and_then(crew_at_work) {
+        Some((busy, working)) => Activity {
+            captain: captain.to_owned(),
+            working,
+            crew: Some(busy),
+        },
+        None => captain_status(captain, statuses, members),
+    }
+}
+
+/// How many of `ship`'s crew are working and a line for each, when the
+/// Fleet API counts the crew.
+fn crew_at_work(ship: &ShipLive) -> Option<(usize, Vec<String>)> {
+    let (busy, _) = ship.crew?;
+    let lines = ship.working().map(crew_line).collect();
+    Some((busy, lines))
+}
+
+/// `Wren · Cancel tile decodes…`: a working crew member and their task.
+fn crew_line(member: &CrewLine) -> String {
+    match &member.task {
+        Some(task) => format!("{} · {}", member.name, bounded(task, TOOLTIP_TASK_CHARS)),
+        None => member.name.clone(),
+    }
+}
+
+/// The ship's activity from its captain's vouched status alone.
+fn captain_status(captain: &str, statuses: &Statuses, members: &[Member]) -> Activity {
     let status = crate::conversation::vouched_status(captain, statuses, members);
     Activity {
         captain: captain.to_owned(),
         working: status.into_iter().map(str::to_owned).collect(),
+        crew: None,
     }
 }
 

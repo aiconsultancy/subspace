@@ -18,6 +18,7 @@ mod details;
 mod empty;
 mod frame;
 mod hosting;
+mod inspector;
 mod navigator;
 
 use details::{kind, kind_icon};
@@ -25,6 +26,9 @@ use details::{kind, kind_icon};
 pub(crate) use details::{server_summary, status_line};
 pub(crate) use frame::{space_docks, toggle_space_dock};
 pub(crate) use hosting::{Hosted, open_channel};
+pub(crate) use inspector::InspectorTab;
+#[cfg(test)]
+pub(crate) use inspector::reason as inspector_reason;
 /// Fewer lines than this on open asks the server for recent history.
 const HISTORY_ON_OPEN: usize = 50;
 /// Lines asked for per history request.
@@ -45,6 +49,9 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         group_networks: Default::default(),
         ships: Default::default(),
         people: Default::default(),
+        captions: Default::default(),
+        watch: Default::default(),
+        inspector_tab: Default::default(),
         seen_fleets: Default::default(),
         hub: None,
         hub_subscription: None,
@@ -77,6 +84,7 @@ pub(crate) fn bind_hub(board: &mut Irc, cx: &mut Context<Irc>) {
         .as_ref()
         .map(|hub| cx.observe(hub, |board, _, cx| sync(board, cx)));
     board.hub = current;
+    board.watch.forget_hub();
     board.dock.reset();
     board.find_revision = board.find_revision.wrapping_add(1);
     let owner = cx.entity().downgrade();
@@ -117,6 +125,7 @@ pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
     }
     publish_visible(board, cx);
     crate::reveal::settle(board, cx);
+    crate::live::watch::sync(board, cx);
     cx.notify();
 }
 
@@ -267,6 +276,16 @@ impl ListDashboard for Irc {
 
     fn group_menu(&self, group: &Group) -> Option<RowMenu> {
         Some(listing::group_menu(group))
+    }
+
+    /// `Ships` above a fleet's first ship channel, and `Channels` above its
+    /// other channels after them.
+    fn group_captions(
+        &self,
+        group: &Group,
+        _cx: &App,
+    ) -> Vec<subspace_framework::dashboard::list::GroupCaption> {
+        navigator::captions(self, group)
     }
 
     /// A folded group says when it hides a mention or unread messages.

@@ -12,20 +12,33 @@ use super::{
     Layout, activity, fleet_group_key, group_key, listed_rows, people_group_key, row, status_label,
     status_tone, title,
 };
-use crate::fleet::{FleetPlace, Roster, short_name};
+use crate::fleet::{ChannelKind, FleetPlace, Roster, short_name};
+use crate::live::{FleetLive, Lives};
 use crate::state::{Buffer, IrcState, Network};
+
+/// The caption above a fleet's first ship channel.
+pub(crate) const SHIPS: &str = "Ships";
+/// The caption above a fleet's other channels, after its ships.
+pub(crate) const CHANNELS: &str = "Channels";
 
 /// One fleet on one network, for its channels' rows.
 struct Fleet<'a> {
     network: &'a Network,
     roster: &'a Roster,
     place: &'a FleetPlace,
+    /// What the fleet's Fleet API says, when the board shows the fleet.
+    live: Option<&'a FleetLive>,
 }
 
 /// Adds `network`'s groups to `layout`: its fleets', `People`, then its own.
-pub(super) fn network(state: &IrcState, network: &Network, roster: &Roster, layout: &mut Layout) {
+pub(super) fn network(
+    state: &IrcState,
+    network: &Network,
+    (roster, lives): (&Roster, &Lives),
+    layout: &mut Layout,
+) {
     let sections = Sections::of(state, network, roster);
-    fleet_groups(network, roster, sections.fleets, layout);
+    fleet_groups(network, (roster, lives), sections.fleets, layout);
     people_group(state, network, sections.people, layout);
     network_group(state, network, sections.rest, layout);
 }
@@ -33,7 +46,7 @@ pub(super) fn network(state: &IrcState, network: &Network, roster: &Roster, layo
 /// Each fleet's group on `network`, for the fleets with a row.
 fn fleet_groups(
     network: &Network,
-    roster: &Roster,
+    (roster, lives): (&Roster, &Lives),
     fleets: Vec<Vec<Held<'_>>>,
     layout: &mut Layout,
 ) {
@@ -45,6 +58,7 @@ fn fleet_groups(
             network,
             roster,
             place,
+            live: lives.get(&place.id),
         };
         let mut rows: Vec<Row> = held
             .iter()
@@ -53,6 +67,11 @@ fn fleet_groups(
         let full: Vec<&str> = held.iter().map(|(key, _)| title(key)).collect();
         unclash(&mut rows, &full);
         let key = fleet_group_key(&network.id, &place.id);
+        let kinds = held.iter().map(|(key, _)| roster.channel(title(key)));
+        let captions = captions(rows.iter().map(|row| row.key.clone()).zip(kinds));
+        if !captions.is_empty() {
+            layout.captions.insert(key.clone(), captions);
+        }
         layout.fleets.insert(key.clone(), place.id.clone());
         let group = status_group(key, &place.name, network, rows);
         push_group(layout, &network.id, group);
@@ -159,11 +178,33 @@ fn ship_activity(
     fleet: &Fleet<'_>,
 ) -> Option<activity::Activity> {
     let captain = activity::captain(fleet.roster.channel(title(key))?)?;
+    let live = fleet.live.and_then(|live| live.ship(captain));
     Some(activity::ship(
         captain,
         &fleet.network.statuses,
         &buffer.members,
+        live.as_ref(),
     ))
+}
+
+/// A fleet group's captions, from each row's key and channel kind in
+/// order: `Ships` above the first ship channel, and `Channels` above the
+/// first channel of no role that follows a ship, so the ships read as one
+/// run. A group with no ship has none.
+pub(super) fn captions<'a>(
+    rows: impl IntoIterator<Item = (SharedString, Option<&'a ChannelKind>)>,
+) -> Vec<(SharedString, &'static str)> {
+    let mut captions = Vec::new();
+    for (key, kind) in rows {
+        let ship = matches!(kind, Some(ChannelKind::Ship { .. }));
+        let caption = match captions.len() {
+            0 if ship => Some(SHIPS),
+            1 if kind.is_none() => Some(CHANNELS),
+            _ => None,
+        };
+        captions.extend(caption.map(|words| (key, words)));
+    }
+    captions
 }
 
 /// A group header with `network`'s connection state: a network's own, or

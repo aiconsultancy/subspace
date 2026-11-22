@@ -14,7 +14,10 @@ use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, Tone, avatar, truncated};
 
 use super::Conversation;
+use subspace_client_fleet::model::Activity;
+
 use crate::fleet::ChannelKind;
+use crate::live::ShipLive;
 use crate::state::Statuses;
 
 /// What the header shows, read from the hub.
@@ -44,23 +47,56 @@ pub(super) struct Live {
     pub spoken: String,
 }
 
-/// The live status of a ship channel's captain from the network's nick
-/// `statuses`; nothing for any other channel, while the captain has no
-/// status, or while no channel member with the captain's nick is signed in
-/// to the account of that nick, so a status shows only for the agent the
-/// server vouches for.
+/// The live pill of a ship channel: its captain's state and, when the
+/// fleet's Fleet API counts the ship's crew, how many are busy, as in
+/// `Lyra is working · 3 of 4 crew busy`. The captain's state is its nick
+/// status while the server vouches for it, else the Fleet API's word for
+/// what the captain is doing. Without live data (`ship` is `None`), the
+/// vouched status alone, as before; nothing for any other channel, or while
+/// there is nothing to say, so no idle state is invented.
 pub(super) fn live(
     kind: Option<&ChannelKind>,
     statuses: &Statuses,
     members: &[Member],
+    ship: Option<&ShipLive>,
 ) -> Option<Live> {
     let Some(ChannelKind::Ship { captain }) = kind else {
         return None;
     };
-    vouched_status(captain, statuses, members).map(|text| Live {
-        text: shortened(text, LIVE_MAX_CHARS),
-        spoken: format!("Captain {captain}: {text}"),
+    let status = vouched_status(captain, statuses, members);
+    let lead = status
+        .map(str::to_owned)
+        .or_else(|| ship.and_then(captain_phrase))?;
+    let crew = ship.and_then(|ship| ship.crew).map(crew_busy);
+    let parts = |lead: String| {
+        std::iter::once(lead)
+            .chain(crew.clone())
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
+    Some(Live {
+        text: parts(shortened(&lead, LIVE_MAX_CHARS)),
+        spoken: format!("Captain {captain}: {}", parts(lead.clone())),
     })
+}
+
+/// `3 of 4 crew busy`.
+fn crew_busy((busy, people): (usize, usize)) -> String {
+    format!("{busy} of {people} crew busy")
+}
+
+/// What the Fleet API says the ship's captain is doing, as a phrase about
+/// the ship, such as `Lyra is working`.
+fn captain_phrase(ship: &ShipLive) -> Option<String> {
+    let phrase = match ship.activity {
+        Activity::Running => "is working",
+        Activity::Queued => "has work queued",
+        Activity::Idle => "is idle",
+        Activity::Uncertain => "is uncertain",
+        Activity::Unprovisioned => "has not started",
+        Activity::Unknown => return None,
+    };
+    Some(format!("{} {phrase}", ship.name))
 }
 
 /// `captain`'s nick status from `statuses`, only while a member of
@@ -253,25 +289,28 @@ mod tests {
         };
         let signed = [lyra(Some("aurora-lyra"))];
         assert_eq!(
-            live(Some(&ship), &statuses, &signed),
+            live(Some(&ship), &statuses, &signed, None),
             None,
             "no invented idle state"
         );
         statuses.set("Aurora-Lyra", Some("Lyra is delegating NAV-2"));
         statuses.set("aurora-admiral", Some("Reviewing the plan"));
         assert_eq!(
-            live(Some(&ship), &statuses, &signed),
+            live(Some(&ship), &statuses, &signed, None),
             Some(Live {
                 text: "Lyra is delegating NAV-2".into(),
                 spoken: "Captain aurora-lyra: Lyra is delegating NAV-2".into(),
             })
         );
         for unvouched in [lyra(None), lyra(Some("mira"))] {
-            assert_eq!(live(Some(&ship), &statuses, &[unvouched]), None);
+            assert_eq!(live(Some(&ship), &statuses, &[unvouched], None), None);
         }
-        assert_eq!(live(Some(&ship), &statuses, &[]), None, "not here");
-        assert_eq!(live(Some(&ChannelKind::Starbase), &statuses, &signed), None);
-        assert_eq!(live(None, &statuses, &signed), None);
+        assert_eq!(live(Some(&ship), &statuses, &[], None), None, "not here");
+        assert_eq!(
+            live(Some(&ChannelKind::Starbase), &statuses, &signed, None),
+            None
+        );
+        assert_eq!(live(None, &statuses, &signed, None), None);
     }
 
     #[test]
@@ -289,7 +328,7 @@ mod tests {
             away: false,
             account: Some("aurora-lyra".into()),
         }];
-        let Some(live) = live(Some(&ship), &statuses, &signed) else {
+        let Some(live) = live(Some(&ship), &statuses, &signed, None) else {
             panic!("a vouched captain's status shows");
         };
         assert!(live.text.chars().count() <= super::LIVE_MAX_CHARS);
@@ -312,6 +351,63 @@ mod tests {
             facts(Some("Release day")).context(),
             "Local Ergo · Release day",
             "the tab's tooltip still names the network"
+        );
+    }
+
+    #[test]
+    fn with_live_data_the_pill_says_the_captain_s_state_and_the_crew_busy() {
+        use subspace_client_fleet::model::Activity;
+        let ship = ChannelKind::Ship {
+            captain: "aurora-lyra".into(),
+        };
+        let lyra = crate::live::tests::lyra();
+        let mut statuses = Statuses::default();
+        let signed = [Member {
+            nick: "aurora-lyra".into(),
+            prefixes: String::new(),
+            away: false,
+            account: Some("aurora-lyra".into()),
+        }];
+        assert_eq!(
+            live(Some(&ship), &statuses, &signed, Some(&lyra)),
+            Some(Live {
+                text: "Lyra is working · 3 of 4 crew busy".into(),
+                spoken: "Captain aurora-lyra: Lyra is working · 3 of 4 crew busy".into(),
+            }),
+            "the Fleet API's word while the captain sets no status"
+        );
+        statuses.set("aurora-lyra", Some("Lyra is delegating"));
+        assert_eq!(
+            live(Some(&ship), &statuses, &signed, Some(&lyra)).map(|live| live.text),
+            Some("Lyra is delegating · 3 of 4 crew busy".into()),
+            "a vouched status leads"
+        );
+        let idle = crate::live::ShipLive {
+            activity: Activity::Idle,
+            crew: None,
+            ..lyra.clone()
+        };
+        assert_eq!(
+            live(Some(&ship), &Statuses::default(), &[], Some(&idle)).map(|live| live.text),
+            Some("Lyra is idle".into()),
+            "no crew count without one from the API"
+        );
+        let unknown = crate::live::ShipLive {
+            activity: Activity::Unknown,
+            ..idle
+        };
+        assert_eq!(
+            live(Some(&ship), &Statuses::default(), &[], Some(&unknown)),
+            None
+        );
+        assert_eq!(
+            live(
+                Some(&ChannelKind::Starbase),
+                &statuses,
+                &signed,
+                Some(&lyra)
+            ),
+            None
         );
     }
 }

@@ -71,6 +71,9 @@ pub(crate) struct Hub {
     /// Clock sampled by the existing drain timer, never by tile rendering.
     pub now: DateTime<Utc>,
     pub uploads: crate::uploads::cache::References,
+    /// What the Fleet API says of each fleet the board shows, by fleet id,
+    /// for the conversations' headers; the board keeps it current.
+    pub fleets: crate::live::Lives,
     captain_notifications: captain_notifications::Monitor,
     _timer: Option<Task<()>>,
     _settings: Option<Subscription>,
@@ -232,6 +235,7 @@ impl Hub {
             now: Utc::now(),
             captain_notifications: Default::default(),
             uploads: Default::default(),
+            fleets: Default::default(),
             _timer: None,
             _settings: None,
         }

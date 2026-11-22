@@ -98,7 +98,7 @@ fn a_fleet_s_channels_come_starbase_command_ships_then_the_rest_without_its_pref
         channel("#aurora-starbase"),
         channel("#lounge"),
     ]);
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     assert_eq!(
         outline(&layout),
         owned(&[
@@ -148,7 +148,7 @@ fn the_fleet_header_carries_the_connection_state_and_the_server_stays_under_its_
         },
         at(1),
     );
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     let counts: Vec<Option<String>> = layout
         .groups
         .iter()
@@ -173,7 +173,7 @@ fn two_fleets_on_one_network_each_have_a_group_and_a_shared_channel_has_none() {
         channel("#shared"),
         channel("#borealis-starbase"),
     ]);
-    let layout = super::super::layout(&state, &rosters);
+    let layout = super::super::layout(&state, &rosters, &Default::default());
     assert_eq!(
         outline(&layout),
         owned(&[
@@ -188,7 +188,7 @@ fn two_fleets_on_one_network_each_have_a_group_and_a_shared_channel_has_none() {
 #[test]
 fn a_fleet_with_no_channel_open_has_no_group() {
     let state = joined([channel("#lounge")]);
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     assert_eq!(
         outline(&layout),
         owned(&[("Local Ergo", &["Server", "#lounge"])])
@@ -204,7 +204,7 @@ fn people_hold_private_conversations_with_people_only() {
         query("Anna"),
         channel("#aurora-lyra"),
     ]);
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     assert_eq!(
         outline(&layout),
         owned(&[
@@ -224,7 +224,7 @@ fn people_hold_private_conversations_with_people_only() {
 #[test]
 fn a_network_that_serves_no_fleet_keeps_its_private_conversations() {
     let state = joined([query("mira"), channel("#aurora-lyra")]);
-    let layout = super::super::layout(&state, &Rosters::default());
+    let layout = super::super::layout(&state, &Rosters::default(), &Default::default());
     assert_eq!(
         outline(&layout),
         owned(&[("Local Ergo", &["Server", "#aurora-lyra", "mira"])])
@@ -234,7 +234,7 @@ fn a_network_that_serves_no_fleet_keeps_its_private_conversations() {
 #[test]
 fn search_finds_a_fleet_channel_by_its_full_name() {
     let state = joined([channel("#aurora-lyra")]);
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     let index = super::super::search(&layout);
     let found = index.search("aurora-lyra", 5);
     assert_eq!(found.len(), 1);
@@ -244,7 +244,7 @@ fn search_finds_a_fleet_channel_by_its_full_name() {
 #[test]
 fn search_still_finds_a_fleet_channel_and_a_person_by_their_network() {
     let state = joined([channel("#aurora-lyra"), query("mira")]);
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     let index = super::super::search(&layout);
     for (query, title) in [("Local Ergo lyra", "lyra"), ("Local Ergo mira", "mira")] {
         let found = index.search(query, 5);
@@ -270,7 +270,7 @@ fn channels_whose_short_names_clash_keep_their_full_names() {
         channel("#lyra"),
         channel("#aurora-nav"),
     ]);
-    let layout = super::super::layout(&state, &rosters);
+    let layout = super::super::layout(&state, &rosters, &Default::default());
     let (_, titles) = outline(&layout)
         .into_iter()
         .find(|(name, _)| name == "Aurora")
@@ -298,4 +298,26 @@ fn ask_addresses_no_one_in_a_channel_two_fleets_claim() {
         roster.asked_in("#borealis-starbase"),
         Some("borealis-admiral")
     );
+}
+
+#[test]
+fn a_fleet_group_captions_its_ships_and_the_channels_after_them() {
+    let state = joined([
+        channel("#aurora-orion"),
+        channel("#aurora-nav"),
+        channel("#aurora-lyra"),
+        channel("#aurora-starbase"),
+    ]);
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
+    let fleet = fleet_group_key(&network_id(), "aurora");
+    assert_eq!(
+        layout.captions.get(&fleet),
+        Some(&vec![
+            (row_key(&channel("#aurora-lyra")), "Ships"),
+            (row_key(&channel("#aurora-nav")), "Channels"),
+        ])
+    );
+    let plain = joined([channel("#aurora-starbase"), channel("#aurora-nav")]);
+    let layout = super::super::layout(&plain, &aurora(), &Default::default());
+    assert!(layout.captions.is_empty(), "no ship, no caption");
 }

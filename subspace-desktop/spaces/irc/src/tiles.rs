@@ -44,7 +44,7 @@ pub(crate) use row::row;
 
 /// A reference a tile can show, by its stable identity: an issue's
 /// identifier or a pull request's canonical `owner/repo#n`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum TileRef {
     Issue(String),
     PullRequest(String),
@@ -92,6 +92,15 @@ impl TileOwners {
     pub fn shows(&self, seq: i64, found: &TileRef) -> bool {
         self.0.get(found) == Some(&seq)
     }
+
+    /// Every reference with a tile, in the order the conversation first
+    /// showed them: what is in play in it.
+    pub fn in_play(&self) -> Vec<TileRef> {
+        let mut owned: Vec<(&i64, &TileRef)> =
+            self.0.iter().map(|(found, seq)| (seq, found)).collect();
+        owned.sort();
+        owned.into_iter().map(|(_, found)| found.clone()).collect()
+    }
 }
 
 /// One conversation's owners and the messages already read for them.
@@ -108,6 +117,11 @@ impl Tiles {
     /// Whether message `seq` shows the tile for `found`.
     pub fn shows(&self, seq: i64, found: &Ref) -> bool {
         TileRef::of(found).is_some_and(|found| self.owners.shows(seq, &found))
+    }
+
+    /// What is in play in the conversation; see [`TileOwners::in_play`].
+    pub fn in_play(&self) -> Vec<TileRef> {
+        self.owners.in_play()
     }
 
     /// Of `messages`, those not yet read under `recognition`.

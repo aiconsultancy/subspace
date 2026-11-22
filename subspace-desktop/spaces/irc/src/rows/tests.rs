@@ -7,7 +7,7 @@ use crate::state::{IrcState, server_key};
 
 /// The layout of a state whose networks serve no fleet.
 fn layout(state: &IrcState) -> Layout {
-    super::layout(state, &Rosters::default())
+    super::layout(state, &Rosters::default(), &Default::default())
 }
 
 fn titles(state: &IrcState) -> Vec<String> {

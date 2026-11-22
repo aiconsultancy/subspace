@@ -8,6 +8,7 @@ use subspace_client_irc::{BufferKey, ConnectionStatus, ListedChannel, NetworkId,
 use subspace_framework::dashboard::{Glyph, Group, ItemSearch, Row, SearchDoc, Tone};
 
 use crate::fleet::{NO_ROSTER, Roster};
+use crate::live::Lives;
 use crate::state::{Buffer, IrcState};
 
 pub(crate) mod activity;
@@ -43,6 +44,9 @@ pub(crate) struct Layout {
     pub ships: HashMap<SharedString, Activity>,
     /// Each row in `People`, with that person's presence.
     pub people: HashMap<SharedString, Presence>,
+    /// The quiet captions inside each fleet group, by group key: each the
+    /// row it stands above and its words.
+    pub captions: HashMap<SharedString, Vec<(SharedString, &'static str)>>,
 }
 
 /// The navigator: on each network, one group per fleet holding its
@@ -50,10 +54,13 @@ pub(crate) struct Layout {
 /// then the network's own group with its server, the channels of no fleet,
 /// any older private conversation with an agent and the listed channels.
 /// A network that serves no fleet keeps one group, as before.
-pub(crate) fn layout(state: &IrcState, rosters: &Rosters) -> Layout {
+/// A ship's dot follows its crew where `lives`, the Fleet API's word on
+/// each fleet the board shows, has them.
+pub(crate) fn layout(state: &IrcState, rosters: &Rosters, lives: &Lives) -> Layout {
     let mut layout = Layout::default();
     for network in state.networks() {
-        groups::network(state, network, roster_of(rosters, &network.id), &mut layout);
+        let roster = roster_of(rosters, &network.id);
+        groups::network(state, network, (roster, lives), &mut layout);
     }
     layout
 }

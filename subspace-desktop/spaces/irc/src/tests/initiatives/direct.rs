@@ -73,7 +73,7 @@ pub(super) fn sent_input(hub: &Entity<Hub>, cx: &mut VisualTestContext) -> bool 
 
 #[gpui_kit::test]
 fn choosing_an_agent_in_the_member_list_shows_where_it_talks(cx: &mut TestAppContext) {
-    let (_, hub, cx) = ship(cx);
+    let (_, hub, cx) = super::live::ship_people(cx);
     assert_eq!(
         cx.update(|window, _| window
             .find("irc-member:aurora-lyra")

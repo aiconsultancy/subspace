@@ -15,7 +15,7 @@ use gpui_kit::{
 };
 use subspace_client_irc::Target;
 use subspace_framework::dashboard::avatar::{self, AgentAvatar, AgentIcons, AgentRank};
-use subspace_framework::dashboard::list::GroupIndicator;
+use subspace_framework::dashboard::list::{GroupCaption, GroupIndicator};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Glyph, Group, Row, Tokens, Tone};
 
@@ -35,7 +35,7 @@ pub(super) fn apply(board: &mut Irc, hub: &Entity<Hub>, cx: &mut Context<Irc>) {
         .iter()
         .map(|network| (network.id.clone(), held.roster(&network.id, cx)))
         .collect();
-    let layout = rows::layout(state, &rosters);
+    let layout = rows::layout(state, &rosters, &held.fleets);
     let selected = held.initiatives.selected_fleet();
     board.search = std::rc::Rc::new(rows::search(&layout));
     fold_new_fleets(board, (&layout.fleets, &layout.groups), selected);
@@ -44,7 +44,21 @@ pub(super) fn apply(board: &mut Irc, hub: &Entity<Hub>, cx: &mut Context<Irc>) {
     board.group_networks = layout.networks;
     board.ships = layout.ships;
     board.people = layout.people;
+    board.captions = layout.captions;
+    board.watch.navigator = layout.fleets.values().cloned().collect();
     board.list.set_groups(layout.groups);
+}
+
+/// The quiet captions inside fleet group `group`, such as `Ships` above
+/// its first ship channel.
+pub(super) fn captions(board: &Irc, group: &Group) -> Vec<GroupCaption> {
+    board
+        .captions
+        .get(&group.key)
+        .into_iter()
+        .flatten()
+        .map(|(row, words)| GroupCaption::new(row.clone(), *words))
+        .collect()
 }
 
 /// Whether row `key`'s buffer has unread messages.
@@ -324,6 +338,7 @@ mod tests {
         let ship = Activity {
             captain: "aurora-lyra".into(),
             working: vec!["Reviewing NAV-7".into()],
+            crew: None,
         };
         let target = Target::Channel("#aurora-lyra".into());
         let key = "row".into();
