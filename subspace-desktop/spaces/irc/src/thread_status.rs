@@ -13,12 +13,12 @@
 mod model;
 mod requests;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod trust;
 
 use subspace_client_irc::{Line, LineKind, Target};
 
-pub(crate) use model::{Settled, Shown, Statuses, shown_entry, statuses};
+pub(crate) use model::{Settled, Shown, Statuses, agent_name, shown_entry, statuses};
 pub(crate) use requests::{Arrival, Ending, REMEMBERED, Requests};
 pub(crate) use trust::{arrival, asked, notices};
 

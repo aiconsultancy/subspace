@@ -6,6 +6,7 @@ mod live;
 mod navigator;
 mod notice;
 mod scope;
+mod thread;
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext, px, size};

@@ -52,6 +52,10 @@ pub(crate) const KEYS: &[KeyHelp] = &[
         "Next or previous link or reference",
     ),
     KeyHelp::new("Enter on a link or reference", "Open it"),
+    KeyHelp::new(
+        "Enter on a message with replies or a request",
+        "Open its thread in the inspector",
+    ),
     KeyHelp::new("Enter / Space on an attachment", "Open it"),
     KeyHelp::new("Esc on a message", "Back to the message input"),
 ];
@@ -216,7 +220,30 @@ pub(super) fn open(this: &mut Conversation, window: &mut Window, cx: &mut Contex
         Some(Opens::Url(url)) => _ = links::open(&url, cx),
         Some(Opens::Ref(found)) => cx.emit(ConversationEvent::Open(found)),
         Some(Opens::Upload(key)) => crate::uploads::viewer::open(this, key, window, cx),
-        None => {}
+        None => open_thread(this, cx),
+    }
+}
+
+/// Opens the focused message's thread in the inspector, as choosing its
+/// reply count or status line does: where the inspector has a Thread tab
+/// and the message has replies or a request's status line.
+fn open_thread(this: &Conversation, cx: &mut Context<Conversation>) {
+    let Some(seq) = this.keyboard.at.map(|at| at.seq) else {
+        return;
+    };
+    let threaded = this.replies.contains_key(&seq) || this.statuses.shown.contains_key(&seq);
+    if !threaded || !crate::thread::has_tab(&this.roster, &this.buffer) {
+        return;
+    }
+    let id = this
+        .hub
+        .read(cx)
+        .state
+        .buffer(&this.buffer)
+        .and_then(|held| held.entries.iter().find(|entry| entry.seq == seq))
+        .and_then(|entry| entry.line.id.clone());
+    if let Some(id) = id {
+        cx.emit(ConversationEvent::OpenThread(id));
     }
 }
 

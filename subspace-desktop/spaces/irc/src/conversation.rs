@@ -52,6 +52,9 @@ pub(crate) enum ConversationEvent {
     Closed,
     /// The displayed local-find document changed.
     FindScopeChanged,
+    /// The thread of the message with this ID was chosen, from its reply
+    /// count or its request's status line.
+    OpenThread(String),
 }
 
 pub(crate) struct Conversation {
@@ -314,7 +317,7 @@ impl Conversation {
 
     /// The shared row facts: who may be mentioned, today, and where
     /// reference clicks go.
-    fn row_context(&self, cx: &App) -> RowContext {
+    pub(crate) fn row_context(&self, cx: &App) -> RowContext {
         RowContext {
             conversation: self.me.clone(),
             mentions: mentions(self, cx),
@@ -332,6 +335,7 @@ impl Conversation {
             now: chrono::Utc::now(),
             roster: Rc::clone(&self.roster),
             tiles: Rc::clone(&self.tiles),
+            threads: crate::thread::has_tab(&self.roster, &self.buffer),
         }
     }
 

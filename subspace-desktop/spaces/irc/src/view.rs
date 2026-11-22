@@ -29,6 +29,8 @@ pub(crate) use hosting::{Hosted, open_channel};
 pub(crate) use inspector::InspectorTab;
 #[cfg(test)]
 pub(crate) use inspector::reason as inspector_reason;
+#[cfg(test)]
+pub(crate) use inspector::thread::PROMPT as THREAD_PROMPT;
 /// Fewer lines than this on open asks the server for recent history.
 const HISTORY_ON_OPEN: usize = 50;
 /// Lines asked for per history request.
@@ -52,6 +54,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         captions: Default::default(),
         watch: Default::default(),
         inspector_tab: Default::default(),
+        threads: Default::default(),
         seen_fleets: Default::default(),
         selection_group: None,
         hub: None,
@@ -127,6 +130,7 @@ pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
     publish_visible(board, cx);
     crate::reveal::settle(board, cx);
     crate::live::watch::sync(board, cx);
+    crate::thread::refresh(board, cx);
     cx.notify();
 }
 

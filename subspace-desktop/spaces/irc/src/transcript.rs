@@ -10,7 +10,7 @@ pub(crate) mod focus;
 mod line;
 pub(crate) mod replies;
 mod scroll;
-mod status;
+pub(crate) mod status;
 mod targets;
 mod viewport;
 
@@ -34,7 +34,7 @@ use crate::state::{Buffer, Entry, HistoryState};
 use crate::style;
 use crate::text;
 
-pub(crate) use line::{Claim, RowContext, displayed, tile_refs};
+pub(crate) use line::{Claim, RowContext, displayed, thread_message, tile_refs};
 pub(crate) use scroll::{Row, Scroller, identities, load_older, row_of};
 pub(crate) use targets::message_targets;
 pub(crate) use viewport::scroller;

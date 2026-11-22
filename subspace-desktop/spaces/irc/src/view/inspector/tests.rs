@@ -15,7 +15,7 @@ use crate::fleet::ChannelKind;
 use crate::live::tests::{NOW, lyra};
 
 #[test]
-fn a_ship_and_a_starbase_have_their_subject_then_people_and_command_has_no_tabs() {
+fn a_ship_and_a_starbase_have_their_subject_thread_and_people_and_command_has_no_tabs() {
     let ship = Subject::of(&ChannelKind::Ship {
         captain: "aurora-lyra".into(),
     })
@@ -25,18 +25,25 @@ fn a_ship_and_a_starbase_have_their_subject_then_people_and_command_has_no_tabs(
             .map(|tab| tab.accessible_label().to_string())
             .collect::<Vec<_>>()
     };
-    assert_eq!(labels(tabs(&ship, Some(5))), ["Ship", "People, 5"]);
-    let starbase = Subject::of(&ChannelKind::Starbase).unwrap();
-    assert_eq!(labels(tabs(&starbase, None)), ["Starbase", "People"]);
-    assert_eq!(Subject::of(&ChannelKind::Command), None);
-    assert!(tabs(&ship, None).len() < subspace_framework::dashboard::workspace::INSPECTOR_MAX_TABS);
-    assert_eq!(InspectorTab::at(1), InspectorTab::People);
     assert_eq!(
-        InspectorTab::at(9),
-        InspectorTab::Subject,
-        "room for Thread later"
+        labels(tabs(&ship, Some(5))),
+        ["Ship", "Thread", "People, 5"]
     );
-    assert_eq!(InspectorTab::People.index(), 1);
+    let starbase = Subject::of(&ChannelKind::Starbase).unwrap();
+    assert_eq!(
+        labels(tabs(&starbase, None)),
+        ["Starbase", "Thread", "People"]
+    );
+    assert_eq!(Subject::of(&ChannelKind::Command), None);
+    assert_eq!(
+        tabs(&ship, None).len(),
+        subspace_framework::dashboard::workspace::INSPECTOR_MAX_TABS,
+        "three, the most the shell draws"
+    );
+    assert_eq!(InspectorTab::at(1), InspectorTab::Thread);
+    assert_eq!(InspectorTab::at(2), InspectorTab::People);
+    assert_eq!(InspectorTab::at(9), InspectorTab::Subject);
+    assert_eq!(InspectorTab::People.index(), 2);
 }
 
 #[test]

@@ -27,6 +27,7 @@ mod limits;
 mod offer;
 mod paste;
 mod recall;
+pub(crate) mod reply;
 mod send;
 mod suggest;
 mod typing;
@@ -52,6 +53,8 @@ pub(crate) struct Draft {
     offer: Option<suggest::Offer>,
     /// Why a private message to a fleet agent was not sent or opened.
     pub agent_notice: Option<AgentNotice>,
+    /// The thread the draft replies in, in reply mode.
+    pub reply: Option<reply::ReplyTo>,
     _subscription: Subscription,
 }
 
@@ -85,6 +88,7 @@ impl Draft {
             list,
             offer: None,
             agent_notice: None,
+            reply: None,
             _subscription: subscription,
         }
     }
@@ -114,6 +118,7 @@ impl Draft {
                     .map(|notice| agents::notice(notice, cx)),
             )
             .children(self.oversized.then(|| paste::notice(self.saving, cx)))
+            .children(self.reply.as_ref().map(|replying| reply::row(replying, cx)))
             .children(uploads.then(|| crate::uploads::outgoing::controls(&self.entity, tray, cx)))
             .child(self.list.clone())
             .child(self.entity.clone())
@@ -152,7 +157,8 @@ pub(crate) fn handle(
             offer::accept(conversation, None, window, cx);
         }
         ChatInputEvent::Complete => complete::apply(conversation, window, cx),
-        ChatInputEvent::Cancel => offer::close(conversation, cx),
+        ChatInputEvent::Cancel if offer::is_open(conversation) => offer::close(conversation, cx),
+        ChatInputEvent::Cancel => reply::cancel(conversation, window, cx),
     }
 }
 

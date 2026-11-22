@@ -21,7 +21,7 @@ use subspace_framework::dashboard::{Tokens, Tone, avatar, chat_bubble};
 
 mod marks;
 mod message;
-pub(crate) use message::{displayed, message, tile_refs};
+pub(crate) use message::{displayed, message, thread_message, tile_refs};
 
 use super::fill::{RowFill, filled};
 use crate::fleet::Rank;
@@ -71,6 +71,9 @@ pub(crate) struct RowContext {
     pub roster: Rc<crate::fleet::Roster>,
     /// Which message keeps each reference's tile, from the same sync.
     pub tiles: Rc<crate::tiles::Tiles>,
+    /// The inspector has a Thread tab for this conversation, so reply
+    /// counts and request status lines open their thread there.
+    pub threads: bool,
 }
 
 fn time(entry: &Entry) -> String {

@@ -18,6 +18,9 @@ use subspace_framework::dashboard::badge::{Pill, PillTone};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, Tone};
 
+use std::rc::Rc;
+
+use super::replies::{ThreadLink, replies_text};
 use crate::state::Entry;
 use crate::thread_status::{Outcome, Settled, Shown, Stage, Statuses};
 
@@ -26,11 +29,12 @@ const MINUTE: i64 = 60;
 const HOUR: i64 = 60 * MINUTE;
 
 /// The status line under `entry`, aligned with the message body, when it is
-/// a request with progress or an ending. Read-only: no focus or action.
-/// `now` sets a running line's clock.
+/// a request with progress or an ending. `now` sets a running line's clock.
+/// With a thread `link` the line opens the request's thread and ends with
+/// its reply count, when it has replies; without one it is read-only.
 pub(super) fn line(
     entry: &Entry,
-    statuses: &Statuses,
+    (statuses, link): (&Statuses, Option<&ThreadLink>),
     now: DateTime<Utc>,
     tokens: &Tokens,
     cx: &App,
@@ -38,10 +42,11 @@ pub(super) fn line(
     let shown = statuses.get(&entry.seq)?;
     let request = entry.line.id.as_deref()?;
     let id = format!("irc-status:{request}");
-    Some(match shown.settled {
-        Some(settled) => settled_line(&id, shown, settled, tokens),
+    let (spoken, marker) = match shown.settled {
+        Some(settled) => settled_line(shown, settled, tokens),
         None => status_line(&id, shown, now, tokens, cx),
-    })
+    };
+    Some(frame(&id, spoken, marker, (link, tokens)))
 }
 
 /// One running request's line, such as `astra · Using a tool 0:35`, then
@@ -52,7 +57,7 @@ fn status_line(
     now: DateTime<Utc>,
     tokens: &Tokens,
     cx: &App,
-) -> AnyElement {
+) -> (String, Marker) {
     let since = status
         .stale
         .map(|time| time.with_timezone(&Local).format("%H:%M").to_string());
@@ -65,12 +70,12 @@ fn status_line(
         .children(clock.map(|clock| clock_text(id, clock, tokens, cx)))
         .child(meter(id, status.stage, tokens))
         .children(since.as_deref().map(|at| stale(id, at)));
-    frame(id, spoken(status, since.as_deref()), marker)
+    (spoken(status, since.as_deref()), marker)
 }
 
 /// A finished request's quiet line: `Done in 42 m`, `Failed after 3 m`, or
 /// `Done` for an ending stored before its time was kept.
-fn settled_line(id: &str, status: &Shown, settled: Settled, tokens: &Tokens) -> AnyElement {
+fn settled_line(status: &Shown, settled: Settled, tokens: &Tokens) -> (String, Marker) {
     let text = settled_text(settled);
     let (icon, tone) = settled_glyph(settled);
     let spoken = settled_spoken(&status.agent, &text);
@@ -79,12 +84,12 @@ fn settled_line(id: &str, status: &Shown, settled: Settled, tokens: &Tokens) -> 
         .text_color(tokens.muted)
         .icon(MarkerIcon::new().child(Icon::from(icon).xsmall().text_color(tokens.tone(tone))))
         .content(MarkerContent::new().text(text));
-    frame(id, spoken, marker)
+    (spoken, marker)
 }
 
 /// A quiet check once done, a cross in the red tone once failed, and a
 /// quiet plain circle when how it ended is unknown.
-fn settled_glyph(settled: Settled) -> (IconName, Tone) {
+pub(crate) fn settled_glyph(settled: Settled) -> (IconName, Tone) {
     match settled.outcome {
         Some(Outcome::Failed) => (IconName::CircleX, Tone::Red),
         Some(Outcome::Completed) => (IconName::CircleCheck, Tone::Muted),
@@ -101,16 +106,50 @@ fn settled_spoken(agent: &str, text: &str) -> String {
     }
 }
 
-/// The line's frame around `marker`: a status region named `spoken`.
-fn frame(id: &str, spoken: String, marker: Marker) -> AnyElement {
-    div()
+/// The line's frame around `marker`: a status region named `spoken`, or,
+/// with a thread `link`, a button that opens the thread, ending with its
+/// reply count when it has replies.
+fn frame(
+    id: &str,
+    spoken: String,
+    marker: Marker,
+    (link, tokens): (Option<&ThreadLink>, &Tokens),
+) -> AnyElement {
+    let frame = div()
         .id(SharedString::from(id.to_owned()))
-        .role(Role::Status)
-        .aria_label(spoken)
         .test_support()
-        .py_1()
-        .child(marker)
+        .py_1();
+    let Some(link) = link else {
+        return frame
+            .role(Role::Status)
+            .aria_label(spoken)
+            .child(marker)
+            .into_any_element();
+    };
+    let count = (link.count > 0).then(|| replies_text(link.count));
+    let open = Rc::clone(&link.open);
+    frame
+        .role(Role::Button)
+        .aria_label(linked_spoken(&spoken, count.as_deref()))
+        .cursor_pointer()
+        .on_click(move |_, window, cx| open(window, cx))
+        .child(marker.children(count.map(|count| {
+            div()
+                .id(SharedString::from(format!("{id}:replies")))
+                .test_support()
+                .text_color(tokens.muted)
+                .child(format!("· {count} ›"))
+        })))
         .into_any_element()
+}
+
+/// A linked line's accessible name: the line, its reply count when it has
+/// replies, and what choosing it does.
+fn linked_spoken(spoken: &str, count: Option<&str>) -> String {
+    match count {
+        Some(count) => format!("{spoken} · {count}. Opens the thread"),
+        None => format!("{spoken}. Opens the thread"),
+    }
 }
 
 /// `Done in 42 m`, `Failed after 3 m`, or without a duration when the
