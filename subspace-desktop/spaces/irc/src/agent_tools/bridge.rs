@@ -77,14 +77,20 @@ pub(crate) fn close() {
 }
 
 /// Answers `request` from the hub's state and returns the commands the hub
-/// sends. A caller that stopped waiting no longer receives the answer.
-pub(crate) fn serve(state: &mut IrcState, request: Request) -> Vec<Command> {
+/// sends. `agents` says which nicks are fleet agents, which no message
+/// reaches. A caller that stopped waiting no longer receives the answer.
+pub(crate) fn serve(
+    state: &mut IrcState,
+    request: Request,
+    agents: &write::Agents,
+) -> Vec<Command> {
     match request {
         Request::Read(request, reply) => answer(reply, read::answer(state, request)),
-        Request::Check(operations, reply) => {
-            answer(reply, (write::check_all(state, &operations), Vec::new()))
-        }
-        Request::Write(operation, reply) => answer(reply, write::apply(state, &operation)),
+        Request::Check(operations, reply) => answer(
+            reply,
+            (write::check_all(state, &operations, agents), Vec::new()),
+        ),
+        Request::Write(operation, reply) => answer(reply, write::apply(state, &operation, agents)),
     }
 }
 

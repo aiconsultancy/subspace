@@ -9,7 +9,7 @@ use subspace_framework::agent_tools::test_support;
 use super::super::bridge::Link;
 use super::super::tools;
 use super::super::write::{self, Write};
-use super::{hub_thread, message_to, operation, state};
+use super::{hub_thread, message_to, operation, people, state};
 use crate::fixtures::{channel, config, network_id, query};
 use crate::state::IrcState;
 
@@ -48,7 +48,7 @@ fn operations_are_validated_before_any_connection_is_asked() {
 fn live_checks_map_each_operation_to_its_runtime_command() {
     let state = state();
     let commands = |operation: Write| {
-        let (result, commands) = write::apply(&state, &operation);
+        let (result, commands) = write::apply(&state, &operation, &people);
         assert_eq!(result.unwrap()["status"], "queued");
         commands
     };
@@ -109,7 +109,7 @@ fn live_checks_map_each_operation_to_its_runtime_command() {
 #[test]
 fn live_checks_refuse_what_the_connection_cannot_do() {
     let state = state();
-    let refused = |operation: Write| write::check(&state, &operation).err().unwrap();
+    let refused = |operation: Write| write::check(&state, &operation, &people).err().unwrap();
     assert!(refused(message_to("#elsewhere", "hi")).contains("Join it first"));
     assert!(
         refused(operation(
@@ -128,20 +128,42 @@ fn live_checks_refuse_what_the_connection_cannot_do() {
         .contains("No IRC network")
     );
     let offline = IrcState::new(&[config()], Vec::new());
-    let error = write::check(&offline, &message_to("bob", "hi"))
+    let error = write::check(&offline, &message_to("bob", "hi"), &people)
         .err()
         .unwrap();
     assert_eq!(error, "Local Ergo is not connected.");
-    let (result, commands) = write::apply(&offline, &message_to("bob", "hi"));
+    let (result, commands) = write::apply(&offline, &message_to("bob", "hi"), &people);
     assert!(result.is_err() && commands.is_empty());
     assert_eq!(
         write::apply(
             &offline,
-            &operation(json!({"action":"connect","network":"local"}))
+            &operation(json!({"action":"connect","network":"local"})),
+            &people
         )
         .1,
         [Command::Connect(network_id())]
     );
+}
+
+#[test]
+fn no_message_goes_to_a_fleet_agent_s_nick_but_its_channel_is_fine() {
+    let state = state();
+    let agents = |network: &subspace_client_irc::NetworkId, nick: &str| {
+        (*network == network_id() && nick.eq_ignore_ascii_case("bob"))
+            .then(|| "bob is a fleet agent. Agents talk in channels, where everyone can see: ask in #subspace.".to_owned())
+    };
+    let error = write::check(&state, &message_to("Bob", "hi"), &agents)
+        .err()
+        .unwrap();
+    assert!(error.contains("bob is a fleet agent"), "{error}");
+    let (result, commands) = write::apply(&state, &message_to("bob", "hi"), &agents);
+    assert!(result.is_err() && commands.is_empty(), "nothing is sent");
+    let me = operation(
+        json!({"action":"message","network":"local","target":"bob","text":"waves","me":true}),
+    );
+    assert!(write::check(&state, &me, &agents).is_err(), "nor an action");
+    assert!(write::check(&state, &message_to("#subspace", "hi"), &agents).is_ok());
+    assert!(write::check(&state, &message_to("mira", "hi"), &agents).is_ok());
 }
 
 #[test]

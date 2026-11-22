@@ -23,5 +23,5 @@ pub use runtime::Runtime;
 pub use session::{
     COMMANDS, CommandHelp, FirstArgument, KEPT_CLIENT_TAGS, MAX_INLINE_BYTES, PROGRESS_TAG,
     check_draft, check_inline_text, connection_batches, draft_line_limit, message_budget,
-    status_text,
+    private_recipients, status_text,
 };
