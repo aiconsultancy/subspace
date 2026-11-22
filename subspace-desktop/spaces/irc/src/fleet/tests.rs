@@ -98,6 +98,8 @@ fn each_agent_talks_in_its_ship_channel_or_the_starbase() {
             rank: Rank::Captain,
             channel: Some("#aurora-orion".into()),
             recorded: false,
+            user_id: "user-aurora-orion".into(),
+            ship: Some("Orion".into()),
         })
     );
 }

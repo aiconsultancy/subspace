@@ -21,7 +21,7 @@ use subspace_framework::dashboard::{Tokens, Tone, avatar, chat_bubble};
 
 mod marks;
 mod message;
-pub(crate) use message::{displayed, message, thread_message, tile_refs};
+pub(crate) use message::{displayed, message, named_issues, thread_message, tile_refs};
 
 use super::fill::{RowFill, filled};
 use crate::fleet::Rank;
@@ -83,6 +83,10 @@ pub(crate) struct RowContext {
     /// Where the keyboard's reaction menu opens: the focused message
     /// measures itself into it.
     pub react_anchor: Option<gpui_kit::Entity<subspace_framework::dashboard::anchored::Anchor>>,
+    /// The message under the pointer, whose toolbar shows.
+    pub hovered: Option<i64>,
+    /// What the message toolbar's actions can do in this conversation.
+    pub actions: super::actions::Availability,
 }
 
 fn time(entry: &Entry) -> String {

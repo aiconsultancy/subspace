@@ -30,6 +30,9 @@ pub(super) fn submit(
         send_reply(conversation, &replying, text, window, cx);
         return;
     }
+    if crate::tracker::submit(conversation, &text, window, cx) {
+        return;
+    }
     if crate::uploads::outgoing::submit(conversation, text.clone(), window, cx) {
         conversation.draft.typing_since = None;
         return;

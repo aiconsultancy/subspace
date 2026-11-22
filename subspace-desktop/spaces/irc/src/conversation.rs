@@ -15,14 +15,13 @@ mod panel;
 pub(crate) mod reacting;
 pub(crate) mod summaries;
 
-pub(crate) use keys::{KEYS, bind_keys};
+pub(crate) use keys::{KEYS, bind_keys, hover};
 #[cfg(test)]
 pub(crate) use keys::{focused, focused_upload, has_card};
 
 use std::{rc::Rc, sync::Arc};
 
 use chrono::Local;
-use gpui_kit::component::dock::TabGroup;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::{
     AnyElement, App, Context, Entity, EventEmitter, FocusHandle, InteractiveElement as _,
@@ -71,7 +70,7 @@ pub(crate) struct Conversation {
     /// The fleet roles on the buffer's network.
     pub(crate) roster: Rc<Roster>,
     /// Which message keeps each reference's tile, read before rows show.
-    tiles: Rc<crate::tiles::Tiles>,
+    pub(crate) tiles: Rc<crate::tiles::Tiles>,
     pub(crate) draft: Draft,
     pub(crate) tray: crate::uploads::outgoing::Tray,
     pub(crate) upload_viewer: Option<crate::uploads::viewer::Viewer>,
@@ -79,15 +78,15 @@ pub(crate) struct Conversation {
     pub(crate) find_cache: std::cell::RefCell<find::Cache>,
     find_source: Option<find::Revision>,
     focus: FocusHandle,
-    /// The dock tab group holding this conversation, whose tab shows the
-    /// unread count.
-    group: Option<WeakEntity<TabGroup>>,
-    /// The content the tab last showed.
-    shown_tab: panel::TabContent,
+    /// The dock tab group holding this conversation and what its tab last
+    /// showed.
+    tab: panel::Tab,
     /// The line a search result opened, shown selected.
     target: Option<i64>,
     /// The transcript's keyboard focus.
     keyboard: keys::Keyboard,
+    /// Tracker writes from this conversation and the open action dialog.
+    pub(crate) tracker: crate::tracker::State,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -140,10 +139,10 @@ impl Conversation {
             find_cache: Default::default(),
             find_source: None,
             focus,
-            group: None,
-            shown_tab: Default::default(),
+            tab: Default::default(),
             target: None,
             keyboard,
+            tracker: Default::default(),
             _subscriptions: subscriptions,
         };
         conversation.show_latest(cx);
@@ -356,6 +355,8 @@ impl Conversation {
             stops: Rc::clone(&self.reacting.stops),
             can_react: self.reacting.supported,
             react_anchor: Some(self.reacting.anchor.clone()),
+            hovered: self.keyboard.hovered,
+            actions: crate::transcript::actions::Availability::of(self, cx),
         }
     }
 
@@ -450,8 +451,40 @@ impl Conversation {
     }
 }
 
+/// Opens message `seq`'s thread in the inspector and puts the composer
+/// into reply mode for it, as the Thread tab's **Reply in thread** does:
+/// only where the inspector has a Thread tab and the network can carry
+/// the reply tag. The reply goes to the channel; nothing here sends a
+/// private message.
+pub(crate) fn reply_in_thread(
+    this: &mut Conversation,
+    seq: i64,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    let hub = this.hub.read(cx);
+    let network = hub.state.network(&this.buffer.network);
+    let allowed = crate::thread::has_tab(&this.roster, &this.buffer)
+        && crate::thread::reply_refusal(network).is_none();
+    let root = hub
+        .state
+        .buffer(&this.buffer)
+        .and_then(|held| held.entries.iter().find(|entry| entry.seq == seq))
+        .filter(|_| allowed)
+        .and_then(|entry| {
+            let id = entry.line.id.as_deref()?;
+            let author = entry.line.from.as_deref().unwrap_or_default();
+            Some(compose::reply::ReplyTo::new(id, author, &entry.line.text))
+        });
+    let Some(root) = root else {
+        return;
+    };
+    cx.emit(ConversationEvent::OpenThread(root.root.clone()));
+    compose::reply::start(this, root, window, cx);
+}
+
 /// Who and which issues the buffer's messages may mention.
-fn mentions(this: &Conversation, cx: &App) -> Mentions {
+pub(crate) fn mentions(this: &Conversation, cx: &App) -> Mentions {
     let hub = this.hub.read(cx);
     let nicks = hub
         .state
@@ -499,6 +532,7 @@ impl Render for Conversation {
             .child(self.render_transcript(cx))
             .child(self.reacting.anchor.clone());
         let notice = reacting::notice(self, cx);
+        let dialog = crate::tracker::message::render(self, cx);
         let content = v_flex()
             .id("irc-conversation")
             .track_focus(&self.focus)
@@ -511,6 +545,7 @@ impl Render for Conversation {
             }))
             .size_full()
             .min_h_0()
+            .relative()
             .bg(tokens.surface)
             .children(header)
             .child(transcript)
@@ -525,6 +560,7 @@ impl Render for Conversation {
                         cx,
                     )),
             )
+            .children(dialog)
             .into_any_element();
         find::scope(self, content, cx)
     }

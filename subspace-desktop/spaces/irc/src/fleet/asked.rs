@@ -1,8 +1,17 @@
-//! Whom `/ask` addresses in a fleet's channel.
+//! Whom `/ask` addresses in a fleet's channel, and whom an assignment
+//! can name.
 
-use super::{ChannelKind, Rank, Roster};
+use super::{Agent, ChannelKind, Rank, Roster};
 
 impl Roster {
+    /// The agents of the network's fleets, by case-folded nick, in no
+    /// particular order: whom a tracker assignment can name.
+    pub(crate) fn agents(&self) -> impl Iterator<Item = (&str, &Agent)> {
+        self.agents
+            .iter()
+            .map(|(nick, agent)| (nick.as_str(), agent))
+    }
+
     /// Whom `/ask` addresses in `channel`: a ship's captain, or the rear
     /// admiral whose Starbase it is. `None` elsewhere, the command channel
     /// included, where no one agent answers for the channel; `None` too in a

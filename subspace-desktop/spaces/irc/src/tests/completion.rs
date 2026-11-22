@@ -48,17 +48,34 @@ pub(super) fn composer(
     // After Kit's own bindings, as the shell does, so the list's keys win.
     cx.update(|_, cx| subspace_framework::dashboard::chat_input::bind_keys(cx));
     inject(&hub, crew_events(), cx);
-    let room = channel("#ship-galactica");
-    board.update(cx, |board, cx| view::reveal(board, &room, cx));
+    let conversation = reveal(&board, &channel("#ship-galactica"), cx);
+    let input = focused_composer(&conversation, cx);
+    (conversation, input, cx)
+}
+
+/// Shows `room` on `board` and returns its conversation.
+pub(super) fn reveal(
+    board: &Entity<crate::Irc>,
+    room: &subspace_client_irc::BufferKey,
+    cx: &mut VisualTestContext,
+) -> Entity<Conversation> {
+    board.update(cx, |board, cx| view::reveal(board, room, cx));
     cx.run_until_parked();
     cx.update(|window, cx| window.render_frame(cx));
-    let conversation = board.read_with(cx, |board, _| board.dock.open[&room].entity.clone());
+    board.read_with(cx, |board, _| board.dock.open[room].entity.clone())
+}
+
+/// `conversation`'s composer, focused.
+pub(super) fn focused_composer(
+    conversation: &Entity<Conversation>,
+    cx: &mut VisualTestContext,
+) -> Entity<ChatInput> {
     let input = conversation.read_with(cx, |conversation, _| conversation.composer().clone());
     cx.update(|window, cx| {
         input.update(cx, |input, cx| input.focus(window, cx));
         window.render_frame(cx);
     });
-    (conversation, input, cx)
+    input
 }
 
 /// The labels the list shows now.

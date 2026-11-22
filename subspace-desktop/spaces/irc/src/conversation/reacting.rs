@@ -245,9 +245,20 @@ pub(super) fn open_choices(
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
-    let Some(seq) = this.keyboard.at.map(|at| at.seq) else {
-        return;
-    };
+    if let Some(seq) = this.keyboard.at.map(|at| at.seq) {
+        open_choices_for(this, seq, window, cx);
+    }
+}
+
+/// Opens the reaction choices for message `seq` at that message, as `r`,
+/// **Add reaction** and the toolbar's React do, when it can take
+/// reactions: the same menu, with the stop group when its conditions hold.
+pub(crate) fn open_choices_for(
+    this: &mut Conversation,
+    seq: i64,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
     let msgid = this
         .hub
         .read(cx)

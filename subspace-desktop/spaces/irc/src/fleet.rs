@@ -104,6 +104,10 @@ pub(crate) struct Agent {
     /// Whether the API records `channel`, rather than a standard name
     /// standing in for it.
     pub recorded: bool,
+    /// The agent's API user, whom an assignment names.
+    pub user_id: String,
+    /// The agent's ship's name, such as `Lyra`, when it has one.
+    pub ship: Option<String>,
 }
 
 /// The fleet roles known on one network.
@@ -302,6 +306,8 @@ fn known(ships: &Ships, agent: &FleetAgent, starbase: Option<Place>) -> Option<(
         rank,
         channel,
         recorded,
+        user_id: agent.user_id.clone(),
+        ship: nonempty(agent.ship.as_deref()),
     };
     (!nick.is_empty()).then(|| (nick.to_owned(), agent))
 }

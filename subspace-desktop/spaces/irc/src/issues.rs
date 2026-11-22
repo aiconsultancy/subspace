@@ -15,13 +15,13 @@ use std::collections::HashMap;
 
 use subspace_framework::contracts::github;
 use subspace_framework::contracts::issues::{
-    Changed, CurrentScope, IssueScope, MAX_RESOLVE, Resolution, ResolutionState, Resolve,
+    Changed, CurrentScope, IssueScope, MAX_RESOLVE, Refresh, Resolution, ResolutionState, Resolve,
 };
 use subspace_framework::dashboard::contracts::{BoardContracts, ContractError, Declaration};
 
 use crate::markup::IssueKeys;
 
-pub(crate) use follow::{attach, open, want};
+pub(crate) use follow::{attach, open, refresh, want};
 pub(crate) use preview::{panel, slot};
 pub(crate) use tile::relative;
 pub(crate) use tooltip::tooltip;
@@ -32,6 +32,7 @@ pub(crate) const CONTRACTS: BoardContracts = BoardContracts::new(&[
     Declaration::subscribes::<Changed>(),
     Declaration::requests::<CurrentScope>(),
     Declaration::requests::<Resolve>(),
+    Declaration::requests::<Refresh>(),
     Declaration::subscribes::<github::Changed>(),
     Declaration::requests::<github::ResolvePullRequests>(),
     Declaration::requests::<github::OpenPullRequest>(),

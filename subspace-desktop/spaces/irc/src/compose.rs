@@ -29,7 +29,7 @@ mod paste;
 mod recall;
 pub(crate) mod reply;
 mod send;
-mod suggest;
+pub(crate) mod suggest;
 mod typing;
 
 pub(crate) use agents::{AgentNotice, listed_channel};

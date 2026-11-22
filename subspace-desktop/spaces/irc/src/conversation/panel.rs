@@ -18,6 +18,14 @@ use super::{Conversation, ConversationEvent};
 /// The name a conversation panel is persisted under. Never change it.
 pub(crate) const PANEL_NAME: &str = "irc.conversation";
 
+/// The dock tab group holding a conversation, whose tab shows its unread
+/// count, and what that tab last showed.
+#[derive(Default)]
+pub(super) struct Tab {
+    pub group: Option<WeakEntity<TabGroup>>,
+    shown: TabContent,
+}
+
 #[derive(Default, PartialEq, Eq)]
 pub(super) struct TabContent {
     unread: usize,
@@ -47,11 +55,11 @@ impl Conversation {
     /// Redraws the title when unread state or conversation context changes.
     pub(super) fn refresh_tab(&mut self, cx: &mut Context<Self>) {
         let content = self.tab_content(cx);
-        if content == self.shown_tab {
+        if content == self.tab.shown {
             return;
         }
-        self.shown_tab = content;
-        if let Some(group) = self.group.as_ref().and_then(WeakEntity::upgrade) {
+        self.tab.shown = content;
+        if let Some(group) = self.tab.group.as_ref().and_then(WeakEntity::upgrade) {
             group.update(cx, |_, cx| cx.notify());
         }
     }
@@ -100,7 +108,7 @@ impl BasePanel for Conversation {
     }
 
     fn on_added_to(&mut self, group: WeakEntity<TabGroup>, _: &mut Window, cx: &mut Context<Self>) {
-        self.group = Some(group);
+        self.tab.group = Some(group);
         cx.notify();
     }
 

@@ -31,6 +31,7 @@ pub(crate) fn message(
         &context.mentions,
         rendered.as_ref(),
     ));
+    let toolbar = crate::transcript::actions::toolbar(entry, !issues.is_empty(), context, cx);
     let identifiers = identifiers(original, context, rendered.as_ref(), issues);
     let spoken = spoken(entry, rendered.as_ref());
     let rank = context
@@ -69,12 +70,12 @@ pub(crate) fn message(
         .rounded(tokens.control_radius)
         .child(leading)
         .child(column)
-        .children(marks::focus_ring(entry, context, &tokens, cx));
-    let row = measure_focused(row, entry, context);
+        .children(marks::focus_ring(entry, context, &tokens, cx))
+        .children(toolbar);
+    let row = measure_focused(hovered(row, entry.seq, context), entry, context);
     let selected = entry.highlight || context.target == Some(entry.seq);
     let row = filled(row, RowFill::of(selected, unread, &tokens));
-    let row = message_frame(id, row, continues);
-    (row, identifiers)
+    (message_frame(id, row, continues), identifiers)
 }
 
 /// `original` as the hub shows it now: with resolved uploads' text hidden,
@@ -120,14 +121,33 @@ pub(crate) fn thread_message(
         .into_any_element()
 }
 
-/// The keyboard-focused message measures itself into the reaction menu's
-/// anchor, so `r` opens the menu at the message. Other rows are untouched.
+/// The row tells its conversation when the pointer is over it, which
+/// shows its toolbar.
+fn hovered<E: gpui_kit::StatefulInteractiveElement>(row: E, seq: i64, context: &RowContext) -> E {
+    let conversation = context.conversation.clone();
+    row.on_hover(move |hovered, _, cx| {
+        let hovered = *hovered;
+        _ = conversation.update(cx, |this, cx| {
+            crate::conversation::hover(this, seq, hovered, cx)
+        });
+    })
+}
+
+/// The issues message `entry`'s text names, as its row reads them.
+pub(crate) fn named_issues(entry: &Entry, mentions: &crate::markup::Mentions) -> Vec<String> {
+    let rendered = markup::rich(&entry.line.text, mentions);
+    markup::issues(&entry.line.text, mentions, rendered.as_ref())
+}
+
+/// The message whose toolbar shows (keyboard-focused or under the pointer)
+/// measures itself into the reaction menu's anchor, so `r` and the
+/// toolbar's React open the menu at the message. Other rows are untouched.
 fn measure_focused<E: gpui_kit::base::ElementExt>(
     row: E,
     entry: &Entry,
     context: &RowContext,
 ) -> E {
-    let focused = context.focus.is_some_and(|at| at.seq == entry.seq);
+    let focused = crate::transcript::actions::shown(entry.seq, context);
     match context.react_anchor.clone().filter(|_| focused) {
         Some(anchor) => row.on_prepaint(move |bounds, _, cx| {
             anchor.update(cx, |anchor, cx| anchor.set_bounds(bounds, cx));

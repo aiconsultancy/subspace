@@ -22,8 +22,14 @@ fn current(conversation: &Conversation, cx: &App) -> Option<Offer> {
         .asking(super::ask::agent(
             &conversation.roster,
             &conversation.buffer,
-        ));
+        ))
+        .tracking(crate::tracker::facts(conversation, typed_issue(&text), cx));
     suggest(&text, cursor, &facts)
+}
+
+/// The issue a tracker command in `text` names, so its answer is gathered.
+fn typed_issue(text: &str) -> Option<String> {
+    crate::tracker::typed(text).and_then(|typed| typed.issue)
 }
 
 fn show(conversation: &mut Conversation, offer: Option<Offer>, cx: &mut Context<Conversation>) {
@@ -69,14 +75,19 @@ pub(super) fn accept(
     let Some(index) = index.or_else(|| draft.list.read(cx).active()) else {
         return;
     };
-    let Some((range, insert)) = draft.offer.as_ref().and_then(|offer| {
+    let Some((range, insert, run)) = draft.offer.as_ref().and_then(|offer| {
         let choice = offer.choices.get(index)?;
-        Some((offer.range.clone(), choice.insert.clone()))
+        Some((offer.range.clone(), choice.insert.clone(), choice.run))
     }) else {
         return;
     };
     let input = draft.entity.clone();
     show(conversation, None, cx);
+    if run {
+        let text = input.read(cx).text(cx);
+        super::send::submit(conversation, text, window, cx);
+        return;
+    }
     input.update(cx, |input, cx| {
         input.replace_range(range, &insert, window, cx);
         input.focus(window, cx);

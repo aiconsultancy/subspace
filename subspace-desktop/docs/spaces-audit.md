@@ -169,6 +169,7 @@ the registrations differ.
 | `irc` | subscribes | `issues@1/changed` |
 | `irc` | requests | `issues@1/current-scope` |
 | `irc` | requests | `issues@1/resolve` |
+| `irc` | requests | `issues@1/refresh` |
 | `irc` | subscribes | `github@1/changed` |
 | `irc` | requests | `github@1/resolve-pull-requests` |
 | `irc` | requests | `github@1/open-pull-request` |

@@ -4,13 +4,14 @@
 //! are gathered from the hub's state, and the result is shown in the shared
 //! completion list above the composer.
 
-use std::ops::Range;
-
 use subspace_client_irc::{BufferKey, COMMANDS, CommandHelp, FirstArgument, Member, Target};
 use subspace_framework::dashboard::chat_input::completion::{CompletionItem, word_before};
 
 use crate::fleet::{Rank, Roster};
 use crate::state::{IrcState, is_message};
+
+mod choice;
+pub(crate) use choice::{Offer, Suggestion};
 
 /// Lines read back for who spoke recently.
 const RECENT_LINES: usize = 500;
@@ -67,20 +68,8 @@ pub(crate) struct Facts {
     /// The agent `/ask` addresses in this channel, when it is a fleet's
     /// ship channel or Starbase.
     pub ask: Option<String>,
-}
-
-/// One choice: the row shown, and the text that replaces the word.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Suggestion {
-    pub item: CompletionItem,
-    pub insert: String,
-}
-
-/// The choices for the word in `range`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Offer {
-    pub range: Range<usize>,
-    pub choices: Vec<Suggestion>,
+    /// What the tracker commands know, where they are offered.
+    pub tracker: Option<crate::tracker::Facts>,
 }
 
 /// What the word at the cursor asks to complete.
@@ -110,7 +99,15 @@ pub(crate) fn fold(text: &str) -> String {
 /// The choices for the word that ends at `cursor` in `text`, if any.
 pub(crate) fn suggest(text: &str, cursor: usize, facts: &Facts) -> Option<Offer> {
     let range = word_before(text, cursor);
-    let trigger = trigger(&text[..range.start], &text[range.clone()])?;
+    let (before, word) = (&text[..range.start], &text[range.clone()]);
+    if let Some(choices) = facts
+        .tracker
+        .as_ref()
+        .and_then(|tracker| crate::tracker::arguments(text, (before, word), tracker))
+    {
+        return (!choices.is_empty()).then_some(Offer { range, choices });
+    }
+    let trigger = trigger(before, word)?;
     let choices = choices(trigger, facts);
     (!choices.is_empty()).then_some(Offer { range, choices })
 }
@@ -141,7 +138,7 @@ fn command_before(before: &str) -> Option<&'static CommandHelp> {
 
 fn choices(trigger: Trigger<'_>, facts: &Facts) -> Vec<Suggestion> {
     match trigger {
-        Trigger::Command(query) => commands(query, facts.ask.as_deref()),
+        Trigger::Command(query) => commands(query, facts),
         Trigger::Mention(query) => people(&facts.people, query, "@"),
         Trigger::Channel(query) => channels(&facts.joined, query),
         Trigger::Argument(FirstArgument::Nick, query) => {
@@ -154,13 +151,23 @@ fn choices(trigger: Trigger<'_>, facts: &Facts) -> Vec<Suggestion> {
 }
 
 /// Commands whose name or alias starts with `query`: the channel's own
-/// first, when it has an agent to `ask`, then the IRC client's in
-/// catalogue order.
-fn commands(query: &str, ask: Option<&str>) -> Vec<Suggestion> {
+/// first (`/ask` when it has an agent to ask, then the tracker commands
+/// where they are offered), then the IRC client's in catalogue order.
+fn commands(query: &str, facts: &Facts) -> Vec<Suggestion> {
     let query = query.to_ascii_lowercase();
-    let own = ask
+    let own = facts
+        .ask
+        .as_deref()
         .filter(|_| super::ask::NAME.starts_with(&query))
-        .map(ask_suggestion);
+        .map(ask_suggestion)
+        .into_iter()
+        .chain(
+            facts
+                .tracker
+                .as_ref()
+                .map(|tracker| crate::tracker::commands(&query, tracker))
+                .unwrap_or_default(),
+        );
     let client = COMMANDS
         .iter()
         .filter(|command| {
@@ -168,16 +175,18 @@ fn commands(query: &str, ask: Option<&str>) -> Vec<Suggestion> {
                 .chain(command.aliases)
                 .any(|name| name.starts_with(&query))
         })
-        .map(|command| Suggestion {
-            item: CompletionItem::command(
-                format!("/{}", command.name),
-                command.args,
-                command.description,
+        .map(|command| {
+            Suggestion::insert(
+                CompletionItem::command(
+                    format!("/{}", command.name),
+                    command.args,
+                    command.description,
+                )
+                .spoken(format!("{}, {}", command.usage(), command.description)),
+                format!("/{} ", command.name),
             )
-            .spoken(format!("{}, {}", command.usage(), command.description)),
-            insert: format!("/{} ", command.name),
         });
-    own.into_iter().chain(client).collect()
+    own.chain(client).collect()
 }
 
 /// `/ask`, which addresses `agent`, as a command of this channel.
@@ -185,12 +194,12 @@ fn ask_suggestion(agent: &str) -> Suggestion {
     let description = super::ask::description(agent);
     let name = super::ask::NAME;
     let args = super::ask::ARGS;
-    Suggestion {
-        item: CompletionItem::command(format!("/{name}"), args, description.clone()).spoken(
-            format!("/{name} {args}, {description}, a command of this channel"),
-        ),
-        insert: format!("/{name} "),
-    }
+    Suggestion::insert(
+        CompletionItem::command(format!("/{name}"), args, description.clone()).spoken(format!(
+            "/{name} {args}, {description}, a command of this channel"
+        )),
+        format!("/{name} "),
+    )
 }
 
 /// People whose nick starts with `query`, ignoring case, each inserted
@@ -201,10 +210,7 @@ fn people(people: &[Person], query: &str, sigil: &str) -> Vec<Suggestion> {
         .iter()
         .filter(|person| fold(&person.nick).starts_with(&query))
         .take(PEOPLE_LIMIT)
-        .map(|person| Suggestion {
-            item: person_item(person),
-            insert: format!("{sigil}{} ", person.nick),
-        })
+        .map(|person| Suggestion::insert(person_item(person), format!("{sigil}{} ", person.nick)))
         .collect()
 }
 
@@ -239,10 +245,7 @@ fn channels(names: &[String], query: &str) -> Vec<Suggestion> {
             let name = fold(name);
             name.starts_with(&query) || name.trim_start_matches(['#', '&']).starts_with(&query)
         })
-        .map(|name| Suggestion {
-            item: CompletionItem::new(name.clone()),
-            insert: format!("{name} "),
-        })
+        .map(|name| Suggestion::insert(CompletionItem::new(name.clone()), format!("{name} ")))
         .collect()
 }
 
@@ -258,12 +261,20 @@ impl Facts {
             channels,
             joined,
             ask: None,
+            tracker: None,
         }
     }
 
     /// The same facts with the agent `/ask` addresses, when there is one.
     pub fn asking(mut self, agent: Option<&str>) -> Self {
         self.ask = agent.map(str::to_owned);
+        self
+    }
+
+    /// The same facts with what the tracker commands know, where they are
+    /// offered.
+    pub fn tracking(mut self, tracker: Option<crate::tracker::Facts>) -> Self {
+        self.tracker = tracker;
         self
     }
 

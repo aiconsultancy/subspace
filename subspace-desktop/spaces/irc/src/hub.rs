@@ -76,6 +76,8 @@ pub(crate) struct Hub {
     pub fleets: crate::live::Lives,
     /// Message reactions, reaction support per network and refusals.
     pub reactions: crate::reactions::Reactions,
+    /// The API client tracker commands and message actions write with.
+    pub tracker: crate::tracker::Link,
     captain_notifications: captain_notifications::Monitor,
     _timer: Option<Task<()>>,
     _settings: Option<Subscription>,
@@ -239,6 +241,7 @@ impl Hub {
             uploads: Default::default(),
             fleets: Default::default(),
             reactions: Default::default(),
+            tracker: Default::default(),
             _timer: None,
             _settings: None,
         }
