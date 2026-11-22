@@ -216,7 +216,9 @@ pub(super) fn people_mark(cx: &App) -> AnyElement {
 /// selected initiative (`selected`, its fleet id if any) is not of its
 /// fleet. With no initiative selected, every fleet starts open. A new group
 /// that holds the selected row stays open, so the list keeps the selection
-/// (a channel joined on request, or one that moved into a fleet's group).
+/// (a channel joined on request, or one that moved into a fleet's group),
+/// and a folded group the selected row has just moved into opens; one the
+/// person folded around the selection stays folded.
 pub(super) fn fold_new_fleets(
     board: &mut Irc,
     (fleets, groups): (&HashMap<SharedString, String>, &[Group]),
@@ -231,6 +233,20 @@ pub(super) fn fold_new_fleets(
             board.list.toggle(key);
         }
     }
+    let moved = moved_into(board.selection_group.as_ref(), holding);
+    if let Some(key) = moved.filter(|key| board.list.is_folded(key)) {
+        board.list.toggle(key);
+    }
+    board.selection_group = holding.cloned();
+}
+
+/// The group the selection has just moved into: `holding` when it differs
+/// from `previous`, the group that held it at the last layout.
+pub(super) fn moved_into<'a>(
+    previous: Option<&SharedString>,
+    holding: Option<&'a SharedString>,
+) -> Option<&'a SharedString> {
+    holding.filter(|holding| previous != Some(*holding))
 }
 
 /// The key of the group in `groups` that holds row `selected`.
@@ -397,6 +413,23 @@ mod tests {
         assert_eq!(super::holding_group(&groups, None), None);
         let gone = gpui_kit::SharedString::from("castor");
         assert_eq!(super::holding_group(&groups, Some(&gone)), None);
+    }
+
+    #[test]
+    fn a_folded_group_opens_only_when_the_selection_moves_into_it() {
+        use super::moved_into;
+        let (a, b) = (
+            gpui_kit::SharedString::from("fleet-a"),
+            gpui_kit::SharedString::from("fleet-b"),
+        );
+        assert_eq!(moved_into(Some(&a), Some(&b)), Some(&b), "moved");
+        assert_eq!(moved_into(None, Some(&b)), Some(&b), "first held");
+        assert_eq!(
+            moved_into(Some(&b), Some(&b)),
+            None,
+            "folded by hand: stays"
+        );
+        assert_eq!(moved_into(Some(&b), None), None, "nothing selected");
     }
 
     #[test]

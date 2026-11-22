@@ -88,6 +88,9 @@ pub struct Irc {
     /// The fleet groups shown so far, so a fleet's group folds only when it
     /// first appears.
     seen_fleets: std::collections::HashSet<SharedString>,
+    /// The group that held the selected row at the last layout, so a
+    /// folded group the selection moves into opens.
+    selection_group: Option<SharedString>,
     hub: Option<Entity<hub::Hub>>,
     hub_subscription: Option<Subscription>,
     /// The networks as last synced, for panels that read without a context.

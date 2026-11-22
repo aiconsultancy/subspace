@@ -53,6 +53,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         watch: Default::default(),
         inspector_tab: Default::default(),
         seen_fleets: Default::default(),
+        selection_group: None,
         hub: None,
         hub_subscription: None,
         networks: Vec::new(),
