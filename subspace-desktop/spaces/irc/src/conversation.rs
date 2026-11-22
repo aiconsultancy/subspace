@@ -333,10 +333,17 @@ impl Conversation {
             Target::Server => (network.name.clone(), crate::view::server_summary(network)),
             Target::Query(name) | Target::Channel(name) => (name.clone(), network.name.clone()),
         };
+        let kind = match &self.buffer.target {
+            Target::Channel(name) => self.roster.channel(name).cloned(),
+            _ => None,
+        };
+        let live = header::live(kind.as_ref(), &network.statuses);
         Some(header::HeaderFacts {
             title,
             network: context,
             topic,
+            kind,
+            live,
         })
     }
 

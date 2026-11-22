@@ -1,13 +1,15 @@
 //! Fleet roles on the board: the rank mark after an agent's name in the
-//! transcript and the member list's note.
+//! transcript, the member list's note, a ship channel's heading with its
+//! captain's live status, and the toolbar's More menu holding the
+//! connection commands.
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use serde_json::json;
 use subspace_api_client::model::MemberInitiative;
-use subspace_client_irc::{ConnectionStatus, Event};
+use subspace_client_irc::{Command, ConnectionStatus, Event};
 
-use super::remove::settle;
+use super::remove::{choose, settle};
 use super::{inject, mount, settings};
 use crate::fixtures::{channel, member, message, network_id};
 use crate::hub::Hub;
@@ -116,4 +118,70 @@ fn an_agent_s_line_carries_its_rank_mark_and_a_person_s_does_not(cx: &mut TestAp
     assert!(drawn("irc-member:aurora-lyra", cx).contains("captain"));
     assert!(drawn("irc-member:aurora-admiral", cx).contains("rear admiral"));
     assert!(!drawn("irc-member:mira", cx).contains("captain"));
+}
+
+#[gpui_kit::test]
+fn a_ship_channel_s_heading_shows_its_glyph_and_its_captain_s_live_status(cx: &mut TestAppContext) {
+    let (_, hub, cx) = ship(cx);
+    cx.update(|window, _| {
+        assert!(
+            window
+                .within("irc-toolbar")
+                .find("irc-header-kind")
+                .visible()
+        );
+        assert!(
+            window.try_find("irc-header-live").is_none(),
+            "no status, no pill: nothing invents an idle state"
+        );
+    });
+    inject(
+        &hub,
+        vec![Event::NickStatus {
+            network: network_id(),
+            nick: "aurora-lyra".into(),
+            status: Some("Lyra is delegating NAV-2 to Juniper".into()),
+        }],
+        cx,
+    );
+    settle(cx);
+    cx.update(|window, _| {
+        assert_eq!(
+            window.find("irc-header-live").label(),
+            Some("Captain aurora-lyra: Lyra is delegating NAV-2 to Juniper")
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn the_connection_controls_live_in_the_more_menu_beside_find(cx: &mut TestAppContext) {
+    let (_, hub, cx) = ship(cx);
+    cx.update(|window, _| {
+        let row = window.within("irc-toolbar");
+        assert!(row.try_find("irc-connection").is_none(), "not inline");
+        assert!(row.try_find("irc-join").is_none(), "not inline");
+        assert!(row.find("irc-find").visible());
+        assert_eq!(row.find("irc-find").label(), Some("Find in conversation"));
+    });
+    cx.update(|window, cx| window.click("irc-more", cx));
+    settle(cx);
+    let labels = cx.update(|window, _| {
+        let menu = window.within("popup-menu");
+        (0usize..32)
+            .filter_map(|index| menu.try_find(index))
+            .filter_map(|item| item.label().map(str::to_owned))
+            .collect::<Vec<_>>()
+    });
+    assert!(
+        labels.starts_with(&["Disconnect".to_owned(), "Join…".to_owned()]),
+        "{labels:?}"
+    );
+    assert!(labels.contains(&"Leave channel".to_owned()), "{labels:?}");
+    choose("Disconnect", cx);
+    hub.read_with(cx, |hub, _| {
+        assert!(hub.sent().contains(&Command::Disconnect {
+            network: network_id(),
+            reason: String::new(),
+        }));
+    });
 }
