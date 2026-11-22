@@ -146,7 +146,9 @@ fixture="$(cd "$(dirname "$0")/../.." && pwd)"
 mkdir -p "$fixture/native"
 env >"$fixture/native/env.txt"
 ls "$GH_CONFIG_DIR" >"$fixture/native/gh.txt"
-cp "$XDG_STATE_HOME/subspace/state.json" "$XDG_CONFIG_HOME/subspace/config.json" "$fixture/native/"
+for file in "$XDG_STATE_HOME/subspace/state.json" "$XDG_CONFIG_HOME/subspace/config.json"; do
+    if [ -e "$file" ]; then cp "$file" "$fixture/native/"; fi
+done
 curl -s -o /dev/null -w 'github %{http_code}\n' "$SUBSPACE_GITHUB_API_URL/user" >"$fixture/native/servers.txt"
 curl -s -o /dev/null -w 'oauth %{http_code}\n' -d client_id=fixture "$SUBSPACE_GITHUB_OAUTH_URL/login/device/code" >>"$fixture/native/servers.txt"
 token=fixture-access
@@ -219,6 +221,18 @@ CAPTURE_NO_GH=1 run_linux >"$fixture/capture-linux-no-gh.out"
 if grep -Fxq hosts.yml "$fixture/native/gh.txt"; then fail 'Linux CAPTURE_NO_GH left accounts'; fi
 grep -Fq captured "$fixture/capture-linux.out" || fail 'Linux capture result not reported'
 test -z "$(ls -A "$fixture/tmp")" || fail 'Linux fixture home was left behind'
+
+# A first run starts with neither file, and refuses options that write one.
+rm "$fixture/native/state.json" "$fixture/native/config.json"
+FAKE_UNAME=Linux TMPDIR="$fixture/tmp" CAPTURE_FIRST_RUN=1 \
+    bash "$fixture/scripts/capture.sh" "$shots" 'wait:10;shot:main' >"$fixture/capture-first-run.out"
+grep -Fq captured "$fixture/capture-first-run.out" || fail 'first-run capture result not reported'
+test ! -e "$fixture/native/state.json" || fail 'CAPTURE_FIRST_RUN wrote a state file'
+test ! -e "$fixture/native/config.json" || fail 'CAPTURE_FIRST_RUN wrote a config file'
+if FAKE_UNAME=Linux TMPDIR="$fixture/tmp" CAPTURE_FIRST_RUN=1 CAPTURE_THEME='One Dark' \
+    bash "$fixture/scripts/capture.sh" "$shots" 'wait:10;shot:main' >/dev/null 2>&1; then
+    fail 'CAPTURE_FIRST_RUN took a theme'
+fi
 
 # A caller's desktop connection must never reach the private capture display.
 rm "$fixture/xvfb-args.txt"

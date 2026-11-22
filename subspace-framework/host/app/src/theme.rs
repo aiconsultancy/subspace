@@ -3,6 +3,7 @@
 mod document;
 mod fonts;
 mod loader;
+mod new_install;
 #[cfg(test)]
 pub(crate) mod preview_tests;
 pub(crate) mod storage;
@@ -24,6 +25,7 @@ pub(crate) use document::{FontChoices, GroupHeadingChoices, KIT_RADII, ThemeDocu
 pub(crate) use loader::bundled_theme_id;
 pub(crate) use loader::validate_custom_theme;
 pub(crate) use loader::validate_product_themes;
+pub use new_install::record_new_install_theme;
 
 pub const THEME_JSON: &str = include_str!("../themes/one-dark.json");
 /// Native macOS library materials in light and dark variants.

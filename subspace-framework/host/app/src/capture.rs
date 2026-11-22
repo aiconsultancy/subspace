@@ -5,15 +5,16 @@
 //! `SUBSPACE_CAPTURE_DIR` enables it. `SUBSPACE_CAPTURE_STEPS` is a `;` list of
 //! `wait:<ms>`, `action:<name>`, `click:<x>,<y>`, `right-click:<x>,<y>`,
 //! `move:<x>,<y>`, `drag:<x1>,<y1>,<x2>,<y2>`, `scroll:<x>,<y>,<dy>`,
-//! `type:<text>`, `key:<keystrokes>`, `drop:<x>,<y>,<fixture-path>`, `installed:<version>` and `shot:<name>`
-//! steps, run in order
+//! `type:<text>`, `key:<keystrokes>`, `drop:<x>,<y>,<fixture-path>`, `installed:<version>`,
+//! `resize:<width>,<height>` and `shot:<name>` steps, run in order
 //! before the app quits. Points are window pixels; `move` puts the pointer
 //! there without a click, for hover states; `drag` presses the left button
 //! at the first point, moves to the second in steps and releases it there,
 //! as a text selection does; `type` sends each character as a key press and `key` sends
 //! space-separated keystrokes such as `down tab`; `installed` puts the updater
 //! in the state after an update to `<version>` installed, without installing
-//! anything. Actions dispatch at the app root independently of focus. Each
+//! anything; `resize` sets the window's content size, for a start with no
+//! saved window bounds. Actions dispatch at the app root independently of focus. Each
 //! key step focuses the active Space, then sends its sequence to normal focus;
 //! type steps preserve focus. The initial Space is the first unless fixture
 //! state sets `app.dashboard`. The default waits four
@@ -38,8 +39,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyWindowHandle, App, AsyncApp, BorrowAppContext as _, Context, Div, ExternalPaths,
     FileDropEvent, FocusHandle, Global, InputEvent as _, InteractiveElement as _, Keystroke,
-    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, Point,
-    ScrollDelta, ScrollEvent, ScrollSource, Stateful, TouchPhase, WeakEntity, Window, point, px,
+    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput,
+    Point, ScrollDelta, ScrollEvent, ScrollSource, Size, Stateful, TouchPhase, WeakEntity, Window,
+    point, px, size,
 };
 
 const DIR_ENV: &str = "SUBSPACE_CAPTURE_DIR";
@@ -93,6 +95,7 @@ enum Step {
     Key(String),
     Installed(String),
     Account(String),
+    Resize(f32, f32),
     Shot(String),
 }
 
@@ -128,8 +131,16 @@ fn parse_step(step: &str) -> Option<Step> {
         ("move", Some(&[x, y])) => Some(Step::Move(x, y)),
         ("drag", Some(&[x1, y1, x2, y2])) => Some(Step::Drag([x1, y1, x2, y2])),
         ("scroll", Some(&[x, y, dy])) => Some(Step::Scroll(x, y, dy)),
+        ("resize", Some(&[width, height])) if positive(width) && positive(height) => {
+            Some(Step::Resize(width, height))
+        }
         _ => None,
     }
+}
+
+/// A finite size above zero.
+fn positive(side: f32) -> bool {
+    side.is_normal() && side.is_sign_positive()
 }
 
 fn parse_steps(text: &str) -> Result<Vec<Step>, String> {
@@ -192,6 +203,7 @@ async fn run_step(step: &Step, dir: &Path, cx: &mut AsyncApp) -> Result<(), Stri
         Step::Key(keys) => cx.update(|cx| press_space(keys, cx)),
         Step::Installed(version) => cx.update(|cx| installed(version, cx)),
         Step::Account(state) => cx.update(|cx| crate::account::fixture(state, cx)),
+        Step::Resize(width, height) => cx.update(|cx| resize(size(px(*width), px(*height)), cx)),
         Step::Shot(name) => capture_shot(name, dir, cx).await,
     }
 }
@@ -234,6 +246,13 @@ fn draw(cx: &mut App) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+fn resize(content: Size<Pixels>, cx: &mut App) -> Result<(), String> {
+    let window = cx.windows().into_iter().next().ok_or("no window")?;
+    window
+        .update(cx, |_, window, _| window.resize(content))
+        .map_err(|e| e.to_string())
 }
 
 fn send(events: Vec<PlatformInput>, cx: &mut App) -> Result<(), String> {
@@ -456,7 +475,7 @@ mod tests {
     fn steps_parse_in_order_and_reject_unknown_kinds() {
         assert_eq!(
             parse_steps(
-                "wait:10; action:app::Quit;click:4,5;right-click:6,7;move:8,9;drag:1,2,3,4;drop:5,6,/tmp/fixture.zip;scroll:1,2,-30;type:@gal;key:down tab;installed:1.2.0;shot:main;"
+                "wait:10; action:app::Quit;click:4,5;right-click:6,7;move:8,9;drag:1,2,3,4;drop:5,6,/tmp/fixture.zip;scroll:1,2,-30;type:@gal;key:down tab;installed:1.2.0;resize:1440,900;shot:main;"
             )
             .unwrap(),
             vec![
@@ -471,12 +490,15 @@ mod tests {
                 Step::Type("@gal".into()),
                 Step::Key("down tab".into()),
                 Step::Installed("1.2.0".into()),
+                Step::Resize(1440., 900.),
                 Step::Shot("main".into()),
             ]
         );
         assert!(parse_steps("click:here").is_err());
         assert!(parse_steps("drag:1,2").is_err());
         assert!(parse_steps("wait:soon").is_err());
+        assert!(parse_steps("resize:1440").is_err());
+        assert!(parse_steps("resize:0,900").is_err());
     }
 
     #[test]

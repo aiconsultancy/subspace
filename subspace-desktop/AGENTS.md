@@ -314,6 +314,8 @@ compare them yourself before asking for review.
 - `STEPS` is a `;` list of `wait:<ms>`, `action:<name>` (for example
   `subspace_app::OpenSettings`), `click:<x>,<y>`, `right-click:<x>,<y>`,
   `move:<x>,<y>` (the pointer without a click, for hover states),
+  `resize:<width>,<height>` (the window's content size, for a start with no
+  saved window bounds),
   `drag:<x1>,<y1>,<x2>,<y2>` (a left-button drag, for text selection),
   `scroll:<x>,<y>,<dy>`, `type:<text>` (each character as a key press),
   `key:<keystrokes>` (space-separated, such as `down tab`),
@@ -344,9 +346,12 @@ compare them yourself before asking for review.
   ([Fleet fixture](docs/capture.md#fleet-fixture)).
 - Capture in the bundled **Twilight Two** theme, the approved mock-ups'
   colours and sizes, so the images can be compared with them: pass
-  `CAPTURE_THEME="Twilight Two"` to `make capture`. The capture script's
-  default stays Cupertino Dark, the app's default theme. Capture other
-  themes only when the change is about a theme, colour or contrast.
+  `CAPTURE_THEME="Twilight Two"` to `make capture`. The capture script
+  writes a state file, so without `CAPTURE_THEME` a capture is an existing
+  install with no saved theme and shows Cupertino Dark, the app's default
+  theme; `CAPTURE_FIRST_RUN=1` captures a new install's first start, which
+  opens in Twilight Two. Capture other themes only when the change is about
+  a theme, colour or contrast.
 - Show each changed state:
   - For a change to existing UI, show before (an `origin/main` build) and
     after, side by side or as a pair, both in the same theme. If the before

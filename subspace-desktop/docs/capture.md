@@ -45,10 +45,18 @@ Linux writes `state.json` under the fixture's `.local/state/subspace/` and
 `Library/Application Support/subspace/`. The fixture directories, servers and
 private display are removed when capture exits.
 
-`CAPTURE_THEME` selects a theme; without it the build starts in Cupertino
-Dark, the app's default. Screenshots for pull requests and the README are
-taken in Twilight Two (`CAPTURE_THEME="Twilight Two"`), as
+`CAPTURE_THEME` selects a theme. The fixture always writes both files, so
+a capture is an existing install: without `CAPTURE_THEME` it has no saved
+theme and starts in Cupertino Dark, the app's default. Screenshots for pull
+requests and the README are taken in Twilight Two
+(`CAPTURE_THEME="Twilight Two"`), as
 [UI change evidence](../AGENTS.md#ui-change-evidence) says.
+`CAPTURE_FIRST_RUN=1` writes neither file, as at a new install's first
+start, which opens in Twilight Two; it refuses `CAPTURE_THEME`,
+`CAPTURE_STATE`, `CAPTURE_CONFIG`, `CAPTURE_IRC_CONFIG` and
+`CAPTURE_FLEET_API`. With no saved window bounds the window opens at its
+default size, so add a `resize:<width>,<height>` step, such as
+`resize:1440,900`, before the shot to capture it at another size.
 `CAPTURE_STATE` and `CAPTURE_CONFIG` merge JSON keys into the fixture files. `CAPTURE_IRC_CONFIG` copies a configuration for a
 local IRC fixture. `CAPTURE_FLEET_API=1` starts the Stargate Fleet API fixture
 (see [Fleet fixture](#fleet-fixture)) and points the built-in Fleet Console at

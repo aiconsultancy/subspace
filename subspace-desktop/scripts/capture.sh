@@ -14,7 +14,9 @@
 # accounts.
 #
 # Optional:
-#   CAPTURE_THEME=<name>       saved appearance.theme (default: Cupertino Dark)
+#   CAPTURE_THEME=<name>       saved appearance.theme (default: none saved, which shows Cupertino Dark)
+#   CAPTURE_FIRST_RUN=1        no state.json or config.json, as at a new install's first start;
+#                              it refuses the options below that write them
 #   CAPTURE_STATE='{...}'      keys merged into state.json
 #   CAPTURE_CONFIG='{...}'     keys merged into config.json, such as boards
 #   CAPTURE_RUNS_DELAY=<secs>  hold each Actions run list
@@ -55,6 +57,14 @@ case "${CAPTURE_UPLOAD_SCENARIO:-}" in
     '' | unknown | absent) ;;
     *) echo "CAPTURE_UPLOAD_SCENARIO must be unknown or absent" >&2; exit 2 ;;
 esac
+if [ -n "${CAPTURE_FIRST_RUN:-}" ]; then
+    for option in CAPTURE_THEME CAPTURE_STATE CAPTURE_CONFIG CAPTURE_IRC_CONFIG CAPTURE_FLEET_API; do
+        if [ -n "${!option:-}" ]; then
+            echo "CAPTURE_FIRST_RUN starts with no state or config file, so it cannot take $option" >&2
+            exit 2
+        fi
+    done
+fi
 if [[ "$platform" = Linux ]]; then
     for helper in dbus-run-session dbus-daemon xvfb-run Xvfb xauth; do
         type -P "$helper" >/dev/null || {
@@ -157,6 +167,8 @@ esac
 EOF
 chmod 755 "$fixture/bin/gh"
 
+# A first run has neither file: the app records a new install's theme.
+if [ -z "${CAPTURE_FIRST_RUN:-}" ]; then
 python3 - "$state_dir" "$config_dir" "${CAPTURE_THEME:-}" "${CAPTURE_STATE:-}" "${CAPTURE_CONFIG:-}" "$fleet_api" <<'EOF'
 import json, os, sys
 state_dir, config_dir, theme, state_extra, config_extra, fleet_api = sys.argv[1:]
@@ -179,6 +191,7 @@ for directory, name, value in ((state_dir, "state.json", state), (config_dir, "c
         json.dump(value, file)
     os.chmod(path, 0o600)
 EOF
+fi
 if [ -n "${CAPTURE_IRC_CONFIG:-}" ]; then
     mkdir -m 700 "$config_dir/irc"
     install -m 600 "$CAPTURE_IRC_CONFIG" "$config_dir/irc/config.json"
