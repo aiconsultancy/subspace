@@ -116,6 +116,10 @@ pub(crate) struct Roster {
     /// The fleets on the network and the channels each claims alone, for
     /// the navigator's fleet groups.
     fleets: Vec<FleetPlace>,
+    /// How many active rear admirals each Starbase's fleet names, by
+    /// case-folded channel, counted before nicks two roles claim are
+    /// dropped, so a clash cannot hide that a fleet has two.
+    admirals: HashMap<String, usize>,
 }
 
 /// The roster of a network that serves no fleet.
@@ -134,12 +138,14 @@ impl Roster {
                 (agents, channels)
             },
         );
+        let admirals = admirals(&agents);
         let agents = unclaimed_twice(agents);
         let channels = crewed(unclaimed_twice(channels), &agents);
         Self {
             agents,
             channels,
             fleets: Vec::new(),
+            admirals,
         }
     }
 
@@ -363,6 +369,20 @@ fn distinct<'a>(fleets: impl IntoIterator<Item = &'a Fleet>) -> Vec<&'a Fleet> {
         .into_iter()
         .filter(|fleet| seen.insert(fleet.id.as_str()))
         .collect()
+}
+
+/// How many rear admirals of `agents` talk in each channel, by
+/// case-folded name.
+fn admirals(agents: &[(String, Agent)]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    let starbases = agents
+        .iter()
+        .filter(|(_, agent)| agent.rank == Rank::RearAdmiral)
+        .filter_map(|(_, agent)| agent.channel.as_deref());
+    for channel in starbases {
+        *counts.entry(channel.to_ascii_lowercase()).or_default() += 1;
+    }
+    counts
 }
 
 /// `channels` without a ship whose captain is not one of `agents` as a
