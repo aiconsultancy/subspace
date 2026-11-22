@@ -275,6 +275,27 @@ fn an_answered_issue_reference_leads_with_its_state_dot_and_a_loading_one_keeps_
 }
 
 #[gpui_kit::test]
+fn a_pending_reference_gains_its_state_dot_when_its_answer_arrives(cx: &mut TestAppContext) {
+    let (_, tracker, cx) = open_room(cx, true, "TST-12 blocks TST-13");
+    let tracker = tracker.expect("a tracker");
+    assert_eq!(state_dots(cx).len(), 1, "TST-13 is still pending");
+    cx.update(|_, cx| {
+        tracker.update(cx, |tracker, _| {
+            tracker
+                .answers
+                .insert("TST-13".into(), summary("TST-13", "Pan the cold cache"));
+        });
+        assert!(contracts::publish(TRACKER, Changed, cx).is_ok());
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        state_dots(cx).len(),
+        2,
+        "pending to available draws its dot"
+    );
+}
+
+#[gpui_kit::test]
 fn with_no_answering_board_no_reference_has_a_state_dot(cx: &mut TestAppContext) {
     let (_, _, cx) = open_room(cx, false, "TST-12 blocks TST-13");
     assert!(state_dots(cx).is_empty());

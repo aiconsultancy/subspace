@@ -270,3 +270,22 @@ fn the_hub_builds_a_network_s_roster_once_until_the_catalogue_changes(cx: &mut T
         "rebuilt for the new catalogue"
     );
 }
+
+#[gpui_kit::test]
+fn the_find_button_opens_find_in_the_conversation(cx: &mut TestAppContext) {
+    use subspace_framework::dashboard::find_in_page;
+    let (_, _, cx) = ship(cx);
+    // The shell hosts find; here a global listener stands in for it.
+    let opened = std::rc::Rc::new(std::cell::Cell::new(0));
+    let heard = std::rc::Rc::clone(&opened);
+    cx.update(|_, cx| {
+        cx.on_action(move |_: &find_in_page::Open, _| heard.set(heard.get() + 1));
+    });
+    cx.update(|window, cx| window.click("irc-find", cx));
+    settle(cx);
+    assert_eq!(
+        opened.get(),
+        1,
+        "the search button asks for find, as Command-F does"
+    );
+}
