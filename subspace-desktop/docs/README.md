@@ -219,6 +219,9 @@ record. [Change records](changes/README.md) explains the convention.
 - [Channels navigator, request lines and composer hints](changes/channels-navigator-and-requests/README.md):
   the navigator grouped by fleet with a People section, request status lines
   that settle into `Done in …`, and the composer's hint row with `/ask`.
+- [Channels tiles once](changes/channels-tiles-once/README.md): an issue or
+  pull request tile only under the first message that names it, and fuller
+  two-line tiles of a fixed size for both.
 - [Bundled Inter and JetBrains Mono](changes/bundled-fonts/README.md): the
   fonts the Subspace App embeds for Twilight Two, and why themes that name no
   font keep the platform's fonts.

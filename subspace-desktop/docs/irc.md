@@ -906,7 +906,7 @@ IRC shows issue references through the `issues` contract
   the inline object, so selection and Copy keep the reference as written. Formatted
   (Markdown) lines show issue references as links (`subspace-irc:issue/…`)
   without an inline muted look.
-- **Hover cards** (`issues/tooltip.rs`) share one observed view for chip hover,
+- **Hover cards** (`issues/tooltip.rs`) share one observed view for tile hover,
   inline-reference hover and the keyboard's focused reference. The view reads
   the hub on each draw, so `Pending` (*Loading SUB-42…*) becomes the current
   summary after `changed`. Available summaries use the A accent or B tracker
@@ -916,43 +916,60 @@ IRC shows issue references through the `issues` contract
   view itself, with no surrounding Kit tooltip frame and no interactive
   children or focus. Pending, Unavailable, SignedOut and Failed keep plain
   Kit tooltip notes. The keyboard card floats through `anchored::floating`.
-- **Issue chips** (`issues/preview.rs`, `issues/tile/`) use the same batched
-  lookup as the hover card. Every available issue is a compact chip in its
-  reserved slot (below), including
-  a message with one available issue; the row always wraps. Chips retain their
-  full accessible names and native activation. A and B cards appear only on
-  hover or reference keyboard focus. Ordinary hover cards have a state edge,
+- **Tiles once** (`tiles.rs`): within one conversation, the first message
+  to name an issue or a pull request keeps its tile under it; every later
+  mention is only the inline reference. On every sync with the hub, before
+  any new row is laid out, `conversation/owners.rs` reads the messages not
+  read yet, in transcript order, and `TileOwners::claim` gives each
+  reference nobody owns to the earliest of them. An owner never changes, so
+  no message gains or loses a tile, or changes height, once drawn: history
+  loaded above or lines merged from the store are read after the held ones,
+  so an older mention found later stays a chip; an owner dropped by the line
+  cap keeps its claim, so no other message grows a tile; a new issue scope
+  reads every message again but keeps the owners. Owners live in the hub per
+  conversation for the session, in memory only, so reopening a conversation
+  keeps them and a restart decides again from the messages then held. See
+  the [change record](changes/channels-tiles-once/README.md).
+- **Issue tiles** (`issues/preview.rs`, `issues/tile/compact.rs`,
+  `tiles/frame.rs`) use the same batched lookup as the hover card. A tile
+  leads with the inline reference's state dot and the key, then the title,
+  then one line of what the summary carries: **Ready for agents** (when
+  `ready_for_agents` is true), **Tracker**, **Archived**, the state's name,
+  the assignee (an agent captain's or rear admiral's icon before the name,
+  through `avatar::agent_icon` and the Icons setting; people get none) or
+  else the owner, and the due date (`due Wed`, or a date after seven days).
+  A tracker with sub-items ends with a small bar and **1 of 2**. A missing
+  fact leaves no gap. Tiles keep their full accessible names and native
+  activation; the A and B hover cards appear on hover or reference keyboard
+  focus. Ordinary hover cards have a state edge,
   mono key, urgent or high priority pill, state pill, two-line title and
   optional assignment and latest-activity footer. Tracker hover cards show a
   progress bar and available pull request and due-date facts.
-  Code spans and blocks do not request chips. The additive summary builders
+  Code spans and blocks do not request tiles. The additive summary builders
   carry priority, owner, assignee kind/rank, progress, pull requests, due date
   and latest activity without coupling Channels to the API client.
-  `reference_card` supplies shared chip and passive card treatments, pills
-  and avatars; Kit supplies icons and progress. Colours come from `Tokens`.
+  `reference_card` supplies the outline surface and passive card treatments,
+  pills and avatars; Kit supplies icons and progress. Colours come from `Tokens`.
   Pure UTC formatting uses `hub.now`: minutes, hours, days, then a British date
   after seven days; future activity says *just now* without a recent dot.
   Activity within an hour has a success dot. Missing or malformed optional
   dates are omitted. See the [change record](changes/subspace-api-accounts/README.md).
-- **Reserved chip slots** (`issues/preview.rs`, `issues::tile::reserved`):
-  every issue reference the scope recognises outside code gets a slot in the
-  chip row from the message's first frame, before any answer, so an answer
-  never changes the row's height and nothing above or below it moves. The
-  slot is the chip's own surface (`card_button` in `reference_card::surface`),
-  inert and named by the tooltip note. With no answer yet or `Pending`, it
-  shows the known key between static skeleton marks in `Tokens::line`, the
-  shared list skeleton's colour; nothing animates, so reduced motion needs no
-  case. `Unavailable`, `SignedOut` and `Failed` keep the slot as a muted
-  `CircleSlash` chip with the key and **Unavailable**, **Signed out** or
-  **Couldn't load**; the inline reference still opens the issue, and the
-  hover note gives the reason. An answer already held, including one from an
-  earlier round, draws its chip on the first frame. Slots wrap in the same
-  row as chips; a loading slot is as wide as a chip with a full-length title,
-  so a short-titled chip can be narrower than its slot. Only recognition
-  changes the reservation: a scope that arrives later, changes or is
-  withdrawn still adds or removes slots. See the
-  [change record](changes/channels-reserve-issue-tile-space/README.md).
-- **Opening an issue** works from a chip, resolved reference click or `Enter` on a resolved
+- **Reserved tiles** (`tiles/frame.rs`): every tile, loaded, loading or
+  unresolved, has the same fixed width (340 px at the reference text size,
+  capped at the row's width) and two-line height, so an answer never changes
+  how tiles wrap or how tall the message is, and nothing above or below it
+  moves. The slot is drawn from the message's first frame. With no answer
+  yet or `Pending`, it is an inert outline tile with the known key and
+  static skeleton bars in `Tokens::line`, the shared list skeleton's colour;
+  nothing animates, so reduced motion needs no case. `Unavailable`,
+  `SignedOut` and `Failed` settle to a muted `CircleSlash`, the key and
+  **Unavailable**, **Signed out** or **Couldn't load** on one line in the
+  same box; the inline reference still opens it, and the hover note gives
+  the reason. An answer already held draws its tile on the first frame.
+  Only recognition changes the reservation: a scope that arrives later,
+  changes or is withdrawn still adds or removes references. See the
+  [earlier change record](changes/channels-reserve-issue-tile-space/README.md).
+- **Opening an issue** works from a tile, resolved reference click or `Enter` on a resolved
   reference. The shell opens the issue in the answering board after it checks
   the profile on the navigation request.
   A reference without a summary keeps its browser destination while the
@@ -999,8 +1016,16 @@ GitHub client or the PRs board.
   muted; `text/look.rs`), and `repo#n`,
   with the owner only beside another owner's same-named repository in the
   message (`PrRef::label_among`). The node text stays as written, so Copy
-  keeps it; Copy link gives `PrRef::url`. No preview row is added under the
-  message.
+  keeps it; Copy link gives `PrRef::url`.
+- **Tile** (`pull_requests/slot.rs`, `pull_requests/compact.rs`), under the
+  message that keeps it (see *Tiles once* above): the status glyph in its
+  tone and `#n`, the title, then the status in words when not open, the
+  repository and the lines added and removed, and the checks as a small bar
+  with **4/5** (`check_counts`; red once a check failed, green when all
+  passed, yellow while running). A missing fact leaves no gap. It shares the
+  issue tile's fixed box, loading skeleton and unresolved line; a click
+  opens the pull request as the chip does, and hovering shows the chip's
+  card.
 - **Answers** (`pull_requests.rs`, `pull_requests/follow.rs`): the hub asks
   for the distinct keys a frame shows in one request of at most 50, keeps the
   answers in memory and forgets them, and the wanted keys, on every `changed`.
@@ -1300,15 +1325,15 @@ messages after its anchor.
 
 ## Inline issue summaries
 
-Each available issue chip has a separate compact shared `IconButton` chevron.
+Each available issue tile has a separate compact shared `IconButton` chevron.
 Its accessible name is **Show summary of SUB-2** or **Hide summary of SUB-2**,
-and Kit receives expanded state. Activation stops propagation; the chip’s
+and Kit receives expanded state. Activation stops propagation; the tile’s
 other button still navigates to Issues. Hover cards A and B show a supplied
 summary below the title in muted text, clamped to three lines; null is omitted.
 
 `Conversation::summaries` retains one selection per message, keyed by message
 sequence and issue identifier. Redraws keep the selection. The panel sits under
-the wrapping chip row; null uses **No summary yet**. The dashboard kit’s
+the wrapping tile row; null uses **No summary yet**. The dashboard kit’s
 `animated_collapsible::AnimatedCollapsible` composes a GPUI animation clock and
 standard GPUI layout. `DISCLOSURE_DURATION` is 200 ms with `ease_in_out`;
 height and opacity follow the same progress in both directions. The animation ID
