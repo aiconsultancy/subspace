@@ -223,6 +223,7 @@ fn only_the_built_in_fleet_console_reads_or_retries_the_fleets() {
     };
     let entry = json!({"path": path, "builtIn": true});
     let mut console = Bridge::new(&config, entry.as_object()).unwrap();
+    config.permissions.clear();
     assert!(
         console
             .call(&Operation::FleetsRetry, &config, false, now)
