@@ -258,6 +258,19 @@ fn the_board_follows_a_ready_fleet_while_it_shows_it(cx: &mut TestAppContext) {
         let state = hub.fleets.get("aurora").map(|fleet| fleet.state.clone());
         assert!(matches!(state, Some(FleetState::Followed(_))), "{state:?}");
     });
+    // The navigator hidden and nothing of the fleet in front: let go.
+    board.update(cx, |board, cx| {
+        board.dock.focused = None;
+        crate::dock::toggle_buffers(board, cx);
+    });
+    settle(cx);
+    assert!(
+        following(&board, cx).is_empty(),
+        "a hidden navigator follows nothing"
+    );
+    board.update(cx, crate::dock::toggle_buffers);
+    settle(cx);
+    assert_eq!(following(&board, cx), ["aurora"], "shown again");
     board.update_in(cx, |board, window, cx| {
         subspace_framework::dashboard::Dashboard::deactivate(board, window, cx);
     });

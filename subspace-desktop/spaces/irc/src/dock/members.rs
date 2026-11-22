@@ -31,6 +31,10 @@ pub(super) fn focus(board: &mut Irc, buffer: &BufferKey, cx: &mut Context<Irc>) 
     member_list(board, buffer, cx);
     view::reveal_row(board, buffer, cx);
     view::publish_visible(board, cx);
+    if changed {
+        // The conversation in front decides a followed fleet.
+        crate::live::watch::sync(board, cx);
+    }
 }
 
 /// The member list the inspector shows: that of the conversation the user

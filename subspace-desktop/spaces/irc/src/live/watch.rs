@@ -1,7 +1,8 @@
 //! Following the fleets the board shows: one `FleetFollow` per fleet whose
-//! group is in the navigator or whose channel is the conversation in front,
-//! while the Space is in front and the fleet's state is ready, dropped as
-//! soon as either stops. The service opens at most one stream per fleet
+//! group is in the navigator while the navigator shows, or whose channel is
+//! the conversation in front, while the Space is in front and the fleet's
+//! state is ready, dropped as soon as either stops. Showing or hiding the
+//! navigator and changing the conversation in front sync again. The service opens at most one stream per fleet
 //! however many Spaces follow it, and closes it with the last handle.
 //!
 //! What the service then reports of each shown fleet goes to the hub
@@ -92,13 +93,17 @@ fn bind(board: &mut Irc, cx: &mut Context<Irc>) {
     board.watch.service = Some(fleets);
 }
 
-/// The fleets on show: the navigator's and the front conversation's, while
-/// the Space is in front; none otherwise.
+/// The fleets on show: the navigator's while it shows and the front
+/// conversation's, while the Space is in front; none otherwise.
 fn shown(board: &Irc, cx: &App) -> BTreeSet<String> {
     if !board.active {
         return BTreeSet::new();
     }
-    let mut shown = board.watch.navigator.clone();
+    let navigator = board
+        .dock
+        .buffers_open()
+        .then(|| board.watch.navigator.clone());
+    let mut shown = navigator.unwrap_or_default();
     shown.extend(front_fleet(board, cx));
     shown
 }
