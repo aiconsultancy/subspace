@@ -214,10 +214,13 @@ pub(super) fn people_mark(cx: &App) -> AnyElement {
 
 /// Folds each fleet group that appears for the first time while the
 /// selected initiative (`selected`, its fleet id if any) is not of its
-/// fleet. With no initiative selected, every fleet starts open. A new group
-/// that holds the selected row stays open, so the list keeps the selection
-/// (a channel joined on request, or one that moved into a fleet's group),
-/// and a folded group the selected row has just moved into opens; one the
+/// fleet. With no initiative selected, every fleet starts open. A network's
+/// only fleet's group, which takes in the network's own rows, instead keeps
+/// the fold of the network's group it replaces, so the network's other
+/// channels and its Server row never fold away unasked. A new group that
+/// holds the selected row stays open, so the list keeps the selection (a
+/// channel joined on request, or one that moved into a fleet's group), and
+/// a folded group the selected row has just moved into opens; one the
 /// person folded around the selection stays folded.
 pub(super) fn fold_new_fleets(
     board: &mut Irc,
@@ -229,7 +232,12 @@ pub(super) fn fold_new_fleets(
         let first = board.seen_fleets.insert(key.clone());
         let other = selected.is_some_and(|selected| selected != Some(fleet.as_str()));
         let keeps = holding == Some(key);
-        if first && other && !keeps && !board.list.is_folded(key) {
+        let network = groups
+            .iter()
+            .find(|group| &group.key == key)
+            .and_then(rows::absorbed_network)
+            .map(|network| board.list.is_folded(&network));
+        if first && starts_folded(other, keeps, network) && !board.list.is_folded(key) {
             board.list.toggle(key);
         }
     }
@@ -238,6 +246,14 @@ pub(super) fn fold_new_fleets(
         board.list.toggle(key);
     }
     board.selection_group = holding.cloned();
+}
+
+/// Whether a fleet group seen for the first time starts folded: never
+/// while it holds the selection (`keeps`); as the network's own group was
+/// (`network`) when it took in that group's rows; else while another
+/// fleet's initiative is selected (`other`).
+pub(super) fn starts_folded(other: bool, keeps: bool, network: Option<bool>) -> bool {
+    !keeps && network.unwrap_or(other)
 }
 
 /// The group the selection has just moved into: `holding` when it differs

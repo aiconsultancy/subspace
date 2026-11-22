@@ -260,6 +260,70 @@ fn fleets_other_than_the_selected_initiative_s_start_folded(cx: &mut TestAppCont
 }
 
 #[gpui_kit::test]
+fn a_network_s_only_fleet_keeps_its_other_channels_open_when_another_fleet_is_picked(
+    cx: &mut TestAppContext,
+) {
+    // The person is in a private conversation when the initiatives arrive,
+    // with one of a fleet on no configured network picked: Aurora, this
+    // network's only fleet, is not the selected one, and its group takes in
+    // the network's other channels and its Server row.
+    let (board, hub, cx) = mount(cx, settings());
+    inject(
+        &hub,
+        vec![
+            Event::Status {
+                network: network_id(),
+                status: ConnectionStatus::Connected {
+                    nick: "subspace".into(),
+                },
+            },
+            Event::Joined {
+                buffer: channel("#lounge"),
+            },
+            Event::Joined {
+                buffer: channel(STARBASE),
+            },
+            Event::Joined {
+                buffer: query("mira"),
+            },
+        ],
+        cx,
+    );
+    settle(cx);
+    board.update(cx, |board, cx| {
+        crate::view::reveal_row(board, &query("mira"), cx)
+    });
+    settle(cx);
+    let mut elsewhere = borealis();
+    elsewhere.fleet = None;
+    let mut initiatives = aurora();
+    initiatives.push(elsewhere);
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(initiatives), cx);
+            catalog.pick("initiative-borealis", cx);
+        })
+    });
+    settle(cx);
+    let aurora = rows::fleet_group_key(&network_id(), "aurora");
+    board.read_with(cx, |board, _| {
+        assert_eq!(board.list.selected(), Some(&rows::row_key(&query("mira"))));
+        let group = board.list.groups().iter().find(|group| group.key == aurora);
+        let titles: Vec<_> = group
+            .map(|group| group.rows.iter().map(|row| row.title.to_string()).collect())
+            .unwrap_or_default();
+        assert!(
+            titles.iter().any(|title| title.contains("lounge")),
+            "{titles:?}"
+        );
+        assert!(
+            !board.list.is_folded(&aurora),
+            "the network's own channels and Server row stay open"
+        );
+    });
+}
+
+#[gpui_kit::test]
 fn with_no_initiative_selected_every_fleet_starts_open(cx: &mut TestAppContext) {
     let (board, _, cx) = two_fleets(cx, false);
     board.read_with(cx, |board, _| {
