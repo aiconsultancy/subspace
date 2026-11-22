@@ -160,6 +160,37 @@ impl Request for Resolve {
     type Response = Vec<Resolution>;
 }
 
+/// Asks the responder to read issue identifiers again, because the asker
+/// has just changed them in the tracker, such as Channels after a tracker
+/// command. The responder forgets what it holds for each identifier in the
+/// named profile and starts a fresh read, as [`Resolve`] does for one it
+/// has never seen; [`Changed`] follows when the reads land. A profile that
+/// is not the responder's current one changes nothing. Same limits as
+/// [`Resolve`]: the first [`MAX_RESOLVE`] distinct identifiers.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Refresh(Resolve);
+
+impl Refresh {
+    pub fn new(profile_id: &str, identifiers: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self(Resolve::new(profile_id, identifiers))
+    }
+
+    // qual:api
+    pub fn profile_id(&self) -> &str {
+        self.0.profile_id()
+    }
+
+    pub fn identifiers(&self) -> &[String] {
+        self.0.identifiers()
+    }
+}
+
+impl Request for Refresh {
+    type Contract = Issues;
+    const NAME: &'static str = "refresh";
+    type Response = ();
+}
+
 /// What the responder knows about one identifier.
 #[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]

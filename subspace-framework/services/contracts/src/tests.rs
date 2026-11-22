@@ -1,5 +1,5 @@
 use crate::issues::{
-    Changed, CurrentScope, IssueScope, IssueState, IssueSummary, MAX_RESOLVE, Resolution,
+    Changed, CurrentScope, IssueScope, IssueState, IssueSummary, MAX_RESOLVE, Refresh, Resolution,
     ResolutionState, Resolve, StateType,
 };
 use crate::{Contract, Event, MessageKey, MessageKind};
@@ -53,6 +53,22 @@ fn resolve_keeps_the_first_distinct_identifiers_up_to_the_batch_limit() {
     let capped = Resolve::new("subspace-api", many);
     assert_eq!(capped.identifiers().len(), MAX_RESOLVE);
     assert_eq!(capped.identifiers()[0], "TST-1");
+}
+
+#[test]
+fn refresh_is_its_own_request_with_the_same_limits_as_resolve() {
+    let key = MessageKey::request::<Refresh>();
+    assert_eq!(key.label(), "issues@1/refresh");
+    assert!(key.is_valid());
+    assert_ne!(key, MessageKey::request::<Resolve>());
+    let request = Refresh::new("subspace-api", ["NAV-2", "NAV-2", "NAV-7"]);
+    assert_eq!(request.identifiers(), ["NAV-2", "NAV-7"]);
+    assert_eq!(request.profile_id(), "subspace-api");
+    let many = (0..80).map(|number| format!("TST-{number}"));
+    assert_eq!(
+        Refresh::new("subspace-api", many).identifiers().len(),
+        MAX_RESOLVE
+    );
 }
 
 #[test]
