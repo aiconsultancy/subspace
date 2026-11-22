@@ -5,6 +5,13 @@ Clone the repository, open your coding agent (Claude Code, Codex or another)
 in it, and ask it to set Subspace up. The agent reads this page, asks you a few
 questions and runs the installer for you. You can also follow it yourself.
 
+We recommend a fleet VM in your cloud, reached over a private network
+(Tailscale, Cloudflare Zero Trust or similar): Subspace is meant to be
+multiplayer, and that keeps the agents' builds off your machine. Your agent
+can create the VM with your cloud provider's own tools and set the private
+network up for you, with your permission. To just try Subspace out, a VM on
+your own computer is the quickest way, and it stays fully supported.
+
 > [!IMPORTANT]
 > **Coding agents: read this whole page before running anything.**
 >
@@ -14,9 +21,11 @@ questions and runs the installer for you. You can also follow it yourself.
 >    names for them.
 > 2. **Confirm the plan once.** Summarise the answers, the exact commands you
 >    will run and everything they will install or change: software on this
->    computer (Lima, QEMU, Multipass), the VM, any cloud account, the user's
->    agent profiles. Wait for one clear yes. That yes covers only what the
->    plan lists; pass `--install-deps` only if it says so.
+>    computer (Lima, QEMU, Multipass, Tailscale, `cloudflared`), the VM and
+>    any other cloud resources with their cost, the cloud account and private
+>    network they use, the user's agent profiles. Wait for one clear yes.
+>    That yes covers only what the plan lists; pass `--install-deps` only if
+>    it says so.
 > 3. **Then work unattended to the end.** Run the installer non-interactively:
 >    pass the answers as flags and add `--yes`. Its prompts cannot reach the
 >    user through you. Do not stop to ask again. If something the plan did
@@ -32,8 +41,8 @@ questions and runs the installer for you. You can also follow it yourself.
 > 6. Finish by running the [privacy audit](#check-that-the-fleet-is-private)
 >    and reporting its result. Then tell the user that **the agents stay
 >    offline until CLIProxyAPI is signed in to at least one of their provider
->    accounts**. That sign-in needs the user's browser, so it is the one step
->    you cannot do unattended: walk them through
+>    accounts**. That sign-in needs the user's browser and comes after the
+>    install, so you cannot do it unattended: walk them through
 >    [bringing the agents online](#bring-the-agents-online) if they are there,
 >    or leave them the exact commands.
 > 7. If the plan included the [local agent skills](#use-your-local-agents-with-the-fleet),
@@ -46,7 +55,7 @@ flowchart LR
   subgraph You["Your computer"]
     D[Subspace desktop app]
   end
-  subgraph VM["Fleet VM (private)"]
+  subgraph VM["Fleet VM (private): in your cloud, or on your computer to try it"]
     SG[Stargate]
     RA[Rear admiral]
     C[Captains + crew]
@@ -54,18 +63,19 @@ flowchart LR
     API[Subspace API + PostgreSQL]
     IRC[Ergo IRC]
   end
-  D -- "SSH tunnel, Tailscale or Cloudflare Access" --> VM
+  D -- "SSH tunnel, over Tailscale or Cloudflare Zero Trust for a cloud VM" --> VM
   SG --- RA & C
   SG --- IRC
   RA & C --- P
   D -. "MCP, through the tunnel" .- API
 ```
 
-- **A fleet is one Linux VM.** It runs a **rear admiral** and one or more
-  **captains**. Each is its own Linux user with its own tmux session, files,
-  IRC account and GitHub App. Each captain has a **crew** (two Claude-family
-  and two Codex-family workers by default) that runs under the captain's
-  Linux user, inside the captain's OpenCode server. Each crew member has one
+- **A fleet is one Linux VM**, in your cloud on a private network
+  (recommended) or on your computer (to try it). It runs a **rear admiral**
+  and one or more **captains**. Each is its own Linux user with its own tmux
+  session, files, IRC account and GitHub App. Each captain has a **crew**
+  (two Claude-family and two Codex-family workers by default) that runs
+  under the captain's Linux user, inside the captain's OpenCode server. Each crew member has one
   Git worktree per repository, commits as its captain and is reached only
   through its captain.
 - **Stargate is the glue.** It connects the rear admiral and captains to
@@ -85,8 +95,9 @@ flowchart LR
   captain (ship).
 - **The Subspace API** (with PostgreSQL) holds issues, initiatives and fleets.
   The desktop app uses it, and so can your local coding agents through its MCP
-  server ([Use your local agents](#use-your-local-agents)). The fleet's own
-  agents cannot reach it: its development sign-in is for you only.
+  server ([Use your local agents](#use-your-local-agents-with-the-fleet)).
+  The fleet's own agents cannot reach it: its development sign-in is for you
+  only.
 - **The desktop app** runs on your computer and reaches all of this through a
   private connection.
 
@@ -102,9 +113,26 @@ Ask all of these before running anything, then confirm the plan once.
 Defaults are in bold. Each question says what to do if the user cannot
 answer it now.
 
-1. **Where should the fleet run?**
-   - **A new local VM on this computer.** On macOS it uses Apple's
-     Virtualization framework through [Lima](https://lima-vm.io); on Linux,
+1. **Where should the fleet run?** Explain the choice. For real use we
+   recommend a VM in the user's cloud, reached over a private network:
+   Subspace is meant to be multiplayer, and a cloud VM keeps the agents'
+   builds off their machine. A VM on this computer is the quickest way to try
+   Subspace out, and stays fully supported, though the agents then share the
+   machine. **If the user cannot answer, use a new local VM**: it needs no
+   cloud account, no spending and no private network, and you never create
+   cloud resources unless the user chose to.
+   - **A new VM in their cloud (recommended).** You create it with the
+     provider's own CLI under the user's signed-in account, as
+     [Create a cloud VM](#create-a-cloud-vm) describes; the installer does
+     not create cloud VMs. Ask which provider, which account or subscription,
+     which region and which size (as for a local VM, below), and confirm that
+     its cost is theirs to accept. Ask whether you may use that CLI; if it is
+     missing or not signed in, they install it and sign in themselves, or let
+     you install it as part of the plan. Settle the private network in
+     question 10.
+   - **A new local VM on this computer (the quickest way to try it).** On
+     macOS it uses Apple's Virtualization framework through
+     [Lima](https://lima-vm.io); on Linux,
      Lima with QEMU and KVM; on Windows, [Multipass](https://canonical.com/multipass)
      with Hyper-V (Windows Pro, Enterprise or Education; Windows Home has no
      Hyper-V, so use an existing VM instead). All are free. The VM needs
@@ -112,10 +140,10 @@ answer it now.
      memory for two or more captains. Ask whether you may install the VM
      tool if it is missing (`--install-deps`); without that, the installer
      stops and says what to install.
-   - **An existing VM, for example in the cloud.** Ubuntu 24.04 or Debian 12,
-     amd64 or arm64, reachable over SSH with a key and passwordless sudo. It
-     must not accept inbound traffic from the internet (see
-     [Prepare a cloud VM](#prepare-a-cloud-vm)). Collect the SSH target
+   - **An existing VM**, in their cloud or elsewhere. Ubuntu 24.04 or
+     Debian 12, amd64 or arm64, reachable over SSH with a key and
+     passwordless sudo. It must not accept inbound traffic from the internet
+     (see [Create a cloud VM](#create-a-cloud-vm)). Collect the SSH target
      (`user@host`), the key to use, the SSH port, any proxy command and the
      host key fingerprint from a trusted channel. Ask whether you may use
      their cloud account to read that fingerprint (for example
@@ -186,11 +214,28 @@ answer it now.
    install, in their browser; see [Bring the agents online](#bring-the-agents-online).
    Ask whether they will be there at the end to do it. If not, finish the
    install and leave them the sign-in commands.
-10. **How they reach the VM.** (**SSH tunnel**). Or Tailscale, or Cloudflare
-    Zero Trust (free for up to 50 users), with `--access`; ask for any
-    addresses that alone may use SSH (`--ssh-from`). See
-    [Private access](docs/private-access.md). Also offer nginx with internal
-    host names if they want browser-friendly addresses.
+10. **How they reach the VM.** For a cloud VM a private network is required:
+    we recommend **Tailscale** or Cloudflare Zero Trust (free for up to 50
+    users), which you set up for them as in
+    [Set up the private network](#set-up-the-private-network), with
+    `--access tailscale` or `--access cloudflare`. If they have no
+    preference, use Tailscale: it needs no domain of their own. For a local
+    VM the default is the **SSH tunnel**, which needs nothing else. Either
+    way the desktop's ports travel through the SSH tunnel, which for a cloud
+    VM runs over the private network. Ask for any addresses that alone may
+    use SSH (`--ssh-from`). See [Private access](docs/private-access.md).
+    Also offer nginx with internal host names if they want browser-friendly
+    addresses.
+
+    The private network needs the user in their browser: signing in to
+    Tailscale or Cloudflare, approving this computer, and creating a one-off
+    auth key or a tunnel token. Ask whether they are there to do it now.
+    Do it together before the unattended run starts, because that run
+    cannot reach a VM with no public IP without it: before you confirm the
+    plan, or straight after its yes for any step that needs Tailscale or
+    `cloudflared` installed on this computer first. If they cannot, do not
+    create the cloud VM: offer the local VM instead, or stop and leave them
+    the steps.
 11. **Secrets.** (**On the VM**, as root-only and per-agent files.) On Azure,
     they can also keep the generated secrets in Key Vault (`--key-vault`), so
     a rebuilt VM gets the same ones. That needs the VM's managed identity to
@@ -214,9 +259,141 @@ answer it now.
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
 
+## Install on a cloud VM
+
+This is the recommended setup. You create the VM with the cloud provider's
+own CLI by following this section, put it on a private network, then run the
+installer against it over SSH. The installer itself does not create cloud VMs
+or install Tailscale or `cloudflared`; it installs the fleet onto a VM you can
+already reach, and `--access` limits SSH to the private network you chose.
+
+### Create a cloud VM
+
+These rules hold for any provider. For an existing VM, check that it meets
+the same image, SSH, inbound and host key rules; if it must keep a public IP
+for now, allow SSH from the user's own address only in the cloud firewall,
+then move to Tailscale or Cloudflare and remove that rule.
+
+- **Only what the plan says.** Use the provider, account or subscription,
+  region and size the user chose, at the cost they accepted, through the
+  provider's official CLI (for example `az`, `gcloud` or `aws`) under the
+  user's existing sign-in. Never create credentials (service principals,
+  access keys, roles or API tokens) and never change account-level settings
+  such as quotas, billing or policies. If the work needs one of those, stop
+  and say what.
+- **A supported image:** Ubuntu 24.04 LTS or Debian 12, amd64 or arm64.
+- **Key-only SSH for a sudo user.** Give the VM the public half of an SSH key
+  on this computer, a new one for the fleet or one the user names, for a
+  user with passwordless sudo. Never set a password.
+- **No public IP and no inbound rules.** Create the VM without a public
+  address, in a firewall or security group that allows no inbound traffic.
+  It still needs outbound internet access for packages, the private network,
+  GitHub and the model providers. If the provider's network gives none by
+  default, its outbound-only NAT service fixes that; it costs money, so it
+  belongs in the plan.
+- **Reach it through the provider first.** With no public IP, use the
+  provider's run-command (or its serial console) to install Tailscale or
+  `cloudflared` and join the private network, as in
+  [Set up the private network](#set-up-the-private-network). From then on
+  the installer uses SSH over that network.
+- **Host key from a trusted channel.** Read the VM's SSH host key fingerprint
+  through the same run-command, never from a first SSH connection, and pass
+  it to the installer as `--host-key`.
+- **Record what you created.** Keep everything in one resource group,
+  project or similar where the provider has one, and tag it (for example
+  `app=subspace`). In your final report, list the provider, account, region,
+  each resource's name, and the VM's name in the tailnet or its Cloudflare
+  tunnel, so the user can find and delete them.
+- **Never delete cloud resources without asking**, even to retry a failed
+  step. If creation fails part-way, stop and report what exists.
+
+### Set up the private network
+
+[Private access](docs/private-access.md) has the commands and policies for
+both documented routes; follow it rather than improvising.
+
+- **Tailscale.** The user, in their browser: signs in to Tailscale, adds
+  `tag:fleet` to the tailnet policy as Private access shows, signs this
+  computer in to the tailnet, and creates a one-off, pre-approved auth key
+  with the tag `tag:fleet`. You, with the plan's permission: install
+  Tailscale on this computer if it is missing, install it on the VM through
+  the provider's run-command and join the VM with that key. Then pass
+  `--remote <user>@<vm>.<tailnet>.ts.net --access tailscale`.
+- **Cloudflare Zero Trust.** The user, in their browser: creates a tunnel
+  and copies its token, adds an SSH-only public hostname on a domain in
+  their Cloudflare account, creates an Access application that allows only
+  them, and, once `cloudflared` is on this computer, signs in to it there
+  (`cloudflared access login https://fleet-ssh.example.com`). You, with the
+  plan's permission: install `cloudflared` on this computer if it is
+  missing, install it on the VM through the run-command and run
+  `cloudflared service install` with the token. Then pass `--access
+  cloudflare` and `--ssh-proxy`, as Private access shows.
+
+Auth keys and tunnel tokens are secrets. Have the user save them in an
+owner-only file, pass them to the run-command without printing them, and
+delete your copies afterwards. Prefer a one-off key with a short expiry,
+because the provider may keep a copy of the run-command's script.
+
+### Example: Azure
+
+Check the subscription with `az account show` (select the user's with
+`az account set --subscription <subscription>`), then create the VM without a
+public IP and with a network security group that has no inbound allow rules:
+
+```sh
+az group create --name subspace-fleet-rg --location <region> --tags app=subspace
+az vm create --resource-group subspace-fleet-rg --name subspace-fleet \
+  --image Ubuntu2404 --size Standard_D4s_v5 --os-disk-size-gb 64 \
+  --admin-username azureuser --ssh-key-values ~/.ssh/subspace-fleet.pub \
+  --public-ip-address "" --nsg-rule NONE --tags app=subspace
+```
+
+`Standard_D4s_v5` has 4 CPUs and 16 GiB of memory; use the size the user
+chose. Join the VM to the tailnet, or install `cloudflared`, through a
+run-command (`az vm run-command invoke --resource-group subspace-fleet-rg
+--name subspace-fleet --command-id RunShellScript --scripts ...`) with the
+commands from [Private access](docs/private-access.md). If that cannot reach
+the package repositories, the VM has no outbound access: Azure is retiring
+default outbound access for new virtual networks, so the subnet needs a NAT
+gateway, which the user must agree to. Then read the host key:
+
+```sh
+az vm run-command invoke -g subspace-fleet-rg -n subspace-fleet --command-id RunShellScript \
+  --scripts "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
+```
+
+`az group delete --name subspace-fleet-rg` deletes everything above. Run it
+only when the user asks, and remove the VM from the tailnet or delete its
+Cloudflare tunnel too.
+
+### Run the installer
+
+```sh
+./install.sh --remote azureuser@fleet.example.ts.net --host-key SHA256:... --yes \
+  --access tailscale \
+  --name "Example Fleet" --rear-admiral Atlas --captains Orion,Vega --admin admiral --demo
+```
+
+Add `--identity ~/.ssh/key` for a specific key (load passphrase-protected keys
+into `ssh-agent` first), `--ssh-port` for another port (the lockdown keeps
+whichever ports sshd listens on), and
+`--ssh-from 203.0.113.7/32` to accept SSH from listed addresses only.
+`--access tailscale` accepts SSH on the tailnet only; through Cloudflare, use
+`--access cloudflare` with the `--ssh-proxy` from
+[Private access](docs/private-access.md#cloudflare-zero-trust) instead. Leave
+`--access` out only for an existing VM you reach another private way.
+
+To keep the generated secrets in Azure Key Vault, give the VM a managed
+identity that can read and write the vault's secrets (for example the Key
+Vault Secrets Officer role on that vault), then add `--key-vault <vault-name>`.
+Secrets are named `subspace-<fleet>-…`. The VM still writes root-only copies,
+because the fleet's services read them from disk. The lockdown keeps the
+agents' Linux users away from Azure's metadata service, so they cannot ask for
+that identity's tokens; the audit fails if they could.
+
 ## Install on a local VM
 
-macOS or Linux, from the repository root:
+The quickest way to try Subspace. macOS or Linux, from the repository root:
 
 ```sh
 ./install.sh --local --yes --install-deps \
@@ -234,54 +411,11 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 --local --yes --install-d
 
 Add the user's repositories as `--repositories URL,URL` (HTTPS Git URLs,
 optionally `ID=URL`) and their crew counts as `--crew-claude N --crew-codex N`,
-on this command and on the existing-VM one below. Leave out `--install-deps`
+on this command and on the cloud VM one above. Leave out `--install-deps`
 to stop and ask instead of installing Lima, QEMU or Multipass. Size the VM with `--cpus`, `--memory` and `--disk` (GiB). The first
 run downloads an Ubuntu image, the agents' tools and the container images, so
 it takes a while. Running it again is safe: it keeps the answers, secrets and
 work already on the VM.
-
-## Install on an existing VM
-
-### Prepare a cloud VM
-
-- Use Ubuntu 24.04 LTS or Debian 12 with an SSH key login for a user with
-  passwordless sudo.
-- **Give it no public inbound access.** Best: no public IP at all, and reach it
-  over Tailscale, Cloudflare Zero Trust or your cloud's private network. If it
-  must have a public IP for now, allow SSH from your own address only in the
-  cloud firewall, then move to Tailscale or Cloudflare and remove that rule.
-- On Azure, for example, create the VM without a public IP and with a
-  network security group that has no inbound allow rules, and join it to your
-  tailnet through a run-command (see [Private access](docs/private-access.md)).
-- Get the VM's SSH host key fingerprint from a trusted channel, so the
-  installer can check it is talking to the right machine. On Azure:
-
-  ```sh
-  az vm run-command invoke -g <resource-group> -n <vm> --command-id RunShellScript \
-    --scripts "ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub"
-  ```
-
-### Run the installer
-
-```sh
-./install.sh --remote azureuser@fleet.example.ts.net --host-key SHA256:... --yes \
-  --name "Example Fleet" --rear-admiral Atlas --captains Orion,Vega --admin admiral --demo
-```
-
-Add `--identity ~/.ssh/key` for a specific key (load passphrase-protected keys
-into `ssh-agent` first), `--ssh-port` for another port (the lockdown keeps
-whichever ports sshd listens on), and
-`--ssh-from 203.0.113.7/32` to accept SSH from listed addresses only. With
-Tailscale up on the VM, add `--access tailscale` to accept SSH on the tailnet
-only.
-
-To keep the generated secrets in Azure Key Vault, give the VM a managed
-identity that can read and write the vault's secrets (for example the Key
-Vault Secrets Officer role on that vault), then add `--key-vault <vault-name>`.
-Secrets are named `subspace-<fleet>-…`. The VM still writes root-only copies,
-because the fleet's services read them from disk. The lockdown keeps the
-agents' Linux users away from Azure's metadata service, so they cannot ask for
-that identity's tokens; the audit fails if they could.
 
 ## One fleet or several: shared IRC
 
@@ -361,7 +495,9 @@ server's operator.
 
 ## What the installer does
 
-1. Creates the VM, or checks the remote VM's host key and sudo access.
+1. Creates the local VM, or checks the remote VM's host key and sudo access.
+   It does not create cloud VMs: you create those first, as in
+   [Create a cloud VM](#create-a-cloud-vm).
 2. Copies `subspace-installer/`, `subspace-api/` and `subspace-irc/` to
    `/opt/subspace/bootstrap` on the VM.
 3. Runs `subspace-setup` there, which:
@@ -592,5 +728,7 @@ them. Agent isolation stays, because it never blocks your login.
 On the VM, `sudo /opt/subspace/bootstrap/subspace-installer/install.sh uninstall`
 stops the fleet and keeps its data. `sudo docker compose --project-name subspace-api down`
 stops the API. For a local VM, `./install.sh destroy`
-deletes everything. Revoke any GitHub App keys and model logins you gave the
+deletes everything. For a cloud VM, delete the resources recorded when it was
+created (on Azure, its resource group) and remove it from the tailnet or
+delete its Cloudflare tunnel; agents do this only when the user asks. Revoke any GitHub App keys and model logins you gave the
 fleet.
