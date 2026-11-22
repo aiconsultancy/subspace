@@ -182,27 +182,6 @@ impl Roster {
             .and_then(|_| self.rank(nick))
     }
 
-    /// Whom `/ask` addresses in `channel`: a ship's captain, or the rear
-    /// admiral whose Starbase it is. `None` elsewhere, the command channel
-    /// included, where no one agent answers for the channel.
-    pub(crate) fn asked_in(&self, channel: &str) -> Option<&str> {
-        match self.channel(channel)? {
-            ChannelKind::Ship { captain } => Some(captain),
-            ChannelKind::Starbase => self
-                .agents
-                .iter()
-                .find(|(_, agent)| {
-                    agent.rank == Rank::RearAdmiral
-                        && agent
-                            .channel
-                            .as_deref()
-                            .is_some_and(|held| held.eq_ignore_ascii_case(channel))
-                })
-                .map(|(nick, _)| nick.as_str()),
-            ChannelKind::Command => None,
-        }
-    }
-
     /// What `channel` is for, when the network's fleets name it so.
     pub(crate) fn channel(&self, channel: &str) -> Option<&ChannelKind> {
         self.channels.get(&channel.to_ascii_lowercase())
@@ -427,6 +406,7 @@ fn slug(slug: &str) -> Option<&str> {
     valid.then_some(slug)
 }
 
+mod asked;
 mod places;
 
 pub(crate) use places::{FleetPlace, short_name};

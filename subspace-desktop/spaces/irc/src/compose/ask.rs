@@ -122,6 +122,23 @@ mod tests {
     }
 
     #[test]
+    fn ask_is_refused_in_a_starbase_that_two_rear_admirals_name() {
+        let aurora = fleet_with(
+            "aurora",
+            vec![
+                agent("admiral-vance", "rearAdmiral", Some("aurora-admiral"), None),
+                agent("admiral-reyes", "rearAdmiral", Some("aurora-deputy"), None),
+            ],
+            serde_json::json!({"starbaseChannel": "#aurora-starbase"}),
+        );
+        let roster = Roster::new([&aurora]);
+        assert!(matches!(
+            ask("/ask anything", &channel("#aurora-starbase"), &roster),
+            Some(Asked::Refused(_))
+        ));
+    }
+
+    #[test]
     fn ask_is_refused_where_there_is_no_agent_or_nothing_to_ask() {
         let roster = roster();
         for buffer in [
