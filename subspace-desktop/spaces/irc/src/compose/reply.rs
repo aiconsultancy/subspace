@@ -187,7 +187,7 @@ pub(super) fn row(reply: &ReplyTo, cx: &mut Context<Conversation>) -> impl IntoE
             div()
                 .flex_shrink_0()
                 .text_color(tokens.fg_strong)
-                .child(reply.author.clone()),
+                .child(format!("{}:", reply.author)),
         )
         .child(
             truncated::text("irc-reply-mode-excerpt", reply.excerpt.clone())
