@@ -13,11 +13,12 @@ over SSH. It:
    agents' Linux users and local Ergo IRC);
 4. starts the Subspace API and PostgreSQL on loopback, signs the admin in
    first so they become the organisation administrator, seeds demo data on
-   request, creates an initiative for the fleet and registers the fleet;
+   request, creates an initiative for the fleet and registers the fleet, its
+   standard channels, a ship per captain and the rear admiral's and captains'
+   agent records (lib/fleet_records.py);
 5. enables Stargate's Fleet API when the pinned Stargate has it, and agent
-   dispatch when asked (off by default): it registers the rear admiral and
-   captains as API agents of this fleet and gives the rear admiral's gateway
-   a token for its own agent identity;
+   dispatch when asked (off by default), giving the rear admiral's gateway a
+   token for the rear admiral's own agent identity;
 6. locks the VM down (see lockdown.sh) and writes a non-secret summary that
    the host reads.
 
@@ -48,6 +49,8 @@ PAYLOAD = HERE.parents[1]
 INSTALLER = PAYLOAD / "subspace-installer"
 # The standard fleet channels are defined once, beside the fleet installer that enforces them.
 sys.path.insert(0, str(HERE.parent / "lib"))
+import fleet_records  # noqa: E402
+import runtime  # noqa: E402
 import standard_channels  # noqa: E402
 INPUTS = Path("/root/fleet")
 API_DIR = Path("/opt/subspace/api")
@@ -81,8 +84,6 @@ CIDR = re.compile(r"[0-9a-fA-F:.]+(?:/[0-9]{1,3})?")
 # Agent dispatch: what switching it on does, in the words the prompt and the summary use.
 DISPATCH_SUMMARY = ("issues flagged Ready for agents are offered to the captains in fleet command, and issues "
                     "assigned to a captain are announced to it there")
-# Fleet agents sign in to the development API as these fictional addresses (the API's agent subjects).
-AGENT_EMAIL_DOMAIN = "agents.example.com"
 # The fleet installer's repository IDs (also Stargate crew project keys) and its crew limit of nine repositories.
 REPO_ID = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 MAX_REPOSITORIES = 9
@@ -388,6 +389,11 @@ def check_answers(answers):
                 f"--metadata-user {user} is a fleet agent's account; agents never reach cloud metadata.")
     for name in [answers["name"], *answers["captains"], answers["rearAdmiral"]]:
         require("\n" not in name and len(name) <= 100, "Names must be single lines of at most 100 characters.")
+    # The API keeps the rear admiral's name as its agent name and each captain's as its ship's name.
+    require(fleet_records.AGENT_NAME.fullmatch(answers["rearAdmiral"]),
+            "The rear admiral's name is also its agent name in the Subspace API: use letters, digits and hyphens, "
+            "at most 64, such as Atlas.")
+    require(all(len(name) <= 64 for name in answers["captains"]), "Ship names must be at most 64 characters.")
     return rear, ids[1:]
 
 
@@ -754,61 +760,43 @@ def api_call(token, method, path, body=None):
     return json.loads(text) if text else {}
 
 
-def agent_subject(account):
-    """The development sign-in address of a fleet agent: its API identity's account subject."""
-    return f"{account}@{AGENT_EMAIL_DOMAIN}"
+def fleet_records_for(config, private):
+    """The fleet's validated config and its API records, as the installer will validate them.
 
-
-def own_fleet(answers, token):
-    """This VM's fleet in the API, registered now if need be; the installer completes its details later."""
-    try:
-        return api_call(token, "GET", f"/fleets/{answers['slug']}")["id"]
-    except ApiError as error:
-        if error.status != 404:
-            raise
-    host, port = irc_endpoint(answers)
-    return api_call(token, "POST", "/fleets", {"slug": answers["slug"], "name": answers["name"], "ircHost": host,
-                                               "ircPort": port, "ircTls": answers["irc"] != "local"})["id"]
-
-
-def dispatch_agents(answers, members, token):
-    """Register the rear admiral and captains as this fleet's API agents; return the rear admiral's token.
-
-    Stargate's dispatcher calls the API as the rear admiral (rank rearAdmiral, linked to this fleet) and
-    offers issues to the fleet's agents of rank captain. Each agent is named after its IRC account, which
-    is how the dispatcher finds a captain's account in chat.
+    Agent dispatch is left out: its token is minted for the rear admiral's agent record, made from these records.
     """
-    fleet_id = own_fleet(answers, token)
-    model = read_json(INPUTS / "fleet.json", {}).get("harness", {}).get("model", "gpt-5.4")
-    known, cursor = {}, ""
-    while True:
-        page = api_call(token, "GET", "/agents?limit=100" + (f"&cursor={quote(cursor)}" if cursor else ""))
-        known.update({row.get("serviceTokenClientId"): row for row in page.get("items", [])})
-        cursor = page.get("nextCursor") or ""
-        if not cursor:
-            break
-    for index, person in enumerate(members):
-        rank = "captain" if index else "rearAdmiral"
-        subject = agent_subject(person["account"])
-        row = known.get(subject)
-        if row is None:
-            body = {"name": person["account"], "rank": rank, "fleetId": fleet_id, "defaultModel": model,
-                    "serviceTokenClientId": subject}
-            if index:
-                body["ship"] = person["name"]
-            api_call(token, "POST", "/agents", body)
-            say(f"registered {person['name']} as this fleet's {'captain' if index else 'rear admiral'} in the API")
-            continue
-        require(row.get("isActive") and row.get("rank") == rank and row.get("fleetId") == fleet_id,
-                f"The API agent {person['account']} is deactivated, has another rank or belongs to another fleet. "
-                "Fix it in the API as an administrator, or pass --no-agent-dispatch.")
+    config = {key: value for key, value in config.items() if key != "agentDispatch"}
+    private = {key: value for key, value in private.items() if key != "rearAdmiralApiToken"}
+    try:
+        cfg = runtime.validate(config, private, check_files=False)
+        return cfg, fleet_records.check(cfg["slug"], fleet_records.roster(cfg))
+    except (runtime.Invalid, fleet_records.Refused) as error:
+        raise SetupError(str(error)) from None
+
+
+def register_own(token, config, private):
+    """Register this fleet, its standard channels, ships and officers with the API on this VM; return the records.
+
+    The fleet installer's 'fleetctl register' sends the same records again afterwards and finds nothing to change.
+    """
+    cfg, records = fleet_records_for(config, private)
+    try:
+        fleet_records.register(lambda method, path, body: api_call(token, method, path, body),
+                               fleet_records.fleet_fields(cfg), records, say=say)
+    except fleet_records.Refused as error:
+        raise SetupError(str(error)) from None
+    return records
+
+
+def rear_admiral_token(answers, records):
+    """A development token for the rear admiral's own agent identity, which agent dispatch acts as."""
     # A development token expires after eight hours, so dispatch stops until setup runs again or the API moves
     # to WorkOS or Entra with a long-lived token (installer README, 'Agent dispatch'). Keep the current one
     # while it has more than half its life left, so a rerun does not restart the gateway for a new token.
     current = read_json(INPUTS / "fleet.secrets.json", {}).get("rearAdmiralApiToken", "")
     if token_seconds_left(current) > 4 * 3600:
         return current
-    return api_token(answers, agent_subject(members[0]["account"]))
+    return api_token(answers, records["rearAdmiral"]["serviceTokenClientId"])
 
 
 def token_seconds_left(token, now=None):
@@ -829,12 +817,12 @@ def seed_demo(answers):
             "api", "bun", "run", "--silent", "seed:demo")
 
 
-def fleet_initiative(token, name, channels, known=None, managed=(), slug=None, exclude=()):
-    """Create, or find, a fleet's initiative and keep its channels in step with the roster.
+def fleet_initiative(token, name, slug, known=None, exclude=()):
+    """Create, or find, a fleet's initiative.
 
-    The initiative is found by its saved ID, else by name among initiatives that belong to no
-    fleet or to this one (slug). Channels someone added by hand stay; channels setup added
-    before (managed) that the roster no longer has are removed.
+    The initiative is found by its saved ID, else by name among initiatives that belong to no fleet or to
+    this one (slug). Setup lists no channels on it: an initiative's channels are its own, beyond its fleet's
+    standard channels, which the fleet and its ships record (fleet_records) and the desktop joins.
     """
     mine = {row["id"]: row for row in api_call(token, "GET", "/me/initiatives").get("items", [])}
     found = known if known in mine else None
@@ -842,52 +830,36 @@ def fleet_initiative(token, name, channels, known=None, managed=(), slug=None, e
     while not found:
         page = api_call(token, "GET", "/initiatives?limit=100" + (f"&cursor={quote(cursor)}" if cursor else ""))
         found = next((row["id"] for row in page.get("items", []) if row.get("name") == name
-                      and row["id"] not in exclude and (row.get("fleet") is None or (slug and (row.get("fleet") or {}).get("slug") == slug))), None)
+                      and row["id"] not in exclude and (row.get("fleet") is None or (row.get("fleet") or {}).get("slug") == slug)), None)
         cursor = page.get("nextCursor") or ""
         if not cursor:
             break
-    if not found:
-        me = api_call(token, "GET", "/me")
-        created = api_call(token, "POST", "/initiatives", {
-            "name": name, "ownerId": me["userId"], "status": "active",
-            "description": f"Work for the {name} fleet. Talk to the rear admiral in {channels[0]}.",
-            "channelConfiguration": {"channels": " ".join(channels), "memberUserIds": [me["userId"]]},
-        })
-        return created["id"]
-    if found not in mine:
-        say(f"found an initiative named {name} that you are not a member of; check its channels in the desktop")
+    if found:
+        if found not in mine:
+            say(f"found an initiative named {name} that you are not a member of; add yourself in the desktop")
         return found
-    retired = set(managed) - set(channels)
-    for _attempt in range(3):
-        # Read the version before the channels: an edit in between makes the update fail with 409.
-        version = api_call(token, "GET", f"/initiatives/{found}")["version"]
-        rows = {row["id"]: row for row in api_call(token, "GET", "/me/initiatives").get("items", [])}
-        current = (rows.get(found, {}).get("channels") or "").split()
-        desired = [channel for channel in current if channel not in retired]
-        desired += [channel for channel in channels if channel not in desired]
-        if desired == current:
-            return found
-        try:
-            api_call(token, "PATCH", f"/initiatives/{found}/channel-configuration",
-                     {"version": version, "channels": " ".join(desired)})
-        except ApiError as error:
-            if error.status == 409:
-                continue
-            raise
-        say(f"the fleet's initiative now lists {' '.join(desired)}")
-        return found
-    raise SetupError("The fleet's initiative kept changing while setup updated its channels. Run setup again.")
+    me = api_call(token, "GET", "/me")
+    return api_call(token, "POST", "/initiatives", {
+        "name": name, "ownerId": me["userId"], "status": "active",
+        "description": f"Work for the {name} fleet. Talk to the rear admiral in {standard_channels.starbase(slug)}.",
+        "channelConfiguration": {"memberUserIds": [me["userId"]]},
+    })["id"]
 
 
-def fleet_registration(answers, members):
-    """The non-secret description of this fleet that another fleet's API needs to show it."""
+def installed_records():
+    """This fleet's validated config and API records, from the inputs setup last wrote."""
+    config, private = read_json(INPUTS / "fleet.json"), read_json(INPUTS / "fleet.secrets.json")
+    require(config and private, "Set the fleet up first.")
+    return fleet_records_for(config, private)
+
+
+def fleet_registration(answers):
+    """The non-secret description of this fleet that another fleet's API needs: the fleet, its standard
+    channels, a ship per captain and the officers' agent records (fleet_records)."""
+    _, records = installed_records()
     host, port = irc_endpoint(answers)
-    return {
-        "slug": answers["slug"], "name": answers["name"], "ircHost": host, "ircPort": port,
-        "ircTls": answers["irc"] != "local", "rearAdmiralName": members[0]["name"],
-        "captainNames": [person["name"] for person in members[1:]],
-        "channels": fleet_channels(answers, members),
-    }
+    return {"slug": answers["slug"], "name": answers["name"], "ircHost": host, "ircPort": port,
+            "ircTls": answers["irc"] != "local", **records}
 
 
 def registration_ready():
@@ -900,22 +872,22 @@ def registration_ready():
 
 
 def register_fleet(registration):
-    """Register another fleet, and an initiative for it, with the API on this VM."""
+    """Register another fleet, its standard channels, ships and officers, and an initiative for it, with the
+    API on this VM."""
     answers = registration_ready()
     require(isinstance(registration, dict), "The fleet registration must be a JSON object.")
     slug, name = registration.get("slug"), registration.get("name")
     require(isinstance(slug, str) and SLUG.fullmatch(slug), "The registration has an invalid fleet ID.")
     require(slug != answers["slug"], "That is this VM's own fleet.")
     require(isinstance(name, str) and 1 <= len(name) <= 100 and "\n" not in name, "The registration has an invalid name.")
-    channels = registration.get("channels")
-    require(isinstance(channels, list) and channels
-            and all(isinstance(c, str) and re.fullmatch(rf"#{re.escape(slug)}-[a-z0-9-]{{1,40}}", c) for c in channels),
-            "The registration's channels must be the fleet's own (#<fleet>-...).")
-    captains = registration.get("captainNames")
-    require(channels[:2] == standard_channels.standard(slug, []) and isinstance(captains, list)
-            and len(channels) == len(set(channels)) == 2 + len(captains),
-            f"The registration must list the fleet's standard channels: {standard_channels.summary(slug)}. "
-            "Set the fleet up again with this version of the installer.")
+    known = {"slug", "name", "ircHost", "ircPort", "ircTls", "starbaseChannel", "commandChannel", "rearAdmiral", "captains"}
+    require(registration.keys() <= known, "The registration has fields this installer does not know. Set the fleet "
+            "up again with the same version of the installer as this VM.")
+    records = {key: registration.get(key) for key in ("starbaseChannel", "commandChannel", "rearAdmiral", "captains")}
+    try:
+        fleet_records.check(slug, records)
+    except fleet_records.Refused as error:
+        raise SetupError(f"{error} Set the fleet up again with this version of the installer.") from None
     require(registration.get("ircHost") not in ("127.0.0.1", "localhost", "::1"),
             "A further fleet needs a shared IRC server (--irc-server): IRC on its own VM is unreachable from here.")
     port = registration.get("ircPort")
@@ -925,24 +897,20 @@ def register_fleet(registration):
     fields["ircTls"] = bool(registration.get("ircTls"))
     token = api_token(answers)
     try:
-        fleet = api_call(token, "GET", f"/fleets/{slug}")
-    except ApiError as error:
-        if error.status != 404:
-            raise
-        fleet = api_call(token, "POST", "/fleets", fields)
-    changes = {key: value for key, value in fields.items() if fleet.get(key) != value}
-    if changes:
-        fleet = api_call(token, "PATCH", f"/fleets/{slug}", changes)
+        fleet = fleet_records.register(lambda method, path, body: api_call(token, method, path, body), fields, records,
+                                       say=say)
+    except fleet_records.Refused as error:
+        raise SetupError(str(error)) from None
     registered = answers.setdefault("registeredFleets", {}).setdefault(slug, {})
-    initiative = fleet_initiative(token, name, channels, registered.get("initiativeId"),
-                                  registered.get("channels", []), slug, exclude=[answers.get("initiativeId")])
+    initiative = fleet_initiative(token, name, slug, registered.get("initiativeId"), exclude=[answers.get("initiativeId")])
     assigned = api_call(token, "GET", f"/initiatives/{initiative}").get("fleetId")
     require(assigned in (None, fleet["id"]), f"Initiative {initiative} already belongs to another fleet.")
     if assigned != fleet["id"]:
         api_call(token, "PUT", f"/initiatives/{initiative}/fleet", {"fleetId": fleet["id"]})
-    registered.update(initiativeId=initiative, channels=channels)
+    registered.pop("channels", None)
+    registered.update(initiativeId=initiative)
     write_json(INPUTS / "answers.json", answers)
-    say(f"registered fleet {name} ({slug}) with initiative {initiative}")
+    say(f"registered fleet {name} ({slug}), its ships and officers, with initiative {initiative}")
 
 
 # Summary ---------------------------------------------------------------------
@@ -1031,12 +999,17 @@ def setup(args):
 
     dispatch_token = ""
 
-    def write_inputs(irc_ref, api_block=None, stargate_api=False, token="", history=None):
-        write_json(config_path, fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history))
+    def inputs(irc_ref, api_block=None, stargate_api=False, token="", history=None):
+        config = fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history)
         private = fleet_secrets(secret_store, members, answers["admin"], token, local_irc,
                                 dispatch_token if api_block else "")
         if history:
             private["ircHistoryPassword"] = secret_store.password("ergo-history")
+        return config, private
+
+    def write_inputs(*args):
+        config, private = inputs(*args)
+        write_json(config_path, config)
         write_json(secrets_path, private)
 
     if not local_irc:
@@ -1071,14 +1044,15 @@ def setup(args):
             token = api_token(answers)
             if answers["demo"]:
                 seed_demo(answers)
-            channels = fleet_channels(answers, members)
-            initiative = fleet_initiative(token, answers["name"], channels, answers.get("initiativeId"),
-                                          answers.get("managedChannels", []), answers["slug"])
-            answers.update(initiativeId=initiative, managedChannels=channels)
+            initiative = fleet_initiative(token, answers["name"], answers["slug"], answers.get("initiativeId"))
+            answers.update(initiativeId=initiative)
             save_answers(answers)
             api_block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": [initiative]}
+            # Register the fleet, its channels, ships and officers now: agent dispatch signs in as the rear
+            # admiral's agent record. The installer's 'fleetctl register' sends the same records again.
+            records = register_own(token, *inputs(irc_ref, api_block, bool(stargate_api), token, history))
             if answers["agentDispatch"]:
-                dispatch_token = dispatch_agents(answers, members, token)
+                dispatch_token = rear_admiral_token(answers, records)
         else:
             say("the API no longer offers development sign-in, so setup leaves its fleet registration, "
                 "initiative and demo data as they are")
@@ -1221,9 +1195,7 @@ def main(argv):
     elif argv and argv[0] == "fleet-registration":
         answers = read_json(INPUTS / "answers.json", {})
         require(answers.get("slug"), "Set the fleet up first.")
-        rear, captains = check_answers(answers)
-        members = roster(answers, rear, captains)
-        sys.stdout.write(json.dumps(fleet_registration(answers, members), indent=2) + "\n")
+        sys.stdout.write(json.dumps(fleet_registration(answers), indent=2) + "\n")
     elif argv and argv[0] == "register-fleet":
         if argv[1:] == ["--check"]:
             registration_ready()

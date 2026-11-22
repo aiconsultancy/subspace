@@ -284,8 +284,8 @@ answer it now.
     there (see [Agent dispatch](README.md#agent-dispatch)). It needs the
     Subspace API on this VM and repositories, because only a captain with
     crew can accept an offer. Setup registers the rear admiral and captains
-    as the fleet's API agents and gives the rear admiral's gateway a
-    development sign-in token, which lasts eight hours: re-run the installer
+    as the fleet's API agents in any case; with dispatch on it also gives the
+    rear admiral's gateway a development sign-in token, which lasts eight hours: re-run the installer
     to renew it, or see
     [Agent dispatch](subspace-installer/README.md#agent-dispatch) for a
     long-lived token. An unattended run leaves it off.
@@ -483,11 +483,13 @@ The desktop app talks to one Subspace API, so with several fleets the API
 belongs on a shared host too, ideally the same one as IRC. Today the installer
 runs the API on the first fleet's VM. Install further fleets with
 `--api-target <first fleet's target>`: they skip their own API, and the
-installer registers each one, with an initiative listing its channels, on the
-first fleet's API. That uses the first fleet's development sign-in, which the
+installer registers each one on the first fleet's API: the fleet with its
+standard channels, a ship for each captain, the rear admiral's and captains'
+agent records and an initiative for it. That uses the first fleet's development sign-in, which the
 installer checks before changing anything; once that API uses WorkOS or Entra,
-register further fleets through its `/api/v1/fleets` and initiative endpoints
-as an administrator instead. Further fleets need the shared IRC server,
+register further fleets through its fleet, ship, agent and initiative
+endpoints as an administrator instead, with the records described in the
+[installer README](subspace-installer/README.md#subspace-api-registration). Further fleets need the shared IRC server,
 because IRC on their own VM is unreachable from the first fleet's API.
 `--api-target` works only with a shared server the installer manages
 (`--irc-server`); with one in a container, register further fleets as
@@ -646,7 +648,9 @@ accounts in Ergo.
 2. **Further fleets.** `--api-target` refuses a server the installer does not
    manage, so install each further fleet with `--no-api` and the same
    `--irc remote` options and its own `--target`, then register it with the
-   first fleet's API. The registration holds no secrets:
+   first fleet's API. The registration holds no secrets: the fleet's IRC
+   server, its standard channels, each captain's ship and channel, and each
+   officer's name, IRC nick, model and account subject.
 
    ```sh
    ssh azureuser@fleet-two.example.ts.net sudo -n subspace-setup fleet-registration > fleet-two.json
@@ -862,13 +866,15 @@ subnets in the user's virtual network. Run it only when the user asks.
    - starts PostgreSQL and the Subspace API on loopback, creates IRC's
      history database (`ergo_history`) beside the API's, signs you in first
      (the first user in an organisation becomes its administrator), seeds the
-     demo data if asked, creates an initiative for the fleet with its channels
-     and registers the fleet;
+     demo data if asked, creates an initiative for the fleet and registers
+     the fleet with its standard channels, a ship for each captain and the
+     rear admiral's and captains' agent records, which the desktop uses to
+     join the channels and mark who is the rear admiral and who is a captain;
    - turns on Stargate's Fleet API when the installed Stargate has it;
-   - with agent dispatch on, registers the rear admiral and captains as the
-     fleet's API agents, gives Stargate's gateway user, and no agent, access
-     to the API's port, and switches dispatch on in the rear admiral's
-     gateway;
+   - with agent dispatch on, gives the rear admiral's gateway a token for the
+     rear admiral's own agent record, gives Stargate's gateway user, and no
+     agent, access to the API's port, and switches dispatch on in the rear
+     admiral's gateway;
    - applies the lockdown and runs the privacy audit.
 4. Confirms the lockdown over a fresh SSH connection, then runs the audit
    again. If that connection fails, the change rolls itself back after three

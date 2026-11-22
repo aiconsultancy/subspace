@@ -22,6 +22,7 @@ import time
 from urllib.parse import urlsplit
 
 from agent_files import collect_cloud, private_directory, private_file, provision_cloud, write_private
+import fleet_records
 from network import rules
 from roles import default_permissions, provision_role, role_documents
 import sessions
@@ -215,7 +216,7 @@ def source(value, label, repo, ref=None):
 def member(value):
     require(not isinstance(value, dict) or "crewGitHubApps" not in value,
             "Remove crewGitHubApps: crew run as their captain and commit and push with the captain's githubApp.")
-    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames", ["id", "name", "account"])
+    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames serviceTokenClientId", ["id", "name", "account"])
     pattern(value["id"], r"[a-z][a-z0-9-]{0,19}", "member ID")
     require(not value["id"].startswith("fleet-"), "Member IDs cannot start with fleet-.")
     require(value["id"] != SENTRY_TOKEN[0], "The medical member ID is reserved for integration credentials.")
@@ -235,6 +236,9 @@ def member(value):
             require(Path(path).is_absolute() and path.endswith(".pub"), "Git signingKey must name an absolute SSH public key file.")
     if "githubApp" in value:
         github_app(value["githubApp"])
+    if "serviceTokenClientId" in value:
+        # The member's account subject at the API's identity provider, for its API agent record.
+        string(value["serviceTokenClientId"], f"Member {value['id']}'s serviceTokenClientId", 200)
     return value
 
 
@@ -742,6 +746,12 @@ def validate(config, credentials, check_files=True):
             person["harness"]["permissions"] = default_permissions(person["role"], references)
         if dispatch and person["crew"]:
             fleet_ipc_policy(person["harness"]["permissions"], f"Captain {person['id']}'s harness.permissions")
+    if api:
+        # fleetctl register records the officers, their ships and the standard channels in the API.
+        try:
+            fleet_records.check(slug, fleet_records.roster({"members": agents, "irc": irc}))
+        except fleet_records.Refused as error:
+            raise Invalid(str(error)) from None
     return {
         "slug": slug, "name": string(cfg["name"], "fleet name"), "members": agents, "irc": irc, "medical": medical,
         "repositories": repositories,
@@ -1265,6 +1275,9 @@ def irc_officer(cfg, person, registration):
     return {
         # Crew have no IRC registrations: their captain reaches them through Stargate's crew plugin.
         **registration, "server": server, "channels": channels, "access": access,
+        # Direct messages are for people only: an agent answers one with a notice naming its first
+        # channel, Starbase for the rear admiral and its ship for a captain, and starts no turn.
+        "dmPolicy": "redirect",
         # Route by authenticated account in strict mode.
         "features": {"botMode": False},
         "fleetPolicy": {"role": role, "humanAccounts": cfg["irc"]["allowedAccounts"],

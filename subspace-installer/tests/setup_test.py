@@ -12,9 +12,16 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fixture  # noqa: E402
 import fleet_setup  # noqa: E402
 from runtime import irc_officer, validate  # noqa: E402
 from standard_channels import COMMAND_SUFFIX  # noqa: E402
+
+
+def fake_api(api):
+    """Send subspace-setup's API calls to the fixture's in-memory API."""
+    return patch.object(fleet_setup, "api_call", side_effect=lambda _token, method, path, body=None: api.call(method, path, body))
 
 
 def answers_for(argv):
@@ -169,6 +176,9 @@ class SetupInputsTests(unittest.TestCase):
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Starbase"],
             ["--name", "A very long fleet name indeed", "--rear-admiral", "Atlas", "--captains", "Andromeda Galaxy"],
             ["--name", "X", "--rear-admiral", "9lives", "--captains", "Orion"],
+            # The rear admiral's name is its API agent name, and a ship's name is at most 64 characters.
+            ["--name", "X", "--rear-admiral", "Atlas Prime", "--captains", "Orion"],
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion" + "!" * 60],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--irc", "remote", "--irc-host", "localhost"],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--ssh-from", "0.0.0.0/0; rm"],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--repositories", "http://example.com/a.git"],
@@ -207,26 +217,54 @@ class SetupInputsTests(unittest.TestCase):
         self.assertIn("WORKOS_CLIENT_ID=client_example\n", written)
         self.assertIn("POSTGRES_PASSWORD=", written)
 
-    def test_further_fleet_registration_is_checked(self):
-        answers, rear, captains = answers_for(["--name", "Fleet Two", "--rear-admiral", "Nova", "--captains", "Lyra",
-                                               "--irc", "remote", "--irc-host", "irc.example.com", "--no-api"])
-        members = fleet_setup.roster(answers, rear, captains)
-        registration = fleet_setup.fleet_registration(answers, members)
-        self.assertEqual(registration["channels"], ["#fleet-two-starbase", f"#fleet-two-{COMMAND_SUFFIX}", "#fleet-two-lyra"])
+    def test_further_fleet_registration_carries_its_records_and_is_checked(self):
+        argv = ["--name", "Fleet Two", "--rear-admiral", "Nova", "--captains", "Lyra, Vega",
+                "--irc", "remote", "--irc-host", "irc.example.com", "--no-api"]
+        answers, members, config, secrets, _ = self.generate(argv)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.secrets.json", secrets)
+        registration = fleet_setup.fleet_registration(answers)
         self.assertEqual((registration["ircHost"], registration["ircPort"], registration["ircTls"]),
                          ("irc.example.com", 6697, True))
-        self.assertEqual(registration["captainNames"], ["Lyra"])
-        fleet_setup.write_json(fleet_setup.INPUTS / "answers.json", {"api": True, "slug": "fleet-one"})
+        self.assertEqual((registration["starbaseChannel"], registration["commandChannel"]),
+                         ("#fleet-two-starbase", f"#fleet-two-{COMMAND_SUFFIX}"))
+        self.assertEqual(registration["rearAdmiral"], {
+            "name": "Nova", "ircNick": "fleet-two-nova", "defaultModel": "gpt-5.4",
+            "serviceTokenClientId": "fleet-two-nova@agents.example.com"})
+        self.assertEqual([(row["ship"], row["channel"], row["ircNick"]) for row in registration["captains"]],
+                         [("Lyra", "#fleet-two-lyra", "fleet-two-lyra"), ("Vega", "#fleet-two-vega", "fleet-two-vega")])
+        self.assertNotIn("Password", fleet_setup.json.dumps(registration))
+        # The first fleet's VM registers it, with its initiative, and a re-run changes nothing.
+        fleet_setup.write_json(fleet_setup.INPUTS / "answers.json", {"api": True, "slug": "fleet-one", "initiativeId": "own"})
         (fleet_setup.INPUTS / "api.env").write_text("AUTH_PROVIDERS=dev\nENABLE_DEV_AUTH=true\n")
+        api = fixture.Subspace()
+        with fake_api(api), patch.object(fleet_setup, "api_token", return_value="admin"):
+            fleet_setup.register_fleet(registration)
+            writes = len(api.writes)
+            fleet_setup.register_fleet(registration)
+        self.assertEqual(len(api.writes), writes)
+        self.assertEqual(api.summary()["fleets"]["fleet-two"]["commandChannel"], f"#fleet-two-{COMMAND_SUFFIX}")
+        self.assertEqual(api.summary()["ships"], [("Lyra", "#fleet-two-lyra"), ("Vega", "#fleet-two-vega")])
+        self.assertEqual([row[:3] for row in api.summary()["agents"]], [
+            ("Nova", "rearAdmiral", "fleet-two-nova"), ("fleet-two-lyra", "captain", "fleet-two-lyra"),
+            ("fleet-two-vega", "captain", "fleet-two-vega")])
+        [initiative] = [row for row in api.initiatives.values() if row["name"] == "Fleet Two"]
+        self.assertEqual((initiative["channels"], initiative["fleetId"]), ("", api.fleet_by("fleet-two")["id"]))
+        captain = registration["captains"][0]
         bad = [
             {**registration, "slug": "fleet-one"},
-            {**registration, "channels": ["#fleet-one-starbase"]},
-            # Each standard channel is required: no command channel, or a captain without a ship channel.
-            {**registration, "channels": ["#fleet-two-starbase", "#fleet-two-lyra"]},
-            {**registration, "channels": registration["channels"][:2]},
-            {**registration, "captainNames": "Lyra"},
             {**registration, "slug": "Fleet Two"},
             {**registration, "ircPort": "6697"},
+            {**registration, "starbaseChannel": "#fleet-one-starbase"},
+            {**registration, "commandChannel": None},
+            {**registration, "captains": [{**captain, "channel": "#fleet-two-command"}]},
+            {**registration, "captains": [{**captain, "channel": "#lyra"}]},
+            {**registration, "captains": [captain, captain]},
+            {**registration, "rearAdmiral": {**registration["rearAdmiral"], "name": "Rear Admiral Nova"}},
+            {**registration, "rearAdmiral": {**registration["rearAdmiral"], "ircNick": "9nova"}},
+            # A registration from an older installer, with names but no records, is refused.
+            {**{key: value for key, value in registration.items() if key not in ("rearAdmiral", "captains")},
+             "rearAdmiralName": "Nova", "captainNames": ["Lyra"]},
         ]
         for value in bad:
             with self.subTest(value=value), patch.object(fleet_setup, "api_token") as token:
@@ -234,44 +272,37 @@ class SetupInputsTests(unittest.TestCase):
                     fleet_setup.register_fleet(value)
                 token.assert_not_called()
 
-    def test_initiative_gains_new_channels_and_keeps_added_ones(self):
-        calls = []
+    def test_setup_registers_the_fleet_its_ships_and_officers_without_dispatch(self):
+        api_block = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"]}
+        _, _, config, secrets, _ = self.generate(
+            ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"], api_block)
+        api = fixture.Subspace()
+        with fake_api(api):
+            records = fleet_setup.register_own("admin", config, secrets)
+            writes = len(api.writes)
+            fleet_setup.register_own("admin", config, secrets)
+        self.assertEqual(len(api.writes), writes)
+        self.assertEqual(records["rearAdmiral"]["ircNick"], "example-fleet-atlas")
+        self.assertEqual(api.summary()["fleets"]["example-fleet"]["starbaseChannel"], "#example-fleet-starbase")
+        self.assertEqual(api.summary()["agents"], [
+            ("Atlas", "rearAdmiral", "example-fleet-atlas", None, True),
+            ("example-fleet-orion", "captain", "example-fleet-orion", "Orion", True)])
+        # The desktop's local IRC endpoint is what the fleet records.
+        self.assertEqual((api.fleet_by("example-fleet")["ircHost"], api.fleet_by("example-fleet")["ircTls"]),
+                         ("127.0.0.1", False))
 
-        def api(_token, method, path, body=None):
-            calls.append((method, path, body))
-            if path == "/me/initiatives":
-                return {"items": [{"id": "i-1", "name": "Example Fleet", "channels": "#example-starbase #extra"}]}
-            if path == "/initiatives/i-1" and method == "GET":
-                return {"version": 4}
-            return {}
-
-        with patch.object(fleet_setup, "api_call", side_effect=api):
-            found = fleet_setup.fleet_initiative("t", "Example Fleet", ["#example-starbase", "#example-vega"], "i-1")
-        self.assertEqual(found, "i-1")
-        self.assertEqual(calls[-1], ("PATCH", "/initiatives/i-1/channel-configuration",
-                                     {"version": 4, "channels": "#example-starbase #extra #example-vega"}))
-
-    def test_initiative_drops_retired_channels_and_skips_other_fleets(self):
-        calls = []
-
-        def api(_token, method, path, body=None):
-            calls.append((method, path, body))
-            if path == "/me/initiatives":
-                return {"items": [{"id": "mine", "name": "Fleet", "channels": "#f-starbase #f-orion #extra"},
-                                  {"id": "theirs", "name": "Fleet", "channels": "#o-starbase"}]}
-            if path.startswith("/initiatives?"):
-                return {"items": [{"id": "theirs", "name": "Fleet", "fleet": {"slug": "other"}},
-                                  {"id": "mine", "name": "Fleet", "fleet": {"slug": "f"}}]}
-            if path == "/initiatives/mine" and method == "GET":
-                return {"version": 7}
-            return {}
-
-        with patch.object(fleet_setup, "api_call", side_effect=api):
-            found = fleet_setup.fleet_initiative("t", "Fleet", ["#f-starbase", "#f-vega"], None,
-                                                 ["#f-starbase", "#f-orion"], "f")
-        self.assertEqual(found, "mine")
-        self.assertEqual(calls[-1], ("PATCH", "/initiatives/mine/channel-configuration",
-                                     {"version": 7, "channels": "#f-starbase #extra #f-vega"}))
+    def test_initiative_is_found_or_created_without_channels(self):
+        api = fixture.Subspace()
+        with fake_api(api):
+            created = fleet_setup.fleet_initiative("t", "Fleet", "f")
+            self.assertEqual(api.initiatives[created]["channels"], "")
+            # Found again by its saved ID or by name; another fleet's initiative of that name is never taken.
+            self.assertEqual(fleet_setup.fleet_initiative("t", "Fleet", "f", created), created)
+            self.assertEqual(fleet_setup.fleet_initiative("t", "Fleet", "f"), created)
+            api.call("POST", "/fleets", {"slug": "other", "name": "Other"})
+            api.initiatives[created]["fleetId"] = api.fleet_by("other")["id"]
+            self.assertNotEqual(fleet_setup.fleet_initiative("t", "Fleet", "f"), created)
+        self.assertNotIn("PATCH", api.counts)
 
     def test_teams_with_key_vault_needs_a_separate_gateway_user(self):
         fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {"stakeholders": {"teams": {"botClientId": "x"}}})
@@ -347,36 +378,25 @@ class AgentDispatchSetupTests(unittest.TestCase):
         with self.assertRaisesRegex(fleet_setup.SetupError, "needs the API on this VM"):
             answers_for([*self.argv, "--agent-dispatch", "--no-api"])
 
-    def test_agents_are_registered_once_and_the_rear_admiral_gets_its_own_token(self):
-        answers, rear, captains = answers_for([*self.argv, "--agent-dispatch"])
-        members = fleet_setup.roster(answers, rear, captains)
-        calls = []
-        agents = []
-
-        def api(token, method, path, body=None):
-            calls.append((method, path))
-            if path == "/fleets/example-fleet":
-                return {"id": "fleet-uuid"}
-            if path.startswith("/agents?"):
-                return {"items": agents, "nextCursor": None}
-            if method == "POST" and path == "/agents":
-                agents.append({**body, "isActive": True})
-                return body
-            raise AssertionError(path)
-
-        with patch.object(fleet_setup, "api_call", side_effect=api), \
-                patch.object(fleet_setup, "api_token", side_effect=lambda _answers, email=None: f"token-for-{email}"):
-            token = fleet_setup.dispatch_agents(answers, members, "header.payload.admin")
-            self.assertEqual(token, "token-for-example-fleet-atlas@agents.example.com")
-            self.assertEqual([(agent["name"], agent["rank"], agent.get("ship")) for agent in agents], [
-                ("example-fleet-atlas", "rearAdmiral", None), ("example-fleet-orion", "captain", "Orion")])
-            self.assertTrue(all(agent["fleetId"] == "fleet-uuid" for agent in agents))
-            fleet_setup.dispatch_agents(answers, members, "header.payload.admin")
-        self.assertEqual(sum(1 for call in calls if call == ("POST", "/agents")), 2)
-        agents[1]["fleetId"] = "another-fleet"
-        with patch.object(fleet_setup, "api_call", side_effect=api), \
-                self.assertRaisesRegex(fleet_setup.SetupError, "belongs to another fleet"):
-            fleet_setup.dispatch_agents(answers, members, "header.payload.admin")
+    def test_the_rear_admiral_signs_in_as_its_own_agent_record(self):
+        answers, config, secrets = self.config([*self.argv, "--agent-dispatch"], self.api)
+        secrets.pop("rearAdmiralApiToken")
+        api = fixture.Subspace()
+        # Setup registers the officers before the installer runs, whether or not dispatch is on, and leaves
+        # dispatch out of that check: its token is what this registration makes possible.
+        with fake_api(api), patch.object(fleet_setup, "api_token",
+                                         side_effect=lambda _answers, email=None: f"token-for-{email}"):
+            records = fleet_setup.register_own("header.payload.admin", config, secrets)
+            self.assertEqual(fleet_setup.rear_admiral_token(answers, records),
+                             "token-for-example-fleet-atlas@agents.example.com")
+        rear = next(row for row in api.agents.values() if row["rank"] == "rearAdmiral")
+        self.assertEqual((rear["serviceTokenClientId"], rear["fleetId"], rear["ircNick"]),
+                         ("example-fleet-atlas@agents.example.com", fixture.FLEET, "example-fleet-atlas"))
+        captains = [row for row in api.agents.values() if row["rank"] == "captain"]
+        self.assertEqual([(row["name"], row["fleetId"]) for row in captains], [("example-fleet-orion", fixture.FLEET)])
+        rear["fleetId"] = "another-fleet"
+        with fake_api(api), self.assertRaisesRegex(fleet_setup.SetupError, "belongs to another fleet"):
+            fleet_setup.register_own("header.payload.admin", config, secrets)
 
     def test_a_rerun_keeps_a_token_with_most_of_its_life_left(self):
         import base64
@@ -389,24 +409,17 @@ class AgentDispatchSetupTests(unittest.TestCase):
         self.assertEqual(fleet_setup.token_seconds_left(jwt(1000), now=400), 600)
         self.assertEqual(fleet_setup.token_seconds_left(jwt(100), now=400), 0)
         self.assertEqual(fleet_setup.token_seconds_left("not-a-jwt"), 0)
-        answers, rear, captains = answers_for([*self.argv, "--agent-dispatch"])
-        members = fleet_setup.roster(answers, rear, captains)
-        agents = [{"serviceTokenClientId": fleet_setup.agent_subject(person["account"]), "isActive": True,
-                   "rank": "captain" if index else "rearAdmiral", "fleetId": "fleet-uuid"}
-                  for index, person in enumerate(members)]
-
-        def api(_token, _method, path, _body=None):
-            return {"id": "fleet-uuid"} if path.startswith("/fleets/") else {"items": agents}
-
+        answers, _, _ = answers_for([*self.argv, "--agent-dispatch"])
+        records = {"rearAdmiral": {"serviceTokenClientId": "example-fleet-atlas@agents.example.com"}}
         fresh = jwt(int(fleet_setup.time.time()) + 8 * 3600)
         fleet_setup.write_json(fleet_setup.INPUTS / "fleet.secrets.json", {"rearAdmiralApiToken": fresh})
-        with patch.object(fleet_setup, "api_call", side_effect=api), \
-                patch.object(fleet_setup, "api_token", return_value="minted") as mint:
-            self.assertEqual(fleet_setup.dispatch_agents(answers, members, "admin"), fresh)
+        with patch.object(fleet_setup, "api_token", return_value="minted") as mint:
+            self.assertEqual(fleet_setup.rear_admiral_token(answers, records), fresh)
             mint.assert_not_called()
             fleet_setup.write_json(fleet_setup.INPUTS / "fleet.secrets.json",
                                    {"rearAdmiralApiToken": jwt(int(fleet_setup.time.time()) + 3600)})
-            self.assertEqual(fleet_setup.dispatch_agents(answers, members, "admin"), "minted")
+            self.assertEqual(fleet_setup.rear_admiral_token(answers, records), "minted")
+            mint.assert_called_once_with(answers, "example-fleet-atlas@agents.example.com")
 
     def test_only_the_gateway_user_may_also_reach_the_api(self):
         answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": []}

@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import pwd
+import re
 import socketserver
 import ssl
 import stat
@@ -23,6 +24,7 @@ from standard_channels import command  # noqa: E402
 
 
 FLEET = "00000000-0000-0000-0000-000000000002"
+ADMIN = "00000000-0000-0000-0000-000000000003"
 COMMAND = command("example-fleet")
 INITIATIVE = "00000000-0000-0000-0000-000000000001"
 TOKEN = "fixture.header.signature"
@@ -96,38 +98,213 @@ class IRC(socketserver.StreamRequestHandler):
         self.send(":localhost " + message)
 
 
+class Refusal(Exception):
+    """An API error response; its status is what the installer's API clients report."""
+
+    def __init__(self, status, message=""):
+        super().__init__(message or f"HTTP {status}")
+        self.status = status
+
+
+class Subspace:
+    """An in-memory Subspace API: the fleet, ship, agent and initiative rules the installer meets.
+
+    It follows the API's rules for these records (subspace-api src/fleets.ts and src/agents.ts): only an
+    administrator registers fleets and agents, agent names, IRC nicks and account subjects are unique in the
+    organisation ignoring case, ship names are unique in a fleet ignoring case, a captain needs a ship and a
+    rear admiral has none, and a versioned write must name the current version.
+    """
+
+    NICK = r"[A-Za-z][A-Za-z0-9_-]{0,63}"
+    NAME = r"[A-Za-z0-9-]{1,64}"
+    CHANNEL = r"#[^\s,]{1,63}"
+
+    def __init__(self, provider="dev", page=200):
+        self.fleets, self.ships, self.agents = {}, {}, {}
+        self.initiatives = {INITIATIVE: {"id": INITIATIVE, "name": "Example initiative", "fleetId": None, "channels": ""}}
+        self.provider, self.page, self.admin = provider, page, True
+        self.counts, self.writes, self.serial = Counter(), [], 0
+
+    def identity(self, slug=None):
+        self.serial += 1
+        return FLEET if slug == "example-fleet" else f"00000000-0000-4000-8000-{self.serial:012d}"
+
+    def fleet_by(self, reference):
+        return next((row for row in self.fleets.values() if reference in (row["id"], row["slug"])), None)
+
+    def call(self, method, path, body=None):
+        self.counts[method] += 1
+        if method != "GET":
+            self.writes.append((method, re.sub(r"[0-9a-f]{8}-[0-9a-f-]{27}", "<id>", path.split("?")[0])))
+        route = path.split("?")[0].strip("/").split("/")
+        query = parse_qs(urlsplit(path).query)
+        match method, route:
+            case "GET", ["fleets", reference, "ships"]:
+                fleet = self.fleet_by(reference) or self.missing()
+                return [dict(row) for row in self.ships.values() if row["fleetId"] == fleet["id"]]
+            case "POST", ["fleets", reference, "ships"]:
+                fleet = self.fleet_by(reference) or self.missing()
+                self.channel(body.get("channel"))
+                if any(row["fleetId"] == fleet["id"] and row["name"].lower() == body["name"].lower() for row in self.ships.values()):
+                    raise Refusal(409, "A ship in this fleet already has that name.")
+                ship = {"id": self.identity(), "fleetId": fleet["id"], "name": body["name"],
+                        "channel": body.get("channel"), "version": 1}
+                self.ships[ship["id"]] = ship
+                return dict(ship)
+            case "PATCH", ["ships", ship_id]:
+                ship = self.ships.get(ship_id) or self.missing()
+                self.versioned(ship, body)
+                channel = body["channel"] if "channel" in body else ship["channel"]
+                self.channel(channel)
+                if any(row is not ship and row["fleetId"] == ship["fleetId"] and row["name"].lower() == body["name"].lower()
+                       for row in self.ships.values()):
+                    raise Refusal(409, "A ship in this fleet already has that name.")
+                if (ship["name"], ship["channel"]) != (body["name"], channel):
+                    ship.update(name=body["name"], channel=channel, version=ship["version"] + 1)
+                return dict(ship)
+            case "GET", ["fleets", reference]:
+                return dict(self.fleet_by(reference) or self.missing())
+            case "POST", ["fleets"]:
+                self.administrator()
+                if self.fleet_by(body["slug"]):
+                    raise Refusal(409, "A fleet already has that slug.")
+                for key in ("starbaseChannel", "commandChannel"):
+                    self.channel(body.get(key))
+                fleet = {"id": self.identity(body["slug"]), "version": 1, **body}
+                self.fleets[fleet["id"]] = fleet
+                return dict(fleet)
+            case "PATCH", ["fleets", reference]:
+                self.administrator()
+                fleet = self.fleet_by(reference) or self.missing()
+                for key in ("starbaseChannel", "commandChannel"):
+                    self.channel(body.get(key, fleet.get(key)))
+                fleet.update(body, version=fleet["version"] + 1)
+                return dict(fleet)
+            case "GET", ["agents"]:
+                rows = list(self.agents.values())
+                start = int(query.get("cursor", ["0"])[0])
+                limit = min(int(query.get("limit", ["50"])[0]), self.page)
+                following = start + limit
+                return {"items": [dict(row) for row in rows[start:following]],
+                        "nextCursor": str(following) if following < len(rows) else None}
+            case "POST", ["agents"]:
+                self.administrator()
+                agent = self.registration(body)
+                agent.update(userId=self.identity(), isActive=True, version=1)
+                self.agents[agent["userId"]] = agent
+                return dict(agent)
+            case "PUT", ["agents", agent_id]:
+                self.administrator()
+                agent = self.agents.get(agent_id) or self.missing()
+                self.versioned(agent, body)
+                changed = self.registration({key: value for key, value in body.items() if key != "version"}, agent)
+                if changed["serviceTokenClientId"] != agent["serviceTokenClientId"]:
+                    raise Refusal(409, "Register a new agent to bind a different account subject.")
+                agent.update(changed, version=agent["version"] + 1)
+                return dict(agent)
+            case "POST", ["agents", agent_id, ("deactivate" | "reactivate") as change]:
+                self.administrator()
+                agent = self.agents.get(agent_id) or self.missing()
+                self.versioned(agent, body)
+                active = change == "reactivate"
+                if agent["isActive"] != active:
+                    agent.update(isActive=active, version=agent["version"] + 1)
+                return dict(agent)
+            case "GET", ["me"]:
+                return {"userId": ADMIN}
+            case "GET", ["me", "initiatives"]:
+                return {"items": [self.initiative(row) for row in self.initiatives.values()]}
+            case "GET", ["initiatives"]:
+                return {"items": [self.initiative(row) for row in self.initiatives.values()], "nextCursor": None}
+            case "POST", ["initiatives"]:
+                configuration = body.get("channelConfiguration", {})
+                row = {"id": self.identity(), "name": body["name"], "fleetId": None,
+                       "channels": configuration.get("channels", "")}
+                self.initiatives[row["id"]] = row
+                return self.initiative(row)
+            case "GET", ["initiatives", initiative]:
+                return dict(self.initiatives.get(initiative) or self.missing())
+            case "PUT", ["initiatives", initiative, "fleet"]:
+                row = self.initiatives.get(initiative) or self.missing()
+                assert body["fleetId"] is None or any(fleet["id"] == body["fleetId"] for fleet in self.fleets.values())
+                row["fleetId"] = body["fleetId"]
+                return dict(row)
+        self.missing()
+
+    def initiative(self, row):
+        fleet = next((fleet for fleet in self.fleets.values() if fleet["id"] == row["fleetId"]), None)
+        return {**row, "version": 1, "fleet": fleet and {"slug": fleet["slug"]}}
+
+    def missing(self):
+        raise Refusal(404, "Not found.")
+
+    def administrator(self):
+        if not self.admin:
+            raise Refusal(403, "Requires an organisation administrator.")
+
+    def channel(self, value):
+        if value is not None and not re.fullmatch(self.CHANNEL, value):
+            raise Refusal(400, "Invalid channel.")
+
+    def versioned(self, row, body):
+        if body.get("version") is not None and body["version"] != row["version"]:
+            raise Refusal(409, f"The record changed. Current version is {row['version']}.")
+
+    def registration(self, body, old=None):
+        if not (re.fullmatch(self.NAME, body["name"]) and body["rank"] in ("rearAdmiral", "captain", "crew")
+                and (body.get("ircNick") is None or re.fullmatch(self.NICK, body["ircNick"]))):
+            raise Refusal(400, "Invalid agent registration.")
+        subject = body["serviceTokenClientId"]
+        if self.provider == "dev" and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", subject):
+            raise Refusal(400, "Use the account subject format for this identity provider.")
+        subject = subject if self.provider == "workos" else subject.lower()
+        fleet = self.fleet_by(body.get("fleetId") or "") or self.missing()
+        ship = self.ships.get(body.get("shipId") or "")
+        if body.get("shipId") and (not ship or ship["fleetId"] != fleet["id"]):
+            raise Refusal(400, "Choose a ship in the selected fleet.")
+        if (body["rank"] == "captain") != bool(ship) and body["rank"] != "crew":
+            raise Refusal(400, "A captain needs a ship; a rear admiral must not supply one.")
+        nick = body["ircNick"] if "ircNick" in body else (old or {}).get("ircNick")
+        for row in self.agents.values():
+            if row is old:
+                continue
+            if (row["serviceTokenClientId"] == subject or row["name"].lower() == body["name"].lower()
+                    or (nick and (row.get("ircNick") or "").lower() == nick.lower())):
+                raise Refusal(409, "An account subject, agent name or IRC nick is already registered.")
+        return {"name": body["name"], "rank": body["rank"], "fleetId": fleet["id"], "shipId": body.get("shipId"),
+                "defaultModel": body["defaultModel"], "serviceTokenClientId": subject, "ircNick": nick}
+
+    def summary(self):
+        """The records a desktop reads: the fleets' channels, ships and active officers."""
+        return {
+            "fleets": {row["slug"]: {"name": row["name"], "starbaseChannel": row.get("starbaseChannel"),
+                                     "commandChannel": row.get("commandChannel")} for row in self.fleets.values()},
+            "ships": sorted((row["name"], row["channel"]) for row in self.ships.values()),
+            "agents": sorted((row["name"], row["rank"], row["ircNick"], (self.ships.get(row["shipId"]) or {}).get("name"),
+                              row["isActive"]) for row in self.agents.values()),
+        }
+
+
 class API(BaseHTTPRequestHandler):
-    fleet = None
-    assigned = None
-    counts = Counter()
+    state = Subspace()
 
     def dispatch(self):
         if self.headers.get("Authorization") != f"Bearer {TOKEN}":
             self.reply(401, {})
             return
         path = self.path.removeprefix("/api/v1")
-        method = self.command
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"]))) if "Content-Length" in self.headers else {}
-        API.counts[method] += 1
-        if path == "/fleets/example-fleet" and method == "GET":
-            self.reply(200 if API.fleet else 404, API.fleet or {})
-        elif path == "/fleets" and method == "POST":
+        if path == "/fleets" and self.command == "POST":
             assert body["ircHost"] == "127.0.0.1" and body["ircTls"] is True
             assert "captainNames" not in body and "rearAdmiralName" not in body
-            API.fleet = {"id": FLEET, **body}
-            self.reply(201, API.fleet)
-        elif path == "/fleets/example-fleet" and method == "PATCH":
+        elif path == "/fleets/example-fleet" and self.command == "PATCH":
             assert body == {"name": "Updated Fleet"}
-            API.fleet.update(body)
-            self.reply(200, API.fleet)
-        elif path == f"/initiatives/{INITIATIVE}" and method == "GET":
-            self.reply(200, {"id": INITIATIVE, "fleetId": API.assigned})
-        elif path == f"/initiatives/{INITIATIVE}/fleet" and method == "PUT":
-            assert body["fleetId"] in {None, FLEET}
-            API.assigned = body["fleetId"]
-            self.reply(200, {"id": INITIATIVE, "fleetId": API.assigned})
-        else:
-            self.reply(404, {})
+        try:
+            value = API.state.call(self.command, path, body)
+        except Refusal as error:
+            self.reply(error.status, {"detail": str(error)})
+            return
+        self.reply(201 if self.command == "POST" and path in ("/fleets", "/agents") else 200, value)
 
     do_GET = dispatch
     do_POST = dispatch
@@ -139,8 +316,10 @@ class API(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
+        fleet = API.state.fleet_by("example-fleet") or {}
         (WORK / "api-results.json").write_text(json.dumps({
-            "counts": API.counts, "fleetId": API.assigned, "name": (API.fleet or {}).get("name"),
+            "counts": API.state.counts, "fleetId": API.state.initiatives[INITIATIVE]["fleetId"],
+            "name": fleet.get("name"), "records": API.state.summary(),
         }))
         self.wfile.write(body)
 
@@ -320,6 +499,8 @@ def check_shape():
     assert rear["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-starbase", "replies": "all"}]
     assert captain["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-orion", "replies": "all"}]
     assert captain["access"]["channelRequests"] == "nick-mention"
+    # A direct message starts no turn: Stargate points the sender at the agent's first channel.
+    assert rear["dmPolicy"] == captain["dmPolicy"] == "redirect"
     # Crew have no IRC registration of their own: they are reached through the captain.
     assert not rear.get("crew") and not captain.get("crew")
     assert captain["access"]["peerCaptains"] == ["example-atlas"]
@@ -532,10 +713,20 @@ def check_addons():
 
 def api():
     results = json.loads((WORK / "api-results.json").read_text())
-    assert results["counts"] == {"GET": 7, "POST": 1, "PUT": 3, "PATCH": 1}, results
+    # Each register reads the fleet, its ships, the agents and the initiative. The first creates the fleet, the
+    # captain's ship and both officers' agent records; the others write nothing but the renamed fleet.
+    assert results["counts"] == {"GET": 13, "POST": 4, "PUT": 3, "PATCH": 1}, results
     assert results["fleetId"] == FLEET
     assert results["name"] == "Updated Fleet"
-    print("API creation, update, idempotent registration, unassign and reassign passed.")
+    assert results["records"] == {
+        "fleets": {"example-fleet": {"name": "Updated Fleet", "starbaseChannel": "#example-fleet-starbase",
+                                     "commandChannel": COMMAND}},
+        "ships": [["Orion", "#example-fleet-orion"]],
+        "agents": [["Atlas", "rearAdmiral", "example-atlas", None, True],
+                   ["example-orion", "captain", "example-orion", "Orion", True]],
+    }, results
+    print("API creation, update, idempotent registration of the fleet's channels, ship and officers, unassign "
+          "and reassign passed.")
 
 
 if __name__ == "__main__":
