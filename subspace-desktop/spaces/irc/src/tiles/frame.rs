@@ -87,12 +87,14 @@ pub(crate) fn loading(key: String, tokens: &Tokens, cx: &App) -> Div {
             .child(
                 skeleton(tokens)
                     .h(rems(SKELETON_BAR_REM))
-                    .w(rems(TITLE_SKELETON_REM)),
+                    .w(rems(TITLE_SKELETON_REM))
+                    .max_w_full(),
             )
             .child(
                 skeleton(tokens)
                     .h(rems(SKELETON_BAR_REM))
-                    .w(rems(META_SKELETON_REM)),
+                    .w(rems(META_SKELETON_REM))
+                    .max_w_full(),
             ),
     )
 }
