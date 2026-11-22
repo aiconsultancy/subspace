@@ -31,36 +31,56 @@ pub(crate) mod tests;
 
 pub(crate) use ship::{CrewLine, ShipLive};
 
-/// What Channels knows of one fleet from its Fleet API.
+/// What Channels draws of one fleet from its Fleet API: its state and its
+/// ships as [`ShipLive`] values, and nothing else the stream delivers
+/// (activity lines, sample times, a ship's other fields), so news that
+/// Channels does not draw compares equal and redraws nothing.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FleetLive {
     pub state: FleetState,
-    /// What the fleet's stream has delivered, while the board follows it.
-    pub snapshot: Option<Rc<FleetSnapshot>>,
+    /// Every ship of the stream's latest overview, while the fleet is
+    /// live; `None` while it is not, or before its first overview, so a
+    /// stale ship never shows once the stream is down.
+    ships: Option<Rc<[ShipLive]>>,
 }
 
 /// Each fleet the board shows, by its Subspace API id.
 pub(crate) type Lives = HashMap<String, FleetLive>;
 
 impl FleetLive {
-    /// The live snapshot: only while the fleet's data arrives, so a stale
-    /// snapshot never shows once the stream is down.
-    fn live(&self) -> Option<&FleetSnapshot> {
-        self.snapshot.as_deref().filter(|_| self.state.is_live())
+    /// The fleet in `state` with what its stream delivered, `snapshot`,
+    /// reduced to what Channels draws.
+    pub(crate) fn new(state: FleetState, snapshot: Option<&FleetSnapshot>) -> Self {
+        let ships = snapshot
+            .filter(|_| state.is_live())
+            .and_then(|snapshot| ship::all(snapshot, |_| true))
+            .map(Rc::from);
+        Self { state, ships }
     }
 
-    /// The ship whose captain has the roster nick `captain`, while the
-    /// fleet is live and its Fleet API lists that ship.
+    /// The ship whose captain has the roster nick `captain`, matched to its
+    /// registration ID ignoring ASCII case, while the fleet is live and its
+    /// Fleet API lists that ship.
     pub(crate) fn ship(&self, captain: &str) -> Option<ShipLive> {
-        self.live().and_then(|snapshot| ship::of(snapshot, captain))
+        self.ships
+            .as_deref()?
+            .iter()
+            .find(|ship| ship.id.eq_ignore_ascii_case(captain))
+            .cloned()
     }
 
     /// Every ship of the live fleet whose captain `is_captain` accepts, in
     /// the Fleet API's order; `None` while the fleet is not live or before
     /// its first overview.
     pub(crate) fn ships(&self, is_captain: impl Fn(&str) -> bool) -> Option<Vec<ShipLive>> {
-        self.live()
-            .and_then(|snapshot| ship::all(snapshot, is_captain))
+        let ships = self.ships.as_deref()?;
+        Some(
+            ships
+                .iter()
+                .filter(|ship| is_captain(&ship.id))
+                .cloned()
+                .collect(),
+        )
     }
 }
 

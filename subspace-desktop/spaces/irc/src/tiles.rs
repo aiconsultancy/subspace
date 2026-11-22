@@ -75,9 +75,9 @@ pub(crate) fn candidates(found: impl IntoIterator<Item = Ref>) -> Vec<Ref> {
 }
 
 /// Which message, by local sequence, keeps each reference's tile in one
-/// conversation.
+/// conversation, with where in that message it was named.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TileOwners(HashMap<TileRef, i64>);
+pub(crate) struct TileOwners(HashMap<TileRef, (i64, usize)>);
 
 impl TileOwners {
     /// The rule: each reference of `messages`, read in order, that has no
@@ -85,15 +85,15 @@ impl TileOwners {
     /// never replaced.
     pub fn claim<'a>(&mut self, messages: impl IntoIterator<Item = (i64, &'a [TileRef])>) {
         for (seq, refs) in messages {
-            for found in refs {
-                self.0.entry(found.clone()).or_insert(seq);
+            for (at, found) in refs.iter().enumerate() {
+                self.0.entry(found.clone()).or_insert((seq, at));
             }
         }
     }
 
     /// Whether message `seq` shows the tile for `found`.
     pub fn shows(&self, seq: i64, found: &TileRef) -> bool {
-        self.0.get(found) == Some(&seq)
+        self.0.get(found).is_some_and(|(owner, _)| *owner == seq)
     }
 
     /// Lets go of every claim whose message `held` does not hold, so a
@@ -102,7 +102,7 @@ impl TileOwners {
     /// messages not yet read ever claim, so no message already drawn gains
     /// a tile.
     pub fn release(&mut self, held: &HashSet<i64>) {
-        self.0.retain(|_, seq| held.contains(seq));
+        self.0.retain(|_, (seq, _)| held.contains(seq));
     }
 
     /// Lets go of every issue's claim, as a new issue recognition does, so
@@ -115,15 +115,16 @@ impl TileOwners {
 
     /// Whether any claim's message is missing from `held`.
     fn outlives(&self, held: &HashSet<i64>) -> bool {
-        self.0.values().any(|seq| !held.contains(seq))
+        self.0.values().any(|(seq, _)| !held.contains(seq))
     }
 
     /// Every reference with a tile, in the order the conversation first
-    /// showed them: what is in play in it.
+    /// showed them, message by message and within a message as it named
+    /// them: what is in play in it, so a cap keeps the first named.
     pub fn in_play(&self) -> Vec<TileRef> {
-        let mut owned: Vec<(&i64, &TileRef)> =
-            self.0.iter().map(|(found, seq)| (seq, found)).collect();
-        owned.sort();
+        let mut owned: Vec<(&(i64, usize), &TileRef)> =
+            self.0.iter().map(|(found, claim)| (claim, found)).collect();
+        owned.sort_unstable_by_key(|(claim, _)| **claim);
         owned.into_iter().map(|(_, found)| found.clone()).collect()
     }
 }

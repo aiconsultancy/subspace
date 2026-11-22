@@ -21,6 +21,7 @@ sha2.workspace = true
 [dev-dependencies]
 subspace-api-client = { workspace = true, features = ["test-support"] }
 subspace-client-irc = { workspace = true, features = ["test-support"] }
+subspace-client-fleet = { workspace = true, features = ["test-support"] }
 subspace-framework = { workspace = true, features = ["test-support"] }
 markdown = "=1.0.0"
 gpui-kit = { workspace = true, features = ["test-support"] }

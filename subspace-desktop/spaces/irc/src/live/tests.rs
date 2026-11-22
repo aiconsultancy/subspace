@@ -2,8 +2,6 @@
 //! roster captain, its figures, its crew and what each is on, untrusted
 //! text bounded, and nothing while the fleet is not live.
 
-use std::rc::Rc;
-
 use serde_json::json;
 use subspace_client_fleet::model::{Activity, FleetOverview, ShipDetail};
 use subspace_client_fleet::{FleetSnapshot, FleetState, Link};
@@ -71,10 +69,7 @@ pub(crate) fn snapshot() -> FleetSnapshot {
 
 /// The aurora fleet as the hub holds it in `state`, with the snapshot.
 pub(crate) fn aurora(state: FleetState) -> FleetLive {
-    FleetLive {
-        state,
-        snapshot: Some(Rc::new(snapshot())),
-    }
+    FleetLive::new(state, Some(&snapshot()))
 }
 
 /// The aurora fleet, live.
@@ -155,10 +150,7 @@ fn nothing_shows_while_the_fleet_is_not_live() {
             .ship("aurora-lyra")
             .is_some()
     );
-    let empty = FleetLive {
-        state: FleetState::Followed(Link::Live),
-        snapshot: None,
-    };
+    let empty = FleetLive::new(FleetState::Followed(Link::Live), None);
     assert!(
         empty.ship("aurora-lyra").is_none(),
         "before the first event"
@@ -218,4 +210,92 @@ fn a_ship_whose_crew_cannot_be_read_says_so_and_counts_nothing() {
     );
     assert_eq!(ship::state_word(Activity::Running), Some("Working"));
     assert_eq!(ship::state_word(Activity::Unknown), None);
+}
+
+#[test]
+fn news_channels_does_not_draw_leaves_the_fleet_equal() {
+    // A busy fleet's activity lines and sample times must not re-sync the
+    // navigator, the search index and every open transcript.
+    let before = snapshot();
+    let mut after = snapshot();
+    after.activity.push_back(
+        serde_json::from_value(json!({"ship": "aurora-lyra", "member": "wren",
+            "kind": "phase", "text": "Wren started reviewing", "at": NOW}))
+        .unwrap(),
+    );
+    after
+        .ships
+        .get_mut("aurora-lyra")
+        .unwrap()
+        .detail_updated_at = Some(NOW);
+    let lyra = &mut after.overview.as_mut().unwrap().ships[0];
+    lyra.repository = Some("acme/nav".into());
+    let state = FleetState::Followed(Link::Live);
+    assert_eq!(
+        FleetLive::new(state.clone(), Some(&before)),
+        FleetLive::new(state.clone(), Some(&after))
+    );
+    // What it draws still counts: a crew member going idle.
+    let mut idle = snapshot();
+    idle.overview.as_mut().unwrap().ships[0]
+        .crew
+        .as_mut()
+        .unwrap()
+        .busy = 2;
+    idle.ships.remove("aurora-lyra");
+    assert_ne!(
+        FleetLive::new(state.clone(), Some(&before)),
+        FleetLive::new(state, Some(&idle))
+    );
+}
+
+#[test]
+fn a_kept_or_unavailable_crew_detail_never_shows_as_live() {
+    // Stargate keeps the last good detail after a failed read: no crew
+    // member shows on the task they were last seen on.
+    let mut kept = snapshot();
+    kept.ships.get_mut("aurora-lyra").unwrap().detail_stale = true;
+    let lyra = ship::of(&kept, "aurora-lyra").unwrap();
+    assert!(lyra.members.is_empty(), "no crew lines from a kept detail");
+    assert_eq!(lyra.crew, Some((3, 4)), "the overview's totals stand in");
+    // The overview says the ship is unavailable while its detail stays.
+    let mut down = snapshot();
+    let overview = down.overview.as_mut().unwrap();
+    overview.ships[0].available = false;
+    let lyra = ship::of(&down, "aurora-lyra").unwrap();
+    assert!(lyra.members.is_empty());
+    assert_eq!(lyra.crew, None);
+    assert!(lyra.unavailable.is_some());
+    // The detail itself says the ship is unavailable.
+    let mut detail_down = snapshot();
+    detail_down
+        .ships
+        .get_mut("aurora-lyra")
+        .unwrap()
+        .ship
+        .available = false;
+    assert!(
+        ship::of(&detail_down, "aurora-lyra")
+            .unwrap()
+            .members
+            .is_empty()
+    );
+    // A kept overview is not live at all.
+    let mut kept_overview = snapshot();
+    kept_overview.overview.as_mut().unwrap().overview_stale = true;
+    let fleet = FleetLive::new(FleetState::Followed(Link::Live), Some(&kept_overview));
+    assert!(fleet.ship("aurora-lyra").is_none());
+    assert!(fleet.ships(|_| true).is_none());
+}
+
+#[test]
+fn bidirectional_controls_are_stripped_from_untrusted_text() {
+    let name = "Ly\u{202E}ar\u{202C} \u{2067}x\u{2069}\u{200F}";
+    assert_eq!(bounded(name, MAX_NAME_CHARS), "Lyar x");
+    let mut detail = lyra_detail();
+    detail.crew_members[1].name = "\u{202E}nerW".into();
+    let mut snapshot = snapshot();
+    snapshot.ships.insert("aurora-lyra".into(), detail);
+    let ship = ship::of(&snapshot, "aurora-lyra").unwrap();
+    assert_eq!(ship.members[0].name, "nerW");
 }
