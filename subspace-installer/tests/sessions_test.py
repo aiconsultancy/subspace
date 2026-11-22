@@ -4,11 +4,15 @@ Run with Python 3.10 or later: python3 -B subspace-installer/tests/sessions_test
 """
 
 import base64
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
 import json
+import os
 from pathlib import Path
+import stat
 import sys
 import tempfile
+from threading import Thread
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
@@ -32,8 +36,10 @@ class FakeOpenCode:
         self.creates = []
         self.updates = []
         self.fail_create = None
+        self.lookups = 0
 
     def get(self, session_id):
+        self.lookups += 1
         value = self.sessions.get(session_id)
         return json.loads(json.dumps(value)) if value else None
 
@@ -121,6 +127,59 @@ class CaptainSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(sessions.SessionError, "differs from its record"):
             self.ensure()
 
+    def test_an_unconfirmed_reservation_follows_a_changed_first_repository(self):
+        self.server.fail_create = "before"
+        with self.assertRaises(sessions.SessionError):
+            self.ensure()
+        reserved = json.loads(self.record.pending.read_text())["sessionID"]
+        self.server.fail_create = None
+        library = DIRECTORY.replace("project", "library")
+        self.assertEqual(self.ensure({**EXPECTED, "directory": library}), (reserved, True))
+        self.assertEqual(self.server.sessions[reserved]["location"], {"directory": library})
+        self.assertEqual(json.loads(self.record.confirmed.read_text())["directory"], library)
+
+    def test_a_reservation_whose_root_exists_keeps_its_first_repository(self):
+        # Interrupted after the create was stored but before the record was confirmed.
+        reserved = sessions.new_session_id()
+        self.record.save({"sessionID": reserved, "directory": DIRECTORY, "agent": "build",
+                          "crew": EXPECTED["crew"], "confirmed": False})
+        self.server.sessions[reserved] = {"id": reserved, "agent": "build", "location": {"directory": DIRECTORY},
+                                          "model": EXPECTED["model"], "permissions": PERMISSIONS}
+        with self.assertRaisesRegex(sessions.SessionError, "already exists in its original first repository"):
+            self.ensure({**EXPECTED, "directory": DIRECTORY.replace("project", "library")})
+
+    def test_a_changed_captain_model_is_reported_not_silently_ignored(self):
+        session_id, _ = self.ensure()
+        notices = []
+        claude = {"providerID": "claude-proxy", "id": "claude-sonnet-5-5"}
+        self.assertEqual(sessions.ensure(self.server, self.record, {**EXPECTED, "model": claude}, wait=ready,
+                                         notice=notices.append), (session_id, False))
+        [notice] = notices
+        self.assertIn("keeps its model openai-proxy/gpt-5.4", notice)
+        self.assertIn("claude-proxy/claude-sonnet-5-5", notice)
+        self.assertEqual(self.server.sessions[session_id]["model"], EXPECTED["model"])
+        notices.clear()
+        sessions.ensure(self.server, self.record, EXPECTED, wait=ready, notice=notices.append)
+        self.assertEqual(notices, [])
+
+    def test_records_reach_the_disk_before_and_after_the_rename(self):
+        events = []
+        real_fsync, real_replace = os.fsync, os.replace
+
+        def fsync(fd):
+            events.append("fsync directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "fsync file")
+            real_fsync(fd)
+
+        def replace(source, target):
+            events.append(f"replace {Path(target).name}")
+            real_replace(source, target)
+
+        with patch.object(sessions.os, "fsync", side_effect=fsync), patch.object(sessions.os, "replace", side_effect=replace):
+            self.ensure()
+        # The reservation and the confirmed record each reach the disk, then the pending file's removal does.
+        self.assertEqual(events, ["fsync file", "replace orion.pending.json", "fsync directory",
+                                  "fsync file", "replace orion.json", "fsync directory", "fsync directory"])
+
     def test_changed_permissions_are_updated_on_the_same_root(self):
         session_id, _ = self.ensure()
         tighter = [*PERMISSIONS, {"action": "stargate_model", "resource": "get", "effect": "allow"}]
@@ -138,7 +197,9 @@ class CaptainSessionTests(unittest.TestCase):
             self.server.fail_create = None
             session_id, _ = self.ensure()
             self.assertEqual(runtime.pinned_session(person, Path(DIRECTORY)), session_id)
-            self.assertIsNone(runtime.pinned_session({**person, "crew": []}, Path(DIRECTORY)))
+            # Zero crew or no repositories would drop the pin: refused, naming the recorded crew.
+            with self.assertRaisesRegex(runtime.Invalid, r"Captain orion: .*crew are fixed .*configured: none"):
+                runtime.pinned_session({**person, "crew": []}, Path(DIRECTORY))
             with self.assertRaisesRegex(runtime.Invalid, "Captain orion: .*crew are fixed"):
                 runtime.pinned_session({**person, "crew": [{"id": "claude-1"}]}, Path(DIRECTORY))
             with self.assertRaisesRegex(runtime.Invalid, "Captain orion: .*first repository is fixed"):
@@ -182,6 +243,33 @@ class OpenCodeClientTests(unittest.TestCase):
         token = base64.b64encode(b"opencode:fixture-password").decode()
         self.assertTrue(all(request.get_header("Authorization") == f"Basic {token}" for request in opener.requests))
 
+    def test_the_loopback_client_ignores_proxy_settings_from_the_environment(self):
+        seen = []
+
+        class Engine(BaseHTTPRequestHandler):
+            def do_GET(self):
+                seen.append((self.path, self.headers.get("Authorization")))
+                body = json.dumps({"data": {"id": "ses_a"}}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Engine)
+        Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        # A proxy that would receive the captain's Basic auth header; nothing listens on port 9.
+        proxies = {name: "http://127.0.0.1:9" for name in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY")}
+        with patch.dict(os.environ, {**proxies, "no_proxy": "", "NO_PROXY": ""}):
+            client = sessions.OpenCode(f"http://127.0.0.1:{server.server_port}", "fixture-password")
+            self.assertEqual(client.get("ses_a"), {"id": "ses_a"})
+        token = base64.b64encode(b"opencode:fixture-password").decode()
+        self.assertEqual(seen, [("/api/session/ses_a", f"Basic {token}")])
+
     def test_authentication_failures_are_errors_not_missing_sessions(self):
         opener = Opener(HTTPError("http://127.0.0.1:4097/api/session/x", 401, "Unauthorized", {}, io.BytesIO()))
         with self.assertRaisesRegex(sessions.SessionError, "HTTP 401"):
@@ -196,6 +284,206 @@ class OpenCodeClientTests(unittest.TestCase):
         client = sessions.OpenCode("http://127.0.0.1:4097", "fixture-password", opener)
         with self.assertRaisesRegex(sessions.SessionError, "did not answer"):
             sessions.wait_until_ready(client, "ses_a", timeout=10, sleep=lambda _: None, clock=lambda: next(clock))
+
+
+
+def secrets_for(*accounts):
+    return {"proxyKey": "fixture-model-proxy-key",
+            "ircPasswords": {account: "fixture-password" for account in accounts}}
+
+
+def crew_fleet(*captains):
+    config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+    config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+    config["captains"] = [{"id": name, "name": name.title(), "account": f"example-{name}"} for name in captains]
+    secrets = secrets_for("example-atlas", *(f"example-{name}" for name in captains))
+    return config, secrets
+
+
+class InstalledFleet(unittest.TestCase):
+    """Render and commission against temporary /etc and /var/lib trees, without root or systemd."""
+
+    def setUp(self):
+        self.root = tempfile.TemporaryDirectory()
+        self.addCleanup(self.root.cleanup)
+        root = Path(self.root.name)
+        self.etc, self.state, self.systemd = root / "etc", root / "state", root / "systemd"
+        for path in (self.etc, self.state, self.systemd):
+            path.mkdir()
+        self.events = []
+        real_durable = sessions.write_durable
+
+        def write(path, content, mode=0o600, group="root"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists() or path.read_text() != content:
+                path.write_text(content)
+                self.events.append(("write", path.name))
+
+        def durable(path, text):
+            self.events.append(("ready", path.name))
+            real_durable(path, text)
+
+        for name, value in (("ETC", self.etc), ("STATE", self.state), ("SYSTEMD", self.systemd),
+                            ("SESSIONS", self.etc / "sessions")):
+            self.start(patch.object(runtime, name, value))
+        self.start(patch.object(runtime, "write", side_effect=write))
+        self.start(patch.object(runtime.sessions, "write_durable", side_effect=durable))
+        for name in ("directory", "run", "configure_git", "toolchains"):
+            self.start(patch.object(runtime, name))
+        self.start(patch.object(runtime.subprocess, "run"))
+        self.start(patch.object(runtime, "account", side_effect=lambda user, home, mode=0o700: home))
+        self.start(patch.object(runtime, "render_proxy", return_value="subspace-fleet-proxy.service"))
+        self.start(patch.object(runtime, "render_view", return_value="subspace-fleet-view.service"))
+        self.start(patch.object(runtime, "render_firewall", return_value=runtime.FIREWALL))
+        self.start(patch.object(runtime, "maintenance_units", return_value=[]))
+        self.start(patch.object(runtime, "reconcile_workspaces",
+                                       side_effect=lambda cfg, homes: self.state / "references" / "atlas"))
+        self.start(patch.object(runtime, "allocate_ports",
+                                       side_effect=lambda cfg: {person["id"]: 4096 + index
+                                                                for index, person in enumerate(cfg["members"])}))
+        self.start(patch.object(sys, "stdout", io.StringIO()))
+        self.store = sessions.SessionRecord(self.etc / "sessions", "orion")
+        self.workspace = str(self.state / "agents/orion/workspace/project")
+
+    def start(self, patcher):
+        value = patcher.start()
+        self.addCleanup(patcher.stop)
+        return value
+
+    def render(self, config, secrets):
+        self.events.clear()
+        runtime.render(runtime.validate(config, secrets), {"tokens": {}, "cloud": {}})
+
+    def pin(self, captain="orion"):
+        server = FakeOpenCode()
+        expected = {**EXPECTED, "directory": str(self.state / f"agents/{captain}/workspace/project"),
+                    "crew": ["claude-1", "claude-2", "codex-1", "codex-2"]}
+        session_id, _ = sessions.ensure(server, sessions.SessionRecord(self.etc / "sessions", captain), expected,
+                                        wait=ready)
+        return session_id
+
+    def gateway(self):
+        config = json.loads((self.etc / "stargate.json").read_text())
+        unit = (self.systemd / "subspace-fleet-gateway.service").read_text()
+        return {entry["id"]: entry["backend"] for entry in config["irc"]}, unit
+
+    def test_the_gateway_waits_for_a_rendered_pin_not_just_a_confirmed_record(self):
+        config, secrets = crew_fleet("orion")
+        marker = self.etc / "sessions/orion.ready"
+        self.render(config, secrets)
+        served, unit = self.gateway()
+        # Unpinned, the captain is left out of the shared gateway, which still serves the rear admiral.
+        self.assertEqual(list(served), ["atlas"])
+        self.assertNotIn("ConditionPathExists", unit)
+        self.assertNotIn("plugins", json.loads((self.etc / "opencode-orion.json").read_text()))
+        self.assertFalse(marker.exists())
+
+        session_id = self.pin()
+        # Confirmed but not yet rendered (a reboot or failed re-render here): still not ready, still left out.
+        self.assertFalse(marker.exists())
+        self.assertEqual(list(self.gateway()[0]), ["atlas"])
+
+        self.render(config, secrets)
+        served, unit = self.gateway()
+        self.assertEqual(served["orion"]["sessionID"], session_id)
+        self.assertIn(f"ConditionPathExists={marker}", unit.splitlines())
+        engine = json.loads((self.etc / "opencode-orion.json").read_text())
+        self.assertEqual(engine["plugins"][0]["options"]["captainSessionID"], session_id)
+        self.assertEqual(marker.read_text(), f"{session_id}\n")
+        self.assertEqual(marker.stat().st_mode & 0o777, 0o600)
+        # The marker follows every configuration that changed to name the pin.
+        written = [name for kind, name in self.events if kind == "write"]
+        self.assertEqual(self.events[-1], ("ready", "orion.ready"))
+        for name in ("opencode-orion.json", "stargate.json", "gateway.json", "subspace-fleet-gateway.service"):
+            self.assertIn(name, written)
+
+        # A re-run with nothing changed rewrites nothing, the marker included.
+        self.render(config, secrets)
+        self.assertEqual(self.events, [])
+        self.assertEqual(marker.read_text(), f"{session_id}\n")
+
+    def test_a_marker_without_a_confirmed_record_is_withdrawn_before_anything_is_written(self):
+        config, secrets = crew_fleet("orion")
+        self.pin()
+        self.render(config, secrets)
+        marker = self.etc / "sessions/orion.ready"
+        self.assertTrue(marker.exists())
+        self.store.confirmed.unlink()
+        real_unlink = Path.unlink
+
+        def unlink(path, missing_ok=False):
+            self.events.append(("unlink", path.name))
+            real_unlink(path, missing_ok=missing_ok)
+
+        with patch.object(Path, "unlink", unlink):
+            self.render(config, secrets)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.events[0], ("unlink", "orion.ready"))
+        self.assertEqual(list(self.gateway()[0]), ["atlas"])
+
+    def test_zero_crew_or_no_repositories_cannot_drop_a_pin(self):
+        config, secrets = crew_fleet("orion")
+        self.pin()
+        self.render(config, secrets)
+        for change in ({"crew": {"claude": {"count": 0}, "codex": {"count": 0}}}, {"repositories": []}):
+            with self.subTest(change=change):
+                self.events.clear()
+                with self.assertRaisesRegex(runtime.Invalid, "Captain orion: .*crew are fixed .*configured: none"):
+                    runtime.render(runtime.validate({**config, **change}, secrets), {"tokens": {}, "cloud": {}})
+                self.assertEqual(self.events, [])
+        self.assertTrue((self.etc / "sessions/orion.ready").exists())
+
+    def commission_setup(self, *captains):
+        config, secrets = crew_fleet(*captains)
+        for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", {})):
+            (self.etc / name).write_text(json.dumps(value))
+            (self.etc / name).chmod(0o600)
+        servers = {}
+        for index, captain in enumerate(captains, 1):
+            (self.etc / f"engine-{captain}.json").write_text(json.dumps({
+                "port": 4096 + index, "directory": str(self.state / f"agents/{captain}/workspace/project"),
+                "environment": {"OPENCODE_PASSWORD": "fixture-password"}}))
+            servers[4096 + index] = FakeOpenCode()
+        clients = patch.object(runtime.sessions, "OpenCode",
+                               side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])])
+        self.start(clients)
+        return servers
+
+    def test_one_failing_captain_does_not_hold_back_the_others(self):
+        servers = self.commission_setup("orion", "vega")
+        servers[4098].fail_create = "before"
+        with patch.object(runtime, "render") as render, \
+                self.assertRaisesRegex(runtime.Invalid, r"^Captain vega: .*HTTP 503.*keeps serving the rest"):
+            runtime.commission(False)
+        render.assert_called_once()
+        self.assertTrue(self.store.confirmed.exists())
+        self.assertFalse(sessions.SessionRecord(self.etc / "sessions", "vega").confirmed.exists())
+
+    def test_a_failed_re_render_asks_for_no_restart(self):
+        self.commission_setup("orion")
+        pending = self.state / "pending"
+        with patch.object(runtime, "render", side_effect=lambda *_args: pending.touch() or 1 / 0), \
+                self.assertRaises(ZeroDivisionError):
+            runtime.commission(False)
+        self.assertFalse(pending.exists())
+        self.assertTrue(self.store.confirmed.exists())
+        self.assertFalse((self.etc / "sessions/orion.ready").exists())
+
+    def test_the_pre_restart_pass_only_updates_pinned_roots_that_answer(self):
+        servers = self.commission_setup("orion", "vega")
+        with patch.object(runtime, "render"):
+            runtime.commission(False)
+        session_id = json.loads(self.store.confirmed.read_text())["sessionID"]
+        servers[4097].sessions[session_id]["permissions"] = PERMISSIONS
+        vega = sessions.SessionRecord(self.etc / "sessions", "vega")
+        vega.confirmed.unlink()
+        with patch.object(runtime, "render") as render:
+            runtime.commission(False, existing=True)
+        render.assert_not_called()
+        self.assertEqual(servers[4097].sessions[session_id]["permissions"],
+                         runtime.captain_permissions(runtime.validate(*crew_fleet("orion", "vega"))["members"][1]))
+        # Unconfirmed captains are left to the full commission after the restart.
+        self.assertEqual(len(servers[4098].creates), 1)
 
 
 if __name__ == "__main__":

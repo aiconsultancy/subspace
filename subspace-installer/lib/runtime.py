@@ -367,7 +367,7 @@ def crew_roster(captain, teams, names, slug):
         for slot in range(1, team["count"] + 1):
             key = f"{family}-{slot}"
             name = string(names.get(key, f"{family.title()} {slot}"), "crew display name").strip()
-            require(name.isascii() and re.fullmatch(CREW_ID, crew_id(name)),
+            require(re.fullmatch(r"[A-Za-z0-9 _-]+", name) and re.fullmatch(CREW_ID, crew_id(name)),
                     "Crew names use ASCII letters, digits, spaces, hyphens and underscores, and shorten to "
                     "an ID of at most 32 characters.")
             member_id = crew_id(name)
@@ -952,20 +952,57 @@ def crew_options(cfg, person, home, engine_port, session_id):
 
 
 def pinned_session(person, workspace):
-    """The captain's confirmed root session, after checking it still fits the configured crew."""
-    if not person["crew"]:
-        return None
+    """A captain's confirmed root session, after checking it still fits the configured crew.
+
+    The record is read whatever the requested roster: zero crew or no repositories must not drop a pin.
+    """
     try:
         record = sessions.SessionRecord(SESSIONS, person["id"]).load()
         if not record or not record.get("confirmed"):
             return None
+        sessions.check_roster(record, [worker["id"] for worker in person["crew"]])
         require(record.get("directory") == str(workspace),
                 "its first repository is fixed once its session is pinned, because Stargate's crew state names "
                 "that checkout. Restore the original first repository.")
-        sessions.check_roster(record, [worker["id"] for worker in person["crew"]])
         return pattern(record.get("sessionID"), sessions.SESSION_ID.pattern, "pinned captain session ID")
     except (Invalid, sessions.SessionError) as error:
         raise Invalid(f"Captain {person['id']}: {error}") from None
+
+
+def captain_pins(cfg):
+    """Each captain's pinned root session or None, checked before anything is installed."""
+    first = next(iter(cfg["repositories"]), None)
+    pins = {}
+    for person in cfg["members"][1:]:
+        workspace = STATE / "agents" / person["id"] / "workspace"
+        pins[person["id"]] = pinned_session(person, workspace / first if first else workspace)
+    return pins
+
+
+def ready_marker(agent_id):
+    """Written once a captain's engine and gateway configuration carry its pin; the gateway unit waits for it."""
+    return SESSIONS / f"{agent_id}.ready"
+
+
+def withdraw_ready(pins):
+    """Remove readiness markers of captains this render does not pin, before their configuration changes."""
+    if not SESSIONS.is_dir():
+        return
+    for marker in SESSIONS.glob("*.ready"):
+        if not pins.get(marker.name.removesuffix(".ready")):
+            marker.unlink(missing_ok=True)
+
+
+def publish_ready(pins):
+    """Mark pinned captains ready, after their configuration is installed and flushed to disk."""
+    pinned = {agent_id: session_id for agent_id, session_id in pins.items() if session_id}
+    if not pinned:
+        return
+    os.sync()
+    for agent_id, session_id in pinned.items():
+        marker = ready_marker(agent_id)
+        if not marker.is_file() or marker.is_symlink() or marker.read_text() != f"{session_id}\n":
+            sessions.write_durable(marker, f"{session_id}\n")
 
 
 def render_engine(cfg, person, home, workspace, engine_port, seed, documents, session_id):
@@ -1365,6 +1402,8 @@ def render(cfg, extra, prune=False):
     if slug_path.exists():
         require(slug_path.read_text().strip() == cfg["slug"], "Fleet slug is immutable on this VM.")
     write(slug_path, cfg["slug"] + "\n")
+    pins = captain_pins(cfg)
+    withdraw_ready(pins)
     tokens = {**extra["tokens"], **extra.get("slack", {}).get(cfg["members"][0]["id"], {})}
     if "reportChannel" not in cfg["integrations"]["usage"]:
         tokens.pop("proxy-management-key", None)
@@ -1403,7 +1442,7 @@ def render(cfg, extra, prune=False):
             )
     references = reconcile_workspaces(cfg, homes)
     databases, engines = [], []
-    registrations, environments, awaiting = {}, {}, {}
+    registrations, environments = {}, {}
     for person in cfg["members"]:
         agent_id = person["id"]
         home = homes[agent_id]
@@ -1414,12 +1453,8 @@ def render(cfg, extra, prune=False):
                 workspace = references
             workspace /= next(iter(cfg["repositories"]))
         if harness["type"] == "opencode":
-            session_id = pinned_session(person, workspace)
-            if person["crew"]:
-                # The gateway waits until this captain's root session is pinned (runtime.py commission).
-                awaiting[agent_id] = SESSIONS / f"{agent_id}.json"
             unit, backend, headers, database = render_engine(
-                cfg, person, home, workspace, ports[agent_id], seed, documents[agent_id], session_id)
+                cfg, person, home, workspace, ports[agent_id], seed, documents[agent_id], pins.get(agent_id))
             databases.append(database)
             units.append(unit)
             engines.append(unit)
@@ -1445,15 +1480,19 @@ def render(cfg, extra, prune=False):
     default_group = "gateway" if rear["harness"]["type"] == "opencode" else "gateway-opencode"
     for person in cfg["members"]:
         agent_id = person["id"]
+        if person["crew"] and not pins.get(agent_id):
+            # Joins the shared gateway once its root session is pinned (runtime.py commission), so the
+            # gateway never serves it unpinned and keeps serving the rest of the fleet meanwhile.
+            continue
         native = person["harness"]["type"] != "opencode"
         group = ("gateway" if person is rear else f"gateway-agent-{agent_id}") if native else default_group
         user = f"ss-{agent_id}" if native else GATEWAY
         home = homes[agent_id] if native else gateway_home
-        opts = groups.setdefault(group, {"user": user, "home": home, "irc": [], "environment": {}, "awaiting": []})
+        opts = groups.setdefault(group, {"user": user, "home": home, "irc": [], "environment": {}, "ready": []})
         opts["irc"].append(irc_officer(cfg, person, registrations[agent_id]))
         opts["environment"].update(environments[agent_id])
-        if agent_id in awaiting:
-            opts["awaiting"].append(awaiting[agent_id])
+        if person["crew"]:
+            opts["ready"].append(ready_marker(agent_id))
 
     checks = []
     for group, options in groups.items():
@@ -1482,7 +1521,7 @@ def render(cfg, extra, prune=False):
         checks.append([user, str(runtime_path)])
         units.append(serve_unit(
             group, "Stargate fleet gateway", f"{APP}/lib/runtime.py gateway {runtime_path} start", user, after,
-            user_paths=writable, unit_options=[f"ConditionPathExists={path}" for path in options["awaiting"]],
+            user_paths=writable, unit_options=[f"ConditionPathExists={path}" for path in options["ready"]],
         ))
     write(ETC / "gateway-checks.json", json_text(checks))
     dash = cfg["dashboard"]
@@ -1503,33 +1542,56 @@ def render(cfg, extra, prune=False):
     else:
         retired_path.unlink(missing_ok=True)
     write(path, "".join(f"{unit}\n" for unit in units))
+    publish_ready(pins)
 
 
-def commission(prune):
-    """Pin every crew-hosting captain's root session on its running engine; re-render once if any is new."""
+def commission(prune, existing=False):
+    """Pin every crew-hosting captain's root session on its running engine; re-render once if any is new.
+
+    With existing, only reconcile already pinned roots on engines that answer now, so a changed policy
+    reaches the session before the gateway restarts with it. That pass is best effort and renders nothing.
+    """
     cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True))
-    pinned = []
+    pinned, failed = [], []
     for person in cfg["members"]:
         if not person["crew"]:
             continue
-        settings = read_json(ETC / f"engine-{person['id']}.json")
-        harness = person["harness"]
-        client = sessions.OpenCode(f"http://{LOOPBACK}:{settings['port']}", settings["environment"]["OPENCODE_PASSWORD"])
-        expected = {
-            "directory": settings["directory"], "title": f"{cfg['slug']}/{person['id']}",
-            "crew": [worker["id"] for worker in person["crew"]],
-            "model": {"providerID": PROVIDERS[harness["family"]], "id": harness["model"]},
-            "permissions": captain_permissions(person),
-        }
+        store = sessions.SessionRecord(SESSIONS, person["id"])
         try:
-            _, new = sessions.ensure(client, sessions.SessionRecord(SESSIONS, person["id"]), expected)
-        except sessions.SessionError as error:
-            raise Invalid(f"Captain {person['id']}: {error}") from None
+            if existing and not (store.load() or {}).get("confirmed"):
+                continue
+            settings = read_json(ETC / f"engine-{person['id']}.json")
+            harness = person["harness"]
+            client = sessions.OpenCode(f"http://{LOOPBACK}:{settings['port']}", settings["environment"]["OPENCODE_PASSWORD"])
+            expected = {
+                "directory": settings["directory"], "title": f"{cfg['slug']}/{person['id']}",
+                "crew": [worker["id"] for worker in person["crew"]],
+                "model": {"providerID": PROVIDERS[harness["family"]], "id": harness["model"]},
+                "permissions": captain_permissions(person),
+            }
+            if existing:
+                _, new = sessions.ensure(client, store, expected, wait=lambda c, i: sessions.wait_until_ready(c, i, 2),
+                                         notice=lambda _text: None)
+            else:
+                _, new = sessions.ensure(client, store, expected)
+        except (Invalid, sessions.SessionError) as error:
+            if not existing:
+                # Keep going: one captain's failure must not hold back the others' pins.
+                failed.append(f"Captain {person['id']}: {error}")
+            continue
         if new:
             pinned.append(person["id"])
     if pinned:
-        render(cfg, read_json(ETC / "extra-secrets.json", private=True), prune)
+        try:
+            render(cfg, read_json(ETC / "extra-secrets.json", private=True), prune)
+        except BaseException:
+            # A failed re-render restarts nothing: running services keep the configuration they loaded, and
+            # a captain's readiness marker is only written once a render completes.
+            (STATE / "pending").unlink(missing_ok=True)
+            raise
         print(f"Pinned the root session of {', '.join(pinned)}. Fleet services restart to load the crew plugin.")
+    require(not failed, " ".join(failed) + " The gateway keeps serving the rest of the fleet without "
+            "unpinned captains. Fix the cause and run the installer again.")
 
 
 def engine(path, attach=False):
@@ -1630,9 +1692,7 @@ def main(args):
             require(slug_path.read_text().strip() == cfg["slug"], "Fleet slug is immutable on this VM.")
         if os.access(SESSIONS, os.R_OK | os.X_OK):
             # Refuse a changed crew roster or first repository before anything is installed.
-            for person in cfg["members"]:
-                if person["crew"]:
-                    pinned_session(person, STATE / "agents" / person["id"] / "workspace" / next(iter(cfg["repositories"])))
+            captain_pins(cfg)
         prune = tail[-1] == "true"
         if verb == "render":
             render(cfg, read_json(cache, private=True), prune)
@@ -1674,7 +1734,7 @@ def main(args):
                 print("No repositories are configured, so captains have no crew: crew work in Git worktrees of "
                       "their captain's checkouts.")
     elif verb == "commission":
-        commission(tail[0] == "true")
+        commission(tail[0] == "true", existing="existing" in tail[1:])
     elif verb == "engine":
         engine(tail[0], attach="attach" in tail[1:])
     elif verb == "gateway":

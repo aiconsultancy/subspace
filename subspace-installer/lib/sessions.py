@@ -13,11 +13,12 @@ import os
 from pathlib import Path
 import re
 import secrets
+import sys
 import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
 SESSION_ID = re.compile(r"ses_[A-Za-z0-9]+")
@@ -47,7 +48,8 @@ class OpenCode:
             "Authorization": "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode(),
             "Accept": "application/json",
         }
-        self.opener = opener or build_opener(NoRedirect())
+        # Loopback only, with the captain's credentials: never through a proxy from the environment.
+        self.opener = opener or build_opener(ProxyHandler({}), NoRedirect())
         self.timeout = timeout
 
     def request(self, method, path, body=None, empty=False):
@@ -114,16 +116,32 @@ def read_record(path):
     return value
 
 
-def write_record(path, value):
+def write_durable(path, text):
+    """Replace a root-only file atomically, with its contents and the rename on disk first."""
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False, encoding="utf-8") as stream:
         temp = Path(stream.name)
         try:
             os.fchmod(stream.fileno(), 0o600)
-            stream.write(json.dumps(value, indent=2) + "\n")
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
             stream.close()
             os.replace(temp, path)
         finally:
             temp.unlink(missing_ok=True)
+    sync_directory(path.parent)
+
+
+def sync_directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def write_record(path, value):
+    write_durable(path, json.dumps(value, indent=2) + "\n")
 
 
 class SessionRecord:
@@ -148,6 +166,7 @@ class SessionRecord:
         if value.get("confirmed"):
             write_record(self.confirmed, value)
             self.pending.unlink(missing_ok=True)
+            sync_directory(self.pending.parent)
         else:
             write_record(self.pending, value)
 
@@ -157,8 +176,9 @@ def check_roster(record, crew):
     recorded = record.get("crew")
     require(recorded == crew, (
         "This captain's crew are fixed once its session is pinned, because Stargate keeps crew identities and "
-        f"worktrees permanent (recorded: {', '.join(recorded or []) or 'none'}; configured: {', '.join(crew)}). "
-        "Restore the recorded crew counts and names, or give the new roster to a new captain."
+        f"worktrees permanent (recorded: {', '.join(recorded or []) or 'none'}; configured: {', '.join(crew) or 'none'}). "
+        "Restore the recorded crew counts and names, and keep at least one repository, which crew need, "
+        "or give the new roster to a new captain."
     ))
 
 
@@ -172,15 +192,21 @@ def verify(session, record, expected):
     )
 
 
-def ensure(client, store, expected, wait=wait_until_ready):
+def model_differs(session, model):
+    stored = session.get("model")
+    return isinstance(stored, dict) and (stored.get("providerID"), stored.get("id")) != (model["providerID"], model["id"])
+
+
+def ensure(client, store, expected, wait=wait_until_ready, notice=None):
     """Create or confirm the captain's root session; return (sessionID, newly confirmed)."""
+    notice = notice or (lambda text: print(text, file=sys.stderr))
     record = store.load()
     if record is not None:
         require(SESSION_ID.fullmatch(str(record.get("sessionID", ""))), "Invalid pinned captain session record.")
-        require(record.get("directory") == expected["directory"],
-                "The captain's first repository is fixed once its session is pinned, because Stargate's crew state "
-                "names that checkout. Restore the original first repository.")
         if record.get("confirmed"):
+            require(record.get("directory") == expected["directory"],
+                    "The captain's first repository is fixed once its session is pinned, because Stargate's crew "
+                    "state names that checkout. Restore the original first repository.")
             check_roster(record, expected["crew"])
     else:
         # Reserve before creating so an interrupted create is retried with the same ID.
@@ -188,6 +214,14 @@ def ensure(client, store, expected, wait=wait_until_ready):
                   "crew": expected["crew"], "confirmed": False}
         store.save(record)
     session = wait(client, record["sessionID"])
+    if not record.get("confirmed") and record.get("directory") != expected["directory"]:
+        # Only a reservation: re-reserve the same unused ID for the new first repository.
+        require(session is None,
+                "The captain's root session already exists in its original first repository, although the "
+                "installer has not confirmed it. Restore the original first repository; the installer never "
+                "replaces a captain root.")
+        record = {**record, "directory": expected["directory"], "crew": expected["crew"]}
+        store.save(record)
     if session is None:
         require(not record.get("confirmed"),
                 "The pinned captain session is missing from OpenCode. The installer does not replace a captain "
@@ -205,6 +239,12 @@ def ensure(client, store, expected, wait=wait_until_ready):
             if session is None:
                 raise
     verify(session, record, expected)
+    if model_differs(session, expected["model"]):
+        # OpenCode's session update takes no model, so the pinned root keeps the one it was created with.
+        stored = session["model"]
+        notice(f"The captain's pinned session keeps its model {stored.get('providerID')}/{stored.get('id')}; "
+               f"OpenCode cannot change it to the configured {expected['model']['providerID']}/{expected['model']['id']}. "
+               "See Captain sessions in the installer README.")
     if session.get("permissions") != expected["permissions"]:
         client.update_permissions(record["sessionID"], expected["permissions"])
         session = client.get(record["sessionID"])

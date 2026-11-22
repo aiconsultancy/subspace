@@ -333,18 +333,26 @@ python3 "$app/lib/runtime.py" check
 if [[ ${source[2]} == local ]]; then
     "$app/lib/runtime.py" irc config --quiet
 fi
+if ! "$no_systemd"; then
+    # Update pinned captain sessions' permissions on their running engines before the gateway
+    # restarts with the new policy. Best effort: the full commission below reports any failure.
+    python3 "$app/lib/runtime.py" commission "$prune_secrets" existing
+fi
 start_services
 if "$no_systemd"; then
     printf 'Captains with crew pin their root session once their OpenCode engine runs (runtime.py commission).\n'
 else
     rm -f -- "$state/pending"
-    # Crew need their captain's root session, created on the running engine before the gateway starts.
-    python3 "$app/lib/runtime.py" commission "$prune_secrets"
+    # Crew need their captain's root session, created on the running engine. The gateway serves a
+    # captain with crew only once its pin is rendered, so it keeps serving the rest meanwhile.
+    commissioned=true
+    python3 "$app/lib/runtime.py" commission "$prune_secrets" || commissioned=false
     if [[ -e $state/pending ]]; then
         python3 "$app/lib/runtime.py" check
         start_services
         rm -f -- "$state/pending"
     fi
+    "$commissioned" || die 'Commissioning did not complete (see above). Running services keep running. Fix the cause and run the installer again.'
 fi
 if "$prune_secrets"; then
     python3 "$app/lib/runtime.py" prune-app-keys
