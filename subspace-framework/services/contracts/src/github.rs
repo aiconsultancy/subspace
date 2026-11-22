@@ -21,7 +21,7 @@ pub mod recognition;
 use crate::{Contract, Event, Request};
 use recognition::PullRequestLink;
 
-pub use details::{CheckStatus, PullRequestDetails, PullRequestStatus, ReviewStatus};
+pub use details::{CheckCounts, CheckStatus, PullRequestDetails, PullRequestStatus, ReviewStatus};
 
 /// At most this many pull requests in one [`ResolvePullRequests`].
 pub const MAX_RESOLVE: usize = 50;
