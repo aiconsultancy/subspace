@@ -41,6 +41,7 @@ pub use input::{COMMANDS, CommandHelp, FirstArgument, private_recipients};
 pub use isupport::Casemapping;
 pub use lines::{KEPT_CLIENT_TAGS, PROGRESS_TAG};
 pub use metadata::status_text;
+pub(crate) use reactions::ended as reactions_ended;
 pub use send::{
     MAX_INLINE_BYTES, check_draft, check_inline_text, connection_batches, draft_line_limit,
     message_budget,
