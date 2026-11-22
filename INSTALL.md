@@ -8,27 +8,36 @@ questions and runs the installer for you. You can also follow it yourself.
 > [!IMPORTANT]
 > **Coding agents: read this whole page before running anything.**
 >
-> 1. Ask the user every question in [Decide with the user](#decide-with-the-user)
->    and explain the trade-offs in your own words. Do not pick names for them.
-> 2. Ask before installing software (Lima, QEMU, Multipass), creating a VM or
->    touching a cloud account. Pass `--install-deps` only after the user agrees.
-> 3. Run the installer non-interactively: pass the answers as flags and add
->    `--yes`. Its prompts cannot reach the user through you.
+> 1. **Ask first, all at once.** Ask the user every question in
+>    [Decide with the user](#decide-with-the-user) before you run, install or
+>    create anything, and explain the trade-offs in your own words. Do not pick
+>    names for them.
+> 2. **Confirm the plan once.** Summarise the answers, the exact commands you
+>    will run and everything they will install or change: software on this
+>    computer (Lima, QEMU, Multipass), the VM, any cloud account, the user's
+>    agent profiles. Wait for one clear yes. That yes covers only what the
+>    plan lists; pass `--install-deps` only if it says so.
+> 3. **Then work unattended to the end.** Run the installer non-interactively:
+>    pass the answers as flags and add `--yes`. Its prompts cannot reach the
+>    user through you. Do not stop to ask again. If something the plan did
+>    not cover comes up, take the safe default named in
+>    [Decide with the user](#decide-with-the-user), or stop with a clear
+>    message that says what is needed and which command to run next.
 > 4. **The fleet VM must stay private.** Never open its services to the
 >    internet, never bind them to `0.0.0.0`, and never pass `--no-lockdown`
 >    unless the user asks for it after you have explained the risk. Agents'
 >    keys and model logins live on that VM.
-> 5. Never print, paste or log passwords or tokens. The installer saves them
->    as owner-only files and tells you where.
+> 5. Never print, paste or log passwords, tokens or private keys. The
+>    installer saves them as owner-only files and tells you where.
 > 6. Finish by running the [privacy audit](#check-that-the-fleet-is-private)
 >    and reporting its result. Then tell the user that **the agents stay
 >    offline until CLIProxyAPI is signed in to at least one of their provider
->    accounts**, and walk them through [bringing the agents online](#bring-the-agents-online);
->    it needs their browser.
-> 7. Then offer the [local agent skills](#use-your-local-agents-with-the-fleet).
->    Ask which agents (Claude Code, Codex, OpenCode) should get them in the
->    user's profile and what name the agents should use for the user. Install
->    them only if the user agrees.
+>    accounts**. That sign-in needs the user's browser, so it is the one step
+>    you cannot do unattended: walk them through
+>    [bringing the agents online](#bring-the-agents-online) if they are there,
+>    or leave them the exact commands.
+> 7. If the plan included the [local agent skills](#use-your-local-agents-with-the-fleet),
+>    install them last, for the agents and the name the user gave.
 
 ## What you are installing
 
@@ -53,12 +62,16 @@ flowchart LR
 ```
 
 - **A fleet is one Linux VM.** It runs a **rear admiral** and one or more
-  **captains**. Each is its own Linux user with its own tmux session and files.
-  Each captain has a **crew** (two Claude-family and two Codex-family workers
-  by default), each in its own Git worktree.
-- **Stargate is the glue.** It connects every agent to its IRC channels (and
-  the rear admiral to Slack or Teams, if you add them later), routes messages
-  and wakes the right agent.
+  **captains**. Each is its own Linux user with its own tmux session, files,
+  IRC account and GitHub App. Each captain has a **crew** (two Claude-family
+  and two Codex-family workers by default) that runs under the captain's
+  Linux user, inside the captain's OpenCode server. Each crew member has one
+  Git worktree per repository, commits as its captain and is reached only
+  through its captain.
+- **Stargate is the glue.** It connects the rear admiral and captains to
+  their IRC channels (and the rear admiral to Slack or Teams, if you add them
+  later), routes messages and wakes the right agent. Its crew plugin lets each
+  captain delegate to its crew and collect their results.
 - **CLIProxyAPI** holds your agentic provider accounts (for example a Claude
   or ChatGPT subscription) and serves the models to the agents. You sign it in
   after the install; until then the agents are offline.
@@ -85,7 +98,9 @@ cloud identity.
 
 ## Decide with the user
 
-Ask these before running anything. Defaults are in bold.
+Ask all of these before running anything, then confirm the plan once.
+Defaults are in bold. Each question says what to do if the user cannot
+answer it now.
 
 1. **Where should the fleet run?**
    - **A new local VM on this computer.** On macOS it uses Apple's
@@ -94,11 +109,17 @@ Ask these before running anything. Defaults are in bold.
      with Hyper-V (Windows Pro, Enterprise or Education; Windows Home has no
      Hyper-V, so use an existing VM instead). All are free. The VM needs
      about 4 CPUs, 8 GiB of memory and 40 to 60 GiB of disk; use 16 GiB of
-     memory for two or more captains.
+     memory for two or more captains. Ask whether you may install the VM
+     tool if it is missing (`--install-deps`); without that, the installer
+     stops and says what to install.
    - **An existing VM, for example in the cloud.** Ubuntu 24.04 or Debian 12,
      amd64 or arm64, reachable over SSH with a key and passwordless sudo. It
      must not accept inbound traffic from the internet (see
-     [Prepare a cloud VM](#prepare-a-cloud-vm)).
+     [Prepare a cloud VM](#prepare-a-cloud-vm)). Collect the SSH target
+     (`user@host`), the key to use, the SSH port, any proxy command and the
+     host key fingerprint from a trusted channel. Ask whether you may use
+     their cloud account to read that fingerprint (for example
+     `az vm run-command`); if not, they give it to you. Never run without it.
 2. **Do you intend to run more than one fleet?** Ask this directly, and explain
    [the difference](#one-fleet-or-several-shared-irc).
    - **No, one fleet:** everything runs on the fleet VM: IRC, the API and
@@ -110,45 +131,88 @@ Ask these before running anything. Defaults are in bold.
      then loads that fleet's IRC channels, so they can work across fleets
      while seeing only the channels and captains of the fleet they are in.
      IRC's history goes in PostgreSQL by default there too; on its own VM they
-     may choose SQLite instead (`--history sqlite`).
+     may choose SQLite instead (`--history sqlite`). Collect that host's
+     details as in question 1. For an IRC server the installer does not
+     manage, they must add the fleet's accounts there themselves and give you
+     its host name and CA certificate.
 3. **Names.** A name for the fleet (for example "Example Fleet"), a name for
    the rear admiral (for example "Atlas") and one or more captain or ship
    names (for example "Orion, Vega"). Names become IRC channels, IRC accounts
    and Linux users, so keep them short: the fleet ID (the fleet name in lower
-   case, or `--slug`) plus a hyphen and an agent's name must fit 22 characters,
-   as in `example-fleet-orion`. Ask how many crew each captain gets
-   (**2 Claude, 2 Codex**; 0 to 10 each).
-4. **Their IRC account name** (**admiral**), used as their nickname. The
+   case, or `--slug`) plus a hyphen and an agent's name must fit 32
+   characters, as in `example-fleet-orion`.
+4. **Which GitHub repositories should the captains have checked out?** List
+   them in order, as HTTPS URLs; the first is where each captain starts. Every
+   captain gets every repository in the list (`--repositories`, at most
+   nine). The answer drives:
+   - each captain's own checkout of every repository, and the rear admiral's
+     read-only reference copies;
+   - **one Git worktree per repository for each crew member**, under its
+     captain's Linux user. Crew need at least one repository: with none, the
+     captains have no crew;
+   - the GitHub access the captains' GitHub Apps need. Captains push, and
+     their crew push as them, so each captain's App needs Contents write on
+     these repositories, plus Pull requests and Issues write to open pull
+     requests and update issues. The rear admiral's App needs Contents read.
+
+   Public repositories work straight away; without Apps, the agents can read
+   and commit but not push. **Private** repositories need a GitHub App for
+   the rear admiral and every captain before the installer can clone them
+   (see [GitHub Apps per fleet member](subspace-installer/README.md#github-apps-per-fleet-member)).
+   Ask whether those Apps exist and where their keys are. If not, install
+   with the public repositories only, and tell the user how to add the private
+   ones once the Apps exist. **Default: no repositories, so no crew yet.**
+5. **Crew per captain** (**2 Claude, 2 Codex**; 0 to 10 each,
+   `--crew-claude`, `--crew-codex`). Explain that crew run inside their
+   captain's OpenCode server as the captain's Linux user: they share the
+   captain's files, credentials and GitHub App, commit as the captain, and
+   have no IRC accounts. The user talks to the captain, who delegates to its
+   crew. A captain's crew roster is fixed once the fleet first starts, so
+   settle the counts now.
+6. **Their IRC account name** (**admiral**), used as their nickname. The
    agents only take orders from this account.
-5. **Demo data?** (**yes**) Fictional fleets, initiatives and issues so they can
+7. **Demo data?** (**yes**) Fictional fleets, initiatives and issues so they can
    look around the desktop app straight away.
-6. **Agent harness** (**OpenCode, recommended**). Stargate also supports the
-   Claude Agent SDK and the OpenAI Codex SDK. OpenCode is the most tested. To
-   use the Claude Agent SDK for some agents, set their `harness` to
-   `claude-sdk` in `/root/fleet/fleet.json` after the install (see the
+8. **Agent harness** (**OpenCode, recommended**). Stargate also supports the
+   Claude Agent SDK and the OpenAI Codex SDK. OpenCode is the most tested,
+   and crew need an OpenCode captain. To use the Claude Agent SDK for the
+   rear admiral or a captain without crew, set its `harness` to `claude-sdk`
+   in `/root/fleet/fleet.json` after the install (see the
    [fleet installer's guide](subspace-installer/README.md#crew-and-repositories)).
    The Codex SDK is configured in Stargate directly; the installer does not
    set it up yet.
-7. **Which provider accounts** will power the agents, for example a ChatGPT
+9. **Which provider accounts** will power the agents, for example a ChatGPT
    (Codex) or Claude subscription. They sign them in to CLIProxyAPI after the
-   install; see [Bring the agents online](#bring-the-agents-online).
-8. **How they reach the VM.** (**SSH tunnel**). Or Tailscale, or Cloudflare
-   Zero Trust (free for up to 50 users). See [Private access](docs/private-access.md).
-   Also offer nginx with internal host names if they want browser-friendly
-   addresses.
-9. **Secrets.** (**On the VM**, as root-only and per-agent files.) On Azure,
-   they can also keep the generated secrets in Key Vault (`--key-vault`), so
-   a rebuilt VM gets the same ones.
-10. **Local agent skills** (after the install). Should their own coding agents
-    (Claude Code, Codex, OpenCode) get Subspace skills in their user profile,
-    so they can use the tracker and talk to the fleet? What name should those
-    agents use for them? See [Use your local agents with the fleet](#use-your-local-agents-with-the-fleet).
-11. **Slack or Teams** (optional, after the install). Should stakeholders reach
-    the rear admiral in Slack or Microsoft Teams? Slack works with a private VM
-    as is ([Slack](docs/slack.md)). Teams needs an Azure VM and one public
-    callback path ([Teams](docs/teams.md)). Teams bots cannot talk to each
-    other, so captains coordinate in IRC, and the installer connects only the
-    rear admiral to Teams.
+   install, in their browser; see [Bring the agents online](#bring-the-agents-online).
+   Ask whether they will be there at the end to do it. If not, finish the
+   install and leave them the sign-in commands.
+10. **How they reach the VM.** (**SSH tunnel**). Or Tailscale, or Cloudflare
+    Zero Trust (free for up to 50 users), with `--access`; ask for any
+    addresses that alone may use SSH (`--ssh-from`). See
+    [Private access](docs/private-access.md). Also offer nginx with internal
+    host names if they want browser-friendly addresses.
+11. **Secrets.** (**On the VM**, as root-only and per-agent files.) On Azure,
+    they can also keep the generated secrets in Key Vault (`--key-vault`), so
+    a rebuilt VM gets the same ones. That needs the VM's managed identity to
+    have access to the vault, which they set up or allow you to set up in
+    their cloud account; if neither, keep the secrets on the VM.
+12. **Local agent skills.** Should their own coding agents (Claude Code,
+    Codex, OpenCode) get Subspace skills in their user profile, so they can
+    use the tracker and talk to the fleet? Which agents, and what name should
+    those agents use for them? You install them at the end. See
+    [Use your local agents with the fleet](#use-your-local-agents-with-the-fleet).
+    **Default: no.**
+13. **Slack or Teams** (optional). Should stakeholders reach the rear admiral
+    in Slack or Microsoft Teams? Slack works with a private VM as is
+    ([Slack](docs/slack.md)). Teams needs an Azure VM and one public callback
+    path ([Teams](docs/teams.md)). Teams bots cannot talk to each other, so
+    captains coordinate in IRC, and the installer connects only the rear
+    admiral to Teams. Both need an app the user creates and its tokens, so
+    they follow those guides with the user after the fleet runs. **Default:
+    neither.**
+
+Then confirm the plan once, as the box at the top of this page describes,
+and run without stopping to ask again.
 
 ## Install on a local VM
 
@@ -168,8 +232,10 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 --local --yes --install-d
   --admin admiral --demo
 ```
 
-Leave out `--install-deps` to stop and ask instead of installing Lima, QEMU or
-Multipass. Size the VM with `--cpus`, `--memory` and `--disk` (GiB). The first
+Add the user's repositories as `--repositories URL,URL` (HTTPS Git URLs,
+optionally `ID=URL`) and their crew counts as `--crew-claude N --crew-codex N`,
+on this command and on the existing-VM one below. Leave out `--install-deps`
+to stop and ask instead of installing Lima, QEMU or Multipass. Size the VM with `--cpus`, `--memory` and `--disk` (GiB). The first
 run downloads an Ubuntu image, the agents' tools and the container images, so
 it takes a while. Running it again is safe: it keeps the answers, secrets and
 work already on the VM.
@@ -219,7 +285,7 @@ that identity's tokens; the audit fails if they could.
 
 ## One fleet or several: shared IRC
 
-Ask the user whether they intend to run more than one fleet. The answer decides
+The user's answer to whether they intend to run more than one fleet decides
 where IRC runs and where its history is stored.
 
 | | One fleet | Several fleets |
@@ -308,7 +374,8 @@ server's operator.
      Stargate (its newest `vX.Y.Z` release, looked up on every run and pinned
      in `fleet.json`; pass `--stargate-ref <SHA>` to stay on one commit),
      CLIProxyAPI, OpenCode, AgentsView, the dashboard, a Linux user and tmux
-     session per agent, and Ergo IRC;
+     session for the rear admiral and each captain, the crew's worktrees and
+     each captain's pinned session, and Ergo IRC;
    - starts PostgreSQL and the Subspace API on loopback, creates IRC's
      history database (`ergo_history`) beside the API's, signs you in first
      (the first user in an organisation becomes its administrator), seeds the
@@ -349,8 +416,9 @@ the agents come online. CLIProxyAPI also supports `antigravity`, `kimi`,
 
 The default models are `gpt-5.4` for Codex-family agents and
 `claude-sonnet-5-5` for Claude-family crew. Use model IDs your accounts can
-reach: change them under `harness` and `crew` in `/root/fleet/fleet.json` and
-run `sudo subspace-setup`. The [fleet installer's guide](subspace-installer/README.md#model-provider-sign-in)
+reach: change them under `harness` and `crew` (`crew.claude.model`,
+`crew.codex.model`) in `/root/fleet/fleet.json` and run `sudo subspace-setup`.
+The [fleet installer's guide](subspace-installer/README.md#model-provider-sign-in)
 covers models and harnesses. On the VM, `sudo subspace-setup providers`
 does the same as `./install.sh providers`.
 
@@ -414,7 +482,7 @@ server with them:
 ```
 
 On Windows, use `.\install.ps1 skills ...`. This changes your agents' user
-profiles, so agents must ask before running it. Local agents sign in with
+profiles, so agents run it only when the user agreed to it in the plan. Local agents sign in with
 **your** login. They must always say they are an agent acting for you, with
 their model and version, for example
 `[on behalf of George (Claude Opus 5.5)]` on IRC, or
@@ -453,7 +521,8 @@ before sharing access.
 | Show the fleet and services | `./install.sh status` |
 | Change a setting | Run the install command again with the new flags |
 | Connect the rear admiral to Slack or Teams | [Slack](docs/slack.md), [Teams](docs/teams.md) |
-| Add repositories or GitHub Apps | Edit `/root/fleet/fleet.json` on the VM, put credential files under `/root/fleet/fleet.secrets/`, then `sudo subspace-setup` |
+| Change the repositories | Run the install command again with `--repositories`; it replaces the list. Once a captain's session is pinned, the installer refuses an empty list or a different first repository, whether reordered or replaced |
+| Add private repositories or GitHub Apps | Edit `/root/fleet/fleet.json` on the VM, put credential files under `/root/fleet/fleet.secrets/`, then `sudo subspace-setup` |
 | Print your IRC password | `sudo subspace-setup secret irc-admin` on the VM |
 | Seed the demo data again | `sudo subspace-setup demo` on the VM |
 | Stop or start a local VM | `./install.sh stop`, `./install.sh start` |
@@ -461,7 +530,8 @@ before sharing access.
 
 `--target NAME` picks which VM a command acts on when you have several
 (default `subspace-fleet`). See the [fleet installer's guide](subspace-installer/README.md)
-for repositories, per-agent GitHub Apps, crews, permissions, Slack and Teams.
+for repositories, GitHub Apps for the rear admiral and captains, crew,
+permissions, Slack and Teams.
 
 ## Secrets
 

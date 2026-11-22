@@ -35,22 +35,25 @@ class SetupInputsTests(unittest.TestCase):
     def generate(self, argv, api_block=None, stargate_api=False):
         answers, rear, captains = answers_for(argv)
         store = fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None)
-        members, crew = fleet_setup.roster(answers, rear, captains)
+        members = fleet_setup.roster(answers, rear, captains)
         local = answers["irc"] == "local"
         config = fleet_setup.fleet_config(answers, members, "a" * 40, api_block, stargate_api, "b" * 40)
         token = "header.payload.signature" if api_block else ""
-        secrets = fleet_setup.fleet_secrets(store, members, crew, answers["admin"], token, local)
-        return answers, members, crew, config, secrets, store
+        secrets = fleet_setup.fleet_secrets(store, members, answers["admin"], token, local)
+        return answers, members, config, secrets, store
 
     def test_local_fleet_validates_with_api_and_demo_channels(self):
         api = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"]}
-        answers, members, crew, config, secrets, _ = self.generate(
+        answers, members, config, secrets, _ = self.generate(
             ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion, Vega",
              "--admin", "admiral", "--demo"], api_block=api)
         cfg = validate(config, secrets, check_files=False)
         self.assertEqual(answers["slug"], "example-fleet")
         self.assertEqual([m["account"] for m in members], ["example-fleet-atlas", "example-fleet-orion", "example-fleet-vega"])
-        self.assertEqual(len(crew), 8)
+        # Crew have no IRC accounts; without repositories they have no worktrees either.
+        self.assertEqual(set(secrets["ircPasswords"]), {"example-fleet-atlas", "example-fleet-orion", "example-fleet-vega", "admiral"})
+        self.assertEqual(config["crew"], {"claude": {"count": 2}, "codex": {"count": 2}})
+        self.assertEqual(config["repositories"], [])
         self.assertEqual(cfg["irc"]["starbaseChannel"], "#example-fleet-starbase")
         self.assertIn("#aurora-nav", config["irc"]["compose"]["channels"])
         self.assertIn("admiral", secrets["ircPasswords"])
@@ -58,37 +61,38 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual(len(set(secrets["ircPasswords"].values())), len(secrets["ircPasswords"]))
 
     def test_shared_irc_fleet_validates_without_human_passwords(self):
-        answers, _, crew, config, secrets, store = self.generate(
+        answers, _, config, secrets, store = self.generate(
             ["--name", "Fleet One", "--rear-admiral", "Atlas", "--captains", "Orion", "--admin", "admiral",
              "--no-demo", "--irc", "remote", "--irc-host", "irc.example.ts.net", "--crew-claude", "1", "--crew-codex", "0"])
         cfg = validate(config, secrets, check_files=False)
         self.assertEqual(cfg["irc"]["mode"], "remote")
         self.assertEqual((cfg["irc"]["host"], cfg["irc"]["port"], cfg["irc"]["tls"]), ("irc.example.ts.net", 6697, True))
         self.assertNotIn("admiral", secrets["ircPasswords"])
-        members, _ = fleet_setup.roster(answers, "atlas", ["orion"])
-        bundle = fleet_setup.irc_bundle(answers, members, crew, store)
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        bundle = fleet_setup.irc_bundle(answers, members, store)
+        self.assertEqual({row["name"] for row in bundle["accounts"]}, {"fleet-one-atlas", "fleet-one-orion"})
         self.assertEqual({row["name"] for row in bundle["accounts"]}, set(secrets["ircPasswords"]))
         self.assertEqual([row["name"] for row in bundle["channels"]], ["#fleet-one-starbase", "#fleet-one-orion"])
         self.assertEqual(bundle["humans"], ["admiral"])
 
     def test_stargate_api_and_secrets_are_stable(self):
         argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
-        _, _, _, config, secrets, _ = self.generate(argv, stargate_api=True)
+        _, _, config, secrets, _ = self.generate(argv, stargate_api=True)
         cfg = validate(config, secrets, check_files=False)
         self.assertEqual(cfg["stargate"]["api"], {"port": 8484})
         self.assertEqual(cfg["stargate"]["ref"], "b" * 40)
-        _, _, _, _, again, _ = self.generate(argv)
+        _, _, _, again, _ = self.generate(argv)
         self.assertEqual(secrets["ircPasswords"], again["ircPasswords"])
         self.assertEqual(secrets["proxyKey"], again["proxyKey"])
 
     def test_single_host_keeps_irc_history_in_postgresql(self):
         answers, rear, captains = answers_for(["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"])
         store = fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None)
-        members, crew = fleet_setup.roster(answers, rear, captains)
+        members = fleet_setup.roster(answers, rear, captains)
         history = {"database": "postgresql", "host": "postgres", "port": 5432, "user": "ergo", "name": "ergo_history",
                    "network": "subspace-api_default"}
         config = fleet_setup.fleet_config(answers, members, "a" * 40, None, False, "b" * 40, history)
-        secrets = fleet_setup.fleet_secrets(store, members, crew, answers["admin"])
+        secrets = fleet_setup.fleet_secrets(store, members, answers["admin"])
         with self.assertRaises(Exception):
             validate(config, secrets, check_files=False)
         secrets["ircHistoryPassword"] = store.password("ergo-history")
@@ -101,15 +105,63 @@ class SetupInputsTests(unittest.TestCase):
         secrets.pop("ircHistoryPassword")
         self.assertIsNone(validate(config, secrets, check_files=False)["historyPassword"])
 
+    def test_repositories_answer_fills_the_fleet_list_and_gives_captains_crew(self):
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
+                "--repositories", "https://github.com/example/project.git, library=https://github.com/example/lib.git"]
+        _, members, config, secrets, _ = self.generate(argv)
+        self.assertEqual(config["repositories"], [
+            {"id": "project", "url": "https://github.com/example/project.git"},
+            {"id": "library", "url": "https://github.com/example/lib.git"},
+        ])
+        cfg = validate(config, secrets, check_files=False)
+        self.assertEqual([worker["id"] for worker in cfg["members"][1]["crew"]], ["claude-1", "claude-2", "codex-1", "codex-2"])
+        self.assertEqual(set(secrets["ircPasswords"]), {"example-fleet-atlas", "example-fleet-orion", "admiral"})
+        # The list lives in fleet.json: a later run without the flag keeps it, including hand edits.
+        config["repositories"][1]["private"] = True
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        answers, rear, captains = answers_for(argv[:7])
+        kept = fleet_setup.fleet_config(answers, fleet_setup.roster(answers, rear, captains), "a" * 40)
+        self.assertEqual(kept["repositories"], config["repositories"])
+        # A new answer replaces the list; a repository that stays keeps its ID and visibility.
+        answers, rear, captains = answers_for([*argv[:7], "--repositories", "https://github.com/example/lib.git"])
+        replaced = fleet_setup.fleet_config(answers, fleet_setup.roster(answers, rear, captains), "a" * 40)
+        self.assertEqual(replaced["repositories"], [config["repositories"][1]])
+        fleet_setup.save_answers(answers)
+        self.assertNotIn("repositories", fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+        # An explicit ID=URL answer renames a known repository and keeps its visibility.
+        answers, rear, captains = answers_for([*argv[:7], "--repositories", "shared=https://github.com/example/lib.git"])
+        renamed = fleet_setup.fleet_config(answers, fleet_setup.roster(answers, rear, captains), "a" * 40)
+        self.assertEqual(renamed["repositories"], [{"id": "shared", "url": "https://github.com/example/lib.git",
+                                                    "private": True}])
+
+    def test_a_rejected_repository_url_is_not_echoed(self):
+        fixture = "fixture-not-a-secret"
+        for url in (f"https://user:{fixture}@example.com/a.git", f"https://example.com/a.git?token={fixture}",
+                    f"http://{fixture}@example.com/a.git"):
+            argv = ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion",
+                    "--repositories", f"https://github.com/example/ok.git,{url}"]
+            with self.subTest(url=url), self.assertRaises(fleet_setup.SetupError) as raised:
+                answers_for(argv)
+            self.assertNotIn(fixture, str(raised.exception))
+            self.assertIn("Repository 2 (example.com)", str(raised.exception))
+
     def test_rejects_unsafe_or_ambiguous_answers(self):
         cases = [
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Atlas"],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--admin", "x-orion"],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--admin", "NickServ"],
-            ["--name", "A very long fleet name indeed", "--rear-admiral", "Atlas", "--captains", "Orion"],
+            ["--name", "A very long fleet name indeed", "--rear-admiral", "Atlas", "--captains", "Andromeda Galaxy"],
             ["--name", "X", "--rear-admiral", "9lives", "--captains", "Orion"],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--irc", "remote", "--irc-host", "localhost"],
             ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--ssh-from", "0.0.0.0/0; rm"],
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--repositories", "http://example.com/a.git"],
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion",
+             "--repositories", "https://user:secret@example.com/a.git"],
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion", "--repositories", "https://example.com/9lives.git"],
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion",
+             "--repositories", "https://example.com/a/web.git,https://example.com/b/web.git"],
+            ["--name", "X", "--rear-admiral", "Atlas", "--captains", "Orion",
+             "--repositories", ",".join(f"https://example.com/r{index}.git" for index in range(10))],
         ]
         for argv in cases:
             with self.subTest(argv=argv), self.assertRaises(fleet_setup.SetupError):
@@ -141,7 +193,7 @@ class SetupInputsTests(unittest.TestCase):
     def test_further_fleet_registration_is_checked(self):
         answers, rear, captains = answers_for(["--name", "Fleet Two", "--rear-admiral", "Nova", "--captains", "Lyra",
                                                "--irc", "remote", "--irc-host", "irc.example.com", "--no-api"])
-        members, _ = fleet_setup.roster(answers, rear, captains)
+        members = fleet_setup.roster(answers, rear, captains)
         registration = fleet_setup.fleet_registration(answers, members)
         self.assertEqual(registration["channels"], ["#fleet-two-starbase", "#fleet-two-lyra"])
         self.assertEqual((registration["ircHost"], registration["ircPort"], registration["ircTls"]),

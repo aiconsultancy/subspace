@@ -23,8 +23,10 @@ FLEET = "00000000-0000-0000-0000-000000000002"
 INITIATIVE = "00000000-0000-0000-0000-000000000001"
 TOKEN = "fixture.header.signature"
 PROXY = "fixture-proxy-client-key"
-CREW = [f"orion-{family}-{index}" for family in ("claude", "codex") for index in (1, 2)]
-MEMBERS = ["atlas", "orion", *CREW]
+# Crew run as their captain, ss-orion, with no Linux user, engine or IRC account of their own.
+CREW = [f"{family}-{index}" for family in ("claude", "codex") for index in (1, 2)]
+MEMBERS = ["atlas", "orion"]
+CAPTAIN_HOME = Path("/var/lib/subspace-fleet/agents/orion")
 SENTRY_TOKEN = "fixture-sentry-read-token"
 MEDICAL_ACCOUNT = "example-medical"
 
@@ -214,7 +216,7 @@ def write(example):
         path = directory / name
         path.write_text(value + "\n")
         path.chmod(0o600)
-    for agent in ("atlas", "orion", CREW[0]):
+    for agent in MEMBERS:
         names = ["kubeconfig", "database-dsn"]
         if agent == "atlas":
             names.append("sentry-auth-token")
@@ -279,9 +281,29 @@ def check():
             raise AssertionError("OpenCode API accepted an unauthenticated request")
         database = f"/var/lib/subspace-fleet/sessions/{agent}/opencode.db"
         subprocess.run(["runuser", "-u", "ss-fleet-view", "--", "test", "-r", database], check=True)
+    check_pinned_session()
     retry(lambda: request(8317, "/v1/models", {"Authorization": f"Bearer {PROXY}"}), "CLIProxyAPI")
     retry(lambda: request(8080, "/"), "AgentsView")
-    print("All officer and crew IRC registrations, dashboard, authenticated OpenCode servers, CLIProxyAPI and AgentsView answered.")
+    print("Rear-admiral and captain IRC registrations, the captain's pinned session, dashboard, authenticated "
+          "OpenCode servers, CLIProxyAPI and AgentsView answered.")
+
+
+def check_pinned_session():
+    """The captain's root session exists on its engine and both Stargate pins name it."""
+    etc = Path("/etc/subspace-fleet")
+    record = json.loads((etc / "sessions/orion.json").read_text())
+    assert record["confirmed"] and record["crew"] == CREW
+    assert stat.S_IMODE((etc / "sessions/orion.json").stat().st_mode) == 0o600
+    backend = next(entry for entry in json.loads((etc / "stargate.json").read_text())["irc"] if entry["id"] == "orion")["backend"]
+    assert backend["sessionID"] == record["sessionID"] and backend["agent"] == "build" and backend["enforcePermissions"]
+    profile = json.loads((etc / "opencode-orion.json").read_text())
+    [plugin] = profile["plugins"]
+    assert plugin["options"]["captainSessionID"] == record["sessionID"]
+    engine = json.loads((etc / "engine-orion.json").read_text())
+    auth = base64.b64encode(f"opencode:{engine['environment']['OPENCODE_PASSWORD']}".encode()).decode()
+    session = json.loads(request(engine["port"], f"/api/session/{record['sessionID']}", {"Authorization": f"Basic {auth}"}))["data"]
+    assert session["agent"] == "build" and session["location"]["directory"] == backend["directory"]
+    assert session["permissions"] == backend["permissions"]
 
 
 def check_shape():
@@ -293,13 +315,25 @@ def check_shape():
     assert rear["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-starbase", "replies": "all"}]
     assert captain["access"]["humanWakeChannels"] == [{"channel": "#example-fleet-orion", "replies": "all"}]
     assert captain["access"]["channelRequests"] == "nick-mention"
-    assert len(captain["crew"]) == len(CREW)
+    # Crew have no IRC registration of their own: they are reached through the captain.
+    assert not rear.get("crew") and not captain.get("crew")
     assert captain["access"]["peerCaptains"] == ["example-atlas"]
+    assert captain["backend"]["agent"] == "build" and "sessionID" not in rear["backend"]
     firewall = (etc / "firewall.nft").read_text()
     operator = pwd.getpwnam("fixture-operator").pw_uid
     assert f'tcp dport 8070 meta skuid != {{ 0, {operator} }}' in firewall
     assert f'tcp dport 8080 meta skuid != {{ 0, {operator} }}' in firewall
     model_uids = {0, operator, pwd.getpwnam("ss-fleet-gateway").pw_uid, *(pwd.getpwnam(f"ss-{agent}").pw_uid for agent in MEMBERS)}
+    for worker in CREW:
+        try:
+            pwd.getpwnam(f"ss-orion-{worker}")
+        except KeyError:
+            continue
+        raise AssertionError(f"Crew member {worker} has its own Linux user")
+    units = (etc / "units").read_text().splitlines()
+    assert sorted(unit for unit in units if "-engine-" in unit) == [f"subspace-fleet-engine-{agent}.service" for agent in MEMBERS]
+    gateway_unit = Path("/etc/systemd/system/subspace-fleet-gateway.service").read_text()
+    assert f"ConditionPathExists={etc}/sessions/orion.json" in gateway_unit
     assert f'tcp dport 8317 meta skuid != {{ {", ".join(map(str, sorted(model_uids)))} }}' in firewall
     for service in ("proxy", "view", "dashboard", "engine-atlas", "gateway"):
         unit = Path(f"/etc/systemd/system/subspace-fleet-{service}.service").read_text()
@@ -307,12 +341,13 @@ def check_shape():
         assert "LogNamespace=subspace-fleet" in unit
     for timer in ("mirrors", "tools", "prune"):
         assert f"subspace-fleet-{timer}.timer" in (etc / "units").read_text().splitlines()
-    for agent, role in zip(MEMBERS, ["rear-admiral", "captain", *["crew"] * len(CREW)]):
+    for agent, role in zip(MEMBERS, ["rear-admiral", "captain"]):
         identity = pwd.getpwnam(f"ss-{agent}")
         opencode = Path(identity.pw_dir) / ".config/opencode"
         instructions = (opencode / "AGENTS.md").read_text()
         assert "Example Fleet" in instructions
         assert (opencode / "skills" / f"fleet-{role}" / "SKILL.md").is_file()
+        assert (opencode / "skills/fleet-crew/SKILL.md").is_file() == (role == "captain")
         permissions = json.loads((etc / f"opencode-{agent}.json").read_text())["permissions"]
         assert {"action": "read", "resource": "*", "effect": "allow"} in permissions
         assert ({"action": "edit", "resource": "*", "effect": "allow"} in permissions) == (role != "rear-admiral")
@@ -326,30 +361,38 @@ def check_shape():
                "MISE_GLOBAL_CONFIG_FILE=/etc/subspace-fleet/toolchains.toml",
                "/opt/subspace-fleet/toolchains/shims/node", "--version"]
     assert subprocess.check_output(command, text=True).startswith("v24.")
-    for agent in ["orion", *CREW]:
-        identity = pwd.getpwnam(f"ss-{agent}")
-        for repo in ("sample", "second"):
-            checkout = Path(identity.pw_dir) / "workspace" / repo
-            git = ["runuser", "-u", f"ss-{agent}", "--", "git", "-C", str(checkout)]
+    captain = pwd.getpwnam("ss-orion")
+    for repo in ("sample", "second"):
+        checkout = CAPTAIN_HOME / "workspace" / repo
+        git = ["runuser", "-u", "ss-orion", "--", "git", "-C", str(checkout)]
+        assert subprocess.check_output([*git, "branch", "--show-current"], text=True).strip() == "main"
+        assert (checkout / ".git").is_dir()
+        objects = checkout / ".git/objects"
+        assert (objects / "info/alternates").read_text().strip() == f"/var/lib/subspace-fleet/repositories/{repo}.git/objects"
+        assert (checkout / "README.md").read_text().strip() == repo
+        assert checkout.stat().st_uid == captain.pw_uid
+        # One worktree per repository per crew member, owned by the captain and sharing its checkout's Git data.
+        for worker in CREW:
+            worktree = CAPTAIN_HOME / "worktrees" / worker / repo
+            git = ["runuser", "-u", "ss-orion", "--", "git", "-C", str(worktree)]
             branch = subprocess.check_output([*git, "branch", "--show-current"], text=True).strip()
-            assert branch == (f"crew/{agent}" if agent in CREW else "main")
-            marker = checkout / ".git"
-            if agent in CREW:
-                backing = Path(identity.pw_dir) / f".{repo}.git"
-                assert marker.is_file() and str(backing) in marker.read_text()
-                objects = backing / "objects"
-            else:
-                assert marker.is_dir()
-                objects = marker / "objects"
-            assert (objects / "info/alternates").read_text().strip() == f"/var/lib/subspace-fleet/repositories/{repo}.git/objects"
-            assert (checkout / "README.md").read_text().strip() == repo
-            assert checkout.stat().st_uid == identity.pw_uid
-        if agent in CREW:
-            engine = json.loads((etc / f"opencode-{agent}.json").read_text())
-            provider = engine["providers"]["fleet-proxy"]["package"]
-            assert ("anthropic-compatible" if "-claude-" in agent else "openai-compatible") in provider
+            assert branch == f"crew/example-fleet-orion-{worker}"
+            common = subprocess.check_output([*git, "rev-parse", "--path-format=absolute", "--git-common-dir"], text=True).strip()
+            assert common == str(checkout / ".git")
+            assert (worktree / ".git").is_file() and (worktree / "README.md").read_text().strip() == repo
+            assert worktree.stat().st_uid == captain.pw_uid
+            assert stat.S_IMODE(worktree.parent.stat().st_mode) == 0o700
+    engine = json.loads((etc / "opencode-orion.json").read_text())
+    assert engine["default_agent"] == "build"
+    for worker in CREW:
+        agent = engine["agents"][f"orion-crew-{worker}"]
+        assert agent["mode"] == "primary"
+        family = "claude-proxy" if worker.startswith("claude") else "openai-proxy"
+        assert agent["model"].startswith(f"{family}/")
+    assert "anthropic-compatible" in engine["providers"]["claude-proxy"]["package"]
+    assert "openai-compatible" in engine["providers"]["openai-proxy"]["package"]
     check_cloud()
-    print("Crew mix, worktrees for both repositories, authenticated routing configuration and private credentials passed.")
+    print("Crew under the captain, one worktree per repository per crew member, model routing and private credentials passed.")
 
 
 def check_firewall():
@@ -362,7 +405,7 @@ def check_firewall():
 
 
 def check_cloud():
-    for agent in ("atlas", "orion", CREW[0]):
+    for agent in MEMBERS:
         identity = pwd.getpwnam(f"ss-{agent}")
         for name in ("kubeconfig", "database-dsn"):
             file = Path(identity.pw_dir) / ".config/subspace/cloud" / name
@@ -388,7 +431,6 @@ def local():
                                "crew": {"claude": {"count": 0}, "codex": {"count": 1}}})
     source = json.loads((WORK / "fleet.secrets.json").read_text())
     source["ircPasswords"]["example-lyra"] = "fixture-irc-password"
-    source["ircPasswords"]["example-lyra-codex-1"] = "fixture-irc-password"
     source["ircOperatorPassword"] = "fixture-operator-password"
     Path("/etc/subspace-fleet/local-fixture.json").write_text(json.dumps(config))
     path = Path("/etc/subspace-fleet/local-fixture-secrets.json")
@@ -421,7 +463,6 @@ def local():
 def addons():
     cfg = json.loads((WORK / "fleet.json").read_text())
     cfg["rearAdmiral"]["harness"] = {"type": "claude-sdk", "family": "claude"}
-    cfg["captains"][0]["crew"] = {"claude": {"type": "claude-sdk"}}
     cfg["stakeholders"] = {
         "slack": {"appId": "AEXAMPLE", "users": ["UEXAMPLE"], "channels": ["CEXAMPLE"]},
         "teams": {"botClientId": "00000000-0000-4000-8000-000000000001",
@@ -459,14 +500,12 @@ def check_addons():
     assert teams.stat().st_uid == pwd.getpwnam("ss-atlas").pw_uid
     assert stat.S_IMODE(teams.stat().st_mode) == 0o2750
     other = json.loads((etc / "stargate-gateway-opencode.json").read_text())
-    assert [crew["id"] for crew in other["irc"][0]["crew"]] == ["codex-1", "codex-2"]
+    [captain] = other["irc"]
+    assert captain["id"] == "orion" and not captain.get("crew") and captain["backend"]["sessionID"]
     assert {"bots", "teams", "quotaWatch"}.isdisjoint(other)
-    for agent in CREW[:2]:
-        worker = json.loads((etc / f"stargate-gateway-agent-{agent}.json").read_text())
-        assert worker["irc"][0]["backend"]["type"] == "claude"
-        assert worker["irc"][0]["channels"] == ["#example-fleet-orion"]
-        unit = Path(f"/etc/systemd/system/subspace-fleet-gateway-agent-{agent}.service")
-        assert f"User=ss-{agent}\n" in unit.read_text()
+    assert "ConditionPathExists=/etc/subspace-fleet/sessions/orion.json" in \
+        Path("/etc/systemd/system/subspace-fleet-gateway-opencode.service").read_text()
+    assert not list(Path("/etc/systemd/system").glob("subspace-fleet-gateway-agent-orion-*"))
     check_cloud()
 
     def quota_api():

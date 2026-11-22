@@ -1,8 +1,16 @@
 ---
 name: fleet-crew
-description: Complete a bounded change in your assigned worktree and hand it back.
+description: Complete a bounded assignment from your captain in your own worktree and hand it back.
 ---
 
-Confirm the assigned files and acceptance criteria with $captain. Check your
-worktree status and current branch. Make the smallest change that meets the
-criteria, run repository checks and send a concise handoff in $channel.
+1. Read the assignment's scope, files and acceptance criteria. If anything is
+   unclear, ask your captain with `stargate_dm` rather than guess.
+2. Check your worktree's status and branch, then create a feature branch for
+   the assignment.
+3. Make the smallest change that meets the criteria and run the repository's
+   checks.
+4. Note milestones and blockers for your captain with `stargate_journal` or
+   `stargate_mail` while you work.
+5. Finish with a final answer that gives the branch, the commit SHA, the exact
+   verification commands with their results, and any remaining risk. Stargate
+   returns that answer to your captain as the task's result.

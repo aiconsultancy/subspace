@@ -9,3 +9,5 @@ cli-proxy-api amd64 8.0.78 router-for-me/CLIProxyAPI CLIProxyAPI_8.0.78_linux_am
 cli-proxy-api arm64 8.0.78 router-for-me/CLIProxyAPI CLIProxyAPI_8.0.78_linux_aarch64_no-plugin.tar.gz 12146199f576c67aba89951e09d0d0a18ff1bee26c72406ac100a8ab03718866 cli-proxy-api
 agentsview amd64 0.47.0 kenn-io/agentsview agentsview_0.47.0_linux_amd64.tar.gz a49876edf9fe8d0641978afe69d776540175852a446a5d42a6d439215eb0dc45 agentsview
 agentsview arm64 0.47.0 kenn-io/agentsview agentsview_0.47.0_linux_arm64.tar.gz 587936c600ecef1a0b18ecabf384c75c4ea503c37f9032ef1117c023544edeaa agentsview
+mesij amd64 0.1.0 withakay/mesij mesij_0.1.0_linux_amd64.tar.gz 1d384f032e2a92ec61b53a22085365fb902837f79256a66a57c7200478be28ec mesij
+mesij arm64 0.1.0 withakay/mesij mesij_0.1.0_linux_arm64.tar.gz 586d97a7be9de57ad618fb189673906070e6f92968470f1946b45eec03d75e37 mesij

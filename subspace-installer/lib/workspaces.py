@@ -102,41 +102,70 @@ def refresh_reference(user, dest, source, mirror, helper, member):
         git(member, "config", "--global", "--add", "safe.directory", dest)
 
 
+def crew_worktree(home, worker, repo_id):
+    """A crew member's permanent worktree of one repository, under its captain's home."""
+    return home / "worktrees" / worker["id"] / repo_id
+
+
 def prepare_member(person, home, repo_id, source, mirror, cache_user, helper):
-    agent_id = person["id"]
-    user = f"ss-{agent_id}"
+    user = f"ss-{person['id']}"
     dest = home / "workspace" / repo_id
     start = mirror or source
     options = ("--shared",) if mirror else ()
     auth = private_credentials(helper, source) if mirror is None else None
-    if person["role"] == "crew":
-        backing = home / f".{repo_id}.git"
-        clone(user, start, backing, *options, "--bare", env=auth)
-        if git(user, "-C", backing, "remote", "get-url", "origin", output=True) == str(start):
-            git(user, "-C", backing, "remote", "set-url", "origin", source)
-        check_origin(user, backing, source)
-        worktrees = git(user, "-C", backing, "worktree", "list", "--porcelain", output=True)
-        if f"worktree {dest}" not in worktrees.splitlines():
-            if mirror:
-                base = git(cache_user, "-C", mirror, "rev-parse", "HEAD", output=True)
-            else:
-                git(user, "-C", backing, "fetch", "--quiet", "origin", "HEAD", env=auth)
-                base = "FETCH_HEAD"
-            branches = git(user, "-C", backing, "branch", "--list", f"crew/{agent_id}", output=True)
-            branch = ["-b", f"crew/{agent_id}", dest, base] if not branches else [dest, f"crew/{agent_id}"]
-            git(user, "-C", backing, "worktree", "add", "--quiet", *branch)
-        common = git(user, "-C", dest, "rev-parse", "--path-format=absolute", "--git-common-dir", output=True)
-        if common != str(backing):
-            raise ValueError(f"Crew checkout {dest} is outside its assigned repository.")
-        git_dir = backing
-    else:
-        clone(user, start, dest, *options, env=auth)
-        if git(user, "-C", dest, "remote", "get-url", "origin", output=True) == str(start):
-            git(user, "-C", dest, "remote", "set-url", "origin", source)
-        check_origin(user, dest, source)
-        git_dir = dest / ".git"
+    clone(user, start, dest, *options, env=auth)
+    if git(user, "-C", dest, "remote", "get-url", "origin", output=True) == str(start):
+        git(user, "-C", dest, "remote", "set-url", "origin", source)
+    check_origin(user, dest, source)
     hook = helper.parent / "git-hooks/pre-push"
-    as_user(user, "/usr/bin/python3", Path(__file__), "hook", git_dir, hook, "on" if "githubApp" in person else "off")
+    # Crew worktrees share this checkout's hooks, configuration and credentials.
+    as_user(user, "/usr/bin/python3", Path(__file__), "hook", dest / ".git", hook, "on" if "githubApp" in person else "off")
+    remote_head = []
+
+    def start_point():
+        # Resolved at most once per repository, and only when a new crew branch needs it.
+        if not remote_head:
+            if mirror:
+                remote_head.append(git(cache_user, "-C", mirror, "rev-parse", "HEAD", output=True))
+            else:
+                git(user, "-C", dest, "fetch", "--quiet", "origin", "HEAD", env=auth)
+                remote_head.append(git(user, "-C", dest, "rev-parse", "FETCH_HEAD", output=True))
+        return remote_head[0]
+
+    for worker in person.get("crew", ()):
+        prepare_crew(user, dest, crew_worktree(home, worker, repo_id), worker["branch"], start_point)
+
+
+def registered_worktrees(user, checkout):
+    """Map each registered worktree path to its porcelain attribute lines, such as prunable or locked."""
+    entries = {}
+    for block in git(user, "-C", checkout, "worktree", "list", "--porcelain", output=True).split("\n\n"):
+        lines = block.splitlines()
+        if lines and lines[0].startswith("worktree "):
+            entries[lines[0].removeprefix("worktree ")] = lines[1:]
+    return entries
+
+
+def prepare_crew(user, checkout, dest, branch, start_point):
+    """Add a crew member's worktree of the captain's checkout once; never reset or move existing work."""
+    registered = registered_worktrees(user, checkout)
+    present = dest.exists() or dest.is_symlink()
+    if str(dest) in registered and not present:
+        # Its directory was deleted: forget only this registration (Git refuses a locked one), keep the
+        # branch and its commits, and add the worktree again below.
+        git(user, "-C", checkout, "worktree", "remove", dest)
+        registered.pop(str(dest))
+    if str(dest) not in registered:
+        if present:
+            raise ValueError(f"{dest} exists but is not a worktree of {checkout}. Move it aside.")
+        as_user(user, "/usr/bin/mkdir", "-p", "--", dest.parent)
+        existing = git(user, "-C", checkout, "branch", "--list", branch, output=True)
+        target = [dest, branch] if existing else ["-b", branch, dest, start_point()]
+        git(user, "-C", checkout, "worktree", "add", "--quiet", *target)
+    # Stargate requires each worker to share its project checkout's Git common directory.
+    common = git(user, "-C", dest, "rev-parse", "--path-format=absolute", "--git-common-dir", output=True)
+    if common != str(checkout / ".git"):
+        raise ValueError(f"Crew worktree {dest} belongs to another repository.")
 
 
 def manage_hook(git_dir, source, enabled):
@@ -165,12 +194,12 @@ def prepare_workspaces(repos, people, homes, cache, cache_user, references, help
 
 
 def prune_worktrees(repos, people, homes, days):
+    """Forget records of crew worktrees that no longer exist; existing directories are never removed."""
     for person in people:
         if person["role"] == "rear_admiral":
             continue
-        home = homes[person["id"]]
         for repo_id in repos:
-            path = home / (f".{repo_id}.git" if person["role"] == "crew" else f"workspace/{repo_id}")
+            path = homes[person["id"]] / "workspace" / repo_id
             if path.is_dir():
                 git(f"ss-{person['id']}", "-C", path, "worktree", "prune", f"--expire={days}.days.ago")
 

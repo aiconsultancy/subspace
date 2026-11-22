@@ -35,7 +35,7 @@ import subprocess
 import sys
 import tempfile
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 HERE = Path(__file__).resolve().parent
@@ -70,6 +70,9 @@ LINUX_USER = re.compile(r"[a-z_][a-z0-9_.-]{0,31}")
 # Development sign-in is only the default: an operator who switches the API to WorkOS or Entra keeps it.
 DEV_AUTH = {"AUTH_PROVIDERS": "dev", "ENABLE_DEV_AUTH": "true", "NODE_ENV": "development"}
 CIDR = re.compile(r"[0-9a-fA-F:.]+(?:/[0-9]{1,3})?")
+# The fleet installer's repository IDs (also Stargate crew project keys) and its crew limit of nine repositories.
+REPO_ID = re.compile(r"[a-z][a-z0-9_-]{0,39}")
+MAX_REPOSITORIES = 9
 
 
 class SetupError(Exception):
@@ -138,8 +141,11 @@ def parse_args(argv):
     parser.add_argument("--admin", help="your IRC account and nickname (default admiral)")
     parser.add_argument("--admin-email", help="development sign-in email (default developer@example.com)")
     parser.add_argument("--organisation", help="development sign-in organisation (default local)")
-    parser.add_argument("--crew-claude", type=int, help="Claude-family crew per captain (default 2)")
-    parser.add_argument("--crew-codex", type=int, help="Codex-family crew per captain (default 2)")
+    parser.add_argument("--repositories", help="comma-separated HTTPS Git URLs that every captain checks out, "
+                        "optionally as ID=URL; crew get one worktree of each. Replaces the fleet's list; "
+                        "'' clears it. Private GitHub repositories need GitHub Apps first (installer README)")
+    parser.add_argument("--crew-claude", type=int, help="Claude-family crew per captain (default 2; crew need a repository)")
+    parser.add_argument("--crew-codex", type=int, help="Codex-family crew per captain (default 2; crew need a repository)")
     parser.add_argument("--demo", dest="demo", action="store_true", default=None, help="seed fictional demo data")
     parser.add_argument("--no-demo", dest="demo", action="store_false")
     parser.add_argument("--irc", choices=["local", "remote"],
@@ -215,6 +221,12 @@ def gather(args, saved):
     pick("admin", args.admin, "Your IRC account name", "admiral")
     pick("adminEmail", args.admin_email, "Development sign-in email", "developer@example.com")
     pick("organisation", args.organisation, "Development sign-in organisation", "local")
+    # Repositories live in fleet.json, beside hand-added private ones, so only this run's answer applies.
+    if args.repositories is not None:
+        answers["repositories"] = parse_repositories(args.repositories)
+    elif interactive and not (INPUTS / "fleet.json").exists():
+        answers["repositories"] = parse_repositories(
+            prompt("Repositories every captain checks out (comma-separated HTTPS Git URLs, blank for none)", "", interactive) or "")
     crew = answers.setdefault("crew", {})
     for family, flag in (("claude", args.crew_claude), ("codex", args.crew_codex)):
         if flag is not None:
@@ -260,6 +272,43 @@ def gather(args, saved):
     return answers
 
 
+def parse_repositories(value):
+    """'URL' or 'ID=URL' items as [ID, URL, named]. The ID defaults to the repository's name."""
+    rows = []
+    for item in (part.strip() for part in value.split(",")):
+        if not item:
+            continue
+        named = re.fullmatch(r"([a-z][a-z0-9_-]{0,39})=(.+)", item)
+        url = named.group(2) if named else item
+        try:
+            path = urlsplit(url).path
+        except ValueError:
+            path = ""
+        name = named.group(1) if named else re.sub(
+            r"[^a-z0-9_-]+", "-", path.rstrip("/").rpartition("/")[2].removesuffix(".git").lower()).strip("-")
+        rows.append([name, url, bool(named)])
+    return rows
+
+
+def check_repositories(rows):
+    for index, (name, url, _named) in enumerate(rows, 1):
+        try:
+            parts = urlsplit(url)
+            host = parts.hostname
+        except ValueError:
+            parts, host = None, None
+        # Name a rejected item by position and host only: the URL may carry credentials.
+        require(parts and parts.scheme == "https" and host and parts.path.strip("/") and not parts.username
+                and not parts.password and not parts.query and not parts.fragment,
+                f"Repository {index} ({host or 'no host'}) needs an HTTPS Git URL without credentials, "
+                "a query or a fragment.")
+        require(REPO_ID.fullmatch(name) and name != "default",
+                f"Give repository {url} an ID that starts with a letter, as ID=URL (for example web={url}).")
+    require(len({row[0] for row in rows}) == len(rows) and len({row[1] for row in rows}) == len(rows),
+            "Repository IDs and URLs must be unique.")
+    require(len(rows) <= MAX_REPOSITORIES, f"Use at most {MAX_REPOSITORIES} repositories, the crew limit.")
+
+
 def check_answers(answers):
     require(1 <= len(answers["name"]) <= 100, "The fleet name must be 1 to 100 characters.")
     require(SLUG.fullmatch(answers["slug"]), "The fleet ID must be at most 20 lower-case letters, digits or hyphens.")
@@ -275,8 +324,8 @@ def check_answers(answers):
             and not any(admin.startswith(f"{account}-") for account in agent_accounts[1:]),
             "Your IRC account must differ from the agents' names and accounts.")
     for agent in ids:
-        require(len(f"{answers['slug']}-{agent}") <= 22,
-                f"'{answers['slug']}-{agent}' is too long for its crew's IRC accounts. Use a shorter fleet ID or name.")
+        require(len(f"{answers['slug']}-{agent}") <= 32,
+                f"'{answers['slug']}-{agent}' is too long for its IRC account. Use a shorter fleet ID or name.")
     require(EMAIL.fullmatch(answers["adminEmail"]), "Use a valid sign-in email address.")
     if answers["irc"] == "remote":
         host = answers.get("ircHost") or ""
@@ -289,6 +338,7 @@ def check_answers(answers):
     require(ORG.fullmatch(answers["organisation"]), "The organisation must be lower-case letters, digits or hyphens.")
     for family, count in answers["crew"].items():
         require(isinstance(count, int) and 0 <= count <= 10, f"{family} crew must be between 0 and 10 per captain.")
+    check_repositories(answers.get("repositories", []))
     if answers.get("stargateRef"):
         require(SHA.fullmatch(answers["stargateRef"]), "--stargate-ref must be a full 40-character commit SHA.")
     require(answers["operator"] and answers["operator"] != "root",
@@ -384,17 +434,21 @@ class Secrets:
 # Fleet config ----------------------------------------------------------------
 
 def roster(answers, rear, captains):
+    """The rear admiral and captains: the only fleet members with Linux users and IRC accounts.
+
+    Crew run as their captain through Stargate's crew plugin and have no IRC account.
+    """
     # Accounts carry the fleet ID so that several fleets can share one IRC server.
     slug = answers["slug"]
     members = [{"id": rear, "name": answers["rearAdmiral"], "account": f"{slug}-{rear}"}]
     for captain_id, name in zip(captains, answers["captains"], strict=True):
         members.append({"id": captain_id, "name": name, "account": f"{slug}-{captain_id}"})
-    crew_accounts = []
-    for captain in members[1:]:
-        for family in ("claude", "codex"):
-            for slot in range(1, answers["crew"][family] + 1):
-                crew_accounts.append(f"{captain['account']}-{family}-{slot}")
-    return members, crew_accounts
+    return members
+
+
+def save_answers(answers):
+    # Repositories are kept in fleet.json, where an operator may also add private ones by hand.
+    write_json(INPUTS / "answers.json", {key: value for key, value in answers.items() if key != "repositories"})
 
 
 def demo_channels():
@@ -434,7 +488,6 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         "rearAdmiral": members[0],
         "captains": members[1:],
         "crew": {family: {"count": count} for family, count in answers["crew"].items()},
-        "repositories": [],
         "operatorUsers": [answers["operator"]],
         "toolchains": {"node": "24"},
         "irc": {
@@ -456,11 +509,19 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
     previous = read_json(INPUTS / "fleet.json", {})
-    # Keep anything the operator added by hand, such as repositories, GitHub Apps or stakeholders.
-    for key in ("repositories", "harness", "stakeholders", "usage", "medical", "toolchains", "maintenance",
+    # Keep anything the operator added by hand, such as private repositories, GitHub Apps or stakeholders.
+    for key in ("harness", "stakeholders", "usage", "medical", "toolchains", "maintenance",
                 "githubPolicy", "dashboard", "proxy", "agentsview"):
         if key in previous:
             config[key] = previous[key]
+    repositories = previous.get("repositories", [])
+    if "repositories" in answers:
+        # This run's answer replaces the list; a repository that stays keeps its visibility, and its ID
+        # unless this answer names one.
+        known = {row.get("url"): row for row in repositories if isinstance(row, dict)}
+        repositories = [{**known[url], "id": name} if named and url in known else known.get(url, {"id": name, "url": url})
+                        for name, url, named in answers["repositories"]]
+    config["repositories"] = repositories
     by_id = {person["id"]: person for person in [previous.get("rearAdmiral", {}), *previous.get("captains", [])]
              if isinstance(person, dict) and "id" in person}
     for person in [config["rearAdmiral"], *config["captains"]]:
@@ -481,11 +542,11 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     return config
 
 
-def fleet_secrets(secret_store, members, crew_accounts, admin, token="", local_irc=True):
+def fleet_secrets(secret_store, members, admin, token="", local_irc=True):
     # A shared IRC server owns the human accounts; a local one is seeded with the admin's.
     humans = [admin] if local_irc else []
     passwords = {account: secret_store.password(f"irc-{account}")
-                 for account in [person["account"] for person in members] + crew_accounts + humans}
+                 for account in [person["account"] for person in members] + humans}
     result = {
         "proxyKey": secret_store.get("proxy-key", lambda: secrets.token_urlsafe(32)),
         "ircPasswords": passwords,
@@ -787,7 +848,7 @@ def fleet_channels(answers, members):
     return [f"#{slug}-starbase"] + [f"#{slug}-{person['id']}" for person in members[1:]]
 
 
-def irc_bundle(answers, members, crew_accounts, secret_store):
+def irc_bundle(answers, members, secret_store):
     """What a shared IRC server needs for this fleet: its SASL accounts and channels."""
     channels = fleet_channels(answers, members)
     topics = [f"{answers['name']} Starbase: admirals and the rear admiral"] + [
@@ -795,7 +856,7 @@ def irc_bundle(answers, members, crew_accounts, secret_store):
     bundle = {
         "fleet": answers["slug"],
         "accounts": [{"name": account, "password": secret_store.password(f"irc-{account}")}
-                     for account in [person["account"] for person in members] + crew_accounts],
+                     for account in [person["account"] for person in members]],
         "channels": [{"name": name, "topic": topic} for name, topic in zip(channels, topics, strict=True)],
         "humans": [answers["admin"]],
     }
@@ -850,9 +911,9 @@ def setup(args):
     rear, captains = check_answers(answers)
     if saved.get("slug") and saved["slug"] != answers["slug"]:
         raise SetupError("The fleet ID cannot change on an installed VM. Reinstall on a fresh VM to rename it.")
-    write_json(INPUTS / "answers.json", answers)
+    save_answers(answers)
     secret_store = Secrets(INPUTS, answers["slug"], answers.get("keyVault"))
-    members, crew_accounts = roster(answers, rear, captains)
+    members = roster(answers, rear, captains)
     local_irc = answers["irc"] == "local"
     config_path = INPUTS / "fleet.json"
     secrets_path = INPUTS / "fleet.secrets.json"
@@ -865,13 +926,13 @@ def setup(args):
 
     def write_inputs(irc_ref, api_block=None, stargate_api=False, token="", history=None):
         write_json(config_path, fleet_config(answers, members, irc_ref, api_block, stargate_api, stargate_ref, history))
-        private = fleet_secrets(secret_store, members, crew_accounts, answers["admin"], token, local_irc)
+        private = fleet_secrets(secret_store, members, answers["admin"], token, local_irc)
         if history:
             private["ircHistoryPassword"] = secret_store.password("ergo-history")
         write_json(secrets_path, private)
 
     if not local_irc:
-        irc_bundle(answers, members, crew_accounts, secret_store)
+        irc_bundle(answers, members, secret_store)
     if args.dry_run:
         write_inputs(hashlib.sha1(b"dry-run").hexdigest())
         installer(config_path, dry_run=True)
@@ -904,7 +965,7 @@ def setup(args):
             initiative = fleet_initiative(token, answers["name"], channels, answers.get("initiativeId"),
                                           answers.get("managedChannels", []), answers["slug"])
             answers.update(initiativeId=initiative, managedChannels=channels)
-            write_json(INPUTS / "answers.json", answers)
+            save_answers(answers)
             api_block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": [initiative]}
         else:
             say("the API no longer offers development sign-in, so setup leaves its fleet registration, "
@@ -1024,7 +1085,7 @@ def main(argv):
         answers = read_json(INPUTS / "answers.json", {})
         require(answers.get("slug"), "Set the fleet up first.")
         rear, captains = check_answers(answers)
-        members, _ = roster(answers, rear, captains)
+        members = roster(answers, rear, captains)
         sys.stdout.write(json.dumps(fleet_registration(answers, members), indent=2) + "\n")
     elif argv and argv[0] == "register-fleet":
         if argv[1:] == ["--check"]:
