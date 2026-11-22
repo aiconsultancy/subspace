@@ -136,6 +136,12 @@ impl Hub {
         let state = lock(&self.0.state);
         !state.live_reads.issue.pending() && !state.live_reads.list.pending()
     }
+    /// Whether no read is queued or out, so a test can wait for what a step
+    /// set going to finish before it counts requests.
+    #[cfg(test)]
+    pub(crate) fn idle(&self) -> bool {
+        self.0.queue.idle()
+    }
     /// A hub's data and queued requests belong to its original account.
     pub fn account_changed(&self) -> bool {
         self.0.client.account_changed()
