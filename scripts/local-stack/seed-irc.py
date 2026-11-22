@@ -131,6 +131,15 @@ def apply(channels, accounts, journal):
 
 def main():
     channels = json.load(sys.stdin)
+    # Conversations go only to the channels the stack registers, the
+    # standard fleet channels among them, never to a channel JOIN would create.
+    registered = {
+        row["name"].lower()
+        for row in json.loads(Path(os.environ["IRC_CHANNELS_FILE"]).read_text(encoding="utf-8"))
+    }
+    unknown = sorted(name for name in channels if name.lower() not in registered)
+    if unknown:
+        raise RuntimeError(f"the demo conversations use unregistered channels: {', '.join(unknown)}")
     accounts = {
         account["name"]: account["password"]
         for account in json.loads(Path(os.environ["IRC_ACCOUNTS_FILE"]).read_text(encoding="utf-8"))

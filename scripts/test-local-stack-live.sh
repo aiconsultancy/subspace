@@ -35,6 +35,20 @@ with ExitStack() as scope:
         entries = [(sender, body) for sender, body in irc.history(name) if sender in accounts]
         assert all(count == 1 for count in Counter(entries).values()), name
         result[name] = len(entries)
+        # Who speaks where follows the standard channels: people and the
+        # rear admiral in Starbase, the rear admiral and captains in command.
+        # A ship channel has the captains, the rear admiral and people.
+        fleet, _, suffix = name[1:].partition("-")
+        agents = {account for account in accounts if account.startswith(f"{fleet}-")}
+        if suffix == "starbase":
+            allowed = {"developer", f"{fleet}-admiral"}
+        elif suffix == "command":
+            allowed = agents
+        elif suffix:
+            allowed = {"developer", *agents}
+        else:
+            allowed = set(accounts)
+        assert {sender for sender, _ in entries} <= allowed, name
     print(json.dumps(result, sort_keys=True))
 PY
 }
@@ -42,14 +56,14 @@ PY
 mode=${STACK_LIVE_MODE:-empty}
 if [ "$mode" = empty ]; then
     verify empty
-    test "$(irc_counts)" = '{"#aurora-command": 0, "#aurora-nav": 0, "#aurora-relay": 0, "#borealis-command": 0, "#borealis-warp": 0, "#subspace": 0}'
+    test "$(irc_counts)" = '{"#aurora-castor": 0, "#aurora-command": 0, "#aurora-lyra": 0, "#aurora-orion": 0, "#aurora-starbase": 0, "#aurora-vega": 0, "#borealis-command": 0, "#borealis-rigel": 0, "#borealis-starbase": 0, "#subspace": 0}'
     make -s stack-demo
 fi
 initial=$(verify demo)
 echo "$initial"
 history=$(irc_counts)
 echo "$history"
-test "$history" = '{"#aurora-command": 3, "#aurora-nav": 5, "#aurora-relay": 4, "#borealis-command": 3, "#borealis-warp": 4, "#subspace": 3}'
+test "$history" = '{"#aurora-castor": 0, "#aurora-command": 2, "#aurora-lyra": 5, "#aurora-orion": 4, "#aurora-starbase": 2, "#aurora-vega": 0, "#borealis-command": 2, "#borealis-rigel": 4, "#borealis-starbase": 2, "#subspace": 3}'
 make -s stack-demo | grep -Fx 'Demo IRC history ready: 0 new messages.'
 test "$(verify demo)" = "$initial"
 test "$(irc_counts)" = "$history"
