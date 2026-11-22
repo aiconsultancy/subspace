@@ -91,9 +91,11 @@ flowchart LR
   through the **Claude Agent SDK** or the **OpenAI Codex SDK**, but OpenCode is
   the most tested and the recommended choice. The Stargate dashboard and
   **AgentsView** show what the agents are doing.
-- **Ergo IRC** carries conversations between you and the agents: a
-  **Starbase** channel for talking to the rear admiral, and a channel per
-  captain (ship). It runs on the fleet VM for a trial or a single fleet; for
+- **Ergo IRC** carries conversations between you and the agents. Every fleet
+  has the same [standard channels](subspace-installer/README.md#channels):
+  **Starbase** for talking to the rear admiral, **fleet command** where the
+  rear admiral and the captains coordinate, and a channel per captain
+  (ship). It runs on the fleet VM for a trial or a single fleet; for
   real use with several fleets, one shared server in a container serves them
   all ([One fleet or several](#one-fleet-or-several-shared-irc)).
 - **The Subspace API** (with PostgreSQL) holds issues, initiatives and fleets.
@@ -188,7 +190,8 @@ answer it now.
    names (for example "Orion, Vega"). Names become IRC channels, IRC accounts
    and Linux users, so keep them short: the fleet ID (the fleet name in lower
    case, or `--slug`) plus a hyphen and an agent's name must fit 32
-   characters, as in `example-fleet-orion`.
+   characters, as in `example-fleet-orion`. A captain cannot be called
+   Starbase or Command, the names of two of the fleet's standard channels.
 4. **Which GitHub repositories should the captains have checked out?** List
    them in order, as HTTPS URLs; the first is where each captain starts. Every
    captain gets every repository in the list (`--repositories`, at most
@@ -456,7 +459,7 @@ where that server runs and where its history is stored.
   default, and the right choice for a local trial or a fleet that will stay
   the only one.
 - **Several fleets.** One Ergo server for all your fleets. Each fleet keeps
-  its own Starbase and ship channels, named after the fleet, and its agents
+  its own standard channels, named after the fleet, and its agents
   have their own accounts. The desktop stays connected to that one network.
   When you change fleet, by picking an initiative of another fleet in
   **Channels**, it loads that fleet's channels, so you work across fleets while
@@ -593,8 +596,13 @@ you create; and delete nothing without asking.
 
 The server's accounts are the humans' accounts (at least the user's own,
 from question 6) plus every fleet's agents; its channels are every fleet's
-channels. Each fleet VM prints what it needs as an IRC bundle (see the next
-section). Keep the bundles in an owner-only folder on this computer, because
+channels. Each fleet needs at least its
+[standard channels](subspace-installer/README.md#channels):
+`#<fleet>-starbase`, `#<fleet>-command` and `#<fleet>-<captain>` for each
+captain, as in `#fleet-one-starbase`, `#fleet-one-command` and
+`#fleet-one-orion`. Add any initiative channels beside them. Each fleet VM
+prints what it needs as an IRC bundle (see the next section), with its
+standard channels already in it. Keep the bundles in an owner-only folder on this computer, because
 they hold the agents' IRC passwords, and build the seeds from them:
 
 ```sh
@@ -909,8 +917,8 @@ does the same as `./install.sh providers`.
    source for this setup.
 3. **Channels.** The installer already added the fleet's IRC network, signed in
    as your account with the password file it saved. Pick the fleet's
-   initiative in **Channels** to join its Starbase and ship channels. Say hello
-   to the rear admiral in Starbase. If the desktop's settings file could not
+   initiative in **Channels** to join its Starbase, fleet command and ship
+   channels. Say hello to the rear admiral in Starbase. If the desktop's settings file could not
    be updated automatically, the installer printed the network to add under
    **Settings > Channels > Add network**; `./install.sh desktop` writes it
    again.

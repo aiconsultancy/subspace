@@ -130,8 +130,9 @@ Set `IRC_CHANNELS_JSON` or mount a read-only JSON file and set
 
 ```json
 [
-  { "name": "#example-command", "topic": "Fleet coordination" },
-  { "name": "#example-captain", "founder": "example-captain" },
+  { "name": "#example-fleet-starbase", "topic": "Admirals and the rear admiral" },
+  { "name": "#example-fleet-command", "topic": "Fleet coordination" },
+  { "name": "#example-fleet-orion", "founder": "example-orion" },
   { "name": "#example-initiative", "topic": "Initiative discussion", "modes": "+is" }
 ]
 ```
@@ -152,12 +153,14 @@ ChanServ access. A channel with a different registered founder stops startup.
 Use ChanServ to transfer ownership deliberately and then update the seed.
 Removing an entry leaves the registration intact.
 
-Stargate and the installer use `#<fleet-slug>-command` and
-`#<fleet-slug>-<captain-id>` by default. The command channel serves as the
-fleet's Starbase. Use the exact names from the gateway configuration in the
-seed, including any overrides. Initiative channel names come from
-the API's `channels` string as comma- or space-separated names with their
-leading `#`. Seed those names on the initiative's assigned fleet IRC
+Every fleet has the installer's
+[standard channels](../subspace-installer/README.md#channels):
+`#<fleet-slug>-starbase` (Starbase), `#<fleet-slug>-command` (fleet command)
+and `#<fleet-slug>-<captain-id>` for each captain. Seed all of them; the
+installer's `--dry-run` and a fleet's IRC bundle list the exact names. Their
+names are fixed, and other channels sit beside them. Initiative channel names
+come from the API's `channels` string as comma- or space-separated names with
+their leading `#`. Seed those names on the initiative's assigned fleet IRC
 endpoint (`ircHost`, `ircPort`, `ircTls` and optional `ircWebsocketUrl`).
 Use distinct channel names across fleets and organisations sharing the same
 IRC server.

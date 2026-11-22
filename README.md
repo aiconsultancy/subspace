@@ -167,8 +167,8 @@ out:
 - **Assigned to a captain.** Assign an issue to a captain and the rear
   admiral asks that captain in chat to pick it up, assign it to a crew
   member and get it done.
-- **In the open.** Offers, answers and requests go to the fleet's channel,
-  so people watch them in the Channels Space and can step in.
+- **In the open.** Offers, answers and requests go to the fleet's command
+  channel, so people watch them in the Channels Space and can step in.
 - **Own fleet only.** The API refuses a fleet agent's assignment or *Ready
   for agents* change on an issue whose project belongs to another fleet,
   even when the project moved after the dispatcher last read it. It also
@@ -432,10 +432,13 @@ configurable.
   of the work, and it assigns work to the captains so things keep moving.
   **Captains** are Opus 5.5, each with a **crew** of two Claude and two Codex
   workers.
-- **Channels.** Each captain has its own channel. The other captains are in it
-  too, but only the owning captain is woken by its messages; the others wake
-  only when tagged. The **Starbase** channel is where admirals talk to the rear
-  admiral and to each other.
+- **Channels.** Every fleet has the same
+  [standard channels](subspace-installer/README.md#channels). Each captain
+  has its own ship channel. The other captains are in it too, but only the
+  owning captain is woken by its messages; the others wake only when tagged.
+  The **Starbase** channel is where admirals talk to the rear admiral and to
+  each other. In the **fleet command** channel the rear admiral and the
+  captains coordinate.
 - **Checkouts.** Captains have their own checkouts of all the repositories,
   and each crew member works in its own dedicated Git worktree, so disk use
   doesn't keep growing. Stargate manages all of this; it is the glue.
