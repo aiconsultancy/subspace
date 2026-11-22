@@ -248,3 +248,25 @@ fn a_fleet_that_two_initiatives_share_keeps_its_roles() {
     );
     assert_eq!(roster.channel("#aurora-lyra").cloned(), ship("aurora-lyra"));
 }
+
+#[test]
+fn a_ship_whose_captain_is_ambiguous_is_no_ship_channel() {
+    let clash = fleet(
+        "aurora",
+        vec![
+            agent("Vega", "rearAdmiral", Some("aurora-lyra"), None),
+            agent("Lyra", "captain", Some("aurora-lyra"), Some("Lattice")),
+        ],
+    );
+    let roster = Roster::new([&clash]);
+    assert_eq!(roster.rank("aurora-lyra"), None);
+    assert_eq!(
+        roster.channel("#aurora-lyra"),
+        None,
+        "no ship for a captain the roster cannot name"
+    );
+    assert_eq!(
+        roster.channel("#aurora-starbase"),
+        Some(&ChannelKind::Starbase)
+    );
+}

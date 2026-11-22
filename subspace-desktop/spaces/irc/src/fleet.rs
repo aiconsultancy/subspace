@@ -118,10 +118,9 @@ impl Roster {
                 (agents, channels)
             },
         );
-        Self {
-            agents: unclaimed_twice(agents),
-            channels: unclaimed_twice(channels),
-        }
+        let agents = unclaimed_twice(agents);
+        let channels = crewed(unclaimed_twice(channels), &agents);
+        Self { agents, channels }
     }
 
     /// The agent whose API nick is `nick`, when exactly one agent of the
@@ -234,6 +233,23 @@ fn distinct<'a>(fleets: impl IntoIterator<Item = &'a Fleet>) -> Vec<&'a Fleet> {
     fleets
         .into_iter()
         .filter(|fleet| seen.insert(fleet.id.as_str()))
+        .collect()
+}
+
+/// `channels` without a ship whose captain is not one of `agents` as a
+/// captain, such as one whose nick two roles claimed.
+fn crewed(
+    channels: Vec<(String, ChannelKind)>,
+    agents: &[(String, Agent)],
+) -> Vec<(String, ChannelKind)> {
+    channels
+        .into_iter()
+        .filter(|(_, kind)| match kind {
+            ChannelKind::Ship { captain } => {
+                found(agents, captain).is_some_and(|agent| agent.rank == Rank::Captain)
+            }
+            ChannelKind::Starbase | ChannelKind::Command => true,
+        })
         .collect()
 }
 
