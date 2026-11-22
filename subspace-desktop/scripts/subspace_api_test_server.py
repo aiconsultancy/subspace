@@ -283,15 +283,29 @@ FLEET_CAPTAINS = {'lyra': ('aurora-lyra', 'aurora'), 'orion': ('aurora-orion', '
                   'castor': ('aurora-castor', 'aurora'), 'vega': ('aurora-vega', 'aurora'),
                   'rigel': ('borealis-rigel', 'borealis')}
 # --fleet: the aurora fleet's initiative, so Channels knows its roles: on the
-# fleet's connection (any loopback one in a capture) aurora-admiral is the
-# rear admiral, aurora-lyra and the other ships' nicks are captains, and
-# #aurora-starbase and #aurora-<ship> are its channels. Never selected, so
-# it joins nothing.
+# fleet's connection (any loopback one in a capture) the API's agents give
+# each rank by IRC nick: aurora-admiral is the rear admiral (named
+# admiral-vance, so no name rule could guess it), aurora-lyra, aurora-orion,
+# aurora-castor and aurora-vega are captains, and aurora-wren is Lyra's crew.
+# The fleet records #aurora-starbase and #aurora-command; each captain's ship
+# channel is the standard #<nick>. Never selected, so it joins nothing.
+FLEET_AGENTS = [dict(userId='fixture-agent-admiral', name='admiral-vance', rank='rearAdmiral', shipId=None,
+                     ship=None, ircNick='aurora-admiral', shipChannel=None, available=True)] + [
+    dict(userId=f'fixture-agent-{code}', name=code.title(), rank='captain', shipId=f'fixture-ship-{code}',
+         ship=ship, ircNick=nick, shipChannel=None, available=True)
+    for code, ship, nick in (('castor', 'Comet', 'aurora-castor'), ('lyra', 'Lattice', 'aurora-lyra'),
+                             ('orion', 'Plover', 'aurora-orion'), ('vega', 'Vane', 'aurora-vega'))] + [
+    dict(userId='fixture-agent-wren', name='Wren', rank='crew', shipId='fixture-ship-lyra', ship='Lattice',
+         ircNick='aurora-wren', shipChannel=None, available=True)]
 FLEET_INITIATIVE = dict(
     id='5d1f0c2e-5b7a-4f0e-9a51-2a8f3c6d7e10', name='Fallow Reach', channels='#aurora-starbase, #aurora-lyra',
     fleetId='aurora', fleet=dict(id='aurora', slug='aurora', name='Aurora', ircHost='irc.example.test', ircPort=6697,
-                                 ircTls=True, ircWebsocketUrl=None, rearAdmiralName='Admiral',
-                                 captainNames=['Lyra', 'Orion', 'Vega', 'Castor'], vmHost=None))
+                                 ircTls=True, ircWebsocketUrl=None, rearAdmiralName='admiral-vance',
+                                 captainNames=['Castor', 'Lyra', 'Orion', 'Vega'], vmHost=None,
+                                 starbaseChannel='#aurora-starbase', commandChannel='#aurora-command',
+                                 agents=FLEET_AGENTS,
+                                 ships=[dict(id=agent['shipId'], name=agent['ship'], channel=None)
+                                        for agent in FLEET_AGENTS if agent['rank'] == 'captain']))
 FLEET_LABELS = dict(bug='#e5484d', feature='#5b5bd6', performance='#f76b15', docs='#30a46c',
                     design='#ab4aba', reliability='#008c95')
 # Per project: key, name, lead, then issues as (title, state type, label,

@@ -83,7 +83,10 @@ fn rows_show_the_mode_prefix_and_speak_rank_and_away() {
 #[test]
 fn a_fleet_agent_s_row_notes_its_rank_as_the_member_list_does() {
     let aurora: subspace_api_client::model::Fleet = serde_json::from_value(serde_json::json!({
-        "id": "aurora", "slug": "aurora", "rearAdmiralName": "Admiral", "captainNames": ["Lyra"]
+        "id": "aurora", "slug": "aurora", "agents": [
+            {"name": "Vance", "rank": "rearAdmiral", "ircNick": "aurora-admiral"},
+            {"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra"}
+        ]
     }))
     .unwrap();
     let roster = crate::fleet::Roster::new([&aurora]);

@@ -123,7 +123,9 @@ fn gutter_time(
 /// rear admiral's name takes its rank's tone.
 fn header(entry: &Entry, nick: &str, rank: Option<Rank>, tokens: &Tokens, cx: &App) -> AnyElement {
     let notice = entry.line.kind == subspace_client_irc::LineKind::Notice;
-    let tone = rank.map_or_else(|| style::sender_tone(nick, entry.line.own), Rank::tone);
+    let tone = rank
+        .and_then(Rank::tone)
+        .unwrap_or_else(|| style::sender_tone(nick, entry.line.own));
     h_flex()
         .id(SharedString::from(format!("irc-line:{}:sender", entry.seq)))
         .test_support()
