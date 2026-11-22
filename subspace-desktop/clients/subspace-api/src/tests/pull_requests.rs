@@ -33,6 +33,18 @@ fn summary_is_optional_and_all_contract_fields_deserialize() {
 }
 
 #[test]
+fn ready_for_agents_is_read_when_sent_and_unknown_when_not() {
+    let mut value = super::row("1");
+    let row: IssueListItem = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(row.ready_for_agents, None, "an older service sends no flag");
+    for flag in [true, false] {
+        value["readyForAgents"] = json!(flag);
+        let row: IssueListItem = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(row.ready_for_agents, Some(flag));
+    }
+}
+
+#[test]
 fn route_404_is_neutral_and_does_not_hide_the_issue() {
     let mock = Mock::new(common);
     let hub = connected(&mock);

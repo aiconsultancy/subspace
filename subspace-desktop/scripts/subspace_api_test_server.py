@@ -148,7 +148,8 @@ def issue(ref, title, kind, now):
                 priority=2, estimate=3, dueDate=None, parentId=None, blocked=False, progress=None,
                 archivedAt=None, createdAt=now, updatedAt=now, version=1, commentCount=0,
                 todoCounts=dict(total=0, done=0), lastActivityAt=now, lastActivity=None,
-                cycle=None, cycleId=None, milestoneId=None, relayedCrew=None, provenance=None, pullRequestSummary=None)
+                cycle=None, cycleId=None, milestoneId=None, relayedCrew=None, provenance=None, pullRequestSummary=None,
+                readyForAgents=False)
 
 
 def comment(issue_id, body, parent, now, author=ADA):
