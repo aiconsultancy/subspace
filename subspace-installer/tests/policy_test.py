@@ -772,6 +772,63 @@ class FleetRecordsTests(unittest.TestCase):
             with self.subTest(message=message), self.assertRaisesRegex(fleet_records.Refused, message):
                 self.register()
 
+    def test_the_fleet_records_where_a_desktop_reaches_its_fleet_api(self):
+        # Without stargate.api there is no Fleet API, so the fleet records no address.
+        self.register()
+        self.assertIsNone(self.api.fleet_by("example-fleet")["fleetApiUrl"])
+        # With it, the SSH tunnel's end on the desktop: the same port on the desktop's loopback.
+        self.config["stargate"] = {"api": {"port": 8585}}
+        self.assertEqual(self.register(), [("PATCH", "/fleets/example-fleet")])
+        self.assertEqual(self.api.fleet_by("example-fleet")["fleetApiUrl"], "http://127.0.0.1:8585")
+        self.assertEqual(self.register(), [], "a re-run changes nothing")
+        # An address the operator gives, such as an HTTPS name on the tailnet, is sent as the API stores it.
+        self.config["api"]["fleetApiUrl"] = "HTTPS://Fleet.Example.ts.net:443/"
+        self.assertEqual(self.register(), [("PATCH", "/fleets/example-fleet")])
+        self.assertEqual(self.api.fleet_by("example-fleet")["fleetApiUrl"], "https://fleet.example.ts.net")
+        self.assertEqual(self.register(), [], "a re-run changes nothing")
+        # Switching the Fleet API off clears it, and needs the address gone from the config too.
+        self.config["stargate"] = {}
+        with self.assertRaisesRegex(Invalid, "api.fleetApiUrl.*off"):
+            self.register()
+        del self.config["api"]["fleetApiUrl"]
+        self.assertEqual(self.register(), [("PATCH", "/fleets/example-fleet")])
+        self.assertIsNone(self.api.fleet_by("example-fleet")["fleetApiUrl"])
+        self.config["stargate"] = {"api": {}}
+        for address in ("http://fleet.example.ts.net:8484", "https://operator@fleet.example.ts.net",
+                        "https://fleet.example.ts.net/?token=x", "fleet.example.ts.net"):
+            self.config["api"]["fleetApiUrl"] = address
+            with self.subTest(address=address), self.assertRaisesRegex(Invalid, "Invalid api.fleetApiUrl"):
+                validate(self.config, self.secrets)
+
+    def test_fleet_api_addresses_take_the_api_s_stored_form(self):
+        accepted = {
+            "https://fleet.example.com": "https://fleet.example.com",
+            "https://fleet.example.com/": "https://fleet.example.com",
+            "HTTPS://Fleet.Example.COM:443/": "https://fleet.example.com",
+            "https://fleet.example.com:8443/api/": "https://fleet.example.com:8443/api",
+            "https://fleet.example.com/api//": "https://fleet.example.com/api",
+            "https://100.64.0.7:7400": "https://100.64.0.7:7400",
+            "http://127.0.0.1:7400/": "http://127.0.0.1:7400",
+            "http://LOCALHOST:7400": "http://localhost:7400",
+            "http://[::1]:7400": "http://[::1]:7400",
+        }
+        for value, stored in accepted.items():
+            with self.subTest(value=value):
+                self.assertEqual(fleet_records.fleet_api_url(value), stored)
+                self.assertEqual(fixture.Subspace.fleet_api_url(value), stored, "the API stores the same form")
+        self.assertEqual(fleet_records.fleet_api_url("http://[0:0:0:0:0:0:0:1]:80/"), "http://[::1]")
+        refused = ["http://fleet.example.com:7400", "http://100.64.0.7:7400", "http://localhost.example.com",
+                   "http://0.0.0.0:7400", "ftp://fleet.example.com", "wss://fleet.example.com", "/api",
+                   "fleet.example.com", "https://", "https://operator@fleet.example.com",
+                   "https://operator:secret@fleet.example.com", "https://fleet.example.com/?token=x",
+                   "https://fleet.example.com/?", "https://fleet.example.com/#token", "https://fleet.example.com/a b",
+                   " https://fleet.example.com", "https://fleet.example.com\\api", "https://fleet.example.com:99999",
+                   "https://127.1", "https://fleet.example.com/../api", "https://bücher.example.com",
+                   f"https://fleet.example.com/{'a' * 2048}", None, 8484]
+        for value in refused:
+            with self.subTest(value=value), self.assertRaises(fleet_records.Refused):
+                fleet_records.fleet_api_url(value)
+
     def test_the_api_s_refusals_are_explained(self):
         self.api.admin = False
         with self.assertRaisesRegex(fleet_records.Refused, "human organisation administrator"):

@@ -350,8 +350,9 @@ IRC nick on its API agent record, and joins the channels the fleet and its
 ships record plus the initiative's own.
 
 - **The fleet**: its name, the IRC endpoint the desktop uses
-  (`irc.advertise`, else the gateway's), `vmHost`, and its standard
-  `starbaseChannel` and `commandChannel`.
+  (`irc.advertise`, else the gateway's), `vmHost`, its standard
+  `starbaseChannel` and `commandChannel`, and `fleetApiUrl`, where the
+  desktop reaches Stargate's Fleet API (below).
 - **One ship per captain**, named after the ship, the captain's `name`, and
   recording its ship channel, `#<slug>-<captain-id>`.
 - **The rear admiral's agent record**, rank `rearAdmiral`, named with its
@@ -383,10 +384,31 @@ installer refuses, naming the record, to take over an agent with the same IRC
 nick under another account subject, an agent of another fleet, or an agent
 name already in use.
 
+**The Fleet API address.** The desktop reads each fleet's live state from
+its Stargate Fleet API, at the `fleetApiUrl` the fleet records. With
+`stargate.api` on, the installer records `api.fleetApiUrl` when it is set,
+for example `https://fleet.example.ts.net:8484` for an HTTPS name on the
+tailnet that you set up yourself. Otherwise it records the SSH tunnel's end on
+the desktop, `http://127.0.0.1:<stargate.api.port>`: every way of reaching a
+fleet (the SSH tunnel, over Tailscale or through Cloudflare) forwards that
+port to the same port on the desktop's loopback. With `stargate.api` off it
+records none, and `api.fleetApiUrl` is refused. The address must be `https`,
+or `http` only on `localhost`, `127.0.0.1` or `[::1]`, with no credentials,
+query or fragment, and is sent in the form the API stores it, so a re-run
+writes nothing. Registration never sends the Fleet API's token to the
+Subspace API or prints it: the desktop app asks for the fleet's token once and
+keeps it on the user's own machine.
+
 `subspace-setup` registers the same records with the API on its VM before it
 runs the installer, so [agent dispatch](#agent-dispatch) can sign the rear
 admiral in, and `subspace-setup register-fleet` registers a further fleet's
-from its `subspace-setup fleet-registration` output. Setup gives the fleet's
+from its `subspace-setup fleet-registration` output. `subspace-setup
+--fleet-api-url <https address>` sets the address (`--fleet-api-url tunnel`
+goes back to the tunnel's end). A further fleet's registration carries only
+an address given that way, or none while its Fleet API is off: every fleet's
+tunnel uses the same local ports, so the tunnel's loopback end belongs to the
+first fleet, and `register-fleet` refuses a loopback address for a further
+fleet. Without one, the API keeps the address it has. Setup gives the fleet's
 initiative no channels of its own: the standard channels belong to the fleet
 and its ships.
 
@@ -712,7 +734,7 @@ their crew's assignments through `stargate_crew`.
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
 | `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. |
-| `api` | Optional `url` (origin or ending in `/api`), `vmHost` and `initiatives` (array of UUIDs). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
+| `api` | Optional `url` (origin or ending in `/api`), `vmHost`, `fleetApiUrl` (where a desktop reaches the Fleet API, when not through the SSH tunnel; needs `stargate.api`; see [Subspace API registration](#subspace-api-registration)) and `initiatives` (array of UUIDs). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
 | `agentDispatch` | Optional [agent dispatch](#agent-dispatch): `enabled` (default `false`), `pollIntervalSeconds` (120), `answerTimeoutSeconds` (300) and `retryLadderSeconds` (`[3600, 10800, 21600, 43200]`). On, it needs `api`, a captain with crew, an OpenCode rear admiral and `rearAdmiralApiToken`. |
 
 The mode-0600 secrets JSON has `proxyKey` (a random proxy client key),

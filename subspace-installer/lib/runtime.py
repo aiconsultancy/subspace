@@ -333,7 +333,7 @@ def history_config(value):
 
 
 def api_config(value):
-    value = fields(value, "api", "url initiatives vmHost", ["url"])
+    value = fields(value, "api", "url initiatives vmHost fleetApiUrl", ["url"])
     base = url(value["url"], "API base URL", True, ("", "/", "/api", "/api/")).rstrip("/")
     initiatives = value.get("initiatives", [])
     require(isinstance(initiatives, list), "API initiatives must be an array.")
@@ -341,6 +341,12 @@ def api_config(value):
     cfg = {"url": base if base.endswith("/api") else f"{base}/api", "initiatives": list(dict.fromkeys(ids))}
     if "vmHost" in value:
         cfg["vmHost"] = host(value["vmHost"])
+    if "fleetApiUrl" in value:
+        # Where a desktop reaches Stargate's Fleet API, when not through the SSH tunnel's loopback end.
+        try:
+            cfg["fleetApiUrl"] = fleet_records.fleet_api_url(value["fleetApiUrl"], "api.fleetApiUrl")
+        except fleet_records.Refused as error:
+            raise Invalid(str(error)) from None
     return cfg
 
 
@@ -682,6 +688,8 @@ def validate(config, credentials, check_files=True):
         listeners += [irc["port"], irc["compose"]["tlsPort"], 8097]
     require(len(set(listeners)) == len(listeners), "Fleet listeners need distinct ports.")
     api = api_config(cfg["api"]) if "api" in cfg else None
+    require(not (api or {}).get("fleetApiUrl") or stargate_api,
+            "api.fleetApiUrl is the address of Stargate's Fleet API, which is off: set stargate.api, or remove it.")
     dispatch = agent_dispatch_config(cfg.get("agentDispatch", {}), api, agents)
     operators = cfg.get("operatorUsers", [])
     require(isinstance(operators, list), "operatorUsers must be an array.")
@@ -1973,6 +1981,10 @@ def main(args):
                       f"{cfg['irc']['commandChannel']}.")
             else:
                 print("Agent dispatch is off.")
+            if cfg["api"]:
+                address = fleet_records.fleet_api_address(cfg)
+                print(f"The Subspace API will record the fleet's Stargate Fleet API at {address}." if address else
+                      "Stargate's Fleet API is off, so the Subspace API will record no Fleet API address.")
             if not cfg["repositories"] and len(cfg["members"]) > 1:
                 print("No repositories are configured, so captains have no crew: crew work in Git worktrees of "
                       "their captain's checkouts.")

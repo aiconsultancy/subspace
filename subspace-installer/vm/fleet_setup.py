@@ -171,6 +171,9 @@ def parse_args(argv):
                         help="skip the Subspace API and PostgreSQL on this VM")
     parser.add_argument("--stargate-api", choices=["auto", "on", "off"],
                         help="enable Stargate's Fleet API (default auto: when the pinned Stargate has it)")
+    parser.add_argument("--fleet-api-url", help="the HTTPS address at which a desktop reaches Stargate's Fleet API, "
+                        "such as a Tailscale or Cloudflare name, recorded in the Subspace API; 'tunnel' (the default) "
+                        "records the SSH tunnel's end on the desktop, http://127.0.0.1:8484")
     parser.add_argument("--stargate-ref", help="'latest' (the default: Stargate's newest release, looked up on "
                         "every run) or a full commit SHA to pin")
     parser.add_argument("--agent-dispatch", dest="agent_dispatch", action="store_true", default=None,
@@ -272,6 +275,10 @@ def gather(args, saved):
         answers["agentDispatch"] = yes_no(f"Switch on agent dispatch? ({DISPATCH_SUMMARY[0].upper()}"
                                           f"{DISPATCH_SUMMARY[1:]}.)", False, interactive)
     answers["stargateApi"] = args.stargate_api or answers.get("stargateApi", "auto")
+    if args.fleet_api_url == "tunnel":
+        answers.pop("fleetApiUrl", None)
+    elif args.fleet_api_url is not None:
+        answers["fleetApiUrl"] = args.fleet_api_url
     if args.stargate_ref == "latest":
         answers.pop("stargateRef", None)
     elif args.stargate_ref is not None:
@@ -366,6 +373,14 @@ def check_answers(answers):
     check_repositories(answers.get("repositories", []))
     if answers.get("stargateRef"):
         require(SHA.fullmatch(answers["stargateRef"]), "--stargate-ref must be a full 40-character commit SHA.")
+    if answers.get("fleetApiUrl"):
+        try:
+            answers["fleetApiUrl"] = fleet_records.fleet_api_url(answers["fleetApiUrl"], "--fleet-api-url")
+        except fleet_records.Refused as error:
+            raise SetupError(str(error)) from None
+        require(answers["stargateApi"] != "off",
+                "--fleet-api-url is the address of Stargate's Fleet API, which --stargate-api off turns off. Pass "
+                "--fleet-api-url tunnel, or switch the Fleet API on.")
     require(isinstance(answers.get("agentDispatch", False), bool), "Agent dispatch is on or off.")
     require(not answers.get("agentDispatch") or answers["api"],
             "Agent dispatch polls the Subspace API, so it needs the API on this VM: drop --no-api, or pass "
@@ -570,7 +585,10 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     if stargate:
         config["stargate"] = stargate
     if api_block:
-        config["api"] = api_block
+        config["api"] = dict(api_block)
+        # An address the operator gave; without one, the installer records the SSH tunnel's end.
+        if stargate_api and answers.get("fleetApiUrl"):
+            config["api"]["fleetApiUrl"] = answers["fleetApiUrl"]
     # Timings someone set by hand stay; the answer switches dispatch on or off. It needs the API block.
     dispatch = previous.get("agentDispatch") if isinstance(previous.get("agentDispatch"), dict) else {}
     if dispatch or answers.get("agentDispatch"):
@@ -855,11 +873,21 @@ def installed_records():
 
 def fleet_registration(answers):
     """The non-secret description of this fleet that another fleet's API needs: the fleet, its standard
-    channels, a ship per captain and the officers' agent records (fleet_records)."""
-    _, records = installed_records()
+    channels, a ship per captain and the officers' agent records (fleet_records).
+
+    fleetApiUrl is the address --fleet-api-url gave, or null while the Fleet API is off. Otherwise it is left
+    out, so the API keeps what it has: the SSH tunnel's loopback end on the desktop is the first fleet's, since
+    every fleet's tunnel uses the same local ports.
+    """
+    cfg, records = installed_records()
     host, port = irc_endpoint(answers)
-    return {"slug": answers["slug"], "name": answers["name"], "ircHost": host, "ircPort": port,
-            "ircTls": answers["irc"] != "local", **records}
+    registration = {"slug": answers["slug"], "name": answers["name"], "ircHost": host, "ircPort": port,
+                    "ircTls": answers["irc"] != "local", **records}
+    if not cfg["stargate"].get("api"):
+        registration["fleetApiUrl"] = None
+    elif answers.get("fleetApiUrl"):
+        registration["fleetApiUrl"] = answers["fleetApiUrl"]
+    return registration
 
 
 def registration_ready():
@@ -880,7 +908,8 @@ def register_fleet(registration):
     require(isinstance(slug, str) and SLUG.fullmatch(slug), "The registration has an invalid fleet ID.")
     require(slug != answers["slug"], "That is this VM's own fleet.")
     require(isinstance(name, str) and 1 <= len(name) <= 100 and "\n" not in name, "The registration has an invalid name.")
-    known = {"slug", "name", "ircHost", "ircPort", "ircTls", "starbaseChannel", "commandChannel", "rearAdmiral", "captains"}
+    known = {"slug", "name", "ircHost", "ircPort", "ircTls", "starbaseChannel", "commandChannel", "rearAdmiral", "captains",
+             "fleetApiUrl"}
     require(registration.keys() <= known, "The registration has fields this installer does not know. Set the fleet "
             "up again with the same version of the installer as this VM.")
     records = {key: registration.get(key) for key in ("starbaseChannel", "commandChannel", "rearAdmiral", "captains")}
@@ -895,6 +924,16 @@ def register_fleet(registration):
             "The registration has an invalid IRC server.")
     fields = {key: registration[key] for key in ("slug", "name", "ircHost", "ircPort")}
     fields["ircTls"] = bool(registration.get("ircTls"))
+    if registration.get("fleetApiUrl") is not None:
+        try:
+            fields["fleetApiUrl"] = fleet_records.fleet_api_url(registration["fleetApiUrl"])
+        except fleet_records.Refused as error:
+            raise SetupError(f"The registration has an invalid fleetApiUrl. {error}") from None
+        require(urlsplit(fields["fleetApiUrl"]).hostname not in ("localhost", LOOPBACK, "::1"),
+                "A further fleet's Fleet API address cannot be on the desktop's loopback, which the first fleet's "
+                "SSH tunnel uses. Give that fleet an HTTPS address with --fleet-api-url, or 'tunnel' to leave it out.")
+    elif "fleetApiUrl" in registration:
+        fields["fleetApiUrl"] = None
     token = api_token(answers)
     try:
         fleet = fleet_records.register(lambda method, path, body: api_call(token, method, path, body), fields, records,
@@ -1102,6 +1141,12 @@ def setup(args):
     print()
     say(f"fleet {values['SUBSPACE_FLEET_NAME']} ({values['SUBSPACE_FLEET_SLUG']}) is set up.")
     say(f"Starbase is {channels[0]}; fleet command is {channels[1]}; ship channels: {' '.join(channels[2:])}.")
+    if api_block and stargate_api:
+        address = answers.get("fleetApiUrl") or f"http://{LOOPBACK}:{STARGATE_API_PORT}"
+        say(f"the Subspace API records the fleet's Stargate Fleet API at {address}; the desktop app asks for the "
+            "fleet's token once.")
+    elif answers.get("fleetApiUrl") and not stargate_api:
+        say("the installed Stargate has no Fleet API, so the fleet records no Fleet API address.")
     if answers["agentDispatch"]:
         say(f"agent dispatch is on: {DISPATCH_SUMMARY}.")
         if api_block:

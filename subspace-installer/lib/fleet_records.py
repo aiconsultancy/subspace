@@ -4,7 +4,8 @@ The desktop takes each agent's rank and IRC nick from the API's agent records
 and joins the channels the fleet and its ships record, so the installer keeps
 them in step with the fleet's roster:
 
-- the fleet records Starbase and the command channel;
+- the fleet records Starbase and the command channel, and the address at which
+  a desktop reaches its Stargate Fleet API (fleet_api_address());
 - each captain has a ship, named for the ship (the captain's ``name``), which
   records the captain's ship channel;
 - the rear admiral and each captain have an agent record with their rank and
@@ -22,6 +23,7 @@ registration). Only a human organisation administrator may change fleets and
 agents, and only a human may change ships.
 """
 
+import ipaddress
 import re
 from urllib.parse import quote
 
@@ -31,6 +33,13 @@ import standard_channels
 AGENT_NAME = re.compile(r"[A-Za-z0-9-]{1,64}")
 IRC_NICK = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 CAPTAIN_ID = re.compile(r"[a-z][a-z0-9-]{0,19}")
+# A Fleet API address the API accepts (subspace-api src/fleets.ts), limited to forms whose stored form the
+# installer can predict: an ASCII host name, an IPv4 address or a bracketed IPv6 address, and a plain path.
+FLEET_API_URL = re.compile(r"(?P<scheme>[Hh][Tt][Tt][Pp][Ss]?)://(?P<host>\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)"
+                           r"(?::(?P<port>[0-9]{1,5}))?(?P<path>(?:/[A-Za-z0-9._~!$&'()*+,;=:@%-]*)*)")
+HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+FLEET_API_URL_LIMIT = 2048
 OFFICERS = ("rearAdmiral", "captain")
 PAGE = 200
 
@@ -53,6 +62,56 @@ def line(value, maximum):
 AGENT_EMAIL_DOMAIN = "agents.example.com"
 
 
+def fleet_api_url(value, label="Fleet API address"):
+    """A Fleet API address in the form the API stores it, or Refused.
+
+    The API takes an absolute https URL on any host, or http only on loopback, without credentials, query or
+    fragment, and stores it with a lower-case scheme and host, no default port and no trailing slash. The desktop
+    sends the fleet's token to this address, so plain http is refused anywhere but on the desktop itself.
+    """
+    problem = (f"Invalid {label}: use https://<host>[:port][/path], or http only on localhost, 127.0.0.1 or "
+               "[::1] (such as the SSH tunnel's end), without credentials, a query or a fragment.")
+    match = FLEET_API_URL.fullmatch(value) if isinstance(value, str) and len(value) <= FLEET_API_URL_LIMIT else None
+    require(match, problem)
+    scheme, host, port, path = (match["scheme"].lower(), match["host"].lower(), match["port"], match["path"])
+    if host.startswith("["):
+        try:
+            host = f"[{ipaddress.IPv6Address(host[1:-1]).compressed}]"
+        except ValueError:
+            raise Refused(problem) from None
+    elif re.fullmatch(r"[0-9.]+", host):
+        # Only a full dotted quad: the API's URL parser reads shorter numeric forms differently.
+        parts = host.split(".")
+        require(len(parts) == 4 and all(part.isdigit() and str(int(part)) == part and int(part) < 256
+                                        for part in parts), problem)
+    else:
+        labels = host.split(".")
+        require(all(HOST_LABEL.fullmatch(label) for label in labels) and not labels[-1].isdigit(), problem)
+    require(scheme == "https" or host in LOOPBACK_HOSTS, problem)
+    if port is not None:
+        require(1 <= int(port) <= 65535, problem)
+        port = None if int(port) == {"https": 443, "http": 80}[scheme] else str(int(port))
+    segments = path.split("/")[1:]
+    require(all(segment.lower().replace("%2e", ".") not in (".", "..") for segment in segments), problem)
+    address = f"{scheme}://{host}{f':{port}' if port else ''}{path}".rstrip("/")
+    require(len(address) <= FLEET_API_URL_LIMIT, problem)
+    return address
+
+
+def fleet_api_address(cfg):
+    """The address a desktop reaches the fleet's Stargate Fleet API at, or None when it has none.
+
+    An address set in api.fleetApiUrl (an HTTPS name through Tailscale or Cloudflare, say) comes first.
+    Otherwise it is the SSH tunnel's end on the desktop: every way of reaching a fleet (the SSH tunnel itself,
+    over Tailscale or through Cloudflare) forwards the Fleet API's port to the same port on the desktop's
+    loopback. Without stargate.api there is no Fleet API, so the fleet records none.
+    """
+    stargate_api = cfg["stargate"].get("api")
+    if not stargate_api:
+        return None
+    return (cfg["api"] or {}).get("fleetApiUrl") or f"http://127.0.0.1:{stargate_api['port']}"
+
+
 def subject(account):
     """An officer's default account subject (the API's serviceTokenClientId)."""
     return f"{account.lower()}@{AGENT_EMAIL_DOMAIN}"
@@ -64,6 +123,7 @@ def fleet_fields(cfg):
     return {
         "slug": cfg["slug"], "name": cfg["name"], "ircHost": irc["host"], "ircPort": irc["port"],
         "ircTls": irc["tls"], "ircWebsocketUrl": irc.get("websocketUrl"), "vmHost": (cfg["api"] or {}).get("vmHost"),
+        "fleetApiUrl": fleet_api_address(cfg),
     }
 
 
