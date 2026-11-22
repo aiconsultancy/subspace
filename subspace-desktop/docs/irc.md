@@ -157,7 +157,9 @@ fleets on one network claim belongs to neither.
   in `Tone::Red` before the count, which keeps the accent.
 - A fleet group that is not the selected initiative's fleet starts folded
   the first time it appears (`view/navigator.rs`, `fold_new_fleets`); with no initiative
-  selected every fleet starts open. Revealing a row in a folded group
+  selected every fleet starts open. A network's only fleet's group, which
+  takes in the network's other channels and Server row, keeps the fold of
+  the network's group instead. Revealing a row in a folded group
   unfolds it, a folded group the selected row moves into opens, and later
   syncs leave it as the user left it.
 - `People` stays a group of its own: it is a different kind of row from a
@@ -173,27 +175,34 @@ the app's one fleet service ([Fleets and the Fleet API](fleet-api.md)),
 in `live.rs` and `live/`.
 
 - **Following** (`live/watch.rs`): while the Space is in front, the board
-  holds one `FleetFollow` for each fleet whose group is in the navigator or
-  whose channel is the conversation in front, once the fleet's state is
+  holds one `FleetFollow` for each fleet whose group is in the navigator,
+  while the navigator shows, or whose channel is the conversation in front, once the fleet's state is
   `Ready` (a token saved for the address the Subspace API records) or
   followed, and drops it when the fleet is no longer shown or the Space is
   hidden. The service opens at most one stream per fleet and closes it with
   the last handle. What the service says of each shown fleet goes to
   `Hub::fleets`, only when it changed, where the navigator, the headers and
-  the inspector read it. A fleet with no address, no token, a changed
-  address or no answer keeps today's behaviour everywhere.
+  the inspector read it. The hub holds only what Channels draws (each
+  ship as `ShipLive`), so an activity line or a sample time redraws
+  nothing. A fleet with no address, no token, a changed address or no
+  answer keeps today's behaviour everywhere.
 - **Matching a ship** (`live/ship.rs`): a ship's channel names its captain
   by the roster (the Subspace API's agent of rank captain), and its Fleet
   API ship is the one whose registration ID equals that captain's API nick,
   ignoring ASCII case, as the installer names both. Nothing is matched from
   a nick seen on IRC, a channel name or message text. The Starbase lists
-  only the Fleet API's ships whose ID is a roster captain's nick. Names,
-  models, tasks and phases from the API are untrusted: they are bounded
-  (32, 40 and 120 characters), stripped of control characters, put on one
-  line and drawn as text; a ship keeps at most 24 crew lines, while its
-  figures count everyone.
+  only the Fleet API's ships whose ID is the nick of a roster captain of
+  the Starbase's own fleet. Names, models, tasks and phases from the API
+  are untrusted: they are bounded (32, 40 and 120 characters), stripped of
+  control and bidirectional formatting characters, put on one line and
+  drawn as text; a ship keeps at most 24 crew lines, chosen before they are
+  formatted, while its figures count everyone.
 - **Live** means `FleetState::is_live()`: streamed or polled. Otherwise no
-  live figure shows anywhere, and nothing stale is kept.
+  live figure shows anywhere, and nothing stale is kept. A ship's crew
+  detail that Stargate kept after a failed read (`detailStale`), or that
+  the overview or the detail marks unavailable, gives no crew lines (the
+  overview's totals stand in), and a kept overview (`overviewStale`) shows
+  no ships.
 - **A ship's dot** follows its crew: a crew member is working while one of
   its contexts has a current task, as Stargate counts `busy`. From the
   ship's detail once it arrives, else the overview's `crew.busy`. A ship
