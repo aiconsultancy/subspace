@@ -152,7 +152,7 @@ is the summary.
 | Tab strip, at the top of the pane | `workspace::Pane::tabs` with a `tabs::pane_tab_bar` | What is open: the list, and an opened item beside it. A Space's views are navigator rows, not tabs. |
 | Toolbar, under the tab strip | `workspace::Toolbar` | Search and filters on the leading side, actions on the trailing side. |
 | Content | The children of `workspace::Pane` | Lists run the full width. Reading content, such as an issue's body or a conversation, is no wider than `workspace::READING_WIDTH_PX`. |
-| Inspector, the trailing dock | `workspace::Inspector`, `workspace::section` and `workspace::fact` | The detail of the selection, with the actions that act on it in the footer. |
+| Inspector, the trailing dock | `workspace::Inspector`, `workspace::section` and `workspace::fact`; `Inspector::tabs` with `workspace::InspectorTab` for the [approved exception](design-guide.md#inspector-tabs) | The detail of the selection, with the actions that act on it in the footer. |
 | Status bar, the shell's | `Dashboard::status`, `Dashboard::docks` and `Dashboard::toggle_dock` | Connection, account, counts and sync time; the navigator's switch at its leading end and the inspector's at its trailing end. |
 
 `workspace::Workspace::new(id).navigator(..).pane(..).inspector(..)` places

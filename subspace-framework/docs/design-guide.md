@@ -33,7 +33,7 @@ app imports it as `subspace_framework::dashboard::workspace`.
 | Tab strip, the top of the pane | What is open: the list or view on show, and an opened item beside it. | The Space's views; those are navigator rows. | `--strip-h` high |
 | Toolbar, under the tab strip | Search and filters on the leading side, actions for what is open on the trailing side. | A Space title, a line of context, actions that need a selection to make sense, the dock switches. | at least `--toolbar-h` high |
 | Content | The list, the page, the conversation or the graph. | A heading for the Space, its own outer padding. | the rest of the pane |
-| Inspector or detail panel, the trailing dock | The detail of the selection, with the actions that act on it in its footer. | Views, filters, the Space's own state. | `--inspector-w` wide, or the detail panel's own width; header `--strip-h` high |
+| Inspector or detail panel, the trailing dock | The detail of the selection, with the actions that act on it in its footer. Tabs only under [Inspector tabs](#inspector-tabs). | Views, filters, the Space's own state. | `--inspector-w` wide, or the detail panel's own width; header `--strip-h` high |
 | Status bar, the shell's | Account, connection, counts and sync time, from `Dashboard::status`; the navigator's switch at its leading end and the inspector's at its trailing end, from `Dashboard::docks`. | Any other control of the Space's. Besides the dock switches, it holds only the shell's own commands, such as About and Help. | the shell's |
 
 Inside every panel, text starts at `--pad-x` plus `--row-inset`. The defaults
@@ -84,6 +84,31 @@ nothing to this control.
    decision, such as Save.
 9. **Shared components and tokens only.** No literal colours or sizes, no
    one-off styled controls. Read sizes from `Tokens::current(cx)`.
+
+### Inspector tabs
+
+The owner has approved one exception to the zones above: the inspector may
+carry tabs in place of its title, as Channels' "Ship", "Thread" and
+"People 5" do. Build them with `Inspector::tabs` and `InspectorTab`, and
+only on these terms:
+
+- **One selection, several subjects.** Every tab is about the item selected
+  in the pane or the navigator, such as a channel's ship, its thread and its
+  people. Choosing a tab changes what the inspector says about that
+  selection, never the selection itself.
+- **Not a second navigator.** A tab never lists the Space's views, projects
+  or places to go, and choosing one never changes the pane. Those are
+  navigator rows.
+- **Few tabs.** At most `INSPECTOR_MAX_TABS` (3), each a short noun with an
+  optional count, such as "People 5". The shell draws no more than that.
+- **Only when the subjects compete for room.** If the facts fit as
+  `section`s one under another, use sections and keep the title.
+- **The shell's control.** The tabs are a segmented tab list in the header:
+  tab and tab-list roles, each tab reached with Tab and chosen with Enter,
+  Space or a click, as the other segmented controls are. Close stays the
+  last header control, and the inspector's title becomes the tab list's
+  accessible name. The Space keeps which tab is open and may remember it
+  with its other stored choices.
 
 ## Interaction in list Spaces
 
@@ -303,6 +328,24 @@ and the web Space's toolbar (`spaces/web/src/toolbar.rs`).
    }
    ```
 
+   An inspector whose subjects compete for room may swap its title for tabs
+   under the rules in [Inspector tabs](#inspector-tabs):
+
+   ```rust
+   let tabs = [
+       workspace::InspectorTab::new("Note"),
+       workspace::InspectorTab::new("People").count(people.len().to_string()),
+   ];
+   let notes = cx.entity().downgrade();
+   workspace::Inspector::new("notes-inspector", "Note details").tabs(
+       tabs,
+       self.inspector_tab,
+       move |index, _, _, cx| {
+           _ = notes.update(cx, |this, cx| this.show_inspector_tab(index, cx));
+       },
+   )
+   ```
+
    A panel that owns its width, such as the shared detail panel
    (`panel::frame`), goes in with `Workspace::detail` instead. Use `detail`
    or `inspector`, not both.
@@ -391,6 +434,8 @@ A reviewer ticks:
       labels show in capitals.
 - [ ] The open tab joins the content, with no accent line along its top.
 - [ ] Each toolbar has at most one primary action, the Space's main one.
+- [ ] Inspector tabs, if any, are at most three subjects of the same
+      selection, never views or destinations.
 - [ ] The dock switches end the status bar, the navigator's first and the
       inspector's last, quiet glyphs that take the accent while on.
 
