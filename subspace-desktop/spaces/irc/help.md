@@ -136,15 +136,20 @@ connection state in words: **Disconnected**, **Connecting…**, **Signing in…*
    `7 users`. See [Join channels from the list](#join-channels-from-the-list).
 
 On a network that serves a Subspace fleet, the fleet's channels have a group
-of their own, named after the fleet and showing the same connection state,
-before the network's group. A fleet's group lists its Starbase, its command
-channel, its ships' channels, then the other channels of its initiatives,
-each without the fleet's prefix: `#aurora-lyra` shows as `lyra`. Every
+named after the fleet and showing the network's connection state. A fleet's
+group lists its Starbase, its command channel, its ships' channels under
+**Ships**, then the other channels of its initiatives, each without the
+fleet's prefix: `#aurora-lyra` shows as `lyra`. When the network holds only
+that fleet, its group also holds the network's other channels under
+**Other**, with the **Server** row last. When it holds several fleets, the
+network's own group comes after them, named after the network. Every
 channel leads with a `#`, and a ship's channel with its captain's icon as
 **Settings > Application > Appearance > Icons** asks: **Large**, **Small**
 (the default) or **Off**, which shows the `#`. A ship's channel ends with a
-dot, filled green while its captain reports a status and a ring while not;
-hover the dot to read the status. Several fleets on one server each have a group. Fleets other than
+dot: filled green while any of its crew is working and a ring while none
+is, when Subspace can read the fleet; hover the dot to see who is working
+and on what. Without the fleet's live state the dot follows the captain's
+own status. Several fleets on one server each have a group. Fleets other than
 the selected initiative's start folded; with no initiative selected, every
 fleet starts open. Private conversations with people
 are listed under **People**, after the fleets, each with a dot that is
