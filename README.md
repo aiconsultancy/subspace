@@ -16,9 +16,13 @@ their own fleet machines instead of on your laptop.
 </picture>
 
 **Get started:** clone this repository, open your coding agent in it and ask it
-to set Subspace up. [INSTALL.md](INSTALL.md) tells it (and you) how: it creates
-a private fleet VM on your computer or uses one of yours, installs the agents,
-IRC and the API on it, and connects the desktop app.
+to set Subspace up. [INSTALL.md](INSTALL.md) tells it (and you) how. We
+recommend a fleet VM in your cloud, reached over a private network: Subspace
+is meant to be multiplayer, and that keeps the agents' builds off your
+machine. Your agent can create the VM with your cloud provider and set the
+private network up for you. To just try Subspace out, a VM on your own
+computer is the quickest way. Either way it installs the agents, IRC and the
+API on the VM and connects the desktop app.
 
 **Bring your own agents.** Your local Claude Code, Codex or OpenCode can work
 with the remote fleet too. They use the issue tracker, decisions, documents,
@@ -97,15 +101,17 @@ same room.
 - **Stay inside your quotas.** A configurable cool-down scales crews down as
   a usage quota runs low and back up when it is restored. See
   [How we run it](#how-we-run-it).
-- **Try it on your own machine.** Point your coding agent at
-  [INSTALL.md](INSTALL.md), the setup guide written for it. It runs a fleet
-  in a VM on your computer and connects the desktop app, with demo data
-  (fictional fleets, initiatives and issues) to look around in straight away.
-- **Keep it private.** Nothing faces the internet; that is a firm
-  requirement. For a team, the same guide takes your agent through
-  preparing a cloud VM and putting it on a private network with Tailscale,
-  Cloudflare Zero Trust or similar. We use Cloudflare Zero Trust. Tailscale works just as well, and we
-  have tested it. See [Private access](docs/private-access.md).
+- **Run it in your cloud, privately.** This is what we recommend. Point your
+  coding agent at [INSTALL.md](INSTALL.md), the setup guide written for it:
+  it can create a VM with your cloud provider and put it on a private network
+  with Tailscale, Cloudflare Zero Trust or similar. Nothing faces the
+  internet; that is a firm requirement. We use Cloudflare Zero Trust.
+  Tailscale works just as well, and we have tested it. See
+  [Private access](docs/private-access.md).
+- **Or try it on your own machine.** The same guide runs a fleet in a VM on
+  your computer and connects the desktop app, with demo data (fictional
+  fleets, initiatives and issues) to look around in straight away. It is the
+  easiest way to see Subspace, though the agents then share your machine.
 
 All of this is configurable.
 
@@ -124,9 +130,9 @@ Stargate on Slack, wanted more and deeper integration, and built this.
 
 Subspace changes where the agents live and how the team talks to them:
 
-- **Agents are not on your computer.** They run on fleet VMs, so you never wait
-  on their builds, and your machine doesn't grind to a halt when an agent runs
-  a heavy build.
+- **Agents are not on your computer.** They run on fleet VMs, which we
+  recommend you keep in the cloud, so you never wait on their builds and your
+  machine doesn't grind to a halt when an agent runs a heavy build.
 - **The whole team is in the same room.** Humans and captains (the coding
   agents) work together in IRC through the Subspace desktop app. Captains can
   talk to each other as well as to you.
@@ -428,6 +434,9 @@ configurable.
 - **Checkouts.** Captains have their own checkouts of all the repositories,
   and each crew member works in its own dedicated Git worktree, so disk use
   doesn't keep growing. Stargate manages all of this; it is the glue.
+- **A GitHub App per captain.** Each captain commits, reviews and opens pull
+  requests under its own GitHub App, so GitHub shows what was done by which
+  captain. Issues already record which captain was responsible for the work.
 - **Cloud access.** On Azure, each fleet VM has a managed identity with
   read-only access to the Kubernetes clusters (AKS), the databases and other
   resources, so agents can inspect real infrastructure. Agents also have
