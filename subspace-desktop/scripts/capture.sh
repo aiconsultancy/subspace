@@ -23,7 +23,10 @@
 #   CAPTURE_NO_UPDATES_STREAM=1   the Subspace API fixture has no live updates stream
 #   CAPTURE_DECISION_SCENARIO=<normal|missing|forbidden|unavailable>  Decisions fixture
 #   CAPTURE_CHANGE_AFTER=<s>   the fixture retitles SUB-1 after <s> seconds, as a change elsewhere
-#   CAPTURE_FLEET=1            the fixture adds the neutral FLT project for web Space evidence
+#   CAPTURE_FLEET=1            the fixture adds the neutral FLT project and the demo world's NAV, MAP,
+#                              WARP and RELAY issues for web Space evidence
+#   CAPTURE_FLEET_API=1        a fictional Stargate Fleet API (the aurora fleet) on loopback, with the
+#                              built-in Fleet Console's address and token set to it
 #   CAPTURE_MOVE_UNCONFIRMED=1  a committed move lists its sub-issues as not confirmed, as a NETT move can
 #   CAPTURE_UPLOAD_SCENARIO=<unknown|absent>  the first issue opened shows an upload NETT left unresolved
 #   CAPTURE_KEEP_LOG=1         copy the app's logs into <out-dir>
@@ -113,8 +116,14 @@ if [ -n "${CAPTURE_DECISION_SCENARIO:-}" ]; then api_args+=(--decision-scenario 
 if [ -n "${CAPTURE_FLEET:-}" ]; then api_args+=(--fleet); fi
 python3 -u "$root/scripts/subspace_api_test_server.py" "${api_args[@]}" >"$fixture/subspace-api.log" 2>&1 &
 servers+=("$!")
+if [ -n "${CAPTURE_FLEET_API:-}" ]; then
+    python3 -u "$root/scripts/fleet_api_test_server.py" --port 0 --token fixture-fleet >"$fixture/fleet-api.log" 2>&1 &
+    servers+=("$!")
+fi
 github="$(server_address "$fixture/github.log")"
 subspace_api="$(server_address "$fixture/subspace-api.log")"
+fleet_api=""
+if [ -n "${CAPTURE_FLEET_API:-}" ]; then fleet_api="$(server_address "$fixture/fleet-api.log")"; fi
 
 if [ -z "${CAPTURE_NO_GH:-}" ]; then
     cat >"$fixture/gh/hosts.yml" <<'EOF'
@@ -142,12 +151,15 @@ esac
 EOF
 chmod 755 "$fixture/bin/gh"
 
-python3 - "$state_dir" "$config_dir" "${CAPTURE_THEME:-}" "${CAPTURE_STATE:-}" "${CAPTURE_CONFIG:-}" <<'EOF'
+python3 - "$state_dir" "$config_dir" "${CAPTURE_THEME:-}" "${CAPTURE_STATE:-}" "${CAPTURE_CONFIG:-}" "$fleet_api" <<'EOF'
 import json, os, sys
-state_dir, config_dir, theme, state_extra, config_extra = sys.argv[1:]
+state_dir, config_dir, theme, state_extra, config_extra, fleet_api = sys.argv[1:]
 state = {"appearance.theme": theme} if theme else {}
 state.update(json.loads(state_extra or "{}"))
 config = {"repos": ["acme/web", "acme/api", "acme/design-system"]}
+if fleet_api:
+    # The app adds its built-in Fleet Console to this entry at start.
+    config["webBoards"] = {"fleet-console": {"settings": {"endpoint": fleet_api}, "secrets": {"token": "fixture-fleet"}}}
 config.update(json.loads(config_extra or "{}"))
 for directory, name, value in ((state_dir, "state.json", state), (config_dir, "config.json", config)):
     path = os.path.join(directory, name)
@@ -201,6 +213,7 @@ fi
 grep -E 'captured|capture failed' "$fixture/stderr.log" || tail -5 "$fixture/stderr.log"
 if [ -n "${CAPTURE_KEEP_LOG:-}" ]; then
     cp "$fixture/stderr.log" "$fixture/github.log" "$fixture/subspace-api.log" "$out/"
+    if [ -n "$fleet_api" ]; then cp "$fixture/fleet-api.log" "$out/"; fi
     find "$home" -name '*.log' -exec cp {} "$out/" \;
 fi
 if [[ "$status" -ne 0 ]] || grep -q 'capture failed:' "$fixture/stderr.log" || ! grep -q '^captured ' "$fixture/stderr.log"; then

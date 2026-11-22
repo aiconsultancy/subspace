@@ -9,7 +9,7 @@ cd "$root"
 source "$root/scripts/product-fixture.sh"
 setup_product_fixture ""
 host_platform="$(/usr/bin/uname -s)"
-cp "$root/scripts/"{capture.sh,github_test_server.py,subspace_api_test_server.py} "$fixture/scripts/"
+cp "$root/scripts/"{capture.sh,github_test_server.py,subspace_api_test_server.py,fleet_api_test_server.py} "$fixture/scripts/"
 
 # The capture launcher is macOS-only, but its shell contract is portable:
 # validate the generated plist without depending on macOS's plutil binary.
@@ -41,7 +41,15 @@ while [ $# -gt 0 ]; do
         shift ;;
     --env)
         case "$2" in
-        HOME=*) cp "${2#HOME=}/Library/Application Support/subspace/"*.json "$log/" ;;
+        HOME=*)
+            cp "${2#HOME=}/Library/Application Support/subspace/"*.json "$log/"
+            fleet="$(jq -r '.webBoards["fleet-console"].settings.endpoint // empty' "$log/config.json")"
+            if [ -n "$fleet" ]; then
+                printf '%s\n' "$fleet" >>"$log/urls.txt"
+                fleet_token="$(jq -r '.webBoards["fleet-console"].secrets.token // empty' "$log/config.json")"
+                curl -s -H "Authorization: Bearer $fleet_token" -o /dev/null -w 'fleet-api %{http_code}\n' "$fleet/api/v1/fleet" >>"$log/servers.txt"
+            fi
+            ;;
         GH_CONFIG_DIR=*) ls "${2#*=}" >"$log/gh.txt" ;;
         SUBSPACE_GITHUB_API_URL=*) printf '%s\n' "${2#*=}" >>"$log/urls.txt"; curl -s -o /dev/null -w 'github %{http_code}\n' "${2#*=}/user" >>"$log/servers.txt" ;;
         SUBSPACE_GITHUB_OAUTH_URL=*) curl -s -o /dev/null -w 'oauth %{http_code}\n' -d client_id=fixture "${2#*=}/login/device/code" >>"$log/servers.txt" ;;
@@ -68,7 +76,7 @@ if [[ "$host_platform" = Darwin ]]; then
 TMPDIR="$fixture/tmp" XDG_CONFIG_HOME=/real-user/config GH_CONFIG_DIR=/real-user/gh GH_TOKEN=real-user-token \
     CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" CAPTURE_CONFIG='{"boards": {"actions": true}}' \
     CAPTURE_DECISION_SCENARIO=forbidden CAPTURE_MOVE_UNCONFIRMED=1 CAPTURE_UPLOAD_SCENARIO=unknown \
-    bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >"$fixture/capture.out"
+    CAPTURE_FLEET_API=1 bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >"$fixture/capture.out"
 
 args="$fixture/open/args.txt"
 grep -Fq "build --locked -p subspace --features capture" "$fixture/cargo.log" || fail "no capture build"
@@ -96,6 +104,9 @@ grep -Eq '^github [1-5][0-9][0-9]$' "$fixture/open/servers.txt" || fail "the Git
 grep -Eq '^subspace-api 200$' "$fixture/open/servers.txt" || fail "the Subspace API fixture did not answer"
 grep -Eq '^decisions 403$' "$fixture/open/servers.txt" || fail "the Decisions fixture scenario was not applied"
 grep -Eq '^oauth 200$' "$fixture/open/servers.txt" || fail "the sign-in fixture did not answer"
+grep -Eq '^fleet-api 200$' "$fixture/open/servers.txt" || fail "the Fleet API fixture did not answer"
+jq -e '.webBoards["fleet-console"] | (.settings.endpoint | test("^http://127\\.0\\.0\\.1:[0-9]+$")) and .secrets.token == "fixture-fleet"' \
+    "$fixture/open/config.json" >/dev/null || fail "Fleet Console is not pointed at the Fleet API fixture"
 test "$(jq -r '."appearance.theme"' "$fixture/open/state.json")" = "One Dark" || fail "theme not saved"
 test "$(jq -c '[.repos[0], .boards.actions]' "$fixture/open/config.json")" = '["acme/web",true]' || fail "config not merged"
 grep -Fq 'captured main' "$fixture/capture.out" || fail "capture result not reported"
@@ -114,6 +125,7 @@ TMPDIR="$fixture/tmp" CAPTURE_NO_GH=1 bash "$fixture/scripts/capture.sh" "$fixtu
 if grep -Fxq hosts.yml "$fixture/open/gh.txt"; then fail "CAPTURE_NO_GH left gh accounts"; fi
 if grep -Fq SUBSPACE_CAPTURE_MOVE_UNCONFIRMED "$fixture/open/args.txt"; then fail "the move fixture is on by default"; fi
 if grep -Fq SUBSPACE_CAPTURE_UPLOAD_SCENARIO "$fixture/open/args.txt"; then fail "the upload fixture is on by default"; fi
+if jq -e '.webBoards' "$fixture/open/config.json" >/dev/null; then fail "the Fleet API fixture is on by default"; fi
 if TMPDIR="$fixture/tmp" CAPTURE_UPLOAD_SCENARIO=other bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null 2>&1; then
     fail "an unknown upload scenario was accepted"
 fi

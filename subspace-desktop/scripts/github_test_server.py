@@ -71,6 +71,8 @@ LABELS = {
     "security": "b60205",
     "docs": "0075ca",
     "breaking": "e99695",
+    "accessibility": "c5def5",
+    "reliability": "008c95",
 }
 
 
@@ -150,6 +152,62 @@ PRS = [
          checks="PENDING", review=None, additions=12, deletions=980, head="drop-toolbar-v1",
          updated=dict(days=3), created=dict(days=12), comments=2, assignees=[],
          reviewers=[]),
+    # The navigation console's Fallow Reach work (NAV, MAP, WARP and RELAY in
+    # the Subspace API fixture's --fleet data).
+    dict(repo="acme/web", number=492, title="Cancel tile decodes that leave the viewport (NAV-7)",
+         author="lin-dev", sections=["review"], draft=False, labels=["performance", "frontend"],
+         checks="PENDING", review="REVIEW_REQUIRED", additions=214, deletions=61,
+         head="nav-7-cancel-offscreen-decodes", updated=dict(minutes=20), created=dict(days=1), comments=4,
+         assignees=["lin-dev"], reviewers=[("octo-dev", "PENDING"), ("mona", "COMMENTED")]),
+    dict(repo="acme/web", number=489, title="Tab from a chart marker to the burn summary (NAV-11)",
+         author="sam-codes", sections=["review"], draft=False, labels=["accessibility", "frontend"],
+         checks="SUCCESS", review="APPROVED", additions=133, deletions=27,
+         head="nav-11-marker-focus-order", updated=dict(hours=1), created=dict(days=2), comments=6,
+         assignees=["sam-codes"], reviewers=[("lin-dev", "APPROVED"), ("octo-dev", "PENDING")]),
+    dict(repo="acme/api", number=1186, title="Page diagnostics reports by sample range (WARP-7)",
+         author="ada-ops", sections=["review"], draft=False, labels=["backend", "performance"],
+         checks="FAILURE", review="CHANGES_REQUESTED", additions=388, deletions=95,
+         head="warp-7-sample-range-pages", updated=dict(hours=2), created=dict(days=3), comments=11,
+         assignees=["ada-ops"], reviewers=[("mona", "CHANGES_REQUESTED"), ("octo-dev", "PENDING")]),
+    dict(repo="acme/api", number=1188, title="Carry unresolved acknowledgements across a relay swap (RELAY-1)",
+         author="mona", sections=["review"], draft=True, labels=["backend", "reliability"],
+         checks="SUCCESS", review="REVIEW_REQUIRED", additions=502, deletions=133,
+         head="relay-1-recover-queued-frames", updated=dict(minutes=45), created=dict(days=2), comments=3,
+         assignees=["mona"], reviewers=[("octo-dev", "PENDING")]),
+    dict(repo="acme/design-system", number=106, title="Dashed route style for unconfirmed burns (NAV-8)",
+         author="mona", sections=["review"], draft=False, labels=["needs-design"],
+         checks="SUCCESS", review="REVIEW_REQUIRED", additions=41, deletions=6,
+         head="nav-8-dashed-routes", updated=dict(hours=6), created=dict(days=1), comments=2,
+         assignees=[], reviewers=[("octo-dev", "PENDING"), ("lin-dev", "APPROVED")]),
+    dict(repo="acme/design-system", number=105, title="High-contrast map palette tokens (MAP-3)",
+         author="lin-dev", sections=["review"], draft=False, labels=["enhancement"],
+         checks="SUCCESS", review="APPROVED", additions=96, deletions=12,
+         head="map-3-high-contrast-palette", updated=dict(days=1), created=dict(days=4), comments=5,
+         assignees=["lin-dev"], reviewers=[("mona", "APPROVED"), ("octo-dev", "PENDING")]),
+    dict(repo="acme/web", number=493, title="Show the survey corridor at every zoom level (MAP-1)",
+         author="octo-dev", sections=["mine"], draft=True, labels=["frontend"],
+         checks="PENDING", review=None, additions=162, deletions=20, head="map-1-corridor-zoom-bands",
+         updated=dict(minutes=12), created=dict(hours=20), comments=0, assignees=["octo-dev"], reviewers=[]),
+    dict(repo="acme/api", number=1183, title="Retry telemetry uploads with jittered backoff (NAV-5)",
+         author="sam-codes", sections=["involved"], draft=False, labels=["backend", "reliability"],
+         checks="FAILURE", review="REVIEW_REQUIRED", additions=77, deletions=14,
+         head="nav-5-telemetry-backoff", updated=dict(hours=8), created=dict(days=3), comments=3,
+         assignees=["sam-codes"], reviewers=[("octo-dev", "COMMENTED")]),
+    dict(repo="acme/web", number=491, title="Decode star chart tiles in a worker pool (NAV-1)",
+         author="ada-ops", sections=["involved"], draft=False, labels=["performance", "frontend"],
+         checks="SUCCESS", review="APPROVED", additions=571, deletions=148,
+         head="nav-1-tile-worker-pool", updated=dict(hours=1), created=dict(days=5), comments=14,
+         assignees=["ada-ops"], reviewers=[("octo-dev", "APPROVED"), ("lin-dev", "APPROVED")]),
+    dict(repo="acme/api", number=1187, title="Simulator: duplicate acknowledgement replay (RELAY-3)",
+         author="mona", sections=["involved"], draft=False, labels=["backend", "reliability"],
+         checks="FAILURE", review="REVIEW_REQUIRED", additions=219, deletions=34,
+         head="relay-3-duplicate-ack-replay", updated=dict(minutes=47), created=dict(days=2), comments=4,
+         assignees=["mona"], reviewers=[("octo-dev", "COMMENTED")]),
+    dict(repo="acme/design-system", number=107,
+         title="Reject route manifests with mismatched atlas versions (MAP-9)",
+         author="octo-dev", sections=["mine"], draft=True, labels=["enhancement"],
+         checks="PENDING", review=None, additions=88, deletions=9, head="map-9-atlas-version-check",
+         updated=dict(minutes=41), created=dict(hours=3), comments=0, assignees=["octo-dev"], reviewers=[]),
 ]
 
 ISSUES = [
@@ -301,6 +359,11 @@ def find_item(owner, name, number):
 
 
 PR_BODIES = {
+    "nav-7-cancel-offscreen-decodes": (
+        "<p>Decode jobs carry the viewport epoch, so tiles that leave the viewport are dropped "
+        "before they reach the UI thread. Part of NAV-1; closes NAV-7.</p><h3>Testing</h3><ul>"
+        "<li>Seam-crossing chart tests</li><li>Cold-cache pan on the Fallow Reach replay: "
+        "87 ms peak, 41 ms warm</li></ul>"),
     "palette-shortcuts": (
         "<p>Adds keyboard shortcuts to every command in the palette and shows them beside "
         "each entry.</p><h3>Changes</h3><ul><li>New <code>useShortcut</code> hook with "
@@ -551,6 +614,7 @@ WORKFLOWS = [
     (101, "CI", ".github/workflows/ci.yml"),
     (102, "Deploy", ".github/workflows/deploy.yml"),
     (103, "Nightly", ".github/workflows/nightly.yml"),
+    (104, "Release", ".github/workflows/release.yml"),
 ]
 
 RUNS = [
@@ -573,7 +637,42 @@ RUNS = [
      "octo-dev", "Dark chart palette", dict(minutes=1)),
     ("acme/design-system", 9202, 101, "completed", "success", "main", "push", "mona",
      "Publish 5.3.0", dict(days=2)),
+    # Runs behind the Fallow Reach pull requests and their releases.
+    ("acme/web", 9005, 101, "in_progress", None, "settings-forms", "pull_request", "lin-dev",
+     "Use FormField in the profile section", dict(minutes=9)),
+    ("acme/web", 9006, 101, "in_progress", None, "nav-7-cancel-offscreen-decodes", "pull_request", "lin-dev",
+     "Carry the viewport epoch on decode jobs", dict(minutes=6)),
+    ("acme/web", 9007, 101, "completed", "success", "nav-11-marker-focus-order", "pull_request", "sam-codes",
+     "Move focus from the marker to the burn summary", dict(hours=1)),
+    ("acme/web", 9008, 104, "completed", "success", "main", "push", "mona",
+     "Release navigation console 0.9.0", dict(hours=6)),
+    ("acme/web", 9009, 101, "completed", "cancelled", "map-1-corridor-zoom-bands", "pull_request", "octo-dev",
+     "Pin the corridor geometry across zoom bands", dict(minutes=40)),
+    ("acme/web", 9010, 101, "queued", None, "map-1-corridor-zoom-bands", "pull_request", "octo-dev",
+     "Thin waypoint labels by zoom band", dict(minutes=2)),
+    ("acme/api", 9104, 101, "completed", "failure", "warp-7-sample-range-pages", "pull_request", "ada-ops",
+     "Resume reports from the last sample range", dict(hours=2)),
+    ("acme/api", 9105, 101, "completed", "success", "relay-1-recover-queued-frames", "pull_request", "mona",
+     "Keep unresolved acknowledgements across a swap", dict(minutes=50)),
+    ("acme/api", 9106, 101, "completed", "failure", "nav-5-telemetry-backoff", "pull_request", "sam-codes",
+     "Jitter telemetry upload retries", dict(hours=8)),
+    ("acme/api", 9109, 101, "completed", "failure", "relay-3-duplicate-ack-replay", "pull_request", "mona",
+     "Replay a late acknowledgement twice", dict(minutes=48)),
+    ("acme/web", 9011, 101, "completed", "success", "nav-1-tile-worker-pool", "pull_request", "ada-ops",
+     "Keep decodes off the UI thread", dict(hours=1, minutes=10)),
+    ("acme/api", 9107, 102, "completed", "success", "main", "push", "ada-ops",
+     "Deploy relay handover counters", dict(hours=11)),
+    ("acme/api", 9108, 103, "completed", "skipped", "main", "schedule", "hubot",
+     "Nightly build", dict(days=1, hours=9)),
+    ("acme/design-system", 9203, 101, "completed", "failure", "deps/icons-3.4.1", "pull_request", "hubot",
+     "Bump @acme/icons from 3.2.0 to 3.4.1", dict(hours=9)),
+    ("acme/design-system", 9204, 101, "completed", "success", "map-3-high-contrast-palette", "pull_request",
+     "lin-dev", "High-contrast map palette tokens", dict(days=1)),
+    ("acme/design-system", 9205, 104, "in_progress", None, "main", "workflow_dispatch", "mona",
+     "Release 5.4.0", dict(minutes=3)),
 ]
+# Runs on their second attempt, re-run after a failure.
+RERUNS = {9005, 9105, 9205}
 
 
 def workflow(workflow_id):
@@ -589,7 +688,8 @@ def run_json(run):
     _, name, path = workflow(workflow_id)
     return {
         "id": run_id, "name": name, "path": path, "workflow_id": workflow_id,
-        "run_number": run_id % 1000 + 200, "run_attempt": 1, "event": event, "status": status,
+        "run_number": run_id % 1000 + 200, "run_attempt": 2 if run_id in RERUNS else 1,
+        "event": event, "status": status,
         "conclusion": conclusion, "head_branch": branch, "head_sha": sha(f"{repo}{run_id}"),
         "html_url": f"https://github.com/{repo}/actions/runs/{run_id}",
         "created_at": ago(**age), "updated_at": ago(**age), "run_started_at": ago(**age),
@@ -610,7 +710,8 @@ def jobs_json(run):
             "id": run_id * 10 + index, "run_id": run_id, "name": name, "status": job_status,
             "conclusion": job_conclusion,
             "html_url": f"https://github.com/{repo}/actions/runs/{run_id}/job/{run_id * 10 + index}",
-            "started_at": at(index), "completed_at": at(index + 3) if job_status == "completed" else None,
+            "started_at": at(index),
+            "completed_at": at(index + 1 + (run_id + index * 3) % 7) if job_status == "completed" else None,
             "runner_name": f"acme-runner-{index}", "labels": ["ubuntu-latest"],
             "steps": [{"number": n + 1, "name": step, "status": job_status,
                        "conclusion": job_conclusion, "started_at": at(index),
@@ -620,6 +721,14 @@ def jobs_json(run):
 
     done = status == "completed"
     test_conclusion = conclusion if done else None
+    if conclusion == "skipped":
+        return [job(1, name, "completed", "skipped", ["Set up job"]) for name in ("build", "test")]
+    if workflow_id == 104:
+        return [
+            job(1, "build", "completed", "success", ["Checkout", "Install", "Build"]),
+            job(2, "changelog", "completed", "success", ["Checkout", "Collect notes"]),
+            job(3, "publish", status, test_conclusion, ["Checkout", "Sign", "Publish"]),
+        ]
     if workflow_id == 102:
         return [
             job(1, "build", "completed", "success", ["Checkout", "Build image", "Push image"]),
@@ -652,6 +761,10 @@ WORKFLOW_FILES = {
          "    runs-on: ubuntu-latest\n    steps: [{run: make deploy}]\n  deploy-production:\n"
          "    needs: deploy-staging\n    environment: production\n    runs-on: ubuntu-latest\n"
          "    steps: [{run: make deploy}]\n",
+    104: "name: Release\non:\n  push: {branches: [main]}\n  workflow_dispatch:\njobs:\n  build:\n"
+         "    runs-on: ubuntu-latest\n    steps: [{run: npm run build}]\n  changelog:\n"
+         "    runs-on: ubuntu-latest\n    steps: [{run: npm run notes}]\n  publish:\n"
+         "    needs: [build, changelog]\n    runs-on: ubuntu-latest\n    steps: [{run: npm publish}]\n",
     103: "name: Nightly\non:\n  schedule: [{cron: '0 3 * * *'}]\njobs:\n  lint:\n"
          "    runs-on: ubuntu-latest\n    steps: [{run: npm run lint}]\n  build:\n"
          "    runs-on: ubuntu-latest\n    steps: [{run: npm run build}]\n  test:\n"

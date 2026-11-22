@@ -421,7 +421,16 @@ class FixtureTests(unittest.TestCase):
                 issue = json.load(response)
             self.assertEqual((issue['identifier'], issue['state']['type']), ('FLT-212', 'started'))
             self.assertEqual(issue['assignee']['displayName'], 'Bo Sample')
-            self.assertIn('FLT', [row['key'] for row in fleet.fixture.projects])
+            keys = [row['key'] for row in fleet.fixture.projects]
+            for key in ('FLT', 'NAV', 'MAP', 'WARP', 'RELAY'):
+                self.assertIn(key, keys)
+            # The demo world's issues the Fleet API fixture's crew work on.
+            request = Request(fleet.origin + '/api/v1/issues/NAV-7',
+                              headers={'Authorization': 'Bearer fixture-access'})
+            with urlopen(request, timeout=3) as response:
+                issue = json.load(response)
+            self.assertEqual((issue['title'], issue['state']['type']),
+                             ('Cancel tile decodes that leave the viewport', 'started'))
         finally:
             fleet.shutdown()
             fleet.server_close()
