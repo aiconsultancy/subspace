@@ -56,6 +56,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         inspector_tab: Default::default(),
         threads: Default::default(),
         seen_fleets: Default::default(),
+        absorbing: Default::default(),
         selection_group: None,
         hub: None,
         hub_subscription: None,

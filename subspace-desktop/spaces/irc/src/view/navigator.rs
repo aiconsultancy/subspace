@@ -237,7 +237,11 @@ pub(super) fn fold_new_fleets(
             .find(|group| &group.key == key)
             .and_then(rows::absorbed_network)
             .map(|network| board.list.is_folded(&network));
-        if first && starts_folded(other, keeps, network) && !board.list.is_folded(key) {
+        let began = began_absorbing(&mut board.absorbing, key, network.is_some());
+        let folded = board.list.is_folded(key);
+        if fold_to(first, began, starts_folded(other, keeps, network))
+            .is_some_and(|fold| fold != folded)
+        {
             board.list.toggle(key);
         }
     }
@@ -246,6 +250,34 @@ pub(super) fn fold_new_fleets(
         board.list.toggle(key);
     }
     board.selection_group = holding.cloned();
+}
+
+/// Notes whether group `key` takes in its network's rows (`absorbs`) and
+/// says whether it has just begun to.
+fn began_absorbing(
+    absorbing: &mut std::collections::HashSet<SharedString>,
+    key: &SharedString,
+    absorbs: bool,
+) -> bool {
+    if absorbs {
+        absorbing.insert(key.clone())
+    } else {
+        absorbing.remove(key);
+        false
+    }
+}
+
+/// What fold a fleet group takes now, if any: a group seen for the first
+/// time folds when it starts folded (`fold`), and a group that began to
+/// take in its network's rows (`began`) folds or opens as `fold` says, so
+/// a folded group never hides the network's rows the network's own group
+/// showed. `None` leaves the person's choice.
+pub(super) fn fold_to(first: bool, began: bool, fold: bool) -> Option<bool> {
+    match (first, began) {
+        (_, true) => Some(fold),
+        (true, false) => fold.then_some(true),
+        (false, false) => None,
+    }
 }
 
 /// Whether a fleet group seen for the first time starts folded: never
@@ -350,6 +382,30 @@ mod tests {
 
     use super::{Marks, captain_icon, people_mark, presence_mark, row_mark, ship_dot};
     use crate::rows::{Activity, Presence};
+
+    /// A group folds when first seen if it starts folded, and takes its
+    /// network's fold when it begins to take in the network's rows.
+    #[test]
+    fn a_group_folds_on_first_sight_or_as_its_network_s_when_it_begins_to_take_in_its_rows() {
+        use super::fold_to;
+        assert_eq!(fold_to(true, false, true), Some(true));
+        assert_eq!(fold_to(true, false, false), None, "a new group is open");
+        assert_eq!(
+            fold_to(false, true, false),
+            Some(false),
+            "opens as the network's"
+        );
+        assert_eq!(
+            fold_to(false, true, true),
+            Some(true),
+            "folds as the network's"
+        );
+        assert_eq!(
+            fold_to(false, false, true),
+            None,
+            "the person's choice stands"
+        );
+    }
 
     /// The drawn navigator is checked by `tests/initiatives/navigator.rs`;
     /// this checks the captain's icon in each mode of the Icons setting.
