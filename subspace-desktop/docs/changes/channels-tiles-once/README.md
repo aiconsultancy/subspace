@@ -205,6 +205,59 @@ through the same `avatar::agent_icon` seam as the navigator, captured in the
 agents (no fixture issue is marked so; a render test covers it), and history
 loaded above (a render test covers it).
 
+## Findings carried from pull request 65
+
+The two model reviews of [Channels navigator, request lines and composer
+hints](../channels-navigator-and-requests/README.md) left twelve medium
+and low findings for this pull request. Each was checked against the
+code; each fix is its own commit with its tests.
+
+1. **A new fleet group folding away the selection** — fixed (`fix(irc):
+   keep a new fleet group open when it holds the selection`). A fleet
+   group seen for the first time no longer folds when it holds the
+   selected row, and a folded group's header carries an `@` mark (a
+   mention) or a dot (unread messages) through `group_indicators`.
+2. **Two channels with the same short name** — fixed (`fix(irc): keep full
+   channel names where a fleet's short names would clash`). Rows whose
+   short names clash in a group keep their full channel names. The other
+   initiative channels stay short, as the owner approved, rather than
+   shortening only the roster's channels as suggested.
+3. **`/ask` picking one of two rear admirals** — fixed with 8 (`fix(irc):
+   refuse /ask where two fleets or two rear admirals could answer`): a
+   Starbase two rear admirals name has no addressee.
+4. **An older ending without an outcome reading Done** — fixed (`fix(irc):
+   settle a request whose outcome is unknown as Ended, not Done`): it reads
+   **Ended** with a plain circle.
+5. **Hint row without accessible names** — fixed (`fix(irc): name the
+   composer's hints and say who can see an upload`): each hint is named
+   `<word>: <key>`, such as *mention: at sign*.
+6. **`docs/irc.md` citing `Conversation::follow_clock`** — fixed in the
+   same commit as 5: it names `conversation::clock::follow`.
+7. **The upload notice not saying who can open a file** — fixed in the same
+   commit as 5. The design guide keeps the hint row slim and quiet, so the
+   notice stays one truncating line at its end rather than wrapping or
+   moving beside the paperclip; its words now say who can see a file and
+   for how long, *Subspace users see it for 30 days. No credentials.*, with
+   the full sentence as its accessible name and its tooltip.
+8. **`/ask` in a channel two fleets claim** — fixed (see 3): `/ask` and its
+   completion both ask `Roster::asked_in`, which now refuses a channel that
+   not exactly one fleet holds, the same ownership the navigator uses.
+9. **A restored request showing Done after it showed Failed** — fixed
+   (`fix(irc): load a request's stored ending before its restored notices
+   fold`). Reproduced by a test first; the stored endings now load before
+   the restored lines fold, and a notice still fills in an ending stored
+   without its outcome.
+10. **`/ask` not rechecking length** — fixed (`fix(irc): recheck /ask
+    against the connection's limits after addressing it`): the addressed
+    message is checked against the connection's limits and, when over, the
+    draft stays with an error. Whether the IRC client later rejects a
+    message is not known when the composer empties, as for any message;
+    that is unchanged.
+11. **Search losing the network name** — fixed (`fix(irc): search a buffer
+    by its network as well as its group`).
+12. **People presence scanning every channel per row** — fixed
+    (`perf(irc): look up People's presence once per network`).
+
 ## Tasks
 
 - [x] The tiles-once rule and its tests.
