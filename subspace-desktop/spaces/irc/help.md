@@ -13,7 +13,7 @@ hub/persist,state/merge,state/directory,reveal,commands,context,issues,issues/{f
 markup/issue,conversation/keys,transcript/focus,transcript/line/marks,
 thread_status,thread_status/model,thread_status/trust,state/folding,
 transcript/status,transcript/replies,fleet,fleet/places,conversation/header,
-conversation/clock,rows/sections,rows/groups,view/navigator,compose/ask,
+conversation/clock,rows/sections,rows/groups,rows/activity,view/navigator,compose/ask,
 compose/hints,text/look,
 text/references}.rs;
 scripts/irc-thread-status-fixture.py;
@@ -139,13 +139,16 @@ On a network that serves a Subspace fleet, the fleet's channels have a group
 of their own, named after the fleet and showing the same connection state,
 before the network's group. A fleet's group lists its Starbase, its command
 channel, its ships' channels, then the other channels of its initiatives,
-each without the fleet's prefix: `#aurora-lyra` shows as `lyra`. A ship's
-channel leads with its captain's avatar and says **working** while the
-captain reports a status; the Starbase and the command channel lead with a
-glyph. Several fleets on one server each have a group. Fleets other than
+each without the fleet's prefix: `#aurora-lyra` shows as `lyra`. Every
+channel leads with a `#`, and a ship's channel with its captain's icon as
+**Settings > Application > Appearance > Icons** asks: **Large**, **Small**
+(the default) or **Off**, which shows the `#`. A ship's channel ends with a
+dot, filled green while its captain reports a status and a ring while not;
+hover the dot to read the status. Several fleets on one server each have a group. Fleets other than
 the selected initiative's start folded; with no initiative selected, every
 fleet starts open. Private conversations with people
-are listed under **People**, after the fleets. An older private conversation
+are listed under **People**, after the fleets, each with a dot that is
+filled while that person is in a channel you share and not away. An older private conversation
 with a fleet agent stays under its network, as agents talk only in channels.
 Channels that belong to no fleet, and networks that serve none, are listed
 as before.

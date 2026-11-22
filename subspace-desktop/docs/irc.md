@@ -83,7 +83,9 @@ channel whose captain is unknown is a plain channel.
   named *captain* or *rear admiral*. Crew keep a person's avatar and tone
   and a muted `CREW` pill.
 - **Members and completion.** The member list shows the small agent avatar
-  and its note, and the `@` completion row's trailing mark, says `captain`,
+  as the app's **Icons** setting asks (`avatar::agent_icon`: as drawn for
+  Large, at a row glyph's size for Small, none for Off, the name closing
+  up) and its note, and the `@` completion row's trailing mark, says `captain`,
   `rear admiral` or `crew`.
 - **Heading.** A ship's channel leads with its captain's small agent avatar,
   the Starbase and the command channel with a glyph, and a ship's channel
@@ -117,14 +119,25 @@ fleets on one network claim belongs to neither.
   layout (`dock/layout.rs`, which stores buffers) and search results restore
   as before; only group keys are new. `Irc::group_networks` maps each group
   key to its network for the toolbar, Join and the list's menu.
-- A ship's row leads with its captain's small agent avatar
-  (`avatar::agent(...).small()`), the Starbase and the command channel with
-  their kind's glyph in its tone, other rows with the quiet kind glyph. A
-  ship's row says `working` before its count while its captain has a nick
-  status, by the heading pill's rule (`conversation::vouched_status`: a
-  member with the captain's nick signed in to its account); no idle state
-  is invented and there is no crew meter, as the Space cannot read crew
-  activity.
+- Rows are plain, as the owner asked: every channel row, the Starbase and
+  the command channel included, leads with the muted `#` (`view::kind_icon`),
+  and a person in `People` with a presence dot (`avatar::activity_dot`,
+  filled while they are in a channel we share and not away, a muted ring
+  while away or in none; `rows::activity::presence`). A ship's row leads
+  with its captain's agent icon as the app's **Icons** setting asks
+  (`avatar::agent_icon`): **Large** the small agent avatar
+  (`avatar::agent(...).small()`), **Small**, the default, the same avatar at
+  the `#`'s size, **Off** the `#`.
+- A ship's row ends with one dot (`view/navigator.rs`, `ship_dot`): filled
+  green while the ship is working, a muted ring while not, named
+  *aurora-lyra: working* or *aurora-lyra: idle* (the row's spoken name ends
+  with the same words), and showing Kit's tooltip on hover: the captain's
+  status today. Whether a ship is working comes from one function,
+  `rows::activity::ship`: today the captain's nick status while the server
+  vouches for it, by the heading pill's rule (`conversation::vouched_status`:
+  a member with the captain's nick signed in to its account), so nothing is
+  invented without one. Crew activity joins `Activity::working` there once
+  the Space can read it, and the tooltip then lists the crew at work.
 - Every row with unread messages is emphasised. A mention adds an `@` mark
   in `Tone::Red` before the count, which keeps the accent.
 - A fleet group that is not the selected initiative's fleet starts folded

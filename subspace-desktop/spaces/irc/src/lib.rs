@@ -71,8 +71,10 @@ pub struct Irc {
     listed: HashMap<SharedString, BufferKey>,
     /// The network each group header stands for.
     group_networks: HashMap<SharedString, NetworkId>,
-    /// What each fleet channel's row is for.
-    kinds: HashMap<SharedString, fleet::ChannelKind>,
+    /// Each ship row's activity, for its dot.
+    ships: HashMap<SharedString, rows::Activity>,
+    /// Each `People` row's presence, for its mark.
+    people: HashMap<SharedString, rows::Presence>,
     /// The fleet groups shown so far, so a fleet's group folds only when it
     /// first appears.
     seen_fleets: std::collections::HashSet<SharedString>,

@@ -19,6 +19,7 @@ use gpui_kit::{
 };
 use subspace_client_irc::{BufferKey, Member};
 use subspace_framework::dashboard::action::row_button;
+use subspace_framework::dashboard::avatar::AgentIcons;
 use subspace_framework::dashboard::{Tokens, avatar, truncated, workspace};
 
 use crate::fleet::{self, Roster};
@@ -152,6 +153,7 @@ impl Render for MemberList {
             statuses: &statuses,
             roster: &roster,
             tokens: &tokens,
+            icons: AgentIcons::current(cx),
         };
         let sections: Vec<AnyElement> = groups(&members)
             .into_iter()
@@ -178,6 +180,8 @@ struct Ours<'a> {
     statuses: &'a Statuses,
     roster: &'a Roster,
     tokens: &'a Tokens,
+    /// The app's Icons setting, for agents' avatars.
+    icons: AgentIcons,
 }
 
 /// One rank's members under the inspector's section heading, such as
@@ -275,23 +279,31 @@ fn content(ours: &Ours<'_>, member: &Member, status: Option<&str>) -> Div {
         .min_w_0()
         .gap_2()
         .when(member.away, |row| row.opacity(AWAY_OPACITY))
-        .child(face(member, rank, tokens))
+        .children(face(member, rank, ours))
         .child(v_flex().flex_1().min_w_0().child(name).children(status))
 }
 
-/// A member's avatar: a captain's or the rear admiral's agent avatar, or a
-/// person's (and a crew member's) square initials.
-fn face(member: &Member, rank: Option<fleet::Rank>, tokens: &Tokens) -> AnyElement {
-    match rank.and_then(fleet::Rank::avatar) {
-        Some(agent) => avatar::agent(
-            SharedString::from(format!("irc-member-agent:{}", member.nick)),
-            agent,
-            member.nick.clone(),
-        )
-        .small()
-        .into_any_element(),
-        None => avatar::member(member.nick.clone(), tokens).into_any_element(),
-    }
+/// A member's avatar: a captain's or the rear admiral's agent avatar as
+/// the Icons setting asks (`avatar::agent_icon`; none while off, so the
+/// name closes up), or a person's (and a crew member's) square initials.
+fn face(member: &Member, rank: Option<fleet::Rank>, ours: &Ours<'_>) -> Option<AnyElement> {
+    let agent = rank.and_then(fleet::Rank::avatar);
+    let person = agent
+        .is_none()
+        .then(|| avatar::member(member.nick.clone(), ours.tokens).into_any_element());
+    let agent = agent.and_then(|agent| agent_face(member, agent, ours.icons));
+    agent.or(person)
+}
+
+/// An agent member's avatar at the size `icons` asks; `None` when off.
+fn agent_face(member: &Member, agent: avatar::AgentRank, icons: AgentIcons) -> Option<AnyElement> {
+    let face = avatar::agent(
+        SharedString::from(format!("irc-member-agent:{}", member.nick)),
+        agent,
+        member.nick.clone(),
+    )
+    .small();
+    avatar::agent_icon(face, icons).map(IntoElement::into_any_element)
 }
 
 /// Away members are dimmed, and their accessible name says so.

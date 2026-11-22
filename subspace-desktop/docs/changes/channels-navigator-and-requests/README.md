@@ -8,9 +8,13 @@ Channels](../channels-agent-identity/README.md) built its first pieces. This
 change builds the next three, from the mock-up's notes 1, 6 and 8:
 
 - **The navigator shows the fleet** (note 1): one group per fleet with its
-  Starbase, command channel and ships, a ship led by its captain's avatar
-  and saying when the captain is working, and a **People** section that
-  holds private conversations with people only.
+  Starbase, command channel and ships, and a **People** section that holds
+  private conversations with people only. Shown the first design, the owner
+  found its per-ship and per-person icons busy and asked for something
+  simpler, "a bit more Slack-like": plain rows, one dot per ship saying
+  whether it is working, with a tooltip on hover, and the agent and ship
+  icons as an app setting, **Icons: Large / Small / Off**, rather than
+  removed.
 - **A request line settles into a result** (note 6). Owner decision: a
   finished request keeps a settled line, **Done in 42 m** or **Failed after
   3 m**, where the line used to disappear. While it runs, the line shows the
@@ -41,12 +45,41 @@ Desktop only: no Framework, API or Stargate change.
   the other channels of its initiatives, each by the name the row shows,
   which drops the `#` and the fleet's `<slug>-` prefix (`#aurora-lyra` shows
   as `lyra`). Search keeps the full name.
-- A ship's row leads with its captain's small agent avatar; the Starbase and
-  the command channel lead with their kind's glyph in its tone. A ship's row
-  says `working` before its count while its captain has a nick status that
-  the server vouches for (the heading pill's rule). Nothing else: no idle
-  state is invented, and there is no crew meter, as the Space cannot read
-  crew activity yet.
+- Every channel row, the Starbase and the command channel included, leads
+  with the muted `#`; a person in **People** with a presence dot, filled
+  while they are in a channel we share and not away, a muted ring while away
+  or in none. A ship's row leads with its captain's icon as the Icons
+  setting asks: **Large** the small agent avatar, **Small** (the default)
+  the same avatar at the `#`'s size, **Off** the `#`.
+- A ship's row ends with one dot (`avatar::activity_dot`): filled green while
+  the ship is working, a muted ring while not, named *aurora-lyra: working*
+  or *aurora-lyra: idle*, and the row's spoken name ends the same way.
+  Hovering it shows Kit's tooltip with what is at work: today the captain's
+  status. "Working" comes from one function, `rows::activity::ship`: the
+  captain's nick status while the server vouches for it (the heading pill's
+  rule), so nothing is invented without one. Crew activity joins it there
+  once the Space can read it, and the tooltip will list the crew at work.
+
+### 1a. The Icons setting
+
+- **Settings > Application > Appearance > Icons**: Large, Small or Off,
+  default Small (`avatar::DEFAULT_AGENT_ICONS`), stored as `app.agent-icons`
+  in the state file beside the theme and the icon button size; a file
+  without it reads as Small. Save applies it without a restart.
+- The Framework holds it, additively: `avatar::AgentIcons` (a global, read
+  with `AgentIcons::current`) and one seam, `avatar::agent_icon(avatar,
+  icons)`, which every surface calls: Large returns the avatar as the
+  surface draws it, Small the same avatar at 12 px (`MARK_SIZE_PX`), Off
+  nothing, so the text closes up.
+- It governs the navigator's ship rows and the inspector's member list
+  (a captain's or the rear admiral's avatar). Not built in the app yet, so
+  not covered: a Ships list or a header card with a crew ring in the
+  inspector, and agent avatars in live tiles or request status lines (tiles
+  show people's photos through `reference_card::avatar`, and request lines
+  have no avatar). Message authors' avatars, the conversation heading's
+  avatar and text role marks are left as they are.
+- Row and member heights do not change between modes, and no transcript
+  line carries an agent icon, so tile height reservation is unaffected.
 - Every row with unread messages is emphasised and shows its count. A
   mention adds an `@` mark before the count.
 - **People** holds the private conversations with people. A private
@@ -143,8 +176,15 @@ Desktop only: no Framework, API or Stargate change.
 ## Delivery
 
 - Navigator: `fleet.rs`, `fleet/places.rs`, `initiatives.rs`,
-  `rows.rs`, `rows/sections.rs`, `rows/groups.rs`, `view.rs`, `lib.rs`,
-  `conversation/header.rs` (`vouched_status`, `kind_glyph` shared).
+  `rows.rs`, `rows/sections.rs`, `rows/groups.rs`, `rows/activity.rs`,
+  `view.rs`, `view/navigator.rs`, `lib.rs`, `members.rs`,
+  `conversation/header.rs` (`vouched_status` shared).
+- Icons setting (Framework): `board-kit/dashboard/src/avatar/icons.rs`,
+  `avatar/agent.rs` (`agent_icon`, `MARK_SIZE_PX`), `avatar/crew.rs`
+  (`activity_dot`), `prefs.rs`, `host/app/src/settings/icon_buttons.rs`
+  (a shared draft for live appearance choices), `settings/agent_icons.rs`,
+  the Component gallery's agent and crew meter cards, and
+  [Appearance](../../../../subspace-framework/docs/appearance.md#agent-icons).
 - Request lines: `thread_status.rs` (`Outcome`, `Stage`),
   `thread_status/requests.rs` (`Ending`), `thread_status/trust.rs`,
   `thread_status/model.rs` (`Settled`), `transcript/status.rs`,
@@ -156,7 +196,7 @@ Desktop only: no Framework, API or Stargate change.
   `fleet.rs` (`Roster::asked_in`).
 - Tests: `rows/tests.rs` and `rows/tests/fleets.rs` (order, prefix
   stripping, two fleets on one network, channels of no fleet, People for
-  people only, `working`, search); `tests/initiatives/navigator.rs` (the
+  people only, the ship dot and presence, search); `tests/initiatives/navigator.rs` (the
   drawn navigator, emphasis and mention mark, folding);
   `thread_status/tests/settled.rs`, `retention.rs` and `endings.rs` (stage
   mapping, done and failed, an ending after the line cap, after a restart,
@@ -214,9 +254,13 @@ Not captured: a light theme, a narrow window, two fleets on one network
 ## Tasks
 
 - [x] The navigator by fleet.
+- [x] Plain rows, one dot per ship and the Icons setting (owner feedback).
 - [x] A request line that settles into a result.
 - [x] The composer's hint row and `/ask`.
-- [ ] Crew meter on ship rows, once the API reports crew activity.
+- [ ] Crew activity in the ship dot and its tooltip, once the API reports
+      it (`rows::activity::ship`).
+- [ ] The inspector's Ships list and header card, and agent avatars in
+      tiles, through `avatar::agent_icon` when they are built.
 - [ ] Captions inside a list group and a completion section heading, which
       need the Framework.
 - [ ] Tracker commands (`/assign`, `/ready`, `/decision`).

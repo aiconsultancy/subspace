@@ -7,10 +7,10 @@ use subspace_framework::dashboard::{Glyph, Group, Row, Tone};
 
 use super::sections::{Held, Sections};
 use super::{
-    Layout, WORKING, fleet_group_key, group_key, listed_rows, people_group_key, row, status_label,
+    Layout, activity, fleet_group_key, group_key, listed_rows, people_group_key, row, status_label,
     status_tone, title,
 };
-use crate::fleet::{ChannelKind, FleetPlace, Roster, short_name};
+use crate::fleet::{FleetPlace, Roster, short_name};
 use crate::state::{Buffer, IrcState, Network};
 
 /// One fleet on one network, for its channels' rows.
@@ -63,7 +63,7 @@ fn people_group(state: &IrcState, network: &Network, people: Vec<Held<'_>>, layo
     }
     let rows = people
         .iter()
-        .map(|(key, buffer)| keyed(row(key, buffer), key, layout))
+        .map(|(key, buffer)| person_row(state, key, buffer, layout))
         .collect();
     let group = Group {
         key: people_group_key(&network.id),
@@ -73,6 +73,14 @@ fn people_group(state: &IrcState, network: &Network, people: Vec<Held<'_>>, layo
         rows,
     };
     push_group(layout, &network.id, group);
+}
+
+/// A person's row, with their presence recorded for its mark.
+fn person_row(state: &IrcState, key: &BufferKey, buffer: &Buffer, layout: &mut Layout) -> Row {
+    let row = keyed(row(key, buffer), key, layout);
+    let presence = activity::presence(state, &key.network, title(key));
+    layout.people.insert(row.key.clone(), presence);
+    row
 }
 
 /// `People`, with the network's name when there are `networks` networks
@@ -109,28 +117,29 @@ fn keyed(row: Row, key: &BufferKey, layout: &mut Layout) -> Row {
 }
 
 /// A fleet channel's row: its name without the fleet's prefix, and for a
-/// ship whose captain has a status, `working` before the unread count.
+/// ship, its activity recorded for its dot.
 fn fleet_row(key: &BufferKey, buffer: &Buffer, fleet: &Fleet<'_>, layout: &mut Layout) -> Row {
-    let name = title(key);
-    let kind = fleet.roster.channel(name).cloned();
-    let working = match &kind {
-        Some(ChannelKind::Ship { captain }) => {
-            crate::conversation::vouched_status(captain, &fleet.network.statuses, &buffer.members)
-                .is_some()
-        }
-        _ => false,
-    };
     let mut row = row(key, buffer);
-    row.title = short_name(fleet.place.slug.as_deref(), name)
+    row.title = short_name(fleet.place.slug.as_deref(), title(key))
         .to_owned()
         .into();
-    if working {
-        row.trailing.insert(0, Glyph::new(WORKING, Tone::Muted));
-    }
-    if let Some(kind) = kind {
-        layout.kinds.insert(row.key.clone(), kind);
-    }
+    let ship = ship_activity(key, buffer, fleet).map(|ship| (row.key.clone(), ship));
+    layout.ships.extend(ship);
     keyed(row, key, layout)
+}
+
+/// A ship channel's activity; `None` for any other channel.
+fn ship_activity(
+    key: &BufferKey,
+    buffer: &Buffer,
+    fleet: &Fleet<'_>,
+) -> Option<activity::Activity> {
+    let captain = activity::captain(fleet.roster.channel(title(key))?)?;
+    Some(activity::ship(
+        captain,
+        &fleet.network.statuses,
+        &buffer.members,
+    ))
 }
 
 /// A group header with `network`'s connection state: a network's own, or

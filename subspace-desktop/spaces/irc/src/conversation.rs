@@ -8,7 +8,7 @@ mod clock;
 pub(crate) use clock::ticking;
 pub(crate) mod find;
 mod header;
-pub(crate) use header::{kind_glyph, vouched_status};
+pub(crate) use header::vouched_status;
 mod keys;
 mod panel;
 pub(crate) mod summaries;

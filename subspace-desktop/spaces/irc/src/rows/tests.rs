@@ -212,4 +212,5 @@ fn search_finds_listed_channels_as_not_joined() {
     assert_eq!(found[0].1.title.as_ref(), "#rust");
 }
 
+mod activity;
 mod fleets;

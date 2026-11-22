@@ -7,11 +7,14 @@ use gpui_kit::SharedString;
 use subspace_client_irc::{BufferKey, ConnectionStatus, ListedChannel, NetworkId, Target};
 use subspace_framework::dashboard::{Glyph, Group, ItemSearch, Row, SearchDoc, Tone};
 
-use crate::fleet::{ChannelKind, NO_ROSTER, Roster};
+use crate::fleet::{NO_ROSTER, Roster};
 use crate::state::{Buffer, IrcState};
 
+pub(crate) mod activity;
 mod groups;
 mod sections;
+
+pub(crate) use activity::{Activity, Presence};
 
 /// Separates the parts of a row key; it cannot appear in a nick or channel.
 const SEPARATOR: char = '\u{1f}';
@@ -19,8 +22,6 @@ const SEPARATOR: char = '\u{1f}';
 const MAX_COUNT: usize = 99;
 /// The kind part of a listed channel's row key.
 const LISTED: &str = "l";
-/// A ship row's note while its captain has a nick status.
-pub(crate) const WORKING: &str = "working";
 /// The mark of a row whose unread lines mention us.
 pub(crate) const MENTION: &str = "@";
 
@@ -38,9 +39,10 @@ pub(crate) struct Layout {
     pub networks: HashMap<SharedString, NetworkId>,
     /// The fleet groups, with their fleet's id.
     pub fleets: HashMap<SharedString, String>,
-    /// What each fleet channel's row is for: a ship, the Starbase or the
-    /// command channel.
-    pub kinds: HashMap<SharedString, ChannelKind>,
+    /// Each ship row's activity, for its dot.
+    pub ships: HashMap<SharedString, Activity>,
+    /// Each row in `People`, with that person's presence.
+    pub people: HashMap<SharedString, Presence>,
 }
 
 /// The navigator: on each network, one group per fleet holding its

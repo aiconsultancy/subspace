@@ -1,12 +1,7 @@
 //! The board's view: the workspace (buffer list, conversations, member
 //! list), rows from the state, and keeping the hub told which buffer is read.
 
-use gpui_kit::component::h_flex;
-use gpui_kit::prelude::FluentBuilder as _;
-use gpui_kit::{
-    AnyElement, App, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, SharedString, Styled as _, TestSupportExt as _, WeakEntity, Window, div,
-};
+use gpui_kit::{AnyElement, App, Context, Entity, SharedString, WeakEntity, Window};
 use subspace_client_irc::{BufferKey, Target};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::row_menu::{MenuCommand, MenuGroup};
@@ -47,7 +42,8 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         buffers: Default::default(),
         listed: Default::default(),
         group_networks: Default::default(),
-        kinds: Default::default(),
+        ships: Default::default(),
+        people: Default::default(),
         seen_fleets: Default::default(),
         hub: None,
         hub_subscription: None,
@@ -215,23 +211,11 @@ impl ListDashboard for Irc {
         })
     }
 
-    /// A ship channel leads with its captain's small agent avatar, the
-    /// Starbase and the command channel with their kind's glyph, and any
-    /// other buffer with its kind's quiet glyph.
+    /// A ship channel leads with its captain's agent icon as the Icons
+    /// setting asks, else the quiet `#`; a person in `People` with a
+    /// presence dot; any other buffer with its kind's quiet glyph.
     fn row_leading(&self, row: &Row, cx: &App) -> Option<AnyElement> {
-        let buffer = self
-            .buffers
-            .get(&row.key)
-            .or_else(|| self.listed.get(&row.key))?;
-        let mark = navigator::row_mark(row, self.kinds.get(&row.key), &buffer.target, cx);
-        Some(
-            div()
-                .id(SharedString::from(format!("irc-row:{}", row.key)))
-                .test_support()
-                .flex_shrink_0()
-                .child(mark)
-                .into_any_element(),
-        )
+        navigator::leading(self, row, cx)
     }
 
     /// `People` leads with the people glyph; the other groups with their
@@ -247,27 +231,11 @@ impl ListDashboard for Irc {
         Some(self.text_edge)
     }
 
-    /// A ship's `working` note, a mention's `@` mark, then an unread count
-    /// or a channel's user count, as a navigator row's quiet count: small,
-    /// at the trailing edge.
+    /// A mention's `@` mark, then an unread count or a channel's user
+    /// count, as a navigator row's quiet count, then a ship's one dot at the
+    /// trailing edge.
     fn row_trailing(&self, row: &Row, cx: &App) -> Option<AnyElement> {
-        let tokens = Tokens::current(cx);
-        Some(
-            h_flex()
-                .flex_shrink_0()
-                .gap_1()
-                .children(row.trailing.iter().map(|glyph| {
-                    div()
-                        .flex_shrink_0()
-                        .text_size(tokens.caption_size())
-                        .text_color(tokens.glyph(glyph))
-                        .when(glyph.text.as_ref() == rows::MENTION, |mark| {
-                            mark.font_weight(FontWeight::BOLD)
-                        })
-                        .child(glyph.text.clone())
-                }))
-                .into_any_element(),
-        )
+        Some(navigator::trailing(self, row, cx))
     }
 
     /// Every row with unread lines reads emphasised.
@@ -279,10 +247,12 @@ impl ListDashboard for Irc {
         if self.listed.contains_key(&row.key) {
             return rows::listed_accessible_label(row);
         }
-        match self.buffer_state(&row.key, cx) {
+        let base = match self.buffer_state(&row.key, cx) {
             Some(buffer) => rows::accessible_label(&row.title, &buffer),
             None => row.title.clone(),
-        }
+        };
+        let mark = navigator::spoken_mark(self, &row.key);
+        rows::activity::spoken(&base, mark.as_deref()).into()
     }
 
     /// A click selects a channel we are not in; a double click joins it.
