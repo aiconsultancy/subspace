@@ -31,6 +31,11 @@
 #                              built-in Fleet Console's address and token set to it; with
 #                              CAPTURE_FLEET=1 the API's aurora fleet records it as its fleetApiUrl, and
 #                              its token is saved for that address (Settings > Fleets)
+#   CAPTURE_FLEET_TOKEN=<saved|none|moved>  with CAPTURE_FLEET_API=1, the aurora fleet's Settings > Fleets
+#                              token: saved for the fixture's address (the default), none saved, or
+#                              fixture-fleet-moved saved for https://aurora-old.example.test, so the
+#                              fleet shows Address changed; the fixture's log (CAPTURE_KEEP_LOG=1)
+#                              fingerprints each request's token
 #   CAPTURE_MOVE_UNCONFIRMED=1  a committed move lists its sub-issues as not confirmed, as a NETT move can
 #   CAPTURE_UPLOAD_SCENARIO=<unknown|absent>  the first issue opened shows an upload NETT left unresolved
 #   CAPTURE_KEEP_LOG=1         copy the app's logs into <out-dir>
@@ -67,6 +72,10 @@ if [ -n "${CAPTURE_FIRST_RUN:-}" ]; then
         fi
     done
 fi
+case "${CAPTURE_FLEET_TOKEN:-saved}" in
+    saved | none | moved) ;;
+    *) echo "CAPTURE_FLEET_TOKEN must be saved, none or moved" >&2; exit 2 ;;
+esac
 if [[ "$platform" = Linux ]]; then
     for helper in dbus-run-session dbus-daemon xvfb-run Xvfb xauth; do
         type -P "$helper" >/dev/null || {
@@ -134,7 +143,8 @@ if [ -n "${CAPTURE_DECISION_SCENARIO:-}" ]; then api_args+=(--decision-scenario 
 if [ -n "${CAPTURE_FLEET:-}" ]; then api_args+=(--fleet); fi
 fleet_api=""
 if [ -n "${CAPTURE_FLEET_API:-}" ]; then
-    python3 -u "$root/scripts/fleet_api_test_server.py" --port 0 --token fixture-fleet >"$fixture/fleet-api.log" 2>&1 &
+    python3 -u "$root/scripts/fleet_api_test_server.py" --port 0 --token fixture-fleet --log-requests \
+        >"$fixture/fleet-api.log" 2>&1 &
     servers+=("$!")
     fleet_api="$(server_address "$fixture/fleet-api.log")"
     # The Subspace API fixture's aurora fleet records this address.
@@ -173,9 +183,10 @@ chmod 755 "$fixture/bin/gh"
 
 # A first run has neither file: the app records a new install's theme.
 if [ -z "${CAPTURE_FIRST_RUN:-}" ]; then
-python3 - "$state_dir" "$config_dir" "${CAPTURE_THEME:-}" "${CAPTURE_STATE:-}" "${CAPTURE_CONFIG:-}" "$fleet_api" <<'EOF'
+python3 - "$state_dir" "$config_dir" "${CAPTURE_THEME:-}" "${CAPTURE_STATE:-}" "${CAPTURE_CONFIG:-}" "$fleet_api" \
+    "${CAPTURE_FLEET_TOKEN:-saved}" <<'EOF'
 import json, os, sys
-state_dir, config_dir, theme, state_extra, config_extra, fleet_api = sys.argv[1:]
+state_dir, config_dir, theme, state_extra, config_extra, fleet_api, fleet_token = sys.argv[1:]
 state = {"appearance.theme": theme} if theme else {}
 state.update(json.loads(state_extra or "{}"))
 config = {"repos": ["acme/web", "acme/api", "acme/design-system"]}
@@ -190,10 +201,14 @@ config.update(extra)
 if boards:
     config["webBoards"] = boards
 files = [(state_dir, "state.json", state), (config_dir, "config.json", config)]
-if fleet_api:
-    # The aurora fleet's token in Settings > Fleets, saved for the Fleet API
-    # fixture's address, as a debug build keeps it beside state.json.
-    token = json.dumps({"v": 1, "endpoint": fleet_api, "token": "fixture-fleet"})
+# The aurora fleet's token in Settings > Fleets, as a debug build keeps it
+# beside state.json: saved for the Fleet API fixture's address, or with
+# CAPTURE_FLEET_TOKEN=moved another token saved for an address the fleet
+# had before, which must never reach the fixture.
+saved = {"saved": (fleet_api, "fixture-fleet"),
+         "moved": ("https://aurora-old.example.test", "fixture-fleet-moved")}.get(fleet_token)
+if fleet_api and saved:
+    token = json.dumps({"v": 1, "endpoint": saved[0], "token": saved[1]})
     files.append((state_dir, "fleet-api-tokens.json", {"fleet-api:aurora": token}))
 for directory, name, value in files:
     path = os.path.join(directory, name)

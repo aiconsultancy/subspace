@@ -11,11 +11,18 @@ token is invented. Never calls upstream services.
 
   python3 scripts/fleet_api_test_server.py --port 0 --token fixture-fleet
   python3 scripts/fleet_api_test_server.py --port 0 --refuse-events  # 503, as with eight streams open
+  python3 scripts/fleet_api_test_server.py --port 0 --log-requests   # one line per request
   python3 scripts/fleet_api_test_server.py --snapshot   # one JSON document
+
+--log-requests prints each request's method, path and status with a
+fingerprint of its Authorization header (`auth=none`, or `auth=` and the
+first 12 hex digits of the header's SHA-256), never the header itself, so a
+capture can show which token reached the fixture.
 """
 
 import argparse
 import copy
+import hashlib
 import hmac
 import json
 import queue
@@ -533,6 +540,11 @@ POOL = (
 )
 
 
+def auth_fingerprint(header):
+    """`none`, or the first 12 hex digits of the SHA-256 of an Authorization header."""
+    return hashlib.sha256(header.encode()).hexdigest()[:12] if header else 'none'
+
+
 def frame(kind, data):
     return f'event: {kind}\ndata: {json.dumps(data, separators=(",", ":"))}\n\n'.encode()
 
@@ -543,6 +555,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *_):
         pass
+
+    def log_request(self, code='-', size='-'):
+        if self.server.log_requests:
+            auth = auth_fingerprint(self.headers.get('Authorization', ''))
+            path = urlsplit(self.path).path
+            print(f'request {self.command} {path} {code} auth={auth}', flush=True)
 
     def allowed_origin(self):
         origin = self.headers.get('Origin', '')
@@ -656,10 +674,11 @@ class Handler(BaseHTTPRequestHandler):
 class FleetServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, token, tick=5.0, now=None, refuse_events=False):
+    def __init__(self, port, token, tick=5.0, now=None, refuse_events=False, log_requests=False):
         if not token:
             raise ValueError('A non-empty fixture token is required.')
         self.token = token
+        self.log_requests = log_requests
         self.fleet = Fleet(now)
         self.lock = threading.RLock()
         self.subscribers = set()
@@ -720,13 +739,16 @@ def main():
                         help='Seconds between simulated crew changes; 0 keeps the fleet still.')
     parser.add_argument('--refuse-events', action='store_true',
                         help='Answer the event stream with 503, as Stargate does with eight streams open.')
+    parser.add_argument('--log-requests', action='store_true',
+                        help="Print each request's method, path, status and Authorization fingerprint.")
     parser.add_argument('--snapshot', action='store_true',
                         help='Print the fleet, every ship and every crew member as one JSON document and exit.')
     options = parser.parse_args()
     if options.snapshot:
         print(json.dumps(Fleet().snapshot(), indent=2))
         return
-    server = FleetServer(options.port, options.token, options.tick, refuse_events=options.refuse_events)
+    server = FleetServer(options.port, options.token, options.tick, refuse_events=options.refuse_events,
+                         log_requests=options.log_requests)
     try:
         print(f'Stargate Fleet API fixture on {server.origin}', flush=True)
         server.serve_forever()
