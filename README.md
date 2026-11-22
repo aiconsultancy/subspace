@@ -250,6 +250,8 @@ credential files that the installer provisions instead.
 The desktop app in its Twilight Two theme, with fictional fixture data.
 Select an image to see it full size.
 
+### Channels and the tracker
+
 <table>
 <tr>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-channels-twilight-two.png"><img src="docs/assets/screenshots/desktop-channels-twilight-two.png" width="440" alt="Channels, a custom IRC client, with the pointer over an issue reference so its live tile shows the issue's title, state and progress"></a><br><b>Channels.</b> People and captains in a ship channel. Hovering an issue shows its live tile.</td>
@@ -259,14 +261,11 @@ Select an image to see it full size.
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-issue-page-twilight-two.png"><img src="docs/assets/screenshots/desktop-issue-page-twilight-two.png" width="440" alt="A tracker issue open in a tab, with an image, an attachment, its sub-issues and linked pull requests, and its properties in the inspector"></a><br><b>An issue.</b> A tracker with an image, an attached document, sub-issues and its pull requests.</td>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-decisions-twilight-two.png"><img src="docs/assets/screenshots/desktop-decisions-twilight-two.png" width="440" alt="The Decisions Space listing decisions by status, with filters for people and agents and the selected decision's maker, linked issues and evidence in the inspector"></a><br><b>Decisions.</b> What was decided, by a person or an agent, and what superseded it.</td>
 </tr>
-<tr>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-pull-requests-twilight-two.png"><img src="docs/assets/screenshots/desktop-pull-requests-twilight-two.png" width="440" alt="The PRs Space listing pull requests across repositories, with the selected pull request's reviewers and checks in the inspector"></a><br><b>Pull requests.</b> Across repositories, with reviewers and checks in the inspector.</td>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-pull-request-page-twilight-two.png"><img src="docs/assets/screenshots/desktop-pull-request-page-twilight-two.png" width="440" alt="A pull request open in a tab, with its description, testing notes and review activity"></a><br><b>A pull request.</b> Its description, review activity and checks, with approve and comment to hand.</td>
-</tr>
-<tr>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-actions-twilight-two.png"><img src="docs/assets/screenshots/desktop-actions-twilight-two.png" width="440" alt="The Actions Space listing workflow runs by workflow, with a failed run selected and its jobs in the inspector"></a><br><b>Actions.</b> Workflow runs across repositories, with the selected run's jobs in the inspector.</td>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-actions-run-twilight-two.png"><img src="docs/assets/screenshots/desktop-actions-run-twilight-two.png" width="440" alt="A failed workflow run open in a tab, with its trigger, commit, jobs and steps"></a><br><b>A workflow run.</b> Its trigger, commit, jobs and steps.</td>
-</tr>
+</table>
+
+### Fleet Console
+
+<table>
 <tr>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-fleet-console-twilight-two.png"><img src="docs/assets/screenshots/desktop-fleet-console-twilight-two.png" width="440" alt="The Fleet Console at fleet tier: the rear admiral in the centre with four captains in orbit, and the fleet's host and system figures in the inspector"></a><br><b>Fleet Console.</b> A fleet: its rear admiral, four captains, and the VM's CPU, memory and disks.</td>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-fleet-console-warp-twilight-two.png"><img src="docs/assets/screenshots/desktop-fleet-console-warp-twilight-two.png" width="440" alt="The Fleet Console part-way through the warp from a captain into one of its crew"></a><br><b>Warping in.</b> From a captain to one of its crew.</td>
@@ -274,6 +273,19 @@ Select an image to see it full size.
 <tr>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-fleet-console-ship-twilight-two.png"><img src="docs/assets/screenshots/desktop-fleet-console-ship-twilight-two.png" width="440" alt="The Fleet Console at ship tier: a captain with its four crew, each showing its branch and linked issue, and the captain's queue in the inspector"></a><br><b>A ship.</b> The captain, its queue and each crew member's branch and issue.</td>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-fleet-console-crew-twilight-two.png"><img src="docs/assets/screenshots/desktop-fleet-console-crew-twilight-two.png" width="440" alt="The Fleet Console at crew tier: a crew member's current task, issues, Git state and pull request"></a><br><b>A crew member.</b> Its current task, issues, Git state and pull request.</td>
+</tr>
+</table>
+
+### Pull requests and Actions
+
+<table>
+<tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-pull-requests-twilight-two.png"><img src="docs/assets/screenshots/desktop-pull-requests-twilight-two.png" width="440" alt="The PRs Space listing pull requests across repositories, with the selected pull request's reviewers and checks in the inspector"></a><br><b>Pull requests.</b> Across repositories, with reviewers and checks in the inspector.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-pull-request-page-twilight-two.png"><img src="docs/assets/screenshots/desktop-pull-request-page-twilight-two.png" width="440" alt="A pull request open in a tab, with its description, testing notes and review activity"></a><br><b>A pull request.</b> Its description, review activity and checks, with approve and comment to hand.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-actions-twilight-two.png"><img src="docs/assets/screenshots/desktop-actions-twilight-two.png" width="440" alt="The Actions Space listing workflow runs by workflow, with a failed run selected and its jobs in the inspector"></a><br><b>Actions.</b> Workflow runs across repositories, with the selected run's jobs in the inspector.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-actions-run-twilight-two.png"><img src="docs/assets/screenshots/desktop-actions-run-twilight-two.png" width="440" alt="A failed workflow run open in a tab, with its trigger, commit, jobs and steps"></a><br><b>A workflow run.</b> Its trigger, commit, jobs and steps.</td>
 </tr>
 </table>
 
