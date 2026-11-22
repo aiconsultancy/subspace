@@ -125,8 +125,9 @@ Linux user, through Stargate's crew plugin:
   `stargate_mail` and `stargate_dm` for messages.
 - A captain's crew roster and first repository are fixed once its
   [session is pinned](#captain-sessions), because Stargate keeps crew
-  identities and worktrees permanent. The installer refuses a later change.
-  Restore the recorded roster, or give a new roster to a new captain. Adding
+  identities and worktrees permanent. The installer refuses a later change,
+  including crew counts of 0 or an empty repository list. Restore the
+  recorded roster, or give a new roster to a new captain. Adding
   repositories after the first is allowed. A changed crew model applies to
   crew sessions created afterwards.
 
@@ -170,10 +171,35 @@ restarts the services to load the plugin.
 The record lives in `/etc/subspace-fleet/sessions/<captain-id>.json`, owned
 by root with mode `0600`. The installer first reserves the ID in
 `<captain-id>.pending.json` beside it, before it creates the session, so an
-interrupted run retries the same ID instead of creating a second root. Later runs check the session's identity, agent,
-directory and permissions, update its permissions when you change the
-captain's policy, and never replace a missing root. The gateway does not
-start until every captain with crew has a confirmed record.
+interrupted run retries the same ID instead of creating a second root. Later
+runs check the session's identity, agent, directory and permissions, and
+never replace a missing root. When you change the captain's policy, the
+installer updates the session's permissions on the running engine before it
+restarts the gateway with the new policy.
+
+The rear admiral and the OpenCode captains share one gateway. It serves a
+captain with crew only once a render has put that captain's pin into both
+its engine and gateway configuration. The installer then writes
+`<captain-id>.ready` beside the record, and the gateway unit starts only
+while the marker of every captain it serves exists. Until then the gateway
+serves the rest of the fleet. If commissioning fails for a captain, the
+installer names the captain, still restarts the services for the captains it
+did pin, and exits with an error. The gateway keeps running without the
+captain that failed.
+
+OpenCode's session update cannot change a session's model, so a pinned root
+keeps the model it was created with. If you change a captain's
+`harness.model` or `harness.family`, each installer run reports that the
+root keeps its original model. To run the captain on the new model, give its
+crew to a new captain, or restore the original model.
+
+If commissioning fails before a session is confirmed, fix the cause, such as
+the engine or the model proxy, and run the installer again. It retries the
+reserved ID. Until the session exists you can still change the first
+repository. If a confirmed root is missing from the engine, the installer
+stops for that captain. Restore
+`/var/lib/subspace-fleet/sessions/<captain-id>/opencode.db` from a backup, or
+retire the captain and give its crew to a new captain ID.
 
 ### Instructions, permissions and toolchains
 
@@ -190,10 +216,11 @@ receive the same role guidance and skill procedure in their system prompt.
 
 The default OpenCode policy grants read, glob, grep, skills and Git inspection.
 Captains can edit their checkout, stage and commit locally, and run common
-build and test commands. External paths, publication and other shell
-commands require an explicit grant. Build and test commands can execute code
-from the project, so use trusted repositories. Supply an ordered
-`harness.permissions` array to replace the starter policy across the fleet
+build and test commands. For a captain without crew, external paths,
+publication and other shell commands require an explicit grant. A captain
+with crew can reach them through its crew (see below). Build and test
+commands can execute code from the project, so use trusted repositories.
+Supply an ordered `harness.permissions` array to replace the starter policy across the fleet
 or for the rear admiral or a single captain. Rules use `action`, `resource`
 and `effect`. Put narrower rules after broader ones. See
 [OpenCode permissions](https://opencode.ai/docs/permissions/). A captain with
@@ -207,6 +234,16 @@ and the Stargate crew tools, with reads of `*.env`, `*.env.*`, `*.key` and
 `*.pem` files denied. That profile also allows paths outside the worktree.
 It is broader than the captain's starter policy, and tool rules are not an
 operating-system boundary in either case.
+
+**A captain with crew effectively has the crew profile's tools.** It directs
+crew that run shell commands, edit files and use paths outside their
+worktrees, so its own `harness.permissions` do not limit what it can get
+done. Crew can also read the captain's engine credentials, such as its
+OpenCode server password and the model proxy key. The
+[protected-branch check](#github-apps-per-fleet-member) below is a
+client-side Git `pre-push` hook, which a crew shell can skip with
+`git push --no-verify`. Protect the branches that matter on the server, with
+GitHub rulesets or branch protection on every configured repository.
 
 **Crew share their captain's Linux user.** A crew member can read and change
 whatever its captain can: the captain's checkouts and every crew worktree,
