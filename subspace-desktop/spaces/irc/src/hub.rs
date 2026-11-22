@@ -246,6 +246,7 @@ impl Hub {
     pub fn remove(&mut self, buffer: &BufferKey, cx: &mut Context<Self>) {
         if self.state.remove(buffer) {
             self.recall.forget(buffer);
+            self.tiles.forget(buffer);
             self.save_removed(cx);
             cx.notify();
         }

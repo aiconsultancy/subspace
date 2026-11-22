@@ -25,7 +25,11 @@ fn read(tiles: &mut Tiles, held: &[i64], messages: &[(i64, Vec<TileRef>)]) {
         .filter(|(seq, _)| unread.contains(seq))
         .cloned()
         .collect();
-    tiles.read(0, held, &found);
+    tiles.read(0, &shown(held), &found);
+}
+
+fn shown(held: &[i64]) -> HashSet<i64> {
+    held.iter().copied().collect()
 }
 
 fn shows(tiles: &Tiles, seq: i64, found: &TileRef) -> bool {
@@ -131,44 +135,81 @@ fn reading_again_changes_nothing() {
 }
 
 #[test]
-fn an_owner_past_the_line_cap_keeps_its_claim() {
+fn an_owner_no_longer_shown_lets_go_and_a_new_mention_takes_the_tile() {
     let mut tiles = Tiles::default();
     read(
         &mut tiles,
         &[1, 2],
-        &[(1, vec![issue("NAV-2")]), (2, vec![])],
+        &[(1, vec![issue("NAV-2")]), (2, vec![issue("NAV-2")])],
     );
-    // The cap drops message 1; a later mention stays a chip, so no message
-    // already drawn grows a tile.
-    read(
-        &mut tiles,
-        &[2, 3],
-        &[(2, vec![]), (3, vec![issue("NAV-2")])],
+    // The cap drops message 1, or it folds into its request: message 2,
+    // already drawn as a chip, does not grow a tile.
+    read(&mut tiles, &[2], &[(2, vec![issue("NAV-2")])]);
+    assert!(!shows(&tiles, 1, &issue("NAV-2")), "let go");
+    assert!(
+        !shows(&tiles, 2, &issue("NAV-2")),
+        "drawn as a chip, stays one"
     );
-    assert!(!shows(&tiles, 3, &issue("NAV-2")));
     assert!(
         !tiles.read.contains(&1),
         "a dropped message is forgotten as read"
     );
+    // The next new message that names it shows the tile again.
+    read(
+        &mut tiles,
+        &[2, 3],
+        &[(2, vec![issue("NAV-2")]), (3, vec![issue("NAV-2")])],
+    );
+    assert!(shows(&tiles, 3, &issue("NAV-2")));
 }
 
 #[test]
-fn a_new_recognition_reads_every_message_again_and_keeps_owners() {
+fn a_new_recognition_claims_issues_afresh_and_keeps_pull_requests() {
     let mut tiles = Tiles::default();
-    tiles.read(0, &[1, 2], &[(1, vec![]), (2, vec![pr("acme/web#492")])]);
+    tiles.read(
+        0,
+        &shown(&[1, 2]),
+        &[(1, vec![]), (2, vec![issue("NAV-2"), pr("acme/web#492")])],
+    );
     assert_eq!(tiles.unread(&[1, 2], 1), HashSet::from([1, 2]));
     // The new scope recognises NAV-2 in both, and 492 in message 1 too.
     tiles.read(
         1,
-        &[1, 2],
+        &shown(&[1, 2]),
         &[
             (1, vec![issue("NAV-2"), pr("acme/web#492")]),
             (2, vec![issue("NAV-2"), pr("acme/web#492")]),
         ],
     );
-    assert!(shows(&tiles, 1, &issue("NAV-2")));
-    assert!(shows(&tiles, 2, &pr("acme/web#492")), "an owner stays");
+    assert!(
+        shows(&tiles, 1, &issue("NAV-2")),
+        "claimed within the new scope"
+    );
+    assert!(
+        !shows(&tiles, 2, &issue("NAV-2")),
+        "the old scope's claim is gone"
+    );
+    assert!(
+        shows(&tiles, 2, &pr("acme/web#492")),
+        "a pull request's owner stays"
+    );
     assert!(tiles.unread(&[1, 2], 1).is_empty());
+}
+
+#[test]
+fn a_sync_with_nothing_new_copies_nothing_and_a_removed_conversation_starts_afresh() {
+    let key = BufferKey {
+        network: NetworkId("fixture".into()),
+        target: Target::Channel("#one".to_owned()),
+    };
+    let mut sessions = Sessions::default();
+    let first = sessions.read(&key, 0, (&[7], &[(7, vec![issue("NAV-2")])]));
+    let again = sessions.read(&key, 0, (&[7], &[]));
+    assert!(std::rc::Rc::ptr_eq(&first, &again), "no copy of the owners");
+    drop((first, again));
+    sessions.forget(&key);
+    let rejoined = sessions.read(&key, 0, (&[1], &[(1, vec![issue("NAV-2")])]));
+    assert!(rejoined.shows(1, &Ref::Issue("NAV-2".into())));
 }
 
 #[test]

@@ -179,6 +179,7 @@ impl Conversation {
         clock::follow(self, cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
+        self.tiles = Rc::default();
         self.tiles = owners::follow(self, &rows, cx);
         self.scroll.reset(rows, ids, cx);
     }
@@ -195,6 +196,7 @@ impl Conversation {
             .buffer(&self.buffer)
             .and_then(|held| thread_status::shown_entry(held, seq));
         let index = shown.and_then(|(at, _)| transcript::row_of(&rows, at));
+        self.tiles = Rc::default();
         self.tiles = owners::follow(self, &rows, cx);
         self.scroll.replace(rows, ids, cx);
         let (Some(index), Some((_, seq))) = (index, shown) else {
@@ -231,6 +233,7 @@ impl Conversation {
         let revision = self.find_active.then(|| find::revision(self, cx));
         let find_changed = self.scroll.rows() != rows || self.find_source != revision;
         self.find_source = revision;
+        self.tiles = Rc::default();
         self.tiles = owners::follow(self, &rows, cx);
         self.scroll.replace(rows, ids, cx);
         self.scroll.remeasure(&changed, cx);
