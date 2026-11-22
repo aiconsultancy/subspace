@@ -76,6 +76,7 @@ pub(crate) struct Retained {
     pub(crate) popover: PopoverHost,
     pub(crate) list: Entity<FixtureList>,
     pub(crate) list_notes: Entity<FixtureList>,
+    pub(crate) list_captions: Entity<FixtureList>,
     pub(crate) kit: KitStates,
     pub(crate) tab_dock: Entity<gpui_kit::component::dock::DockArea>,
 }
@@ -126,6 +127,7 @@ impl Retained {
             popover: PopoverHost::new(cx),
             list: cx.new(|cx| FixtureList::new(window, cx)),
             list_notes: cx.new(FixtureList::with_notes),
+            list_captions: cx.new(FixtureList::with_captions),
             tab_dock: crate::samples::choices::dock::fixture(window, cx),
             kit: KitStates {
                 basic: basic::State::new(window, cx),

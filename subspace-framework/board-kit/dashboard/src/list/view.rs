@@ -132,6 +132,7 @@ fn list_column<D: ListDashboard>(
             .into_any_element(),
     }
 }
+mod captions;
 mod rows;
 
 mod scroll_lines;

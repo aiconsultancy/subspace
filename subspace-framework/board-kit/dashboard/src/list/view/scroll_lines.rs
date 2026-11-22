@@ -5,13 +5,15 @@ use gpui_kit::{AnyElement, App, ClickEvent, Context, IntoElement, SharedString, 
 use gpui_kit::{div, px};
 
 use super::super::{COMFORTABLE_ROW_SCALE, Group, LIST_TAIL_HEIGHT_PX, ListDashboard, LoadStatus};
+use super::captions::with_caption;
 use super::rows::{group_row, item_row, with_note};
 use crate::feedback::{self, Words};
 use crate::tokens::Tokens;
 
-/// One group's lines: its header, then its rows and note unless folded.
-/// The note shares the last line's element, so each line of the scroll
-/// container stays one visible key.
+/// One group's lines: its header, then its rows, captions and note unless
+/// folded. A caption shares the element of the row under it, and the note
+/// the last line's, so each line of the scroll container stays one visible
+/// key.
 fn one_group_lines<D: ListDashboard>(
     this: &D,
     group: &Group,
@@ -23,7 +25,14 @@ fn one_group_lines<D: ListDashboard>(
     if folded {
         return lines;
     }
-    lines.extend(group.rows.iter().map(|row| item_row(this, row, tokens, cx)));
+    let captions = this.group_captions(group, cx);
+    lines.extend(group.rows.iter().map(|row| {
+        let line = item_row(this, row, tokens, cx);
+        match captions.iter().find(|caption| caption.before == row.key) {
+            Some(caption) => with_caption(this, line, caption, tokens),
+            None => line,
+        }
+    }));
     if let Some(note) = this.group_note(group, cx)
         && let Some(last) = lines.pop()
     {

@@ -124,6 +124,11 @@ only on these terms:
   puts their switches at the two ends of the status bar.
 - With the navigator hidden, its views stay reachable from a view menu at
   the start of the toolbar, a `menu_button` that names the current view.
+- A shared list's group may carry captions inside it, such as **SHIPS** and
+  **PEOPLE** above a fleet's ships and people
+  (`ListDashboard::group_captions`). A caption is a quiet label, not a row:
+  the list keys, the panel's previous and next and the selection pass over
+  it, and folding the group hides it.
 - Navigator rows are tree items (`Role::TreeItem`) in a tree
   (`Role::Tree`) named after the Space. Tab reaches them, the list keys
   (down or j, up or k) move between them and stop at the first and the

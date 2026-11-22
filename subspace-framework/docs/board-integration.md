@@ -194,7 +194,9 @@ its states: `workspace::Navigator`, `workspace::Toolbar`,
   never in `render`), `on_selection_changed`, `on_panel_toggled`,
   `on_activate`, `row_menu`, `row_commands` (the board's own menu commands,
   each in its [group](design-guide.md#context-menus)), `extend_row_menu`,
-  `row_submenus`, `group_menu`, `group_indicators`, `row_leading`, `row_emphasis`, `row_accessible_label`,
+  `row_submenus`, `group_menu`, `group_indicators`, `group_captions` (quiet
+  labels inside a group, such as SHIPS and PEOPLE, that are not rows),
+  `row_leading`, `row_emphasis`, `row_accessible_label`,
   `empty_message`, `empty_actions`, `panel_extra`, `panel_footer`,
   `panel_scroll_handle`, `panel_content_owns_scroll`, `min_list_width` and
   `can_navigate`. Change selection from outside the list's keys with
