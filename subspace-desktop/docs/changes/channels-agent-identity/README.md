@@ -127,7 +127,30 @@ was checked against the code and fixed on this branch:
 
 ### Captures
 
-See the captures section below.
+Captured on macOS with `make capture` in Twilight Two, with
+`CAPTURE_FLEET=1`, against a fresh loopback Ergo
+(`scripts/irc-test-server.sh`) and `scripts/irc-history-fixture.py
+--late-after 7 --status`, restarted for each run, and a Channels config naming
+`127.0.0.1:16667` with the aurora channels. The steps wait with the server
+buffer in front, then click `#aurora-lyra`
+(`wait:13000;click:95,219;wait:3000;shot:…`); the notice run then chooses
+`aurora-lyra` in the member list (`click:1199,215`). The before image is the
+base pull request's own after capture, taken the same way from this
+branch's base, `2c9bcfc`. The ship channel capture predates the last
+commit, which renames only the fixture's ships and keeps a sliver of the
+live pill in a narrower heading; neither shows at 1440 x 900. Every name and
+issue is fictional.
+
+![Before: agents have square initials and muted CAPTAIN and REAR ADMIRAL pills; the heading leads with a ship glyph](evidence/before-ship-channel.png)
+
+![After: captains and the rear admiral have agent avatars in the transcript and member list, CAPTAIN in blue and REAR ADMIRAL in the accent, the heading leads with the captain's avatar, and the command channel is #aurora-command](evidence/after-ship-channel.png)
+
+![After: choosing aurora-lyra in the member list opens no private conversation and says where it talks, with Go to #aurora-lyra](evidence/after-agent-notice.png)
+
+![After, at 960 x 720: the heading has room only for the captain's avatar and the name; the topic and the live pill give way without pushing the search button or More, and the status stays in the member list](evidence/after-narrow-heading.png)
+
+Not captured: a light theme, the Starbase's heading, and the notice from
+`/msg` or `/query`; board tests cover each private message entry point.
 
 ## Tasks
 
