@@ -378,6 +378,36 @@ class AgentDispatchSetupTests(unittest.TestCase):
                 self.assertRaisesRegex(fleet_setup.SetupError, "belongs to another fleet"):
             fleet_setup.dispatch_agents(answers, members, "header.payload.admin")
 
+    def test_a_rerun_keeps_a_token_with_most_of_its_life_left(self):
+        import base64
+        import json
+
+        def jwt(exp):
+            payload = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).decode().rstrip("=")
+            return f"header.{payload}.signature"
+
+        self.assertEqual(fleet_setup.token_seconds_left(jwt(1000), now=400), 600)
+        self.assertEqual(fleet_setup.token_seconds_left(jwt(100), now=400), 0)
+        self.assertEqual(fleet_setup.token_seconds_left("not-a-jwt"), 0)
+        answers, rear, captains = answers_for([*self.argv, "--agent-dispatch"])
+        members = fleet_setup.roster(answers, rear, captains)
+        agents = [{"serviceTokenClientId": fleet_setup.agent_subject(person["account"]), "isActive": True,
+                   "rank": "captain" if index else "rearAdmiral", "fleetId": "fleet-uuid"}
+                  for index, person in enumerate(members)]
+
+        def api(_token, _method, path, _body=None):
+            return {"id": "fleet-uuid"} if path.startswith("/fleets/") else {"items": agents}
+
+        fresh = jwt(int(fleet_setup.time.time()) + 8 * 3600)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.secrets.json", {"rearAdmiralApiToken": fresh})
+        with patch.object(fleet_setup, "api_call", side_effect=api), \
+                patch.object(fleet_setup, "api_token", return_value="minted") as mint:
+            self.assertEqual(fleet_setup.dispatch_agents(answers, members, "admin"), fresh)
+            mint.assert_not_called()
+            fleet_setup.write_json(fleet_setup.INPUTS / "fleet.secrets.json",
+                                   {"rearAdmiralApiToken": jwt(int(fleet_setup.time.time()) + 3600)})
+            self.assertEqual(fleet_setup.dispatch_agents(answers, members, "admin"), "minted")
+
     def test_only_the_gateway_user_may_also_reach_the_api(self):
         answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": []}
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "metadata_users", return_value=[]):

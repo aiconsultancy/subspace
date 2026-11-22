@@ -26,6 +26,7 @@ after a failure or to change a setting.
 """
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -37,6 +38,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
@@ -800,9 +802,23 @@ def dispatch_agents(answers, members, token):
         require(row.get("isActive") and row.get("rank") == rank and row.get("fleetId") == fleet_id,
                 f"The API agent {person['account']} is deactivated, has another rank or belongs to another fleet. "
                 "Fix it in the API as an administrator, or pass --no-agent-dispatch.")
-    # A development token: it expires (eight hours), so dispatch stops until setup runs again or the API moves
-    # to WorkOS or Entra with a long-lived token (installer README, 'Agent dispatch').
+    # A development token expires after eight hours, so dispatch stops until setup runs again or the API moves
+    # to WorkOS or Entra with a long-lived token (installer README, 'Agent dispatch'). Keep the current one
+    # while it has more than half its life left, so a rerun does not restart the gateway for a new token.
+    current = read_json(INPUTS / "fleet.secrets.json", {}).get("rearAdmiralApiToken", "")
+    if token_seconds_left(current) > 4 * 3600:
+        return current
     return api_token(answers, agent_subject(members[0]["account"]))
+
+
+def token_seconds_left(token, now=None):
+    """Seconds until a bearer JWT's exp claim, read without verifying it; 0 when unknown or expired."""
+    try:
+        payload = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        return max(0, int(claims["exp"]) - int(time.time() if now is None else now))
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        return 0
 
 
 def seed_demo(answers):
