@@ -14,6 +14,7 @@ import roles
 from roles import default_permissions
 import runtime
 from runtime import Invalid, repository_config, toolchain_config, validate
+import standard_channels
 import workspaces
 
 
@@ -369,6 +370,103 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertFalse(any(rule["action"] == "edit" for rule in rear))
         self.assertIn({"action": "edit", "resource": "*", "effect": "allow"}, captain)
         self.assertFalse(any(rule["resource"].startswith("git push") for rule in captain))
+
+
+class StandardChannelTests(unittest.TestCase):
+    """Every fleet has Starbase, a separate command channel and one ship channel per captain."""
+
+    def setUp(self):
+        self.config = example_config()
+        self.config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra"})
+        self.secrets = officer_secrets("example-lyra")
+
+    def officers(self, cfg):
+        def registration(person):
+            return {"id": person["id"], "account": person["account"], "backend": {"directory": "/workspace"}}
+        return [runtime.irc_officer(cfg, person, registration(person)) for person in cfg["members"]]
+
+    def test_the_standard_set_is_always_present_and_joined(self):
+        cfg = validate(self.config, self.secrets)
+        command = f"#example-fleet-{standard_channels.COMMAND_SUFFIX}"
+        self.assertEqual(cfg["irc"]["channels"],
+                         ["#example-fleet-starbase", command, "#example-fleet-orion", "#example-fleet-lyra"])
+        self.assertEqual((cfg["irc"]["starbaseChannel"], cfg["irc"]["commandChannel"]), ("#example-fleet-starbase", command))
+        self.assertEqual([person["channel"] for person in cfg["members"]],
+                         ["#example-fleet-starbase", "#example-fleet-orion", "#example-fleet-lyra"])
+        rear, orion, lyra = self.officers(cfg)
+        # The rear admiral joins every standard channel; captains join command and every ship channel.
+        self.assertEqual(rear["channels"], ["#example-fleet-starbase", command, "#example-fleet-orion", "#example-fleet-lyra"])
+        self.assertEqual(orion["channels"], ["#example-fleet-orion", command, "#example-fleet-lyra"])
+        self.assertEqual(lyra["channels"], ["#example-fleet-lyra", command, "#example-fleet-orion"])
+        # Humans wake the rear admiral in Starbase and a captain in its own ship; command needs an @nick.
+        self.assertEqual(rear["access"]["humanWakeChannels"], [{"channel": "#example-fleet-starbase", "replies": "all"}])
+        self.assertEqual(orion["access"]["humanWakeChannels"], [{"channel": "#example-fleet-orion", "replies": "all"}])
+        self.assertTrue(all(entry["access"]["channelRequests"] == "nick-mention" for entry in (rear, orion, lyra)))
+        self.assertIn("example-atlas", orion["access"]["peerCaptains"])
+
+    def test_the_standard_names_may_be_stated(self):
+        self.config["irc"].update(starbaseChannel="#example-fleet-starbase",
+                                  commandChannel=standard_channels.command("example-fleet"))
+        self.config["rearAdmiral"]["channel"] = "#example-fleet-starbase"
+        self.config["captains"][0]["channel"] = "#example-fleet-orion"
+        self.assertEqual(validate(self.config, self.secrets)["irc"]["channels"][:2],
+                         ["#example-fleet-starbase", standard_channels.command("example-fleet")])
+
+    def test_renamed_standard_channels_are_refused_clearly(self):
+        cases = [
+            (("irc", "commandChannel"), "#example-fleet-starbase", "irc.commandChannel"),
+            (("irc", "starbaseChannel"), "#example-fleet-bridge", "irc.starbaseChannel"),
+            (("rearAdmiral", "channel"), "#example-fleet-bridge", "rearAdmiral.channel"),
+            (("captains", 0, "channel"), "#orion-work", "Captain orion's channel"),
+            (("captains", 0, "channel"), "#Not A Channel", "Captain orion's channel"),
+        ]
+        for path, value, label in cases:
+            config = json.loads(json.dumps(self.config))
+            target = config
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path), self.assertRaises(Invalid) as raised:
+                validate(config, self.secrets)
+            message = str(raised.exception)
+            self.assertTrue(message.startswith(label), message)
+            for expected in ("#example-fleet-starbase", standard_channels.command("example-fleet"),
+                             "#example-fleet-<captain-id>", "Extra channels are welcome", "irc.compose.channels"):
+                self.assertIn(expected, message)
+
+    def test_extra_channels_are_kept_beside_the_standard_set(self):
+        self.config["irc"] = {"mode": "local", "allowedAccounts": ["operator"],
+                              "compose": {"operator": "ircop", "ref": "0" * 40, "channels": ["#example-fleet-nav"]}}
+        self.secrets["ircOperatorPassword"] = "fixture-operator-password"
+        cfg = validate(self.config, self.secrets)
+        self.assertEqual(cfg["irc"]["compose"]["channels"], ["#example-fleet-nav"])
+        self.assertEqual(len(cfg["irc"]["channels"]), 4)
+
+    def test_names_that_cannot_be_standard_are_refused(self):
+        long_slug = "a" * 35
+        self.config["slug"] = long_slug
+        self.config["captains"][1]["id"] = "b" * 20
+        with self.assertRaisesRegex(Invalid, rf"#{long_slug}-b+ is 57 characters.*limited to 50.*shorter"):
+            validate(self.config, self.secrets)
+        self.config["slug"] = "example-fleet"
+        self.config["captains"][1]["id"] = standard_channels.COMMAND_SUFFIX
+        with self.assertRaisesRegex(Invalid, "named like a standard fleet channel"):
+            validate(self.config, self.secrets)
+        self.config["captains"][1]["id"] = "lyra"
+        self.config["captains"][1]["account"] = "example-" + "l" * 30
+        with self.assertRaisesRegex(Invalid, "at most 32"):
+            validate(self.config, self.secrets)
+
+    def test_the_rear_admiral_joins_at_most_twenty_channels(self):
+        self.config["captains"] = [{"id": f"ship{index}", "name": f"Ship {index}", "account": f"example-ship{index}"}
+                                   for index in range(19)]
+        secrets = {"proxyKey": "fixture-model-proxy-key", "ircPasswords": {
+            person["account"]: "fixture-password" for person in [self.config["rearAdmiral"], *self.config["captains"]]}}
+        with self.assertRaisesRegex(Invalid, "at most 18 captains"):
+            validate(self.config, secrets)
+        self.config["captains"].pop()
+        secrets["ircPasswords"].pop("example-ship18")
+        self.assertEqual(len(validate(self.config, secrets)["irc"]["channels"]), 20)
 
 
 if __name__ == "__main__":
