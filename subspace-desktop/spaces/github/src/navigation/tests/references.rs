@@ -21,6 +21,7 @@ use super::loading::{client, response};
 use super::{KEY, mount, seed};
 use crate::Github;
 
+mod checks;
 mod privacy;
 mod refresh;
 
@@ -169,22 +170,6 @@ fn response_with_checks() -> String {
     body["data"]["repository"]["issueOrPullRequest"]["commits"] = json!({"nodes":[{"commit":
         {"statusCheckRollup":{"state":"FAILURE", "contexts":{"nodes":contexts}}}}]});
     body.to_string()
-}
-
-#[gpui_kit::test]
-fn a_listed_pull_request_has_its_combined_state_but_no_check_counts(cx: &mut TestAppContext) {
-    let mock = Mock::new(|_| (500, String::new()));
-    let (board, _, cx) = routed(cx, Some(&mock));
-    board.update(cx, seed);
-    let ResolutionState::Available(details) = ask(KEY, cx) else {
-        panic!("a loaded pull request is available");
-    };
-    assert_eq!(details.checks, Some(CheckStatus::Pending));
-    assert!(
-        details.check_counts.is_none(),
-        "no check runs were read, and none is read for the counts"
-    );
-    assert!(mock.requests().is_empty());
 }
 
 #[gpui_kit::test]

@@ -99,7 +99,8 @@ export function tokenProblem(problem, origin = "local") {
 function apiTokenProblem(problem) {
   if (problem === "token-address") return { short: "Address changed", title: "Its address changed since its token was saved", body: `Check the new address, then paste the fleet's token again in ${SUBSPACE_FLEETS}.` };
   if (problem === "token-checking") return { short: "Reading token", title: "Subspace is reading its saved token", body: "Fleet Console connects as soon as it has it." };
-  if (problem === "token-store") return { short: "Token not read", title: "Subspace could not read its saved token", body: "Unlock your system keychain, then open Fleet Console again." };
+  // Only Retry asks Subspace to read the keychain again.
+  if (problem === "token-store") return { short: "Token not read", title: "Subspace could not read its saved token", body: "Unlock your system keychain, then choose Retry.", retry: true };
   return { short: "No token saved", title: "No token saved", body: `Paste the fleet's token in ${SUBSPACE_FLEETS}.` };
 }
 

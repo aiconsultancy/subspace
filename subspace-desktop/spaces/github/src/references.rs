@@ -10,27 +10,49 @@
 //! `SignedOut` until it signs in again or a read with it succeeds; lists
 //! from before a reload or from the disk cache answer only once a refresh
 //! confirms them. Answers stay in memory.
+//!
+//! A pull request the account holds only from a list has its combined
+//! checks state but not its check runs, so a tile would have no bar. The
+//! first ask for one answers from the list at once and starts the same
+//! one read of it a pull request it does not hold gets, which carries the
+//! runs; its landing is announced, and later asks answer with the counts.
+//! A refresh of the lists (every section, or the favourites' sections)
+//! marks those reads stale when its first section lands, once however
+//! many sections land and however many pull requests are opened, so a
+//! pull request a tile still asks about is read again at most once per
+//! refresh, deduplicated with every other read and bounded by the keys
+//! asked about. Until the new read lands a stale read answers only with
+//! its counts, on the newer list's item, and only while its combined
+//! checks state and last update are the list's (the list does not carry
+//! the head commit; a force-push updates the pull request). A read is
+//! taken as newer than the list only when it started after the refresh
+//! that marked it stale. The list query is not widened: every list would
+//! pay for counts no tile shows.
+//!
+//! A pull request the account holds neither opened nor listed answers from
+//! its read until the next refresh, then is read again once, so one that
+//! left the lists, as when the account lost access to its repository, is
+//! not answered from memory for good: GitHub's refusal replaces it. A
+//! signed-out account starts no read at all.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
-use gpui_kit::{AppContext as _, Context, Subscription};
-use subspace_framework::client_github::Client;
-use subspace_framework::client_github::model::{
-    CheckRunState, CheckState, GhCheck, GhItem, PrState, ReviewDecision,
-};
-use subspace_framework::contracts::github::recognition::PullRequestLink;
+use gpui_kit::{Context, Subscription};
 use subspace_framework::contracts::github::{
-    Changed, CheckCounts, CheckStatus, PullRequestDetails, PullRequestStatus, Resolution,
-    ResolutionState, ResolvePullRequests, ReviewStatus,
+    Changed, Resolution, ResolutionState, ResolvePullRequests,
 };
-use subspace_framework::core::http::Error;
 use subspace_framework::dashboard::Dashboard as _;
 use subspace_framework::dashboard::contracts;
 use subspace_framework::dashboard::github_sign_in::{self, SignInEvent};
 
 use crate::Github;
-use crate::navigation::requested_pr;
+use held::{known, wants_read};
+use reads::read;
+use summary::details;
+
+mod held;
+mod reads;
+mod summary;
 
 /// What this account learned about pull requests it did not hold, by
 /// lower-cased `(account, key)`.
@@ -46,6 +68,15 @@ pub(crate) struct References {
     /// Bumped by every sign-out, so a read that started before one never
     /// lifts it.
     sign_outs: u64,
+    /// Answers read before the last list refresh: a listed pull request
+    /// with one is read again for fresh check runs when next asked.
+    stale: HashSet<(String, String)>,
+    /// A list refresh started and none of its sections has landed yet:
+    /// the first to land marks every answer stale.
+    refresh_due: bool,
+    /// Bumped each time answers are marked stale, so a read that started
+    /// before lands stale: it is older than the list.
+    refreshes: u64,
 }
 
 /// Answers the contract for `board` and follows sign-in and sign-out. The
@@ -85,9 +116,37 @@ pub(crate) fn since(board: &Github) -> u64 {
     board.references.sign_outs
 }
 
+/// A list refresh starts: its first section to land marks the answers
+/// read before it stale ([`section_landed`]).
+pub(crate) fn refreshing(board: &mut Github) {
+    board.references.refresh_due = true;
+}
+
+/// A list section read by `login` that started at `since` just landed:
+/// the first of a refresh marks every answer stale, so each listed pull
+/// request a tile asks about is read again once per refresh.
+pub(crate) fn section_landed(
+    board: &mut Github,
+    login: &str,
+    since: u64,
+    cx: &mut Context<Github>,
+) {
+    mark_stale(&mut board.references);
+    landed(board, login, since, cx);
+}
+
+/// Marks every answer stale, once per refresh.
+fn mark_stale(references: &mut References) {
+    if std::mem::take(&mut references.refresh_due) {
+        references.stale = references.answers.keys().cloned().collect();
+        references.refreshes = references.refreshes.wrapping_add(1);
+    }
+}
+
 /// A read by `login` that started at `since` just landed. Its credentials
 /// work, so a sign-out since before it started no longer holds; one that
 /// came while it ran still does. Either way the other Spaces ask again.
+/// It marks nothing stale: a detail read lands here too.
 pub(crate) fn landed(board: &mut Github, login: &str, since: u64, cx: &mut Context<Github>) {
     let references = &mut board.references;
     if references.sign_outs == since {
@@ -106,6 +165,7 @@ pub(crate) fn forget(board: &mut Github, cx: &mut Context<Github>) {
     let references = &mut board.references;
     references.answers.clear();
     references.reading.clear();
+    references.stale.clear();
     references.generation = references.generation.wrapping_add(1);
     announce(cx);
 }
@@ -122,7 +182,7 @@ fn answer(
         .collect();
     let unknown: Vec<String> = states
         .iter()
-        .filter(|(_, state)| state.is_none())
+        .filter(|(key, state)| state.is_none() || wants_read(board, key))
         .map(|(key, _)| key.clone())
         .collect();
     let pending = read(board, unknown, cx);
@@ -132,195 +192,6 @@ fn answer(
         .collect()
 }
 
-/// What answers `key` without a read, if anything does.
-fn known(board: &Github, key: &str) -> Option<ResolutionState> {
-    let (Some(_), Some(login)) = (&board.client, board.account.as_deref()) else {
-        return Some(ResolutionState::SignedOut);
-    };
-    if board.references.signed_out.contains(&login.to_lowercase()) {
-        return Some(ResolutionState::SignedOut);
-    }
-    if let Some((item, runs)) = loaded(board, key) {
-        return Some(ResolutionState::Available(details(item, runs)));
-    }
-    board
-        .references
-        .answers
-        .get(&cache_key(login, key))
-        .cloned()
-}
-
-/// The pull request `key` as the current account already loaded it, from a
-/// detail or a list a refresh has confirmed, with its head commit's check
-/// runs: an opened one has them, a listed one only its combined state, so
-/// its runs are empty.
-fn loaded<'a>(board: &'a Github, key: &str) -> Option<(&'a GhItem, &'a [GhCheck])> {
-    let account = board.account_data()?;
-    let same = |item: &GhItem| item.key.eq_ignore_ascii_case(key);
-    let detail = account
-        .details
-        .values()
-        .find(|detail| same(&detail.item))
-        .map(|detail| (&detail.item, detail.check_runs.as_slice()));
-    let listed = || {
-        account
-            .sections
-            .iter()
-            .filter(|(id, _)| !account.unconfirmed.contains(*id))
-            .flat_map(|(_, section)| section.items.iter())
-            .find(|item| same(item))
-            .map(|item| (item, &[][..]))
-    };
-    detail
-        .or_else(listed)
-        .filter(|(item, _)| item.kind == subspace_framework::client_github::model::ItemKind::Pr)
-}
-
-/// Starts one background read of the `keys` not already being read, and
-/// says what answers them meanwhile.
-fn read(board: &mut Github, keys: Vec<String>, cx: &mut Context<Github>) -> ResolutionState {
-    let (Some(client), Some(login)) = (board.client.clone(), board.account.clone()) else {
-        return ResolutionState::SignedOut;
-    };
-    let references = &mut board.references;
-    let fresh: Vec<String> = keys
-        .into_iter()
-        .filter(|key| references.reading.insert(cache_key(&login, key)))
-        .collect();
-    if !fresh.is_empty() {
-        spawn_read(client, login, fresh, references.generation, cx);
-    }
-    ResolutionState::Pending
-}
-
-fn spawn_read(
-    client: Arc<Client>,
-    login: String,
-    keys: Vec<String>,
-    generation: u64,
-    cx: &mut Context<Github>,
-) {
-    cx.spawn(async move |this, cx| {
-        let account = login.clone();
-        let answers = cx
-            .background_spawn(async move { read_all(&client, &account, keys) })
-            .await;
-        _ = this.update(cx, |board, cx| land(board, &login, answers, generation, cx));
-    })
-    .detach();
-}
-
-/// Reads each key in turn, so one request never fans out into many calls.
-fn read_all(client: &Client, login: &str, keys: Vec<String>) -> Vec<(String, ResolutionState)> {
-    keys.into_iter()
-        .map(|key| {
-            let read = client
-                .item(login, &key)
-                .and_then(|detail| requested_pr((detail, ()), &key));
-            let state = match read {
-                Ok((detail, ())) => {
-                    ResolutionState::Available(details(&detail.item, &detail.check_runs))
-                }
-                Err(error) => refused(&error),
-            };
-            (key, state)
-        })
-        .collect()
-}
-
-fn land(
-    board: &mut Github,
-    login: &str,
-    answers: Vec<(String, ResolutionState)>,
-    generation: u64,
-    cx: &mut Context<Github>,
-) {
-    let references = &mut board.references;
-    if references.generation != generation {
-        return;
-    }
-    for (key, state) in answers {
-        let key = cache_key(login, &key);
-        references.reading.remove(&key);
-        references.answers.insert(key, state);
-    }
-    announce(cx);
-}
-
-/// What a failed read tells the asker, without saying whether a pull
-/// request it cannot read exists.
-fn refused(error: &Error) -> ResolutionState {
-    match error {
-        Error::Credential(_) | Error::Status { status: 401, .. } => ResolutionState::SignedOut,
-        Error::Status {
-            status: 400 | 403 | 404,
-            ..
-        } => ResolutionState::Unavailable,
-        _ => ResolutionState::Failed,
-    }
-}
-
 fn cache_key(login: &str, key: &str) -> (String, String) {
     (login.to_lowercase(), key.to_ascii_lowercase())
-}
-
-/// The short summary of a loaded pull request, with its check counts when
-/// its check runs were read with it.
-fn details(item: &GhItem, runs: &[GhCheck]) -> PullRequestDetails {
-    let url =
-        PullRequestLink::from_key(&item.key).map_or_else(|| item.url.clone(), |link| link.url());
-    let updated = Some(item.updated_at.as_str()).filter(|at| !at.is_empty());
-    PullRequestDetails::new(&item.key, &item.title, &url, status(item.state))
-        .with_author(item.author.as_ref().map(|author| author.login.as_str()))
-        .with_review(item.review_decision.map(review))
-        .with_checks(item.checks.map(checks))
-        .with_check_counts(check_counts(runs))
-        .with_updated_at(updated)
-        .with_branches(item.head_ref.as_deref(), item.base_ref.as_deref())
-        .with_changes(item.additions, item.deletions)
-}
-
-/// How many of `runs` passed, out of how many: a check passes unless it
-/// failed, was cancelled or is still running, as the detail's check summary
-/// counts them. `None` when no runs were read.
-fn check_counts(runs: &[GhCheck]) -> Option<CheckCounts> {
-    let passed = runs
-        .iter()
-        .filter(|run| {
-            matches!(
-                run.state,
-                CheckRunState::Success | CheckRunState::Neutral | CheckRunState::Skipped
-            )
-        })
-        .count();
-    let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    (!runs.is_empty()).then(|| CheckCounts::new(count(passed), count(runs.len())))
-}
-
-// qual:allow(dry, boilerplate) reason: "Maps the GitHub client's model onto the independent public contract enum; the contract crate must not depend on the client, so neither can derive the other."
-fn status(state: PrState) -> PullRequestStatus {
-    match state {
-        PrState::Open => PullRequestStatus::Open,
-        PrState::Draft => PullRequestStatus::Draft,
-        PrState::Merged => PullRequestStatus::Merged,
-        PrState::Closed => PullRequestStatus::Closed,
-    }
-}
-
-// qual:allow(dry, repeated_matches) reason: "Maps review decisions to contract values. Copilot Agents maps its own unrelated enums to UI icons and tones."
-fn review(decision: ReviewDecision) -> ReviewStatus {
-    match decision {
-        ReviewDecision::Approved => ReviewStatus::Approved,
-        ReviewDecision::ChangesRequested => ReviewStatus::ChangesRequested,
-        ReviewDecision::ReviewRequired => ReviewStatus::ReviewRequired,
-    }
-}
-
-// qual:allow(dry, repeated_matches) reason: "Maps check results to contract values. This enum is independent of review decisions and Copilot Agents UI state."
-fn checks(state: CheckState) -> CheckStatus {
-    match state {
-        CheckState::Success => CheckStatus::Success,
-        CheckState::Failure => CheckStatus::Failure,
-        CheckState::Pending => CheckStatus::Pending,
-    }
 }

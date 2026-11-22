@@ -15,7 +15,7 @@ use gpui_kit::{
 };
 use subspace_client_irc::Target;
 use subspace_framework::dashboard::avatar::{self, AgentAvatar, AgentIcons, AgentRank};
-use subspace_framework::dashboard::list::GroupIndicator;
+use subspace_framework::dashboard::list::{GroupCaption, GroupIndicator};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Glyph, Group, Row, Tokens, Tone};
 
@@ -35,7 +35,7 @@ pub(super) fn apply(board: &mut Irc, hub: &Entity<Hub>, cx: &mut Context<Irc>) {
         .iter()
         .map(|network| (network.id.clone(), held.roster(&network.id, cx)))
         .collect();
-    let layout = rows::layout(state, &rosters);
+    let layout = rows::layout(state, &rosters, &held.fleets);
     let selected = held.initiatives.selected_fleet();
     board.search = std::rc::Rc::new(rows::search(&layout));
     fold_new_fleets(board, (&layout.fleets, &layout.groups), selected);
@@ -44,7 +44,21 @@ pub(super) fn apply(board: &mut Irc, hub: &Entity<Hub>, cx: &mut Context<Irc>) {
     board.group_networks = layout.networks;
     board.ships = layout.ships;
     board.people = layout.people;
+    board.captions = layout.captions;
+    board.watch.navigator = layout.fleets.values().cloned().collect();
     board.list.set_groups(layout.groups);
+}
+
+/// The quiet captions inside fleet group `group`, such as `Ships` above
+/// its first ship channel.
+pub(super) fn captions(board: &Irc, group: &Group) -> Vec<GroupCaption> {
+    board
+        .captions
+        .get(&group.key)
+        .into_iter()
+        .flatten()
+        .map(|(row, words)| GroupCaption::new(row.clone(), *words))
+        .collect()
 }
 
 /// Whether row `key`'s buffer has unread messages.
@@ -200,9 +214,14 @@ pub(super) fn people_mark(cx: &App) -> AnyElement {
 
 /// Folds each fleet group that appears for the first time while the
 /// selected initiative (`selected`, its fleet id if any) is not of its
-/// fleet. With no initiative selected, every fleet starts open. A new group
-/// that holds the selected row stays open, so the list keeps the selection
-/// (a channel joined on request, or one that moved into a fleet's group).
+/// fleet. With no initiative selected, every fleet starts open. A network's
+/// only fleet's group, which takes in the network's own rows, instead keeps
+/// the fold of the network's group it replaces, so the network's other
+/// channels and its Server row never fold away unasked. A new group that
+/// holds the selected row stays open, so the list keeps the selection (a
+/// channel joined on request, or one that moved into a fleet's group), and
+/// a folded group the selected row has just moved into opens; one the
+/// person folded around the selection stays folded.
 pub(super) fn fold_new_fleets(
     board: &mut Irc,
     (fleets, groups): (&HashMap<SharedString, String>, &[Group]),
@@ -213,10 +232,37 @@ pub(super) fn fold_new_fleets(
         let first = board.seen_fleets.insert(key.clone());
         let other = selected.is_some_and(|selected| selected != Some(fleet.as_str()));
         let keeps = holding == Some(key);
-        if first && other && !keeps && !board.list.is_folded(key) {
+        let network = groups
+            .iter()
+            .find(|group| &group.key == key)
+            .and_then(rows::absorbed_network)
+            .map(|network| board.list.is_folded(&network));
+        if first && starts_folded(other, keeps, network) && !board.list.is_folded(key) {
             board.list.toggle(key);
         }
     }
+    let moved = moved_into(board.selection_group.as_ref(), holding);
+    if let Some(key) = moved.filter(|key| board.list.is_folded(key)) {
+        board.list.toggle(key);
+    }
+    board.selection_group = holding.cloned();
+}
+
+/// Whether a fleet group seen for the first time starts folded: never
+/// while it holds the selection (`keeps`); as the network's own group was
+/// (`network`) when it took in that group's rows; else while another
+/// fleet's initiative is selected (`other`).
+pub(super) fn starts_folded(other: bool, keeps: bool, network: Option<bool>) -> bool {
+    !keeps && network.unwrap_or(other)
+}
+
+/// The group the selection has just moved into: `holding` when it differs
+/// from `previous`, the group that held it at the last layout.
+pub(super) fn moved_into<'a>(
+    previous: Option<&SharedString>,
+    holding: Option<&'a SharedString>,
+) -> Option<&'a SharedString> {
+    holding.filter(|holding| previous != Some(*holding))
 }
 
 /// The key of the group in `groups` that holds row `selected`.
@@ -324,6 +370,7 @@ mod tests {
         let ship = Activity {
             captain: "aurora-lyra".into(),
             working: vec!["Reviewing NAV-7".into()],
+            crew: None,
         };
         let target = Target::Channel("#aurora-lyra".into());
         let key = "row".into();
@@ -382,6 +429,23 @@ mod tests {
         assert_eq!(super::holding_group(&groups, None), None);
         let gone = gpui_kit::SharedString::from("castor");
         assert_eq!(super::holding_group(&groups, Some(&gone)), None);
+    }
+
+    #[test]
+    fn a_folded_group_opens_only_when_the_selection_moves_into_it() {
+        use super::moved_into;
+        let (a, b) = (
+            gpui_kit::SharedString::from("fleet-a"),
+            gpui_kit::SharedString::from("fleet-b"),
+        );
+        assert_eq!(moved_into(Some(&a), Some(&b)), Some(&b), "moved");
+        assert_eq!(moved_into(None, Some(&b)), Some(&b), "first held");
+        assert_eq!(
+            moved_into(Some(&b), Some(&b)),
+            None,
+            "folded by hand: stays"
+        );
+        assert_eq!(moved_into(Some(&b), None), None, "nothing selected");
     }
 
     #[test]

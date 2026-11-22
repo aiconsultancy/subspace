@@ -61,8 +61,11 @@ pub(crate) enum Effect {
     Issues(IssueCall),
     /// Save a checked `secrets.set`.
     SaveSecret(secrets::SecretWrite),
-    /// Answer with the app's fleets ([`fleets`]).
-    Fleets,
+    /// Answer with the app's fleets ([`fleets`]); `retry` first reads
+    /// again any token the keychain could not read.
+    Fleets {
+        retry: bool,
+    },
 }
 
 impl Bridge {
@@ -140,8 +143,10 @@ impl Bridge {
             Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
                 Permission::Issues
             }
-            Operation::Fleets if !self.shares_fleets => return Err(fleets::NOT_SHARED),
-            Operation::Fleets => Permission::Secrets,
+            Operation::Fleets | Operation::FleetsRetry if !self.shares_fleets => {
+                return Err(fleets::NOT_SHARED);
+            }
+            Operation::Fleets | Operation::FleetsRetry => Permission::Secrets,
         };
         if !self.allows(required, config) {
             return Err(DENIED);
@@ -196,7 +201,10 @@ impl Bridge {
                 self.context = context.clone();
             }
             Operation::Notify(message) => return self.notification(message, notifications_on, now),
-            Operation::Secrets | Operation::SecretsSet(_) | Operation::Fleets => {
+            Operation::Secrets
+            | Operation::SecretsSet(_)
+            | Operation::Fleets
+            | Operation::FleetsRetry => {
                 return self.secrets(operation, config, now);
             }
             Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
@@ -207,16 +215,17 @@ impl Bridge {
         Ok((Value::Null, Effect::None))
     }
 
-    /// `secrets.get`, `fleets.get` (the app finishes it), or a checked and
-    /// counted `secrets.set`.
+    /// `secrets.get`, `fleets.get` and `fleets.retry` (the app finishes
+    /// them), or a checked and counted `secrets.set`.
     fn secrets(
         &mut self,
         operation: &Operation,
         config: &WebBoard,
         now: Instant,
     ) -> Result<(Value, Effect), &'static str> {
-        if matches!(operation, Operation::Fleets) {
-            return Ok((Value::Null, Effect::Fleets));
+        if let Operation::Fleets | Operation::FleetsRetry = operation {
+            let retry = matches!(operation, Operation::FleetsRetry);
+            return Ok((Value::Null, Effect::Fleets { retry }));
         }
         let Operation::SecretsSet(write) = operation else {
             let value = secrets::readable(&self.manifest, &self.owner, config);

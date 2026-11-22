@@ -18,7 +18,7 @@ fn state() -> IrcState {
 fn configured_networks_start_with_a_server_buffer() {
     let state = state();
     assert_eq!(state.networks().len(), 1);
-    assert_eq!(state.networks()[0].name, "Local Ergo");
+    assert_eq!(state.networks()[0].name, "Acme IRC");
     assert_eq!(state.networks()[0].nick, "subspace");
     assert!(state.buffer(&server_key(&network_id())).is_some());
     assert_eq!(state.connected_count(), 0);

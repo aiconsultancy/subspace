@@ -9900,6 +9900,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "subspace-api-client",
+ "subspace-client-fleet",
  "subspace-client-irc",
  "subspace-framework",
  "tempfile",

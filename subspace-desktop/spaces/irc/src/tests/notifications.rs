@@ -76,10 +76,7 @@ fn a_tag_in_another_channel_notifies_with_who_and_where(cx: &mut TestAppContext)
         .collect();
     assert_eq!(
         notices,
-        [Notice::described(
-            "alice mentioned you in #ops",
-            "Local Ergo"
-        )],
+        [Notice::described("alice mentioned you in #ops", "Acme IRC")],
         "on by default, naming the sender, the channel and the network"
     );
 }
@@ -109,7 +106,7 @@ fn the_conversation_in_view_with_the_app_in_front_stays_quiet(cx: &mut TestAppCo
         notices,
         [Notice::described(
             "carol sent you a private message",
-            "Local Ergo"
+            "Acme IRC"
         )],
         "a private message elsewhere still notifies"
     );
@@ -149,7 +146,7 @@ fn a_conversation_shown_beside_stays_quiet_and_a_tab_behind_notifies(cx: &mut Te
         notices,
         [Notice::described(
             "alice mentioned you in #crew",
-            "Local Ergo"
+            "Acme IRC"
         )],
         "#crew is a tab behind #subspace"
     );

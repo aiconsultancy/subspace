@@ -126,7 +126,7 @@ fn drawn(id: &str, cx: &mut VisualTestContext) -> String {
 
 #[gpui_kit::test]
 fn an_agent_s_line_carries_its_rank_mark_and_a_person_s_does_not(cx: &mut TestAppContext) {
-    let (_, hub, cx) = ship(cx);
+    let (_, hub, cx) = super::live::ship_people(cx);
     let [mira, lyra, admiral] =
         ["mira", "aurora-lyra", "aurora-admiral"].map(|nick| seq_of(&hub, nick, cx));
     cx.update(|window, _| {
@@ -295,7 +295,7 @@ fn the_find_button_opens_find_in_the_conversation(cx: &mut TestAppContext) {
 fn captains_and_the_rear_admiral_have_agent_avatars_and_people_keep_theirs(
     cx: &mut TestAppContext,
 ) {
-    let (_, hub, cx) = ship(cx);
+    let (_, hub, cx) = super::live::ship_people(cx);
     let [mira, lyra, admiral] =
         ["mira", "aurora-lyra", "aurora-admiral"].map(|nick| seq_of(&hub, nick, cx));
     cx.update(|window, _| {

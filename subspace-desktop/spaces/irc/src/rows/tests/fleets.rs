@@ -9,7 +9,7 @@ use subspace_api_client::model::MemberInitiative;
 use subspace_client_irc::{BufferKey, ConnectionStatus, Event};
 use subspace_framework::dashboard::Group;
 
-use super::super::{Layout, Rosters, fleet_group_key, group_key, people_group_key, row_key};
+use super::super::{Layout, Rosters, fleet_group_key, people_group_key, row_key};
 use crate::fixtures::{at, channel, config, network_id, query};
 use crate::fleet::Roster;
 use crate::state::IrcState;
@@ -25,7 +25,7 @@ fn agent(nick: &str, rank: &str, ship: Option<&str>) -> Value {
 /// An initiative of fleet `slug` (named `name`), whose rear admiral is
 /// `<slug>-admiral` and whose captains are `<slug>-<ship>` for each of
 /// `ships`, naming its own `channels` too.
-fn initiative(slug: &str, name: &str, ships: &[&str], channels: &str) -> Value {
+pub(super) fn initiative(slug: &str, name: &str, ships: &[&str], channels: &str) -> Value {
     let mut agents = vec![agent(&format!("{slug}-admiral"), "rearAdmiral", None)];
     agents.extend(
         ships
@@ -43,7 +43,7 @@ fn initiative(slug: &str, name: &str, ships: &[&str], channels: &str) -> Value {
     })
 }
 
-fn rosters(initiatives: Value) -> Rosters {
+pub(super) fn rosters(initiatives: Value) -> Rosters {
     let initiatives: Vec<MemberInitiative> = serde_json::from_value(initiatives).unwrap();
     let held: Vec<&MemberInitiative> = initiatives.iter().collect();
     Rosters::from([(network_id(), Rc::new(Roster::for_initiatives(&held)))])
@@ -67,7 +67,7 @@ pub(super) fn joined(buffers: impl IntoIterator<Item = BufferKey>) -> IrcState {
 }
 
 /// Each group's name and its rows' titles.
-fn outline(layout: &Layout) -> Vec<(String, Vec<String>)> {
+pub(super) fn outline(layout: &Layout) -> Vec<(String, Vec<String>)> {
     layout
         .groups
         .iter()
@@ -78,7 +78,7 @@ fn outline(layout: &Layout) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-fn owned(groups: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
+pub(super) fn owned(groups: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
     groups
         .iter()
         .map(|(name, rows)| {
@@ -98,13 +98,15 @@ fn a_fleet_s_channels_come_starbase_command_ships_then_the_rest_without_its_pref
         channel("#aurora-starbase"),
         channel("#lounge"),
     ]);
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     assert_eq!(
         outline(&layout),
-        owned(&[
-            ("Aurora", &["starbase", "command", "lyra", "orion", "nav"]),
-            ("Local Ergo", &["Server", "#lounge"]),
-        ])
+        owned(&[(
+            "Aurora",
+            &[
+                "starbase", "command", "lyra", "orion", "nav", "#lounge", "Server"
+            ]
+        )])
     );
     let fleet = fleet_group_key(&network_id(), "aurora");
     assert_eq!(layout.groups[0].key, fleet, "only the group's key is new");
@@ -113,7 +115,6 @@ fn a_fleet_s_channels_come_starbase_command_ships_then_the_rest_without_its_pref
         Some("aurora")
     );
     assert_eq!(layout.networks.get(&fleet), Some(&network_id()));
-    assert_eq!(layout.groups[1].key, group_key(&network_id()));
     let lyra = row_key(&channel("#aurora-lyra"));
     assert_eq!(
         layout.groups[0].rows[2].key, lyra,
@@ -139,7 +140,7 @@ fn a_fleet_s_channels_come_starbase_command_ships_then_the_rest_without_its_pref
 }
 
 #[test]
-fn the_fleet_header_carries_the_connection_state_and_the_server_stays_under_its_network() {
+fn a_one_fleet_network_is_one_group_with_the_connection_state_and_the_server_last() {
     let mut state = joined([channel("#aurora-lyra")]);
     state.apply(
         Event::Status {
@@ -148,17 +149,19 @@ fn the_fleet_header_carries_the_connection_state_and_the_server_stays_under_its_
         },
         at(1),
     );
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     let counts: Vec<Option<String>> = layout
         .groups
         .iter()
         .map(|group| group.count.as_ref().map(ToString::to_string))
         .collect();
+    assert_eq!(counts, [Some("Connected".to_owned())], "named once");
+    let rows = &layout.groups[0].rows;
+    assert_eq!(rows.last().map(|row| row.title.as_ref()), Some("Server"));
     assert_eq!(
-        counts,
-        [Some("Connected".to_owned()), Some("Connected".to_owned())]
+        layout.networks.get(&layout.groups[0].key),
+        Some(&network_id())
     );
-    assert_eq!(layout.groups[1].rows[0].title.as_ref(), "Server");
 }
 
 #[test]
@@ -173,27 +176,27 @@ fn two_fleets_on_one_network_each_have_a_group_and_a_shared_channel_has_none() {
         channel("#shared"),
         channel("#borealis-starbase"),
     ]);
-    let layout = super::super::layout(&state, &rosters);
+    let layout = super::super::layout(&state, &rosters, &Default::default());
     assert_eq!(
         outline(&layout),
         owned(&[
             ("Aurora", &["lyra"]),
             ("Borealis", &["starbase", "vega"]),
-            ("Local Ergo", &["Server", "#shared"]),
+            ("Acme IRC", &["Server", "#shared"]),
         ])
     );
     assert_ne!(layout.groups[0].key, layout.groups[1].key);
 }
 
 #[test]
-fn a_fleet_with_no_channel_open_has_no_group() {
+fn a_one_fleet_network_with_no_fleet_channel_open_is_still_named_after_its_fleet() {
     let state = joined([channel("#lounge")]);
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     assert_eq!(
         outline(&layout),
-        owned(&[("Local Ergo", &["Server", "#lounge"])])
+        owned(&[("Aurora", &["#lounge", "Server"])])
     );
-    assert!(layout.fleets.is_empty());
+    assert_eq!(layout.fleets.len(), 1);
 }
 
 #[test]
@@ -204,15 +207,14 @@ fn people_hold_private_conversations_with_people_only() {
         query("Anna"),
         channel("#aurora-lyra"),
     ]);
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     assert_eq!(
         outline(&layout),
         owned(&[
-            ("Aurora", &["lyra"]),
+            ("Aurora", &["lyra", "aurora-lyra", "Server"]),
             ("People", &["Anna", "mira"]),
-            ("Local Ergo", &["Server", "aurora-lyra"]),
         ]),
-        "an older conversation with an agent stays where it was"
+        "an older conversation with an agent stays with the network's rows"
     );
     assert_eq!(layout.groups[1].key, people_group_key(&network_id()));
     assert_eq!(
@@ -224,29 +226,28 @@ fn people_hold_private_conversations_with_people_only() {
 #[test]
 fn a_network_that_serves_no_fleet_keeps_its_private_conversations() {
     let state = joined([query("mira"), channel("#aurora-lyra")]);
-    let layout = super::super::layout(&state, &Rosters::default());
+    let layout = super::super::layout(&state, &Rosters::default(), &Default::default());
     assert_eq!(
         outline(&layout),
-        owned(&[("Local Ergo", &["Server", "#aurora-lyra", "mira"])])
+        owned(&[("Acme IRC", &["Server", "#aurora-lyra", "mira"])])
     );
 }
 
 #[test]
 fn search_finds_a_fleet_channel_by_its_full_name() {
     let state = joined([channel("#aurora-lyra")]);
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     let index = super::super::search(&layout);
     let found = index.search("aurora-lyra", 5);
-    assert_eq!(found.len(), 1);
-    assert_eq!(found[0].1.title.as_ref(), "lyra");
+    assert_eq!(found.first().map(|hit| hit.1.title.as_ref()), Some("lyra"));
 }
 
 #[test]
 fn search_still_finds_a_fleet_channel_and_a_person_by_their_network() {
     let state = joined([channel("#aurora-lyra"), query("mira")]);
-    let layout = super::super::layout(&state, &aurora());
+    let layout = super::super::layout(&state, &aurora(), &Default::default());
     let index = super::super::search(&layout);
-    for (query, title) in [("Local Ergo lyra", "lyra"), ("Local Ergo mira", "mira")] {
+    for (query, title) in [("Acme IRC lyra", "lyra"), ("Acme IRC mira", "mira")] {
         let found = index.search(query, 5);
         assert_eq!(
             found.first().map(|(_, row)| row.title.as_ref()),
@@ -270,7 +271,7 @@ fn channels_whose_short_names_clash_keep_their_full_names() {
         channel("#lyra"),
         channel("#aurora-nav"),
     ]);
-    let layout = super::super::layout(&state, &rosters);
+    let layout = super::super::layout(&state, &rosters, &Default::default());
     let (_, titles) = outline(&layout)
         .into_iter()
         .find(|(name, _)| name == "Aurora")

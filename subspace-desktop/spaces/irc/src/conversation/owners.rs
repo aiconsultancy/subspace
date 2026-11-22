@@ -12,27 +12,30 @@ use crate::tiles::{TileRef, Tiles};
 use crate::transcript::Row;
 
 /// The conversation's tiles once every message `rows` shows has been read.
+/// A conversation whose buffer the hub no longer holds reads nothing, so
+/// its owners are not let go as if every message had left.
 pub(super) fn follow(conversation: &Conversation, rows: &[Row], cx: &mut App) -> Rc<Tiles> {
-    let (recognition, held, found) = found(conversation, rows, cx);
     let buffer = conversation.buffer.clone();
+    let Some((recognition, held, found)) = found(conversation, rows, cx) else {
+        return conversation.hub.read(cx).tiles.get(&buffer);
+    };
     conversation.hub.update(cx, |hub, _| {
         hub.tiles.read(&buffer, recognition, (&held, &found))
     })
 }
 
-/// The issue recognition now, every message held, and what the messages
-/// not read yet name, in transcript order.
+/// The issue recognition now, every message shown, and what the messages
+/// not read yet name, in transcript order; `None` while the hub holds no
+/// buffer for the conversation.
 fn found(
     conversation: &Conversation,
     rows: &[Row],
     cx: &App,
-) -> (u64, Vec<i64>, Vec<(i64, Vec<TileRef>)>) {
+) -> Option<(u64, Vec<i64>, Vec<(i64, Vec<TileRef>)>)> {
     let mentions = super::mentions(conversation, cx);
     let hub = conversation.hub.read(cx);
     let recognition = hub.issues.recognition_revision();
-    let Some(held) = hub.state.buffer(&conversation.buffer) else {
-        return (recognition, Vec::new(), Vec::new());
-    };
+    let held = hub.state.buffer(&conversation.buffer)?;
     let messages = messages(rows, held);
     let seqs: Vec<i64> = messages.iter().map(|(_, seq)| *seq).collect();
     let unread = hub
@@ -47,7 +50,7 @@ fn found(
             (*seq, refs.iter().filter_map(TileRef::of).collect())
         })
         .collect();
-    (recognition, seqs, found)
+    Some((recognition, seqs, found))
 }
 
 /// The messages `rows` show, in transcript order, by index and sequence.

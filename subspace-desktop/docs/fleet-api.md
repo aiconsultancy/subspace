@@ -104,6 +104,16 @@ ID, name and recorded address, the checked `address` and the `state`);
 `FleetApi::directory_revision()` only when a fleet, its address or its token
 changes.
 
+Channels follows each fleet its navigator (while the navigator shows) or
+the conversation in front shows, while the Space is in front and the fleet is `Ready` or followed,
+and drops the handle as soon as it no longer shows it; it reads the
+overview and each ship's detail for a ship's dot, its header and its
+inspector ([Live fleet state](irc.md#live-fleet-state)). A Space that must
+not open the token store, such as one under test, reads the service with
+`FleetApi::current(cx)`, and a test installs one over
+`TokenStore::memory()` with `FleetApi::install`, which only the client's
+`test-support` feature, enabled on dev-dependencies, offers.
+
 For a one-shot read, `FleetApi::client(fleet)` hands out a ready
 `FleetClient` (or the state that explains why not); run its blocking
 `fleet()` and `ship(id)` in `cx.background_spawn`.
@@ -145,6 +155,14 @@ installed under that ID), and only with its `secrets` grant. It returns each
 fleet as `{id, name, endpoint, token, problem}` with `token` only when it was
 saved for `endpoint`; every other web Space gets an error. The page hears
 `subspace:fleets-changed` when a fleet, its address or its token changes.
+`subspace.fleets.get()` never reads the keychain. Only the page's
+**Retry** calls `subspace.fleets.retry()`, which reads again any token the
+keychain could not read (`FleetApi::reload_unreadable`) before answering,
+so nothing asks to unlock the keychain without the person asking. The fleet
+stays **Keychain locked** while it is read again, the page hears
+`subspace:fleets-changed` only if the read finds something new, and the
+service reads one fleet's token again at most once every five seconds,
+whoever asks.
 See the Fleet Console's [README](../web-spaces/fleet-console/README.md#fleets).
 
 ## Fixtures

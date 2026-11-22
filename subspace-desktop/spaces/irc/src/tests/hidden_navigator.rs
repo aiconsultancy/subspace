@@ -93,7 +93,7 @@ fn with_the_navigator_hidden_the_palette_offers_what_the_toolbar_acts_on(cx: &mu
     });
     let offered = |label: &str| labels.iter().any(|known| known == label);
     assert!(offered("Join channel…"), "{labels:?}");
-    assert!(offered("Disconnect from Local Ergo"), "{labels:?}");
+    assert!(offered("Disconnect from Acme IRC"), "{labels:?}");
     assert!(
         !offered("Connect to Home Ergo"),
         "not the hidden selection's network: {labels:?}"

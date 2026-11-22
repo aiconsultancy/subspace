@@ -121,7 +121,7 @@ mod tests {
         let mut state = IrcState::new(&[config()], Vec::new());
         let room = channel("#subspace");
         let offline = offers(&state, Some(&network_id()), None);
-        assert_eq!(offline, [Offer::Connect(network_id(), "Local Ergo".into())]);
+        assert_eq!(offline, [Offer::Connect(network_id(), "Acme IRC".into())]);
         state.apply(
             Event::Status {
                 network: network_id(),
@@ -144,7 +144,7 @@ mod tests {
             [
                 Offer::Join,
                 Offer::Refresh(network_id()),
-                Offer::Disconnect(network_id(), "Local Ergo".into()),
+                Offer::Disconnect(network_id(), "Acme IRC".into()),
                 Offer::MarkRead(room.clone(), "#subspace".into()),
                 Offer::Remove(Removal::Leave, room),
             ]

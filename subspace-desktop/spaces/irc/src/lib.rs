@@ -21,6 +21,7 @@ mod issues;
 mod join;
 mod lines;
 mod listing;
+mod live;
 mod markup;
 mod members;
 mod notice;
@@ -76,9 +77,20 @@ pub struct Irc {
     ships: HashMap<SharedString, rows::Activity>,
     /// Each `People` row's presence, for its mark.
     people: HashMap<SharedString, rows::Presence>,
+    /// The captions inside each fleet group, by group key.
+    captions: HashMap<SharedString, Vec<(SharedString, &'static str)>>,
+    /// The fleets followed while the navigator or the conversation in front
+    /// shows them.
+    watch: live::watch::Watch,
+    /// The inspector's open tab for a fleet channel: its ship or Starbase,
+    /// or its people.
+    inspector_tab: view::InspectorTab,
     /// The fleet groups shown so far, so a fleet's group folds only when it
     /// first appears.
     seen_fleets: std::collections::HashSet<SharedString>,
+    /// The group that held the selected row at the last layout, so a
+    /// folded group the selection moves into opens.
+    selection_group: Option<SharedString>,
     hub: Option<Entity<hub::Hub>>,
     hub_subscription: Option<Subscription>,
     /// The networks as last synced, for panels that read without a context.
@@ -232,6 +244,7 @@ impl Dashboard for Irc {
         }
         join::close(self, window, cx);
         view::publish_visible(self, cx);
+        live::watch::sync(self, cx);
     }
 
     fn open_notification(&mut self, target: u64, _window: &mut Window, cx: &mut Context<Self>) {

@@ -74,8 +74,12 @@ nothing to this control.
    time go through `Dashboard::status`. There is no large Space heading and
    no line of context above the content; the Space's name is the
    navigator's title.
-7. **Selection shows through the row's own fill.** No leading bars, no
-   coloured edges.
+7. **Selection shows through surface and text.** A selected row shows it
+   through its own fill; a selected tab takes the surface it adjoins, with
+   the stronger text colour at medium weight. Never an accent line on one
+   edge: no leading bars, underlines or coloured edges, on rows, tabs or
+   blocks. Functional marks stay: focus rings, a drag's insertion mark and
+   full dividers between regions.
 8. **One primary action per toolbar.** A pane toolbar has at most one
    primary action: the Space's main one, at the trailing end, such as
    **New issue…**, **Trigger…** or **New project**, built with
@@ -434,10 +438,12 @@ A reviewer ticks:
 - [ ] Account, connection, counts and sync time are in the status bar.
 - [ ] There is no large Space heading or line of context.
 - [ ] Only shared components and theme tokens are used.
-- [ ] Selection shows through the row's fill, with no leading bar.
+- [ ] Selection shows through the row's fill or the tab's surface, with no
+      leading bar or accent edge.
 - [ ] The Space's name in the navigator takes the accent, and section
       labels show in capitals.
-- [ ] The open tab joins the content, with no accent line along its top.
+- [ ] The open tab joins the content by its surface and text, with no accent
+      line on any edge, in every tab bar.
 - [ ] Each toolbar has at most one primary action, the Space's main one.
 - [ ] Inspector tabs, if any, are at most three subjects of the same
       selection, never views or destinations.

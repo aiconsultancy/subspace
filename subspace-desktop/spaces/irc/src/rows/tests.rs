@@ -7,7 +7,7 @@ use crate::state::{IrcState, server_key};
 
 /// The layout of a state whose networks serve no fleet.
 fn layout(state: &IrcState) -> Layout {
-    super::layout(state, &Rosters::default())
+    super::layout(state, &Rosters::default(), &Default::default())
 }
 
 fn titles(state: &IrcState) -> Vec<String> {
@@ -31,7 +31,7 @@ fn server_then_channels_then_queries_each_sorted() {
     }
     assert_eq!(titles(&state), ["Server", "#Alpha", "#zeta", "Anna", "bob"]);
     let layout = layout(&state);
-    assert_eq!(layout.groups[0].name.as_ref(), "Local Ergo");
+    assert_eq!(layout.groups[0].name.as_ref(), "Acme IRC");
     assert_eq!(
         layout.buffers.get(&row_key(&server_key(&network_id()))),
         Some(&server_key(&network_id()))
@@ -213,4 +213,6 @@ fn search_finds_listed_channels_as_not_joined() {
 }
 
 mod activity;
+mod arrange;
+mod captions;
 mod fleets;

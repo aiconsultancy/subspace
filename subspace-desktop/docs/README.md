@@ -219,6 +219,9 @@ record. [Change records](changes/README.md) explains the convention.
 - [Channels navigator, request lines and composer hints](changes/channels-navigator-and-requests/README.md):
   the navigator grouped by fleet with a People section, request status lines
   that settle into `Done in …`, and the composer's hint row with `/ask`.
+- [Channels fleet live](changes/channels-fleet-live/README.md): each
+  fleet's live state from its Fleet API in Channels: a ship's dot, the
+  header pill and the Ship, Starbase and People inspector tabs.
 - [Channels tiles once](changes/channels-tiles-once/README.md): an issue or
   pull request tile only under the first message that names it, and fuller
   two-line tiles of a fixed size for both.

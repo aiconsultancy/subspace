@@ -8,9 +8,11 @@ use subspace_client_irc::{BufferKey, ConnectionStatus, ListedChannel, NetworkId,
 use subspace_framework::dashboard::{Glyph, Group, ItemSearch, Row, SearchDoc, Tone};
 
 use crate::fleet::{NO_ROSTER, Roster};
+use crate::live::Lives;
 use crate::state::{Buffer, IrcState};
 
 pub(crate) mod activity;
+mod arrange;
 mod groups;
 mod sections;
 
@@ -43,6 +45,11 @@ pub(crate) struct Layout {
     pub ships: HashMap<SharedString, Activity>,
     /// Each row in `People`, with that person's presence.
     pub people: HashMap<SharedString, Presence>,
+    /// The quiet captions inside each fleet group, by group key: each the
+    /// row it stands above and its words.
+    pub captions: HashMap<SharedString, Vec<(SharedString, &'static str)>>,
+    /// Each network's name, for search.
+    pub network_names: HashMap<NetworkId, SharedString>,
 }
 
 /// The navigator: on each network, one group per fleet holding its
@@ -50,10 +57,13 @@ pub(crate) struct Layout {
 /// then the network's own group with its server, the channels of no fleet,
 /// any older private conversation with an agent and the listed channels.
 /// A network that serves no fleet keeps one group, as before.
-pub(crate) fn layout(state: &IrcState, rosters: &Rosters) -> Layout {
+/// A ship's dot follows its crew where `lives`, the Fleet API's word on
+/// each fleet the board shows, has them.
+pub(crate) fn layout(state: &IrcState, rosters: &Rosters, lives: &Lives) -> Layout {
     let mut layout = Layout::default();
     for network in state.networks() {
-        groups::network(state, network, roster_of(rosters, &network.id), &mut layout);
+        let roster = roster_of(rosters, &network.id);
+        groups::network(state, network, (roster, lives), &mut layout);
     }
     layout
 }
@@ -112,7 +122,7 @@ pub(crate) fn unjoined<'a>(state: &'a IrcState, network: &NetworkId) -> Vec<&'a 
 /// `aurora lyra` finds it, also once it moved into a fleet's group or
 /// `People`.
 pub(crate) fn search(layout: &Layout) -> ItemSearch {
-    let networks = network_names(layout);
+    let networks = &layout.network_names;
     ItemSearch::new(layout.groups.iter().flat_map(move |group| {
         let parent = search_parent(
             &group.name,
@@ -132,18 +142,6 @@ pub(crate) fn search(layout: &Layout) -> ItemSearch {
             (doc, row.clone())
         })
     }))
-}
-
-/// Each network's name, from its own group, which every network has.
-fn network_names(layout: &Layout) -> HashMap<NetworkId, SharedString> {
-    layout
-        .groups
-        .iter()
-        .filter_map(|group| {
-            let network = layout.networks.get(&group.key)?;
-            (group.key == group_key(network)).then(|| (network.clone(), group.name.clone()))
-        })
-        .collect()
 }
 
 /// A search document's parent: its group, and its network when the group
@@ -196,6 +194,17 @@ pub(crate) fn listed_key(key: &BufferKey) -> SharedString {
 
 pub(crate) fn group_key(network: &NetworkId) -> SharedString {
     format!("irc{SEPARATOR}{}", network.0).into()
+}
+
+/// The key of the network's own group whose rows `group`, a network's only
+/// fleet's group, took in: its Server row's network; `None` for a group
+/// without the network's rows.
+pub(crate) fn absorbed_network(group: &Group) -> Option<SharedString> {
+    let server = format!("{SEPARATOR}s");
+    group.rows.iter().find_map(|row| {
+        let network = row.key.strip_suffix(server.as_str())?;
+        (network.matches(SEPARATOR).count() == 1).then(|| SharedString::from(network.to_owned()))
+    })
 }
 
 /// A fleet's group on `network`, apart from the network's own.

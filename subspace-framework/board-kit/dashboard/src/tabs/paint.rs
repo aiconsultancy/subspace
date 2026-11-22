@@ -17,7 +17,6 @@ const OPAQUE: f32 = 1.;
 const DISABLED_OPACITY: f32 = 0.5;
 /// Kit inserts gap_1 after the decorative prefix (in rems).
 const PREFIX_GAP: f32 = 0.25;
-const ACCENT_EDGE: f32 = 2.;
 const DOT_SIZE: f32 = 5.;
 /// An opened item's key, at the default monospace setting.
 const KEY_MONO_PX: f32 = 11.5;
@@ -35,7 +34,6 @@ const LAYER_REACH: f32 = 4096.;
 pub(super) struct State {
     pub(super) foreground: gpui_kit::Hsla,
     pub(super) background: gpui_kit::Hsla,
-    pub(super) edge: gpui_kit::Hsla,
     pub(super) weight: FontWeight,
 }
 
@@ -65,11 +63,6 @@ pub(super) fn state(
         } else {
             surface.opacity(TRANSPARENT)
         },
-        edge: if selected && !disabled {
-            tokens.accent
-        } else {
-            tokens.accent.opacity(TRANSPARENT)
-        },
         weight: if selected && !disabled {
             FontWeight::MEDIUM
         } else {
@@ -93,8 +86,9 @@ pub(super) struct Dress {
     /// The adjoining content or header surface the selected tab takes.
     pub(super) surface: gpui_kit::Hsla,
     pub(super) size: Size,
-    /// A workspace pane's tab strip: each tab is as tall as the strip, and
-    /// the open one joins the content below it with no accent line.
+    /// A workspace pane's tab strip: each tab is as tall as the strip. In
+    /// every bar the selected tab is told apart by its surface and its
+    /// stronger, medium-weight text, never by a line on one edge.
     pub(super) pane: bool,
     /// The monospace family, for an opened item's key.
     pub(super) mono: SharedString,
@@ -107,7 +101,6 @@ pub(super) fn tab(tab: Tab, selected: bool, tokens: &Tokens, dress: Dress) -> Ki
     let glass_hover = tokens.controls.toolbar_look.hover == ButtonFinish::Glass;
     let close_label = tab_label(&tab.spec.label);
     let height = tab_height(&dress, tokens);
-    let edge = (selected && !disabled && !dress.pane).then_some(normal.edge);
     let fill = div()
         .absolute()
         .top_0()
@@ -125,7 +118,7 @@ pub(super) fn tab(tab: Tab, selected: bool, tokens: &Tokens, dress: Dress) -> Ki
     tab.native
         .group(GROUP)
         .when(dress.pane, |tab| tab.min_h(height))
-        .prefix(layers(fill, edge, height))
+        .prefix(layers(fill, height))
         .child(content)
         .when_some(tab.close, |tab, handler| {
             tab.suffix(close_button(handler, selected, disabled, &close_label))
@@ -224,32 +217,15 @@ fn hover_rim(colour: gpui_kit::Hsla) -> impl gpui_kit::IntoElement {
 }
 
 /// Kit wraps a prefix in an unpositioned box, and GPUI places an absolute
-/// element against its direct parent, so the layers hang from a zero-width
+/// element against its direct parent, so the fill hangs from a zero-width
 /// column as tall as the tab. Kit paints the tab's borders and suffix after it.
-fn layers(
-    fill: gpui_kit::Div,
-    edge: Option<gpui_kit::Hsla>,
-    height: Pixels,
-) -> impl gpui_kit::IntoElement {
+fn layers(fill: gpui_kit::Div, height: Pixels) -> impl gpui_kit::IntoElement {
     div()
         .id("tab-layers")
         .test_support()
         .w_0()
         .h(height)
         .child(fill)
-        .when_some(edge, |column, edge| {
-            column.child(
-                div()
-                    .id("tab-selected-edge")
-                    .test_support()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .h(px(ACCENT_EDGE))
-                    .w(px(LAYER_REACH))
-                    .bg(edge),
-            )
-        })
 }
 
 fn tab_label(label: &gpui_kit::SharedString) -> String {

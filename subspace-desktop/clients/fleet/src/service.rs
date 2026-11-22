@@ -26,6 +26,7 @@ pub use tokens::TokenError;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription};
 use subspace_api_client::initiatives::Catalog;
@@ -38,6 +39,11 @@ use follow::Followed;
 
 struct Session(Entity<FleetApi>);
 impl Global for Session {}
+
+/// The least time between two reads of one fleet's token after the secret
+/// store could not read it, whoever asks: a locked macOS keychain may ask
+/// the person to unlock it on every read.
+const REREAD_INTERVAL: Duration = Duration::from_secs(5);
 
 /// A fleet the person's initiatives belong to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,6 +62,8 @@ pub struct FleetApi {
     store: Arc<TokenStore>,
     fleets: Vec<FleetRecord>,
     tokens: BTreeMap<String, TokenLoad>,
+    /// When each fleet's unreadable token was last read again.
+    rereads: BTreeMap<String, Instant>,
     /// Each fleet a handle follows, with the holder every handle clones.
     interest: BTreeMap<String, Arc<()>>,
     feeds: BTreeMap<String, Followed>,
@@ -87,12 +95,43 @@ impl FleetApi {
         service
     }
 
+    /// The process's service when something has created it, without
+    /// creating one, so a caller that must never open the token store, such
+    /// as a Space under test, can still read fleets a test set up.
+    pub fn current(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<Session>().map(|session| session.0.clone())
+    }
+
+    /// Makes `service` the process's service in place of the one
+    /// [`Self::shared`] would create, as a test does with one over
+    /// [`TokenStore::memory`]. Only for tests: the `test-support` feature,
+    /// which only dev-dependencies enable.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn install(service: Entity<Self>, cx: &mut App) {
+        cx.set_global(Session(service));
+    }
+
+    /// A new service over `store` with `fleets`, installed as the
+    /// process's ([`Self::install`]). Only for tests (`test-support`).
+    // qual:api
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn install_new(store: TokenStore, fleets: Vec<FleetRecord>, cx: &mut App) -> Entity<Self> {
+        let service = cx.new(|cx| {
+            let mut service = Self::new(Arc::new(store));
+            service.set_fleets(fleets, cx);
+            service
+        });
+        Self::install(service.clone(), cx);
+        service
+    }
+
     /// A service over `store` with no fleets until [`Self::set_fleets`].
     pub fn new(store: Arc<TokenStore>) -> Self {
         Self {
             store,
             fleets: Vec::new(),
             tokens: BTreeMap::new(),
+            rereads: BTreeMap::new(),
             interest: BTreeMap::new(),
             feeds: BTreeMap::new(),
             revision: 0,
@@ -188,6 +227,21 @@ impl FleetApi {
         }
     }
 
+    /// Reads again every saved token the secret store could not read, as
+    /// when the person has unlocked the keychain and chosen Retry. Each
+    /// fleet stays **Keychain locked** until a read finds otherwise, and is
+    /// read again at most once every few seconds, however often this is
+    /// called. Call it only when the person asks.
+    pub fn reload_unreadable(&mut self, cx: &mut Context<Self>) {
+        self.reload_unreadable_at(Instant::now(), cx);
+    }
+
+    pub(crate) fn reload_unreadable_at(&mut self, now: Instant, cx: &mut Context<Self>) {
+        directory::due_rereads(&self.tokens, &mut self.rereads, now, REREAD_INTERVAL)
+            .into_iter()
+            .for_each(|fleet| self.load_token(fleet, cx));
+    }
+
     fn load_token(&self, fleet: String, cx: &mut Context<Self>) {
         let store = Arc::clone(&self.store);
         let id = fleet.clone();
@@ -199,8 +253,10 @@ impl FleetApi {
         .detach();
     }
 
+    /// Keeps what a read or a save found, announcing it only when it
+    /// differs from what the service had.
     fn set_token(&mut self, fleet: &str, token: TokenLoad, cx: &mut Context<Self>) {
-        if self.record(fleet).is_none() {
+        if self.record(fleet).is_none() || self.tokens.get(fleet) == Some(&token) {
             return;
         }
         self.tokens.insert(fleet.to_owned(), token);

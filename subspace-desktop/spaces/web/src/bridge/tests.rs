@@ -207,6 +207,42 @@ fn the_theme_needs_no_grant_but_issues_do() {
 }
 
 #[test]
+fn only_the_built_in_fleet_console_reads_or_retries_the_fleets() {
+    let (_root, mut config, mut bridge) = fixture();
+    let now = Instant::now();
+    grant(&mut config, &bridge, Permission::Secrets);
+    for operation in [&Operation::Fleets, &Operation::FleetsRetry] {
+        assert_eq!(
+            bridge.call(operation, &config, false, now).err(),
+            Some(super::fleets::NOT_SHARED)
+        );
+    }
+    config.id = crate::builtin::FLEET_CONSOLE_ID.into();
+    let WebBoardSource::Folder(path) = &config.source else {
+        unreachable!()
+    };
+    let entry = json!({"path": path, "builtIn": true});
+    let mut console = Bridge::new(&config, entry.as_object()).unwrap();
+    config.permissions.clear();
+    assert!(
+        console
+            .call(&Operation::FleetsRetry, &config, false, now)
+            .is_err(),
+        "needs secrets"
+    );
+    grant(&mut config, &console, Permission::Secrets);
+    let mut call = |operation| console.call(operation, &config, false, now);
+    assert!(matches!(
+        call(&Operation::Fleets),
+        Ok((_, Effect::Fleets { retry: false }))
+    ));
+    assert!(matches!(
+        call(&Operation::FleetsRetry),
+        Ok((_, Effect::Fleets { retry: true }))
+    ));
+}
+
+#[test]
 fn every_web_board_declares_the_issues_contract_under_its_own_id() {
     let (_root, _, bridge) = fixture();
     assert_eq!(bridge.board, "notes");

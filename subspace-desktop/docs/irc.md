@@ -104,17 +104,29 @@ fleets on one network claim belongs to neither.
   `irc␟<network>␟f␟<fleet id>`, holding that fleet's channels: the Starbase,
   the command channel, the ships, then the rest, each by the name the row
   shows. A fleet's rows drop the `#` and the `<slug>-` prefix
-  (`#aurora-lyra` shows as `lyra`); search still finds the full name. A
-  fleet with no buffer open has no group. The header carries the network's
-  connection state, as the network's own header does.
+  (`#aurora-lyra` shows as `lyra`); search still finds the full name. The
+  captions `Ships` (above the first ship) and `Channels` (above the fleet's
+  other channels after its ships) come through `ListDashboard::group_captions`.
+  A fleet with no buffer open has no group, unless it is its network's only
+  fleet. The header carries the network's connection state.
+- **A network that holds one fleet is one group** (`rows/arrange.rs`): the
+  fleet's, named after the fleet, which also holds, under an `Other`
+  caption, the network's channels no fleet claims, its older private
+  conversations with agents and its listed channels, with the Server row
+  last. So one IRC server for an organisation that holds one fleet shows one
+  heading, not the fleet's and the network's.
 - **People**, keyed `irc␟<network>␟p`, follows the fleets on a network that
   serves one and holds the private conversations with people. A private
   conversation with a nick the roster knows as an agent stays in the
   network's group, so history stays reachable but `People` never offers an
   agent. With more than one network it reads `People · <network>`.
-- **The network's group** keeps its key and holds the server row, the
-  channels of no fleet, those older private conversations and the listed
-  channels. A network that serves no fleet has only this group, as before.
+- **The network's group**, on a network that holds several fleets, comes
+  last, keeps its key and holds the server row, the channels of no fleet,
+  those older private conversations and the listed channels. It is named
+  after the network, or `<name> network` when a fleet has the same name
+  ignoring case, so the same heading never shows twice. A network that
+  serves no fleet has only this group, as before. Search finds a row by its
+  group and its network (`Layout::network_names`), merged or not.
 - Row keys are the buffers' own (`rows::row_key`), so selection, the dock
   layout (`dock/layout.rs`, which stores buffers) and search results restore
   as before; only group keys are new. `Irc::group_networks` maps each group
@@ -132,22 +144,100 @@ fleets on one network claim belongs to neither.
   green while the ship is working, a muted ring while not, named
   *aurora-lyra: working* or *aurora-lyra: idle* (the row's spoken name ends
   with the same words), and showing Kit's tooltip on hover: the captain's
-  status today. Whether a ship is working comes from one function,
-  `rows::activity::ship`: today the captain's nick status while the server
-  vouches for it, by the heading pill's rule (`conversation::vouched_status`:
-  a member with the captain's nick signed in to its account), so nothing is
-  invented without one. Crew activity joins `Activity::working` there once
-  the Space can read it, and the tooltip then lists the crew at work.
+  what is at work. Whether a ship is working comes from one function,
+  `rows::activity::ship`. With live fleet data (see
+  [Live fleet state](#live-fleet-state)) it follows the crew: filled while at
+  least one crew member has a task, named *aurora-lyra: 3 crew working*,
+  and the tooltip reads `3 crew working` then one line per member and task.
+  Without it, the captain's nick status while the server vouches for it, by
+  the heading pill's rule (`conversation::vouched_status`: a member with the
+  captain's nick signed in to its account), so nothing is invented without
+  one.
 - Every row with unread messages is emphasised. A mention adds an `@` mark
   in `Tone::Red` before the count, which keeps the accent.
 - A fleet group that is not the selected initiative's fleet starts folded
   the first time it appears (`view/navigator.rs`, `fold_new_fleets`); with no initiative
-  selected every fleet starts open. Revealing a row in a folded group
-  unfolds it, and later syncs leave it as the user left it.
-- The shared list has no caption inside a group, so `People` is a group of
-  its own and the ships have no `Ships` caption.
+  selected every fleet starts open. A network's only fleet's group, which
+  takes in the network's other channels and Server row, keeps the fold of
+  the network's group instead. Revealing a row in a folded group
+  unfolds it, a folded group the selected row moves into opens, and later
+  syncs leave it as the user left it.
+- `People` stays a group of its own: it is a different kind of row from a
+  fleet's channels, and the design guide's caption is for runs inside one
+  group.
 
 See the [change record](changes/channels-navigator-and-requests/README.md).
+
+### Live fleet state
+
+Channels reads each fleet's live state from its Stargate Fleet API through
+the app's one fleet service ([Fleets and the Fleet API](fleet-api.md)),
+in `live.rs` and `live/`.
+
+- **Following** (`live/watch.rs`): while the Space is in front, the board
+  holds one `FleetFollow` for each fleet whose group is in the navigator,
+  while the navigator shows, or whose channel is the conversation in front, once the fleet's state is
+  `Ready` (a token saved for the address the Subspace API records) or
+  followed, and drops it when the fleet is no longer shown or the Space is
+  hidden. The service opens at most one stream per fleet and closes it with
+  the last handle. What the service says of each shown fleet goes to
+  `Hub::fleets`, only when it changed, where the navigator, the headers and
+  the inspector read it. The hub holds only what Channels draws (each
+  ship as `ShipLive`), so an activity line or a sample time redraws
+  nothing. A fleet with no address, no token, a changed address or no
+  answer keeps today's behaviour everywhere.
+- **Matching a ship** (`live/ship.rs`): a ship's channel names its captain
+  by the roster (the Subspace API's agent of rank captain), and its Fleet
+  API ship is the one whose registration ID equals that captain's API nick,
+  ignoring ASCII case, as the installer names both. Nothing is matched from
+  a nick seen on IRC, a channel name or message text. The Starbase lists
+  only the Fleet API's ships whose ID is the nick of a roster captain of
+  the Starbase's own fleet. Names, models, tasks and phases from the API
+  are untrusted: they are bounded (32, 40 and 120 characters), stripped of
+  control and bidirectional formatting characters, put on one line and
+  drawn as text; a ship keeps at most 24 crew lines, chosen before they are
+  formatted, while its figures count everyone.
+- **Live** means `FleetState::is_live()`: streamed or polled. Otherwise no
+  live figure shows anywhere, and nothing stale is kept. A ship's crew
+  detail that Stargate kept after a failed read (`detailStale`), or that
+  the overview or the detail marks unavailable, gives no crew lines (the
+  overview's totals stand in), and a kept overview (`overviewStale`) shows
+  no ships.
+- **A ship's dot** follows its crew: a crew member is working while one of
+  its contexts has a current task, as Stargate counts `busy`. From the
+  ship's detail once it arrives, else the overview's `crew.busy`. A ship
+  whose crew the API cannot read or does not have falls back to the
+  captain's status.
+- **The header pill** on a ship's channel: the captain's vouched status, or
+  else the Fleet API's word for the captain (`Lyra is working`, `has work
+  queued`, `is idle`), then `N of M crew busy` when the API counts the crew.
+  Without live data, the vouched status alone, as before.
+- **The inspector** (`view/inspector.rs` and `view/inspector/`) has tabs on
+  a ship's channel (**Ship**, **People**) and a Starbase (**Starbase**,
+  **People**), through `Inspector::tabs` under the design guide's
+  *Inspector tabs*; a later change adds **Thread** as the third. The tab
+  list is named `<channel> details`. Other conversations keep the member
+  list under its title. **People** is today's member list. **Ship**: a card
+  with the captain's agent avatar and crew ring (the Icons setting, through
+  `avatar::agent_icon`), the ship's name, `captain · <model>`, a pill with
+  the captain's state and the figures **Crew busy**, **Queued** (crew with
+  queued work) and **Done** (the captain's done jobs), each only when the
+  API gives it; **Crew**, each member with a dot, the task's phase and
+  summary, and how long (`dates::age`); **In play here**, the issues and pull
+  requests the conversation's tiles show, in order, with their state; and
+  **Here now**, the channel's members. **Starbase**: **Ships**, one row
+  each with the captain's icon, name, state and `avatar::crew_meter`.
+  While the fleet is not live the tab says why in one sentence
+  (`view/inspector/reason.rs`): the state's `label()` and its `help()`, and
+  for **No token** or **Address changed** where to act, Settings › Fleets.
+- **Left out** because no API gives it yet: **Last decision** (the Decisions
+  data has no per-conversation record Channels can reach), the Fleet
+  Console footer action (the built-in Fleet Console takes no request to open
+  on a ship), the queued figure as the mock-up's job count, the captain's
+  `delegating` word (Stargate's captain activity is `running`, `queued` or
+  `idle`), the crew's issue key apart from the task's text, and the
+  Starbase's stakeholders and ready work. See the
+  [change record](changes/channels-fleet-live/README.md).
 
 ### Direct messages are for people only
 
@@ -227,7 +317,7 @@ server uses its host name, port `6697` and TLS with certificate checks.
   "networks": [
     {
       "id": "local",
-      "name": "Local Ergo",
+      "name": "Acme IRC",
       "host": "127.0.0.1",
       "port": 16667,
       "tls": false,
@@ -1007,15 +1097,20 @@ IRC shows issue references through the `issues` contract
   mention is only the inline reference. On every sync with the hub, before
   any new row is laid out, `conversation/owners.rs` reads the messages not
   read yet, in transcript order, and `TileOwners::claim` gives each
-  reference nobody owns to the earliest of them. An owner never changes, so
-  no message gains or loses a tile, or changes height, once drawn: history
+  reference nobody owns to the earliest of them. Only messages not read yet
+  claim, so no message already drawn gains a tile or changes height: history
   loaded above or lines merged from the store are read after the held ones,
-  so an older mention found later stays a chip; an owner dropped by the line
-  cap keeps its claim, so no other message grows a tile; a new issue scope
-  reads every message again but keeps the owners. Owners live in the hub per
-  conversation for the session, in memory only, so reopening a conversation
-  keeps them and a restart decides again from the messages then held. See
-  the [change record](changes/channels-tiles-once/README.md).
+  so an older mention found later stays a chip. An owner the conversation no
+  longer shows (dropped by the line cap, folded into its request) lets go of
+  its claim, so the next new message that names the reference shows the
+  tile; a removed conversation's owners are forgotten. A new issue scope
+  reads every message again and claims issues afresh within that scope;
+  pull requests keep their owners. A sync with nothing new copies nothing.
+  Owners live in the hub per conversation for the session, in memory only,
+  so reopening a conversation keeps them and a restart decides again from
+  the messages then held. See the
+  [change record](changes/channels-tiles-once/README.md) and the
+  [fixes carried to the next one](changes/channels-fleet-live/README.md).
 - **Issue tiles** (`issues/preview.rs`, `issues/tile/compact.rs`,
   `tiles/frame.rs`) use the same batched lookup as the hover card. A tile
   leads with the inline reference's state dot and the key, then the title,
@@ -1023,8 +1118,10 @@ IRC shows issue references through the `issues` contract
   `ready_for_agents` is true), **Tracker**, **Archived**, the state's name,
   the assignee (an agent captain's or rear admiral's icon before the name,
   through `avatar::agent_icon` and the Icons setting; people get none) or
-  else the owner, and the due date (`due Wed`, or a date after seven days).
-  A tracker with sub-items ends with a small bar and **1 of 2**. A missing
+  else the owner, and the due date (`due Wed`, or a date after seven days);
+  the assignee or owner, untrusted text, is the part that gives way on a
+  full line. A tracker (the summary's tracker flag) with sub-items ends with
+  a small bar and **1 of 2**. A missing
   fact leaves no gap. Tiles keep their full accessible names and native
   activation; the A and B hover cards appear on hover or reference keyboard
   focus. Ordinary hover cards have a state edge,
@@ -1108,14 +1205,20 @@ GitHub client or the PRs board.
   tone and `#n`, the title, then the status in words when not open, the
   repository and the lines added and removed, and the checks as a small bar
   with **4/5** (`check_counts`; red once a check failed, green when all
-  passed, yellow while running). A missing fact leaves no gap. It shares the
+  passed, yellow while running). The PRs Space answers a pull request it
+  holds only from a list at once, without counts, and reads it once for its
+  check runs; the bar appears when that read lands, inside the tile's fixed
+  box (`spaces/github/src/references.rs`). A missing fact leaves no gap. It shares the
   issue tile's fixed box, loading skeleton and unresolved line; a click
   opens the pull request as the chip does, and hovering shows the chip's
   card.
 - **Answers** (`pull_requests.rs`, `pull_requests/follow.rs`): the hub asks
   for the distinct keys a frame shows in one request of at most 50, keeps the
   answers in memory and forgets them, and the wanted keys, on every `changed`.
-  A refused request records `Unavailable`. Nothing reaches IRC's store,
+  A refused request records `Unavailable`, so with the PRs Space off a
+  pull request's tile settles to its muted **Unavailable** line in its
+  reserved box rather than vanishing and moving the lines under it.
+  Nothing reaches IRC's store,
   search, state file or logs.
 - **Hover tile** (`pull_requests/tooltip.rs`, `pull_requests/tile.rs`): a
   passive 320 px `reference_card` (accent treatment) with state edge and pill,

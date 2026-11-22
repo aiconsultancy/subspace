@@ -15,12 +15,15 @@
 //!   keeps it.
 //! - New messages only ever see references already owned or new ones.
 //! - Re-rendering reads nothing again.
-//! - An owner that leaves the held window (the line cap) keeps its claim:
-//!   no other message takes the tile, which would make it grow.
+//! - An owner no longer shown (dropped by the line cap, folded into its
+//!   request, or removed with its conversation) lets go of its claim, so
+//!   the next new message that names it shows the tile. Only messages not
+//!   yet read ever claim, so no message already drawn gains a tile.
 //! - A new issue scope can recognise references the messages did not have
 //!   before (those messages change anyway, as their text gains chips), so
-//!   every held message is read again then; references already owned stay
-//!   with their owner.
+//!   every held message is read again then, and issues are claimed afresh
+//!   within the new scope: an identifier another tracker recognised keeps
+//!   no claim. Pull requests keep their owners.
 //!
 //! Owners live in the hub per conversation (`BufferKey`) for the session,
 //! in memory only: closing and reopening a conversation keeps them, and a
@@ -44,7 +47,7 @@ pub(crate) use row::row;
 
 /// A reference a tile can show, by its stable identity: an issue's
 /// identifier or a pull request's canonical `owner/repo#n`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) enum TileRef {
     Issue(String),
     PullRequest(String),
@@ -72,9 +75,9 @@ pub(crate) fn candidates(found: impl IntoIterator<Item = Ref>) -> Vec<Ref> {
 }
 
 /// Which message, by local sequence, keeps each reference's tile in one
-/// conversation.
+/// conversation, with where in that message it was named.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TileOwners(HashMap<TileRef, i64>);
+pub(crate) struct TileOwners(HashMap<TileRef, (i64, usize)>);
 
 impl TileOwners {
     /// The rule: each reference of `messages`, read in order, that has no
@@ -82,15 +85,47 @@ impl TileOwners {
     /// never replaced.
     pub fn claim<'a>(&mut self, messages: impl IntoIterator<Item = (i64, &'a [TileRef])>) {
         for (seq, refs) in messages {
-            for found in refs {
-                self.0.entry(found.clone()).or_insert(seq);
+            for (at, found) in refs.iter().enumerate() {
+                self.0.entry(found.clone()).or_insert((seq, at));
             }
         }
     }
 
     /// Whether message `seq` shows the tile for `found`.
     pub fn shows(&self, seq: i64, found: &TileRef) -> bool {
-        self.0.get(found) == Some(&seq)
+        self.0.get(found).is_some_and(|(owner, _)| *owner == seq)
+    }
+
+    /// Lets go of every claim whose message `held` does not hold, so a
+    /// later message may show that tile: the owner was dropped by the line
+    /// cap, folded into its request, or removed with its conversation. Only
+    /// messages not yet read ever claim, so no message already drawn gains
+    /// a tile.
+    pub fn release(&mut self, held: &HashSet<i64>) {
+        self.0.retain(|_, (seq, _)| held.contains(seq));
+    }
+
+    /// Lets go of every issue's claim, as a new issue recognition does, so
+    /// issues are claimed again within the tracker scope now recognised and
+    /// no identifier keeps a claim another scope made.
+    pub fn release_issues(&mut self) {
+        self.0
+            .retain(|found, _| matches!(found, TileRef::PullRequest(_)));
+    }
+
+    /// Whether any claim's message is missing from `held`.
+    fn outlives(&self, held: &HashSet<i64>) -> bool {
+        self.0.values().any(|(seq, _)| !held.contains(seq))
+    }
+
+    /// Every reference with a tile, in the order the conversation first
+    /// showed them, message by message and within a message as it named
+    /// them: what is in play in it, so a cap keeps the first named.
+    pub fn in_play(&self) -> Vec<TileRef> {
+        let mut owned: Vec<(&(i64, usize), &TileRef)> =
+            self.0.iter().map(|(found, claim)| (claim, found)).collect();
+        owned.sort_unstable_by_key(|(claim, _)| **claim);
+        owned.into_iter().map(|(_, found)| found.clone()).collect()
     }
 }
 
@@ -110,6 +145,11 @@ impl Tiles {
         TileRef::of(found).is_some_and(|found| self.owners.shows(seq, &found))
     }
 
+    /// What is in play in the conversation; see [`TileOwners::in_play`].
+    pub fn in_play(&self) -> Vec<TileRef> {
+        self.owners.in_play()
+    }
+
     /// Of `messages`, those not yet read under `recognition`.
     pub fn unread(&self, messages: &[i64], recognition: u64) -> HashSet<i64> {
         let fresh = recognition != self.recognition;
@@ -120,18 +160,37 @@ impl Tiles {
             .collect()
     }
 
+    /// Whether reading `found` under `recognition`, with `held` the
+    /// messages shown now, would change anything: something new to claim,
+    /// a new recognition, or a message read or owning a tile that is no
+    /// longer shown. Lets a sync with nothing new skip copying the owners.
+    pub fn stale(
+        &self,
+        recognition: u64,
+        held: &HashSet<i64>,
+        found: &[(i64, Vec<TileRef>)],
+    ) -> bool {
+        recognition != self.recognition
+            || !found.is_empty()
+            || self.read.iter().any(|seq| !held.contains(seq))
+            || self.owners.outlives(held)
+    }
+
     /// Records what the messages `found` name, in transcript order, under
-    /// `recognition`. `held` is every message the conversation holds now,
-    /// so those no longer held are forgotten as read (never as owners).
-    pub fn read(&mut self, recognition: u64, held: &[i64], found: &[(i64, Vec<TileRef>)]) {
+    /// `recognition`. `held` is every message the conversation shows now:
+    /// those no longer shown are forgotten as read and let go as owners.
+    /// A new recognition lets go of every issue's claim, so the messages,
+    /// all read again, claim issues within the new tracker scope.
+    pub fn read(&mut self, recognition: u64, held: &HashSet<i64>, found: &[(i64, Vec<TileRef>)]) {
         if recognition != self.recognition {
             self.read.clear();
+            self.owners.release_issues();
             self.recognition = recognition;
         }
+        self.owners.release(held);
         self.owners
             .claim(found.iter().map(|(seq, refs)| (*seq, refs.as_slice())));
         self.read.extend(found.iter().map(|(seq, _)| *seq));
-        let held: HashSet<i64> = held.iter().copied().collect();
         self.read.retain(|seq| held.contains(seq));
     }
 }
@@ -146,15 +205,25 @@ impl Sessions {
         self.0.get(buffer).cloned().unwrap_or_default()
     }
 
-    /// Reads `found` into `buffer`'s tiles; see [`Tiles::read`].
+    /// Reads `found` into `buffer`'s tiles; see [`Tiles::read`]. With
+    /// nothing new it changes nothing and copies nothing.
     pub fn read(
         &mut self,
         buffer: &BufferKey,
         recognition: u64,
         (held, found): (&[i64], &[(i64, Vec<TileRef>)]),
     ) -> Rc<Tiles> {
+        let held: HashSet<i64> = held.iter().copied().collect();
         let tiles = self.0.entry(buffer.clone()).or_default();
-        Rc::make_mut(tiles).read(recognition, held, found);
+        if tiles.stale(recognition, &held, found) {
+            Rc::make_mut(tiles).read(recognition, &held, found);
+        }
         Rc::clone(tiles)
+    }
+
+    /// Forgets `buffer`'s tiles, as when the conversation is removed: if it
+    /// is joined again, its messages claim afresh.
+    pub fn forget(&mut self, buffer: &BufferKey) {
+        self.0.remove(buffer);
     }
 }
