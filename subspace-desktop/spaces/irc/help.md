@@ -546,17 +546,26 @@ highlights identifiers with the loaded project keys, such as `SUB-827`.
 Lowercase identifiers (`sub-827`), `UTF-8`, text in code and URLs stay plain
 issue text or ordinary links. App links and Linear links are not issue references.
 
-Readable issues always appear below the message as compact chips, even when
-only one is available. The row wraps to fit the transcript. Click a chip or
-press `Enter` on it to open the same issue in Issues.
+The first message in a conversation to name an issue shows a tile for it
+underneath: the state dot and identifier, the title, then one line of what
+the tracker says (**Ready for agents**, **Tracker**, the state, who it is
+with and when it is due) and, for a tracker with sub-issues, a small bar
+such as **1 of 2**. Every later mention of that issue in the conversation is
+only the inline reference, so the transcript does not repeat it. A tile
+takes its place as soon as the message shows, as an outline with grey bars
+while the issue loads, so nothing below it moves when it arrives. An issue
+that cannot be shown settles to one grey line in the same box, such as
+**Unavailable**. If the message that first showed a tile scrolls out of the
+kept history, the next new mention shows it again. Click a tile, or press
+`Enter` on it, to open the same issue in Issues.
 
-Use the small chevron beside a chip to show its summary under the chip row.
-Press it again to close the panel, or choose another chip’s chevron to switch
+Use the small chevron on a tile to show its summary under the tiles.
+Press it again to close the panel, or choose another tile’s chevron to switch
 the one panel for that message. This keeps you in Channels. Older issues show
 **No summary yet**. The panel grows and fades over 200 ms; reduced motion makes
 the change instant. A transcript at the bottom stays at the bottom.
 
-Point at a chip or an inline reference, or move the keyboard to a reference,
+Point at a tile or an inline reference, or move the keyboard to a reference,
 to see the same floating card. An ordinary issue shows its state edge,
 identifier, urgent or high priority, title and state. A supplied summary sits
 below the title in muted text, wrapped to at most three lines. When supplied, its footer
@@ -600,7 +609,16 @@ A marker and a link to the same pull request are the same chip. A bare
 `#123` or a marker without an owner (`[PR:repo#123]`) stays plain text:
 Channels has no repository to read it in. A pull request inside code (between
 backticks or in a code block) stays text too. Other GitHub links stay ordinary
-links. No extra card appears under the message.
+links.
+
+The first message in a conversation to name a pull request shows a tile for
+it underneath: its glyph in its status colour and `#number`, the title, then
+its status when not open, the repository and the lines changed, and its
+checks as a small bar such as **4/5** when the PRs Space has read them.
+Later mentions are only the chip. Like an issue tile, it holds its place as
+grey bars while it loads, and settles to one grey line, such as
+**Unavailable**, when it cannot be shown, including while the PRs Space is
+off. Click it to open the pull request as the chip does.
 
 Point at a chip, or move the keyboard to it with `Tab`, to see its card. It shows the state (open, draft, merged or
 closed), `repo#number`, the title, branches and changed lines when known, the
