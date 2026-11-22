@@ -6,6 +6,35 @@ temp_root="${TMPDIR:-/tmp}"
 fixture="$(mktemp -d "${temp_root%/}/subspace-local-stack.XXXXXX")"
 trap 'rm -rf "${fixture:?}"' EXIT
 
+# Each demo fleet has the standard channels (subspace-installer/README.md,
+# "Channels"): Starbase, fleet command and one ship channel per captain, with
+# the installer's topics, and an IRC account <fleet>-<captain-id> per agent.
+python3 - "$root" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+fleets = {"aurora": ("Aurora fleet", ["lyra", "orion", "vega", "castor"]),
+          "borealis": ("Borealis fleet", ["rigel"])}
+channels = json.loads((root / "scripts/local-stack/irc-channels.json").read_text())
+expected = [{"name": "#subspace", "topic": "Local workspace"}]
+accounts = ["developer"]
+for slug, (name, captains) in fleets.items():
+    expected += [
+        {"name": f"#{slug}-starbase", "topic": f"{name} Starbase: admirals and the rear admiral"},
+        {"name": f"#{slug}-command",
+         "topic": f"{name} command: the rear admiral and the captains, and agent dispatch"},
+        *({"name": f"#{slug}-{captain}", "topic": f"{name}: {captain.capitalize()}'s ship"}
+          for captain in captains),
+    ]
+    accounts += [f"{slug}-admiral", *(f"{slug}-{captain}" for captain in captains)]
+assert channels == expected, channels
+script = (root / "scripts/local-stack.sh").read_text()
+assert re.search(r"^accounts=\((.*)\)$", script, re.M)[1].split() == accounts
+PY
+
 checkout="$fixture/checkout with spaces"
 mkdir -p "$checkout/scripts/local-stack" "$fixture/bin" "$fixture/home"
 cp "$root/Makefile" "$checkout/"

@@ -1,8 +1,12 @@
 [
   { "name": "#subspace", "topic": "Local workspace" },
-  { "name": "#aurora-command", "topic": "Aurora fleet Starbase: admirals and the rear admiral" },
-  { "name": "#aurora-nav", "topic": "Navigation console initiative" },
-  { "name": "#aurora-relay", "topic": "Relay reliability initiative" },
-  { "name": "#borealis-command", "topic": "Borealis fleet Starbase: admirals and the rear admiral" },
-  { "name": "#borealis-warp", "topic": "Warp diagnostics initiative" }
+  { "name": "#aurora-starbase", "topic": "Aurora fleet Starbase: admirals and the rear admiral" },
+  { "name": "#aurora-command", "topic": "Aurora fleet command: the rear admiral and the captains, and agent dispatch" },
+  { "name": "#aurora-lyra", "topic": "Aurora fleet: Lyra's ship" },
+  { "name": "#aurora-orion", "topic": "Aurora fleet: Orion's ship" },
+  { "name": "#aurora-vega", "topic": "Aurora fleet: Vega's ship" },
+  { "name": "#aurora-castor", "topic": "Aurora fleet: Castor's ship" },
+  { "name": "#borealis-starbase", "topic": "Borealis fleet Starbase: admirals and the rear admiral" },
+  { "name": "#borealis-command", "topic": "Borealis fleet command: the rear admiral and the captains, and agent dispatch" },
+  { "name": "#borealis-rigel", "topic": "Borealis fleet: Rigel's ship" }
 ]
