@@ -330,15 +330,34 @@ in the local database. Use `DEMO=0` to skip the rehearsal.
 Everything binds to `127.0.0.1` only. The `local` organisation has the
 `developer@example.com` account, the bootstrap Local workspace, and IRC
 accounts for the developer and fleet agents. The two demo fleets share Ergo:
-`aurora` uses the plain listener and `borealis` uses TLS.
+`aurora` uses the plain listener and `borealis` uses TLS. An agent's IRC
+nick, SASL account and API agent name are the same: `<fleet>-admiral` for
+the rear admiral and `<fleet>-<captain-id>` for a captain. Aurora has
+`aurora-admiral` and the captains `aurora-lyra`, `aurora-orion`,
+`aurora-vega` and `aurora-castor`. Borealis has `borealis-admiral` and
+`borealis-rigel`.
+
+Ergo registers the Local workspace's `#subspace` and each fleet's
+[standard channels](subspace-installer/README.md#channels):
+
+| Channel | Aurora's | What the demo shows there |
+| --- | --- | --- |
+| Starbase | `#aurora-starbase` | People and the rear admiral talk. |
+| Fleet command | `#aurora-command` | The rear admiral and the captains coordinate. |
+| Ship, one per captain | `#aurora-lyra` and so on | People talk to the captain about its work. |
 
 The default seed adds the fictional Fallow Reach rehearsal. Navigation console,
 Warp diagnostics and Relay reliability span four projects (`NAV`, `MAP`,
 `WARP` and `RELAY`) with 48 issues, decision records, threaded comments, todos,
 review screenshots and local simulated pull requests and deployments. The
-Channels Space has conversation history in six channels, including a screenshot
-in `#aurora-nav`. The same screenshot is kept on the issue for when the IRC
-upload expires. No agent processes or GitHub credentials are needed.
+Channels Space has conversation history in `#subspace`, both fleets'
+Starbase and command channels, and the ship channels `#aurora-lyra`
+(navigation, including a screenshot), `#aurora-orion` (the relay rollout)
+and `#borealis-rigel` (warp diagnostics). `#aurora-vega` and
+`#aurora-castor` start empty. The same screenshot is kept on the issue for
+when the IRC upload expires. Each initiative lists its fleet's Starbase and
+command channels and the ship channels of the captains on its projects. No
+agent processes or GitHub credentials are needed.
 
 To start with the developer account, fleet records, IRC accounts and just the
 bootstrap workspace, use either command on a fresh stack:
@@ -418,8 +437,9 @@ the other fleet switches connection.
 use a fresh checkout with a distinct `COMPOSE_PROJECT_NAME` and spare ports
 for all five bindings. Set `SUBSPACE_STACK_DESKTOP_CONFIG=0` to skip the
 desktop config write, start that stack with `DEMO=0`, then run
-`make stack-check STACK_LIVE=1` with the same environment. It adds the demo
-and checks that a second seed preserves the API and IRC data.
+`make stack-check STACK_LIVE=1` with the same environment. It adds the demo,
+checks that the agents and channels follow the standard, and checks that a
+second seed preserves the API and IRC data.
 
 ## How we run it
 
