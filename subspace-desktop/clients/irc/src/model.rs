@@ -5,88 +5,20 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+mod config;
 mod listing;
+mod reaction;
 mod replies;
 mod send_result;
+pub use config::{NetworkConfig, Sasl};
 pub use listing::ListedChannel;
+pub use reaction::{Casemapping, Reaction, ReactionChange, ReactionError, Update};
 pub use replies::ThreadRoots;
 pub use send_result::SendResult;
 
 /// A configured network's stable key, such as `libera`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NetworkId(pub String);
-
-/// SASL credentials. Only `PLAIN` and `EXTERNAL` are offered.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Sasl {
-    pub username: String,
-    #[serde(default)]
-    pub password: String,
-    /// A file holding the password, read at each connect and never stored;
-    /// used when `password` is empty.
-    #[serde(default)]
-    pub password_file: Option<std::path::PathBuf>,
-    #[serde(default)]
-    pub external: bool,
-}
-
-/// One network from `networks` in the Channels Space's settings file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NetworkConfig {
-    pub id: NetworkId,
-    /// Display name; defaults to the id.
-    #[serde(default)]
-    pub name: String,
-    pub host: String,
-    #[serde(default = "default_port")]
-    pub port: u16,
-    #[serde(default = "default_true")]
-    pub tls: bool,
-    /// Only for local test servers.
-    #[serde(default)]
-    pub accept_invalid_certs: bool,
-    pub nickname: String,
-    #[serde(default)]
-    pub alt_nicks: Vec<String>,
-    #[serde(default)]
-    pub username: String,
-    #[serde(default)]
-    pub realname: String,
-    /// Server password (`PASS`), not the account password.
-    #[serde(default)]
-    pub password: String,
-    #[serde(default)]
-    pub sasl: Option<Sasl>,
-    /// Channels joined after registration, such as `#subspace`.
-    #[serde(default)]
-    pub channels: Vec<String>,
-    #[serde(default = "default_true")]
-    pub auto_connect: bool,
-    /// Words that highlight a line, besides our own nick (case-insensitive,
-    /// whole words).
-    #[serde(default)]
-    pub highlights: Vec<String>,
-    /// PEM CA certificate(s) trusted for this server, besides the system roots,
-    /// such as a private network's own CA.
-    #[serde(default)]
-    pub ca_cert: Option<std::path::PathBuf>,
-    /// PEM client certificate for TLS (and SASL `EXTERNAL`).
-    #[serde(default)]
-    pub client_cert: Option<std::path::PathBuf>,
-    /// PEM private key for `client_cert`; defaults to the certificate file.
-    #[serde(default)]
-    pub client_key: Option<std::path::PathBuf>,
-}
-
-fn default_port() -> u16 {
-    6697
-}
-
-fn default_true() -> bool {
-    true
-}
 
 /// Where a line belongs within one network.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -416,6 +348,23 @@ pub enum Command {
         buffer: BufferKey,
         state: Typing,
     },
+    /// Adds `reaction` to the message `msgid` in the buffer's conversation
+    /// as a `TAGMSG` with `+draft/react` and `+draft/reply`. Requires
+    /// `message-tags`; a refused reaction sends nothing and is answered with
+    /// [`Update::ReactionRefused`]. Check it first with
+    /// [`crate::reactions::check_reaction`].
+    React {
+        buffer: BufferKey,
+        msgid: String,
+        reaction: String,
+    },
+    /// Takes back our `reaction` to `msgid` (`+draft/unreact`), with the
+    /// same checks as [`Command::React`].
+    Unreact {
+        buffer: BufferKey,
+        msgid: String,
+        reaction: String,
+    },
     /// Asks the server for its public channels (`LIST`), answered as
     /// [`Event::ChannelList`]. Each connection asks once by itself after
     /// the message of the day. Ignored while a `LIST` is running or before
@@ -426,23 +375,4 @@ pub enum Command {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{NetworkConfig, default_port, default_true};
-
-    #[test]
-    fn defaults_are_tls_and_auto_connect() {
-        assert_eq!(default_port(), 6697);
-        assert!(default_true());
-    }
-
-    #[test]
-    fn minimal_network_config_uses_defaults() {
-        let config: NetworkConfig =
-            serde_json::from_str(r#"{"id":"local","host":"127.0.0.1","nickname":"me"}"#).unwrap();
-        assert_eq!(config.port, 6697);
-        assert!(config.tls);
-        assert!(config.auto_connect);
-        assert!(config.highlights.is_empty());
-        assert!(config.sasl.is_none());
-    }
-}
+mod tests;

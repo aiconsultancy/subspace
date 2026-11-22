@@ -116,7 +116,7 @@ async fn send_over(failure: Failure, lines: &[&str]) -> (Option<End>, Vec<Event>
         lines: lines.iter().map(|line| line.to_string()).collect(),
     };
     let end = link.command(Some(NetCommand::Session(send))).await;
-    let reported = events.0.lock().unwrap().iter().cloned().collect();
+    let reported = events.events();
     let written = String::from_utf8_lossy(&wire.lock().unwrap()).into_owned();
     (end, reported, written)
 }
@@ -207,4 +207,53 @@ async fn a_full_write_answers_written_after_the_echoes() {
         echo.is_some() && answer.is_some() && echo < answer,
         "{events:?}"
     );
+}
+
+/// A reaction whose write fails: no local echo, and a `ConnectionLost`
+/// refusal instead; a full write echoes it.
+#[tokio::test]
+async fn a_reaction_whose_write_fails_is_refused_without_an_echo() {
+    use crate::model::{ReactionError, Update};
+    let react = || Command::React {
+        buffer: BufferKey {
+            network: NetworkId("local".into()),
+            target: Target::Channel("#c".into()),
+        },
+        msgid: "m1".into(),
+        reaction: "👍".into(),
+    };
+    let reported = |events: &EventSink| -> Vec<Update> {
+        events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|update| !matches!(update, Update::Event(_)))
+            .cloned()
+            .collect()
+    };
+    for (failure, written) in [
+        (Failure::BeforeAnyByte, false),
+        (Failure::AfterBytes(4096), true),
+    ] {
+        let events = EventSink::default();
+        let stream = Box::new(Failing {
+            failure,
+            wire: Arc::new(Mutex::new(Vec::new())),
+        });
+        let mut link = Link::new(stream, welcomed(), events.clone());
+        link.command(Some(NetCommand::Session(react()))).await;
+        let updates = reported(&events);
+        assert_eq!(updates.len(), 1);
+        match written {
+            true => assert!(matches!(&updates[0], Update::Reaction(reaction) if reaction.own)),
+            false => assert!(matches!(
+                &updates[0],
+                Update::ReactionRefused {
+                    error: ReactionError::ConnectionLost,
+                    ..
+                }
+            )),
+        }
+    }
 }

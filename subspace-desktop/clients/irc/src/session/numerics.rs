@@ -36,11 +36,20 @@ pub(super) fn server_line(session: &Session, message: &Message, kind: LineKind, 
     )));
 }
 
-pub(super) fn info(session: &mut Session, message: &Message, out: &mut Output) {
+/// 900 (`RPL_LOGGEDIN`): shown, and our account remembered.
+pub(super) fn logged_in(session: &mut Session, message: &Message, out: &mut Output) {
     server_line(session, message, LineKind::Info, out);
+    session.reg.account = Some(message.param(2).to_owned()).filter(|account| !account.is_empty());
 }
 
-pub(super) fn isupport(session: &mut Session, message: &Message, _: &mut Output) {
+/// 901 (`RPL_LOGGEDOUT`): shown, and our account forgotten.
+pub(super) fn logged_out(session: &mut Session, message: &Message, out: &mut Output) {
+    server_line(session, message, LineKind::Info, out);
+    session.reg.account = None;
+}
+
+pub(super) fn isupport(session: &mut Session, message: &Message, out: &mut Output) {
+    let allowed = super::reactions::supported(session);
     let end = message.params.len().saturating_sub(1);
     message
         .params
@@ -51,6 +60,9 @@ pub(super) fn isupport(session: &mut Session, message: &Message, _: &mut Output)
     let names = session.spellings.names();
     session.refold(names);
     super::metadata::refold(session);
+    if super::reactions::supported(session) != allowed {
+        out.updates.now.push(super::reactions::support(session));
+    }
 }
 
 /// 221 (`RPL_UMODEIS`): our user modes, such as `+Zi`.

@@ -18,9 +18,7 @@ const WAIT: Duration = Duration::from_secs(10);
 
 fn statuses(events: &EventSink) -> Vec<ConnectionStatus> {
     events
-        .0
-        .lock()
-        .unwrap()
+        .events()
         .iter()
         .filter_map(|event| match event {
             Event::Status { status, .. } => Some(status.clone()),
@@ -130,7 +128,7 @@ async fn w02_an_idle_network_answers_offline_and_connects_on_request() {
         seen.ends_with(&[ConnectionStatus::Connecting, ConnectionStatus::Registering])
     })
     .await;
-    let offline = events.0.lock().unwrap().iter().any(|event| {
+    let offline = events.events().iter().any(|event| {
         matches!(event, Event::Line(line) if line.kind == LineKind::Error
             && line.text == "Not connected to Acceptance: cannot join #x"
             && line.buffer == BufferKey { network: NetworkId("acc".into()), target: Target::Server })

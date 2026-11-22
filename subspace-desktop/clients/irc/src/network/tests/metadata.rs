@@ -11,7 +11,7 @@ use crate::model::{Command, Event, NetworkConfig, NetworkId};
 async fn wait_status(events: &EventSink, cleared: bool) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let found = events.0.lock().unwrap().iter().any(|event| {
+            let found = events.events().iter().any(|event| {
                 matches!(event, Event::NickStatus { nick, status, .. } if nick == "agent" && status.is_none() == cleared)
             });
             if found { return; }
@@ -58,9 +58,7 @@ async fn socket_loss_and_owner_disconnect_emit_clears() {
                 .is_ok()
         );
         let cleared = events
-            .0
-            .lock()
-            .unwrap()
+            .events()
             .iter()
             .filter(|event| matches!(event, Event::NickStatus { status: None, .. }))
             .count();
