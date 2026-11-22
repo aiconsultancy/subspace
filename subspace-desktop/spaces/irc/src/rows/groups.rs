@@ -1,6 +1,8 @@
 //! A network's navigator groups: each fleet's, `People`, then the
 //! network's own.
 
+use std::collections::HashMap;
+
 use gpui_kit::SharedString;
 use subspace_client_irc::{BufferKey, NetworkId};
 use subspace_framework::dashboard::{Glyph, Group, Row, Tone};
@@ -63,9 +65,10 @@ fn people_group(state: &IrcState, network: &Network, people: Vec<Held<'_>>, layo
     if people.is_empty() {
         return;
     }
+    let presences = activity::presences(state, &network.id);
     let rows = people
         .iter()
-        .map(|(key, buffer)| person_row(state, key, buffer, layout))
+        .map(|(key, buffer)| person_row(&presences, key, buffer, layout))
         .collect();
     let group = Group {
         key: people_group_key(&network.id),
@@ -78,9 +81,14 @@ fn people_group(state: &IrcState, network: &Network, people: Vec<Held<'_>>, layo
 }
 
 /// A person's row, with their presence recorded for its mark.
-fn person_row(state: &IrcState, key: &BufferKey, buffer: &Buffer, layout: &mut Layout) -> Row {
+fn person_row(
+    presences: &HashMap<String, activity::Presence>,
+    key: &BufferKey,
+    buffer: &Buffer,
+    layout: &mut Layout,
+) -> Row {
     let row = keyed(row(key, buffer), key, layout);
-    let presence = activity::presence(state, &key.network, title(key));
+    let presence = activity::presence(presences, title(key));
     layout.people.insert(row.key.clone(), presence);
     row
 }

@@ -1,6 +1,8 @@
 //! What a navigator row says about who is at work: a ship's one dot, and a
 //! person's presence.
 
+use std::collections::HashMap;
+
 use subspace_client_irc::{Member, NetworkId, Target};
 
 use crate::fleet::ChannelKind;
@@ -92,21 +94,37 @@ impl Presence {
     }
 }
 
-/// `nick`'s presence on `network`, from the members of the channels we are
-/// in there.
-pub(crate) fn presence(state: &IrcState, network: &NetworkId, nick: &str) -> Presence {
-    let seen = state
+/// Everyone's presence on `network`, from the members of the channels we
+/// are in there, by nick in ASCII lower case: built once per network, so
+/// the People rows look it up rather than scan every channel each. A nick
+/// in several channels takes its first.
+pub(crate) fn presences(state: &IrcState, network: &NetworkId) -> HashMap<String, Presence> {
+    let mut found = HashMap::new();
+    let members = state
         .buffers()
         .filter(|(key, buffer)| {
             &key.network == network && buffer.joined && matches!(key.target, Target::Channel(_))
         })
-        .flat_map(|(_, buffer)| &buffer.members)
-        .find(|member| member.nick.eq_ignore_ascii_case(nick));
-    match seen {
-        Some(member) if member.away => Presence::Away,
-        Some(_) => Presence::Here,
-        None => Presence::Unseen,
+        .flat_map(|(_, buffer)| &buffer.members);
+    for member in members {
+        let presence = if member.away {
+            Presence::Away
+        } else {
+            Presence::Here
+        };
+        found
+            .entry(member.nick.to_ascii_lowercase())
+            .or_insert(presence);
     }
+    found
+}
+
+/// `nick`'s presence in `presences`; unseen when it shares no channel.
+pub(crate) fn presence(presences: &HashMap<String, Presence>, nick: &str) -> Presence {
+    presences
+        .get(&nick.to_ascii_lowercase())
+        .copied()
+        .unwrap_or(Presence::Unseen)
 }
 
 /// A row's spoken name followed by what its mark says, if it has one, such
