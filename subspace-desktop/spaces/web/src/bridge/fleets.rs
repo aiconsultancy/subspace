@@ -54,7 +54,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use gpui_kit::{AppContext as _, Entity, TestAppContext};
+    use gpui_kit::{Entity, TestAppContext};
     use subspace_client_fleet::{FleetApi, FleetRecord, TokenStore};
     use subspace_framework::core::Secret;
     use subspace_framework::core::vault::{Vault, VaultError};
@@ -86,14 +86,10 @@ mod tests {
     fn locked(cx: &mut TestAppContext) -> (Entity<FleetApi>, Arc<AtomicUsize>) {
         let reads = Arc::new(AtomicUsize::new(0));
         let store = TokenStore::with_vault(Box::new(Locked(reads.clone())));
-        let service = cx.new(|_| FleetApi::new(Arc::new(store)));
-        service.update(cx, |service, cx| {
-            let record =
-                FleetRecord::new("aurora", "Aurora", Some("https://fleet.example.com".into()));
-            service.set_fleets(vec![record], cx);
-        });
+        let address = Some("https://fleet.example.com".into());
+        let fleets = vec![FleetRecord::new("aurora", "Aurora", address)];
+        let service = cx.update(|cx| FleetApi::install_new(store, fleets, cx));
         cx.run_until_parked();
-        cx.update(|cx| FleetApi::install(service.clone(), cx));
         (service, reads)
     }
 

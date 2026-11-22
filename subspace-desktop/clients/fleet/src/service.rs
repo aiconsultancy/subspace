@@ -111,6 +111,20 @@ impl FleetApi {
         cx.set_global(Session(service));
     }
 
+    /// A new service over `store` with `fleets`, installed as the
+    /// process's ([`Self::install`]). Only for tests (`test-support`).
+    // qual:api
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn install_new(store: TokenStore, fleets: Vec<FleetRecord>, cx: &mut App) -> Entity<Self> {
+        let service = cx.new(|cx| {
+            let mut service = Self::new(Arc::new(store));
+            service.set_fleets(fleets, cx);
+            service
+        });
+        Self::install(service.clone(), cx);
+        service
+    }
+
     /// A service over `store` with no fleets until [`Self::set_fleets`].
     pub fn new(store: Arc<TokenStore>) -> Self {
         Self {

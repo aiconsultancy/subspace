@@ -101,6 +101,7 @@ impl TokenStore {
 
     /// Tokens kept in `vault`, as a test with a vault of its own needs,
     /// such as a locked keychain. Only for tests (`test-support`).
+    // qual:api
     #[cfg(any(test, feature = "test-support"))]
     pub fn with_vault(vault: Box<dyn Vault>) -> Self {
         Self { vault }

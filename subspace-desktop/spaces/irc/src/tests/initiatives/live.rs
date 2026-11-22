@@ -3,10 +3,8 @@
 //! Ships, the header pill and the navigator dot's tooltip, and the board
 //! following a fleet through the shared service while it shows it.
 
-use std::sync::Arc;
-
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
+use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use subspace_client_fleet::{FleetApi, FleetRecord, FleetState, Link, TokenStore};
 use subspace_client_irc::Event;
 use subspace_framework::core::Secret;
@@ -227,13 +225,9 @@ fn the_starbase_lists_the_roster_s_ships_with_their_crew(cx: &mut TestAppContext
 
 #[gpui_kit::test]
 fn the_board_follows_a_ready_fleet_while_it_shows_it(cx: &mut TestAppContext) {
-    let service = cx.new(|_| FleetApi::new(Arc::new(TokenStore::memory())));
-    service.update(cx, |service, cx| {
-        let record = FleetRecord::new("aurora", "Aurora", Some("http://127.0.0.1:9".into()));
-        service.set_fleets(vec![record], cx);
-    });
+    let record = FleetRecord::new("aurora", "Aurora", Some("http://127.0.0.1:9".into()));
+    let service = cx.update(|cx| FleetApi::install_new(TokenStore::memory(), vec![record], cx));
     cx.run_until_parked();
-    cx.update(|cx| FleetApi::install(service.clone(), cx));
     let (board, hub, cx) = ship(cx);
     let following = |board: &Entity<Irc>, cx: &mut VisualTestContext| {
         board.read_with(cx, |board, _| board.watch.following())
