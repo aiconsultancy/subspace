@@ -71,9 +71,11 @@ if grep -Fq -- "--label" "$fixture/gh.log"; then
 	exit 1
 fi
 test "$(git --git-dir="$fixture/origin.git" rev-parse "$desktop")" = "$(git --git-dir="$fixture/origin.git" rev-parse main)"
-# The lockfiles check is started on the refreshed release branch only.
-test "$(grep -c '^workflow run' "$fixture/gh.log")" = 1
+# The lockfiles and Stargate pin checks are started on the refreshed release
+# branch only.
+test "$(grep -c '^workflow run' "$fixture/gh.log")" = 2
 grep -Fqx "workflow run lockfiles.yml --repo fixture/repository --ref $framework" "$fixture/gh.log"
+grep -Fqx "workflow run stargate-pin.yml --repo fixture/repository --ref $framework" "$fixture/gh.log"
 test "$(git rev-parse HEAD)" = "$(git --git-dir="$fixture/origin.git" rev-parse main)"
 
 # A second run finds nothing to do and pushes nothing.
@@ -85,6 +87,7 @@ test ! -e "$fixture/verified"
 grep -Fq "$framework: the lockfiles are up to date." "$GITHUB_STEP_SUMMARY"
 # An up-to-date release branch is checked too.
 test "$(grep -c "^workflow run lockfiles.yml --repo fixture/repository --ref $framework\$" "$fixture/gh.log")" = 2
+test "$(grep -c "^workflow run stargate-pin.yml --repo fixture/repository --ref $framework\$" "$fixture/gh.log")" = 2
 
 # A sync that touches anything but lockfiles stops before committing.
 printf '#!/usr/bin/env bash\nprintf "changed\\n" >>README.md\n' >"$fixture/sync"
@@ -98,4 +101,10 @@ if grep -Fq -- "--ref $desktop" "$fixture/gh.log"; then
 	exit 1
 fi
 test "$(git --git-dir="$fixture/origin.git" rev-parse "$desktop")" = "$(git --git-dir="$fixture/origin.git" rev-parse main)"
+
+# The app's release branch, which carries the installer, gets both checks.
+printf '#!/usr/bin/env bash\n' >"$fixture/sync"
+FAKE_BRANCHES="$desktop" bash scripts/release-lockfiles.sh
+grep -Fqx "workflow run lockfiles.yml --repo fixture/repository --ref $desktop" "$fixture/gh.log"
+grep -Fqx "workflow run stargate-pin.yml --repo fixture/repository --ref $desktop" "$fixture/gh.log"
 echo "release-lockfiles fixtures passed"

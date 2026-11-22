@@ -110,6 +110,40 @@ class LockfilesCheckTests(unittest.TestCase):
         self.assertRegex(release, r"actions: write\b")
 
 
+WORKFLOWS = SCRIPTS.parent / ".github/workflows"
+
+
+class StargatePinCheckTests(unittest.TestCase):
+    """Each release branch gets the Stargate pin check the way it gets the lockfiles check; the check needs
+    the network, so it stays out of the offline gates."""
+
+    def test_the_release_branches_get_the_pin_check(self) -> None:
+        refresh = (SCRIPTS / "release-lockfiles.sh").read_text()
+        self.assertIn('gh workflow run stargate-pin.yml --repo "$repo" --ref "$1"', refresh)
+        workflow = (WORKFLOWS / "stargate-pin.yml").read_text()
+        for line in ("  pull_request:\n", "  workflow_dispatch:\n", "permissions: {}\n",
+                     "      contents: read\n", "        run: python3 scripts/stargate-pin.py --check\n",
+                     "github.ref_name != 'release-please--branches--main--components--subspace-framework'"):
+            self.assertIn(line, workflow)
+        self.assertNotIn("write", workflow)
+        self.assertNotIn("continue-on-error", workflow)
+
+    def test_the_offline_gates_do_not_ask_github(self) -> None:
+        makefile = (SCRIPTS.parent / "Makefile").read_text()
+        recipe = makefile.split("\nrelease-check:", 1)[1].split("\n\n", 1)[0]
+        hooks = (SCRIPTS.parent / "prek.toml").read_text()
+        for text in (recipe, hooks):
+            self.assertNotIn("stargate-pin.py --check", text)
+            self.assertNotIn("stargate-pin.py --json", text)
+
+    def test_every_action_is_pinned_to_a_commit(self) -> None:
+        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+            for line in workflow.read_text().splitlines():
+                if line.strip().startswith(("uses:", "- uses:")):
+                    with self.subTest(workflow=workflow.name, line=line):
+                        self.assertRegex(line, r"uses: [\w.-]+/[\w./-]+@[0-9a-f]{40} # v\d")
+
+
 STARGATE_API = "https://api.github.com/repos/aiconsultancy/stargate"
 OLD, NEW, NEWER = "a" * 40, "b" * 40, "c" * 40
 RUNTIME = f'''STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
