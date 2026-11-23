@@ -1,37 +1,28 @@
 //! Secrets longer than one stored item can hold, split across several items.
 //!
-//! The account's own item holds the secret itself, exactly as earlier builds
-//! wrote it, whenever it fits. A longer secret is split into chunks and the
-//! account's item holds a short manifest instead:
+//! The account's own item is the one commit point, for this build and every
+//! earlier one. Text there is always the secret itself, verbatim, as every
+//! earlier build wrote it; a longer secret is chunks under derived names and,
+//! in the account's item, a manifest in bytes that no text write can produce
+//! (the `format` module has the layout).
 //!
-//! - A value without the [`TAG`] prefix is the secret itself.
-//! - `TAG` + `plain/` + the secret is a secret that itself starts with `TAG`.
-//! - `TAG` + `chunks/v1/<generation>/<count>/<bytes>` is a manifest: the
-//!   secret is `count` chunks, `bytes` long in UTF-8. The generation is 32
-//!   random hexadecimal digits, new for every save.
-//! - Any other value with the prefix is a format this build cannot read.
-//!
-//! Chunk `index` is stored under `<account>#chunk/<generation>/<index>` as
-//! `<generation>/<index>/` and its piece of the secret. A save writes the new
-//! chunks, then the manifest, and only then deletes the previous chunks, so a
-//! save that stops part way leaves the previous secret readable. A load that
-//! finds a chunk missing, or one written by another save, fails rather than
-//! return part of a secret.
+//! A save writes the new chunks, then the account's item, then sweeps every
+//! chunk of the account that the item does not name; a save that fails
+//! before the account's item is written deletes its own chunks. A delete
+//! deletes the account's item, then sweeps. A load fails, rather than return
+//! anything else, unless the chunks make a secret with the manifest's length
+//! and digest.
 
-use std::sync::Mutex;
+mod format;
 
-use super::{KeychainError, Store};
-use crate::vault::lock;
+use zeroize::Zeroizing;
 
-/// Marks a value that is not the secret itself.
-const TAG: &str = "subspace-keychain/";
-/// After [`TAG`]: a secret that itself starts with the tag.
-const ESCAPED: &str = "plain/";
-/// After [`TAG`]: a version 1 manifest.
-const MANIFEST: &str = "chunks/v1/";
-const GENERATION_DIGITS: usize = 32;
-/// The most chunks one secret may use: 240 KiB of ASCII in Windows chunks.
-const MAX_CHUNKS: usize = 256;
+use super::{Item, KeychainError, Store};
+use format::{
+    Manifest, chunk_header, chunk_name, concat, digest, fits, generation, manifest, namespace,
+    piece, pieces, read_manifest, verify,
+};
+
 /// Windows Credential Manager holds at most 2,560 bytes in one credential
 /// (`CRED_MAX_CREDENTIAL_BLOB_SIZE`) and the keyring crate stores a password
 /// there as UTF-16, so 1,280 code units. Earlier builds had the same limit.
@@ -39,45 +30,33 @@ const WINDOWS_ITEM_UNITS: usize = 1_280;
 /// A chunk's piece of the secret: with its header of at most 37 units, a
 /// chunk stays more than a fifth under [`WINDOWS_ITEM_UNITS`].
 const WINDOWS_PIECE_UNITS: usize = 960;
+/// `CRED_MAX_USERNAME_LENGTH`, which keyring applies to the account in bytes.
+const WINDOWS_ACCOUNT_BYTES: usize = 513;
 
-/// Serialises split loads, saves and deletes in this process, so a load
-/// never reads a manifest whose chunks a save is deleting.
-static SPLIT: Mutex<()> = Mutex::new(());
-
-/// How much one stored item holds, in UTF-16 code units.
-#[derive(Clone, Copy, Debug)]
+/// What one stored item holds, in UTF-16 code units, and the longest account.
+#[derive(Clone, Copy)]
 pub(super) struct Limits {
-    /// The longest value kept as one item, which every earlier build reads.
-    single: usize,
+    /// The longest secret kept as one item, which every earlier build reads.
+    item: usize,
     /// The longest piece of a split secret.
     piece: usize,
+    /// The longest account name, in bytes.
+    account: usize,
 }
 
 impl Limits {
     pub(super) const WINDOWS: Self = Self {
-        single: WINDOWS_ITEM_UNITS,
+        item: WINDOWS_ITEM_UNITS,
         piece: WINDOWS_PIECE_UNITS,
+        account: WINDOWS_ACCOUNT_BYTES,
     };
 }
 
-/// What an account's own item holds.
-enum Stored<'a> {
-    Plain(&'a str),
-    /// The fields of a manifest, after its prefix.
-    Manifest(&'a str),
-    Unknown,
-}
-
-struct Manifest {
-    generation: String,
-    count: usize,
-    bytes: usize,
-}
-
-/// The items one save writes: its chunks by name, then the account's item.
+/// What a save writes: its chunks by name, then the account's item, which is
+/// the secret itself unless there is a manifest.
 struct Plan {
-    chunks: Vec<(String, String)>,
-    primary: String,
+    chunks: Vec<(String, Zeroizing<String>)>,
+    manifest: Option<Vec<u8>>,
 }
 
 /// The secret under `account`. Without limits, one item holds any secret.
@@ -87,8 +66,8 @@ pub(super) fn load(
     account: &str,
 ) -> Result<Option<String>, KeychainError> {
     match limits {
-        None => store.get(account),
-        Some(_) => load_split(store, account),
+        None => load_one(store, account),
+        Some(limits) => load_split(store, limits, account),
     }
 }
 
@@ -99,7 +78,7 @@ pub(super) fn save(
     secret: &str,
 ) -> Result<(), KeychainError> {
     match limits {
-        None => store.set(account, secret),
+        None => store.set_text(account, secret),
         Some(limits) => save_split(store, limits, account, secret),
     }
 }
@@ -112,231 +91,164 @@ pub(super) fn delete(
 ) -> Result<(), KeychainError> {
     match limits {
         None => store.delete(account),
-        Some(_) => delete_split(store, account),
+        Some(limits) => delete_split(store, limits, account),
     }
 }
 
-fn load_split(store: &impl Store, account: &str) -> Result<Option<String>, KeychainError> {
-    let _split = lock(&SPLIT);
-    let value = store.get(account)?;
-    value
-        .map(|value| decode(store, account, &value))
-        .transpose()
+fn load_one(store: &impl Store, account: &str) -> Result<Option<String>, KeychainError> {
+    store.get(account)?.map(text).transpose()
 }
 
-/// Reading the previous item is best effort: one that cannot be read is
-/// replaced, as earlier builds did, at the cost of its chunks.
+fn load_split(
+    store: &impl Store,
+    limits: Limits,
+    account: &str,
+) -> Result<Option<String>, KeychainError> {
+    let namespace = namespace(account, limits.account)?;
+    let item = store.get(account)?;
+    item.map(|item| decode(store, &namespace, item)).transpose()
+}
+
+/// The sweep after the account's item is written is best effort: the secret
+/// is saved, and the next save or delete sweeps again.
 fn save_split(
     store: &impl Store,
     limits: Limits,
     account: &str,
     secret: &str,
 ) -> Result<(), KeychainError> {
-    let _split = lock(&SPLIT);
-    let previous = chunk_names(account, store.get(account).ok().flatten().as_deref());
-    let plan = plan(account, secret, limits)?;
-    write(store, account, &plan)
-        .inspect_err(|_| forget(store, plan.chunks.iter().map(|(name, _)| name)))?;
-    forget(store, &previous);
+    let namespace = namespace(account, limits.account)?;
+    let plan = plan(&namespace, secret, limits)?;
+    write(store, account, secret, &plan).inspect_err(|_| forget(store, &plan))?;
+    let _ = sweep(store, account, &namespace);
     Ok(())
 }
 
-/// Deletes the chunks before the manifest that names them, so a delete that
-/// stops part way can be repeated. An unreadable item is deleted alone.
-fn delete_split(store: &impl Store, account: &str) -> Result<(), KeychainError> {
-    let _split = lock(&SPLIT);
-    let chunks = chunk_names(account, store.get(account).ok().flatten().as_deref());
-    chunks.iter().try_for_each(|name| store.delete(name))?;
-    store.delete(account)
+/// Deletes the account's item, the commit, before the chunks, so a delete
+/// that stops part way leaves no secret.
+fn delete_split(store: &impl Store, limits: Limits, account: &str) -> Result<(), KeychainError> {
+    let namespace = namespace(account, limits.account)?;
+    store.delete(account)?;
+    sweep(store, account, &namespace)
 }
 
-fn decode(store: &impl Store, account: &str, value: &str) -> Result<String, KeychainError> {
-    match classify(value) {
-        Stored::Plain(secret) => Ok(secret.to_owned()),
-        Stored::Manifest(fields) => join(store, account, read_manifest(fields)),
-        Stored::Unknown => Err(KeychainError),
+fn decode(store: &impl Store, namespace: &str, item: Item) -> Result<String, KeychainError> {
+    match item {
+        Item::Text(secret) => Ok(secret),
+        Item::Bytes(bytes) => join(store, namespace, read_manifest(&bytes)),
     }
 }
 
 fn join(
     store: &impl Store,
-    account: &str,
+    namespace: &str,
     manifest: Option<Manifest>,
 ) -> Result<String, KeychainError> {
     let manifest = manifest.ok_or(KeychainError)?;
     let pieces = (0..manifest.count)
-        .map(|index| read_chunk(store, account, &manifest, index))
+        .map(|index| read_chunk(store, namespace, &manifest, index))
         .collect::<Result<Vec<_>, _>>()?;
-    assemble(&manifest, &pieces)
+    let secret = concat(&pieces);
+    let digest = digest(&manifest.generation, &secret);
+    verify(&manifest, secret, &digest)
 }
 
 fn read_chunk(
     store: &impl Store,
-    account: &str,
+    namespace: &str,
     manifest: &Manifest,
     index: usize,
-) -> Result<String, KeychainError> {
-    let value = store.get(&chunk_name(account, &manifest.generation, index))?;
-    strip_header(value, &chunk_header(&manifest.generation, index))
+) -> Result<Zeroizing<String>, KeychainError> {
+    let item = store.get(&chunk_name(namespace, &manifest.generation, index))?;
+    piece(item, &chunk_header(&manifest.generation, index))
 }
 
-fn plan(account: &str, secret: &str, limits: Limits) -> Result<Plan, KeychainError> {
-    single(secret, limits).map_or_else(
-        || split(account, secret, limits, &generation()),
-        |primary| {
-            Ok(Plan {
-                chunks: Vec::new(),
-                primary,
-            })
-        },
-    )
+fn plan(namespace: &str, secret: &str, limits: Limits) -> Result<Plan, KeychainError> {
+    match fits(secret, limits.item) {
+        true => Ok(Plan {
+            chunks: Vec::new(),
+            manifest: None,
+        }),
+        false => split(namespace, secret, limits.piece, &generation()),
+    }
 }
 
 fn split(
-    account: &str,
+    namespace: &str,
     secret: &str,
-    limits: Limits,
+    units: usize,
     generation: &str,
 ) -> Result<Plan, KeychainError> {
-    let pieces = pieces(secret, limits.piece)?;
+    let pieces = pieces(secret, units)?;
     let chunks = pieces.iter().enumerate().map(|(index, piece)| {
-        let value = chunk_header(generation, index) + piece;
-        (chunk_name(account, generation, index), value)
+        let value = Zeroizing::new(chunk_header(generation, index) + piece);
+        (chunk_name(namespace, generation, index), value)
     });
+    let digest = digest(generation, secret);
     Ok(Plan {
         chunks: chunks.collect(),
-        primary: manifest(generation, pieces.len(), secret.len()),
+        manifest: Some(manifest(generation, pieces.len(), secret.len(), &digest)),
     })
 }
 
-fn write(store: &impl Store, account: &str, plan: &Plan) -> Result<(), KeychainError> {
+fn write(
+    store: &impl Store,
+    account: &str,
+    secret: &str,
+    plan: &Plan,
+) -> Result<(), KeychainError> {
     plan.chunks
         .iter()
-        .try_for_each(|(name, value)| store.set(name, value))?;
-    store.set(account, &plan.primary)
+        .try_for_each(|(name, value)| store.set_text(name, value))?;
+    match &plan.manifest {
+        None => store.set_text(account, secret),
+        Some(manifest) => store.set_bytes(account, manifest),
+    }
 }
 
-/// Deletes the named items, ignoring failures: they are no longer read.
-fn forget<'a>(store: &impl Store, names: impl IntoIterator<Item = &'a String>) {
-    names.into_iter().for_each(|name| {
+/// Deletes a failed save's chunks, ignoring failures: nothing names them.
+fn forget(store: &impl Store, plan: &Plan) {
+    plan.chunks.iter().for_each(|(name, _)| {
         let _ = store.delete(name);
     });
 }
 
-/// The chunks the account's item `value` names, if it is a manifest.
-fn chunk_names(account: &str, value: Option<&str>) -> Vec<String> {
-    let manifest = value
-        .map(classify)
-        .and_then(Stored::manifest)
-        .and_then(read_manifest);
+/// Deletes every chunk of the account that its item does not name now.
+fn sweep(store: &impl Store, account: &str, namespace: &str) -> Result<(), KeychainError> {
+    let live = chunk_names(namespace, store.get(account)?);
+    let found = store.list(namespace)?;
+    found
+        .iter()
+        .filter(|name| !live.iter().any(|live| live.eq_ignore_ascii_case(name)))
+        .try_for_each(|name| store.delete(name))
+}
+
+/// The chunks the account's item names, if it is a manifest.
+fn chunk_names(namespace: &str, item: Option<Item>) -> Vec<String> {
+    let manifest = item
+        .and_then(manifest_bytes)
+        .and_then(|bytes| read_manifest(&bytes));
     manifest.map_or_else(Vec::new, |manifest| {
         (0..manifest.count)
-            .map(|index| chunk_name(account, &manifest.generation, index))
+            .map(|index| chunk_name(namespace, &manifest.generation, index))
             .collect()
     })
 }
 
-impl<'a> Stored<'a> {
-    fn manifest(self) -> Option<&'a str> {
-        match self {
-            Stored::Manifest(fields) => Some(fields),
-            Stored::Plain(_) | Stored::Unknown => None,
+fn manifest_bytes(item: Item) -> Option<Vec<u8>> {
+    match item {
+        Item::Bytes(bytes) => Some(bytes),
+        Item::Text(secret) => {
+            let _wiped = Zeroizing::new(secret);
+            None
         }
     }
 }
 
-fn classify(value: &str) -> Stored<'_> {
-    let Some(tagged) = value.strip_prefix(TAG) else {
-        return Stored::Plain(value);
-    };
-    match (tagged.strip_prefix(ESCAPED), tagged.strip_prefix(MANIFEST)) {
-        (Some(secret), _) => Stored::Plain(secret),
-        (None, Some(fields)) => Stored::Manifest(fields),
-        (None, None) => Stored::Unknown,
+/// An item that, without limits, must be text.
+fn text(item: Item) -> Result<String, KeychainError> {
+    match item {
+        Item::Text(text) => Ok(text),
+        Item::Bytes(_) => Err(KeychainError),
     }
-}
-
-fn read_manifest(fields: &str) -> Option<Manifest> {
-    let [generation, count, bytes] = fields.split('/').collect::<Vec<_>>()[..] else {
-        return None;
-    };
-    let valid = generation.len() == GENERATION_DIGITS
-        && generation
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
-    let count = count
-        .parse()
-        .ok()
-        .filter(|count| valid && (1..=MAX_CHUNKS).contains(count))?;
-    Some(Manifest {
-        generation: generation.to_owned(),
-        count,
-        bytes: bytes.parse().ok()?,
-    })
-}
-
-/// The one item that holds `secret`, if it fits in one.
-fn single(secret: &str, limits: Limits) -> Option<String> {
-    let value = match secret.starts_with(TAG) {
-        true => format!("{TAG}{ESCAPED}{secret}"),
-        false => secret.to_owned(),
-    };
-    (value.encode_utf16().count() <= limits.single).then_some(value)
-}
-
-/// `secret` in pieces of at most `units` UTF-16 code units, split between
-/// characters, or an error when it needs more than [`MAX_CHUNKS`].
-fn pieces(secret: &str, units: usize) -> Result<Vec<&str>, KeychainError> {
-    let mut pieces = Vec::new();
-    let (mut start, mut length) = (0, 0);
-    for (at, character) in secret.char_indices() {
-        if length + character.len_utf16() > units {
-            pieces.push(&secret[start..at]);
-            (start, length) = (at, 0);
-        }
-        length += character.len_utf16();
-    }
-    pieces.push(&secret[start..]);
-    match pieces.len() <= MAX_CHUNKS {
-        true => Ok(pieces),
-        false => Err(KeychainError),
-    }
-}
-
-/// The piece in a chunk's `value`, unless it is missing or another save's.
-fn strip_header(value: Option<String>, header: &str) -> Result<String, KeychainError> {
-    value
-        .as_deref()
-        .and_then(|value| value.strip_prefix(header))
-        .map(str::to_owned)
-        .ok_or(KeychainError)
-}
-
-/// The secret the pieces make, unless it is not the manifest's length.
-fn assemble(manifest: &Manifest, pieces: &[String]) -> Result<String, KeychainError> {
-    let secret = pieces.concat();
-    match secret.len() == manifest.bytes {
-        true => Ok(secret),
-        false => Err(KeychainError),
-    }
-}
-
-fn generation() -> String {
-    format!(
-        "{:0width$x}",
-        rand::random::<u128>(),
-        width = GENERATION_DIGITS
-    )
-}
-
-fn manifest(generation: &str, count: usize, bytes: usize) -> String {
-    format!("{TAG}{MANIFEST}{generation}/{count}/{bytes}")
-}
-
-fn chunk_name(account: &str, generation: &str, index: usize) -> String {
-    format!("{account}#chunk/{generation}/{index}")
-}
-
-fn chunk_header(generation: &str, index: usize) -> String {
-    format!("{generation}/{index}/")
 }

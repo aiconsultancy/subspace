@@ -204,6 +204,9 @@ flate2 = "1"
 hex = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 keyring = "4.2"
+# Only for `Entry::search`, which `keyring::v1` does not re-export: the
+# Windows keychain sweeps the chunks of a long secret it no longer names.
+keyring-core = "1"
 libc = "0.2"
 rand = "0.10"
 regex = "1"
@@ -231,6 +234,7 @@ unicode-normalization = "0.1"
 ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
 url = "2"
 zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
+zeroize = "1"
 windows-sys = "0.61"
 
 [workspace.lints.clippy]

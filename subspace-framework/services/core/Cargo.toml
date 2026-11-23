@@ -16,16 +16,19 @@ subspace-product.workspace = true
 dirs.workspace = true
 hex.workspace = true
 keyring.workspace = true
+keyring-core.workspace = true
 rand.workspace = true
 regex.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
+sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 unicode-normalization.workspace = true
 ureq.workspace = true
 url.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

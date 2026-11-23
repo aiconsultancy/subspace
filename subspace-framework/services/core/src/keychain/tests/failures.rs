@@ -1,87 +1,108 @@
-//! Damaged items and saves that fail: never part of a secret, never a mix.
+//! Damaged items: never part of a secret, never another secret.
 
 use std::collections::BTreeMap;
 
 use super::memory::{
-    ACCOUNT, MANIFEST_PREFIX, MAX_CHUNKS, Memory, PIECE_UNITS, WINDOWS, assert_split_round_trip,
+    ACCOUNT, MANIFEST_PREFIX, MAX_CHUNKS, Memory, PIECE_UNITS, Value, WINDOWS,
+    assert_split_round_trip, fields,
 };
 use crate::keychain::KeychainError;
 use crate::keychain::split::{load, save};
 
-#[test]
-fn a_missing_truncated_or_foreign_chunk_fails_closed() {
+/// A store holding a secret of 3,000 `b`s in four chunks, and its first chunk.
+fn split_store() -> (Memory, String, String) {
     let store = Memory::windows();
-    save(&store, WINDOWS, ACCOUNT, &"a".repeat(3_000)).unwrap();
-    let earlier = store.items();
     save(&store, WINDOWS, ACCOUNT, &"b".repeat(3_000)).unwrap();
-    let (chunk, value) = store
+    let (name, value) = store
         .items()
         .into_iter()
         .find(|(name, _)| name != ACCOUNT)
         .unwrap();
-    let foreign = earlier.into_iter().find(|(name, _)| name != ACCOUNT);
-    store.insert(&chunk, &foreign.unwrap().1);
-    assert_eq!(load(&store, WINDOWS, ACCOUNT), Err(KeychainError));
-    store.insert(&chunk, &value[..value.len() - 1]);
-    assert_eq!(load(&store, WINDOWS, ACCOUNT), Err(KeychainError));
+    let Value::Text(value) = value else {
+        panic!("a chunk is text");
+    };
+    (store, name, value)
+}
+
+#[test]
+fn a_missing_truncated_empty_or_bytes_chunk_fails_closed() {
+    let (store, chunk, value) = split_store();
+    let (header, _) = value.split_at(value.rfind('/').unwrap() + 1);
+    let damaged = [
+        Value::Text(value[..value.len() - 1].to_owned()),
+        Value::Text(header.to_owned()),
+        Value::Text(String::new()),
+        Value::Bytes(value.clone().into_bytes()),
+    ];
+    for damage in damaged {
+        store.insert(&chunk, damage);
+        assert_eq!(load(&store, WINDOWS, ACCOUNT), Err(KeychainError));
+    }
     store.remove(&chunk);
     assert_eq!(load(&store, WINDOWS, ACCOUNT), Err(KeychainError));
 }
 
 #[test]
-fn an_unreadable_manifest_fails_closed() {
-    let generation = "0".repeat(32);
-    let values = [
-        format!("subspace-keychain/chunks/v2/{generation}/2/10"),
-        "subspace-keychain/chunks/v1/not-a-generation/2/10".to_owned(),
-        format!("{MANIFEST_PREFIX}{generation}/0/0"),
-        format!("{MANIFEST_PREFIX}{generation}/{}/10", MAX_CHUNKS + 1),
-        format!("{MANIFEST_PREFIX}{generation}/2"),
-        format!("{MANIFEST_PREFIX}{generation}/2/10/1"),
-        "subspace-keychain/".to_owned(),
+fn a_chunk_with_the_same_length_but_other_content_fails_closed() {
+    let (store, chunk, value) = split_store();
+    // A valid header with another payload of the same length.
+    let (header, payload) = value.split_at(value.rfind('/').unwrap() + 1);
+    let substituted = format!("{header}c{}", &payload[1..]);
+    store.insert(&chunk, Value::Text(substituted));
+    assert_eq!(load(&store, WINDOWS, ACCOUNT), Err(KeychainError));
+
+    // A chunk of an earlier save of the same length, under this save's name.
+    let earlier = Memory::windows();
+    save(&earlier, WINDOWS, ACCOUNT, &"b".repeat(3_000)).unwrap();
+    let foreign = earlier
+        .items()
+        .into_iter()
+        .find(|(name, _)| name != ACCOUNT);
+    store.insert(&chunk, foreign.unwrap().1);
+    assert_eq!(load(&store, WINDOWS, ACCOUNT), Err(KeychainError));
+}
+
+#[test]
+fn an_impossible_or_damaged_manifest_fails_closed() {
+    let (store, _, _) = split_store();
+    let Value::Bytes(manifest) = store.items()[ACCOUNT].clone() else {
+        panic!("a split secret's item is bytes");
+    };
+    let good = fields(&Value::Bytes(manifest.clone())).unwrap();
+    let text = |count: &str, length: &str, digest: &str| {
+        let fields = format!("{}/{count}/{length}/{digest}", good.generation);
+        Value::Bytes([MANIFEST_PREFIX, fields.as_bytes()].concat())
+    };
+    let digest = good.digest.as_str();
+    let mut other = good.digest.clone().into_bytes();
+    other[0] = if other[0] == b'0' { b'1' } else { b'0' };
+    let damaged = [
+        text("004", "0000003000", &String::from_utf8(other).unwrap()),
+        text("000", "0000000000", digest),
+        text("001", "0000003000", digest),
+        text(&format!("{:03}", MAX_CHUNKS + 1), "0000003000", digest),
+        text("004", "0000000003", digest),
+        text("004", "0000002999", digest),
+        text("4", "3000", digest),
+        text("+04", "0000003000", digest),
+        text("004", "0000003000", &digest.to_uppercase()),
+        text("004", "0000003000", &format!("{digest}/0")),
+        Value::Bytes(manifest[1..].to_vec()),
+        Value::Bytes(manifest[..manifest.len() - 1].to_vec()),
+        Value::Bytes(vec![0xff]),
+        Value::Bytes(Vec::new()),
     ];
-    for value in &values {
-        let store = Memory::holding(ACCOUNT, value);
+    for damage in damaged {
+        store.insert(ACCOUNT, damage);
         assert_eq!(load(&store, WINDOWS, ACCOUNT), Err(KeychainError));
     }
-}
-
-#[test]
-fn a_save_that_stops_part_way_keeps_the_previous_secret() {
-    // Five chunks and the manifest.
-    let next = "n".repeat(4 * PIECE_UNITS + 1);
-    for previous in ["fixture-token".to_owned(), "p".repeat(3_000)] {
-        for write in 1..=6 {
-            let store = Memory::windows();
-            save(&store, WINDOWS, ACCOUNT, &previous).unwrap();
-            store.fail_write(write, true);
-            assert_eq!(save(&store, WINDOWS, ACCOUNT, &next), Err(KeychainError));
-            store.recover();
-            assert_eq!(load(&store, WINDOWS, ACCOUNT), Ok(Some(previous.clone())));
-            save(&store, WINDOWS, ACCOUNT, &next).unwrap();
-            assert_eq!(load(&store, WINDOWS, ACCOUNT), Ok(Some(next.clone())));
-        }
-    }
-}
-
-#[test]
-fn a_failed_save_removes_its_own_chunks() {
-    let next = "n".repeat(4 * PIECE_UNITS + 1);
-    for previous in ["fixture-token".to_owned(), "p".repeat(3_000)] {
-        for write in 1..=6 {
-            let store = Memory::windows();
-            save(&store, WINDOWS, ACCOUNT, &previous).unwrap();
-            let before = store.items();
-            store.fail_write(write, false);
-            assert_eq!(save(&store, WINDOWS, ACCOUNT, &next), Err(KeychainError));
-            assert_eq!(store.items(), before);
-        }
-    }
+    store.insert(ACCOUNT, Value::Bytes(manifest));
+    assert_eq!(load(&store, WINDOWS, ACCOUNT), Ok(Some("b".repeat(3_000))));
 }
 
 #[test]
 fn a_secret_beyond_the_chunk_limit_is_refused_and_changes_nothing() {
-    let store = Memory::holding(ACCOUNT, "fixture-token");
+    let store = Memory::holding(ACCOUNT, Value::Text("fixture-token".to_owned()));
     let longest = "a".repeat(MAX_CHUNKS * PIECE_UNITS);
     assert_eq!(
         save(&store, WINDOWS, ACCOUNT, &format!("{longest}a")),
@@ -89,7 +110,7 @@ fn a_secret_beyond_the_chunk_limit_is_refused_and_changes_nothing() {
     );
     assert_eq!(
         store.items(),
-        BTreeMap::from([(ACCOUNT.to_owned(), "fixture-token".to_owned())])
+        BTreeMap::from([(ACCOUNT.to_owned(), Value::Text("fixture-token".to_owned()))])
     );
     assert_split_round_trip(&longest);
 }

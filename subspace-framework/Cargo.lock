@@ -8551,6 +8551,7 @@ dependencies = [
  "dirs 7.0.0",
  "hex",
  "keyring",
+ "keyring-core",
  "libc",
  "rand 0.10.3",
  "regex",
@@ -8558,6 +8559,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "subspace-product",
  "tempfile",
  "thiserror 2.0.21",
@@ -8565,6 +8567,7 @@ dependencies = [
  "ureq",
  "url",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]

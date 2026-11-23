@@ -1,10 +1,8 @@
 //! The real Windows Credential Manager, on request only.
 
-use std::collections::BTreeSet;
-
-use super::memory::{ACCOUNT, MANIFEST_PREFIX, named};
+use super::memory::{ACCOUNT, namespace_of};
 use crate::Secret;
-use crate::keychain::{Keychain, Store, System};
+use crate::keychain::{Item, Keychain, Store, System};
 
 /// Deletes the test's secret however the test ends.
 struct Cleanup<'a>(&'a Keychain);
@@ -23,32 +21,26 @@ fn a_long_secret_round_trips_through_credential_manager() {
     let store = System(&service);
     let keychain = Keychain::new(service.clone());
     let _cleanup = Cleanup(&keychain);
-    let missing = |names: &BTreeSet<String>| names.iter().all(|name| store.get(name) == Ok(None));
+    let namespace = namespace_of(ACCOUNT);
+    let chunks = || store.list(&namespace).unwrap();
 
-    // 5,000 characters, 6,250 UTF-16 code units.
+    // 5,000 characters, 6,250 UTF-16 code units: seven chunks.
     let secret = Secret::new("aé€\u{1d11e}".repeat(1_250));
     keychain.save(ACCOUNT, &secret).unwrap();
-    let primary = store.get(ACCOUNT).unwrap().unwrap();
-    assert!(primary.starts_with(MANIFEST_PREFIX));
-    let first = named(ACCOUNT, &primary);
+    assert!(matches!(store.get(ACCOUNT), Ok(Some(Item::Bytes(_)))));
+    assert_eq!(chunks().len(), 7);
     assert_eq!(keychain.load(ACCOUNT).unwrap(), Some(secret));
 
-    keychain
-        .save(ACCOUNT, &Secret::new("fixture-token"))
-        .unwrap();
-    assert_eq!(
-        store.get(ACCOUNT).unwrap().as_deref(),
-        Some("fixture-token")
-    );
-    assert!(missing(
-        &first.into_iter().filter(|name| name != ACCOUNT).collect()
-    ));
+    let short = Secret::new("fixture-token");
+    keychain.save(ACCOUNT, &short).unwrap();
+    assert!(matches!(store.get(ACCOUNT), Ok(Some(Item::Text(text))) if text == "fixture-token"));
+    assert!(chunks().is_empty());
 
     keychain
         .save(ACCOUNT, &Secret::new("b".repeat(5_000)))
         .unwrap();
-    let second = named(ACCOUNT, &store.get(ACCOUNT).unwrap().unwrap());
+    assert_eq!(chunks().len(), 6);
     keychain.delete(ACCOUNT).unwrap();
     assert_eq!(keychain.load(ACCOUNT).unwrap(), None);
-    assert!(missing(&second));
+    assert!(chunks().is_empty());
 }
