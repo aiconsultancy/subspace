@@ -96,9 +96,7 @@ impl FleetApi {
         cx: &mut Context<Self>,
     ) -> Result<(), TokenError> {
         let current = generation == self.generation_of(fleet);
-        if matches!(outcome, Outcome::Read(_)) {
-            self.reads.rereading.remove(fleet);
-        }
+        let read = matches!(outcome, Outcome::Read(_));
         let wrote = matches!(outcome, Outcome::Saved(Ok(_)) | Outcome::Cleared(Ok(())));
         if wrote {
             end_hold(&mut self.reads.cleared, fleet, generation);
@@ -118,6 +116,9 @@ impl FleetApi {
             (true, Some(token), _) => self.set_token(fleet, token, cx),
             (true, None, Err(_)) => self.load_token(fleet.to_owned(), cx),
             _ => {}
+        }
+        if read {
+            self.read_landed(fleet, cx);
         }
         result
     }

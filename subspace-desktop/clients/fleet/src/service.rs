@@ -83,6 +83,9 @@ struct Reads {
     cleared: BTreeMap<String, u64>,
     /// The fleets with a re-read queued and not landed: never two at once.
     rereading: std::collections::BTreeSet<String>,
+    /// The fleets whose waiting Retry came due while a read was still in
+    /// flight: read once that read lands, if it did not settle them.
+    after_read: std::collections::BTreeSet<String>,
     /// Each fleet's last store operation queued ([`queue`]): the fleet's
     /// next one runs after it. One queue per fleet, so a keychain call
     /// that waits on one fleet never holds up another.
@@ -353,6 +356,11 @@ impl FleetApi {
         }
         self.reads.deferred.remove(fleet);
         let unchanged = asked.generation == self.generation_of(fleet);
+        if unchanged && self.reads.rereading.contains(fleet) {
+            // The read before it outlasted the interval: wait for it to land.
+            self.reads.after_read.insert(fleet.to_owned());
+            return;
+        }
         // A Retry may have read it since: the deadline is checked again.
         let due = self
             .reads
@@ -361,6 +369,16 @@ impl FleetApi {
             .is_none_or(|last| at.saturating_duration_since(*last) >= REREAD_INTERVAL);
         if unchanged && due && self.tokens.get(fleet) == Some(&TokenLoad::Unavailable) {
             self.reads.last.insert(fleet.to_owned(), at);
+            self.reread(fleet.to_owned(), cx);
+        }
+    }
+
+    /// A read of `fleet`'s token landed: another may be queued now, and a
+    /// Retry that waited behind it reads, if the token is still unreadable.
+    fn read_landed(&mut self, fleet: &str, cx: &mut Context<Self>) {
+        self.reads.rereading.remove(fleet);
+        let waited = self.reads.after_read.remove(fleet);
+        if waited && self.tokens.get(fleet) == Some(&TokenLoad::Unavailable) {
             self.reread(fleet.to_owned(), cx);
         }
     }
@@ -385,6 +403,7 @@ impl FleetApi {
         let reads = &mut self.reads;
         // A Retry waiting from the old generation no longer holds the slot.
         reads.deferred.remove(fleet);
+        reads.after_read.remove(fleet);
         reads.generation = reads.generation.wrapping_add(1);
         reads.generations.insert(fleet.to_owned(), reads.generation);
         reads.generation

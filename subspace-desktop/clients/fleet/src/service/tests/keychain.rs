@@ -261,3 +261,29 @@ fn a_retry_while_a_read_is_in_flight_waits_rather_than_being_lost(cx: &mut TestA
     cx.run_until_parked();
     assert_eq!(reads(&count), 4, "once, and never on a timer");
 }
+
+/// A Retry kept waiting behind a read that outlasts the interval, such as
+/// one held up by a keychain prompt, reads once that read lands rather
+/// than being lost.
+#[gpui_kit::test]
+fn a_retry_behind_a_read_that_outlasts_the_interval_reads_when_it_lands(cx: &mut TestAppContext) {
+    let (service, _locked, count) = locked_service(cx);
+    let start = cx.executor().now();
+    retry_at(&service, start, cx);
+    assert_eq!(reads(&count), 2);
+    // A read still in flight, as one waiting on a keychain prompt.
+    service.update(cx, |service, cx| {
+        service.reads.rereading.insert("aurora".into());
+        service.reload_unreadable_at(start + Duration::from_secs(6), cx);
+    });
+    cx.executor().advance_clock(Duration::from_secs(30));
+    cx.run_until_parked();
+    assert_eq!(reads(&count), 2, "the read is still in flight");
+    // It lands, still locked.
+    service.update(cx, |service, cx| service.read_landed("aurora", cx));
+    cx.run_until_parked();
+    assert_eq!(reads(&count), 3, "the waiting Retry reads now");
+    cx.executor().advance_clock(Duration::from_secs(60));
+    cx.run_until_parked();
+    assert_eq!(reads(&count), 3, "once");
+}
