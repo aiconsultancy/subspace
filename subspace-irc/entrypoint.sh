@@ -76,6 +76,7 @@ esac
 # directory, which only UID 10001 can read, and reaches the script by path.
 auth_url=${IRC_AUTH_API_URL:-}
 auth_ca=${IRC_AUTH_API_CA_FILE:-}
+auth_prefix=${IRC_AUTH_PASSPHRASE_PREFIX:-}
 auth_token=$run/auth-token
 auth_block=
 rm -f "$auth_token" "$auth_token.tmp"
@@ -94,13 +95,17 @@ if [ -n "$auth_url" ]; then
     jq -Rse 'test("\\A[A-Za-z0-9._~+/=-]{16,1024}\\z")' < "$auth_token.tmp" >/dev/null ||
         { rm -f "$auth_token.tmp"; die 'The hook token must be 16–1024 characters of letters, digits and . _ ~ + / = -'; }
     mv "$auth_token.tmp" "$auth_token"
+    # Only passphrases with this prefix (API-issued credentials) reach the API.
+    auth_prefix=${auth_prefix:-sirc1.}
+    printf '%s' "$auth_prefix" | jq -Rse 'test("\\A[!-~]{1,64}\\z")' >/dev/null ||
+        die 'IRC_AUTH_PASSPHRASE_PREFIX must be 1–64 printable ASCII characters without whitespace'
     if [ -n "$auth_ca" ]; then
         case "$auth_ca" in /*) ;; *) die 'IRC_AUTH_API_CA_FILE must be an absolute path' ;; esac
         [ -r "$auth_ca" ] || die 'IRC_AUTH_API_CA_FILE must be readable by UID 10001'
     fi
     auth_block=$(printf '    auth-script:\n        enabled: true\n        command: "/ircd-bin/subspace-auth"\n        args: []\n        autocreate: true\n        timeout: 9s\n        kill-timeout: 1s\n        max-concurrency: 64')
-elif [ -n "${IRC_AUTH_API_TOKEN_FILE:-}${IRC_AUTH_API_TOKEN:-}${auth_ca}" ]; then
-    die 'IRC_AUTH_API_TOKEN, IRC_AUTH_API_TOKEN_FILE and IRC_AUTH_API_CA_FILE need IRC_AUTH_API_URL'
+elif [ -n "${IRC_AUTH_API_TOKEN_FILE:-}${IRC_AUTH_API_TOKEN:-}${auth_ca}${auth_prefix}" ]; then
+    die 'IRC_AUTH_API_TOKEN, IRC_AUTH_API_TOKEN_FILE, IRC_AUTH_API_CA_FILE and IRC_AUTH_PASSPHRASE_PREFIX need IRC_AUTH_API_URL'
 fi
 unset IRC_AUTH_API_TOKEN
 
@@ -325,7 +330,8 @@ trap - EXIT TERM INT
 # path, never the token, and allow-environment-overrides stays off.
 set -- PATH="$PATH"
 if [ -n "$auth_url" ]; then
-    set -- "$@" IRC_AUTH_API_URL="$auth_url" IRC_AUTH_API_TOKEN_FILE="$auth_token" IRC_OPER_NAME="$oper"
+    set -- "$@" IRC_AUTH_API_URL="$auth_url" IRC_AUTH_API_TOKEN_FILE="$auth_token" \
+        IRC_AUTH_PASSPHRASE_PREFIX="$auth_prefix" IRC_OPER_NAME="$oper"
     if [ -n "$auth_ca" ]; then
         set -- "$@" IRC_AUTH_API_CA_FILE="$auth_ca"
     fi

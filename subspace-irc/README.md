@@ -133,7 +133,16 @@ Set `IRC_AUTH_API_URL` to the Subspace API's base URL, such as
 hook token, preferably as a mounted file in `IRC_AUTH_API_TOKEN_FILE`. Ergo
 then runs the image's `/ircd-bin/subspace-auth` script for each login through
 its [auth-script](https://github.com/ergochat/ergo/blob/v2.19.1/docs/MANUAL.md#external-authentication-systems)
-hook. The script posts Ergo's request unchanged to
+hook.
+
+The script calls the API only for two kinds of login: a password that starts
+with the API's credential prefix (`IRC_AUTH_PASSPHRASE_PREFIX`, default
+`sirc1.`), and a certificate login (SASL EXTERNAL) with no password. It
+refuses every other login at once, without a network request, so Ergo goes
+straight to its local accounts. A local account's password never leaves the
+IRC server. The operator's logins never reach the API either, whatever the
+password, and the script refuses an answer that names the operator account.
+For the logins it does pass on, the script posts Ergo's request unchanged to
 `POST /api/v1/irc/authenticate` with the token as a bearer token. It waits at
 most five seconds and never retries. A client gets its credential from
 `POST /api/v1/me/irc-credential` and presents it as the SASL PLAIN password
@@ -149,16 +158,15 @@ Anything else is a refusal: `{"success": false}`, another HTTP status, a
 timeout, an unreachable API, an untrusted certificate or a body that is not a
 single JSON object with a boolean `success`. After a refusal Ergo checks its
 local accounts, so the seeded operator and service accounts keep working.
-Keep the operator as a break-glass login. The script never sends the
-operator's sign-ins to the API and refuses an answer that names the operator
-account. Other local accounts' passwords do reach the API, which refuses
-them, so use HTTPS. Ergo logs a fixed reason for failures, such as
-`subspace-auth: Subspace API answered HTTP 500`. Requests, the token and
-responses are never logged.
+Keep the operator as a break-glass login, and do not give local accounts
+passwords that start with the credential prefix. Ergo logs a fixed reason for
+failures, such as `subspace-auth: Subspace API answered HTTP 500`. Requests,
+the token and responses are never logged.
 
 While the API is down, accounts that sign in through it cannot connect or
 reconnect; sessions already connected stay connected. Each such sign-in waits
-up to five seconds before Ergo falls back to local accounts.
+up to five seconds before Ergo falls back to local accounts. Local accounts
+sign in without waiting for the API.
 
 Accounts the hook creates have no password. Ergo reports their credentials
 as managed externally, so `NickServ PASSWD` is refused and only the API can
@@ -170,7 +178,7 @@ Use `https` for the API. A plain `http` URL is accepted for a private network
 such as a Compose network. For a private certificate authority, mount its
 certificate and set `IRC_AUTH_API_CA_FILE`; otherwise the system CA bundle
 applies. Start-up fails when the URL is set without a valid token, and when
-the token or CA settings are set without the URL. The entrypoint copies the
+the token, CA or prefix settings are set without the URL. The entrypoint copies the
 token into the private run directory, readable only by UID `10001`, and
 passes Ergo only its path. The bootstrap server that seeds accounts and
 channels never runs the hook.
@@ -246,6 +254,7 @@ your Compose override or through your container host's volume controls.
 | `IRC_AUTH_API_URL` | empty | Subspace API base URL; turns on sign-in through the API |
 | `IRC_AUTH_API_TOKEN_FILE`, `IRC_AUTH_API_TOKEN` | empty | Hook token (16–1024 URL-safe or Base64 characters), preferably as a mounted file |
 | `IRC_AUTH_API_CA_FILE` | system CA bundle | PEM file of a private CA that signed the API's certificate |
+| `IRC_AUTH_PASSPHRASE_PREFIX` | `sirc1.` | Prefix of API-issued IRC credentials; only these passwords reach the API |
 | `IRC_HISTORY_DATABASE` | `sqlite` | Where persistent history goes: `sqlite` (in the volume) or `postgresql` |
 | `IRC_POSTGRES_HOST`, `IRC_POSTGRES_PORT` | empty, `5432` | PostgreSQL server for history |
 | `IRC_POSTGRES_USER`, `IRC_POSTGRES_DATABASE` | `ergo`, `ergo_history` | Role and database Ergo uses; it creates its tables itself |
@@ -316,7 +325,9 @@ the mounted channel seed and registered channel history across recreation.
 The auth hook test runs the image beside a stub API over HTTPS with a private
 CA. It checks that an accepted credential signs in under the returned name
 and creates the account, and that refusals, errors, redirects, timeouts and
-malformed answers fail closed. It also checks the local fallback with the API
+malformed answers fail closed. It checks from the stub's request log that
+local passwords never reach the API while prefixed credentials, certificate
+logins and a custom prefix do. It also checks the local fallback with the API
 down, certificate verification and start-up validation.
 
 ## Licence

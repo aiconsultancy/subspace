@@ -27,6 +27,8 @@ def answer(name, passphrase):
         # Accepted only for the presented name, answered with a different one.
         "sirc1.valid": (200, {"success": True, "accountName": "hook-member"})
         if name == "hook-presented" else (200, {"success": False}),
+        "custom-valid": (200, {"success": True, "accountName": "hook-custom"})
+        if name == "hook-custom-user" else (200, {"success": False}),
         "sirc1.refuse": (200, {"success": False}),
         "sirc1.status500": (500, {"success": True, "accountName": "hook-status"}),
         "sirc1.redirect": (302, {"success": True, "accountName": "hook-redirect"}),
@@ -56,6 +58,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(400, b"{}")
         if not isinstance(request, dict) or not set(request) <= INPUT_KEYS:
             return self.reply(400, b"{}")
+        if "certfp" in request and "passphrase" not in request:
+            # Certificate login: the test's client certificate maps to one account.
+            print("request certfp", flush=True)
+            return self.reply(200, json.dumps({"success": True, "accountName": "hook-cert"}).encode())
         name = request.get("accountName", "")
         print("request", name, flush=True)
         status, body, delay = answer(name, request.get("passphrase", ""))

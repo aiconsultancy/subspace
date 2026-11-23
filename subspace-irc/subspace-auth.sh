@@ -1,11 +1,14 @@
 #!/bin/sh
 # Ergo auth-script hook: ask the Subspace API whether a login is valid.
 #
-# Ergo writes one JSON line on stdin and reads one JSON line from stdout. The
-# request is posted unchanged to the API; its answer is printed only when it
-# is an HTTP 200 with a well-formed body. Anything else is a refusal, after
-# which Ergo checks its local accounts. Never log the request, the token or
-# the response: they carry credentials.
+# Ergo writes one JSON line on stdin and reads one JSON line from stdout.
+# Only API-issued credentials (a passphrase with the configured prefix) and
+# certificate logins reach the API; anything else is refused at once, so a
+# local account's password never leaves this server. The request is posted
+# unchanged and the API's answer is printed only when it is an HTTP 200 with
+# a well-formed body. Anything else is a refusal, after which Ergo checks its
+# local accounts. Never log the request, the token or the response: they
+# carry credentials.
 set -u
 umask 077
 
@@ -24,6 +27,21 @@ refuse() {
 # rather than waiting for the end of input.
 IFS= read -r request || refuse 'no request on stdin'
 
+# Decide locally which logins the API may see. The break-glass operator always
+# signs in locally, and the API cannot sign anyone in as that account.
+prefix=${IRC_AUTH_PASSPHRASE_PREFIX:-sirc1.}
+oper=$(printf '%s' "${IRC_OPER_NAME:-}" | tr '[:upper:]' '[:lower:]')
+decision=$(printf '%s\n' "$request" | jq -r --arg prefix "$prefix" --arg oper "$oper" '
+    def text($key): .[$key] | type == "string" and . != "";
+    if type != "object" then "local"
+    elif $oper != "" and (.accountName | type) == "string"
+        and (.accountName | ascii_downcase) == $oper then "local"
+    elif text("passphrase") then
+        if .passphrase | startswith($prefix) then "api" else "local" end
+    elif text("certfp") then "api"
+    else "local" end' 2>/dev/null) || refuse 'Ergo sent an invalid request'
+[ "$decision" = api ] || refuse
+
 url=${IRC_AUTH_API_URL:-}
 [ -n "$url" ] || refuse 'IRC_AUTH_API_URL is not set'
 if [ -n "${IRC_AUTH_API_TOKEN_FILE:-}" ]; then
@@ -34,17 +52,6 @@ fi
 case $token in
     '' | *[!A-Za-z0-9._~+/=-]*) refuse 'the hook token is missing or invalid' ;;
 esac
-
-# The break-glass operator always signs in locally: its password is never
-# sent to the API, and the API cannot sign anyone in as that account.
-oper=$(printf '%s' "${IRC_OPER_NAME:-}" | tr '[:upper:]' '[:lower:]')
-if [ -n "$oper" ]; then
-    name=$(printf '%s\n' "$request" | jq -r '
-        if type == "object" and (.accountName | type) == "string"
-        then .accountName | ascii_downcase else "" end' 2>/dev/null) ||
-        refuse 'Ergo sent an invalid request'
-    [ "$name" != "$oper" ] || refuse
-fi
 
 set --
 if [ -n "${IRC_AUTH_API_CA_FILE:-}" ]; then
