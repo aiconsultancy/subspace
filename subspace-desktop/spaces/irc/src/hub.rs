@@ -21,6 +21,7 @@ use crate::{agent_tools, notice, store};
 /// Lines asked for around a message that is not held.
 const AROUND: u16 = 50;
 
+mod account;
 mod captain_notifications;
 mod configuration;
 mod persist;
@@ -52,8 +53,13 @@ pub(crate) struct Hub {
     shown: Vec<BufferKey>,
     /// Notification targets: index + 1 is the target number.
     targets: Vec<BufferKey>,
-    /// The settings the runtime and state follow.
+    /// The settings the runtime and state follow: the saved ones and the
+    /// account's networks.
     applied: Settings,
+    /// The settings saved in the board's file.
+    pub(crate) saved: Settings,
+    /// The networks the signed-in account brings.
+    pub(crate) managed: crate::managed::Managed,
     /// The networks the runtime was last configured with: the settings
     /// without the channels the user left.
     running: Vec<NetworkConfig>,
@@ -109,6 +115,7 @@ pub(crate) fn start(cx: &mut App) {
     let initiatives = InitiativeIrc::new(Catalog::shared(cx), loopback_fixture());
     let hub = cx.new(|cx| {
         let mut hub = Hub::new(&settings, removed, Outbox::Runtime(runtime), initiatives);
+        hub.managed = crate::managed::Managed::new(crate::managed::device(cx));
         hub.state.directories = cached_directories(&settings);
         hub.tools = Some(agent_tools::open());
         hub.uploads.session.connect();
@@ -232,6 +239,8 @@ impl Hub {
             shown: Vec::new(),
             targets: Vec::new(),
             applied: settings.clone(),
+            saved: settings.clone(),
+            managed: Default::default(),
             running: Vec::new(),
             saved_removed,
             tools: None,
@@ -308,6 +317,7 @@ impl Hub {
         receive(self, updates, now, cx);
         self.flush_store(false, cx);
         captain_notifications::tick(self, cx);
+        crate::managed::tick(self, cx);
     }
 
     /// Answers the agent tool calls that arrived since the last drain.

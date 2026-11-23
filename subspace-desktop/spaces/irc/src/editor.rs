@@ -3,7 +3,7 @@
 
 mod draft;
 mod form;
-mod ids;
+pub(crate) mod ids;
 mod network_view;
 pub(crate) mod validate;
 mod view;

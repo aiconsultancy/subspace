@@ -44,11 +44,18 @@ impl Hub {
         }
     }
 
-    /// Follows new settings: the runtime reconnects only the networks whose
-    /// configuration changed, and the state keeps the others' buffers. A
-    /// channel newly added to a network's channels is wanted again, even
-    /// after the user left it.
+    /// Follows newly saved settings, with the account's networks derived
+    /// again beside them.
     pub fn apply(&mut self, settings: Settings, cx: &mut Context<Self>) {
+        self.saved = settings;
+        self.reconcile(cx);
+    }
+
+    /// Follows new effective settings: the runtime reconnects only the
+    /// networks whose configuration changed, and the state keeps the
+    /// others' buffers. A channel newly added to a network's channels is
+    /// wanted again, even after the user left it.
+    pub(crate) fn follow(&mut self, settings: Settings, cx: &mut Context<Self>) {
         if settings == self.applied {
             return;
         }

@@ -78,6 +78,11 @@ impl Endpoint {
             && (!network.accept_invalid_certs || loopback(&network.host))
     }
 
+    /// Whether the server is on this computer.
+    pub(crate) fn is_loopback(&self) -> bool {
+        loopback(&self.host)
+    }
+
     pub(crate) fn label(&self) -> String {
         let scheme = if self.tls { "ircs" } else { "irc" };
         format!("{scheme}://{}:{}", self.host, self.port)
