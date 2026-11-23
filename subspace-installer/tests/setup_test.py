@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "vm"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
 import fleet_setup  # noqa: E402
+import runtime  # noqa: E402
 from runtime import irc_officer, validate  # noqa: E402
 from standard_channels import COMMAND_SUFFIX  # noqa: E402
 
@@ -788,9 +789,9 @@ class ExternalDatabaseTests(unittest.TestCase):
         self.assertIn(self.url_file, plan)
         self.assertIn("sslmode=verify-full", plan)
         self.assertIn("applies them only with --migrate", plan)
-        self.assertNotIn(self.PASSWORD, plan)
         # The installer's dry run that follows talks of IRC sign-in: this line says it means the API's.
         self.assertIn("\nAPI sign-in: setup acts as", plan)
+        self.assertNotIn(self.PASSWORD, plan)
         self.assertNotIn("tracker-db.example.org", plan)
         self.assertNotIn("WARNING", plan)
         plain = self.private("plain", self.URL.replace("?sslmode=verify-full", ""))
@@ -815,6 +816,35 @@ class ExternalDatabaseTests(unittest.TestCase):
                 self.assertRaisesRegex(fleet_setup.SetupError, "chmod 600"):
             fleet_setup.setup(fleet_setup.parse_args(argv))
         installer.assert_not_called()
+
+    def test_the_other_new_settings_survive_a_run_against_an_existing_postgresql(self):
+        # Slack bots, a captain's sessionRoot and repository notes are added to fleet.json by hand; setup keeps them
+        # on a run with --database-url-file, and the installer accepts the result with password IRC sign-in.
+        url = "https://github.com/example/project.git"
+        slack = {"appId": "AFIXTURE1", "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"]}
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
+            "rearAdmiral": {"id": "atlas", "slack": slack},
+            "captains": [{"id": "orion", "sessionRoot": "workspace", "slack": {**slack, "appId": "AFIXTURE2"}}],
+            "repositories": [{"id": "project", "url": url, "description": "The example service.",
+                              "tracker": "Example issues"}],
+        })
+        answers, _ = self.answers("--database-url-file", self.url_file, "--repositories", url)
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        api = {"url": f"http://{fleet_setup.LOOPBACK}:{fleet_setup.API_PORT}",
+               "initiatives": ["00000000-0000-4000-8000-000000000001"],
+               "agentUrl": f"http://{fleet_setup.LOOPBACK}:{fleet_setup.AGENT_API_PORT}"}
+        config = fleet_setup.fleet_config(answers, members, "a" * 40, api)
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
+                                            answers["admin"], "header.payload.signature")
+        cfg = validate(config, secrets, check_files=False)
+        rear, orion = cfg["members"]
+        self.assertEqual((rear["slack"]["appId"], orion["slack"]["appId"], orion["sessionRoot"]),
+                         ("AFIXTURE1", "AFIXTURE2", "workspace"))
+        self.assertEqual(cfg["repositoryNotes"]["project"], {"description": "The example service.",
+                                                             "tracker": "Example issues"})
+        self.assertEqual(cfg["irc"]["auth"], "password")
+        self.assertTrue(runtime.rear_root(cfg))
+        self.assertNotIn(self.PASSWORD, str(config) + str(secrets))
 
     def test_setup_does_not_move_the_api_s_own_postgresql(self):
         local, _ = self.answers()
