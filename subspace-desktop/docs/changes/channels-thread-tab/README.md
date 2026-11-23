@@ -380,6 +380,42 @@ them. Findings 15 to 18 are not resolved here.
 29. **The trust paragraph addressed reviewers** (Sol low). Reworded in this
     commit to state the owner's rule and its reason only.
 
+### Third round
+
+Third reviews of head `867351e`: Claude Opus 5.5 (clear, one P3) and
+GPT-6.2 Sol (not clear: two high findings on the GitHub reference access
+rule, two medium and two low elsewhere). By the owner's decision the
+GitHub access hardening is not part of the Thread tab: all of it, from
+the three rounds and the two findings carried from pull request 69 (2
+and 3), moved with its tests to `fix/github-reference-access` for its own
+pull request, and `deeaaef` takes it out of this branch, leaving the
+GitHub Space and the Framework's GitHub client as `main` has them. The
+Channels side needed no change for this: In play here and the reference
+chips use the `github@1` contract, which is unchanged. Sol's two new
+GitHub findings go with that branch.
+
+30. **A failed save after a failed clear restored the old token** (Sol
+    medium). Real. Fixed in `75253f5`: a cleared token stays out of use
+    until a delete or a replacement write succeeds. Test
+    `a_refused_delete_then_a_refused_save_never_bring_the_old_token_back`
+    (failed before).
+31. **A Retry waiting from an older generation blocked one asked now**
+    (Sol medium). Real. Fixed in `75253f5`: a new generation drops the
+    waiting Retry, and each carries its own identity. Test
+    `a_retry_from_an_older_generation_never_blocks_one_asked_now` (failed
+    before).
+32. **Opening another thread lifted a gone reply's guard** (Opus P3).
+    Real. Fixed in `b96561b`. Test
+    `opening_other_threads_never_lifts_a_gone_reply_s_guard` (failed
+    before).
+33. **Each rebuild cloned every loaded reply** (Sol low). Real. Fixed in
+    `b96561b`: the thread keeps the count and only the latest 40. Test
+    `a_long_thread_keeps_its_count_and_only_its_latest_replies`.
+34. **The fixture waited for ever for a tagged echo and never checked the
+    capabilities** (Sol low). Real. Fixed in `1547be3`: a 15 s deadline, and
+    a stop with the reason on a refused or unacknowledged capability. The
+    check was exercised by hand; the fixture was not run against a server.
+
 ## Captures
 
 Captured on macOS with `make capture` at 1440 x 900 in Twilight Two, with
