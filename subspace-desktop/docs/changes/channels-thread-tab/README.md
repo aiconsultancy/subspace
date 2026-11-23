@@ -194,7 +194,8 @@ against it.
    Fixed in `891b7d2` (`fix(irc): keep each view's fleets and say when the
    fleet's data is not current`): each view publishes its own share
    (`Hub::fleet_views`) and `Hub::fleets` is their union; a closed view's
-   share goes with it. Test:
+   share goes with it (its release hook; the render test covers a view
+   leaving the front, not the release itself). Test:
    `a_hidden_view_on_the_same_hub_never_empties_the_fleets_a_shown_one_shows`
    and `the_hub_shows_every_view_s_fleets_and_a_hidden_view_takes_none_away`.
 5. **Channels could start the fleet service before showing any fleet**
@@ -254,6 +255,109 @@ answer comes and **Unavailable** when it cannot be shown (`93662d0`).
 Tests:
 `a_reference_in_play_says_its_state_once_answered`,
 `an_unanswered_reference_says_loading_and_a_refused_one_unavailable`.
+
+## Review findings
+
+This pull request's own reviews: GPT-6.2 Sol (high effort, verdict not
+clear: three high, six medium, two low) and Claude Opus 5.5 (high effort,
+clear: three P2, five P3), both of head `83e124a`. Each was checked
+against the code. Findings both raised are listed once.
+
+### Fleet token store
+
+1. **Keychain writes not ordered; a read started during a clear or save
+   not dropped** (Sol high, Opus P2 1). Real. Fixed in `ff14d0f`: every
+   read, save and clear runs on one ordered path (`service/queue.rs`);
+   each waits for the one before and applies its result before the next
+   starts, so the keychain and the service change in the order asked. A
+   clear stops the token at once; nothing queued before it can restore it
+   in memory or in the keychain. Tests (`service/tests/ordering.rs`, each
+   over 40 schedules where order matters): clear then retry, retry then
+   clear, save then clear, clear then save, the token stopping at once.
+   Five of them failed on the code before; retry then clear already passed
+   there and stays as a guard.
+2. **A failed save during the first read left the fleet Checking** (Sol
+   medium). Real. Fixed in `ff14d0f`: a token or address that cannot be
+   saved is refused before the generation moves, and a save or clear that
+   fails while current reads the keychain again. Test
+   `a_failed_save_while_the_first_read_runs_settles_from_the_keychain`
+   (failed before).
+3. **The deferred Retry served only the first deadline** (Sol medium).
+   Real. Fixed in `ff14d0f`: one waiting read per fleet the click covered,
+   each at its own deadline, none for a fleet saved, cleared or removed
+   since. Test `a_retry_reads_each_fleet_it_covered_once_its_own_interval_ends`
+   (failed before).
+
+### GitHub access
+
+4. **A late list section could bring back a refused summary** (Sol high),
+   **reference and detail reads overwrote each other's decisions** (Sol
+   high), **a refusal on an opened pull request stuck for the session**
+   (Opus P2 2) and **a pull request two sections list lost its whole
+   answer** (Opus P3 8). Real. Fixed in `a7cc283`: every read takes a tick
+   of one clock when it starts, whichever path makes it, and results are
+   weighed by it (`references/access.rs`). A refusal answers until a read
+   that started later succeeds; a section or read that started earlier
+   never lifts it; an older refusal is dropped. A refusal is read again on
+   the next refresh, also for an opened pull request. Freshness against the
+   list compares start ticks, so a read started after a refresh's sections
+   started keeps its whole answer. Tests in
+   `navigation/tests/references/access.rs`, counting the reads: a section
+   requested before a refusal, an older reference read against a newer
+   detail refusal, an older detail success against a newer refusal, an
+   opened pull request read again on refresh, a rate limit. These were not
+   run against the old code (its interfaces differ); each checks a
+   behaviour the old code lacked.
+5. **Rate limits counted as refusals** (Opus P2 2). Partly refuted: the
+   GitHub client already reports a 403 with `x-ratelimit-remaining: 0` or a
+   rate-limit message (primary and secondary) as 429, which Channels'
+   resolver treats as a failure. A 403 with only `Retry-After` was not
+   caught: fixed in the client in `0d23322`, with a test. Only 400, 403 and
+   404 now count as access refusals; a 401 or a missing credential answers
+   signed out and never overrides held data. The module documentation
+   says so.
+
+### Threads
+
+6. **A follow-up request made as a reply never showed its replies** (Opus
+   P2 3, Sol medium). Real. Fixed in `46bdbc6`: the tab shows the chosen
+   request's own steps with the replies of the conversation's thread it is
+   in, so the answers to it and a reply sent from its tab appear there,
+   and the thread's count and the transcript's agree. Test
+   `a_follow_up_request_shows_its_own_steps_and_the_replies_to_it`
+   (failed before).
+7. **Evicting a thread's root silently turned a reply draft into a channel
+   message or command** (Sol medium). Real. Fixed in `46bdbc6`: the draft
+   stays in reply mode, marked gone; the row says the thread is no longer
+   loaded, Enter sends nothing, and only **Write to the channel** leaves
+   reply mode, keeping the text. Tests
+   `a_reply_whose_thread_is_gone_is_never_sent` and
+   `a_reply_whose_thread_goes_is_kept_and_sent_nowhere_until_chosen`.
+8. **A lone ending notice hid Load around this message** (Sol low). Real.
+   Fixed in `46bdbc6`. Test
+   `a_lone_ending_notice_still_says_the_earlier_steps_are_not_loaded`
+   (failed before).
+
+### The rest
+
+9. **In play here not asked for when the Ship tab is chosen** (Sol
+   medium). Real. Fixed in `2565a0e`. Test
+   `choosing_the_ship_tab_asks_for_what_in_play_lists`.
+10. **The Thread tab drew every reply each render** (Sol medium, Opus P3
+    7). Real. Fixed in `2565a0e`: the latest 40 are drawn, the rest counted
+    in a line; the heading counts all. Test
+    `the_thread_tab_draws_the_latest_replies_and_counts_the_rest`.
+11. **Linked status lines no longer announced as status** (Opus P3 4).
+    Real. Fixed in `2565a0e`: a status element inside the button. Test
+    `a_linked_status_line_is_still_announced_as_status`.
+12. **The navigator kept absorption state for groups that disappeared**
+    (Sol low). Real. Fixed in `2565a0e`. Test
+    `a_group_that_goes_begins_to_take_in_its_rows_again_when_it_returns`.
+13. **`want_in_play` between `inspector`'s doc comment and the function**
+    (Opus P3 5). Fixed in `2565a0e`.
+14. **A test claimed to test closing a view** (Opus P3 6). Corrected in
+    `2565a0e`: the test and this record say it covers a view leaving the
+    front; the release on close is not driven by a test.
 
 ## Captures
 

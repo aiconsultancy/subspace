@@ -671,16 +671,20 @@ It shows one thread at a time: a request, or any message with replies.
   answer**, **Writing the reply**, then **Done**, **Failed** or **Ended**),
   each with its server time and how long it lasted, the ending with the
   request's whole time (`in 42 m`) and a running step with `since 17:50`;
-  then **Replies · N**, grouped by author by the transcript's rule, or
-  `No replies yet.`
+  then **Replies · N**, grouped by author by the transcript's rule, the
+  latest 40 drawn and the rest counted (`N earlier replies are in the
+  channel.`), or `No replies yet.`
 - **Membership and trust.** A reply is a message whose `+draft/reply`
-  leads, through held parents, to the root, read by the same `ThreadRoots`
-  as the counts, so the tab's replies and the count agree. Nothing in a
+  leads, through held parents, to the root of the conversation's thread
+  the chosen message is in, read by the same `ThreadRoots` as the counts,
+  so the tab's replies and the count agree. A follow-up request made as a
+  reply shows its own steps with that thread's replies, so the answers to
+  it, and a reply sent from its tab, appear there. Nothing in a
   message's text places it in a thread. A step is a notice the buffer
   folded under the status line's trust rule (its server account equals the
   nick the held request asks); an untrusted notice is an ordinary reply and
   never a step. A request whose ending was kept but none of whose notices
-  are held says `The steps before the end are not loaded.`, with **Load
+  before it are held (none at all, or only the ending's) says `The steps before the end are not loaded.`, with **Load
   around this message** (`Command::LoadAround`) while the network is
   connected and keeps `draft/chathistory`.
 - **Lifetime.** The chosen thread is kept per conversation for the session
@@ -689,7 +693,12 @@ It shows one thread at a time: a request, or any message with replies.
   a fingerprint of their count, ends, folded count and the root's ending,
   so a sync that leaves the buffer alone reads none of its lines; it goes
   once its root is no longer held (the line cap, or the conversation
-  removed). New replies and steps show live.
+  removed). A reply being written to it then stays in reply mode, marked
+  gone: the row says the thread is no longer loaded, Enter sends nothing,
+  not even a command, and only **Write to the channel** leaves reply mode,
+  keeping the text. New replies and steps show live. A linked status line
+  keeps a status element inside its button, so its changes are still
+  announced.
 - **Replying.** **Reply in thread**, the tab's footer action, puts the
   composer into reply mode (`compose/reply.rs`): a row above the input says
   `Replying in thread to <author>: <start of the root>`, with **Cancel

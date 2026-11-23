@@ -142,17 +142,22 @@ unknown key gets); later answers carry the counts. A list refresh (every
 section, or the favourites' sections) marks those reads stale once, when
 its first section lands, so each is read again at most once per refresh,
 when next asked, however many sections land or pull requests are opened.
-A read answers whole only when it started after the last section listing
-the pull request landed, so a later section of the same refresh wins over
-a read that began before it; an older read lends only its counts to the
+Every read, whichever path makes it (a list section, the board's own
+detail read or a reference read), takes a tick of one clock when it
+starts, and results are weighed by that tick, not by when they land. A
+read answers whole only when it started after the latest section listing
+the pull request started; an older read lends only its counts to the
 list's item, and only while the list's combined state and last update
 match the read's. A read of a pull request the board neither opened nor
 lists is checked again once per refresh too, so one the account can no
-longer read stops answering. A refusal (from a reference read or the
-board's own detail read) answers ahead of a pull request the account
-opened or listed before it, until a later read succeeds, so a pull request
-it lost access to stops showing its summary. A signed-out account starts
-no read.
+longer read stops answering. An access refusal (400, 403 or 404; a rate
+limit, which the GitHub client reports as 429, including a 403 with
+`Retry-After`, is a failure) answers ahead of a pull request the account
+opened or listed until a read that started after it succeeds: a section
+or read that started before it never brings the summary back, and a
+refusal from a read older than a later success is dropped. A refusal is
+read again on the next refresh, also for a pull request the board opened.
+A signed-out account starts no read.
 
 ```rust
 // In the requester's contracts():
