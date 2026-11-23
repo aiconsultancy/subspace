@@ -291,7 +291,15 @@ def gather(args, saved):
     # An existing PostgreSQL for the API: the file's path is kept, never the URL. --migrate is for this run only.
     require(not (args.database_url_file and args.api is False),
             "--database-url-file runs the API on this VM, which --no-api leaves out. Pass one or the other.")
-    if args.database_url_file is not None:
+    if args.database_url_file == "":
+        # The API's tracker is in that server; a PostgreSQL on this VM would start empty, and the API image's
+        # automatic migration would run against whatever DATABASE_URL api.env still names.
+        require(not answers.get("databaseUrlFile"),
+                f"This VM's API keeps its tracker in the existing PostgreSQL named in {answers.get('databaseUrlFile')}, "
+                "and setup has no way back to a PostgreSQL on this VM. Keep --database-url-file, or restore a dump "
+                "of that database on a fresh VM (installer README, 'An existing PostgreSQL').")
+        answers.pop("databaseUrlFile", None)
+    elif args.database_url_file is not None:
         answers["databaseUrlFile"] = args.database_url_file
     if args.database_ca_file == "":
         answers.pop("databaseCaFile", None)
@@ -837,6 +845,10 @@ def api_up(answers, secret_store, migrate=False):
             key, _, value = line.partition("=")
             if key and not key.startswith("#") and key not in environment:
                 kept[key] = value
+    if not external:
+        # The API's own PostgreSQL: never a URL an earlier run, or anyone, left in api.env, which Compose would
+        # prefer to the local database and the image would migrate on start.
+        kept.pop("DATABASE_URL", None)
     # The agent listener answers for the development sign-in organisation, which the fleet's agents are
     # registered in. Setup offers it once: after that, an operator who sets AGENT_PORT= or deletes it keeps
     # it off, and setup never turns it back on. The API refuses the listener in production.

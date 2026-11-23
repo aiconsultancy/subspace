@@ -850,7 +850,8 @@ registration to you, as it does on its own PostgreSQL.
   already run with its own PostgreSQL: the tracker stays in that container's
   `subspace-api_subspace_postgres` volume, and setup does not move it. Restore
   a dump of it on the server and set up a fresh VM. Nor is there a way back to
-  a PostgreSQL on the VM.
+  a PostgreSQL on the VM: `--database-url-file ''` is refused, and a run in
+  the API's own mode never keeps a `DATABASE_URL` in `api.env`.
 - **Nothing drops the database.** `--no-api` stops the API's containers and
   keeps the setting for when the API returns. The fleet installer's
   `uninstall` never runs Compose or connects to a database, and neither

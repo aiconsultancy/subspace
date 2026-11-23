@@ -846,6 +846,24 @@ class ExternalDatabaseTests(unittest.TestCase):
         self.assertTrue(runtime.rear_root(cfg))
         self.assertNotIn(self.PASSWORD, str(config) + str(secrets))
 
+    def test_there_is_no_way_back_to_a_postgresql_on_this_vm(self):
+        answers, _ = self.answers("--database-url-file", self.url_file)
+        self.up(answers)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "no way back to a PostgreSQL on this VM") as refused:
+            self.answers("--database-url-file", "", saved=answers)
+        self.assertNotIn(self.PASSWORD, str(refused.exception))
+        # On a VM that never had the setting, an empty value changes nothing.
+        local, _ = self.answers("--database-url-file", "")
+        self.assertNotIn("databaseUrlFile", local)
+        # Whatever api.env holds, the API's own PostgreSQL never gets an external URL, so the image's automatic
+        # migration on start can only reach the database on this VM.
+        self.assertIn("DATABASE_URL=", (fleet_setup.INPUTS / "api.env").read_text())
+        self.up(local)
+        environment = (fleet_setup.INPUTS / "api.env").read_text()
+        self.assertNotIn("DATABASE_URL", environment)
+        self.assertNotIn(self.PASSWORD, environment)
+        self.assertIn("POSTGRES_PASSWORD=", environment)
+
     def test_setup_does_not_move_the_api_s_own_postgresql(self):
         local, _ = self.answers()
         fleet_setup.save_answers(local)
