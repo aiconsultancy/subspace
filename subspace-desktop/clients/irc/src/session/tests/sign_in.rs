@@ -102,21 +102,41 @@ fn an_accepted_sign_in_registers_and_joins() {
 }
 
 #[test]
-fn a_refused_sign_in_is_told_in_fixed_words_and_joins_nothing() {
+fn a_refused_sign_in_is_told_in_fixed_words_and_left_at_once() {
     let mut session = issued();
     feed(&mut session, &["AUTHENTICATE +"]);
     let failed = feed(&mut session, &[":srv 904 ada :bad password issued-pw"]);
-    assert_eq!(sent(&failed), ["CAP END"]);
     let line = lines(&failed)[0];
     assert_eq!(line.kind, LineKind::Error);
     assert_eq!(line.text, "The server did not accept the sign-in (904)");
-    let welcome = feed(&mut session, &[":srv 001 ada :Welcome"]);
     assert!(
-        matches!(welcome.ending, Some(Ending::Refused(_))),
-        "the network retries"
+        matches!(failed.ending, Some(Ending::Refused(_))),
+        "the network drops the login and retries"
     );
-    assert!(!connected(&welcome));
-    assert_eq!(sent(&welcome), ["QUIT :Sign-in required"], "nothing joined");
+    assert_eq!(sent(&failed), ["QUIT :Sign-in required"], "no registration");
+    assert!(!connected(&failed));
+}
+
+#[test]
+fn a_login_that_may_no_longer_be_sent_is_not() {
+    let mut config = config();
+    config.sasl = Some(Sasl {
+        username: "ada@desk1".into(),
+        password: String::new(),
+        password_file: None,
+        external: false,
+        credential: None,
+    });
+    let stale = IssuedPassword::new("issued-pw").while_valid(|| false);
+    let mut session = sign_in_with(Session::new(config, Carry::default()), stale);
+    session.start(now());
+    feed(
+        &mut session,
+        &[":srv CAP * LS :sasl", ":srv CAP * ACK :sasl"],
+    );
+    let out = feed(&mut session, &["AUTHENTICATE +"]);
+    assert_eq!(sent(&out), ["QUIT :Sign-in required"]);
+    assert!(matches!(out.ending, Some(Ending::Refused(_))));
 }
 
 #[test]

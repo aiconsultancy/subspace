@@ -5,21 +5,50 @@
 
 use std::sync::Arc;
 
+type Valid = dyn Fn() -> bool + Send + Sync;
+
 /// An issued password: never formatted, serialised or stored with the
-/// configuration.
-#[derive(Clone, PartialEq, Eq)]
-pub struct IssuedPassword(String);
+/// configuration. It may carry a check, asked at the moment it would be
+/// sent, of whether it may still be: it has not expired and its account is
+/// still signed in.
+#[derive(Clone)]
+pub struct IssuedPassword {
+    secret: String,
+    valid: Option<Arc<Valid>>,
+}
 
 impl IssuedPassword {
     pub fn new(password: impl Into<String>) -> Self {
-        Self(password.into())
+        Self {
+            secret: password.into(),
+            valid: None,
+        }
+    }
+
+    /// The password, sent only while `valid` says it may be.
+    pub fn while_valid(mut self, valid: impl Fn() -> bool + Send + Sync + 'static) -> Self {
+        self.valid = Some(Arc::new(valid));
+        self
     }
 
     /// The password, for the one SASL exchange that sends it.
     pub fn expose(&self) -> &str {
-        &self.0
+        &self.secret
+    }
+
+    /// Whether it may still be sent now.
+    pub(crate) fn sendable(&self) -> bool {
+        self.valid.as_ref().is_none_or(|valid| valid())
     }
 }
+
+impl PartialEq for IssuedPassword {
+    fn eq(&self, other: &Self) -> bool {
+        self.secret == other.secret
+    }
+}
+
+impl Eq for IssuedPassword {}
 
 impl std::fmt::Debug for IssuedPassword {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

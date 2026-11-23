@@ -235,8 +235,13 @@ pub(super) fn authenticate(session: &mut Session, message: &Message, out: &mut O
     if session.caps.sasl == Authentication::TimedOut || message.param(0) != "+" {
         return;
     }
-    // An issued password goes out once, then the session drops it.
+    // An issued password goes out once, then the session drops it, and
+    // only while it may still be sent.
     let issued = session.caps.issued.password.take();
+    if issued.as_ref().is_some_and(|issued| !issued.sendable()) {
+        refuse(EXPIRED, out);
+        return;
+    }
     let Some(credentials) = session.config.sasl.as_ref() else {
         return;
     };
@@ -257,6 +262,16 @@ pub(super) fn authenticate(session: &mut Session, message: &Message, out: &mut O
     if encoded.len().is_multiple_of(CHUNK_SIZE) {
         out.send(Message::new("AUTHENTICATE", ["+"]));
     }
+}
+
+/// Why an issued login was not sent.
+const EXPIRED: &str = "The sign-in expired or its account signed out before it was sent";
+
+/// Ends the link because an issued login cannot be used: leave, and let
+/// the network tell the source and retry.
+fn refuse(reason: &str, out: &mut Output) {
+    out.ending = Some(super::Ending::Refused(reason.to_owned()));
+    out.send(Message::new("QUIT", ["Sign-in required"]));
 }
 
 /// A SASL outcome in fixed words, with its numeric.
@@ -283,8 +298,14 @@ fn sasl_result(session: &mut Session, message: &Message, kind: LineKind, out: &m
     if session.caps.issued.required {
         // The server's words could echo the issued login: say it in ours.
         let text = sign_in_outcome(&message.command);
-        let line = lines::line(session, message, Target::Server, kind, text);
+        let line = lines::line(session, message, Target::Server, kind, text.clone());
         out.event(Event::Line(line));
+        if kind == LineKind::Error {
+            // Refused: leave now, so the login is dropped and retried later.
+            session.caps.sasl = Authentication::Finished;
+            refuse(&text, out);
+            return;
+        }
     } else {
         numerics::server_line(session, message, kind, out);
     }
