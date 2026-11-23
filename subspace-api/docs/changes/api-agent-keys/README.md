@@ -124,6 +124,8 @@ use at once.
   `tests/irc.test.ts` and `tests/listeners.test.ts` cover every acceptance bullet
   and refusal in the two issues. The tests build their own Ed25519, P-256, P-384 and
   RSA certificates and mint agent tokens as a gateway would, with `NODE_ENV=production`
-  and a fictional Entra tenant for people.
+  and a fictional Entra tenant for people. `tests/agent-keys-migration.test.ts`
+  applies the two migrations to a database that already has an organisation, a
+  person, a fleet and an agent, twice, and checks the database's own constraints.
 - Not verified: the Stargate gateway against this API, a real Ergo with
   certificate forwarding, and the migrations on a copy of a production database.
