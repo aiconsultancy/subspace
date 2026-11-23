@@ -24,8 +24,21 @@ fn current(conversation: &Conversation, cx: &App) -> Option<Offer> {
             &conversation.roster,
             &conversation.buffer,
         ))
-        .tracking(crate::tracker::facts(conversation, typed_issue(&text), cx));
+        .tracking(tracker_facts(conversation, &text, cx));
     suggest(&text, cursor, &facts)
+}
+
+/// What the tracker commands know, gathered only for a draft that is a
+/// slash command: ordinary chat never pays for reading every issue in
+/// play.
+fn tracker_facts(
+    conversation: &Conversation,
+    text: &str,
+    cx: &App,
+) -> Option<crate::tracker::Facts> {
+    text.starts_with('/')
+        .then(|| crate::tracker::facts(conversation, typed_issue(text), cx))
+        .flatten()
 }
 
 /// The issue a tracker command in `text` names, so its answer is gathered.
