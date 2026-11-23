@@ -25,6 +25,7 @@ from agent_files import collect_cloud, private_directory, private_file, provisio
 import fleet_records
 from network import rules
 from roles import API_SKILL_MISSING, api_skill_path, default_permissions, provision_role, role_documents
+from roles import provision_workspace, workspace_documents
 import sessions
 import standard_channels
 from workspaces import crew_worktree, prepare_workspaces, prune_worktrees
@@ -503,7 +504,7 @@ def repository_config(value):
     require(isinstance(value, list), "repositories must be an array.")
     repos = {}
     for row in value:
-        row = fields(row, "repository", "id url private", ["id", "url"])
+        row = fields(row, "repository", "id url private description tracker", ["id", "url"])
         # IDs are also Stargate crew project keys: lowercase, starting with a letter, never "default".
         name = pattern(row["id"], r"[a-z][a-z0-9_-]{0,39}", "repository ID (start with a lowercase letter)")
         require(name != "default", "The repository ID default is reserved by Stargate's crew plugin.")
@@ -515,6 +516,21 @@ def repository_config(value):
             pattern(address, r"https://github\.com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+", "private GitHub repository HTTPS URL")
         repos[name] = {"url": address, "private": private}
     return repos
+
+
+def repository_notes(value):
+    """Each repository's optional one-line description and tracker note, for its captains' workspace instructions.
+
+    Kept apart from repository_config, whose URL and visibility are fixed once installed; these may change.
+    """
+    notes = {}
+    for row in value:
+        note = {}
+        for key, maximum in (("description", 200), ("tracker", 300)):
+            if key in row:
+                note[key] = string(row[key], f"repository {row['id']} {key} (one line)", maximum).strip()
+        notes[row["id"]] = note
+    return notes
 
 
 def toolchain_config(value):
@@ -779,6 +795,7 @@ def validate(config, credentials, check_files=True):
     return {
         "slug": slug, "name": string(cfg["name"], "fleet name"), "members": agents, "irc": irc, "medical": medical,
         "repositories": repositories,
+        "repositoryNotes": repository_notes(cfg.get("repositories", [])),
         "integrations": integrations_config(cfg), "operators": operators, "protectedBranches": protected,
         "toolchains": toolchain_config(cfg.get("toolchains", {})),
         "maintenance": maintenance_config(cfg.get("maintenance", {})),
@@ -1825,6 +1842,13 @@ def render(cfg, extra, prune=False):
             ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "role"],
             input=json_text(documents[agent_id]), text=True, check=True,
         )
+        if person["role"] == "captain":
+            # The workspace's own AGENTS.md and CLAUDE.md, written as the captain beside its checkouts, never in one.
+            subprocess.run(
+                ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "workspace-instructions"],
+                input=json_text(workspace_documents(cfg, person, roots[agent_id]["path"], home)), text=True,
+                check=True,
+            )
         files = extra["cloud"].get(agent_id, {})
         if files or (home / ".config/subspace/cloud/.installer-files").is_file():
             subprocess.run(
@@ -2189,6 +2213,9 @@ def main(args):
         provision_cloud(json.load(sys.stdin), tail == ["true"])
     elif verb == "role":
         provision_role(json.load(sys.stdin))
+    elif verb == "workspace-instructions":
+        # Run as the captain: its workspace AGENTS.md and CLAUDE.md, keeping the operator notes.
+        provision_workspace(json.load(sys.stdin))
     elif verb == "agent-header":
         # Stargate's Claude backend runs this as the officer for its Subspace MCP server's headers.
         require(len(tail) == 1 and re.fullmatch(r"[a-z][a-z0-9-]{0,23}", tail[0]), "Name one agent account.")

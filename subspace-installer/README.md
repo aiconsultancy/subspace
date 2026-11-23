@@ -110,6 +110,15 @@ first repository. The rear admiral can inspect them from its own Linux
 account, including Git history. `subspace-setup --repositories` fills this
 list from comma-separated HTTPS URLs, optionally written as `ID=URL`.
 
+A repository also takes an optional one-line `description` and `tracker`,
+free text that names where its work is tracked, for example
+`"tracker": "Example issues at https://tracker.example.com/project"`. Both
+appear in each captain's [workspace instructions](#workspace-instructions),
+so a fleet whose repositories use more than one tracker can say which is
+which. A repository without a `tracker` uses the fleet's Subspace tracker
+when `api` is set; otherwise its instructions say the tracker is not
+recorded. Unlike the URL and visibility, both may change at any time.
+
 Set fleet-wide `crew.claude` and `crew.codex` defaults, or override either
 under a captain's `crew`. Each family takes a `count` from 0 to 10 and a
 `model`. Crew run inside their captain's OpenCode server, as the captain's
@@ -250,8 +259,10 @@ project of its own, keyed by its path (checked in its source), and:
   the captain's home, and `.opencode/`, `opencode.json` and `.claude/` from
   the workspace and every directory above it, never from the repositories
   below. The root session therefore no longer loads the first repository's
-  own `AGENTS.md` or `.opencode/` automatically; crew sessions, in their
-  worktrees, still load their repository's;
+  own `AGENTS.md` or `.opencode/` automatically: the
+  [workspace instructions](#workspace-instructions) name each repository's
+  instructions instead, and crew sessions, in their worktrees, still load
+  their repository's;
 - treats every checkout as inside the session's directory, so a captain
   without crew can work in all of its repositories under its permissions,
   not only the first, and runs commands in a checkout by setting the shell
@@ -269,6 +280,40 @@ the captain's directory, so it now belongs in the workspace rather than in a
 checkout. Stargate's Fleet API reports a ship's repository from its crew's
 default project; for a captain without crew, which has none, it reports no
 repository.
+
+### Workspace instructions
+
+Every install and upgrade writes two files into each captain's workspace,
+beside its checkouts and never inside one:
+
+- `AGENTS.md`, which OpenCode loads for every session in the workspace and,
+  because it reads `AGENTS.md` up to the captain's home, for a session in one
+  of its checkouts too, such as a root pinned in the first repository. It
+  says who the captain is and who its rear admiral is; lists each
+  repository with its ID, `description`, remote, tracker (see
+  [Crew and repositories](#crew-and-repositories)), where its own
+  instructions are and, for a captain with crew, where its crew's worktrees
+  are; lists the fleet's [channels](#channels); and says that work in a
+  repository follows that repository's own `AGENTS.md`, rules and tracker.
+- `CLAUDE.md`, which imports it (`@AGENTS.md`) for Claude Code. OpenCode
+  reads a `CLAUDE.md` only where a directory has no `AGENTS.md`, so it
+  ignores this one. Stargate's Claude backend loads neither file by default,
+  so a `claude-sdk` captain does not see them.
+
+The text comes from [`lib/roles/captain/WORKSPACE.md`](lib/roles/captain/WORKSPACE.md);
+edit it and re-run the installer to change every captain's file. Both files
+start with a comment that marks them as generated, and the installer writes
+them as the captain's Linux user, mode `0600`, rewriting them only when they
+change.
+
+To add your own guidance for one captain, write it between the two operator
+notes markers at the end of its `AGENTS.md`, as the captain's user, for
+example `sudo -e -u ss-orion /var/lib/subspace-fleet/agents/orion/workspace/AGENTS.md`.
+Everything between the markers survives regeneration; anything else in the
+file is replaced. The captain can add notes there too. If the installer finds
+an `AGENTS.md` or `CLAUDE.md` it did not write, it keeps that text in the
+operator notes. If a file is not a regular UTF-8 file the captain can read,
+such as a symbolic link, it leaves both files unchanged and says so.
 
 ### Instructions, permissions and toolchains
 

@@ -12,7 +12,8 @@ $roster
 Each crew member has one permanent worktree per repository ($repositories),
 under `$worktrees/<crew ID>/<repository ID>`. `$first` is your crew's default
 repository. To assign work in another repository, pass its repository ID as
-`project` to the crew tools.
+`project` to the crew tools. Your workspace's AGENTS.md describes each
+repository and the tracker its work uses.
 
 Delegate with `stargate_crew` and receive each hand-back as the task's
 result, as you would a subagent's. Use `stargate_mail` for notes that need no

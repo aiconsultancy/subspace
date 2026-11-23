@@ -1,5 +1,6 @@
 """Offline checks for network, GitHub and workspace policy."""
 
+import io
 import json
 import re
 import subprocess
@@ -538,7 +539,8 @@ def workspace_fleet(**api):
     config = example_config()
     config["crew"] = {"claude": {"count": 1}, "codex": {"count": 1}}
     config["repositories"] = [
-        {"id": "project", "url": "https://github.com/example/project.git"},
+        {"id": "project", "url": "https://github.com/example/project.git", "description": "The example service.",
+         "tracker": "Example issues at https://tracker.example.com/project"},
         {"id": "library", "url": "https://github.com/example/library.git"},
     ]
     config["captains"].append({"id": "vega", "name": "Vega", "account": "example-vega"})
@@ -550,7 +552,7 @@ def workspace_fleet(**api):
 
 
 class WorkspaceRootTests(unittest.TestCase):
-    """A captain's session starts in its workspace above the checkouts."""
+    """A captain's session starts in its workspace above the checkouts, with generated instructions there."""
 
     home = Path("/var/lib/subspace-fleet/agents/orion")
 
@@ -583,6 +585,127 @@ class WorkspaceRootTests(unittest.TestCase):
         config["rearAdmiral"]["sessionRoot"] = "workspace"
         with self.assertRaisesRegex(Invalid, "Only captains take sessionRoot"):
             validate(config, officer_secrets())
+
+    def test_repository_notes_are_one_line_and_kept_apart_from_the_sources(self):
+        cfg = workspace_fleet()
+        self.assertEqual(cfg["repositoryNotes"], {
+            "project": {"description": "The example service.",
+                        "tracker": "Example issues at https://tracker.example.com/project"},
+            "library": {},
+        })
+        # Notes stay out of the repository sources, whose URL and visibility are fixed once installed.
+        self.assertEqual(cfg["repositories"]["project"], {"url": "https://github.com/example/project.git",
+                                                          "private": False})
+        for row, message in (({"description": "two\nlines"}, "one line"), ({"tracker": "x" * 301}, "one line"),
+                             ({"tracker": 7}, "one line")):
+            config = example_config()
+            config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git", **row}]
+            with self.subTest(row=row), self.assertRaisesRegex(Invalid, message):
+                validate(config, officer_secrets())
+
+    def test_the_workspace_instructions_describe_repositories_trackers_and_channels(self):
+        cfg = workspace_fleet(url="http://127.0.0.1:3000")
+        captain = cfg["members"][1]
+        documents = roles.workspace_documents(cfg, captain, self.home / "workspace", self.home)
+        agents = documents["AGENTS.md"]
+        self.assertTrue(agents.startswith(roles.GENERATED))
+        self.assertIn("You are Orion, a captain in Example Fleet.", agents)
+        self.assertIn(f"`{self.home}/workspace`", agents)
+        self.assertIn("Your sessions start here", agents)
+        self.assertIn("The rear admiral, Atlas,", agents)
+        # Each repository: its ID, description, remote, tracker and where its own instructions are.
+        project, library = agents.split("### `project`")[1].split("### `library`")
+        self.assertIn("The example service.", project)
+        self.assertIn("- Remote: https://github.com/example/project.git", project)
+        self.assertIn("- Tracker: Example issues at https://tracker.example.com/project", project)
+        self.assertIn("- Instructions: `project/AGENTS.md`", project)
+        self.assertIn(f"- Crew worktrees: `{self.home}/worktrees/<crew ID>/project`", project)
+        # A repository without a tracker note uses the fleet's Subspace tracker.
+        self.assertIn("- Tracker: the fleet's Subspace tracker", library)
+        self.assertIn("- Instructions: `library/AGENTS.md`", library)
+        self.assertIn("passing the repository ID as `project` for any repository but `project`", agents)
+        for line in ("- `#example-fleet-orion`: your ship channel", "- `#example-fleet-command`: fleet command",
+                     "- `#example-fleet-vega`: Vega's ship channel.", "- `#example-fleet-starbase`: Starbase"):
+            self.assertIn(line, agents)
+        self.assertIn("its AGENTS.md, branch and review rules, checks and tracker take precedence", agents)
+        self.assertNotIn("$", agents)
+        self.assertEqual(documents["CLAUDE.md"].splitlines()[-1], "@AGENTS.md")
+        self.assertTrue(documents["CLAUDE.md"].startswith(roles.GENERATED))
+        # Without the API a repository with no note says the tracker is not recorded.
+        cfg = workspace_fleet()
+        agents = roles.workspace_documents(cfg, cfg["members"][2], self.home / "workspace/project", self.home)["AGENTS.md"]
+        self.assertIn("- Tracker: not recorded in the fleet configuration", agents)
+        self.assertIn("Your sessions start in `project/`, your checkout of the first repository", agents)
+
+    def provision(self, home, documents):
+        with patch.dict("os.environ", {"HOME": str(home)}):
+            roles.provision_workspace(documents)
+
+    def test_regeneration_keeps_operator_notes_and_never_writes_into_a_checkout(self):
+        cfg = workspace_fleet()
+        captain = cfg["members"][1]
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            workspace = home / "workspace"
+            for repo in ("project", "library"):
+                (workspace / repo / ".git").mkdir(parents=True)
+                (workspace / repo / "AGENTS.md").write_text(f"{repo}'s own instructions\n")
+            checkouts = {path: path.read_bytes() for path in workspace.glob("*/**/*") if path.is_file()}
+            documents = roles.workspace_documents(cfg, captain, workspace, home)
+            self.provision(home, documents)
+            agents, claude = workspace / "AGENTS.md", workspace / "CLAUDE.md"
+            self.assertEqual(roles.operator_notes(agents.read_text()), "")
+            self.assertEqual((agents.stat().st_mode & 0o777, claude.stat().st_mode & 0o777), (0o600, 0o600))
+            self.assertEqual(claude.read_text(), documents["CLAUDE.md"])
+            # Idempotent: an unchanged run replaces neither file.
+            inodes = (agents.stat().st_ino, claude.stat().st_ino)
+            self.provision(home, documents)
+            self.assertEqual((agents.stat().st_ino, claude.stat().st_ino), inodes)
+            # An operator's notes survive a regeneration with changed fleet details.
+            text = agents.read_text().replace(f"{roles.NOTES_START}\n\n",
+                                              f"{roles.NOTES_START}\nDeploy windows are Tuesdays.\n\nAsk first.\n")
+            agents.write_text(text)
+            cfg["repositoryNotes"]["library"]["tracker"] = "Library board"
+            changed = roles.workspace_documents(cfg, captain, workspace, home)
+            self.provision(home, changed)
+            regenerated = agents.read_text()
+            self.assertIn("- Tracker: Library board", regenerated)
+            self.assertEqual(roles.operator_notes(regenerated), "Deploy windows are Tuesdays.\n\nAsk first.")
+            self.assertTrue(regenerated.rstrip().endswith(roles.NOTES_END))
+            self.provision(home, changed)
+            self.assertEqual(agents.read_text(), regenerated)
+            # Only the workspace's own two files were written: every checkout is as it was.
+            self.assertEqual({path: path.read_bytes() for path in workspace.glob("*/**/*") if path.is_file()}, checkouts)
+            self.assertEqual(sorted(path.name for path in workspace.iterdir()),
+                             ["AGENTS.md", "CLAUDE.md", "library", "project"])
+
+    def test_files_the_installer_did_not_write_are_kept_or_left_alone(self):
+        cfg = workspace_fleet()
+        captain = cfg["members"][1]
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            workspace = home / "workspace"
+            workspace.mkdir()
+            (workspace / "AGENTS.md").write_text("Hand-written workspace notes.\n")
+            (workspace / "CLAUDE.md").write_text("Prefer small pull requests.\n")
+            documents = roles.workspace_documents(cfg, captain, workspace, home)
+            with patch("sys.stderr", new_callable=io.StringIO) as warnings:
+                self.provision(home, documents)
+            self.assertIn("kept the text of", warnings.getvalue())
+            notes = roles.operator_notes((workspace / "AGENTS.md").read_text())
+            self.assertEqual(notes, "Hand-written workspace notes.\n\nPrefer small pull requests.")
+            self.assertEqual((workspace / "CLAUDE.md").read_text(), documents["CLAUDE.md"])
+            self.provision(home, documents)
+            self.assertEqual(roles.operator_notes((workspace / "AGENTS.md").read_text()), notes)
+            # A file the captain cannot read safely, such as a symbolic link, is left as it is.
+            (workspace / "AGENTS.md").unlink()
+            (workspace / "AGENTS.md").symlink_to(workspace / "CLAUDE.md")
+            before = (workspace / "CLAUDE.md").read_text()
+            with patch("sys.stderr", new_callable=io.StringIO) as warnings:
+                self.provision(home, documents)
+            self.assertIn("unchanged", warnings.getvalue())
+            self.assertTrue((workspace / "AGENTS.md").is_symlink())
+            self.assertEqual((workspace / "CLAUDE.md").read_text(), before)
 
 
 class StandardChannelTests(unittest.TestCase):

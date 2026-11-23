@@ -480,6 +480,10 @@ class InstalledFleet(unittest.TestCase):
         self.render(config, secrets)
         self.assertEqual(self.roots_record(), {"orion": "workspace"})
         self.assertEqual(self.engine_directory(), str(workspace))
+        # The workspace instructions are written as the captain, which owns the workspace.
+        calls = [call for call in runtime.subprocess.run.call_args_list if "workspace-instructions" in call.args[0]]
+        self.assertEqual(calls[-1].args[0][:3], ["runuser", "-u", "ss-orion"])
+        self.assertIn(f"`{workspace}`", json.loads(calls[-1].kwargs["input"])["AGENTS.md"])
 
         runtime.commission(False)
         record = json.loads(self.store.confirmed.read_text())

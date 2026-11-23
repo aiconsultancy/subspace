@@ -576,10 +576,18 @@ def check_shape():
                "/opt/subspace-fleet/toolchains/shims/node", "--version"]
     assert subprocess.check_output(command, text=True).startswith("v24.")
     captain = pwd.getpwnam("ss-orion")
+    # The captain's workspace instructions sit beside its checkouts, written as the captain.
+    workspace = CAPTAIN_HOME / "workspace"
+    instructions = (workspace / "AGENTS.md").read_text()
+    assert "### `sample`" in instructions and "### `second`" in instructions and "<!-- Operator notes end -->" in instructions
+    assert (workspace / "CLAUDE.md").read_text().endswith("@AGENTS.md\n")
+    assert {(workspace / name).stat().st_uid for name in ("AGENTS.md", "CLAUDE.md")} == {captain.pw_uid}
     for repo in ("sample", "second"):
         checkout = CAPTAIN_HOME / "workspace" / repo
         git = ["runuser", "-u", "ss-orion", "--", "git", "-C", str(checkout)]
         assert subprocess.check_output([*git, "branch", "--show-current"], text=True).strip() == "main"
+        # Nothing is written into a checkout.
+        assert subprocess.check_output([*git, "status", "--porcelain"], text=True) == ""
         assert (checkout / ".git").is_dir()
         objects = checkout / ".git/objects"
         assert (objects / "info/alternates").read_text().strip() == f"/var/lib/subspace-fleet/repositories/{repo}.git/objects"
