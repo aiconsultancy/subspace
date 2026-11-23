@@ -241,3 +241,25 @@ fn a_whole_command_s_first_row_says_what_return_will_do() {
 
 mod message;
 mod write;
+
+#[test]
+fn a_captain_without_a_user_is_no_default_assignee() {
+    use crate::fleet::Roster;
+    use crate::fleet::tests::{agent, fleet};
+    let mut lyra = agent("aurora-lyra", "captain", Some("aurora-lyra"), Some("Lyra"));
+    lyra["userId"] = serde_json::json!("");
+    let roster = Roster::new([&fleet("aurora", vec![lyra])]);
+    let facts = super::gather(
+        &crate::issues::IssueReferences::default(),
+        &crate::tiles::Tiles::default(),
+        &roster,
+        &crate::fixtures::channel("#aurora-lyra"),
+        None,
+    );
+    assert!(facts.captain.is_none(), "no assigneeId \"\" is ever sent");
+    assert_eq!(facts.ship.as_deref(), Some("Lyra"));
+    assert!(
+        plan(&typed("/assign NAV-2").unwrap(), &facts).is_err(),
+        "asks whom"
+    );
+}

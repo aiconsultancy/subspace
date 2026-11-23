@@ -141,6 +141,7 @@ pub(crate) fn gather(
         })
         .collect();
     let (captain, ship) = captain(roster, buffer).unzip();
+    let captain = captain.flatten();
     Facts {
         tracker: issues
             .scope()
@@ -195,7 +196,7 @@ fn known(summary: &IssueSummary) -> Known {
 }
 
 /// The captain of a ship's channel and its ship's name.
-fn captain(roster: &Roster, buffer: &BufferKey) -> Option<(AgentChoice, Option<String>)> {
+fn captain(roster: &Roster, buffer: &BufferKey) -> Option<(Option<AgentChoice>, Option<String>)> {
     let Target::Channel(name) = &buffer.target else {
         return None;
     };
@@ -203,10 +204,12 @@ fn captain(roster: &Roster, buffer: &BufferKey) -> Option<(AgentChoice, Option<S
         return None;
     };
     let agent = roster.agent(captain)?;
-    let choice = AgentChoice {
+    // A captain the API records no user for cannot be assigned: no
+    // default, so the plan asks whom.
+    let choice = (!agent.user_id.is_empty()).then(|| AgentChoice {
         nick: captain.clone(),
         user_id: agent.user_id.clone(),
-    };
+    });
     Some((choice, agent.ship.clone()))
 }
 
