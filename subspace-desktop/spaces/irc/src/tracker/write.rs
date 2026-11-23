@@ -4,8 +4,12 @@
 //! writes once; nothing is retried. Results and refusals come back as the
 //! notice's plain words, never with a token or a server body in them.
 
-use subspace_api_client::decision_writes::{DecisionText, IrcEvidence, NewDecision};
-use subspace_api_client::issue_writes::{IssueChanges, IssueProperty, IssueSave};
+use subspace_api_client::decision_writes::{
+    DecisionText, DecisionWriteError, IrcEvidence, NewDecision,
+};
+use subspace_api_client::issue_writes::{IssueChanges, IssueProperty, IssueSave, IssueSaveError};
+
+use super::failed::Failed;
 use subspace_api_client::model::{IssueDetail, IssueFields};
 use subspace_api_client::{Client, Error};
 
@@ -98,10 +102,10 @@ pub(crate) fn title_of(text: &str) -> String {
 }
 
 /// Runs `job` with `client`; blocking.
-pub(crate) fn run(client: &Client, job: &Job) -> Result<Done, String> {
+pub(crate) fn run(client: &Client, job: &Job) -> Result<Done, Failed> {
     match job {
-        Job::Assign { issue, to } => assign(client, issue, to),
-        Job::Ready { issue, on } => ready(client, issue, *on),
+        Job::Assign { issue, to } => Ok(assign(client, issue, to)?),
+        Job::Ready { issue, on } => Ok(ready(client, issue, *on)?),
         Job::Decide(draft) => decide(client, draft),
         Job::Create(draft) => create(client, draft),
     }
@@ -157,7 +161,7 @@ fn ready(client: &Client, issue: &str, on: bool) -> Result<Done, String> {
     })
 }
 
-fn decide(client: &Client, draft: &DecisionDraft) -> Result<Done, String> {
+fn decide(client: &Client, draft: &DecisionDraft) -> Result<Done, Failed> {
     let issue = &draft.issue;
     client.me().map_err(|error| read_error(issue, &error))?;
     let detail = read(client, issue)?;
@@ -177,8 +181,12 @@ fn decide(client: &Client, draft: &DecisionDraft) -> Result<Done, String> {
         decided_on: &today,
         message,
     };
-    let refused = |error: subspace_api_client::decision_writes::DecisionWriteError| {
-        format!("Couldn't record the decision on {issue}: {error}")
+    let refused = |error: DecisionWriteError| {
+        let words = format!("Couldn't record the decision on {issue}: {error}");
+        match error {
+            DecisionWriteError::Unconfirmed => Failed::unconfirmed(words),
+            _ => Failed::from(words),
+        }
     };
     let decision = NewDecision::new(&fields.project_id, &[&fields.id], &text).map_err(refused)?;
     let recorded = client.log_decision(&decision).map_err(refused)?;
@@ -191,7 +199,7 @@ fn decide(client: &Client, draft: &DecisionDraft) -> Result<Done, String> {
     })
 }
 
-fn create(client: &Client, draft: &IssueDraft) -> Result<Done, String> {
+fn create(client: &Client, draft: &IssueDraft) -> Result<Done, Failed> {
     let project = &draft.project;
     let refused = |words: String| format!("Couldn't create the issue in {project}: {words}");
     client.me().map_err(|error| refused(error.to_string()))?;
@@ -202,17 +210,19 @@ fn create(client: &Client, draft: &IssueDraft) -> Result<Done, String> {
         .iter()
         .find(|row| row.key == *project && row.archived_at.is_none())
     else {
-        return Err(refused(
-            "the project isn't open in this tracker.".to_owned(),
-        ));
+        return Err(refused("the project isn't open in this tracker.".to_owned()).into());
     };
     let mut changes = IssueChanges::default();
     changes.set(IssueProperty::Title(draft.title.clone()));
     changes.set(IssueProperty::Summary(draft.summary.clone()));
     changes.set(IssueProperty::Description(Some(draft.description.clone())));
-    let IssueSave::Saved(created) = client
-        .create_issue(&found.id, &changes)
-        .map_err(|error| refused(error.to_string()))?;
+    let IssueSave::Saved(created) =
+        client
+            .create_issue(&found.id, &changes)
+            .map_err(|error| match error {
+                IssueSaveError::Unconfirmed => Failed::unconfirmed(refused(error.to_string())),
+                _ => Failed::from(refused(error.to_string())),
+            })?;
     let fields = &created.fields;
     Ok(Done {
         notice: format!(

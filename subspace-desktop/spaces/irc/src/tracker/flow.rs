@@ -9,6 +9,7 @@ use gpui_kit::{AppContext as _, Context, Window};
 use subspace_api_client::Client;
 use subspace_client_irc::Target;
 
+use super::failed::Failed;
 use super::message::Dialog;
 use super::write::{self, Done, Job};
 use super::{available, facts, plan, typed};
@@ -17,6 +18,8 @@ use crate::conversation::Conversation;
 /// Why a tracker command with attachments was kept.
 pub(crate) const ATTACHMENTS: &str =
     "Tracker commands don't take attachments. Send the files on their own.";
+/// Why a draft whose last write was never confirmed is not sent again.
+pub(crate) const UNCONFIRMED_AGAIN: &str = "The tracker didn't confirm the last try, so this may already be saved. Check the tracker; to send it again anyway, change the command first.";
 /// Why a dialog's button wrote nothing after the account, organisation
 /// or tracker changed.
 pub(crate) const SCOPE_CHANGED: &str = "You switched account, organisation or tracker since this opened, so nothing was written. Close it and open it again.";
@@ -27,6 +30,9 @@ pub(crate) const SCOPE_CHANGED: &str = "You switched account, organisation or tr
 pub(crate) struct State {
     pub busy: bool,
     pub dialog: Option<Dialog>,
+    /// A typed command whose write the tracker never confirmed: it may
+    /// have landed, so the same draft is not sent again.
+    pub unconfirmed: Option<String>,
     /// The issues asked for again after a write, which tests read back.
     #[cfg(test)]
     pub refreshed: Vec<String>,
@@ -81,6 +87,12 @@ pub(crate) fn submit(
     let Some(typed) = typed(text) else {
         return false;
     };
+    if conversation.tracker.unconfirmed.as_deref() == Some(text) {
+        conversation.draft.entity.update(cx, |input, cx| {
+            input.set_error(UNCONFIRMED_AGAIN.to_owned(), cx)
+        });
+        return true;
+    }
     let planned = if conversation.tray.is_empty() {
         let refusal = available(&conversation.buffer, &conversation.hub.read(cx).issues);
         match refusal {
@@ -152,7 +164,7 @@ pub(crate) fn start_with(
     let client = match super::destination::matching(client, scope) {
         Ok(client) => client,
         Err(reason) => {
-            finish(conversation, Err(reason), origin, window, cx);
+            finish(conversation, Err(reason.into()), origin, window, cx);
             return;
         }
     };
@@ -180,31 +192,64 @@ pub(crate) fn start_with(
 /// the dialog and asks for the issue again, a refused one keeps the text.
 fn finish(
     conversation: &mut Conversation,
-    result: Result<Done, String>,
+    result: Result<Done, Failed>,
     origin: Origin,
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
     conversation.tracker.busy = false;
-    let landed = result.is_ok();
+    let outcome = Outcome::of(&result);
     let notice = match result {
         Ok(done) => {
             refresh(conversation, &done.changed, cx);
             done.notice
         }
-        Err(reason) => reason,
+        Err(failed) => failed.words,
     };
     conversation.reacting.notice = Some(notice);
     match origin {
-        Origin::Composer => conversation.draft.entity.update(cx, |input, cx| {
-            input.set_busy(false, cx);
-            if landed {
-                input.clear(window, cx);
-            }
-        }),
-        Origin::Dialog => super::message::finished(conversation, landed, window, cx),
+        Origin::Composer => composer_finished(conversation, outcome, window, cx),
+        Origin::Dialog => super::message::finished(conversation, outcome, window, cx),
     }
     cx.notify();
+}
+
+/// What came of a write, for where it came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    Landed,
+    Refused,
+    /// Sent, but never confirmed: it may have landed.
+    Unconfirmed,
+}
+
+impl Outcome {
+    fn of(result: &Result<Done, Failed>) -> Self {
+        match result {
+            Ok(_) => Self::Landed,
+            Err(failed) if failed.unconfirmed => Self::Unconfirmed,
+            Err(_) => Self::Refused,
+        }
+    }
+}
+
+/// The composer after its command's write: emptied once it landed; kept
+/// otherwise, and not sent again as it stands once it went unconfirmed.
+fn composer_finished(
+    conversation: &mut Conversation,
+    outcome: Outcome,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    let input = conversation.draft.entity.clone();
+    let text = input.read(cx).text(cx);
+    conversation.tracker.unconfirmed = (outcome == Outcome::Unconfirmed).then_some(text);
+    input.update(cx, |input, cx| {
+        input.set_busy(false, cx);
+        if outcome == Outcome::Landed {
+            input.clear(window, cx);
+        }
+    });
 }
 
 /// Asks the tracker for `identifier` again, so tiles and **In play here**

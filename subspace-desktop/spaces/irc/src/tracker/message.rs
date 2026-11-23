@@ -11,7 +11,7 @@ use gpui_kit::{
 };
 use subspace_client_irc::Target;
 
-use super::flow::{self, Binding, Origin};
+use super::flow::{self, Binding, Origin, Outcome};
 pub(crate) use super::quote::Kind;
 use super::quote::{Quoted, choices, decision_draft, issue_draft};
 use super::write::{Job, title_of};
@@ -40,6 +40,9 @@ pub(crate) struct Dialog {
     choices: Vec<String>,
     pub(crate) chosen: Option<String>,
     pub(crate) error: Option<String>,
+    /// Its write went unconfirmed: it may have landed, so the button stays
+    /// off and nothing is sent again from here.
+    pub(crate) unconfirmed: bool,
     /// The account, organisation and tracker the dialog opened under: its
     /// button writes only while they are still current.
     binding: Binding,
@@ -99,6 +102,7 @@ pub(crate) fn open(
         choices,
         chosen,
         error: None,
+        unconfirmed: false,
         binding,
         previous_focus,
         _subscription: subscription,
@@ -147,14 +151,15 @@ pub(crate) fn close(
 /// with its text so the person can try again.
 pub(crate) fn finished(
     conversation: &mut Conversation,
-    landed: bool,
+    outcome: Outcome,
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
-    if landed {
+    if outcome == Outcome::Landed {
         close(conversation, window, cx);
     } else if let Some(dialog) = conversation.tracker.dialog.as_mut() {
         dialog.error = conversation.reacting.notice.clone();
+        dialog.unconfirmed |= outcome == Outcome::Unconfirmed;
     }
 }
 
@@ -172,7 +177,12 @@ pub(crate) fn confirm(
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
-    if conversation.tracker.busy {
+    let unconfirmed = conversation
+        .tracker
+        .dialog
+        .as_ref()
+        .is_some_and(|dialog| dialog.unconfirmed);
+    if conversation.tracker.busy || unconfirmed {
         return;
     }
     let context = flow::context(conversation, cx);

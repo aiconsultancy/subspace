@@ -110,7 +110,7 @@ fn ready_sends_the_flag_and_a_fresh_refusal_writes_nothing() {
     );
     assert_eq!(sent(&mock)[2].2, json!({"readyForAgents":true,"version":4}));
     let assigned = tracker(false, Some("user-wren"));
-    let refused = write::run(&client(&assigned), &on).unwrap_err();
+    let refused = write::run(&client(&assigned), &on).unwrap_err().words;
     assert!(refused.contains("assigned to Wren"), "{refused}");
     assert!(sent(&assigned).iter().all(|(method, _, _)| method == "GET"));
 }
@@ -190,7 +190,7 @@ fn the_api_s_refusal_reads_in_plain_words_without_its_body() {
         issue: "NAV-2".into(),
         to: Who::Me,
     };
-    let refused = write::run(&client(&mock), &job).unwrap_err();
+    let refused = write::run(&client(&mock), &job).unwrap_err().words;
     assert_eq!(
         refused,
         "Couldn't change NAV-2: You don't have permission to save this issue. Your draft is still here."
@@ -203,7 +203,29 @@ fn the_api_s_refusal_reads_in_plain_words_without_its_body() {
         _ => (404, "{}".into()),
     });
     assert_eq!(
-        write::run(&client(&missing), &job).unwrap_err(),
+        write::run(&client(&missing), &job).unwrap_err().words,
         "NAV-2 isn't in the tracker, or you can't see it."
     );
+}
+
+#[test]
+fn a_decision_the_tracker_never_confirmed_is_marked_unconfirmed() {
+    let mock = Mock::new(
+        |request| match (request.method.as_str(), request.path.as_str()) {
+            ("GET", "/api/v1/me") => (200, me()),
+            ("GET", "/api/v1/issues/NAV-2") => (200, issue(false, None).to_string()),
+            ("POST", "/api/v1/decisions") => (502, "{}".into()),
+            _ => (404, "{}".into()),
+        },
+    );
+    let job = Job::from_plan(
+        Plan::Decision {
+            issue: "NAV-2".into(),
+            text: "Decode tiles on a worker pool.".into(),
+        },
+        String::new(),
+    );
+    let failed = write::run(&client(&mock), &job).unwrap_err();
+    assert!(failed.unconfirmed, "{}", failed.words);
+    assert!(failed.words.contains("Check the issue's decisions"));
 }

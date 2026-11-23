@@ -27,6 +27,7 @@
 
 mod check;
 mod destination;
+mod failed;
 mod flow;
 pub(crate) mod message;
 mod parse;
@@ -53,6 +54,8 @@ use crate::tiles::{TileRef, Tiles};
 pub(crate) use destination::WRONG_TRACKER;
 #[cfg(test)]
 pub(crate) use flow::SCOPE_CHANGED;
+#[cfg(test)]
+pub(crate) use flow::UNCONFIRMED_AGAIN;
 pub(crate) use flow::{State, submit};
 pub(crate) use parse::typed;
 pub(crate) use plan::Facts;

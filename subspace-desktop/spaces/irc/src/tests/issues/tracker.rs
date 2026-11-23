@@ -22,6 +22,7 @@ use crate::tests::{channel_events, inject, mount, settings};
 mod composer;
 mod destination;
 mod dialog;
+mod unconfirmed;
 
 fn with_id(mut line: Line, id: &str) -> Line {
     line.id = Some(id.into());

@@ -74,7 +74,7 @@ pub(crate) fn render(
                 )
                 .child(
                     dialog_button("irc-tracker-confirm", Intent::Primary, Some(icon), button)
-                        .disabled(busy)
+                        .disabled(busy || dialog.unconfirmed)
                         .on_click(cx.listener(|this, _, window, cx| confirm(this, window, cx))),
                 ),
         );
