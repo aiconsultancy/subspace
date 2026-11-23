@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { Redacted } from "effect";
 import { databaseUrl } from "./db";
+import { canonicalName } from "./usernames";
 import { githubConfig } from "./github-app";
 import { isUuid } from "./validation";
 
@@ -101,18 +102,34 @@ function entraAdminRole(env: NodeJS.ProcessEnv, providers: ReadonlySet<string>) 
 }
 
 /**
- * Operator names no person may be given as a username, beside the built-in IRC service names:
- * a comma-separated list compared without regard to case.
+ * Names no person or agent may be given as a username, beside the built-in IRC service names:
+ * operator names and the IRC server's existing accounts. RESERVED_USERNAMES is a comma-separated
+ * list, and RESERVED_USERNAMES_FILE a file of names separated by commas, spaces or new lines, in
+ * which a line starting with # is a comment. Both may be set. Names compare in ASCII lower case.
  */
 export function reservedUsernames(env: NodeJS.ProcessEnv): ReadonlySet<string> {
-  const names = (env.RESERVED_USERNAMES ?? "")
-    .split(",")
-    .map((name) => name.trim().toLowerCase())
+  const file = env.RESERVED_USERNAMES_FILE?.trim();
+  let listed = "";
+  if (file) {
+    try {
+      listed = readFileSync(file, "utf8");
+    } catch {
+      throw new Error("RESERVED_USERNAMES_FILE must name a readable file");
+    }
+  }
+  const names = [
+    ...(env.RESERVED_USERNAMES ?? "").split(","),
+    ...listed
+      .split(/\r?\n/u)
+      .filter((line) => !line.trim().startsWith("#"))
+      .flatMap((line) => line.split(/[\s,]+/u)),
+  ]
+    .map((name) => canonicalName(name.trim()))
     .filter(Boolean);
   for (const name of names) {
-    if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(name)) {
+    if (!/^[\x21-\x7e]{1,64}$/u.test(name)) {
       throw new Error(
-        "RESERVED_USERNAMES must be comma-separated names of a letter then letters, digits, - or _",
+        "RESERVED_USERNAMES and RESERVED_USERNAMES_FILE must hold names of up to 64 printable ASCII characters",
       );
     }
   }

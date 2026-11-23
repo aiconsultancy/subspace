@@ -956,7 +956,7 @@ export const auditLogs = pgTable(
     actorId: uuid("actor_id"),
     actorDisplayName: text("actor_display_name"),
     actorRank: text("actor_rank", { enum: ["rearAdmiral", "captain", "crew"] }),
-    source: text({ enum: ["rest", "mcp", "github"] }).notNull(),
+    source: text({ enum: ["rest", "mcp", "github", "cli"] }).notNull(),
     entityType: text("entity_type").notNull(),
     entityId: text("entity_id"),
     projectId: uuid("project_id"),

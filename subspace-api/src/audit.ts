@@ -58,7 +58,7 @@ const Audit = Schema.Struct({
   actorRank: Schema.NullOr(AgentRank),
   relayedCrewName: NullableString,
   relayedCrewModel: NullableString,
-  source: Schema.Literals(["rest", "mcp", "github"]),
+  source: Schema.Literals(["rest", "mcp", "github", "cli"]),
   entityType: Schema.String,
   entityId: NullableString,
   projectId: Schema.NullOr(Uuid),

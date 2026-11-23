@@ -155,7 +155,7 @@ Development sign-in without a name takes the username from the e-mail.
 4. Reserved names are skipped: Ergo's services (`nickserv`, `chanserv`,
    `operserv`, `hostserv`, `histserv`, `botserv`, `memoserv` and `global`), `guest`
    and any name starting `guest-`, and the operator's names in
-   `RESERVED_USERNAMES`.
+   `RESERVED_USERNAMES` and `RESERVED_USERNAMES_FILE`.
 
 Allocations in an organisation are serialised with each other and with agent
 registration changes, so people who register at the same moment with the same
@@ -182,10 +182,19 @@ during a rolling deployment, is given one on their next request, audited as
 and `GET /api/v1/users` report `username`. It is null only for an agent without
 an IRC nick.
 
-Before turning on IRC sign-in through the API for a server that already has
-hand-made accounts, make sure each such account's owner has that username here.
-Otherwise a different person with the same first name could be handed the existing
-account.
+To give a person a particular username, such as the name of an IRC account they
+already own, an administrator runs the username command with the person's verified
+organisation and subject:
+
+```sh
+bun run auth:username entra 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 tamsin_q
+```
+
+It takes a letter, then letters, digits, `-` or `_`, at most 32 characters. It may
+give a reserved name, but refuses a name another member or agent holds or has
+retired. The person's previous username is retired, and the change is audited as
+`usernameSet` with source `cli`. Before turning on IRC sign-in for a server that
+already has accounts, follow [Turning it on for an existing server](#turning-it-on-for-an-existing-server).
 
 Local administrators can manage fleets, fleet assignments and initiative channel
 configuration. Initiative membership is explicit. Users see active, explicitly
@@ -216,6 +225,7 @@ links.
 | `AUTO_REGISTER`                                                       | Providers that register a person at [first sign-in](#first-sign-in). Empty or `none` is off.                    |
 | `ENTRA_ADMIN_ROLE`                                                    | Optional Entra app role whose holders are administrators, checked on every request.                             |
 | `RESERVED_USERNAMES`                                                  | Comma-separated operator names that no person or agent may take as a [username](#usernames).                    |
+| `RESERVED_USERNAMES_FILE`                                             | File of further reserved names, such as the IRC server's existing accounts, by line, comma or space.            |
 | `AGENT_PORT`, `AGENT_HOST`, `AGENT_ORGANISATION`                      | Optional [agent listener](#the-agent-listener): port (off when unset), address and `<provider>:<organisation>`. |
 | `DEV_KEY_PATH`                                                        | Private development signing key file, defaulting to `.data/dev-signing-key`.                                    |
 | `DEV_CHANNELS`, `DEV_IRC_HOST`, `DEV_IRC_PORT`                        | Channel text and IRC endpoint for newly created dev organisations.                                              |
@@ -315,6 +325,28 @@ The API never logs a passphrase or the hook token. It logs each decision at debu
 level with its reason and, for a correctly signed credential, the user ID. It
 does not write audit events for these decisions, because Ergo calls the hook for
 every SASL attempt, so their number has no bound.
+
+### Turning it on for an existing server
+
+An IRC server that already has accounts must not hand one of them to whoever the
+API later gives the same username. Before the hook answers for it:
+
+1. List the server's accounts that belong to no registered agent: the operator's
+   and any made by hand.
+2. Reserve them all. Write the names to a file, one per line, and name it in
+   `RESERVED_USERNAMES_FILE`, then restart the API. Do this before upgrading to a
+   version that allocates usernames or turning on registration, so that neither
+   the username backfill nor a first sign-in hands one of them out.
+3. Give each account a person owns to that person with the username command,
+   `bun run auth:username <provider> <organisation> <subject> <account>`. The
+   person must already be a member: add them with the membership command, or let
+   them sign in once while the hook is still off.
+4. Only then turn on the hook: set `IRC_AUTH_HOOK_TOKEN` and
+   `IRC_AUTH_ORGANISATION`, restart the API and enable the IRC server's
+   auth-script.
+
+A reserved name that nobody holds stays with its local account, because the hook
+never names it and Ergo falls back to its own accounts.
 
 ## GitHub App and webhooks
 

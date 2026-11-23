@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull, ne, sql, type SQLWrapper } from "drizzle-orm";
 import { Context, Effect } from "effect";
 import { type Database } from "./db";
-import { organisations, retiredUsernames, users } from "./schema";
+import { auditLogs, organisations, retiredUsernames, users } from "./schema";
 
 /**
  * Usernames: one handle per person, which is also their IRC account name. People and agents
@@ -262,4 +262,90 @@ export const backfillUsernames = (db: Db, reserved: ReadonlySet<string>) =>
         .where(and(eq(users.id, person.id), isNull(users.username)));
     }
     return people.length;
+  });
+
+/** A username an administrator sets: a letter, then letters, digits, `-` or `_`, at most 32. */
+export const settableUsername = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/u;
+
+/** Why an explicit username could not be set. Safe to show to the administrator. */
+export class UsernameRefused extends Error {}
+
+/**
+ * Sets a person's username explicitly, as the username command does: so that the owner of an
+ * existing IRC account is given that account's name. A reserved name is allowed; a name another
+ * record holds, or retired, is refused. The old username is retired by the database, and the
+ * change is audited.
+ */
+export const setUsername = (
+  db: Db,
+  identity: { provider: "workos" | "entra" | "dev"; externalOrganisation: string; subject: string },
+  name: string,
+) =>
+  Effect.gen(function* () {
+    if (!settableUsername.test(name))
+      return yield* Effect.fail(
+        new UsernameRefused(
+          "Use a letter, then letters, digits, - or _, at most 32 characters in all.",
+        ),
+      );
+    return yield* db.transaction((tx) =>
+      Effect.gen(function* () {
+        const [org] = yield* tx
+          .select({ id: organisations.id })
+          .from(organisations)
+          .where(
+            and(
+              eq(organisations.provider, identity.provider),
+              eq(organisations.externalId, identity.externalOrganisation),
+            ),
+          )
+          .for("no key update");
+        const [person] = org
+          ? yield* tx
+              .select()
+              .from(users)
+              .where(and(eq(users.organisationId, org.id), eq(users.subject, identity.subject)))
+          : [];
+        if (!org || !person)
+          return yield* Effect.fail(
+            new UsernameRefused("No member has that organisation and subject. Add them first."),
+          );
+        if (person.agentRank)
+          return yield* Effect.fail(
+            new UsernameRefused(
+              "That subject is an agent, whose username is its IRC nick. Change the nick instead.",
+            ),
+          );
+        const [holder] = yield* tx
+          .select({ id: users.id })
+          .from(users)
+          .where(
+            and(
+              eq(users.organisationId, org.id),
+              eq(usernameKey(users.username), canonicalName(name)),
+              ne(users.id, person.id),
+            ),
+          );
+        if (holder)
+          return yield* Effect.fail(new UsernameRefused("Another member or agent has that name."));
+        if (yield* retiredByAnother(tx, org.id, name, person.id))
+          return yield* Effect.fail(
+            new UsernameRefused("That name was issued to someone else before and stays retired."),
+          );
+        yield* tx.update(users).set({ username: name }).where(eq(users.id, person.id));
+        yield* tx.insert(auditLogs).values({
+          organisationId: org.id,
+          action: "usernameSet",
+          actorType: "integration",
+          actorId: null,
+          actorDisplayName: "Username command",
+          source: "cli",
+          entityType: "Member",
+          entityId: person.id,
+          summary: "Set the username with the username command.",
+          changes: { from: person.username, to: name },
+        });
+        return { userId: person.id, previous: person.username, username: name };
+      }),
+    );
   });

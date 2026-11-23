@@ -1,17 +1,18 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm, symlink } from "node:fs/promises";
+import { mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect } from "effect";
 import { config, reservedUsernames } from "../src/config";
-import { databaseLayer } from "../src/db";
+import { Database, databaseLayer } from "../src/db";
 import { localMember, provisionMember } from "../src/identity";
 import {
   allocatedUsername,
   foldName,
   isReservedUsername,
   nameParts,
+  setUsername,
   usernameCandidates,
 } from "../src/usernames";
 import {
@@ -136,7 +137,9 @@ describe("the username rule", () => {
     expect(() => reservedUsernames({ RESERVED_USERNAMES: "root,two words" })).toThrow(
       "RESERVED_USERNAMES",
     );
-    expect(() => reservedUsernames({ RESERVED_USERNAMES: "1st" })).toThrow("RESERVED_USERNAMES");
+    expect(() => reservedUsernames({ RESERVED_USERNAMES: "zoë" })).toThrow("RESERVED_USERNAMES");
+    // Existing IRC accounts may have any name Ergo accepts.
+    expect([...reservedUsernames({ RESERVED_USERNAMES: "1st,[away]" })]).toEqual(["1st", "[away]"]);
     expect([
       ...config({
         DATABASE_URL: "postgresql://subspace@127.0.0.1/subspace",
@@ -145,6 +148,25 @@ describe("the username rule", () => {
       }).reservedUsernames,
     ]).toEqual(["root"]);
   });
+});
+
+test("RESERVED_USERNAMES_FILE lists names by line, comma or space, with comments", async () => {
+  const folder = await mkdtemp(join(tmpdir(), "subspace-reserved-"));
+  try {
+    const file = join(folder, "accounts");
+    await writeFile(
+      file,
+      "# Accounts on the IRC server\nOperator\nTamsin_Q, kerra\n  # indented comment\nlowen  bryn\n\n",
+    );
+    expect([
+      ...reservedUsernames({ RESERVED_USERNAMES: "root", RESERVED_USERNAMES_FILE: file }),
+    ]).toEqual(["root", "operator", "tamsin_q", "kerra", "lowen", "bryn"]);
+    expect(() => reservedUsernames({ RESERVED_USERNAMES_FILE: join(folder, "missing") })).toThrow(
+      "RESERVED_USERNAMES_FILE must name a readable file",
+    );
+  } finally {
+    await rm(folder, { recursive: true });
+  }
 });
 
 describe.skipIf(!testDatabase)("usernames on registration", () => {
@@ -504,6 +526,82 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
     expect((await provision("Someone Else")).username).toBe("lowennah");
     expect((await provision("Someone Else", false)).username).toBe("lowennah");
   });
+
+  test("an administrator can set a person's username, but not to another's or a retired name", async () => {
+    const first = await signIn({ given_name: "Kerra", family_name: "Jago" });
+    const second = await signIn({ given_name: "Kerra", family_name: "Polkinghorne" });
+    expect([first.username, second.username]).toEqual(["kerra", "kerrap"]);
+    const subjectOf = async (userId: string) =>
+      (await database.client.query("SELECT subject FROM users WHERE id = $1", [userId])).rows[0]
+        .subject as string;
+    const set = async (userId: string, name: string, subject?: string) => {
+      const who = subject ?? (await subjectOf(userId));
+      const result = await Effect.runPromise(
+        Effect.result(
+          Effect.flatMap(Database, (db) =>
+            setUsername(
+              db,
+              {
+                provider: "entra",
+                externalOrganisation: tenant.tenant,
+                subject: who,
+              },
+              name,
+            ),
+          ).pipe(Effect.provide(databaseLayer(database.url, 2))),
+        ),
+      );
+      return "failure" in result && result.failure
+        ? (result.failure as Error).message
+        : (result as { success: { username: string } }).success.username;
+    };
+    // A reserved name can be given deliberately, and the old name is retired.
+    expect(await set(first.userId, "Root")).toBe("Root");
+    expect(await stored(first.userId)).toBe("Root");
+    expect((await signIn({ given_name: "Kerra", family_name: "Jory" })).username).toBe("kerraj");
+    expect(await set(second.userId, "ROOT")).toBe("Another member or agent has that name.");
+    expect(await set(second.userId, "kerra")).toBe(
+      "That name was issued to someone else before and stays retired.",
+    );
+    expect(await set(first.userId, "kerra")).toBe("kerra");
+    expect(await set(second.userId, "two words")).toContain("Use a letter");
+    expect(await set(second.userId, "x", crypto.randomUUID())).toContain("No member");
+    const [{ subject: agentSubject }] = (
+      await database.client.query(
+        "SELECT subject FROM users WHERE agent_rank IS NOT NULL AND agent_irc_nick IS NOT NULL LIMIT 1",
+      )
+    ).rows;
+    expect(await set(second.userId, "agentname", agentSubject)).toContain("is an agent");
+    const audit = (
+      await database.client.query(
+        `SELECT "actorType" AS actor, source, changes FROM audit_logs WHERE action = 'usernameSet' AND entity_id = $1 ORDER BY occurred_at`,
+        [first.userId],
+      )
+    ).rows;
+    expect(audit).toEqual([
+      { actor: "integration", source: "cli", changes: { from: "kerra", to: "Root" } },
+      { actor: "integration", source: "cli", changes: { from: "Root", to: "kerra" } },
+    ]);
+
+    // The command itself.
+    const command = (...args: string[]) =>
+      Bun.spawnSync([process.execPath, "scripts/username.ts", ...args], {
+        cwd: fileURLToPath(new URL("..", import.meta.url)),
+        env: { ...process.env, DATABASE_URL: database.url },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    const saved = command("entra", tenant.tenant, await subjectOf(second.userId), "Polkinghorne_K");
+    expect([saved.exitCode, saved.stdout.toString().trim()]).toEqual([
+      0,
+      "Username changed from kerrap to Polkinghorne_K; kerrap is retired.",
+    ]);
+    const refused = command("entra", tenant.tenant, await subjectOf(second.userId), "kerra");
+    expect([refused.exitCode, refused.stderr.toString().trim()]).toEqual([
+      1,
+      "Another member or agent has that name.",
+    ]);
+  });
 });
 
 describe.skipIf(!testDatabase)("usernames at development sign-in", () => {
@@ -602,10 +700,19 @@ describe.skipIf(!testDatabase)("the username backfill", () => {
         ["crew", "alpha", "example-model", quarrie],
       );
 
+      // The server's existing accounts, reserved in a file, as the cut-over steps describe.
+      const reservedFolder = await mkdtemp(join(tmpdir(), "subspace-reserved-"));
+      const reservedFile = join(reservedFolder, "accounts");
+      await writeFile(reservedFile, "# Existing IRC accounts\nFormer\n");
       const migrate = () => {
         const run = Bun.spawnSync([process.execPath, "scripts/migrate.ts"], {
           cwd: fileURLToPath(new URL("..", import.meta.url)),
-          env: { ...process.env, DATABASE_URL: database.url, RESERVED_USERNAMES: "root" },
+          env: {
+            ...process.env,
+            DATABASE_URL: database.url,
+            RESERVED_USERNAMES: "root",
+            RESERVED_USERNAMES_FILE: reservedFile,
+          },
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -627,12 +734,13 @@ describe.skipIf(!testDatabase)("the username backfill", () => {
         [corin]: "corint",
         [root]: "roota",
         [nameless]: "xiaoming",
-        [former]: "former",
+        [former]: "formerp",
         [agent]: "Corin",
         [nickless]: null,
       });
       migrate();
       expect(await names()).toEqual(result);
+      await rm(reservedFolder, { recursive: true });
     } finally {
       await database.drop();
     }
