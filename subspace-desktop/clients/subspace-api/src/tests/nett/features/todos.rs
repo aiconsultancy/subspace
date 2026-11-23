@@ -42,21 +42,7 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
     wait_for("A sent", &|| mock.count("PUT", &item.id) == 1);
     hub.close_issue();
     open_todos(&hub);
-    wait_for("A stored", &|| {
-        hub.snapshot().issue().is_some_and(|issue| {
-            issue.todos().unwrap()[0]
-                .items
-                .iter()
-                .any(|row| row.id == item.id && row.completed)
-        })
-    });
-    // A is stored before its answer is held: B must not start until A's
-    // hold is first in the release queue.
-    wait_for("A held", &|| {
-        saves(&mock, &item.id)
-            .first()
-            .is_some_and(|a| a["slowBodyHeadersStatus"] == 200)
-    });
+    wait_for_a_stored_and_held(&mock, &hub, &item.id);
     hub.set_todo_done(&item.id, false).unwrap();
     wait_for("B held", &|| {
         saves(&mock, &item.id)
@@ -92,6 +78,25 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
         })
     });
     hub.stop();
+}
+
+/// Waits until save A of `item` is stored and its answer is held. A is
+/// stored before its answer is held: B must not start until A's hold is
+/// first in the release queue.
+fn wait_for_a_stored_and_held(mock: &NettMock, hub: &Hub, item: &str) {
+    wait_for("A stored", &|| {
+        hub.snapshot().issue().is_some_and(|issue| {
+            issue.todos().unwrap()[0]
+                .items
+                .iter()
+                .any(|row| row.id == item && row.completed)
+        })
+    });
+    wait_for("A held", &|| {
+        saves(mock, item)
+            .first()
+            .is_some_and(|a| a["slowBodyHeadersStatus"] == 200)
+    });
 }
 
 /// The logged saves of `item`, oldest first.
