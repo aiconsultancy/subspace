@@ -21,6 +21,7 @@ use crate::tests::completion::{focused_composer as composer, labels, reveal, tex
 use crate::tests::{channel_events, inject, mount, settings};
 
 mod composer;
+mod destination;
 mod dialog;
 
 fn with_id(mut line: Line, id: &str) -> Line {
@@ -51,10 +52,14 @@ fn open<'a>(
         "m2",
     )));
     inject(&hub, events, cx);
+    let origin = mock.map_or_else(
+        || "http://127.0.0.1:9".to_owned(),
+        |mock| format!("{}/api", mock.base_url()),
+    );
     hub.update(cx, |hub, cx| {
         if tracker {
-            let scope = IssueScope::new("subspace-api", "Subspace API", "http://127.0.0.1:9")
-                .with_project_keys(["NAV"]);
+            let scope =
+                IssueScope::new("subspace-api", "Subspace API", &origin).with_project_keys(["NAV"]);
             hub.issues.set_scope(Some(scope));
         }
         if let Some(mock) = mock {

@@ -20,8 +20,6 @@ pub(crate) const ATTACHMENTS: &str =
 /// Why a dialog's button wrote nothing after the account, organisation
 /// or tracker changed.
 pub(crate) const SCOPE_CHANGED: &str = "You switched account, organisation or tracker since this opened, so nothing was written. Close it and open it again.";
-/// Why nothing could be written without a client.
-const NO_CLIENT: &str = "Couldn't reach Subspace API. Check Settings › Account, then try again.";
 
 /// A conversation's tracker writes: whether one is running, and the open
 /// message action's dialog.
@@ -150,9 +148,13 @@ pub(crate) fn start_with(
     if conversation.tracker.busy {
         return;
     }
-    let Some(client) = client else {
-        finish(conversation, Err(NO_CLIENT.to_owned()), origin, window, cx);
-        return;
+    let scope = conversation.hub.read(cx).issues.scope();
+    let client = match super::destination::matching(client, scope) {
+        Ok(client) => client,
+        Err(reason) => {
+            finish(conversation, Err(reason), origin, window, cx);
+            return;
+        }
     };
     conversation.tracker.busy = true;
     conversation.reacting.notice = Some(job.running());

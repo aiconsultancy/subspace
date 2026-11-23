@@ -26,6 +26,7 @@
 //! as text, and nothing in a message can make a command run.
 
 mod check;
+mod destination;
 mod flow;
 pub(crate) mod message;
 mod parse;
@@ -48,6 +49,8 @@ use crate::fleet::{ChannelKind, Roster};
 use crate::issues::IssueReferences;
 use crate::tiles::{TileRef, Tiles};
 
+#[cfg(test)]
+pub(crate) use destination::WRONG_TRACKER;
 #[cfg(test)]
 pub(crate) use flow::SCOPE_CHANGED;
 pub(crate) use flow::{State, submit};
