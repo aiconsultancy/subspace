@@ -48,6 +48,7 @@ import { createGitHubClient } from "./github-app";
 import { GithubPollState, githubPollState, pollGitHub } from "./github-poll";
 import { AgentRank, CurrentMember, localMember, publicProfile } from "./identity";
 import { signedInMember, type SignInPolicy } from "./registration";
+import { ReservedUsernames } from "./usernames";
 import {
   ChannelChanges,
   ChannelConfiguration,
@@ -121,6 +122,7 @@ const identityGroup = HttpApiGroup.make("identity")
         kind: Schema.Literals(["human", "agent"]),
         displayName: Name,
         email: NullableString,
+        username: NullableString,
         agentName: NullableString,
         agentRank: Schema.NullOr(AgentRank),
         fleet: NullableString,
@@ -461,7 +463,7 @@ function localUrl(value: string) {
   }
 }
 
-function devLive(dev: NonNullable<Config["dev"]>, key: Uint8Array) {
+function devLive(dev: NonNullable<Config["dev"]>, key: Uint8Array, reserved: ReadonlySet<string>) {
   return HttpApiBuilder.group(documentedApi, "development", (handlers) =>
     handlers.handle("devToken", ({ payload, request }) =>
       handleDb(
@@ -472,11 +474,14 @@ function devLive(dev: NonNullable<Config["dev"]>, key: Uint8Array) {
           }
           const email = (payload.email ?? defaultDevEmail).toLowerCase();
           const organisation = payload.organisation ?? defaultDevOrg;
+          // Without a name, the username comes from the e-mail, not the default display name.
           const member = yield* localMember(
             email,
             payload.name ?? defaultDevName,
             organisation,
             dev,
+            reserved,
+            { name: payload.name, email },
           );
           if (!member.active)
             return yield* Effect.fail(problem(403, "This membership is inactive."));
@@ -546,6 +551,7 @@ function resourceLayers(options: Config, store: (typeof Storage)["Service"]) {
       client: github,
     }),
     Layer.succeed(GithubPollState, githubPollState(options.github)),
+    Layer.succeed(ReservedUsernames, options.reservedUsernames),
   );
   return { dbLayer, github, resources };
 }
@@ -594,6 +600,7 @@ export function routes(
   const signIn: SignInPolicy = {
     autoRegister: options.autoRegister,
     entraAdminRole: options.entra?.adminRole ?? null,
+    reservedUsernames: options.reservedUsernames,
   };
   const auth = Layer.effect(
     BearerAuth,
@@ -647,7 +654,9 @@ export function routes(
   const endpoints = (
     options.dev && devKey
       ? HttpApiBuilder.layer(documentedApi, { openapiPath: "/openapi.json" }).pipe(
-          Layer.provide(Layer.merge(common, devLive(options.dev, devKey))),
+          Layer.provide(
+            Layer.merge(common, devLive(options.dev, devKey, options.reservedUsernames)),
+          ),
           Layer.provide(services),
         )
       : HttpApiBuilder.layer(api, { openapiPath: "/openapi.json" }).pipe(

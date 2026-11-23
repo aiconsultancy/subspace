@@ -218,6 +218,7 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
       kind: "human",
       displayName: "Ada Lovelace",
       email: "ada@example.com",
+      username: "ada",
       agentRank: null,
       isAdmin: false,
     });
@@ -242,7 +243,7 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
       actor_id: row.id,
       actor_type: "human",
       entity_type: "Member",
-      changes: { provider: "entra", role: "member" },
+      changes: { provider: "entra", role: "member", username: "ada" },
     });
   });
 

@@ -96,6 +96,16 @@
                         }
                       ]
                     },
+                    "username": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "agentName": {
                       "anyOf": [
                         {
@@ -174,6 +184,7 @@
                     "kind",
                     "displayName",
                     "email",
+                    "username",
                     "agentName",
                     "agentRank",
                     "fleet",
@@ -35408,6 +35419,16 @@
             "minLength": 1,
             "maxLength": 120
           },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "isFormerMember": {
             "type": "boolean"
           },
@@ -35487,6 +35508,7 @@
         "required": [
           "userId",
           "displayName",
+          "username",
           "isFormerMember",
           "kind",
           "agent"
@@ -39552,6 +39574,16 @@
             "minLength": 1,
             "maxLength": 120
           },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -39573,6 +39605,7 @@
         "required": [
           "id",
           "displayName",
+          "username",
           "kind",
           "email"
         ],

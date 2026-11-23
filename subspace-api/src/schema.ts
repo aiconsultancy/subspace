@@ -106,6 +106,11 @@ export const users = pgTable(
     agentShipId: uuid("agent_ship_id"),
     agentModel: text("agent_model"),
     agentIrcNick: text("agent_irc_nick"),
+    /**
+     * The person's handle, which is also their IRC account name. An agent's is its IRC nick, kept
+     * in step by a trigger, so people and agents share one namespace per organisation.
+     */
+    username: text(),
     registeredById: uuid("registered_by_id"),
     deactivatedById: uuid("deactivated_by_id"),
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
@@ -143,6 +148,9 @@ export const users = pgTable(
     uniqueIndex("user_agent_irc_nick")
       .on(table.organisationId, sql`lower(${table.agentIrcNick})`)
       .where(sql`${table.agentIrcNick} is not null`),
+    uniqueIndex("users_username")
+      .on(table.organisationId, sql`lower(${table.username})`)
+      .where(sql`${table.username} is not null`),
     foreignKey({
       columns: [table.organisationId, table.registeredById],
       foreignColumns: [table.organisationId, table.id],

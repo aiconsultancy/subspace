@@ -50,6 +50,8 @@ function person(id: string, fields: Partial<Member>): Member {
     createdAt: created,
     updatedAt: created,
     ...fields,
+    // An agent's username is its IRC nick, as the database keeps it.
+    username: fields.agentRank ? (fields.agentIrcNick ?? null) : (fields.username ?? null),
   };
 }
 
@@ -309,6 +311,7 @@ describe("requests on the agent listener", () => {
         kind: "agent",
         displayName: "Orion",
         email: null,
+        username: "orion-irc",
         agentName: "Orion",
         agentRank: "captain",
         fleet: "alpha",

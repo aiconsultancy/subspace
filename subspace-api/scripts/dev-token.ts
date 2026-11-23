@@ -19,9 +19,10 @@ const org = credentials.organisation!;
 const key = await readDevKey(options.dev.keyPath);
 
 const member = await Effect.runPromise(
-  localMember(email, credentials.name!, org, options.dev).pipe(
-    Effect.provide(databaseLayer(options.databaseUrl)),
-  ),
+  localMember(email, credentials.name!, org, options.dev, options.reservedUsernames, {
+    name: process.argv[4],
+    email,
+  }).pipe(Effect.provide(databaseLayer(options.databaseUrl))),
 );
 if (!member.active) throw new Error("This membership is inactive.");
 // Output is intentionally machine-readable for the caller. Redirect it into a

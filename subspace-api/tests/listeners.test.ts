@@ -37,6 +37,7 @@ const captain: Member = {
   agentShip: null,
   agentModel: "example-model",
   agentIrcNick: "orion",
+  username: "orion",
   registeredById: "00000000-0000-4000-8000-0000000000ff",
   deactivatedById: null,
   deactivatedAt: null,

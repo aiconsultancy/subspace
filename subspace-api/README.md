@@ -126,6 +126,57 @@ in `azp`, contain the delegated API scope and use the API application's client
 UUID as its audience. Use `--deactivate` with the same organisation and subject
 to revoke API access.
 
+### Usernames
+
+Every person has a `username`, which is also their IRC account name. People and
+agents share one namespace in each organisation, compared without regard to case:
+an agent's username is its IRC nick (`ircNick`), and the database keeps the two in
+step on every write. A unique index on the organisation and the lower-case
+username guarantees that no two records share a name.
+
+The API allocates a username when it registers a person, and the membership
+command and development sign-in do the same for the people they add.
+Development sign-in without a name takes the username from the e-mail.
+
+1. The first name is `given_name`. Without one, it is the first word of `name`
+   (`Lovelace, Ada` names the surname first), then the e-mail local part read as
+   `first.last`, then `user`. The surname is `family_name`, else the rest of `name`
+   or of the local part.
+2. Names are folded to lower-case ASCII: diacritics are removed, letters such as
+   `ß` and `ø` are spelt out, anything outside `a` to `z` and `0` to `9` is dropped,
+   leading digits are dropped, and the result has at most 32 characters. Ergo
+   accepts every such name as an account.
+3. The first free name wins: the first name, then the first name with successive
+   letters of the surname, then the first name with a number from 2. Ada Lovelace
+   is `ada`, or `adal` when `ada` is taken, then `adalo` and so on, then `ada2`.
+4. Reserved names are skipped: Ergo's services (`nickserv`, `chanserv`,
+   `operserv`, `hostserv`, `histserv`, `botserv`, `memoserv` and `global`), `guest`
+   and any name starting `guest-`, and the operator's names in
+   `RESERVED_USERNAMES`.
+
+Allocations in an organisation are serialised with each other and with agent
+registration changes, so people who register at the same moment with the same
+first name receive different usernames. An agent cannot register an IRC nick that
+is a person's username (409) or a reserved name (400). A username never changes by
+itself; the API does not yet offer a way to change one.
+
+`bun run db:migrate`, which the image runs at start-up, gives existing people
+usernames by the same rule, oldest first, after applying the migrations and in the
+same transaction. It runs there rather than in a SQL migration because it needs
+`RESERVED_USERNAMES`, and it only fills in missing usernames, so running it again
+changes nothing. A person added without one, such as by an older API instance
+during a rolling deployment, is given one on their next request, audited as
+`usernameAllocated`.
+
+`GET /api/v1/me`, every `Person` (assignees, authors and other credited people)
+and `GET /api/v1/users` report `username`. It is null only for an agent without
+an IRC nick.
+
+Before turning on IRC sign-in through the API for a server that already has
+hand-made accounts, make sure each such account's owner has that username here.
+Otherwise a different person with the same first name could be handed the existing
+account.
+
 Local administrators can manage fleets, fleet assignments and initiative channel
 configuration. Initiative membership is explicit. Users see active, explicitly
 assigned initiatives in their desktop picker. All tenant resource queries are
@@ -154,6 +205,7 @@ links.
 | `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_AUDIENCE`, `ENTRA_SCOPE` | Entra tenant, authorised client, API audience and delegated scope (default `API.Access`).                       |
 | `AUTO_REGISTER`                                                       | Providers that register a person at [first sign-in](#first-sign-in). Empty or `none` is off.                    |
 | `ENTRA_ADMIN_ROLE`                                                    | Optional Entra app role whose holders are administrators, checked on every request.                             |
+| `RESERVED_USERNAMES`                                                  | Comma-separated operator names that no person or agent may take as a [username](#usernames).                    |
 | `AGENT_PORT`, `AGENT_HOST`, `AGENT_ORGANISATION`                      | Optional [agent listener](#the-agent-listener): port (off when unset), address and `<provider>:<organisation>`. |
 | `DEV_KEY_PATH`                                                        | Private development signing key file, defaulting to `.data/dev-signing-key`.                                    |
 | `DEV_CHANNELS`, `DEV_IRC_HOST`, `DEV_IRC_PORT`                        | Channel text and IRC endpoint for newly created dev organisations.                                              |
@@ -245,8 +297,10 @@ Each agent may record `ircNick`, its nick on the fleet's IRC server, which
 fleet IRC servers tie to the account of the same name. Desktop clients mark an
 agent's rank in IRC only by this nick, never by its name. A nick starts with a
 letter and holds letters, digits, `-` and `_`, at most 64 characters, and is
-unique within the organisation, ignoring case. An edit that leaves `ircNick`
-out keeps it; `null` clears it. The fleet's `agents` report it.
+unique within the organisation, ignoring case. It is also the agent's
+[username](#usernames), so it cannot be a person's username or a reserved name.
+An edit that leaves `ircNick` out keeps it; `null` clears it. The fleet's
+`agents` report it.
 
 Agent registration and editing accept `fleetId` and `shipId`. An ID takes
 precedence over its text field. Legacy fleet names resolve within the caller's

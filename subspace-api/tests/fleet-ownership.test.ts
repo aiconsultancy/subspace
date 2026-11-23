@@ -340,6 +340,7 @@ describe("the refusal on the issue routes", () => {
     agentShip: null,
     agentModel: "example-model",
     agentIrcNick: null,
+    username: null,
     registeredById: null,
     deactivatedById: null,
     deactivatedAt: null,

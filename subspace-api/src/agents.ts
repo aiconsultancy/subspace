@@ -10,6 +10,7 @@ import { BearerAuth, handleDb, ValidationErrors, versionedApi } from "./middlewa
 import { cursorTime, encodeCursor, readCursor } from "./paging";
 import { endpointErrors, problem, validationProblem } from "./problems";
 import { fleets, organisations, ships, users } from "./schema";
+import { isReservedUsername, ReservedUsernames } from "./usernames";
 import {
   dateTime,
   dateTimeOrNull,
@@ -244,8 +245,10 @@ function registrationFields(member: Member, data: typeof Registration.Type, old?
       agentFleetId: fleet?.id ?? null,
       agentShipId: ship?.id ?? null,
       agentModel: data.defaultModel,
-      // Left out of an edit, the nick stays as it is; null clears it.
+      // Left out of an edit, the nick stays as it is; null clears it. The username is the nick,
+      // in the same write, so people and agents share one namespace.
       agentIrcNick: data.ircNick,
+      username: data.ircNick,
       subject,
     };
   });
@@ -299,6 +302,15 @@ function changeAgent(member: Member, change: AgentChange, id?: string) {
           return yield* Effect.fail(
             problem(409, "Register a new agent to bind a different account subject."),
           );
+        const nick = registration?.agentIrcNick;
+        if (
+          typeof nick === "string" &&
+          nick.toLowerCase() !== old?.agentIrcNick?.toLowerCase() &&
+          isReservedUsername(nick, yield* ReservedUsernames)
+        )
+          return yield* Effect.fail(
+            validationProblem("ircNick", "This IRC nick is reserved. Choose another."),
+          );
         if (registration) {
           const [conflict] = yield* tx
             .select({ id: users.id })
@@ -309,12 +321,14 @@ function changeAgent(member: Member, change: AgentChange, id?: string) {
                 sql`(${users.subject} = ${registration.subject} or
             (${users.agentRank} is not null and lower(${users.displayName}) = lower(${registration.displayName})) or
             (${registration.agentIrcNick ?? null}::text is not null and
-              lower(${users.agentIrcNick}) = lower(${registration.agentIrcNick ?? null}::text)))`,
+              (lower(${users.agentIrcNick}) = lower(${registration.agentIrcNick ?? null}::text) or
+               lower(${users.username}) = lower(${registration.agentIrcNick ?? null}::text))))`,
                 id ? sql`${users.id} <> ${id}` : undefined,
               ),
             );
           if (conflict)
             return yield* Effect.fail(
+              // A person's username counts as a taken IRC nick: it is their IRC account name.
               problem(409, "An account subject, agent name or IRC nick is already registered."),
             );
         }

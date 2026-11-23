@@ -98,6 +98,25 @@ function entraAdminRole(env: NodeJS.ProcessEnv, providers: ReadonlySet<string>) 
   return value;
 }
 
+/**
+ * Operator names no person may be given as a username, beside the built-in IRC service names:
+ * a comma-separated list compared without regard to case.
+ */
+export function reservedUsernames(env: NodeJS.ProcessEnv): ReadonlySet<string> {
+  const names = (env.RESERVED_USERNAMES ?? "")
+    .split(",")
+    .map((name) => name.trim().toLowerCase())
+    .filter(Boolean);
+  for (const name of names) {
+    if (!/^[a-z][a-z0-9_-]{0,63}$/u.test(name)) {
+      throw new Error(
+        "RESERVED_USERNAMES must be comma-separated names of a letter then letters, digits, - or _",
+      );
+    }
+  }
+  return new Set(names);
+}
+
 const loopback = ["127.0.0.1", "::1", "localhost"];
 
 /**
@@ -175,6 +194,7 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
     port,
     agent,
     autoRegister: autoRegister(env, providers),
+    reservedUsernames: reservedUsernames(env),
     dev: providers.has("dev")
       ? {
           keyPath: env.DEV_KEY_PATH ?? ".data/dev-signing-key",
