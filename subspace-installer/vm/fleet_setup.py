@@ -705,12 +705,27 @@ def irc_source():
             shutil.rmtree(work, ignore_errors=True)
 
 
-def installer(config_path, dry_run=False):
+def installer(config_path, dry_run=False, secrets_dir=None):
     args = [INSTALLER / "install.sh", "--config", config_path]
+    if secrets_dir:
+        args += ["--secrets-dir", secrets_dir]
     if dry_run:
         args.append("--dry-run")
     say("running the fleet installer" + (" (dry run)" if dry_run else ""))
     run(*args)
+
+
+def preflight(config, private):
+    """Check the fleet's inputs as the installer will (configuration, credentials, the secrets directory and
+    pinned sessions), before setup changes the API or its database. A run the installer would refuse then
+    migrates nothing and restarts nothing."""
+    secrets_dir = INPUTS / "fleet.secrets"
+    with tempfile.TemporaryDirectory(prefix="subspace-setup-check-") as scratch:
+        config_path = Path(scratch) / "fleet.json"
+        write_json(config_path, config)
+        write_json(Path(scratch) / "fleet.secrets.json", private)
+        say("checking the fleet's configuration before the API changes")
+        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None)
 
 
 def installed_stargate_source():
@@ -1365,6 +1380,11 @@ def configure(args):
         installer(config_path, dry_run=True)
         say("dry run complete; nothing on this VM changed")
         return
+
+    if answers["api"]:
+        # The API comes first (its token and registration go into the fleet's inputs), so check now that the
+        # installer will accept those inputs: with --migrate, a refused run must not have migrated the database.
+        preflight(*inputs(hashlib.sha1(b"dry-run").hexdigest()))
 
     irc_ref = irc_source() if local_irc else None
     # Releases from v0.40.0 have the Fleet API; a pinned commit is checked after it is installed.

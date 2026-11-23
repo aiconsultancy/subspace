@@ -763,7 +763,10 @@ run, in one-off API containers that publish no port:
 
 `--migrate` applies to that run only. An upgrade whose API brings new
 migrations stops at the check until you back the database up and run setup
-again with `--migrate`.
+again with `--migrate`. Before either step, setup has the fleet installer
+check the fleet's configuration, credentials and pinned sessions, as a dry
+run does, so a run the installer would refuse, such as one missing a Slack
+token, stops before it changes the API or migrates anything.
 
 **Privileges.** The role in the URL needs, to migrate: `CREATE` on the
 database, because Drizzle creates its own `drizzle` schema for the history

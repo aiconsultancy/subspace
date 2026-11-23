@@ -4,6 +4,7 @@ Run with Python 3.10 or later: python3 -B subspace-installer/tests/setup_test.py
 """
 
 import argparse
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -866,6 +867,43 @@ class ExternalDatabaseTests(unittest.TestCase):
                 self.assertIn("-rf", dry)
                 self.assertNotIn("summary.env", dry)
                 self.assertLess(text.index(branch), text.index("summary.env", text.index(branch)))
+
+    def test_a_run_the_installer_refuses_migrates_nothing(self):
+        # A fleet configuration the installer refuses, such as a Slack bot without its tokens, is found before
+        # the lockdown, the API or --migrate change anything.
+        (fleet_setup.INPUTS / "fleet.secrets").mkdir(mode=0o700)
+        argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40,
+                "--database-url-file", self.url_file, "--migrate"]
+        checks = []
+
+        def refuse(config_path, dry_run=False, secrets_dir=None):
+            checks.append((dry_run, secrets_dir, json.loads(Path(config_path).read_text())["slug"]))
+            raise fleet_setup.SetupError("Supply slack-app-token in captain orion's secrets directory.")
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                patch.object(fleet_setup, "installer", side_effect=refuse), \
+                patch.object(fleet_setup, "run") as run, patch.object(fleet_setup, "api_up") as api_up, \
+                patch.object(fleet_setup, "compose") as compose, patch.object(fleet_setup, "irc_source"), \
+                patch.object(fleet_setup, "say"), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "slack-app-token"):
+            fleet_setup.setup(fleet_setup.parse_args(argv))
+        self.assertEqual(checks, [(True, fleet_setup.INPUTS / "fleet.secrets", "example-fleet")])
+        run.assert_not_called()
+        api_up.assert_not_called()
+        compose.assert_not_called()
+
+        # Accepted, the check comes before the lockdown and the API, which then migrates as asked.
+        order = []
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                patch.object(fleet_setup, "installer", side_effect=lambda *a, dry_run=False, **k: order.append(
+                    "check" if dry_run else "install")), \
+                patch.object(fleet_setup, "run", side_effect=lambda *a, **k: order.append(Path(str(a[0])).name)), \
+                patch.object(fleet_setup, "api_up", side_effect=lambda *a: order.append(("api", a[2])) or False), \
+                patch.object(fleet_setup, "irc_source", return_value="a" * 40), patch.object(fleet_setup, "say"), \
+                patch.object(fleet_setup, "summary", side_effect=fleet_setup.SetupError("stop here")), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "stop here"):
+            fleet_setup.setup(fleet_setup.parse_args(argv))
+        self.assertEqual(order[:4], ["check", "lockdown.sh", "docker.sh", ("api", True)])
 
     def test_the_other_new_settings_survive_a_run_against_an_existing_postgresql(self):
         # Slack bots, a captain's sessionRoot and repository notes are added to fleet.json by hand; setup keeps them
