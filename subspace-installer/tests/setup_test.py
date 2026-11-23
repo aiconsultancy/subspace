@@ -233,30 +233,51 @@ class SetupInputsTests(unittest.TestCase):
                     patch.object(fleet_setup, "compose"):
                 return fleet_setup.api_up(answers, store)
 
+        def env():
+            return dict(line.partition("=")[::2] for line in api_env.read_text().splitlines()
+                        if not line.startswith("#"))
+
+        def published():
+            return '"127.0.0.1:3001:3001"' in (fleet_setup.INPUTS / "api.override.yaml").read_text()
+
+        # The first run offers the listener and publishes it on loopback.
         self.assertTrue(up())
-        written = api_env.read_text()
-        self.assertIn("AGENT_PORT=3001\n", written)
-        self.assertIn(f"AGENT_ORGANISATION=dev:{answers['organisation']}\n", written)
-        self.assertTrue(fleet_setup.agent_listener_enabled())
+        self.assertEqual(env()["AGENT_PORT"], "3001")
+        self.assertEqual(env()["AGENT_ORGANISATION"], f"dev:{answers['organisation']}")
+        self.assertIn(fleet_setup.AGENT_OFFERED, api_env.read_text())
+        self.assertTrue(fleet_setup.agent_listener_enabled() and published())
         override = (fleet_setup.INPUTS / "api.override.yaml").read_text()
         self.assertIn('"127.0.0.1:3000:3000"', override)
-        self.assertIn('"127.0.0.1:3001:3001"', override)
         self.assertNotIn("0.0.0.0", override)
-        # An operator who clears the port keeps it off, and production never gets one.
-        api_env.write_text(written.replace("AGENT_PORT=3001", "AGENT_PORT="))
         up()
-        self.assertFalse(fleet_setup.agent_listener_enabled())
-        api_env.write_text("NODE_ENV=production\n")
+        self.assertEqual(env()["AGENT_PORT"], "3001")
+        # A stale organisation in the installer's own form (dev:<organisation>) follows the fleet's.
+        api_env.write_text(api_env.read_text().replace(
+            f"AGENT_ORGANISATION=dev:{answers['organisation']}", "AGENT_ORGANISATION=dev:old-organisation"))
         up()
-        self.assertNotIn("AGENT_PORT", api_env.read_text())
-        # Switching development sign-in off turns the listener off, even after a run that turned it on.
-        self.assertTrue(up())
-        api_env.write_text(api_env.read_text() + "AUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\n")
-        api_env.write_text(api_env.read_text().replace("AUTH_PROVIDERS=dev\n", "").replace(
-            "ENABLE_DEV_AUTH=true\n", "").replace("NODE_ENV=production\n", ""))
+        self.assertEqual(env()["AGENT_ORGANISATION"], f"dev:{answers['organisation']}")
+        # Turned off by the operator, with AGENT_PORT= or by deleting it, it stays off on every later run.
+        for off in ("AGENT_PORT=\n", ""):
+            api_env.write_text(api_env.read_text().replace(f"AGENT_PORT={env()['AGENT_PORT']}\n", off))
+            for _ in range(2):
+                up()
+                self.assertEqual(env()["AGENT_PORT"], "")
+                self.assertFalse(fleet_setup.agent_listener_enabled() or published())
+        # The operator turns it back on by setting the port.
+        api_env.write_text(api_env.read_text().replace("AGENT_PORT=\n", "AGENT_PORT=3001\n"))
+        up()
+        self.assertTrue(fleet_setup.agent_listener_enabled() and published())
+        # Production never gets one.
+        api_env.write_text(api_env.read_text() + "NODE_ENV=production\n")
+        api_env.write_text(api_env.read_text().replace("NODE_ENV=development\n", ""))
+        up()
+        self.assertFalse(fleet_setup.agent_listener_enabled() or published())
+        # Switching development sign-in off turns it off; a fresh api.env with WorkOS never offers it.
+        api_env.write_text("AUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\nWORKOS_CLIENT_ID=client_example\n")
         self.assertFalse(up())
-        self.assertNotIn("AGENT_PORT", api_env.read_text())
-        self.assertNotIn("AGENT_ORGANISATION", api_env.read_text())
+        self.assertEqual(env()["AGENT_PORT"], "")
+        self.assertNotIn("AGENT_ORGANISATION", env())
+        self.assertFalse(published())
 
     def test_further_fleet_registration_carries_its_records_and_is_checked(self):
         argv = ["--name", "Fleet Two", "--rear-admiral", "Nova", "--captains", "Lyra, Vega",

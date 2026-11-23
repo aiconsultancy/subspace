@@ -61,6 +61,8 @@ API_PORT = 3000
 # The API's agent-only listener: a fleet agent names itself in a header there and needs no token. It serves no
 # sign-in or administrator route, so unlike API_PORT the agents' Linux users may reach it.
 AGENT_API_PORT = 3001
+# The line in api.env that records setup has offered the agent listener, so an operator's "off" is kept.
+AGENT_OFFERED = "# subspace-setup has offered the agent listener (AGENT_PORT=3001); AGENT_PORT= keeps it off."
 STARGATE_API_PORT = 8484
 STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 LOOPBACK = "127.0.0.1"
@@ -689,26 +691,36 @@ def api_up(answers, secret_store):
     }
     previous = INPUTS / "api.env"
     kept = {}
+    offered = False
     if previous.exists():
         # Keep what the operator set, such as WorkOS or Entra and turning development sign-in off.
         for line in previous.read_text().splitlines():
+            offered = offered or line == AGENT_OFFERED
             key, _, value = line.partition("=")
             if key and not key.startswith("#") and key not in environment:
                 kept[key] = value
     # The agent listener answers for the development sign-in organisation, which the fleet's agents are
-    # registered in. An operator can change or clear these, and the API refuses the listener in production.
-    agent = {"AGENT_PORT": AGENT_API_PORT, "AGENT_ORGANISATION": f"dev:{answers['organisation']}"}
+    # registered in. Setup offers it once: after that, an operator who sets AGENT_PORT= or deletes it keeps
+    # it off, and setup never turns it back on. The API refuses the listener in production.
+    agent = {} if offered else {"AGENT_PORT": AGENT_API_PORT, "AGENT_ORGANISATION": f"dev:{answers['organisation']}"}
     merged = {**environment, **DEV_AUTH, **agent, **kept}
+    if offered and "AGENT_PORT" not in kept:
+        merged["AGENT_PORT"] = ""
+    if re.fullmatch(r"dev:[a-z0-9][a-z0-9-]{0,62}", merged.get("AGENT_ORGANISATION", "")):
+        # The installer's own form follows the fleet's development sign-in organisation.
+        merged["AGENT_ORGANISATION"] = f"dev:{answers['organisation']}"
     providers = [value.strip() for value in merged.get("AUTH_PROVIDERS", "").split(",")]
     dev_sign_in = merged.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
     if not dev_sign_in and merged.get("AGENT_ORGANISATION", "").startswith("dev:"):
         # The listener answers for development sign-in's organisation and trusts the network as it does:
         # an operator who turns development sign-in off turns it off too.
-        merged.pop("AGENT_PORT", None)
+        merged["AGENT_PORT"] = ""
         merged.pop("AGENT_ORGANISATION", None)
     if merged.get("NODE_ENV") == "production":
-        merged.pop("AGENT_PORT", None)
-    write_private(INPUTS / "api.env", "".join(f"{key}={value}\n" for key, value in merged.items()))
+        merged["AGENT_PORT"] = ""
+    listener = str(merged.get("AGENT_PORT", "")) == str(AGENT_API_PORT)
+    write_private(INPUTS / "api.env", AGENT_OFFERED + "\n" + "".join(
+        f"{key}={value}\n" for key, value in merged.items()))
     # PostgreSQL is not published at all; the API is published on loopback only.
     write_private(INPUTS / "api.override.yaml", "\n".join([
         "services:",
@@ -719,7 +731,7 @@ def api_up(answers, secret_store):
         "    restart: unless-stopped",
         "    ports: !override",
         f'      - "{LOOPBACK}:{API_PORT}:3000"',
-        f'      - "{LOOPBACK}:{AGENT_API_PORT}:{AGENT_API_PORT}"',
+        *([f'      - "{LOOPBACK}:{AGENT_API_PORT}:{AGENT_API_PORT}"'] if listener else []),
         "",
     ]))
     say("building and starting the Subspace API and PostgreSQL (loopback only)")

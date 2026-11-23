@@ -1042,7 +1042,8 @@ agent of that organisation, so one agent can act as another.
 `./install.sh audit` checks that port 3001 is limited that way and serves no
 sign-in route, and that the main port stays closed to the agents. To turn
 the listener off, set `AGENT_PORT=` in `/root/fleet/api.env` and run setup
-again; the agents then have no Subspace MCP server. Switching the API to WorkOS or
+again; later runs keep it off, and the agents then have no Subspace MCP
+server. Switching the API to WorkOS or
 Entra (development sign-in off) turns the agent listener off too, and the
 fleet's agents then have no way into the API yet.
 
