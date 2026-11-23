@@ -230,9 +230,13 @@ retire the captain and give its crew to a new captain ID.
 checkouts, with or without crew. Its optional `sessionRoot` chooses:
 `"workspace"`, the default, or `"repository"`, its checkout of the first
 repository, where installers before this one started every captain. The
-rear admiral takes no `sessionRoot`. `--dry-run` prints where each captain's
-sessions will start and says when a pinned or installed root differs from
-the default or the setting. The installer records each captain's root in
+rear admiral takes no `sessionRoot`: it works in its reference checkout of
+the first repository, and its root is pinned only for
+[agent dispatch](#agent-dispatch) or its own
+[Slack bot](#slack-for-officers). `--dry-run` prints where each captain's
+sessions will start, and where the rear admiral's root is or will be pinned,
+and says when a pinned or installed root differs from the default or the
+setting. The installer records each captain's root in
 `/etc/subspace-fleet/session-roots.json`.
 
 **Upgrading a running fleet never moves a session.**

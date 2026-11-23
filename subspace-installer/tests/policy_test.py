@@ -1194,7 +1194,14 @@ class OfficerSlackTests(unittest.TestCase):
         with self.assertRaisesRegex(Invalid, "Supply slack-app-token in captain lyra's secrets directory"):
             plan()
         self.token("lyra", "slack-app-token", "xapp-1-fixture-lyra")
-        lines = [line for line in plan().splitlines() if line.startswith("Slack:")]
+        output = plan()
+        # The rear admiral's bot pins its root, so the dry run says where, as it does for each captain's root.
+        state = Path(self.root.name) / "state"
+        self.assertIn(f"The rear admiral's root session will be pinned in {state}/references/atlas/project, its "
+                      "reference checkout of the first repository, because it has its own Slack bot.\nIts first "
+                      "repository is then fixed", output)
+        self.assertIn(f"Captain orion's sessions will start in {state}/agents/orion/workspace", output)
+        lines = [line for line in output.splitlines() if line.startswith("Slack:")]
         self.assertEqual(len(lines), 3)
         self.assertIn("Rear admiral atlas answers as Slack app AFIXTURE2 (fleet-slack-atlas), to users UFIXTURE1 in "
                       "CFIXTURE1, when mentioned; it shares its pinned root session with its IRC registration.", lines[0])

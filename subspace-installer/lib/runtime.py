@@ -1409,9 +1409,10 @@ def captain_roots(cfg):
 
 
 def session_root_lines(cfg):
-    """--dry-run: where each captain's sessions will start, and any pinned or installed root that differs."""
+    """--dry-run: where each captain's sessions will start, and any pinned or installed root that differs, after
+    the rear admiral's pinned root when it has one."""
     first = next(iter(cfg["repositories"]), None)
-    lines = []
+    lines = rear_root_lines(cfg)
     for agent_id, root in captain_roots(cfg).items():
         lines.append(f"Captain {agent_id}'s root session is pinned in {root_label(root, first)}." if root["pinned"]
                      else f"Captain {agent_id}'s sessions will start in {root_label(root, first)}.")
@@ -1457,6 +1458,33 @@ def rear_workspace(cfg):
     if first and rear_root(cfg) and pinned_directory(rear) == workspace:
         return workspace
     return STATE / "references" / rear["id"] / first if first else workspace
+
+
+def rear_root_lines(cfg):
+    """--dry-run: where the rear admiral's root is or will be pinned, when agent dispatch or its own Slack bot pins
+    it, and what that fixes."""
+    if not rear_root(cfg):
+        return []
+    rear = cfg["members"][0]
+    path = rear_workspace(cfg)
+    first = next(iter(cfg["repositories"]), None)
+    in_reference = path.parent.parent == STATE / "references"
+    where = f"{path}, {'its reference checkout of the first repository' if in_reference else 'its workspace'}"
+    if pinned_directory(rear):
+        lines = [f"The rear admiral's root session is pinned in {where}."]
+    else:
+        reasons = [reason for reason, on in (("agent dispatch is on", cfg["agentDispatch"]),
+                                             ("it has its own Slack bot", "slack" in rear)) if on]
+        lines = [f"The rear admiral's root session will be pinned in {where}, because {' and '.join(reasons)}."]
+    if in_reference:
+        lines.append("Its first repository is then fixed, as a captain's is: the installer refuses a later change.")
+    elif first:
+        lines.append(f"It was pinned before the fleet had a repository and stays there, because the installer never "
+                     f"moves a pinned session; its reference checkouts are under {STATE / 'references' / rear['id']}.")
+    else:
+        lines.append("It stays in the workspace when repositories are added: the installer never moves a pinned "
+                     "session.")
+    return lines
 
 
 def rear_pin(cfg):
