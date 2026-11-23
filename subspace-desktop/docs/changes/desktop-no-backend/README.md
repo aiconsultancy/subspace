@@ -8,7 +8,7 @@ a build option, not an interface. The owner wants a third `api_backend`
 value, `none`, beside `subspace` (the default) and `nett`: a build that
 starts with nothing to sign in to, connects to IRC networks configured by
 hand, shows Fleet Console only for a fleet whose address and token were
-saved by hand, and shows no surface that would call the API. The other two
+saved by hand, keeps its updates, and shows no surface that would call the API. The other two
 builds behave exactly as before.
 
 ## Spec
@@ -46,7 +46,6 @@ builds behave exactly as before.
 | Channels tracker commands and message actions | Write to the API through the Issues Space | Without the Issues Space they are not offered; `/assign`, `/ready` and `/decision` are ordinary IRC input instead of an error that names the API (`spaces/irc/src/tracker/flow.rs`) |
 | Channels issue tiles | Resolved by the Issues Space | Without it, references stay plain, as they do with Issues turned off |
 | Notifications fed by the API | Captain notices; Issues sends none | As above |
-| The public updater | Would replace the build with a release that has the API | `surfaces::adjust_descriptor`, as a NETT build does |
 | Any API client | | `Client::new()` refuses in a build without a backend, debug fixture variables included (`clients/subspace-api/src/lib.rs`) |
 
 Not present, so nothing to leave out:
@@ -83,12 +82,14 @@ Not present, so nothing to leave out:
   the config file is watched, so it appears when they are saved. No new
   settings surface: the entry's settings are the ones the installer and the
   Space's own Settings page already use.
+- **Updates.** The updater reads the product's release source on GitHub,
+  with the GitHub credential when there is one, and never the Subspace API
+  or its account, so a `none` build updates as every build does.
 
 ### No Framework change
 
 The Framework already lets a product leave out an account
-(`ProductBuild::account`), the Settings extensions, the Spaces and the
-updater. Every change is in the desktop: the product crate, the API client
+(`ProductBuild::account`), the Settings extensions and the Spaces. Every change is in the desktop: the product crate, the API client
 and two lines in Channels.
 
 ### Not changed
@@ -109,7 +110,8 @@ and two lines in Channels.
   - `src/identity.rs`: a launch with no provider offers no account; the
     stamped build's descriptor is adjusted for its backend.
   - `src/main.rs`: each backend's Space and Settings page set, and the
-    adjusted descriptor lists exactly the Spaces a `none` build registers.
+    adjusted descriptor lists exactly the Spaces a `none` build registers
+    and keeps the update source.
   - `src/surfaces.rs`: Fleet Console shows in a `none` build only with an
     address and a token.
   - `tests/no_backend_build.rs`: in a child process, with the Subspace API

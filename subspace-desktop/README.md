@@ -182,8 +182,8 @@ uploads and the tracker commands, so `/assign` is ordinary IRC input.
 Channels connects to the networks you add in **Settings > Channels**. Fleet
 Console appears once its own Stargate API address and token are saved in its
 `webBoards` entry, as the installer saves them; its other fleets are the ones
-you add inside it. The public updater is off, so a release with an API never
-replaces the build.
+you add inside it. Updates work as in every build: they come from GitHub
+releases and never need the API.
 
 The build refuses `identity_provider`, `api_url`, `nett_api_url` and every
 `workos_`, `entra_` and `dev_` setting, and will not start while

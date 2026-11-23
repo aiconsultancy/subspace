@@ -7,9 +7,10 @@
 //!   list only those);
 //! - Settings › Fleets, whose fleets are the API's initiatives' fleets;
 //! - the built-in Fleet Console until its own Stargate API address and token
-//!   are saved, since only those give it a fleet;
-//! - the public updater, which would replace the build with one that has
-//!   them.
+//!   are saved, since only those give it a fleet.
+//!
+//! Updates are the same in every build: the updater checks GitHub releases,
+//! never the API.
 //!
 //! Sign-in needs a provider, which such a build refuses (`identity.rs`), and
 //! the API client refuses every request once `launch::install` has recorded
@@ -61,10 +62,8 @@ pub(crate) fn settings_extensions(
         .collect()
 }
 
-/// A build with no API backend lists no Space that needs the API, and the
-/// public updater must not replace it with a build that has one.
+/// A build with no API backend lists no Space that needs the API.
 pub(crate) fn adjust_descriptor(descriptor: &mut ProductDescriptor) {
-    descriptor.update = None;
     descriptor
         .boards
         .retain(|board| keeps(ApiBackend::None, board.id.as_str(), &API_SPACES));

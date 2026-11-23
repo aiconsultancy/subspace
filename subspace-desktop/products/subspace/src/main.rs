@@ -521,8 +521,9 @@ mod tests {
         assert_eq!(pages(ApiBackend::None), ["web-boards"]);
 
         // Its descriptor lists exactly those Spaces, so Settings and Add a
-        // Space offer no other, and nothing updates it to a build with an API.
-        let mut descriptor = subspace_descriptor::subspace_descriptor();
+        // Space offer no other, and it updates as every build does.
+        let original = subspace_descriptor::subspace_descriptor();
+        let mut descriptor = original.clone();
         super::surfaces::adjust_descriptor(&mut descriptor);
         let described: Vec<_> = descriptor
             .boards
@@ -530,7 +531,7 @@ mod tests {
             .map(|board| board.id.as_str())
             .collect();
         assert_eq!(described, none);
-        assert!(descriptor.update.is_none());
+        assert_eq!(descriptor.update, original.update);
 
         // The stamped build serves its own backend's set.
         let stamped: Vec<_> = board_registrations().iter().map(|board| board.id).collect();
