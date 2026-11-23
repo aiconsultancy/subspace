@@ -60,18 +60,16 @@ function integerSetting(
 }
 
 /**
- * The providers whose first valid token registers an unknown person as a member. Entra is on by
- * default when it is configured, because its tenant, audience and client are already pinned.
- * WorkOS needs an organisation allow-list first, and development sign-in registers its own
- * members, so neither is accepted. An empty value or `none` turns registration off.
+ * The providers whose first valid token registers an unknown person as a member. It is off
+ * unless listed, so an upgrade never widens who has access. Only `entra` is accepted: WorkOS
+ * needs an organisation allow-list first, and development sign-in registers its own members.
+ * An empty value or `none` is off.
  */
 export function autoRegister(
   env: NodeJS.ProcessEnv,
   providers: ReadonlySet<string>,
 ): ReadonlySet<Provider> {
-  const raw = env.AUTO_REGISTER;
-  if (raw === undefined) return new Set<Provider>(providers.has("entra") ? ["entra"] : []);
-  const names = raw
+  const names = (env.AUTO_REGISTER ?? "")
     .split(",")
     .map((name) => name.trim())
     .filter(Boolean);
@@ -88,6 +86,15 @@ export function autoRegister(
     }
   }
   return new Set(names as Provider[]);
+}
+
+/** Whether first sign-in registration may register an Entra guest. Off unless `true`. */
+function entraRegisterGuests(env: NodeJS.ProcessEnv) {
+  const value = env.ENTRA_REGISTER_GUESTS?.trim() || "false";
+  if (value !== "true" && value !== "false") {
+    throw new Error("ENTRA_REGISTER_GUESTS must be true or false");
+  }
+  return value === "true";
 }
 
 /** The Entra app role that makes a person an administrator, checked on every request. */
@@ -306,6 +313,7 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
           audience: requiredUuid(env, "ENTRA_AUDIENCE"),
           scope: env.ENTRA_SCOPE ?? "API.Access",
           adminRole,
+          registerGuests: entraRegisterGuests(env),
         }
       : null,
   };

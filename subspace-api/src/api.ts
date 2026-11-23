@@ -604,6 +604,7 @@ export function routes(
     autoRegister: options.autoRegister,
     entraAdminRole: options.entra?.adminRole ?? null,
     reservedUsernames: options.reservedUsernames,
+    registerGuests: options.entra?.registerGuests ?? false,
   };
   const auth = Layer.effect(
     BearerAuth,

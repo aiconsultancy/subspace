@@ -17,6 +17,8 @@ export interface SignInPolicy {
   readonly entraAdminRole: string | null;
   /** The operator's reserved usernames, in lower case. */
   readonly reservedUsernames: ReadonlySet<string>;
+  /** Whether registration may register an Entra guest. */
+  readonly registerGuests: boolean;
 }
 
 const isEmail = Schema.is(Email);
@@ -37,20 +39,20 @@ function line(value: string | undefined, max: number) {
 }
 
 /**
- * A new person's profile from their token's claims. The display name is `name`, else the given
- * and family names, else the e-mail; the e-mail is `email`, else `preferred_username`, when it
- * has the form of an address. Claims only fill in the profile; they never identify the person.
+ * A new person's profile from their token's claims. The e-mail is the `email` claim when it has
+ * the form of an address, and nothing else: `preferred_username` is often a sign-in name, not a
+ * mailbox. The display name is `name`, else the given and family names, else the e-mail, else
+ * `preferred_username`. Claims only fill in the profile; they never identify the person.
  */
 export function profileFromClaims(claims: Omit<SignInClaims, "roles">) {
-  const email = [claims.email, claims.preferredUsername].find(
-    (value): value is string => value !== undefined && isEmail(value),
-  );
+  const email = claims.email !== undefined && isEmail(claims.email) ? claims.email : null;
   const displayName =
     line(claims.name, 120) ??
     line([claims.givenName, claims.familyName].filter(Boolean).join(" "), 120) ??
-    line(email, 120) ??
+    line(email ?? undefined, 120) ??
+    line(claims.preferredUsername, 120) ??
     "New member";
-  return { displayName, email: email ?? null };
+  return { displayName, email };
 }
 
 /**
@@ -93,7 +95,12 @@ export const registerMember = (
             givenName: claims.givenName,
             familyName: claims.familyName,
             name: claims.name,
-            email: profile.email,
+            // Only when no name is given, the sign-in name stands in for an e-mail.
+            email:
+              profile.email ??
+              (claims.preferredUsername && isEmail(claims.preferredUsername)
+                ? claims.preferredUsername
+                : null),
           },
           reserved,
         );
@@ -218,9 +225,13 @@ export const signedInMember = (identity: VerifiedIdentity, policy: SignInPolicy)
     const adminRole = identity.provider === "entra" ? policy.entraAdminRole : null;
     const tokenRole =
       adminRole === null ? null : claims.roles.includes(adminRole) ? "admin" : "member";
+    // A guest of the tenant is registered only when the operator allows it; an existing guest
+    // member, provisioned by the membership command, still signs in.
+    const registers =
+      policy.autoRegister.has(identity.provider) && (!claims.guest || policy.registerGuests);
     let member =
       (yield* findMember(identity)) ??
-      (policy.autoRegister.has(identity.provider)
+      (registers
         ? yield* registerMember(identity, claims, tokenRole, policy.reservedUsernames)
         : undefined);
     if (!member?.active || member.agentRank) return member;

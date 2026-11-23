@@ -112,6 +112,7 @@ export async function entraTenant() {
     fetchRemote,
     env: {
       AUTH_PROVIDERS: "entra",
+      AUTO_REGISTER: "entra",
       ENTRA_TENANT_ID: tenant,
       ENTRA_CLIENT_ID: client,
       ENTRA_AUDIENCE: audience,

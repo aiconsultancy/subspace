@@ -14,12 +14,13 @@ const entraEnv = {
 };
 
 describe("first sign-in configuration", () => {
-  test("AUTO_REGISTER defaults to entra when Entra is configured, and is off otherwise", () => {
-    expect([...config(entraEnv).autoRegister]).toEqual(["entra"]);
+  test("AUTO_REGISTER is off unless it is listed, so an upgrade widens no access", () => {
+    expect([...config(entraEnv).autoRegister]).toEqual([]);
     expect([
       ...config({ ...entraEnv, AUTH_PROVIDERS: "workos,entra", WORKOS_CLIENT_ID: "client_example" })
         .autoRegister,
-    ]).toEqual(["entra"]);
+    ]).toEqual([]);
+    expect([...config({ ...entraEnv, AUTO_REGISTER: "entra" }).autoRegister]).toEqual(["entra"]);
     expect([
       ...config({ DATABASE_URL: databaseUrl, WORKOS_CLIENT_ID: "client_example" }).autoRegister,
     ]).toEqual([]);
@@ -60,6 +61,17 @@ describe("first sign-in configuration", () => {
         AUTO_REGISTER: "entra",
       }),
     ).toThrow("AUTO_REGISTER must name a provider in AUTH_PROVIDERS");
+  });
+
+  test("ENTRA_REGISTER_GUESTS is off unless true", () => {
+    expect(config(entraEnv).entra?.registerGuests).toBe(false);
+    expect(config({ ...entraEnv, ENTRA_REGISTER_GUESTS: "true" }).entra?.registerGuests).toBe(true);
+    expect(config({ ...entraEnv, ENTRA_REGISTER_GUESTS: "false" }).entra?.registerGuests).toBe(
+      false,
+    );
+    expect(() => config({ ...entraEnv, ENTRA_REGISTER_GUESTS: "yes" })).toThrow(
+      "ENTRA_REGISTER_GUESTS must be true or false",
+    );
   });
 
   test("ENTRA_ADMIN_ROLE is one role value and needs Entra", () => {
@@ -110,6 +122,7 @@ test("the Entra verifier reads profile and role claims beside the identity", asy
       givenName: "Tamsin",
       familyName: "Quarrie",
       roles: ["Subspace.Admin", "Reader"],
+      guest: false,
     },
   });
   // Claims of the wrong type or length are ignored; the identity is unchanged.
@@ -124,11 +137,12 @@ test("the Entra verifier reads profile and role claims beside the identity", asy
     givenName: undefined,
     familyName: undefined,
     roles: [],
+    guest: false,
   });
 });
 
 describe("profile claims at registration", () => {
-  test("the display name is name, then the given and family names, then the e-mail", () => {
+  test("the display name is name, then the given and family names, then the e-mail, then the sign-in name", () => {
     expect(profileFromClaims({ name: "Tamsin Quarrie", givenName: "Morva" }).displayName).toBe(
       "Tamsin Quarrie",
     );
@@ -139,20 +153,20 @@ describe("profile claims at registration", () => {
     expect(profileFromClaims({ email: "tamsin@example.com" }).displayName).toBe(
       "tamsin@example.com",
     );
+    expect(profileFromClaims({ preferredUsername: "tq@example.com" }).displayName).toBe(
+      "tq@example.com",
+    );
     expect(profileFromClaims({}).displayName).toBe("New member");
   });
 
-  test("the e-mail is email, else preferred_username, only when it looks like an address", () => {
+  test("the e-mail comes only from the email claim, when it looks like an address", () => {
     expect(
-      profileFromClaims({ email: "tamsin@example.com", preferredUsername: "al@example.com" }).email,
+      profileFromClaims({ email: "tamsin@example.com", preferredUsername: "tq@example.com" }).email,
     ).toBe("tamsin@example.com");
-    expect(profileFromClaims({ preferredUsername: "tamsin@example.com" }).email).toBe(
-      "tamsin@example.com",
-    );
+    expect(profileFromClaims({ preferredUsername: "tamsin@example.com" }).email).toBeNull();
     expect(
       profileFromClaims({ email: "not an address", preferredUsername: "tamsin@example.com" }).email,
-    ).toBe("tamsin@example.com");
-    expect(profileFromClaims({ preferredUsername: "ADA\\quarrie" }).email).toBeNull();
+    ).toBeNull();
   });
 
   test("names become one line of at most 120 characters", () => {
@@ -468,15 +482,72 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
     ).rejects.toThrow("users_token_role");
   });
 
-  test("the e-mail falls back to preferred_username at registration", async () => {
-    const oid = crypto.randomUUID();
-    const response = await api.call(
+  test("preferred_username is never stored as the e-mail, only used for a missing name", async () => {
+    const named = await api.call(
       "/api/v1/me",
-      await tenant.sign(oid, { name: "Demelza Rowe", preferred_username: "dr@example.com" }),
+      await tenant.sign(crypto.randomUUID(), {
+        name: "Demelza Rowe",
+        preferred_username: "dr@example.com",
+      }),
     );
-    expect(await response.json()).toMatchObject({
+    expect(await named.json()).toMatchObject({
       displayName: "Demelza Rowe",
-      email: "dr@example.com",
+      email: null,
+      username: "demelza",
     });
+    const nameless = await api.call(
+      "/api/v1/me",
+      await tenant.sign(crypto.randomUUID(), { preferred_username: "jowan.hendra@example.com" }),
+    );
+    expect(await nameless.json()).toMatchObject({
+      displayName: "jowan.hendra@example.com",
+      email: null,
+      username: "jowan",
+    });
+  });
+
+  test("a guest of the tenant is not registered unless ENTRA_REGISTER_GUESTS allows it", async () => {
+    const guests = [
+      { idp: "https://sts.windows.net/00000000-0000-4000-8000-0000000000aa/" },
+      { idp: "live.com" },
+      { acct: 1 },
+    ];
+    const users = await count("users");
+    for (const claims of guests) {
+      const response = await api.call(
+        "/api/v1/me",
+        await tenant.sign(crypto.randomUUID(), { name: "Visiting Guest", ...claims }),
+      );
+      expect([claims, response.status]).toEqual([claims, 403]);
+    }
+    expect(await count("users")).toBe(users);
+    // The tenant's own issuer, in either form, and acct 0 are members.
+    for (const claims of [
+      { idp: `https://login.microsoftonline.com/${tenant.tenant}/v2.0` },
+      { idp: `https://sts.windows.net/${tenant.tenant}/` },
+      { acct: 0 },
+    ]) {
+      const response = await api.call(
+        "/api/v1/me",
+        await tenant.sign(crypto.randomUUID(), { name: "Home Member", ...claims }),
+      );
+      expect([claims, response.status]).toEqual([claims, 200]);
+    }
+    // With guests allowed, a guest is registered, and then signs in anywhere as a member.
+    const open = await startApi(
+      database.url,
+      { ...tenant.env, ENTRA_REGISTER_GUESTS: "true" },
+      tenant.fetchRemote,
+    );
+    try {
+      const guest = await tenant.sign(crypto.randomUUID(), {
+        name: "Invited Guest",
+        idp: "https://sts.windows.net/00000000-0000-4000-8000-0000000000aa/",
+      });
+      expect((await open.call("/api/v1/me", guest)).status).toBe(200);
+      expect((await api.call("/api/v1/me", guest)).status).toBe(200);
+    } finally {
+      await open.close();
+    }
   });
 });

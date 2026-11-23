@@ -76,22 +76,29 @@ is missing and an active member with no initiative memberships, and it audits th
 registration as `memberRegistered`. Concurrent first requests from one person
 create one member, and every one of them succeeds.
 
-- `AUTO_REGISTER` is a comma-separated list of providers. It defaults to `entra`
-  when Entra is configured, because the tenant, audience and client are already
-  pinned. An empty value or `none` turns registration off, and an unknown person
-  then receives 403. `workos` is refused at start-up until WorkOS registration
-  gains an organisation allow-list. Development sign-in registers its own members,
-  as before, and is not listed.
-- The token's claims fill in the profile, never the identity. The display name is
-  `name`, else the given and family names, else the e-mail. The e-mail is `email`,
-  else `preferred_username`, when it has the form of an address. Entra puts `name`
-  and `preferred_username` in v2 access tokens when the client asks for the
+- `AUTO_REGISTER` is a comma-separated list of providers, and registration is off
+  unless it lists one: set `AUTO_REGISTER=entra` to turn it on. An empty value or
+  `none` is off, and an unknown person then receives 403. `workos` is refused at
+  start-up until WorkOS registration gains an organisation allow-list. Development
+  sign-in registers its own members, as before, and is not listed.
+- The token's claims fill in the profile, never the identity. The e-mail is the
+  `email` claim when it has the form of an address, and nothing else. The display
+  name is `name`, else the given and family names, else the e-mail, else
+  `preferred_username`, which is a sign-in name rather than a mailbox. Entra puts
+  `name` and `preferred_username` in v2 access tokens when the client asks for the
   `profile` scope. Add `email`, `given_name` and `family_name` as optional claims on
   the **access token** in the API's app registration, so that usernames come from
   the given and family names.
-- Registration admits whoever the tenant lets obtain an access token for the API,
-  guests included. To limit it to chosen people or groups, turn on _Assignment
-  required_ for the enterprise applications in Entra and assign them.
+- Registration refuses a guest of the tenant unless `ENTRA_REGISTER_GUESTS=true`.
+  A token is a guest's when its `idp` claim is present and is not the tenant's own
+  issuer, or its `acct` claim is 1. Microsoft documents `idp` as the same as the
+  issuer unless the account is not in the issuer's tenant, as for guests, and
+  `acct` as an optional claim that is 0 for a member and 1 for a guest; add `acct`
+  to the access token as well if you rely on it. A guest whom the membership command
+  has added signs in as usual.
+- Registration admits every member of the tenant who can obtain an access token for
+  the API. To limit it to chosen people or groups, turn on _Assignment required_
+  for the enterprise applications in Entra and assign them.
 - A token for another tenant, audience or client is refused with 401 and creates
   nothing. A deactivated person stays refused with 403: registration never
   reactivates anyone, and only the membership command below does.
@@ -105,6 +112,20 @@ command's `--role` sets, writes it only when it changes and audits each change a
 effective one for Entra members; when it is removed, the provisioned role applies
 again, so the grants it made end with it. An agent record is never an
 administrator, and the database refuses an agent a token role.
+
+### Upgrading
+
+Upgrading from a version without first sign-in changes nobody's access by itself:
+
+- Registration stays off until you set `AUTO_REGISTER=entra`, and even then it
+  refuses guests unless `ENTRA_REGISTER_GUESTS=true`.
+- `bun run db:migrate`, which the image runs at start-up, gives every existing
+  person a [username](#usernames). If the IRC server already has accounts, reserve
+  them first, as [Turning it on for an existing server](#turning-it-on-for-an-existing-server)
+  describes, so that the backfill hands none of them out.
+- `ENTRA_ADMIN_ROLE` never changes the provisioned role, so removing it later
+  returns everyone to the role the membership command gave them.
+- IRC sign-in stays off until its settings are configured.
 
 ### The membership command
 
@@ -226,7 +247,8 @@ links.
 | `WORKOS_AUDIENCE`                                                     | Optional exact audience for AuthKit deployments that set an audience claim.                                     |
 | `WORKOS_API_KEY`                                                      | Optional profile lookup credential for the membership CLI.                                                      |
 | `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_AUDIENCE`, `ENTRA_SCOPE` | Entra tenant, authorised client, API audience and delegated scope (default `API.Access`).                       |
-| `AUTO_REGISTER`                                                       | Providers that register a person at [first sign-in](#first-sign-in). Empty or `none` is off.                    |
+| `AUTO_REGISTER`                                                       | Providers that register a person at [first sign-in](#first-sign-in), only `entra`. Off unless set.              |
+| `ENTRA_REGISTER_GUESTS`                                               | `true` lets first sign-in register guests of the tenant. Defaults to `false`.                                   |
 | `ENTRA_ADMIN_ROLE`                                                    | Optional Entra app role whose holders are administrators, checked on every request.                             |
 | `RESERVED_USERNAMES`                                                  | Comma-separated operator names that no person or agent may take as a [username](#usernames).                    |
 | `RESERVED_USERNAMES_FILE`                                             | File of further reserved names, such as the IRC server's existing accounts, by line, comma or space.            |

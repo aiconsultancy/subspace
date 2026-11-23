@@ -34,6 +34,8 @@ export interface SignInClaims {
   readonly givenName?: string;
   readonly familyName?: string;
   readonly roles: readonly string[];
+  /** Whether the token names a guest of the tenant rather than a member of it. */
+  readonly guest?: boolean;
 }
 
 export type VerifiedIdentity = PrincipalIdentity & {
@@ -116,6 +118,24 @@ export type RemoteFetch = NonNullable<
   NonNullable<Parameters<typeof createRemoteJWKSet>[1]>[typeof customFetch]
 >;
 
+/**
+ * Whether an Entra token names a guest. Microsoft documents `idp` as the identity provider that
+ * authenticated the subject, the same as the issuer unless the account is not in the issuer's
+ * tenant, such as a guest, and `acct` (an optional claim) as 0 for a member and 1 for a guest.
+ * So a token is a guest's when `idp` is present and is not this tenant's issuer, in its v2 or
+ * v1 form, or when `acct` is 1.
+ */
+function entraGuest(payload: JWTPayload, tenantId: string) {
+  const issuers = [
+    `https://login.microsoftonline.com/${tenantId}/v2.0`,
+    `https://sts.windows.net/${tenantId}/`,
+  ];
+  const idp = payload.idp;
+  if (idp !== undefined && !(typeof idp === "string" && issuers.includes(idp.toLowerCase())))
+    return true;
+  return payload.acct === 1 || payload.acct === "1";
+}
+
 export function jwtVerifiers(
   options: Config,
   devKey: Uint8Array | null,
@@ -195,7 +215,7 @@ export function jwtVerifiers(
         expiresAt: payload.exp!,
         subject: claim(payload, "oid").toLowerCase(),
         externalOrganisation: tenantId,
-        claims: signInClaims(payload),
+        claims: { ...signInClaims(payload), guest: entraGuest(payload, tenantId) },
       };
     });
   }
