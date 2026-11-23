@@ -134,6 +134,11 @@ fn front(board: &Irc, cx: &App) -> Option<Front> {
     })
 }
 
+/// Asks for the answers of what the Ship tab's **In play here** lists.
+pub(crate) fn want_in_play(board: &Irc, cx: &mut Context<Irc>) {
+    play::want(board, cx);
+}
+
 /// The inspector: a fleet channel's ship or Starbase and its people under
 /// tabs; else the focused channel's members under their count, or a hint
 /// for a buffer that has none.
@@ -188,6 +193,8 @@ fn tabbed(board: &Irc, cx: &mut Context<Irc>) -> Option<workspace::Inspector> {
             move |index, _, _, cx| {
                 _ = board_entity.update(cx, |board, cx| {
                     board.inspector_tab = InspectorTab::at(index);
+                    // Shown now: ask for what In play here lists.
+                    want_in_play(board, cx);
                     cx.notify();
                 });
             },
@@ -214,9 +221,9 @@ fn people(members: Option<Entity<MemberList>>, cx: &App) -> AnyElement {
     }
 }
 
-/// The subject tab: the ship or the Starbase.
+/// The subject tab: the ship or the Starbase. Like every tab, it starts
+/// at the inspector body's own text edge, with no inset of its own.
 fn subject_body(board: &Irc, front: &Front, cx: &App) -> AnyElement {
-    let tokens = Tokens::current(cx);
     let content = match &front.subject {
         Subject::Ship { captain } => ship::body(board, front, captain, cx),
         Subject::Starbase => starbase::body(front, cx),
@@ -227,8 +234,6 @@ fn subject_body(board: &Irc, front: &Front, cx: &App) -> AnyElement {
         .w_full()
         .min_w_0()
         .gap_4()
-        .px(workspace::text_edge(&tokens))
-        .py_3()
         .child(content)
         .into_any_element()
 }

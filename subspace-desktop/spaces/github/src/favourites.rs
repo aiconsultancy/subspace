@@ -206,6 +206,7 @@ impl Github {
     /// Loads `sections` again for the account, with the current scope.
     fn reload_sections(&mut self, sections: &[&'static str], cx: &mut Context<Self>) {
         if let (Some(client), Some(login)) = (self.client.clone(), self.account.clone()) {
+            crate::references::refreshing(self);
             for section in sections {
                 self.load_section(client.clone(), login.clone(), section, cx);
             }

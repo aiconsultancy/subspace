@@ -30,7 +30,7 @@ use subspace_client_irc::{BufferKey, ConnectionStatus, Target};
 pub(crate) use chosen::Threads;
 #[cfg(test)]
 use model::build;
-pub(crate) use model::{Step, StepKind, Thread, Timeline};
+pub(crate) use model::{MAX_REPLIES, Step, StepKind, Thread, Timeline};
 
 use crate::Irc;
 use crate::fleet::{ChannelKind, Roster};
@@ -106,7 +106,8 @@ pub(crate) fn open(
 }
 
 /// Rebuilds each chosen thread whose buffer changed, and lets go of those
-/// whose root is no longer held, with any reply being written to it.
+/// whose root is no longer held; a reply being written to one is kept,
+/// marked gone ([`crate::compose::reply::forget`]).
 pub(crate) fn refresh(board: &mut Irc, cx: &mut Context<Irc>) {
     let Some(hub) = board.hub.clone() else {
         return;
@@ -115,22 +116,24 @@ pub(crate) fn refresh(board: &mut Irc, cx: &mut Context<Irc>) {
     if gone.is_empty() {
         return;
     }
-    crate::dock::with_window(board, cx, move |board, window, cx| {
+    crate::dock::with_window(board, cx, move |board, _, cx| {
         for (buffer, root) in &gone {
             if let Some(hosted) = board.dock.open.get(buffer) {
                 hosted.entity.update(cx, |view, cx| {
-                    crate::compose::reply::forget(view, root, window, cx);
+                    crate::compose::reply::forget(view, root, cx);
                 });
             }
         }
     });
 }
 
-/// Leaves reply mode in `buffer`'s composer.
+/// Leaves reply mode in `buffer`'s composer, unless its reply is gone.
 fn cancel_reply(board: &Irc, buffer: &BufferKey, window: &mut Window, cx: &mut Context<Irc>) {
     if let Some(hosted) = board.dock.open.get(buffer) {
+        // A reply whose thread is gone keeps its guard: only Write to the
+        // channel lifts it.
         hosted.entity.update(cx, |view, cx| {
-            crate::compose::reply::cancel(view, window, cx)
+            crate::compose::reply::escape(view, window, cx)
         });
     }
 }

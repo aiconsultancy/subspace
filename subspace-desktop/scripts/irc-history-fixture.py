@@ -144,11 +144,28 @@ def connect(server, nick, caps=()):
         for line in buffer.split(b'\r\n'):
             if line.startswith(b'PING'):
                 sock.sendall(b'PONG' + line[4:] + b'\r\n')
+    check_caps(nick, caps, buffer)
     if is_agent(nick):
         sock.sendall(sign_in(nick).encode())
     sock.sendall(f'JOIN {",".join(channels_for(nick))}\r\n'.encode())
     sock.settimeout(None)
     return sock
+
+
+def check_caps(nick, caps, received):
+    """Stops unless the server acknowledged every capability `nick` asked
+    for: a NAK, or no ACK naming each, ends the fixture with the reason."""
+    if not caps:
+        return
+    acked = set()
+    for line in received.decode(errors='replace').split('\r\n'):
+        if ' CAP ' in line and ' NAK ' in line:
+            raise SystemExit(f'{nick}: the server refused the capabilities: {line}')
+        if ' CAP ' in line and ' ACK ' in line:
+            acked.update(line.rsplit(':', 1)[-1].split())
+    missing = [cap for cap in caps if cap not in acked]
+    if missing:
+        raise SystemExit(f'{nick}: the server did not acknowledge {" ".join(missing)}')
 
 
 def keep_alive(sock):
@@ -161,47 +178,76 @@ def keep_alive(sock):
         pass
 
 
+# Lines a socket's reader took but did not use, with the incomplete line
+# after them, by socket, for the next reader of that socket: the late-lines watcher must still see a JOIN that
+# arrived while the threads were being played.
+UNREAD = {}
+# How long to wait for the server to echo a request with its message ID.
+ECHO_DEADLINE = 15
+
+
 def late_lines(sock, socks, nick, delay, late):
     """Waits for `nick` to join the ship channel on `sock`, then, after
-    `delay` seconds, posts the late lines there."""
+    `delay` seconds, posts the late lines there. Lines an earlier reader
+    left unread on `sock` are seen first."""
     joined = f' JOIN {CHANNEL}'.encode()
-    buffer = b''
+
+    def handle(line):
+        if line.startswith(b'PING'):
+            sock.sendall(b'PONG' + line[4:] + b'\r\n')
+        elif line.startswith(f':{nick}!'.encode()) and line.endswith(joined):
+            time.sleep(delay)
+            for speaker, text in late:
+                socks[speaker].sendall(f'PRIVMSG {CHANNEL} :{text}\r\n'.encode())
+                time.sleep(0.4)
+            print(f'posted {len(late)} late lines to {CHANNEL}', flush=True)
+
+    unread, buffer = UNREAD.pop(sock, ([], b''))
     try:
+        for line in unread:
+            handle(line)
         while chunk := sock.recv(4096):
             buffer += chunk
             lines = buffer.split(b'\r\n')
             buffer = lines.pop()
             for line in lines:
-                if line.startswith(b'PING'):
-                    sock.sendall(b'PONG' + line[4:] + b'\r\n')
-                elif line.startswith(f':{nick}!'.encode()) and line.endswith(joined):
-                    time.sleep(delay)
-                    for speaker, text in late:
-                        socks[speaker].sendall(f'PRIVMSG {CHANNEL} :{text}\r\n'.encode())
-                        time.sleep(0.4)
-                    print(f'posted {len(late)} late lines to {CHANNEL}', flush=True)
+                handle(line)
     except OSError:
         pass
 
 
 def await_msgid(sock, text):
     """Reads `sock` until the server echoes `text` back, and returns the
-    message ID it gave it. Needs `echo-message` and `message-tags`."""
-    buffer = b''
+    message ID it gave it. Needs `echo-message` and `message-tags`. Every
+    other line it reads is kept for the socket's next reader. Gives up with
+    the reason after ECHO_DEADLINE seconds."""
+    unread, buffer = UNREAD.pop(sock, ([], b''))
+    deadline = time.monotonic() + ECHO_DEADLINE
     while True:
-        chunk = sock.recv(4096)
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise SystemExit(f'no tagged echo of {text!r} within {ECHO_DEADLINE} s')
+        sock.settimeout(left)
+        try:
+            chunk = sock.recv(4096)
+        except socket.timeout:
+            continue
+        finally:
+            sock.settimeout(None)
         if not chunk:
             raise SystemExit('the server closed the connection before echoing the request')
         buffer += chunk
         lines = buffer.split(b'\r\n')
         buffer = lines.pop()
-        for line in lines:
+        for at, line in enumerate(lines):
             if line.startswith(b'PING'):
                 sock.sendall(b'PONG' + line[4:] + b'\r\n')
                 continue
             decoded = line.decode(errors='replace')
             if f'PRIVMSG {CHANNEL} :{text}' in decoded and (found := re.search(r'msgid=([^; ]+)', decoded)):
+                UNREAD[sock] = (unread + lines[at + 1:], buffer)
                 return found.group(1)
+            unread.append(line)
 
 
 def react(sock, msgid, reaction):

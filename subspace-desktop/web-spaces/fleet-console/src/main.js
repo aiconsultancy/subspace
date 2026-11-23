@@ -256,7 +256,7 @@ function connectionDisplay() {
   const fleet = activeFleet();
   if (fleet?.connection.reason === "no-token") {
     const problem = tokenProblem(fleet.entry.problem, fleet.entry.origin);
-    return { label: "No token", tone: "red", banner: { title: `${fleet.name}: ${problem.title.charAt(0).toLowerCase()}${problem.title.slice(1)}`, body: problem.body, retry: false } };
+    return { label: "No token", tone: "red", banner: { title: `${fleet.name}: ${problem.title.charAt(0).toLowerCase()}${problem.title.slice(1)}`, body: problem.body, retry: Boolean(problem.retry) } };
   }
   return describeConnection(app.connection, { endpoint: activeEndpoint(), now: Date.now() });
 }
@@ -767,14 +767,15 @@ function reconfigure(retry = false) {
   return configure(retry);
 }
 
-async function readConfig() {
+/** `retry` is the person's Retry: only then may Subspace read its keychain again. */
+async function readConfig(retry = false) {
   const bridge = app.bridge;
   if (bridge.present) await bridge.refresh();
   const allowed = { settings: bridge.has("settings"), secrets: bridge.has("secrets"), saveSecrets: bridge.has("save-secrets") };
   const capabilities = bridge.capabilities();
   const settings = allowed.settings ? ((await bridge.settings()) ?? {}) : {};
   const secrets = allowed.secrets ? ((await bridge.secrets()) ?? {}) : {};
-  const api = allowed.secrets && capabilities.fleets ? ((await bridge.fleets()) ?? []) : [];
+  const api = allowed.secrets && capabilities.fleets ? ((await bridge.fleets(retry)) ?? []) : [];
   app.blocker = addBlocker({ present: bridge.present, capabilities, allowed });
   return resolveFleets({ present: bridge.present, allowed, capabilities, settings, secrets, list: store.load(), api, normalizeEndpoint });
 }
@@ -810,7 +811,7 @@ async function startManager(mode, fleets) {
 }
 
 async function applyConfig(retry) {
-  const config = await readConfig();
+  const config = await readConfig(retry);
   app.motionSetting = config.motion ?? "Full";
   root.dataset.motion = reduced() ? "reduced" : "full";
   perfToggle.setSetting(config.perfReadout);

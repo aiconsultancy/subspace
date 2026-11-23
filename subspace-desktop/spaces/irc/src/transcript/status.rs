@@ -128,7 +128,7 @@ fn frame(
     };
     let count = (link.count > 0).then(|| replies_text(link.count));
     let open = Rc::clone(&link.open);
-    frame
+    let button = frame
         .role(Role::Button)
         .aria_label(linked_spoken(&spoken, count.as_deref()))
         .cursor_pointer()
@@ -139,8 +139,18 @@ fn frame(
                 .test_support()
                 .text_color(tokens.muted)
                 .child(format!("· {count} ›"))
-        })))
-        .into_any_element()
+        })));
+    // The line is also a status beside the button, not inside it, so its
+    // stage and clock are announced however nested roles are flattened.
+    // It takes no room: the button draws the line.
+    let live = div()
+        .id(SharedString::from(format!("{id}:live")))
+        .test_support()
+        .role(Role::Status)
+        .aria_label(spoken)
+        .size_0()
+        .overflow_hidden();
+    div().child(button).child(live).into_any_element()
 }
 
 /// A linked line's accessible name: the line, its reply count when it has

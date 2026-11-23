@@ -15,7 +15,7 @@ use subspace_framework::dashboard::avatar::{self, AgentIcons, AgentRank};
 use subspace_framework::dashboard::badge::Pill;
 use subspace_framework::dashboard::{Tokens, Tone, dates, feedback, truncated, workspace};
 
-use super::reason::{self, NOT_LISTED};
+use super::reason;
 use super::{Front, play};
 use crate::Irc;
 use crate::live::ship::state_word;
@@ -59,7 +59,10 @@ fn fleet_part(
             .child(crew_section(ship, now, cx))
             .into_any_element(),
         (None, Some((title, sentence))) => reason::view(title, sentence, cx),
-        (None, None) => reason::view(NOT_LISTED.0, NOT_LISTED.1.to_owned(), cx),
+        (None, None) => {
+            let (title, sentence) = reason::unshown(front.fleet.as_ref());
+            reason::view(title, sentence.to_owned(), cx)
+        }
     }
 }
 
@@ -159,10 +162,7 @@ fn crew_section(ship: &ShipLive, now: DateTime<Utc>, cx: &App) -> AnyElement {
     let tokens = Tokens::current(cx);
     let section = workspace::section("Crew", cx);
     if ship.members.is_empty() {
-        let note = match ship.crew {
-            Some((_, people)) if people > 0 => "The crew's detail has not arrived yet.",
-            _ => "This ship has no crew.",
-        };
+        let note = crew_note(ship);
         return section
             .child(feedback::empty_line(
                 &tokens,
@@ -179,6 +179,18 @@ fn crew_section(ship: &ShipLive, now: DateTime<Utc>, cx: &App) -> AnyElement {
                 .map(|(index, member)| crew_row(index, member, now, &tokens)),
         )
         .into_any_element()
+}
+
+/// Why a ship shows no crew lines: its crew's detail is kept, not
+/// current; it has not arrived; or the ship has no crew.
+pub(crate) fn crew_note(ship: &ShipLive) -> &'static str {
+    match ship.crew {
+        Some((_, people)) if people > 0 && ship.crew_kept => {
+            "The crew's detail is kept from an earlier read and not current, so it is not shown."
+        }
+        Some((_, people)) if people > 0 => "The crew's detail has not arrived yet.",
+        _ => "This ship has no crew.",
+    }
 }
 
 /// One crew member: their dot, name, work and how long.

@@ -31,7 +31,9 @@ to it), Shift+P shows or hides the frame-time readout.
   out. When no fleet has a token and Fleet Console has no Settings fleet of
   its own, the sample banner says what your initiatives' fleet needs, again
   pointing to Settings › Fleets. They are read again when Subspace sends
-  `subspace:fleets-changed`.
+  `subspace:fleets-changed`. A token Subspace could not read from a locked
+  keychain shows **Retry**: only Retry asks Subspace to read the keychain
+  again (`subspace.fleets.retry()`), so unlock it first.
 - **The first fleet** is the one in Settings (`endpoint` and `token`). With
   only that fleet, Fleet Console opens on it, as it always has, and the
   inspector offers **Add fleet**.

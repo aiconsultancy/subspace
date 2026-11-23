@@ -8,7 +8,12 @@
 //!
 //! A row above the input says it is a reply and to what, with a way to
 //! cancel; Escape cancels too. The composer leaves reply mode once the
-//! reply is sent, and when the thread's root is no longer held.
+//! reply is sent. When the thread's root is no longer held, as under the
+//! line cap, the draft stays in reply mode, marked gone: the row says the
+//! thread is no longer loaded, Enter sends nothing, Escape keeps it, and
+//! only an explicit **Write to the channel** leaves reply mode, keeping
+//! the text, so a reply never silently becomes an ordinary message or a
+//! command.
 
 use gpui_kit::component::{Icon, Sizable as _, h_flex};
 use gpui_kit::{
@@ -35,6 +40,9 @@ pub(crate) struct ReplyTo {
     pub author: String,
     /// The start of the root's text, plain.
     pub excerpt: String,
+    /// The root is no longer held: nothing is sent until the person
+    /// chooses to write to the channel instead.
+    pub gone: bool,
 }
 
 impl ReplyTo {
@@ -50,6 +58,7 @@ impl ReplyTo {
             root: id.to_owned(),
             author: author.to_owned(),
             excerpt: chars,
+            gone: false,
         }
     }
 
@@ -70,6 +79,8 @@ pub(crate) const COMMAND: &str =
 /// Why a draft with attachments in reply mode was kept.
 pub(crate) const ATTACHMENTS: &str =
     "Attachments can't go in a thread reply yet. Cancel the reply to send them.";
+/// Why a reply whose thread is no longer loaded was kept.
+pub(crate) const GONE: &str = "The thread is no longer loaded, so this reply was not sent. Choose Write to the channel to send it as an ordinary message.";
 /// Why reply mode is refused outside a channel.
 pub(crate) const CHANNEL_ONLY: &str = "Thread replies are sent in a channel.";
 
@@ -84,6 +95,9 @@ pub(crate) fn command(
 ) -> Result<Command, &'static str> {
     if !matches!(buffer.target, Target::Channel(_)) {
         return Err(CHANNEL_ONLY);
+    }
+    if reply.gone {
+        return Err(GONE);
     }
     if let Some(refusal) = crate::thread::reply_refusal(network) {
         return Err(refusal);
@@ -137,26 +151,45 @@ pub(crate) fn cancel(
     cx.notify();
 }
 
-/// Leaves reply mode when it replies to `root`, whose thread is no longer
-/// held.
-pub(crate) fn forget(
+/// Escape in the composer: leaves reply mode, except for a reply whose
+/// thread is gone, which stays unsendable until the person chooses
+/// **Write to the channel**.
+pub(crate) fn escape(
     conversation: &mut Conversation,
-    root: &str,
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
-    let replying = conversation
+    if conversation
         .draft
         .reply
         .as_ref()
-        .is_some_and(|reply| reply.root == root);
-    if replying {
-        cancel(conversation, window, cx);
+        .is_some_and(|reply| reply.gone)
+    {
+        return;
+    }
+    cancel(conversation, window, cx);
+}
+
+/// Marks the reply to `root`, whose thread is no longer held, as gone: it
+/// keeps the draft in reply mode and sends nothing until the person
+/// chooses to write to the channel instead.
+pub(crate) fn forget(conversation: &mut Conversation, root: &str, cx: &mut Context<Conversation>) {
+    if let Some(reply) = conversation
+        .draft
+        .reply
+        .as_mut()
+        .filter(|reply| reply.root == root)
+    {
+        reply.gone = true;
+        cx.notify();
     }
 }
 
 /// The row above the input in reply mode: what is replied to, and Cancel.
-pub(super) fn row(reply: &ReplyTo, cx: &mut Context<Conversation>) -> impl IntoElement {
+pub(super) fn row(reply: &ReplyTo, cx: &mut Context<Conversation>) -> gpui_kit::AnyElement {
+    if reply.gone {
+        return gone_row(cx).into_any_element();
+    }
     let tokens = Tokens::current(cx);
     let words = reply.words();
     h_flex()
@@ -200,6 +233,40 @@ pub(super) fn row(reply: &ReplyTo, cx: &mut Context<Conversation>) -> impl IntoE
                 Intent::Quiet,
                 IconName::X,
                 "Cancel reply",
+            )
+            .on_click(cx.listener(|this, _, window, cx| cancel(this, window, cx))),
+        )
+        .into_any_element()
+}
+
+/// The row once the thread is no longer loaded: why nothing was sent, and
+/// the one way on, which keeps the text as an ordinary draft.
+fn gone_row(cx: &mut Context<Conversation>) -> impl IntoElement {
+    let tokens = Tokens::current(cx);
+    h_flex()
+        .id("irc-reply-mode")
+        .test_support()
+        .role(Role::Alert)
+        .aria_label(SharedString::from(GONE))
+        .w_full()
+        .min_w_0()
+        .gap_2()
+        .px_2()
+        .py_1()
+        .text_size(tokens.secondary_size())
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_color(tokens.fg)
+                .child("The thread is no longer loaded. Your reply was not sent."),
+        )
+        .child(
+            subspace_framework::dashboard::action::action_button(
+                "irc-reply-mode-to-channel",
+                Intent::Neutral,
+                Some(IconName::Hash),
+                "Write to the channel",
             )
             .on_click(cx.listener(|this, _, window, cx| cancel(this, window, cx))),
         )

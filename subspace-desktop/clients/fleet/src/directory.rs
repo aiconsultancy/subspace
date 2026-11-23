@@ -3,6 +3,7 @@
 //! follows. Pure, so the address rule is tested on its own.
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 use subspace_api_client::model::MemberInitiative;
 use subspace_framework::core::Secret;
@@ -53,7 +54,7 @@ pub fn fleets_of(initiatives: &[MemberInitiative]) -> Vec<FleetRecord> {
 }
 
 /// Where a fleet's saved token stands on this computer.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq)]
 pub(crate) enum TokenLoad {
     /// Not read from the secret store yet.
     #[default]
@@ -62,6 +63,9 @@ pub(crate) enum TokenLoad {
     Saved(SavedToken),
     /// The secret store could not be read.
     Unavailable,
+    /// The person cleared the token but the keychain refused the delete:
+    /// it is not used until cleared again or replaced.
+    ClearFailed,
 }
 
 impl TokenLoad {
@@ -91,6 +95,9 @@ pub enum FleetState {
     AddressChanged { saved_for: Option<String> },
     /// The secret store could not be read.
     StoreUnavailable,
+    /// The person cleared the token but the keychain would not delete it:
+    /// it is not used, followed or shared until cleared again or replaced.
+    ClearFailed,
     /// A token is saved for the recorded address; nothing follows the
     /// fleet now.
     Ready,
@@ -110,6 +117,7 @@ impl FleetState {
             Self::NoToken => "No token",
             Self::AddressChanged { .. } => "Address changed",
             Self::StoreUnavailable => "Keychain locked",
+            Self::ClearFailed => "Token not removed",
             Self::Ready => "Token saved",
             Self::Followed(link) => link.label(),
         }
@@ -136,6 +144,9 @@ impl FleetState {
             Self::StoreUnavailable => {
                 Some("Subspace could not read its secret store. Unlock your system keychain.")
             }
+            Self::ClearFailed => Some(
+                "Subspace could not remove this fleet's token from your keychain, so it is not being used. Clear it again, or save a new token. Until then your keychain may still hold it the next time Subspace starts.",
+            ),
             Self::Followed(link) => link.help(),
             Self::Checking | Self::Ready => None,
         }
@@ -162,6 +173,7 @@ pub(crate) fn ready_client(
         TokenLoad::Loading => return Err(FleetState::Checking),
         TokenLoad::Missing => return Err(FleetState::NoToken),
         TokenLoad::Unavailable => return Err(FleetState::StoreUnavailable),
+        TokenLoad::ClearFailed => return Err(FleetState::ClearFailed),
         TokenLoad::Saved(saved) => saved,
     };
     match saved.for_address(&address) {
@@ -242,6 +254,57 @@ pub(crate) fn retain_tokens(
         tokens.insert(id.clone(), TokenLoad::Loading);
     }
     new
+}
+
+/// The fleets in `old` that `new` no longer has.
+pub(crate) fn removed(old: &[FleetRecord], new: &[FleetRecord]) -> Vec<String> {
+    old.iter()
+        .filter(|fleet| !new.iter().any(|kept| kept.id == fleet.id))
+        .map(|fleet| fleet.id.clone())
+        .collect()
+}
+
+/// Each fleet whose token the store could not read and that was read
+/// again within `interval` of `now`, with when it may be read again: a
+/// Retry asked too soon waits for each.
+pub(crate) fn waiting(
+    tokens: &BTreeMap<String, TokenLoad>,
+    last: &BTreeMap<String, Instant>,
+    now: Instant,
+    interval: Duration,
+) -> Vec<(String, Instant)> {
+    tokens
+        .iter()
+        .filter(|(_, token)| **token == TokenLoad::Unavailable)
+        .filter_map(|(fleet, _)| last.get(fleet).map(|at| (fleet.clone(), *at + interval)))
+        .filter(|(_, due)| *due > now)
+        .collect()
+}
+
+/// The fleets whose token the store could not read and that may be read
+/// again at `now`: none read again within `interval`. Marks them read at
+/// `now` and forgets fleets no longer known.
+pub(crate) fn due_rereads(
+    tokens: &BTreeMap<String, TokenLoad>,
+    last: &mut BTreeMap<String, Instant>,
+    now: Instant,
+    interval: Duration,
+) -> Vec<String> {
+    last.retain(|fleet, _| tokens.contains_key(fleet));
+    let due: Vec<String> = tokens
+        .iter()
+        .filter(|(fleet, token)| {
+            **token == TokenLoad::Unavailable
+                && last
+                    .get(*fleet)
+                    .is_none_or(|at| now.saturating_duration_since(*at) >= interval)
+        })
+        .map(|(fleet, _)| fleet.clone())
+        .collect();
+    for fleet in &due {
+        last.insert(fleet.clone(), now);
+    }
+    due
 }
 
 #[cfg(test)]

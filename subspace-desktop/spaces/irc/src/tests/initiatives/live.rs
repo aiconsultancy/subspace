@@ -3,10 +3,8 @@
 //! Ships, the header pill and the navigator dot's tooltip, and the board
 //! following a fleet through the shared service while it shows it.
 
-use std::sync::Arc;
-
 use gpui_kit::test::TestWindowExt as _;
-use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
+use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use subspace_client_fleet::{FleetApi, FleetRecord, FleetState, Link, TokenStore};
 use subspace_client_irc::Event;
 use subspace_framework::core::Secret;
@@ -21,7 +19,7 @@ use crate::live::tests::aurora;
 use crate::{Irc, rows, view};
 
 /// The hub told the aurora fleet is in `state`, with the fixture's ships.
-fn set_fleet(hub: &Entity<Hub>, state: FleetState, cx: &mut VisualTestContext) {
+pub(super) fn set_fleet(hub: &Entity<Hub>, state: FleetState, cx: &mut VisualTestContext) {
     hub.update(cx, |hub, cx| {
         hub.fleets = [("aurora".to_owned(), aurora(state))].into();
         cx.notify();
@@ -43,7 +41,7 @@ pub(super) fn ship_people(
     (board, hub, cx)
 }
 
-fn live() -> FleetState {
+pub(super) fn live() -> FleetState {
     FleetState::Followed(Link::Live)
 }
 
@@ -228,13 +226,9 @@ fn the_starbase_lists_the_roster_s_ships_with_their_crew(cx: &mut TestAppContext
 
 #[gpui_kit::test]
 fn the_board_follows_a_ready_fleet_while_it_shows_it(cx: &mut TestAppContext) {
-    let service = cx.new(|_| FleetApi::new(Arc::new(TokenStore::memory())));
-    service.update(cx, |service, cx| {
-        let record = FleetRecord::new("aurora", "Aurora", Some("http://127.0.0.1:9".into()));
-        service.set_fleets(vec![record], cx);
-    });
+    let record = FleetRecord::new("aurora", "Aurora", Some("http://127.0.0.1:9".into()));
+    let service = cx.update(|cx| FleetApi::install_new(TokenStore::memory(), vec![record], cx));
     cx.run_until_parked();
-    cx.update(|cx| FleetApi::install(service.clone(), cx));
     let (board, hub, cx) = ship(cx);
     let following = |board: &Entity<Irc>, cx: &mut VisualTestContext| {
         board.read_with(cx, |board, _| board.watch.following())
@@ -259,6 +253,19 @@ fn the_board_follows_a_ready_fleet_while_it_shows_it(cx: &mut TestAppContext) {
         let state = hub.fleets.get("aurora").map(|fleet| fleet.state.clone());
         assert!(matches!(state, Some(FleetState::Followed(_))), "{state:?}");
     });
+    // The navigator hidden and nothing of the fleet in front: let go.
+    board.update(cx, |board, cx| {
+        board.dock.focused = None;
+        crate::dock::toggle_buffers(board, cx);
+    });
+    settle(cx);
+    assert!(
+        following(&board, cx).is_empty(),
+        "a hidden navigator follows nothing"
+    );
+    board.update(cx, crate::dock::toggle_buffers);
+    settle(cx);
+    assert_eq!(following(&board, cx), ["aurora"], "shown again");
     board.update_in(cx, |board, window, cx| {
         subspace_framework::dashboard::Dashboard::deactivate(board, window, cx);
     });

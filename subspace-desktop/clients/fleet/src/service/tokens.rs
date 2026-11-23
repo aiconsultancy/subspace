@@ -1,14 +1,13 @@
 //! Saving, clearing and testing a fleet's token.
 
-use std::sync::Arc;
-
 use gpui_kit::{AppContext as _, Context, Task};
 use subspace_framework::core::Secret;
 
 use super::FleetApi;
+use super::queue::Op;
 use crate::directory::{self, FleetState, TokenLoad};
 use crate::model::FleetOverview;
-use crate::tokens::{SavedToken, StoreError, clean_token};
+use crate::tokens::{StoreError, clean_token};
 use crate::{Error, FleetAddress, FleetClient};
 
 /// Why a token could not be saved or tested.
@@ -32,50 +31,50 @@ pub enum TokenError {
 
 impl FleetApi {
     /// Saves `token` for `fleet`, bound to the address the API records now.
+    /// A token or address that cannot be saved is refused before anything
+    /// changes. Otherwise the save queues behind every store operation
+    /// already asked for ([`super::queue`]), and a read queued before it is
+    /// dropped when it lands: this one is newer.
     pub fn save_token(
         &mut self,
         fleet: &str,
         token: Secret,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), TokenError>> {
-        let address = self.address(fleet);
-        let (store, id) = (Arc::clone(&self.store), fleet.to_owned());
-        let save = cx.background_spawn(async move {
-            let address = address?;
-            let token = Secret::new(clean_token(&token).map_err(TokenError::Store)?);
-            store
-                .save(&id, &address, &token)
-                .map_err(TokenError::Store)?;
-            Ok(SavedToken::new(&address, token))
+        let checked = self.address(fleet).and_then(|address| {
+            let token = clean_token(&token).map_err(TokenError::Store)?;
+            Ok((address, Secret::new(token)))
         });
-        let id = fleet.to_owned();
-        cx.spawn(async move |this, cx| {
-            let saved = save.await?;
-            _ = this.update(cx, |this, cx| {
-                this.set_token(&id, TokenLoad::Saved(saved), cx)
-            });
-            Ok(())
-        })
+        let (address, token) = match checked {
+            Ok(checked) => checked,
+            Err(error) => return Task::ready(Err(error)),
+        };
+        self.supersede(fleet);
+        self.enqueue(fleet, Op::Save(address, token), cx)
     }
 
-    /// Forgets `fleet`'s token on this computer.
+    /// Forgets `fleet`'s token on this computer. The token stops being
+    /// used, followed and shared at once; the keychain delete queues behind
+    /// every store operation already asked for, and nothing queued before
+    /// it can bring the token back, in memory or in the keychain.
     pub fn clear_token(
         &mut self,
         fleet: &str,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), TokenError>> {
-        let known = self.record(fleet).map(|record| record.id.clone());
-        let store = Arc::clone(&self.store);
-        let clear = cx.background_spawn(async move {
-            let id = known.ok_or(TokenError::UnknownFleet)?;
-            store.clear(&id).map_err(TokenError::Store)?;
-            Ok(id)
-        });
-        cx.spawn(async move |this, cx| {
-            let id = clear.await?;
-            _ = this.update(cx, |this, cx| this.set_token(&id, TokenLoad::Missing, cx));
-            Ok(())
-        })
+        match self.forget(fleet, cx) {
+            Ok(()) => self.enqueue(fleet, Op::Clear, cx),
+            Err(error) => Task::ready(Err(error)),
+        }
+    }
+
+    /// Stops using `fleet`'s token at once, in a new generation.
+    fn forget(&mut self, fleet: &str, cx: &mut Context<Self>) -> Result<(), TokenError> {
+        self.record(fleet).ok_or(TokenError::UnknownFleet)?;
+        self.supersede(fleet);
+        self.reads.cleared.insert(fleet.to_owned());
+        self.set_token(fleet, TokenLoad::Missing, cx);
+        Ok(())
     }
 
     /// Reads the fleet once at its recorded address, with `token` when

@@ -104,7 +104,9 @@
       open: identifier => call("issues.open", String(identifier)).then(() => undefined),
     }),
     // Answered only for the app's built-in Fleet Console; refused elsewhere.
-    fleets: Object.freeze({ get: () => call("fleets.get") }),
+    // retry() also reads again a token the keychain could not read: only
+    // for the person's Retry.
+    fleets: Object.freeze({ get: () => call("fleets.get"), retry: () => call("fleets.retry") }),
   }) });
 
   function sendNotification(notification) {

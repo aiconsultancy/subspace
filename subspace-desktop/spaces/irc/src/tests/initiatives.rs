@@ -1,12 +1,16 @@
 mod ask;
 mod direct;
 mod fleet;
+mod folding;
 mod header;
 mod live;
 mod navigator;
 mod notice;
+mod review;
 mod scope;
 mod thread;
+mod thread_gone;
+mod views;
 
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{Entity, TestAppContext, VisualTestContext, px, size};

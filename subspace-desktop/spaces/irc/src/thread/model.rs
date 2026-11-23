@@ -15,9 +15,19 @@ pub(crate) struct Thread {
     /// The status timeline, when the root is a request with trusted
     /// progress or one that ended, as for its status line.
     pub timeline: Option<Timeline>,
-    /// The replies the buffer holds, oldest first.
+    /// The latest replies the buffer holds, at most [`MAX_REPLIES`],
+    /// oldest first.
     pub replies: Vec<Entry>,
+    /// How many replies the buffer holds, all of them.
+    pub reply_count: usize,
+    /// The chosen message is itself a reply, such as a follow-up request:
+    /// `replies` are its whole thread's.
+    pub nested: bool,
 }
+
+/// The most replies a thread keeps to draw: the latest. A rebuild copies
+/// no more, however long the thread.
+pub(crate) const MAX_REPLIES: usize = 40;
 
 /// A request's steps, from the progress notices its status line folds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,24 +78,45 @@ impl StepKind {
 }
 
 /// The thread of message `root` in `held`, the buffer `buffer`; `None`
-/// when the buffer does not hold it.
+/// when the buffer does not hold it. Its replies are those of the
+/// conversation's thread the message is in, as the transcript counts them,
+/// so a follow-up request made as a reply shows the replies to it and a
+/// reply sent from its tab appears there; its timeline is the chosen
+/// message's own. The chosen message is shown once, as the root.
 pub(crate) fn build(buffer: &BufferKey, held: &Buffer, root: &str) -> Option<Thread> {
     let root_entry = held
         .entries
         .iter()
         .find(|entry| entry.line.id.as_deref() == Some(root) && entry.line.buffer == *buffer)?;
     let roots = ThreadRoots::new(buffer, held.entries.iter().map(|entry| &entry.line));
-    let replies = held
+    let thread = roots.root(&root_entry.line).unwrap_or(root);
+    let all: Vec<&Entry> = held
         .entries
         .iter()
-        .filter(|entry| is_reply(held, &roots, entry, root))
-        .cloned()
+        .filter(|entry| entry.seq != root_entry.seq && is_reply(held, &roots, entry, thread))
         .collect();
+    let reply_count = all.len();
+    let replies = latest(&all);
     Some(Thread {
         root: root_entry.clone(),
         timeline: timeline(held, root_entry, root),
         replies,
+        reply_count,
+        nested: is_nested(thread, root),
     })
+}
+
+/// The latest [`MAX_REPLIES`] of `all`, copied.
+fn latest(all: &[&Entry]) -> Vec<Entry> {
+    all[all.len().saturating_sub(MAX_REPLIES)..]
+        .iter()
+        .map(|entry| (*entry).clone())
+        .collect()
+}
+
+/// Whether the chosen message `root` is itself a reply in `thread`.
+fn is_nested(thread: &str, root: &str) -> bool {
+    thread != root
 }
 
 /// Whether `entry` is a reply in the thread of `root`: a message, not
@@ -106,7 +137,15 @@ fn timeline(held: &Buffer, root_entry: &Entry, root: &str) -> Option<Timeline> {
     if asked.is_none() && ending.is_none() {
         return None;
     }
-    let observed = observed(held, root);
+    let mut observed = observed(held, root);
+    if let Some(ending) = ending {
+        // The kept ending is the request's end, as its status line says:
+        // no held notice ends it otherwise, and none after it is a step.
+        observed.retain(|notice| {
+            !matches!(notice.phase, Phase::Finished(_))
+                && ending.at.is_none_or(|at| notice.at <= at)
+        });
+    }
     if observed.is_empty() && ending.is_none() {
         // Addressed, as `Morning, all.` reads, but no agent reported on it:
         // the transcript shows no status line either.
@@ -118,6 +157,8 @@ fn timeline(held: &Buffer, root_entry: &Entry, root: &str) -> Option<Timeline> {
         .or_else(|| asked.map(thread_status::agent_name))
         .unwrap_or_default();
     let mut steps = steps(&observed, root_entry.line.time);
+    // Only the ending held, as after a partial history load: the steps
+    // before it are not loaded.
     let earlier_missing = ending.is_some() && observed.is_empty();
     if let Some(ending) = ending {
         settle(&mut steps, ending, root_entry.line.time);

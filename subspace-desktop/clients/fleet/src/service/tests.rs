@@ -8,6 +8,10 @@ use super::{FleetApi, TokenError};
 use crate::tests::{FleetFixture, TOKEN};
 use crate::{FleetRecord, FleetState, Link, TokenStore};
 
+mod keychain;
+mod ordering;
+mod retries;
+
 const HOME: &str = "https://fleet.example.com";
 
 fn service(
@@ -235,51 +239,4 @@ fn an_installed_service_is_the_shared_one_and_nothing_is_created_to_read_it(
         assert_eq!(FleetApi::current(cx), Some(installed.clone()));
         assert_eq!(FleetApi::shared(cx), installed);
     });
-}
-
-/// A secret store that cannot be read while `locked`, as a locked
-/// keychain.
-#[derive(Default)]
-struct Keychain {
-    locked: Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl subspace_framework::core::vault::Vault for Keychain {
-    fn load(&self, _: &str) -> Result<Option<Secret>, subspace_framework::core::vault::VaultError> {
-        if self.locked.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(subspace_framework::core::vault::VaultError);
-        }
-        Ok(None)
-    }
-
-    fn save(&self, _: &str, _: &Secret) -> Result<(), subspace_framework::core::vault::VaultError> {
-        Err(subspace_framework::core::vault::VaultError)
-    }
-
-    fn delete(&self, _: &str) -> Result<(), subspace_framework::core::vault::VaultError> {
-        Err(subspace_framework::core::vault::VaultError)
-    }
-}
-
-#[gpui_kit::test]
-fn a_token_the_store_could_not_read_is_read_again_on_retry(cx: &mut TestAppContext) {
-    let locked = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let keychain = Keychain {
-        locked: locked.clone(),
-    };
-    let store = Arc::new(TokenStore::with_vault(Box::new(keychain)));
-    let service = service(store, aurora(HOME), cx);
-    assert_eq!(state(&service, cx), FleetState::StoreUnavailable);
-    locked.store(false, std::sync::atomic::Ordering::SeqCst);
-    service.update(cx, |service, cx| service.reload_unreadable(cx));
-    assert_eq!(state(&service, cx), FleetState::Checking);
-    cx.run_until_parked();
-    assert_eq!(state(&service, cx), FleetState::NoToken, "read again");
-    let revision = service.read_with(cx, |service, _| service.revision());
-    service.update(cx, |service, cx| service.reload_unreadable(cx));
-    assert_eq!(
-        service.read_with(cx, |service, _| service.revision()),
-        revision,
-        "nothing to read again, no news"
-    );
 }
