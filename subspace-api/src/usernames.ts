@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, ne, sql, type SQLWrapper } from "drizzle-orm";
-import { Context, Effect } from "effect";
+import { Context, Effect, Schedule } from "effect";
 import { type Database } from "./db";
 import { auditLogs, organisations, retiredUsernames, users } from "./schema";
 
@@ -228,40 +228,57 @@ export const retiredByAnother = (
   );
 
 /**
- * Gives every person without a username one, oldest first, by the same rule as registration.
- * Agents already have theirs from their IRC nicks. It is deterministic for a given database and
- * changes nothing when every person has a username, so running it again is safe.
+ * Gives every person without a username one, oldest first within each organisation, by the same
+ * rule as registration. Agents already have theirs from their IRC nicks.
+ *
+ * Run it after the schema migrations have committed, never inside them: each batch is its own
+ * short transaction that locks the organisation's row before it touches any user, so it never
+ * holds a lock on the whole users table while it waits, and a failed batch is retried. It only
+ * fills in missing usernames, in a fixed order, so it is deterministic and safe to run again or
+ * from several instances at once.
  */
-export const backfillUsernames = (db: Db, reserved: ReadonlySet<string>) =>
+export const backfillUsernames = (db: Db, reserved: ReadonlySet<string>, batchSize = 100) =>
   Effect.gen(function* () {
-    const people = yield* db
-      .select({
-        id: users.id,
-        organisationId: users.organisationId,
-        displayName: users.displayName,
-        email: users.email,
-      })
+    const missing = and(isNull(users.username), isNull(users.agentRank));
+    const organisationIds = yield* db
+      .selectDistinct({ id: users.organisationId })
       .from(users)
-      .where(and(isNull(users.username), isNull(users.agentRank)))
-      .orderBy(asc(users.createdAt), asc(users.id));
-    const locked = new Set<string>();
-    for (const person of people) {
-      if (!locked.has(person.organisationId)) {
-        yield* lockUsernames(db, person.organisationId);
-        locked.add(person.organisationId);
+      .where(missing)
+      .orderBy(users.organisationId);
+    let total = 0;
+    for (const { id: organisationId } of organisationIds) {
+      for (;;) {
+        const done = yield* db
+          .transaction((tx) =>
+            Effect.gen(function* () {
+              yield* lockUsernames(tx, organisationId);
+              const people = yield* tx
+                .select({ id: users.id, displayName: users.displayName, email: users.email })
+                .from(users)
+                .where(and(eq(users.organisationId, organisationId), missing))
+                .orderBy(asc(users.createdAt), asc(users.id))
+                .limit(batchSize);
+              for (const person of people) {
+                const username = yield* allocateUsername(
+                  tx,
+                  organisationId,
+                  { name: person.displayName, email: person.email },
+                  reserved,
+                );
+                yield* tx
+                  .update(users)
+                  .set({ username })
+                  .where(and(eq(users.id, person.id), isNull(users.username)));
+              }
+              return people.length;
+            }),
+          )
+          .pipe(Effect.retry({ times: 4, schedule: Schedule.exponential("200 millis") }));
+        total += done;
+        if (done < batchSize) break;
       }
-      const username = yield* allocateUsername(
-        db,
-        person.organisationId,
-        { name: person.displayName, email: person.email },
-        reserved,
-      );
-      yield* db
-        .update(users)
-        .set({ username })
-        .where(and(eq(users.id, person.id), isNull(users.username)));
     }
-    return people.length;
+    return total;
   });
 
 /** A username an administrator sets: a letter, then letters, digits, `-` or `_`, at most 32. */

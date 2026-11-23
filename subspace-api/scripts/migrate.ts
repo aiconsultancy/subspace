@@ -13,12 +13,12 @@ const migration = Effect.gen(function* () {
       // Concurrent API instances must wait before Drizzle inspects its journal.
       yield* tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('subspace-api-migrations'))`);
       yield* migrate(tx, { migrationsFolder: new URL("../drizzle", import.meta.url).pathname });
-      // People need the operator's reserved names, which only the runtime configuration holds, so
-      // the backfill runs here, in the same transaction, rather than in a SQL migration. It only
-      // fills in missing usernames, so it is a no-op once every person has one.
-      yield* backfillUsernames(tx, reserved);
     }),
   );
+  // After the schema change has committed, so no lock on the users table is held meanwhile.
+  // People need the operator's reserved names, which only the runtime configuration holds, so
+  // the backfill runs here rather than in a SQL migration, in short transactions of its own.
+  yield* backfillUsernames(db, reserved);
 });
 
 try {

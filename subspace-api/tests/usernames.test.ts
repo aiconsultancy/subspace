@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect } from "effect";
+import pg from "pg";
 import { config, reservedUsernames } from "../src/config";
 import { Database, databaseLayer } from "../src/db";
 import { localMember, provisionMember } from "../src/identity";
@@ -11,6 +12,7 @@ import {
   allocatedUsername,
   foldName,
   isReservedUsername,
+  backfillUsernames,
   nameParts,
   setUsername,
   usernameCandidates,
@@ -629,6 +631,69 @@ describe.skipIf(!testDatabase)("usernames at development sign-in", () => {
 });
 
 describe.skipIf(!testDatabase)("the username backfill", () => {
+  test("it waits for an organisation in short batches without holding the users table", async () => {
+    const database = await isolatedDatabase("username_backfill_locks");
+    const blocker = new pg.Client(database.url);
+    await blocker.connect();
+    try {
+      const { client } = database;
+      const org = "00000000-0000-4000-8000-000000000011";
+      const other = "00000000-0000-4000-8000-000000000012";
+      await client.query(
+        "INSERT INTO organisations (id, provider, external_id) VALUES ($1, 'dev', 'locks-one'), ($2, 'dev', 'locks-two')",
+        [org, other],
+      );
+      const names = [
+        "Tamsin Quarrie",
+        "Tamsin Brackwater",
+        "Kerra Jago",
+        "Kerra Jory",
+        "Bryn Tallack",
+      ];
+      for (const [index, name] of names.entries())
+        await client.query(
+          "INSERT INTO users (organisation_id, subject, display_name, created_at) VALUES ($1, $2, $3, $4)",
+          [org, `person-${index}@example.com`, name, `2026-01-0${index + 1}T00:00:00Z`],
+        );
+
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT id FROM organisations WHERE id = $1 FOR UPDATE", [org]);
+      const pending = Effect.runPromise(
+        Effect.flatMap(Database, (db) => backfillUsernames(db, new Set(), 2)).pipe(
+          Effect.provide(databaseLayer(database.url, 2)),
+        ),
+      );
+      await Bun.sleep(300);
+      // While the backfill waits for that organisation, the users table stays open to others.
+      await client.query("SET statement_timeout = 2000");
+      expect(Number((await client.query("SELECT count(*) AS n FROM users")).rows[0].n)).toBe(5);
+      await client.query(
+        "INSERT INTO users (organisation_id, subject, display_name, username) VALUES ($1, 'late@example.com', 'Late Person', 'late')",
+        [other],
+      );
+      await client.query("RESET statement_timeout");
+      expect(
+        Number(
+          (await client.query("SELECT count(*) AS n FROM users WHERE username IS NOT NULL")).rows[0]
+            .n,
+        ),
+      ).toBe(1);
+      await blocker.query("COMMIT");
+      expect(await pending).toBe(5);
+      expect(
+        (
+          await client.query(
+            "SELECT username FROM users WHERE organisation_id = $1 ORDER BY created_at",
+            [org],
+          )
+        ).rows.map((row) => row.username),
+      ).toEqual(["tamsin", "tamsinb", "kerra", "kerraj", "bryn"]);
+    } finally {
+      await blocker.end();
+      await database.drop();
+    }
+  });
+
   test("existing people get usernames oldest first, agents keep their nicks, and a rerun changes nothing", async () => {
     const database = await isolatedDatabase("username_backfill", false);
     try {

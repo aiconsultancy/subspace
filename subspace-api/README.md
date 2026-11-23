@@ -171,9 +171,12 @@ database refuses one to any record but the one that held it, which may take it
 back.
 
 `bun run db:migrate`, which the image runs at start-up, gives existing people
-usernames by the same rule, oldest first, after applying the migrations and in the
-same transaction. It runs there rather than in a SQL migration because it needs
-`RESERVED_USERNAMES`, and it only fills in missing usernames, so running it again
+usernames by the same rule, oldest first within each organisation. It runs after
+the migrations have committed, rather than in a SQL migration, because it needs the
+reserved names. Each batch of up to 100 people is a short transaction that locks
+its organisation's row before it touches any user, so the users table stays open
+to other instances meanwhile, and a failed batch is retried. It only fills in
+missing usernames, so running it again, or from several instances at once,
 changes nothing. A person added without one, such as by an older API instance
 during a rolling deployment, is given one on their next request, audited as
 `usernameAllocated`.
