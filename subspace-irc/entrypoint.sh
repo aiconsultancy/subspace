@@ -80,10 +80,13 @@ auth_ca=${IRC_AUTH_API_CA_FILE:-}
 auth_prefix=${IRC_AUTH_PASSPHRASE_PREFIX:-}
 auth_http=${IRC_AUTH_API_ALLOW_HTTP:-false}
 auth_certs=${IRC_AUTH_CERT_LOGINS:-false}
+auth_limit=${IRC_AUTH_API_CONCURRENCY:-}
+auth_slots=$run/auth-slots
 auth_token=$run/auth-token
 auth_local=$run/local-accounts.json
 auth_block=
 rm -f "$auth_token" "$auth_token.tmp" "$auth_local" "$auth_local.tmp"
+rm -rf "$auth_slots"
 for setting in "$auth_http" "$auth_certs"; do
     case $setting in
         true|false) ;;
@@ -124,7 +127,18 @@ if [ -n "$auth_url" ]; then
         case "$auth_ca" in /*) ;; *) die 'IRC_AUTH_API_CA_FILE must be an absolute path' ;; esac
         [ -r "$auth_ca" ] || die 'IRC_AUTH_API_CA_FILE must be readable by UID 10001'
     fi
+    # API-bound script runs are capped well below Ergo's 256 script slots, so
+    # local and operator logins always find a free slot.
+    auth_limit=${auth_limit:-128}
+    case $auth_limit in
+        [1-9] | [1-9][0-9] | 1[0-8][0-9] | 19[0-2]) ;;
+        *) die 'IRC_AUTH_API_CONCURRENCY must be an integer from 1 to 192' ;;
+    esac
+    mkdir "$auth_slots"
     # Extra local-only accounts, separated by commas, spaces or new lines.
+    case $local_names in
+        *@*) die 'IRC_AUTH_LOCAL_ACCOUNTS names must not contain @: list the bare account name, without a device suffix' ;;
+    esac
     local_extra=$(printf '%s' "$local_names" | jq -Rsc '
         [splits("[\\s,]+") | select(. != "")]
         | if all(.[]; test("\\A[!-~]{1,64}\\z")) then map(ascii_downcase) else error("invalid") end
@@ -133,7 +147,7 @@ if [ -n "$auth_url" ]; then
     # Every login holds one of Ergo's script slots while the script runs, even
     # a local one that the script refuses at once, so allow plenty of slots.
     auth_block=$(printf '    auth-script:\n        enabled: true\n        command: "/ircd-bin/subspace-auth"\n        args: []\n        autocreate: true\n        timeout: 9s\n        kill-timeout: 1s\n        max-concurrency: 256')
-elif [ -n "${IRC_AUTH_API_TOKEN_FILE:-}${IRC_AUTH_API_TOKEN:-}${auth_ca}${auth_prefix}${local_names}" ] ||
+elif [ -n "${IRC_AUTH_API_TOKEN_FILE:-}${IRC_AUTH_API_TOKEN:-}${auth_ca}${auth_prefix}${local_names}${auth_limit}" ] ||
     [ "$auth_http" = true ] || [ "$auth_certs" = true ]; then
     die 'The IRC_AUTH_* settings need IRC_AUTH_API_URL'
 fi
@@ -379,7 +393,8 @@ set -- PATH="$PATH"
 if [ -n "$auth_url" ]; then
     set -- "$@" IRC_AUTH_API_URL="$auth_url" IRC_AUTH_API_TOKEN_FILE="$auth_token" \
         IRC_AUTH_PASSPHRASE_PREFIX="$auth_prefix" IRC_AUTH_LOCAL_LIST="$auth_local" \
-        IRC_AUTH_CERT_LOGINS="$auth_certs" IRC_AUTH_API_ALLOW_HTTP="$auth_http"
+        IRC_AUTH_CERT_LOGINS="$auth_certs" IRC_AUTH_API_ALLOW_HTTP="$auth_http" \
+        IRC_AUTH_SLOTS_DIR="$auth_slots" IRC_AUTH_API_CONCURRENCY="$auth_limit"
     if [ -n "$auth_ca" ]; then
         set -- "$@" IRC_AUTH_API_CA_FILE="$auth_ca"
     fi

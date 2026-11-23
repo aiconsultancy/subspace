@@ -42,11 +42,13 @@ FAIL_CLOSED = {
     "sirc1.handmade": "hook-hand-mapper",
     "sirc1.badname": "hook-badname",
     "sirc1.reserved": "hook-reserved",
+    "sirc1.dupsame": "hook-dupsame-user",
+    "sirc1.longs": "hook-longs-user",
 }
 # Names that refused answers carried; none may become an account.
 CREATED_NEVER = ("hook-status", "hook-redirect", "hook-twice", "hook-string", "hook-array",
-                 "hook-dupcase", "hook-short", "hook-huge")
-FLOOD = 100
+                 "hook-dupcase", "hook-short", "hook-huge", "hook-dupsame", "hook-longs")
+FLOOD = 300
 
 
 def sasl(port, account, password, context=None):
@@ -222,6 +224,7 @@ def smoke():
             assert "registration:\n        enabled: false" in config
             assert "require-sasl:\n        enabled: true" in config
             assert "force-nick-equals-account: true" in config
+            assert irc_exec("stat", "-c", "%a %u", "/run/subspace-irc/auth-slots").stdout.split() == ["700", "10001"]
             for path in ("/run/subspace-irc/auth-token", "/run/subspace-irc/local-accounts.json"):
                 mode = irc_exec("stat", "-c", "%a %u", path).stdout.split()
                 assert mode == ["600", "10001"], (path, mode)
@@ -282,26 +285,71 @@ def smoke():
                 assert text not in irc_logs, "API or credential text in Ergo logs"
             print("Passed hook sign-in, fresh answers, local-only accounts and fail-closed answers")
 
-            # A slow API must not starve local logins: hold more API-bound logins than
-            # the old 64 slots, then time the operator's login while they wait.
-            flood = [threading.Thread(target=refused, args=(plain, f"hook-flood-{i}", "sirc1.hang"))
-                     for i in range(FLOOD)]
-            flood_started = time.monotonic()
+            # The local-only list fails closed: unset, empty, null, [] or truncated
+            # refuses every login that would be forwarded, without calling the API.
+            def run_hook(name, local_list):
+                options = ["-e", f"IRC_AUTH_API_URL={API_URL}", "-e", f"IRC_AUTH_API_CA_FILE={CA_PATH}",
+                           "-e", "IRC_AUTH_API_TOKEN_FILE=/run/subspace-irc/auth-token",
+                           "-e", "IRC_AUTH_SLOTS_DIR=/run/subspace-irc/auth-slots",
+                           "-e", "IRC_AUTH_API_CONCURRENCY=4", "-e", f"LIST={local_list or ''}"]
+                if local_list is not None:
+                    options += ["-e", "IRC_AUTH_LOCAL_LIST=/tmp/local-list.json"]
+                request = json.dumps({"accountName": name, "passphrase": "sirc1.unit", "ip": "192.0.2.1"})
+                return subprocess.run(
+                    command + ["exec", "-T", *options, "irc", "sh", "-c",
+                               'printf %s "$LIST" > /tmp/local-list.json && exec /ircd-bin/subspace-auth'],
+                    input=request + "\n", env=env, timeout=30, check=True, capture_output=True, text=True,
+                ).stdout
+
+            invalid = '{"success":false,"error":"subspace-auth: the local-only account list is missing or invalid"}\n'
+            for index, local_list in enumerate((None, "", "null", "[]", '["hook-agent"', '["a"] ["b"]',
+                                                '["hook@device"]')):
+                assert run_hook(f"hook-list-{index}", local_list) == invalid, local_list
+            assert run_hook("hook-list-ok", '["hook-agent"]') == '{"success":false}\n'
+            assert run_hook("hook-agent", '["hook-agent"]') == '{"success":false}\n'
+            requests = stub_requests()
+            assert "hook-list-ok" in requests and "hook-agent" not in requests, requests
+            assert not any(name.startswith("hook-list-") and name != "hook-list-ok" for name in requests)
+            print("Passed the fail-closed local-only list")
+
+            # Saturation: more concurrent API-bound logins than Ergo's 256 script slots
+            # against a hanging API. The script admits at most 128 and refuses the rest
+            # at once, so the operator's password login still finds a slot.
+            results = {}
+
+            def flood_login(index):
+                try:
+                    irc, result = sasl(plain, f"hook-flood-{index}", "sirc1.hang")
+                    irc.__exit__()
+                    results[index] = (" 904 " in result, time.monotonic())
+                except BaseException as error:  # recorded and asserted below
+                    results[index] = (error, time.monotonic())
+
+            flood = [threading.Thread(target=flood_login, args=(i,)) for i in range(FLOOD)]
             for thread in flood:
                 thread.start()
-            deadline = flood_started + 3
-            while sum(name.startswith("hook-flood-") for name in stub_requests()) < FLOOD:
-                assert time.monotonic() < deadline, "flood did not reach the stub"
+            deadline = time.monotonic() + 30
+            while "subspace-auth: API concurrency limit reached" not in logs("irc"):
+                assert time.monotonic() < deadline, "the flood never reached the concurrency limit"
                 time.sleep(0.2)
             started = time.monotonic()
             signs_in(plain, OPERATOR, operator_pw, OPERATOR).__exit__()
-            elapsed = time.monotonic() - started
-            # Each flood login holds its slot for curl's four-second limit.
-            assert time.monotonic() - flood_started < 4, "flood ended before the operator login"
+            finished = time.monotonic()
+            done_before = len(results)
             for thread in flood:
-                thread.join(30)
-            assert elapsed < 2, f"operator login waited {elapsed:.1f}s behind the API"
-            print(f"Passed operator login in {elapsed:.2f}s with {FLOOD} hanging API logins")
+                thread.join(60)
+            assert len(results) == FLOOD, f"{FLOOD - len(results)} flood logins never finished"
+            failures = {i: r for i, (r, _) in results.items() if r is not True}
+            assert not failures, f"flood logins that were not refused: {failures}"
+            forwarded = sum(name.startswith("hook-flood-") for name in stub_requests())
+            assert 0 < forwarded < FLOOD, forwarded
+            # Relative, not absolute, timing: an admitted flood login holds Ergo's slot
+            # for curl's four-second limit, so a queued operator login would take at
+            # least that long, and would finish only after flood logins released slots.
+            assert finished - started < 4, f"operator login took {finished - started:.1f}s"
+            assert done_before < FLOOD, "the flood had ended before the operator signed in"
+            print(f"Passed operator login in {finished - started:.2f}s under {FLOOD} API-bound logins "
+                  f"({forwarded} reached the API, the rest refused at once)")
 
             # API down: local accounts still sign in; API credentials do not.
             compose("stop", "auth-stub")
@@ -343,6 +391,9 @@ def smoke():
             fails_to_start("IRC_AUTH_PASSPHRASE_PREFIX must be", IRC_AUTH_API_URL="http://auth-stub",
                            IRC_AUTH_API_ALLOW_HTTP="true", IRC_AUTH_PASSPHRASE_PREFIX="has space")
             fails_to_start("must be true or false", IRC_AUTH_CERT_LOGINS="yes")
+            fails_to_start("names must not contain @", IRC_AUTH_LOCAL_ACCOUNTS="hook-handmade@laptop")
+            fails_to_start("IRC_AUTH_API_CONCURRENCY must be an integer from 1 to 192",
+                           IRC_AUTH_API_CONCURRENCY="193")
             fails_to_start("IRC_AUTH_API_CA_FILE must be readable", IRC_AUTH_API_CA_FILE="/run/missing.pem")
             fails_to_start("IRC_AUTH_PASSPHRASE_PREFIX must be", IRC_AUTH_PASSPHRASE_PREFIX="tab\tprefix")
             fails_to_start("Set only one of IRC_AUTH_LOCAL_ACCOUNTS and IRC_AUTH_LOCAL_ACCOUNTS_FILE",

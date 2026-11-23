@@ -51,6 +51,9 @@ def answer(name, passphrase):
         "sirc1.handmade": (200, {"success": True, "accountName": "hook-handmade"}),
         "sirc1.badname": (200, {"success": True, "accountName": "bad name!"}),
         "sirc1.reserved": (200, {"success": True, "accountName": "NickServ"}),
+        # jq keeps the last of two identical keys; Go folds U+017F (long s) to "s".
+        "sirc1.dupsame": (200, b'{"success":false,"success":true,"accountName":"hook-dupsame"}'),
+        "sirc1.longs": (200, '{"success":false,"\u017fuccess":true,"accountName":"hook-longs"}'.encode()),
     }
     status, value = answers.get(passphrase, (200, {"success": False}))
     data = body(value)
