@@ -667,23 +667,39 @@ growing moves nothing else; tiles keep their fixed box.
   after ten behind **+N**. Ours is a latched button with semibold text; no
   edge line marks anything. The tooltip and accessible name say who
   reacted (`👍 from alice, bob and you`), with names cleaned and cut as
-  status lines' are. Selecting a pill sends `Command::React` or
-  `Command::Unreact` to the message's own conversation. Ours shows only once
+  status lines' are, and values shown without spaces, control or invisible
+  format characters (`shown_value`; the zero-width joiner stays); the exact
+  value held is what is sent back. Selecting a pill asks
+  `reacting::toggle` for `Command::React` or `Command::Unreact` to the
+  message's own conversation. Ours shows only once
   the client reports it (the echo, or the local echo after a successful
   write); a `ReactionRefused` shows as a brief notice above the composer.
 - **Adding** (`reactions/choices.rs`): **Add reaction** ends a row with
   pills, and `r` on a keyboard-focused message opens the same menu at the
-  message. It offers six common reactions, ticked when ours; there is no
-  emoji picker and the stop reactions are never among them.
+  message. It offers six common reactions, ticked when ours (by the folded
+  key; taking ours back sends each exact value we hold); there is no emoji
+  picker and the stop reactions are never among them.
+- **The sending rule** (`reactions/gate.rs`): every path, pills, **+N**,
+  the menus and `r`, sends through `reacting::toggle`, which asks
+  `gate::gate` first. Nothing goes to the server buffer or to a fleet
+  agent in a private conversation (`AgentNotice::refusing`; the controls
+  are hidden there too, and reactions between people in private are
+  ordinary). A new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only
+  from the labelled `Stop <ship>` item in a channel; asked for any other
+  way it is explained and not sent, whether or not the app recognises the
+  message as an agent's, since Stargate stops a queued turn before any
+  status line exists. Taking back our own stop still goes.
 - **Stop reactions** (`reactions/stop.rs`): in a channel, on a held request
-  whose status line is trusted (the agent's account is named after the
-  nick asked) and still running and current, or on that agent's own reply
+  to a fleet agent on the roster whose status line is trusted (the agent's
+  account is named after the nick asked) and still running and current, or on that agent's own reply
   to it (its nick and account both name that nick), the menu lists ✋ and 🛑
-  apart under `Stop <ship>`. Choosing one sends an ordinary reaction; once
-  the client reports it, the notice says it was sent and that the status
-  line shows the result when Stargate reports it. A ✋ or 🛑 pill on any
-  request to a verified agent, or its reply, says it asked the agent to
-  stop and never sends one when selected; elsewhere they are ordinary.
+  apart under `Stop <ship>`. Choosing one sends the reaction; once the
+  client reports that exact reaction on that message, the notice says it
+  was sent and that the status line shows the result when Stargate reports
+  it (pending stops are kept per message and reaction, so another reaction
+  in between loses none). A ✋ or 🛑 pill on a request to a verified agent,
+  or its reply, also says it asked the agent to stop. One msgid index per
+  rebuild finds each reply's request.
   This follows Stargate `main` at `d4842b8` (`routeIrcStop`,
   `src/irc/ship.ts`): a person with an account, on the request or an agent
   message answering it, while the turn is active. A fleet's own
@@ -768,8 +784,9 @@ It shows one thread at a time: a request, or any message with replies.
   not even a command, Escape keeps it, and only **Write to the channel**
   leaves reply mode, keeping the text. **Reply in thread** on another
   thread does not take such a draft with it: while the draft holds text,
-  the row adds **Move to the thread**, and only that choice moves it; an
-  emptied draft starts the new reply at once. New replies and steps show
+  the row adds **Move to \<author\>'s thread**, and only that choice moves
+  it; choosing yet another thread withdraws the offer, as does that
+  thread's root going; an emptied draft starts the new reply at once. New replies and steps show
   live. A linked status line keeps a zero-size status element beside its
   button, not inside it, so its changes are still announced however nested
   roles are flattened.

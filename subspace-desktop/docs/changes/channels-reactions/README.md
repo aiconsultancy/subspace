@@ -30,13 +30,15 @@ stakeholder relay.
   opens the same menu at the message (the Space's existing keyboard path;
   the message text's context menu is the Framework's shared text menu and
   is unchanged). The menu offers six common reactions (👍 ❤️ 😄 🎉 👀 ✅),
-  ticked when ours; there is no emoji picker. Ours shows only once the
+  ticked when ours; taking ours back removes each exact value we hold
+  (`❤` for the menu's `❤️`); there is no emoji picker. Ours shows only once the
   client reports it. A `ReactionRefused` shows as a brief, plain notice
   above the composer, with Dismiss.
 - **Stop reactions.** The stop group, ✋ **Raised hand** and 🛑 **Stop
   sign** under the plain label `Stop <ship>`, is in a message's menu only
   when the conditions the client can know hold: the conversation is a
-  channel; the message is a held request whose status line is trusted (its
+  channel; the nick asked is a fleet agent on the roster; the message is a
+  held request whose status line is trusted (its
   progress comes from the account named after the nick it asks, so the
   agent is verified) and still running and current (not settled, not
   stale), or it is that agent's own reply to such a request (its nick and
@@ -46,10 +48,23 @@ stakeholder relay.
   says only: `Sent ✋ to ask <ship> to stop. The status line shows the
   result when Stargate reports it.` A ✋ or 🛑 pill on a request to a
   verified agent, or the agent's reply, has the tooltip `✋ from sela. It
-  asked aurora-lyra to stop; the status line shows whether it did.`, and
-  selecting it sends nothing (a notice says where the deliberate stop is),
-  so a stray click never stops an agent. Elsewhere ✋ and 🛑 are ordinary
-  reactions. Nothing claims an agent stopped; that is the status line's.
+  asked aurora-lyra to stop; the status line shows whether it did.`
+  Each pending stop is kept by its message and exact reaction, so another
+  reaction sent before its echo loses no notice. Nothing claims an agent
+  stopped; that is the status line's.
+- **The sending rule** (`reactions/gate.rs`). Every reaction sent goes
+  through `reacting::toggle` and one rule: nothing to the server buffer or
+  to a fleet agent in a private conversation (the composer's
+  `AgentNotice::refusing`; the controls are hidden there), and a new ✋ or
+  🛑 of ours (Stargate's stop keys, skin tones and the variation selector
+  folded) only from the labelled `Stop <ship>` item in a channel. A pill,
+  a `+N` item, a common choice or anything else that asks for one is
+  explained, not sent, on any message, whether or not the app recognises it
+  as an agent's: Stargate stops a queued turn before any status line
+  exists. So no selection but that labelled item sends Stargate's default
+  stop reactions; a fleet's other configured stop reactions are invisible
+  to the app and are sent like any other. Taking back our own stop still
+  goes. Reactions between people in private are ordinary.
 - **Support and states.** While `Update::ReactionSupport` is not true for the
   network, the controls go and known reactions stay as read-only pills. A
   message without a `msgid` cannot take a reaction.
@@ -59,9 +74,11 @@ stakeholder relay.
   the tiles keep their fixed box. The Thread tab shows the root's and the
   replies' pills read-only.
 - **Rules.** Reactions go to the conversation the message is in; nothing
-  sends a private message. Reaction values and names from the network are
-  bounded (the client's limits; names cleaned and cut to 32 characters) and
-  rendered as text.
+  opens a private conversation, and none goes to an agent in private.
+  Reaction values and names from the network are bounded (the client's
+  limits; names cleaned and cut to 32 characters; values shown without
+  spaces, control or invisible format characters, keeping the zero-width
+  joiner) and rendered as text; the exact value held is what is sent back.
 
 ### How the stop choices are decided
 
@@ -155,7 +172,8 @@ code before the fix and failed there.
 2. **Reply in thread on another thread replaced a gone reply's target**
    (`compose/reply.rs`): fixed in `d7ce673`. While a gone reply's draft
    holds text, **Reply in thread** only offers the new thread; the row
-   adds **Move to the thread** beside **Write to the channel**, and the
+   adds **Move to \<author\>'s thread** (named after review; see Review
+   findings) beside **Write to the channel**, and the
    draft stays unsendable until the person chooses one or empties it. An
    offered thread that goes too is withdrawn. Tests in
    `tests/initiatives/thread_gone.rs`.
@@ -183,6 +201,84 @@ code before the fix and failed there.
    skipped by assistive technology**: left, unverified. It needs a check
    with VoiceOver, which was not run; the render test proves only that the
    element is there, beside the button, with the status role.
+
+## Review findings
+
+Pull request 72 at `b609038` was reviewed by Claude Opus 5.5 (not clear:
+two P1, two P2, four P3), GPT-6.2 Sol (not clear: one high, six medium,
+one low) and a second Opus pass from the review helper (clear: two
+medium, two low). Each finding was checked against the code. Each fix
+has a test that was run against the code before the fix and failed
+there, except where noted.
+
+Stop reactions and where reactions go:
+
+1. **The +N overflow menu sent a stop with no guard** (Opus P1 1; Sol
+   high; helper medium 1): fixed in `f33b39a`. Every path sends through
+   `reacting::toggle` and the one rule in `reactions/gate.rs`; a new ✋ or
+   🛑 goes only from the labelled `Stop <ship>` item. The +N tooltips
+   carry the stop wording. Test: a ✋ behind +1 on a running request,
+   chosen from the menu by keyboard (`tests/reactions/gate.rs`).
+2. **A ✋ or 🛑 pill sent a stop where the app could not see the agent**
+   (Opus P2 3; Sol medium; helper medium 2): fixed in `f33b39a` by the same
+   rule, which does not depend on recognising the message. Tests: a ✋ on
+   a fresh request with no status, and a 🛑 on an agent reply without an
+   account tag; taking back our own ✋ still sends.
+3. **Reactions could be sent privately to a fleet agent** (Opus P1 2):
+   fixed in `f33b39a`. The rule refuses them where they are sent, with the
+   composer's notice, and the controls are hidden. Reactions between
+   people in private are ordinary. Tests in
+   `tests/initiatives/private_reactions.rs`.
+4. **Another reaction overwrote the pending stop acknowledgement** (Sol
+   medium): fixed in `f33b39a` (pending stops kept per message and exact
+   reaction); the test, added in `d567669`, failed against the earlier
+   `reacting.rs`.
+5. **Take-back sent the menu's value, not ours** (Sol medium): fixed in
+   `9197bc1`. Tests: the Heart choice with `❤` held, through the menu, and
+   two variants held at once.
+6. **The stop group did not consult the roster** (Opus P3 8): fixed in
+   `61feede`; the nick asked must be a fleet agent on the roster. The
+   test failed with the roster check taken out.
+
+Performance:
+
+7. **Quadratic stop rebuild** (Opus P2 4; Sol medium): fixed in `61feede`,
+   one msgid index per rebuild.
+8. **reacted_messages scanned the whole book and built summaries; holds
+   scanned the buffer per update** (Opus P2 4; Sol low): fixed in
+   `caf830c` (a range of the book, a check for one shown person, no buffer
+   scan for a message already known loaded). No behaviour changes, so its
+   test pins the result rather than failing before.
+9. **Every rename re-folded every nick with allocations** (helper low 1):
+   fixed in `2615a58` with `Casemapping::same`; a test checks it against
+   `fold` under each mapping. The earlier change record's sentence about
+   pre-folded nicks is corrected.
+
+The rest:
+
+10. **A stale Move to the thread offer** (Opus P3 5): fixed in `d8d09c7`.
+    Choosing another thread withdraws the offer, and the button names the
+    thread's author, with the root's start in its accessible name.
+11. **A Retry lost behind a read that outlasts the interval** (Opus P3 6):
+    fixed in `e24bd86`. The test failed with the landing extracted into
+    `read_landed` and the fix not yet in.
+12. **Network reaction values shown uncleaned** (Opus P3 7): fixed in
+    `f3bec96`. Values are shown without spaces, control or invisible format
+    characters, keeping the zero-width joiner; the exact value is what is
+    sent back. `validate_reaction` is unchanged, so such values still
+    arrive and are only cleaned for display.
+13. **A second accountless rename renamed a nick's earlier holder** (Sol
+    medium): fixed in `2615a58`.
+14. **A late removal left a backdated place before it** (Sol medium):
+    fixed in `2615a58`.
+15. **apply evicts before record can refuse** (helper low 2): refuted as
+    stated. For a message the book does not hold, `record` always keeps
+    the operation (a new group and person always fit), and invalid
+    reactions return before anything is evicted. A removal for an unknown
+    message is kept on purpose, as a remembered removal stops a later
+    history replay showing the reaction again, so it may evict the least
+    recently changed unseen message within the unseen budget. Left as
+    designed.
 
 ## Delivery
 
@@ -217,6 +313,15 @@ code before the fix and failed there.
   `view/inspector/thread/steps.rs` with `tests/initiatives/thread_gone.rs`,
   `tests/initiatives/review.rs` and `thread/tests/timeline.rs`;
   [Fleet API](../../fleet-api.md) and [Channels](../../irc.md) updated.
+- Review findings: `reactions/gate.rs` (the one sending rule) with
+  `conversation/reacting.rs`, `transcript/reactions.rs`,
+  `reactions/choices.rs`, `reactions/stop.rs`, `compose/reply.rs`,
+  `thread.rs`; the client's `reactions/book.rs`,
+  `book/groups/record.rs` and `session/isupport.rs`; the fleet client's
+  `service.rs`. Tests in `tests/reactions/gate.rs`,
+  `tests/reactions/take_back.rs`, `tests/initiatives/private_reactions.rs`,
+  `reactions/tests.rs`, `book/tests/review.rs` and
+  `service/tests/keychain.rs`.
 
 Checks: `cargo fmt`, Clippy with warnings denied and the tests of
 `subspace-client-irc`, `subspace-irc-board`, `subspace-client-fleet` and
@@ -285,4 +390,6 @@ count.
 - [x] Merge `main` with the Thread tab; reactions proved on it.
 - [x] The seven findings carried from pull request 70 (five fixed, one
       documented, one unverified).
+- [x] The review findings on pull request 72 (fourteen fixed, one
+      refuted).
 - [ ] The message hover toolbar (separate work).

@@ -683,8 +683,9 @@ network is not connected, the tab says so in place of the action. If the
 message you are replying to is no longer loaded, your reply is kept but
 not sent, and `Esc` keeps it so: choose **Write to the channel** to send it
 as an ordinary message instead. Choosing **Reply in thread** on another
-thread then doesn't move it there by itself: choose **Move to the thread**
-to reply there with it, or empty the message input first.
+thread then doesn't move it there by itself: choose **Move to** that
+author's **thread** to reply there with it, or empty the message input
+first. Choosing yet another thread withdraws that offer.
 
 A long thread shows its latest 40 replies and says how many earlier ones
 are in the channel. A long **Status** list shows its latest 24 steps and
@@ -703,7 +704,12 @@ or focus the message (`Shift+Tab` from the message input, then `↑` or `↓`)
 and press `r`. The menu offers a few common reactions; a ticked one is yours,
 and choosing it again takes it back. A reaction goes to the conversation the
 message is in. Your reaction appears once the server has it; if it can't be
-sent, a short note above the message input says why.
+sent, a short note above the message input says why. Taking yours back
+removes exactly the reaction you made.
+
+You can't react in a private conversation with a fleet agent: agents talk
+in channels, where everyone can see, so the pills there are read-only.
+Reactions in a private conversation with a person are ordinary.
 
 Reactions need a server that supports them (IRCv3 `message-tags`). Without
 that, or while the network is disconnected, the pills stay but you can't
@@ -717,10 +723,14 @@ asks Stargate to stop the agent's turn, if you are signed in to an account
 on the server. The note above the message input then says only that the
 reaction was sent; the request's status line shows whether the agent
 stopped, when Stargate reports it. Taking the reaction back does not undo a
-stop. A ✋ or 🛑 pill on such a message says it asked the agent to stop;
-selecting it sends nothing, so a stray click never stops an agent. Elsewhere
-✋ and 🛑 are ordinary reactions. A fleet can configure other stop
-reactions, which Subspace can't see, so only ✋ and 🛑 are marked.
+stop. Subspace sends a ✋ or 🛑 of yours only from that labelled item:
+selecting someone else's ✋ or 🛑 pill, or choosing one under **+N**, sends
+nothing and says where the deliberate stop is, on any message, as an agent
+can be stopped before its request shows a status line. On a request to a
+fleet agent, or its reply, the pill also says it asked the agent to stop.
+You can still take back a ✋ or 🛑 of your own. A fleet can configure other
+stop reactions, which Subspace can't see: those are sent like any other
+reaction.
 
 The inspector's **Thread** tab shows the same pills, read-only.
 
