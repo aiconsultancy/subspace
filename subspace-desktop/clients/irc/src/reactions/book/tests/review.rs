@@ -229,3 +229,33 @@ fn a_rename_reported_once_per_shared_channel_moves_its_reactions_once() {
         "his reaction follows him to his next nick"
     );
 }
+
+#[test]
+fn only_a_change_moves_a_conversation_s_revision() {
+    let mut book = ReactionBook::new();
+    assert!(book.apply(&reaction("m1", "👍", "bob", 2)));
+    let after = book.revision(&room());
+    assert!(after > 0);
+    assert!(!book.apply(&reaction("m1", "👍", "bob", 2)), "a repeat");
+    assert!(
+        !book.apply(&removed(reaction("m1", "👍", "bob", 1))),
+        "an older removal"
+    );
+    assert_eq!(book.revision(&room()), after);
+    let other = BufferKey {
+        network: room().network,
+        target: Target::Channel("#d".into()),
+    };
+    let elsewhere = crate::test_support::reaction(other.clone(), "m2", "🎉", "bob");
+    assert!(book.apply(&elsewhere));
+    assert_eq!(
+        book.revision(&room()),
+        after,
+        "another conversation's change"
+    );
+    book.observe(&renamed("bob", "robert", None));
+    assert!(
+        book.revision(&room()) > after,
+        "a rename moves what it shows"
+    );
+}

@@ -626,7 +626,8 @@ Channels shows them as described in
   messages never displace loaded ones; `observe` marks the messages of
   lines as loaded, and `mark_seen` does it for lines an owner loads itself.
   `forget` drops a conversation, and `reacted_messages` lists the messages
-  in one that show reactions. It shows 20 reactions per message and 100
+  in one that show reactions. `apply` says whether anything shown may have
+  changed, and `revision` when what one conversation shows last did. It shows 20 reactions per message and 100
   people per reaction, with as many again remembered removals.
   Local echoes carry the local clock, so a large clock skew against the
   server can misorder our own operations.
@@ -658,9 +659,11 @@ Channels reads the runtime with `drain_updates`, and the hub keeps one
 `ReactionBook` (`reactions.rs`), fed every reaction and every event before
 the event applies; a reaction to a line the conversation already holds,
 such as one restored from the store, marks that message loaded first.
-Removing a conversation drops its reactions. Each conversation rebuilds
-what its messages show on every sync and measures again only the rows
-whose reactions changed (`conversation/reacting.rs`), so a row appearing or
+Removing a conversation drops its reactions. A reaction the book discarded,
+as a repeat or an older operation from a history page, wakes nothing.
+Each conversation reads what its messages show again only when its
+revision in the book or its held lines changed, and measures again only
+the rows whose reactions changed (`conversation/reacting.rs`), so a row appearing or
 growing moves nothing else; tiles keep their fixed box.
 
 - **Pills** (`transcript/reactions.rs`): under a message, one small pill per

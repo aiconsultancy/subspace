@@ -38,6 +38,9 @@ pub(crate) struct Reacting {
     pub stops: Rc<Stops>,
     /// The network can react now.
     pub supported: bool,
+    /// What `shown` was read from: the book's revision for this
+    /// conversation and the held lines then.
+    shown_from: Option<ShownFrom>,
     /// Stop reactions sent and not yet reported back, each resolved by
     /// its own message and exact reaction.
     pending: Vec<PendingStop>,
@@ -46,6 +49,12 @@ pub(crate) struct Reacting {
     /// The brief notice above the composer.
     pub notice: Option<String>,
 }
+
+/// The book's revision for a conversation and its held lines' extent
+/// (how many, the first and the last by sequence): lines are only added
+/// and dropped, never changed in place, so an equal extent holds the same
+/// lines.
+type ShownFrom = (u64, (usize, Option<i64>, Option<i64>));
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingStop {
@@ -63,6 +72,7 @@ impl Reacting {
             shown: Rc::default(),
             stops: Rc::default(),
             supported: false,
+            shown_from: None,
             pending: Vec::new(),
             seen_refusal,
             notice: None,
@@ -81,9 +91,12 @@ pub(super) struct Before {
 pub(super) fn refresh(this: &mut Conversation, cx: &App) -> Before {
     let hub = this.hub.read(cx);
     let held = hub.state.buffer(&this.buffer);
-    let shown = held
-        .map(|held| hub.reactions.shown(&this.buffer, held))
-        .unwrap_or_default();
+    let from = held.map(|held| (hub.reactions.revision(&this.buffer), extent(held)));
+    let shown = match held {
+        Some(_) if from == this.reacting.shown_from => Rc::clone(&this.reacting.shown),
+        Some(held) => Rc::new(hub.reactions.shown(&this.buffer, held)),
+        None => Rc::default(),
+    };
     let stops = held
         .map(|held| {
             stop::stops(&stop::Sources {
@@ -96,13 +109,24 @@ pub(super) fn refresh(this: &mut Conversation, cx: &App) -> Before {
         .unwrap_or_default();
     let supported = can_react(this, cx);
     let reacting = &mut this.reacting;
+    reacting.shown_from = from;
     let before = Before {
-        shown: std::mem::replace(&mut reacting.shown, Rc::new(shown)),
+        shown: std::mem::replace(&mut reacting.shown, shown),
         stops: std::mem::replace(&mut reacting.stops, Rc::new(stops)),
         supported: std::mem::replace(&mut reacting.supported, supported),
     };
     follow(this, cx);
     before
+}
+
+/// The extent of `held`'s lines, for [`ShownFrom`].
+fn extent(held: &crate::state::Buffer) -> (usize, Option<i64>, Option<i64>) {
+    let seq = |entry: &crate::state::Entry| entry.seq;
+    (
+        held.entries.len(),
+        held.entries.front().map(seq),
+        held.entries.back().map(seq),
+    )
 }
 
 /// Rows whose reactions changed, to measure again one by one; every row

@@ -301,3 +301,25 @@ fn reaction_values_are_cleaned_for_display() {
     );
     assert_eq!(shown_value("\u{2764}\u{FE0F}"), "\u{2764}\u{FE0F}");
 }
+
+#[test]
+fn a_discarded_reaction_changes_nothing_and_another_conversation_keeps_its_revision() {
+    let state = ops();
+    let mut reactions = Reactions::default();
+    let first = reaction(&room(), "m1", "👍", "carol");
+    let held = held_in(&state, &first);
+    assert!(reactions.update(first.clone(), held));
+    let revision = reactions.revision(&room());
+    assert!(
+        !reactions.update(first, held),
+        "a repeat, as a history page brings, is discarded"
+    );
+    let elsewhere = channel("#elsewhere");
+    assert!(reactions.update(reaction(&elsewhere, "e1", "🎉", "dave"), false));
+    assert_eq!(
+        reactions.revision(&room()),
+        revision,
+        "#ops shows the same, so it reads nothing again"
+    );
+    assert!(reactions.revision(&elsewhere) > revision);
+}

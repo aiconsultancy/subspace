@@ -49,15 +49,14 @@ impl Reactions {
 
     /// Takes one update that is not an event. A reaction to a message the
     /// state already `held`, such as one restored from the store, counts
-    /// that message as loaded first. True when what is shown may change.
+    /// that message as loaded first. True when what is shown may change: a
+    /// reaction the book discarded, as a repeat or an older operation from
+    /// history, changes nothing.
     pub fn update(&mut self, update: Update, held: bool) -> bool {
         match update {
             Update::Reaction(reaction) => {
-                if held {
-                    self.book.mark_seen(&reaction.buffer, &reaction.msgid);
-                }
-                self.book.apply(&reaction);
-                true
+                let made_room = held && self.book.mark_seen(&reaction.buffer, &reaction.msgid);
+                self.book.apply(&reaction) || made_room
             }
             Update::ReactionRefused {
                 buffer,
@@ -93,6 +92,13 @@ impl Reactions {
     /// the message `msgid` in `buffer`.
     pub fn reacted(&self, buffer: &BufferKey, msgid: &str, reaction: &str) -> bool {
         self.book.reacted(buffer, msgid, reaction)
+    }
+
+    /// When what `buffer` shows from the book last changed: what was read
+    /// with [`Self::shown`] at the same revision, over the same held
+    /// lines, is still current.
+    pub fn revision(&self, buffer: &BufferKey) -> u64 {
+        self.book.revision(buffer)
     }
 
     /// The latest refusal in `buffer`, if any.
