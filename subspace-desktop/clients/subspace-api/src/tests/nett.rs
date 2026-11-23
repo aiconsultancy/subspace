@@ -36,8 +36,10 @@ pub(in crate::tests) fn works(mock: &NettMock) -> Client {
     signed_in(mock, Some(&org))
 }
 
+/// Waits for `done`, with room for a machine busy with other builds; the
+/// limit only bounds a failing run.
 fn wait_for(what: &str, done: &dyn Fn() -> bool) {
-    wait(what, Duration::from_secs(10), done);
+    wait(what, Duration::from_secs(30), done);
 }
 
 fn wait(what: &str, limit: Duration, done: &dyn Fn() -> bool) {
