@@ -214,13 +214,14 @@ fn unsafe_link_is_blocked_and_reports_the_failure(cx: &mut TestAppContext) {
 
 #[test]
 fn issues_declares_navigation_and_retains_its_existing_roles() {
-    use subspace_framework::contracts::issues::{Changed, CurrentScope, Resolve};
+    use subspace_framework::contracts::issues::{Changed, CurrentScope, Refresh, Resolve};
     let declared = Issues::contracts();
-    assert_eq!(declared.declarations().len(), 4);
+    assert_eq!(declared.declarations().len(), 5);
     for (role, key) in [
         (Role::Requests, MessageKey::request::<OpenPullRequest>()),
         (Role::Responds, MessageKey::request::<CurrentScope>()),
         (Role::Responds, MessageKey::request::<Resolve>()),
+        (Role::Responds, MessageKey::request::<Refresh>()),
         (Role::Publishes, MessageKey::event::<Changed>()),
     ] {
         assert!(declared.declares(role, key));
