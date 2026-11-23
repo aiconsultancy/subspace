@@ -237,7 +237,9 @@ in `live.rs` and `live/`.
   requests the conversation's tiles show, in order, with their state, or
   **Loading** until answered and **Unavailable** when they cannot be shown
   (the section asks for its own answers, as a tile's message may be out of
-  view); and
+  view, but only while it is on screen: the Space in front, the inspector
+  shown on a ship's Ship tab; an ordinary conversation, a Starbase or a
+  hidden view asks for nothing); and
   **Here now**, the channel's members. **Starbase**: **Ships**, one row
   each with the captain's icon, name, state and `avatar::crew_meter`.
   While the fleet is not live the tab says why in one sentence
@@ -556,13 +558,17 @@ The runtime sends and reads IRCv3 reactions (the work-in-progress
 [react client tag](https://ircv3.net/specs/client-tags/react)): a `TAGMSG`
 to the conversation with `+draft/react=<reaction>` or
 `+draft/unreact=<reaction>`, and `+draft/reply=<msgid>` naming the message.
-The Space does not show them yet; this is the client layer only.
+Channels shows them as described in
+[Reactions in Channels](#reactions-in-channels).
 
 - **Support.** Reactions need `message-tags`, which the runtime already
   requests, and no `CLIENTTAGDENY` that blocks `draft/react`,
-  `draft/unreact` or `draft/reply`. The runtime reports `Update::ReactionSupport { network,
-  supported }` with every capability report and when `CLIENTTAGDENY`
-  changes, so a UI can hide reactions. `reactions::reactions_supported`
+  `draft/unreact` or `draft/reply`, on a registered connection. The runtime
+  reports `Update::ReactionSupport { network, supported }` once the
+  connection is welcomed, with every later capability report, when
+  `CLIENTTAGDENY` changes, and as `false` when the connection ends, so a UI
+  can hide reactions; nothing reports support during capability
+  negotiation. `reactions::reactions_supported`
   answers from the capability list alone.
 - **Sending.** `Command::React` and `Command::Unreact` (checked first with
   `reactions::check_reaction`, which returns the same typed error) send
@@ -572,7 +578,8 @@ The Space does not show them yet; this is the client layer only.
   server calls a channel, or a nick that is not one, without spaces or
   commas), a valid `msgid` (at most 128 bytes, no spaces or controls) or a
   valid reaction (1 to 32 characters, no controls or surrounding spaces)
-  nothing is sent, and the runtime answers `Update::ReactionRefused` with a
+  nothing is sent; a destination too long for the `TAGMSG` to fit one line
+  is refused as `InvalidTarget` rather than cut short, and the runtime answers `Update::ReactionRefused` with a
   `ReactionError`. A reaction for a network that is not configured is
   refused as `NotConnected`. Without `echo-message` the runtime echoes our
   reaction locally, but only after the write succeeds; a failed write is
@@ -587,8 +594,9 @@ The Space does not show them yet; this is the client layer only.
   Space matches `Event` exhaustively. Network input is untrusted: a `TAGMSG`
   with both tags, without a nick or reply `msgid`, or with an invalid value
   is ignored. A reaction is ours when its account is ours, both being
-  known (our account comes from `RPL_LOGGEDIN`), else when its nick is our
-  current nick. `+reply` is read when `+draft/reply` is missing, as Stargate
+  known (our account comes from `RPL_LOGGEDIN`). Live traffic without
+  accounts falls back to our current nick; history never does, since
+  someone else may have held that nick then. `+reply` is read when `+draft/reply` is missing, as Stargate
   does; unprefixed `+react` is not read, as the draft says.
 - **Aggregation.** `reactions::ReactionBook` holds, per buffer and
   `msgid`, each reaction and who reacted (nick, account, ours) in
@@ -598,20 +606,32 @@ The Space does not show them yet; this is the client layer only.
   and remembers removals for that. Each person's place is when their
   current addition started; an older replayed addition can only move a
   shown person's place earlier. When a message's places for remembered
-  removals run out, the oldest group holding only removals is dropped. It follows nick changes through
+  removals run out, the oldest group holding only removals is dropped, and
+  a remembered removal gives way by when it was removed. A remembered
+  removal never becomes visible past the display limits, and an addition
+  that could not show drops nothing. Of two operations at the same server
+  time, a live one wins over one from history, and an older replayed
+  addition never moves a place back across a known removal. It follows nick changes through
   `observe` (`Event::MemberChanged`) or `rename`, skipping entries with
   another known account and merging nobody, and keeps reactions to
   messages not loaded yet. Each reaction's `stops_agent` marks Stargate's
   default stop reactions. People are the same when both are ours, when both
   have the same account, or when neither has an account and their nicks
-  match under the network's case mapping. It keeps at most 2,048 messages
-  (dropping the least recently changed), 20 shown reactions per message and
-  100 shown people per reaction, with as many again remembered removals.
+  match under the network's current case mapping; after an accountless
+  rename leaves two records with one nick, the one that most recently took
+  the nick is that person. It keeps at most 2,048 loaded messages (dropping
+  the least recently changed), and apart from them 256 messages not seen
+  loaded yet, at most 64 per conversation, so reactions naming unknown
+  messages never displace loaded ones; `observe` marks the messages of
+  lines as loaded, and `mark_seen` does it for lines an owner loads itself.
+  `forget` drops a conversation, and `reacted_messages` lists the messages
+  in one that show reactions. It shows 20 reactions per message and 100
+  people per reaction, with as many again remembered removals.
   Local echoes carry the local clock, so a large clock skew against the
   server can misorder our own operations.
 - **Agent stop reactions.** `reactions::agent_stop` describes, as data only,
   the reactions that stop an agent in Stargate (`main` at `da242f8`, the
-  same behaviour as v0.43.0): ✋ and 🛑 by default, ignoring skin tones and
+  same behaviour as v0.43.0, and unchanged at `d4842b8`): ✋ and 🛑 by default, ignoring skin tones and
   the variation selector, as a `TAGMSG` naming the message with
   `+draft/reply` (or `+reply`), from a person with an account, on the
   request or an agent message answering it, while the turn is active and
@@ -630,6 +650,66 @@ additions without their removals, so a reaction taken back then can
 return when that history loads, unless the client saw the removal.
 
 See the [reactions change record](changes/irc-client-reactions/README.md).
+
+### Reactions in Channels
+
+Channels reads the runtime with `drain_updates`, and the hub keeps one
+`ReactionBook` (`reactions.rs`), fed every reaction and every event before
+the event applies; a reaction to a line the conversation already holds,
+such as one restored from the store, marks that message loaded first.
+Removing a conversation drops its reactions. Each conversation rebuilds
+what its messages show on every sync and measures again only the rows
+whose reactions changed (`conversation/reacting.rs`), so a row appearing or
+growing moves nothing else; tiles keep their fixed box.
+
+- **Pills** (`transcript/reactions.rs`): under a message, one small pill per
+  reaction with its count, in the book's order, wrapping, with the rest
+  after ten behind **+N**. Ours is a latched button with semibold text; no
+  edge line marks anything. The tooltip and accessible name say who
+  reacted (`👍 from alice, bob and you`), with names cleaned and cut as
+  status lines' are, and values shown without spaces, control or invisible
+  format characters (`shown_value`; the zero-width joiner stays); the exact
+  value held is what is sent back. Selecting a pill asks
+  `reacting::toggle` for `Command::React` or `Command::Unreact` to the
+  message's own conversation. Ours shows only once
+  the client reports it (the echo, or the local echo after a successful
+  write); a `ReactionRefused` shows as a brief notice above the composer.
+- **Adding** (`reactions/choices.rs`): **Add reaction** ends a row with
+  pills, and `r` on a keyboard-focused message opens the same menu at the
+  message. It offers six common reactions, ticked when ours (by the folded
+  key; taking ours back sends each exact value we hold); there is no emoji
+  picker and the stop reactions are never among them.
+- **The sending rule** (`reactions/gate.rs`): every path, pills, **+N**,
+  the menus and `r`, sends through `reacting::toggle`, which asks
+  `gate::gate` first. Nothing goes to the server buffer or to a fleet
+  agent in a private conversation (`AgentNotice::refusing`; the controls
+  are hidden there too, and reactions between people in private are
+  ordinary). A new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only
+  from the labelled `Stop <ship>` item in a channel; asked for any other
+  way it is explained and not sent, whether or not the app recognises the
+  message as an agent's, since Stargate stops a queued turn before any
+  status line exists. Taking back our own stop still goes.
+- **Stop reactions** (`reactions/stop.rs`): in a channel, on a held request
+  to a fleet agent on the roster whose status line is trusted (the agent's
+  account is named after the nick asked) and still running and current, or on that agent's own reply
+  to it (its nick and account both name that nick), the menu lists ✋ and 🛑
+  apart under `Stop <ship>`. Choosing one sends the reaction; once the
+  client reports that exact reaction on that message, the notice says it
+  was sent and that the status line shows the result when Stargate reports
+  it (pending stops are kept per message and reaction, so another reaction
+  in between loses none). A ✋ or 🛑 pill on a request to a verified agent,
+  or its reply, also says it asked the agent to stop. One msgid index per
+  rebuild finds each reply's request.
+  This follows Stargate `main` at `d4842b8` (`routeIrcStop`,
+  `src/irc/ship.ts`): a person with an account, on the request or an agent
+  message answering it, while the turn is active. A fleet's own
+  `stopReactions` and whether our account counts as a person are not
+  visible to the app.
+- **Support**: without `Update::ReactionSupport` true for the network, the
+  controls go and the pills stay read-only; a message without a `msgid`
+  cannot take a reaction. The Thread tab shows the pills read-only.
+
+See the [change record](changes/channels-reactions/README.md).
 
 ### Loaded reply counts
 
@@ -670,8 +750,10 @@ It shows one thread at a time: a request, or any message with replies.
   of the status line's stage (**Accepted**, **Working**, **Waiting for an
   answer**, **Writing the reply**, then **Done**, **Failed** or **Ended**),
   each with its server time and how long it lasted, the ending with the
-  request's whole time (`in 42 m`) and a running step with `since 17:50`;
-  then **Replies · N**, grouped by author by the transcript's rule, the
+  request's whole time (`in 42 m`) and a running step with `since 17:50`,
+  the latest 24 kept by the model and drawn, the rest counted (`N earlier
+  steps are not shown.`), so an agent that waits and works again many
+  times never builds a row per change on each render; then **Replies · N**, grouped by author by the transcript's rule, the
   latest 40 drawn and the rest counted (`N earlier replies are in the
   channel.`), or `No replies yet.`
 - **Membership and trust.** A reply is a message whose `+draft/reply`
@@ -700,9 +782,14 @@ It shows one thread at a time: a request, or any message with replies.
   removed). A reply being written to it then stays in reply mode, marked
   gone: the row says the thread is no longer loaded, Enter sends nothing,
   not even a command, Escape keeps it, and only **Write to the channel**
-  leaves reply mode, keeping the text. New replies and steps show live. A linked status line
-  keeps a status element inside its button, so its changes are still
-  announced.
+  leaves reply mode, keeping the text. **Reply in thread** on another
+  thread does not take such a draft with it: while the draft holds text,
+  the row adds **Move to \<author\>'s thread**, and only that choice moves
+  it; choosing yet another thread withdraws the offer, as does that
+  thread's root going; an emptied draft starts the new reply at once. New replies and steps show
+  live. A linked status line keeps a zero-size status element beside its
+  button, not inside it, so its changes are still announced however nested
+  roles are flattened.
 - **Replying.** **Reply in thread**, the tab's footer action, puts the
   composer into reply mode (`compose/reply.rs`): a row above the input says
   `Replying in thread to <author>: <start of the root>`, with **Cancel

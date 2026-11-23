@@ -71,8 +71,8 @@ impl FleetApi {
     /// Stops using `fleet`'s token at once, in a new generation.
     fn forget(&mut self, fleet: &str, cx: &mut Context<Self>) -> Result<(), TokenError> {
         self.record(fleet).ok_or(TokenError::UnknownFleet)?;
-        self.supersede(fleet);
-        self.reads.cleared.insert(fleet.to_owned());
+        let generation = self.supersede(fleet);
+        self.reads.cleared.insert(fleet.to_owned(), generation);
         self.set_token(fleet, TokenLoad::Missing, cx);
         Ok(())
     }

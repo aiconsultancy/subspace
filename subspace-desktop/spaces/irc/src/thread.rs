@@ -132,8 +132,10 @@ fn cancel_reply(board: &Irc, buffer: &BufferKey, window: &mut Window, cx: &mut C
     if let Some(hosted) = board.dock.open.get(buffer) {
         // A reply whose thread is gone keeps its guard: only Write to the
         // channel lifts it.
+        // Nor does it keep an offer to move to the thread left behind.
         hosted.entity.update(cx, |view, cx| {
-            crate::compose::reply::escape(view, window, cx)
+            crate::compose::reply::escape(view, window, cx);
+            crate::compose::reply::withdraw_offer(view, cx);
         });
     }
 }

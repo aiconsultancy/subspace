@@ -12,8 +12,8 @@ pub mod agent_stop;
 mod book;
 
 pub use book::{
-    MAX_MESSAGES, MAX_REACTIONS_PER_MESSAGE, MAX_REACTORS_PER_REACTION, ReactionBook,
-    ReactionSummary, Reactor,
+    MAX_MESSAGES, MAX_REACTIONS_PER_MESSAGE, MAX_REACTORS_PER_REACTION, MAX_UNSEEN_MESSAGES,
+    MAX_UNSEEN_PER_BUFFER, ReactionBook, ReactionSummary, Reactor,
 };
 
 use crate::model::ReactionError;

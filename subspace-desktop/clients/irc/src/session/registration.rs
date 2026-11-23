@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{Output, Session, autojoin, caps, history, metadata, numerics};
+use super::{Output, Session, autojoin, caps, history, metadata, numerics, reactions};
 use crate::model::{ConnectionStatus, Event, LineKind, NetworkConfig};
 use crate::proto::Message;
 
@@ -87,8 +87,9 @@ pub(super) fn nick_error(session: &mut Session, message: &Message, out: &mut Out
 
 pub(super) fn welcome(session: &mut Session, message: &Message, out: &mut Output) {
     session.reg.nick = message.param(0).to_owned();
-    session.reg.registered = true;
     caps::close(session, out);
+    session.reg.registered = true;
+    out.updates.now.push(reactions::support(session));
     let nick = session.reg.nick.clone();
     out.event(Event::OwnNick {
         network: session.network(),

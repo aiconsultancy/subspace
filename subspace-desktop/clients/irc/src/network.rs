@@ -217,6 +217,8 @@ impl Network {
         let mut link = Link::new(stream, session, self.events.clone());
         let end = link.run(&mut self.commands).await;
         self.events.extend(link.session.abandon());
+        self.events
+            .extend_updates([session::reactions_ended(self.config.id.clone())]);
         self.carry = link.session.into_carry();
         end
     }

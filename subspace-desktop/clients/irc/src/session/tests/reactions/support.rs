@@ -81,7 +81,7 @@ fn capability_reports_carry_reaction_support() {
             ":ergo.test CAP subspace ACK :batch",
         ],
     );
-    assert_eq!(support(&out), [false]);
+    assert!(support(&out).is_empty(), "nothing before the welcome");
     let mut tagged = in_channel(ALL_CAPS);
     let out = feed(&mut tagged, &[":ergo.test CAP subspace DEL :message-tags"]);
     assert_eq!(support(&out), [false]);
@@ -108,7 +108,11 @@ fn ownership_follows_our_account_when_both_are_known() {
         .iter()
         .map(|reaction| reaction.own)
         .collect();
-    assert_eq!(owned, [true, false, true], "accounts first, else our nick");
+    assert_eq!(
+        owned,
+        [true, false, false],
+        "accounts first; history never by our nick alone"
+    );
     let mut plain = in_channel(PLAIN_CAPS);
     feed(
         &mut plain,

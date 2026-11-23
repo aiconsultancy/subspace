@@ -2,11 +2,17 @@
 //! `+draft/reply`, sent for owners and read live, echoed and from history.
 
 use super::{Output, Session, lines, send::REPLY};
-use crate::model::{BufferKey, Command, Reaction, ReactionChange, ReactionError, Target, Update};
+use crate::model::{
+    BufferKey, Command, NetworkId, Reaction, ReactionChange, ReactionError, Target, Update,
+};
 use crate::proto::Message;
 use crate::reactions::{self, REACT_TAG, UNREACT_TAG};
 
 const ECHO: &str = "echo-message";
+/// What precedes the destination in a reaction's line, after the tags.
+const TAGMSG_BODY: &str = "TAGMSG ";
+/// The line's bytes after the tags, without `CR LF`.
+const LINE_BODY_BYTES: usize = crate::codec::BODY_LIMIT - 2;
 /// The final, unprefixed reply tag, read as a fallback as Stargate does.
 const FINAL_REPLY: &str = "+reply";
 
@@ -71,10 +77,12 @@ fn refused(request: &Request, error: ReactionError) -> Update {
     }
 }
 
-/// Whether this connection can send reactions: `message-tags` and no
-/// `CLIENTTAGDENY` for either reaction tag or the reply tag they need.
+/// Whether this connection can send reactions: registered, `message-tags`
+/// and no `CLIENTTAGDENY` for either reaction tag or the reply tag they
+/// need.
 pub(super) fn supported(session: &Session) -> bool {
-    session.has_cap(reactions::CAPABILITY)
+    session.registered()
+        && session.has_cap(reactions::CAPABILITY)
         && [REACT_TAG, UNREACT_TAG, REPLY]
             .iter()
             .all(|tag| session.isupport.allows_tag(tag.trim_start_matches('+')))
@@ -85,6 +93,15 @@ pub(super) fn support(session: &Session) -> Update {
     Update::ReactionSupport {
         network: session.network(),
         supported: supported(session),
+    }
+}
+
+/// [`Update::ReactionSupport`] to report once a connection to `network`
+/// ends: reactions are off until the next welcome.
+pub(crate) fn ended(network: NetworkId) -> Update {
+    Update::ReactionSupport {
+        network,
+        supported: false,
     }
 }
 
@@ -109,10 +126,12 @@ fn prepare(session: &Session, request: &Request) -> Result<Message, ReactionErro
 }
 
 /// The buffer's one destination: a channel name the server calls a channel,
-/// or a nick that is not one, without spaces, commas or controls.
+/// or a nick that is not one, without spaces, commas or controls, short
+/// enough that the `TAGMSG` fits one line without being cut.
 fn destination<'a>(session: &Session, target: &'a Target) -> Result<&'a str, ReactionError> {
     let valid = |name: &str| {
         !name.is_empty()
+            && TAGMSG_BODY.len() + name.len() <= LINE_BODY_BYTES
             && !name.starts_with(':')
             && !name
                 .chars()
@@ -180,7 +199,7 @@ fn parse(session: &Session, message: &Message, target: Target, history: bool) ->
         change,
         nick: nick.to_owned(),
         account: account.map(str::to_owned),
-        own: ours(session, nick, account),
+        own: ours(session, nick, account, history),
         time: message
             .tag("time")
             .and_then(lines::parse_time)
@@ -191,11 +210,13 @@ fn parse(session: &Session, message: &Message, target: Target, history: bool) ->
     })
 }
 
-/// Ours: the same account when both are known, else our current nick.
-fn ours(session: &Session, nick: &str, account: Option<&str>) -> bool {
+/// Ours: the same account when both are known. Live traffic without
+/// accounts falls back to our current nick; history never does, because
+/// someone else may have held that nick when the reaction was made.
+fn ours(session: &Session, nick: &str, account: Option<&str>, history: bool) -> bool {
     match (account, session.reg.account.as_deref()) {
         (Some(theirs), Some(mine)) => session.fold(theirs) == session.fold(mine),
-        _ => session.is_own(nick),
+        _ => !history && session.is_own(nick),
     }
 }
 

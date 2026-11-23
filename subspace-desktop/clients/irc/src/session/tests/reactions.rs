@@ -7,6 +7,7 @@ use crate::model::{
 };
 use crate::session::{Carry, Output, Session};
 
+mod lifecycle;
 mod support;
 
 fn react(buffer: BufferKey, msgid: &str, reaction: &str) -> Command {

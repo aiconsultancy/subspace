@@ -51,6 +51,7 @@ pub(crate) fn message(
         .children(thread_facts(entry, context, &tokens, cx))
         .children(crate::tiles::row(entry, &refs, context, cx))
         .children(attachments(original, context, &tokens, cx))
+        .children(crate::transcript::reactions::row(entry, context))
         .children(marks::focus_card(entry, context));
     let row = h_flex()
         .id(SharedString::from(format!("{id}:row")))
@@ -69,6 +70,7 @@ pub(crate) fn message(
         .child(leading)
         .child(column)
         .children(marks::focus_ring(entry, context, &tokens, cx));
+    let row = measure_focused(row, entry, context);
     let selected = entry.highlight || context.target == Some(entry.seq);
     let row = filled(row, RowFill::of(selected, unread, &tokens));
     let row = message_frame(id, row, continues);
@@ -114,7 +116,24 @@ pub(crate) fn thread_message(
         .when(!entry.line.text.is_empty(), |column| {
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
         })
+        .children(crate::transcript::reactions::read_only(entry, context))
         .into_any_element()
+}
+
+/// The keyboard-focused message measures itself into the reaction menu's
+/// anchor, so `r` opens the menu at the message. Other rows are untouched.
+fn measure_focused<E: gpui_kit::base::ElementExt>(
+    row: E,
+    entry: &Entry,
+    context: &RowContext,
+) -> E {
+    let focused = context.focus.is_some_and(|at| at.seq == entry.seq);
+    match context.react_anchor.clone().filter(|_| focused) {
+        Some(anchor) => row.on_prepaint(move |bounds, _, cx| {
+            anchor.update(cx, |anchor, cx| anchor.set_bounds(bounds, cx));
+        }),
+        None => row,
+    }
 }
 
 /// What a message's thread says under it: the reply count, then the status

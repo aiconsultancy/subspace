@@ -19,8 +19,8 @@ use crate::{FleetAddress, FleetRecord, FleetState, TokenStore};
 #[derive(Default)]
 pub(super) struct Held {
     pub(super) locked: bool,
-    fail_saves: bool,
-    fail_deletes: bool,
+    pub(super) fail_saves: bool,
+    pub(super) fail_deletes: bool,
     saved: HashMap<String, String>,
     reads: HashMap<String, usize>,
 }
@@ -43,7 +43,7 @@ impl Shelf {
             .unwrap_or_default()
     }
 
-    fn empty(&self) -> bool {
+    pub(super) fn empty(&self) -> bool {
         self.0.lock().unwrap().saved.is_empty()
     }
 }

@@ -1,5 +1,7 @@
 //! A request's status timeline in the Thread tab: a plain list, one row
-//! per step with its words, when it began and how long it took.
+//! per step with its words, when it began and how long it took. Only the
+//! latest steps the timeline keeps are drawn, after a line that counts the
+//! earlier ones.
 
 use chrono::Local;
 use gpui_kit::component::{h_flex, v_flex};
@@ -32,6 +34,15 @@ pub(super) fn section(
     let tokens = Tokens::current(cx);
     let last = timeline.steps.len().saturating_sub(1);
     workspace::section("Status", cx)
+        .children((timeline.earlier_steps > 0).then(|| {
+            feedback::empty_line(
+                &tokens,
+                "irc-thread-earlier-steps",
+                earlier_steps_words(timeline.earlier_steps),
+            )
+            .id("irc-thread-earlier-steps-line")
+            .test_support()
+        }))
         .child(
             v_flex()
                 .id("irc-thread-steps")
@@ -54,6 +65,14 @@ pub(super) fn section(
                 .then(|| missing(board, buffer, thread, cx)),
         )
         .into_any_element()
+}
+
+/// What the timeline says of the earlier steps it leaves out.
+pub(crate) fn earlier_steps_words(skipped: usize) -> String {
+    match skipped {
+        1 => "1 earlier step is not shown.".to_owned(),
+        n => format!("{n} earlier steps are not shown."),
+    }
 }
 
 /// What a step's columns say: its words, when it began, and how long it
@@ -161,7 +180,7 @@ fn around(board: &Irc, buffer: &BufferKey, thread: &Thread, cx: &App) -> Option<
 mod tests {
     use chrono::{Local, TimeDelta};
 
-    use super::step_words;
+    use super::{earlier_steps_words, step_words};
     use crate::fixtures::at;
     use crate::thread::{Step, StepKind};
     use crate::thread_status::{Outcome, Stage};
@@ -200,5 +219,11 @@ mod tests {
             step_words(&unknown, true),
             ("Ended", String::new(), String::new())
         );
+    }
+
+    #[test]
+    fn the_left_out_steps_are_counted() {
+        assert_eq!(earlier_steps_words(1), "1 earlier step is not shown.");
+        assert_eq!(earlier_steps_words(97), "97 earlier steps are not shown.");
     }
 }

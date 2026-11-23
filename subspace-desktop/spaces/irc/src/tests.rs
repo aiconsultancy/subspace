@@ -6,10 +6,9 @@ use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 use subspace_client_irc::{Command, ConnectionStatus, Event};
 use subspace_framework::dashboard::{ChatInputEvent, Dashboard as _, ListDashboard as _};
 
-use crate::config::Settings;
 use crate::fixtures::{at, channel, config, member, message, network_id};
 use crate::hub::{self, Hub};
-use crate::{Irc, rows, view};
+use crate::{Irc, config::Settings, rows, view};
 
 mod back;
 mod completion;
@@ -25,6 +24,7 @@ mod keys;
 mod listing;
 mod notifications;
 mod pull_requests;
+mod reactions;
 mod remove;
 mod replies;
 mod selection;

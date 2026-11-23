@@ -225,6 +225,9 @@ record. [Change records](changes/README.md) explains the convention.
 - [Channels Thread tab](changes/channels-thread-tab/README.md): the
   inspector's Thread tab with a request's status timeline and its replies,
   reply counts and status lines that open it, and reply mode.
+- [Channels reactions](changes/channels-reactions/README.md): message
+  reactions as pills in Channels, toggling yours, the stop reactions on a
+  running request, and the client layer's review findings closed.
 - [Channels tiles once](changes/channels-tiles-once/README.md): an issue or
   pull request tile only under the first message that names it, and fuller
   two-line tiles of a fixed size for both.

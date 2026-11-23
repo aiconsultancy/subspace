@@ -164,7 +164,13 @@ stays **Keychain locked** while it is read again, the page hears
 service reads one fleet's token again at most once every five seconds,
 whoever asks; a **Retry** asked sooner reads each fleet it covered once,
 when that fleet's own five seconds end, never one saved, cleared or removed
-since, and never again on a timer.
+since, and never again on a timer. The five seconds run from when a read
+starts, not from when it was asked for or scheduled, so a waiting Retry
+whose timer runs late, or a read queued behind others, still leaves the
+keychain alone for five seconds after it. A Retry asked while a read is
+still in flight waits for its five seconds rather than being lost, and if
+that read is still in flight then, as behind a keychain prompt, it reads
+once that read lands, unless the read settled the token.
 
 Every read, save and clear of a fleet's token runs on that fleet's one
 ordered path (`service/queue.rs`; each fleet has its own, so a keychain
@@ -182,8 +188,12 @@ cleared token, the fleet says **Token not removed** (`ClearFailed`): the
 token is not used, followed or shared, a Retry does not bring it back,
 and Settings says the keychain may still hold it at the next start and
 offers **Clear token** again; saving a token also resolves it. The token stays out of
-use until a delete or a replacement write succeeds, also when a save queued
-after the clear fails. A Retry waiting from an older token generation is
+use until a delete or a replacement write queued with the clear or after it
+succeeds, also when a save queued after the clear fails. A save queued
+before the clear never ends the hold, even though its write lands after the
+clear began: it wrote before the delete, so a cleared token stays cleared
+when that delete is refused, and neither a later failed save nor removing
+and adding the fleet again brings it back. A Retry waiting from an older token generation is
 dropped when the generation changes, and each waiting Retry consumes only
 its own place. Each fleet
 has at most one re-read queued, and a waiting Retry checks the deadline

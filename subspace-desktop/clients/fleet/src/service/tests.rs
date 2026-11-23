@@ -8,6 +8,7 @@ use super::{FleetApi, TokenError};
 use crate::tests::{FleetFixture, TOKEN};
 use crate::{FleetRecord, FleetState, Link, TokenStore};
 
+mod hold;
 mod keychain;
 mod ordering;
 mod retries;

@@ -189,7 +189,9 @@ fn report(session: &Session, out: &mut Output) {
         network: session.network(),
         enabled: session.caps.enabled.iter().cloned().collect(),
     });
-    out.updates.now.push(super::reactions::support(session));
+    if session.registered() {
+        out.updates.now.push(super::reactions::support(session));
+    }
 }
 
 fn mechanism(credentials: &Sasl) -> &'static str {

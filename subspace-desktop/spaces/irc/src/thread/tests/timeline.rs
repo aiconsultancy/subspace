@@ -264,3 +264,32 @@ fn a_long_thread_keeps_its_count_and_only_its_latest_replies() {
         "the latest 40"
     );
 }
+
+#[test]
+fn a_long_timeline_keeps_only_its_latest_steps() {
+    let mut state = joined(vec![ship()]);
+    let mut lines = vec![
+        request(&room(), "first", 1),
+        progress(&room(), "first", "accepted", 2),
+    ];
+    // An agent that waits and works again sixty times over.
+    for turn in 0..60 {
+        let minute = 3 + turn * 2;
+        lines.push(progress(&room(), "first", "waiting", minute));
+        lines.push(progress(&room(), "first", "tool", minute + 1));
+    }
+    live(&mut state, lines);
+    let timeline = thread(&state, "first").unwrap().timeline.unwrap();
+    assert_eq!(timeline.steps.len(), super::super::model::MAX_STEPS);
+    assert_eq!(
+        timeline.earlier_steps,
+        121 - super::super::model::MAX_STEPS,
+        "every step left out is counted"
+    );
+    let last = timeline.steps.last().unwrap();
+    assert_eq!(
+        (last.kind, last.at),
+        (StepKind::Stage(Stage::Working), Some(at(3 + 59 * 2 + 1))),
+        "the latest step is kept"
+    );
+}

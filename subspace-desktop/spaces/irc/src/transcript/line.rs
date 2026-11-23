@@ -74,6 +74,15 @@ pub(crate) struct RowContext {
     /// The inspector has a Thread tab for this conversation, so reply
     /// counts and request status lines open their thread there.
     pub threads: bool,
+    /// Reactions on each message from the same sync, shared the same way.
+    pub reactions: Rc<crate::reactions::Shown>,
+    /// The agent messages a stop reaction concerns, from the same sync.
+    pub stops: Rc<crate::reactions::stop::Stops>,
+    /// The network can react now, so pills toggle and Add reaction shows.
+    pub can_react: bool,
+    /// Where the keyboard's reaction menu opens: the focused message
+    /// measures itself into it.
+    pub react_anchor: Option<gpui_kit::Entity<subspace_framework::dashboard::anchored::Anchor>>,
 }
 
 fn time(entry: &Entry) -> String {

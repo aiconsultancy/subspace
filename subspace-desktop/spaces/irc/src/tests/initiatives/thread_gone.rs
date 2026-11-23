@@ -15,7 +15,7 @@ use crate::thread::MESSAGE_TAGS;
 
 /// The ship's conversation in reply mode on `ask1`, whose root then goes,
 /// as under the line cap.
-fn gone_reply(board: &Entity<Irc>, cx: &mut VisualTestContext) -> Entity<Conversation> {
+pub(super) fn gone_reply(board: &Entity<Irc>, cx: &mut VisualTestContext) -> Entity<Conversation> {
     cx.update(|window, cx| window.click("irc-status:ask1", cx));
     settle(cx);
     cx.update(|window, cx| window.click("irc-thread-reply", cx));
@@ -25,6 +25,17 @@ fn gone_reply(board: &Entity<Irc>, cx: &mut VisualTestContext) -> Entity<Convers
         crate::compose::reply::forget(view, "ask1", cx)
     });
     settle(cx);
+    conversation
+}
+
+/// [`gone_reply`] with text written for its gone thread.
+pub(super) fn gone_draft(board: &Entity<Irc>, cx: &mut VisualTestContext) -> Entity<Conversation> {
+    let conversation = gone_reply(board, cx);
+    conversation.update_in(cx, |view, window, cx| {
+        view.composer().update(cx, |input, cx| {
+            input.set_text("Ready for review.", window, cx)
+        });
+    });
     conversation
 }
 
@@ -81,4 +92,90 @@ fn opening_other_threads_never_lifts_a_gone_reply_s_guard(cx: &mut TestAppContex
         settle(cx);
     }
     assert!(!send_part(&conversation, &hub, cx), "nothing sent");
+}
+
+/// Opens thread `root` and chooses **Reply in thread** there.
+fn reply_in(board: &Entity<Irc>, root: &str, cx: &mut VisualTestContext) {
+    let room = crate::fixtures::channel("#aurora-lyra");
+    board.update_in(cx, |board, window, cx| {
+        crate::thread::open(board, &room, root.to_owned(), window, cx);
+    });
+    settle(cx);
+    cx.update(|window, cx| window.click("irc-thread-reply", cx));
+    settle(cx);
+}
+
+fn reply_root(conversation: &Entity<Conversation>, cx: &mut VisualTestContext) -> Option<String> {
+    conversation.read_with(cx, |conversation, _| {
+        conversation
+            .draft
+            .reply
+            .as_ref()
+            .map(|reply| reply.root.clone())
+    })
+}
+
+#[gpui_kit::test]
+fn reply_in_another_thread_keeps_a_gone_draft_guarded_until_moved(cx: &mut TestAppContext) {
+    let (board, hub, cx) = finished(cx, &[MESSAGE_TAGS]);
+    let conversation = gone_draft(&board, cx);
+    reply_in(&board, "r1", cx);
+    assert_eq!(
+        reply_root(&conversation, cx).as_deref(),
+        Some("ask1"),
+        "the draft stays with its gone thread"
+    );
+    assert!(!send_part(&conversation, &hub, cx), "nothing sent");
+    cx.update(|window, cx| window.click("irc-reply-mode-move", cx));
+    settle(cx);
+    conversation.read_with(cx, |conversation, _| {
+        let reply = conversation.draft.reply.as_ref().unwrap();
+        assert_eq!((reply.root.as_str(), reply.gone), ("r1", false), "moved");
+    });
+}
+
+#[gpui_kit::test]
+fn an_emptied_gone_draft_lets_another_thread_s_reply_start(cx: &mut TestAppContext) {
+    let (board, _hub, cx) = finished(cx, &[MESSAGE_TAGS]);
+    let conversation = gone_reply(&board, cx);
+    reply_in(&board, "r1", cx);
+    assert_eq!(reply_root(&conversation, cx).as_deref(), Some("r1"));
+}
+
+#[gpui_kit::test]
+fn a_thread_offered_to_a_gone_draft_that_goes_too_is_withdrawn(cx: &mut TestAppContext) {
+    let (board, _hub, cx) = finished(cx, &[MESSAGE_TAGS]);
+    let conversation = gone_draft(&board, cx);
+    reply_in(&board, "r1", cx);
+    conversation.update(cx, |view, cx| crate::compose::reply::forget(view, "r1", cx));
+    settle(cx);
+    conversation.read_with(cx, |conversation, _| {
+        let reply = conversation.draft.reply.as_ref().unwrap();
+        assert_eq!((reply.root.as_str(), reply.gone), ("ask1", true));
+        assert_eq!(reply.offered, None, "nothing to move to");
+    });
+}
+
+#[gpui_kit::test]
+fn choosing_another_thread_withdraws_the_offer_to_move(cx: &mut TestAppContext) {
+    let (board, _hub, cx) = finished(cx, &[MESSAGE_TAGS]);
+    let conversation = gone_draft(&board, cx);
+    reply_in(&board, "r1", cx);
+    cx.update(|window, _| {
+        assert_eq!(
+            window.find("irc-reply-mode-move").label(),
+            Some("Move the reply to the thread of aurora-lyra: Reply r1."),
+            "the button names the thread"
+        );
+    });
+    let room = crate::fixtures::channel("#aurora-lyra");
+    board.update_in(cx, |board, window, cx| {
+        crate::thread::open(board, &room, "r2".to_owned(), window, cx);
+    });
+    settle(cx);
+    conversation.read_with(cx, |conversation, _| {
+        let reply = conversation.draft.reply.as_ref().unwrap();
+        assert_eq!((reply.root.as_str(), reply.gone), ("ask1", true));
+        assert_eq!(reply.offered, None, "the offer stood for r1, now left");
+    });
 }
