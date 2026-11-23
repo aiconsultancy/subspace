@@ -75,6 +75,12 @@ impl Settings {
                     .id("icon-button-size")
                     .accessibility_label("Icon button size"),
             ).child(note(tokens, "Resize icon buttons throughout the application. Text keeps its current size. Save applies this choice without a restart.")))
+            .child(labelled(
+                "Icons",
+                anchored::select(&self.agent_icons.choice)
+                    .id("agent-icons")
+                    .accessibility_label("Icons"),
+            ).child(note(tokens, "How fleet agents' and ships' icons show in Spaces: as drawn, small beside their names, or off. Save applies this choice without a restart.")))
             .child(note(tokens, help::APPEARANCE))
             .child(note(tokens, theme_directory_note(cx)));
         page_frame(

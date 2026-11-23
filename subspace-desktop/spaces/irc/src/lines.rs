@@ -3,7 +3,7 @@
 //! parts, quits and nick changes condensed into one line. Pure, so the
 //! grouping and condensing rules are testable without GPUI.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 use chrono::{Datelike as _, Duration, NaiveDate, TimeZone};
 use subspace_client_irc::LineKind;
@@ -56,14 +56,21 @@ fn kind(entry: &Entry, conversation: bool) -> Kind {
     }
 }
 
-/// `next` continues the group `previous` belongs to: the same sender, the
-/// same kind of message (notices stay apart), within [`GROUP_MINUTES`].
+/// `next` continues the group `previous` belongs to: the same sender under
+/// the same server account, the same kind of message (notices stay apart),
+/// within [`GROUP_MINUTES`]. A change of account starts a new group, so a
+/// continuation never sits under an avatar and rank the server no longer
+/// vouches for: a rank is verified from the nick and account alone.
 pub(crate) fn continues(previous: &Entry, next: &Entry) -> bool {
     let (before, after) = (&previous.line, &next.line);
-    let same_sender = match (&before.from, &after.from) {
+    let same = |left: &Option<String>, right: &Option<String>| match (left, right) {
         (Some(left), Some(right)) => left.eq_ignore_ascii_case(right),
+        (None, None) => true,
         _ => false,
     };
+    let same_sender = before.from.is_some()
+        && same(&before.from, &after.from)
+        && same(&before.account, &after.account);
     let notice = |kind: LineKind| kind == LineKind::Notice;
     let gap = after.time - before.time;
     same_sender
@@ -73,53 +80,63 @@ pub(crate) fn continues(previous: &Entry, next: &Entry) -> bool {
 }
 
 /// The rows for `entries`, dated in `zone`. `conversation` is false for a
-/// server buffer, whose lines stay compact.
+/// server buffer, whose lines stay compact. The `folded` lines, request
+/// progress that a status line shows instead, make no row.
 pub(crate) fn items<Tz: TimeZone>(
     entries: &VecDeque<Entry>,
+    folded: &HashSet<i64>,
     zone: &Tz,
     conversation: bool,
 ) -> Vec<Item> {
-    let kinds: Vec<Kind> = entries
+    let shown: Vec<(usize, &Entry)> = entries
         .iter()
-        .map(|entry| kind(entry, conversation))
+        .enumerate()
+        .filter(|(_, entry)| !folded.contains(&entry.seq))
         .collect();
-    let dates: Vec<NaiveDate> = entries
+    let kinds: Vec<Kind> = shown
         .iter()
-        .map(|entry| entry.line.time.with_timezone(zone).date_naive())
+        .map(|(_, entry)| kind(entry, conversation))
         .collect();
-    let links: Vec<bool> = entries
+    let dates: Vec<NaiveDate> = shown
         .iter()
-        .zip(entries.iter().skip(1))
-        .map(|(previous, next)| continues(previous, next))
+        .map(|(_, entry)| entry.line.time.with_timezone(zone).date_naive())
         .collect();
-    assemble(&kinds, &dates, &links)
+    let links: Vec<bool> = shown
+        .windows(2)
+        .map(|pair| continues(pair[0].1, pair[1].1))
+        .collect();
+    let positions: Vec<usize> = shown.iter().map(|(at, _)| *at).collect();
+    assemble(&positions, &kinds, &dates, &links)
 }
 
-/// The rows from each line's kind and date, and whether each line continues
-/// the one before it (`links[index - 1]`).
-fn assemble(kinds: &[Kind], dates: &[NaiveDate], links: &[bool]) -> Vec<Item> {
+/// The rows from each shown line's entry position, kind and date, and
+/// whether each shown line continues the one before it
+/// (`links[index - 1]`). A membership run spans only adjacent entries.
+fn assemble(positions: &[usize], kinds: &[Kind], dates: &[NaiveDate], links: &[bool]) -> Vec<Item> {
     let mut items = Vec::new();
-    for (index, (kind, date)) in kinds.iter().zip(dates).enumerate() {
+    for (index, ((kind, date), &at)) in kinds.iter().zip(dates).zip(positions).enumerate() {
         let new_day = index == 0 || dates.get(index - 1) != Some(date);
         if new_day {
             items.push(Item::Day(*date));
         }
         let linked = index > 0 && links.get(index - 1).copied().unwrap_or_default();
         match (items.last_mut(), kind) {
-            (Some(Item::Membership { last, .. }), Kind::Membership) => *last = index,
+            (Some(Item::Membership { last, .. }), Kind::Membership) if *last + 1 == at => {
+                *last = at;
+            }
             (_, Kind::Membership) => items.push(Item::Membership {
-                first: index,
-                last: index,
+                first: at,
+                last: at,
             }),
             (Some(Item::Message { .. }), Kind::Message) if linked => items.push(Item::Message {
-                at: index,
+                at,
                 continues: true,
             }),
             (_, Kind::Message) => items.push(Item::Message {
-                at: index,
+                at,
                 continues: false,
             }),
-            (_, Kind::Line) => items.push(Item::Line(index)),
+            (_, Kind::Line) => items.push(Item::Line(at)),
         }
     }
     items

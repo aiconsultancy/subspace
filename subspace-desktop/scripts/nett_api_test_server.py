@@ -44,8 +44,9 @@ It serves:
   sending anything queued once either is gone). A route whose feature is
   not served answers a neutral 404;
 - unauthenticated test hooks under /__fixture/: touch, requests,
-  requests/clear, updates, updates/close, capabilities, config (completion
-  checks, stream refusals, failNext, slowBody, dropPutResponse, dropNext,
+  requests/clear, updates, updates/close, capabilities, slowBody/release,
+  config (completion checks, stream refusals, failNext, slowBody,
+  dropPutResponse, dropNext,
   mediaReadyAtOnce, dropMoveReply, slowMoveCommit), moves/age,
   tokens,
   tokens/revoke, members/revoke, members/restore, projects/hide,
@@ -71,6 +72,7 @@ import hashlib
 import hmac
 import html
 import ipaddress
+import itertools
 import json
 import re
 import secrets
@@ -100,11 +102,16 @@ MAX_UPLOAD_BYTES = 25_000_000
 # request is answered: two largest uploads and a few JSON bodies.
 MAX_BODY_INTAKE_BYTES = 2 * MAX_UPLOAD_BYTES + 8 * MAX_JSON_BYTES
 MAX_LOGGED_REQUESTS = 10_000
+# The longest a slowBody with waitForRelease holds a body when nothing
+# releases it: longer than any test's own waits before it lets the body go.
+MAX_HELD_BODY = 120
 STREAM_SECONDS = 180
 STREAM_WRITE_SECONDS = 1
 KEEPALIVE_SECONDS = 15
 MAX_STREAMS_PER_USER = 16
 MAX_STREAMS = 256
+# Why the most recent update streams ended, kept for tests to check.
+MAX_STREAM_ENDS = 1024
 STREAM_QUEUE = 64
 MAX_STREAM_PROJECTS = 64
 CHAT_UPLOAD_DAYS = 30
@@ -306,6 +313,11 @@ class Subscriber:
         self.ready = threading.Condition()
         self.delivery = threading.Lock()
         self.closed = None
+        # When the stream was closed, and when a hook revoked its authority
+        # (monotonic seconds), so a close or revocation that came after the
+        # stream's lifetime is not taken as why it ended.
+        self.closed_at = None
+        self.revoked_at = None
         self.abort = False
 
     def push(self, event):
@@ -313,14 +325,15 @@ class Subscriber:
             if self.closed:
                 return
             if len(self.queue) >= STREAM_QUEUE:
-                self.closed = 'overflow'
+                self.closed, self.closed_at = 'overflow', time.monotonic()
             else:
                 self.queue.append(event)
             self.ready.notify()
 
     def close(self, reason, abort=False):
         with self.ready:
-            self.closed = self.closed or reason
+            if self.closed is None:
+                self.closed, self.closed_at = reason, time.monotonic()
             self.abort = self.abort or abort
             self.ready.notify()
 
@@ -364,6 +377,23 @@ class Stream:
 
     def __init__(self, subscriber):
         self.subscriber = subscriber
+
+
+def why_stopped(subscriber, now, deadline, timed_out, authorised):
+    """Why a stream stops delivering at `now`, or None while it may go on.
+    `authorised` is whether its authority held when checked just before.
+    Past its deadline, a close or a revoke hook counts only if it came before
+    the deadline: one that came later did not end the stream, its lifetime
+    did. Authority lost other than through a revoke hook has no recorded
+    time, so past the deadline the lifetime is taken as the cause."""
+    if subscriber.closed and (now < deadline or subscriber.closed_at < deadline):
+        return subscriber.closed
+    if now >= deadline:
+        revoked = subscriber.revoked_at is not None and subscriber.revoked_at < deadline
+        return 'lost authority' if revoked and not authorised else timed_out
+    if subscriber.expires is not None and time.time() >= subscriber.expires:
+        return 'token expired'
+    return None if authorised else 'lost authority'
 
 
 def closed_body(payload, supported, declared, schema):
@@ -1371,6 +1401,8 @@ def hook_touch(ctx):
 
 
 def hook_requests(ctx):
+    """The request log, oldest first. Each entry has a seq; it gains an
+    answerSeq on the same sequence just before its answer's last bytes go."""
     return 200, [dict(request) for request in ctx.server.requests]
 
 
@@ -1426,9 +1458,12 @@ def hook_config(ctx):
     failNext: a list of {method, path, status, retryAfter?, times}; a matching
     request (exact path, no query) gets that status instead of an answer.
     slowBody: {path, seconds, times}; the answer's status and headers go first
-    and its body after the delay. With waitForRelease, setting slowBody to
-    null releases the body early. A path ending in * names every path that
-    starts with the rest. dropPutResponse: the next N file-host PUTs
+    and its body after the delay (0 to 10 seconds). With waitForRelease, the
+    delay is a limit of up to 120 seconds, and the body goes early when
+    slowBody is set again (null included), which lets every held body go, or
+    when POST /__fixture/slowBody/release lets the oldest one still held go;
+    a body whose limit ran out has left the queue. A path ending in * names
+    every path that starts with the rest. dropPutResponse: the next N file-host PUTs
     store their bytes and close the connection without answering.
     mediaReadyAtOnce: managed media completions finish checking at once and
     answer 200 with the ready state. dropMoveReply: the next N move
@@ -1484,14 +1519,14 @@ def hook_config(ctx):
         if slow is not None:
             if not isinstance(slow, dict) or set(slow) - {'path', 'seconds', 'times', 'waitForRelease'} \
                     or not isinstance(slow.get('path'), str) or not is_number(slow.get('seconds')) \
-                    or not 0 < slow['seconds'] <= 10 or not isinstance(slow.get('waitForRelease', False), bool):
-                raise Problem(400, 'slowBody is null or {"path": "/…", "seconds": 0–10, "times": K, '
-                                   '"waitForRelease": B}.')
+                    or not isinstance(slow.get('waitForRelease', False), bool) \
+                    or not 0 < slow['seconds'] <= (MAX_HELD_BODY if slow.get('waitForRelease') else 10):
+                raise Problem(400, 'slowBody is null or {"path": "/…", "seconds": 0–10 (0–120 with '
+                                   'waitForRelease), "times": K, "waitForRelease": B}.')
             slow = dict(path=slow['path'], seconds=slow['seconds'],
                         times=bounded(dict(times=slow.get('times', 1)), 'times', 1, 100),
                         waitForRelease=slow.get('waitForRelease', False))
-        ctx.server.slow_body_release.set()
-        ctx.server.slow_body_release = threading.Event()
+        ctx.server.release_held(all_held=True)
         config['slowBody'] = slow
     if 'dropPutResponse' in payload:
         config['dropPutResponse'] = bounded(payload, 'dropPutResponse', 0, 100)
@@ -1537,6 +1572,9 @@ def close_streams(ctx, payload, matches):
     if not isinstance(payload.get('closeStreams', True), bool):
         raise Problem(400, 'closeStreams must be a boolean.')
     closing = [s for s in ctx.server.subscribers if matches(s)]
+    revoked = time.monotonic()
+    for subscriber in closing:
+        subscriber.revoked_at = subscriber.revoked_at or revoked
     # A write already in flight must finish before the hook acknowledges
     # revocation, whether or not the hook also wakes the stream.
     ctx.handler.revoked_streams = closing
@@ -1683,6 +1721,11 @@ def updates_stream(ctx):
     subscriber = Subscriber(org['id'], keys, f.caller, server.authority.expiry(ctx.token), ctx.token)
     server.subscribers.append(subscriber)
     return 200, Stream(subscriber)
+
+
+def hook_release_slow_body(ctx):
+    """Lets the oldest body held by slowBody with waitForRelease go."""
+    return 200, dict(released=ctx.server.release_held())
 
 
 def hook_clear(ctx):
@@ -3075,6 +3118,7 @@ ROUTES = [
     Route('POST', '/__fixture/updates/close', hook_close_updates),
     Route('POST', '/__fixture/capabilities', hook_capabilities),
     Route('POST', '/__fixture/config', hook_config),
+    Route('POST', '/__fixture/slowBody/release', hook_release_slow_body),
     Route('POST', '/__fixture/tokens', hook_tokens),
     Route('POST', '/__fixture/tokens/revoke', hook_revoke_token),
     Route('POST', '/__fixture/members/revoke', hook_revoke_member),
@@ -3167,6 +3211,13 @@ def loopback_host(value):
 
 class FixtureServer(ThreadingHTTPServer):
     daemon_threads = True
+    # socketserver listens with a queue of 5, which half-open connections
+    # count against too. The client opens up to six requests and a stream
+    # while a test polls a hook, and when that burst finds the queue full,
+    # macOS resets a waiting connection: a request is lost before it is
+    # logged, or a hook call fails with ECONNRESET. Hold a burst instead
+    # (the kernel caps this at somaxconn).
+    request_queue_size = 128
 
     def __init__(self, host='127.0.0.1', port=DEFAULT_PORT, access_token=DEFAULT_ACCESS_TOKEN, single_org=False,
                  auto_approve=False, stream_seconds=STREAM_SECONDS, keepalive_seconds=KEEPALIVE_SECONDS,
@@ -3179,7 +3230,19 @@ class FixtureServer(ThreadingHTTPServer):
         self.access_token = access_token
         self.lock = threading.RLock()
         self.requests = []
-        self.slow_body_release = threading.Event()
+        # Bodies held by slowBody with waitForRelease, oldest first.
+        self.held_bodies = collections.deque()
+        # Each logged request's place, and each answer's just before its last
+        # bytes go, on one sequence: a request the client sends after reading
+        # an answer always has a higher seq than that answer's answerSeq.
+        self.sequence = itertools.count(1)
+        # Why the latest update streams ended, in order: close hook, lost
+        # authority, team archived, overflow, token expired, lifetime, write
+        # timed out or client gone. Each record has an id counting from 1
+        # (stream_ends_total is the latest) and the client's port, which
+        # tells two streams with the same organisation and teams apart.
+        self.stream_ends = collections.deque(maxlen=MAX_STREAM_ENDS)
+        self.stream_ends_total = 0
         self.subscribers = []
         self.served = set(served)
         self.org_served = {}
@@ -3282,8 +3345,28 @@ class FixtureServer(ThreadingHTTPServer):
             slow['times'] -= 1
             if slow['times'] <= 0:
                 self.config['slowBody'] = None
-            release = self.slow_body_release if slow['waitForRelease'] else None
+            release = None
+            if slow['waitForRelease']:
+                release = threading.Event()
+                self.held_bodies.append(release)
             return slow['seconds'], release
+
+    def forget_held(self, release):
+        """Takes a held body out of the release queue once it has gone,
+        released or not, so a later release lets a body still held go."""
+        with self.lock:
+            if release in self.held_bodies:
+                self.held_bodies.remove(release)
+
+    def release_held(self, all_held=False):
+        """Lets the oldest held body go, or every one; how many went."""
+        with self.lock:
+            released = list(self.held_bodies) if all_held else list(self.held_bodies)[:1]
+            for event in released:
+                self.held_bodies.remove(event)
+        for event in released:
+            event.set()
+        return len(released)
 
     def served_for(self, org):
         """The capability list for `org`: a hook override, or each --serve
@@ -3337,7 +3420,7 @@ class FixtureServer(ThreadingHTTPServer):
                        cookie=headers.get('Cookie') is not None, orgHeader=headers.get('x-org-id'),
                        contentType=headers.get('Content-Type'),
                        contentLength=int(length) if length and re.fullmatch(r'[0-9]{1,10}', length) else None,
-                       at=round(time.monotonic() - self.started, 3))
+                       at=round(time.monotonic() - self.started, 3), seq=next(self.sequence))
         self.requests.append(request)
         del self.requests[:-MAX_LOGGED_REQUESTS]
         return request
@@ -3532,18 +3615,20 @@ class Handler(BaseHTTPRequestHandler):
         team) or when the client goes."""
         self.close_connection = True
         lifetime = self.server.stream_seconds
+        expiring = subscriber.expires is not None and subscriber.expires - time.time() < lifetime
         if subscriber.expires is not None:
             lifetime = min(lifetime, max(0.0, subscriber.expires - time.time()))
         deadline = time.monotonic() + lifetime
+        timed_out = 'token expired' if expiring else 'lifetime'
+        ended = timed_out
         try:
             self.connection.settimeout(STREAM_WRITE_SECONDS)
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
             self.send_header('Cache-Control', 'private, no-store, no-transform')
             self.end_headers()
-            if not self.flush_stream(subscriber, b'event: ready\ndata: null\n\n', deadline):
-                return
-            while (remaining := deadline - time.monotonic()) > 0:
+            stopped = self.flush_stream(subscriber, b'event: ready\ndata: null\n\n', deadline, timed_out)
+            while not stopped and (remaining := deadline - time.monotonic()) > 0:
                 with subscriber.ready:
                     if not subscriber.queue and not subscriber.closed:
                         subscriber.ready.wait(min(remaining, self.server.keepalive_seconds))
@@ -3553,31 +3638,39 @@ class Handler(BaseHTTPRequestHandler):
                 if events:
                     encoded = [json.dumps(event, separators=(',', ':')).encode() for event in events]
                     frame = b''.join(b'event: issueChanged\ndata: ' + data + b'\n\n' for data in encoded)
-                if not self.flush_stream(subscriber, frame, deadline):
-                    if subscriber.abort:
-                        # Reset the connection rather than end the response.
-                        self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
-                                                   struct.pack('ii', 1, 0))
-                        self.connection.close()
-                    break
+                stopped = self.flush_stream(subscriber, frame, deadline, timed_out)
+            ended = stopped or timed_out
+            if subscriber.abort and stopped == subscriber.closed:
+                # Reset the connection rather than end the response.
+                self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                self.connection.close()
+        except TimeoutError:
+            ended = 'write timed out'
         except OSError:
-            pass  # The client went away.
+            ended = 'client gone'
         finally:
             with self.server.lock:
+                self.server.stream_ends_total += 1
+                self.server.stream_ends.append(dict(id=self.server.stream_ends_total, client=self.client_address[1],
+                                                    org=subscriber.org_id, user=subscriber.user_id,
+                                                    keys=sorted(subscriber.keys), reason=ended))
                 if subscriber in self.server.subscribers:
                     self.server.subscribers.remove(subscriber)
 
-    def flush_stream(self, subscriber, frame, deadline):
-        """Deliver one batch under the same lock revocation waits for."""
+    def flush_stream(self, subscriber, frame, deadline, timed_out):
+        """Delivers one batch under the same lock revocation waits for: None
+        once sent, or why the stream ends, decided here where delivery stops."""
         with subscriber.delivery:
-            if not self.server.authorised(subscriber) or subscriber.closed:
-                return False
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            self.connection.settimeout(min(remaining, STREAM_WRITE_SECONDS))
+            # Authority first: a close that comes while it is checked still
+            # stops this batch.
+            authorised = self.server.authorised(subscriber)
+            now = time.monotonic()
+            ended = why_stopped(subscriber, now, deadline, timed_out, authorised)
+            if ended:
+                return ended
+            self.connection.settimeout(min(deadline - now, STREAM_WRITE_SECONDS))
             self.connection.sendall(frame)
-            return True
+            return None
 
     def respond(self, status, value):
         if isinstance(value, Stream):
@@ -3607,18 +3700,36 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Cache-Control', 'no-store')
         for name, header in headers:
             self.send_header(name, header)
+        if status == 204:
+            self.mark_answer()
         self.end_headers()
         if self.request_log is not None and (slow := self.server.take_slow(self.request_log['path'])):
+            self.hold_body(status, *slow)
+        if status != 204:
+            self.mark_answer()
+            self.wfile.write(body)
+
+    def hold_body(self, status, seconds, release):
+        """Sends the headers, logs them as sent, then waits the delay or
+        until the body is released. A held body leaves the release queue
+        however the wait ends, so a stale entry never takes a release."""
+        try:
             self.wfile.flush()
             with self.server.lock:
                 self.request_log['slowBodyHeadersStatus'] = status
-            seconds, release = slow
             if release is None:
                 time.sleep(seconds)
             else:
                 release.wait(seconds)
-        if status != 204:
-            self.wfile.write(body)
+        finally:
+            if release is not None:
+                self.server.forget_held(release)
+
+    def mark_answer(self):
+        """Logs the answer's place just before its last bytes go."""
+        if self.request_log is not None:
+            with self.server.lock:
+                self.request_log['answerSeq'] = next(self.server.sequence)
 
 
 def host_argument(value):

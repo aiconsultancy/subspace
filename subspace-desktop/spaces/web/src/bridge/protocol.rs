@@ -39,6 +39,14 @@ pub(crate) enum Operation {
     IssueResolve(Vec<String>),
     #[serde(rename = "issues.open")]
     IssueOpen(String),
+    /// The fleets the Subspace API assigns, for the built-in Fleet Console
+    /// only ([`super::fleets`]).
+    #[serde(rename = "fleets.get")]
+    Fleets,
+    /// The same after reading again any token the keychain could not read:
+    /// the page's Retry, the one call that reads the keychain again.
+    #[serde(rename = "fleets.retry")]
+    FleetsRetry,
 }
 
 #[derive(Clone, Deserialize)]
@@ -112,6 +120,8 @@ mod tests {
             json!({"method": "issues.scope"}),
             json!({"method": "issues.resolve", "value": ["ABC-1"]}),
             json!({"method": "issues.open", "value": "ABC-1"}),
+            json!({"method": "fleets.get"}),
+            json!({"method": "fleets.retry"}),
         ] {
             assert!(
                 parse(&message("ab", operation.clone())).is_some(),

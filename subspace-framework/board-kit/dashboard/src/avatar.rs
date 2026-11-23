@@ -1,4 +1,5 @@
-//! Compact, theme-aware profile photos and initials for dashboard rows.
+//! Compact, theme-aware profile photos and initials for dashboard rows, and
+//! the circles that mark a fleet agent by rank.
 
 use gpui_kit::component::{
     Sizable as _, Size,
@@ -10,10 +11,22 @@ use gpui_kit::{RenderImage, SharedString, Styled as _, px};
 use crate::Tokens;
 use std::sync::Arc;
 
+mod agent;
+mod crew;
+mod external;
+mod icons;
+pub use agent::{AgentAvatar, AgentRank, MARK_SIZE_PX, agent, agent_icon};
+pub use crew::{CrewMeter, MAX_DOTS as CREW_METER_MAX_DOTS, activity_dot, crew_meter};
+pub use external::{ExternalAvatar, external};
+pub(crate) use icons::initialize as initialize_icons;
+pub use icons::{AgentIcons, DEFAULT_AGENT_ICONS, PREFERENCE_KEY as AGENT_ICONS_KEY};
+
 const AVATAR_SIZE_PX: f32 = 24.0;
 /// A message sender's avatar: Kit's avatar sizes are pixel tiers, and 24 px
 /// is too small and 48 px too large beside a name and a first line of text.
 pub const SENDER_SIZE_PX: f32 = 32.0;
+/// A member list row's avatar: Kit's extra-small tier.
+pub const MEMBER_SIZE_PX: f32 = 16.0;
 
 const GROUP_AVATAR_LIMIT: usize = 2;
 

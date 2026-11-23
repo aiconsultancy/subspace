@@ -1,6 +1,7 @@
 //! The board-owned bridge. Authority is the intersection of a manifest's
 //! requests and native Settings grants, bound to its folder and manifest.
 
+pub(crate) mod fleets;
 pub(crate) mod issues;
 pub(crate) mod protocol;
 pub(crate) mod runtime;
@@ -12,12 +13,11 @@ pub(crate) mod theme;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use subspace_framework::core::config::web_boards::{WebBoard, WebBoardSource};
 use subspace_framework::dashboard::settings::FieldKind;
 
 use crate::app::{app_origin, same_origin};
-use crate::install::ManagedSource;
 use crate::manifest::{self, Manifest, Permission};
 use issues::IssueCall;
 use protocol::{Context, Message, Operation};
@@ -46,6 +46,9 @@ pub(crate) struct Bridge {
     pub board: &'static str,
     /// The theme last pushed to the page, so an unchanged one is not sent.
     pub pushed_theme: Option<Value>,
+    /// Whether this is the app's built-in Fleet Console, the one page that
+    /// may read the fleets the Subspace API assigns and their tokens.
+    shares_fleets: bool,
 }
 
 /// What the runtime finishes with the app after a call is allowed.
@@ -58,19 +61,24 @@ pub(crate) enum Effect {
     Issues(IssueCall),
     /// Save a checked `secrets.set`.
     SaveSecret(secrets::SecretWrite),
+    /// Answer with the app's fleets ([`fleets`]); `retry` first reads
+    /// again any token the keychain could not read.
+    Fleets {
+        retry: bool,
+    },
 }
 
 impl Bridge {
-    /// The bridge of folder app `board`, with `managed` its recorded install
-    /// source, if any.
-    pub(crate) fn new(board: &WebBoard, managed: Option<&ManagedSource>) -> Option<Self> {
+    /// The bridge of folder app `board`, with `entry` its raw entry in the
+    /// config file, if any, which says where it was installed from.
+    pub(crate) fn new(board: &WebBoard, entry: Option<&Map<String, Value>>) -> Option<Self> {
         let WebBoardSource::Folder(root) = &board.source else {
             return None;
         };
         let manifest = manifest::read(root).ok()??;
         let identity = manifest.identity(root);
         Some(Self {
-            owner: secrets::Owner::new(&identity, &board.source, managed),
+            owner: secrets::Owner::of_entry(&identity, &board.source, &board.id, entry),
             identity,
             manifest,
             root: root.clone(),
@@ -82,6 +90,7 @@ impl Bridge {
             document_epoch: None,
             board: issues::board_id(&board.id),
             pushed_theme: None,
+            shares_fleets: fleets::shares_fleets(board, entry),
         })
     }
 
@@ -97,6 +106,11 @@ impl Bridge {
                 .permissions
                 .get(&format!("{}.{}", self.identity, permission.name()))
                 == Some(&true)
+    }
+
+    /// Whether the page may read the app's fleets, when allowed `secrets`.
+    pub(crate) fn shares_fleets(&self) -> bool {
+        self.shares_fleets
     }
 
     pub(crate) fn trusted(&self, source: &str, current: &str) -> bool {
@@ -129,6 +143,10 @@ impl Bridge {
             Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
                 Permission::Issues
             }
+            Operation::Fleets | Operation::FleetsRetry if !self.shares_fleets => {
+                return Err(fleets::NOT_SHARED);
+            }
+            Operation::Fleets | Operation::FleetsRetry => Permission::Secrets,
         };
         if !self.allows(required, config) {
             return Err(DENIED);
@@ -183,7 +201,10 @@ impl Bridge {
                 self.context = context.clone();
             }
             Operation::Notify(message) => return self.notification(message, notifications_on, now),
-            Operation::Secrets | Operation::SecretsSet(_) => {
+            Operation::Secrets
+            | Operation::SecretsSet(_)
+            | Operation::Fleets
+            | Operation::FleetsRetry => {
                 return self.secrets(operation, config, now);
             }
             Operation::IssueScope | Operation::IssueResolve(_) | Operation::IssueOpen(_) => {
@@ -194,13 +215,18 @@ impl Bridge {
         Ok((Value::Null, Effect::None))
     }
 
-    /// `secrets.get`, or a checked and counted `secrets.set`.
+    /// `secrets.get`, `fleets.get` and `fleets.retry` (the app finishes
+    /// them), or a checked and counted `secrets.set`.
     fn secrets(
         &mut self,
         operation: &Operation,
         config: &WebBoard,
         now: Instant,
     ) -> Result<(Value, Effect), &'static str> {
+        if let Operation::Fleets | Operation::FleetsRetry = operation {
+            let retry = matches!(operation, Operation::FleetsRetry);
+            return Ok((Value::Null, Effect::Fleets { retry }));
+        }
         let Operation::SecretsSet(write) = operation else {
             let value = secrets::readable(&self.manifest, &self.owner, config);
             return Ok((value, Effect::None));

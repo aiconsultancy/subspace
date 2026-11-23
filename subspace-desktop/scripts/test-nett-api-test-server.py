@@ -204,6 +204,31 @@ class CommandLineTests(unittest.TestCase):
         self.assertNotIn('cli', err)
 
 
+class ListenQueueTests(unittest.TestCase):
+    def test_a_burst_of_connections_waiting_to_be_accepted_is_served_not_reset(self):
+        # A Rust test polls a hook while the client under test opens several
+        # connections, and a loaded machine can starve the accept loop. When
+        # the listen queue is full, macOS resets each further connection.
+        server = NETT.FixtureServer(port=0)
+        self.addCleanup(server.server_close)
+        request = (f'GET /api/v1/me HTTP/1.1\r\nHost: {urlsplit(server.origin).netloc}\r\n'
+                   f'Authorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n').encode()
+        connections = []
+        # Nothing accepts yet: every connection waits in the listen queue.
+        for _ in range(32):
+            connection = socket.create_connection(server.server_address[:2], timeout=10)
+            self.addCleanup(connection.close)
+            connection.sendall(request)
+            connections.append(connection)
+        worker = threading.Thread(target=server.serve_forever, args=(0.05,), daemon=True)
+        worker.start()
+        self.addCleanup(worker.join)
+        self.addCleanup(server.shutdown)
+        for connection in connections:
+            with connection.makefile('rb') as reply:
+                self.assertEqual(reply.readline().split()[1:2], [b'200'])
+
+
 class DeviceFlowTests(FixtureCase):
     def test_device_flow_issues_tokens_the_api_accepts_and_refresh_rotates(self):
         device = self.start_device()
@@ -1239,7 +1264,11 @@ class StreamCase(FixtureCase):
         for value in ([org] if orgs is None else orgs):
             connection.putheader('x-org-id', value)
         connection.endheaders()
+        sock = connection.sock  # The response takes it over from the connection.
         response = connection.getresponse()
+        with self.server.lock:
+            ends_before = self.server.stream_ends_total
+        response.stream = dict(ends_before=ends_before, client=sock.getsockname()[1], sock=sock)
         self.addCleanup(connection.close)
         return response
 
@@ -1271,11 +1300,27 @@ class StreamCase(FixtureCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(self.records(response, lambda found: found), [('ready', None)])
 
-    def ends_quickly(self, response, within=2.5):
-        """Reads to the end of a stream the server closes, and returns the rest."""
-        started = time.monotonic()
-        rest = response.read()
-        self.assertLess(time.monotonic() - started, within)
+    def ends_because(self, response, reason, backstop=30):
+        """Reads to the end of a stream the server closes and returns the
+        rest, checking the fixture recorded `reason` as why this stream, by
+        its client port, ended. The reason, not the time taken, tells an
+        early close from the stream's lifetime; the backstop only stops a stream that never ends from
+        hanging the run, as keep-alives would defeat the socket timeout."""
+        stream = response.stream
+        pool = ThreadPoolExecutor(max_workers=1)
+        reading = pool.submit(response.read)
+        try:
+            rest = reading.result(timeout=backstop)
+        except FutureTimeout:
+            # Unblock the read, which a closed response alone does not.
+            stream['sock'].shutdown(socket.SHUT_RDWR)
+            self.fail(f'the stream did not end within {backstop} s')
+        finally:
+            pool.shutdown(wait=False)
+        with self.server.lock:
+            ends = [end['reason'] for end in self.server.stream_ends
+                    if end['id'] > stream['ends_before'] and end['client'] == stream['client']]
+        self.assertEqual(ends, [reason])
         return rest
 
 
@@ -1311,8 +1356,45 @@ class UpdateStreamTests(StreamCase):
         self.assertEqual((commented['identifier'], commented['action']), ('OPS-5', 'comment.created'))
         found = self.records(response, lambda found: (':', 'keepalive') in found)
         self.assertIn((':', 'keepalive'), found)
-        # The stream closes by itself after its lifetime: reading to the end returns.
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response, 3))
+        # The stream closes by itself after its lifetime: reading to the end
+        # returns, where a stream left open would keep sending keep-alives.
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'lifetime'))
+
+    def test_each_stream_has_its_own_end_record(self):
+        # Two streams follow the same organisation and teams: Grace's ends
+        # when she loses authority, Ada's only at its lifetime.
+        hook(self, 'tokens', dict(token=GRACE_TOKEN, user='grace'))
+        ada, grace = self.open_stream(), self.open_stream(token=GRACE_TOKEN)
+        self.ready(ada)
+        self.ready(grace)
+        hook(self, 'members/revoke', dict(org=WORKS, user='grace'))
+        self.ends_because(grace, 'lost authority')
+        self.ends_because(ada, 'lifetime')
+
+    def test_a_close_after_the_lifetime_is_not_why_a_stream_ended(self):
+        subscriber = NETT.Subscriber(WORKS, {'OPS'}, 'ada')
+        deadline = time.monotonic()
+        subscriber.close('closed by the fixture')
+        self.assertEqual(NETT.why_stopped(subscriber, deadline + 1, deadline, 'lifetime', True), 'lifetime')
+        self.assertEqual(NETT.why_stopped(subscriber, deadline + 1, deadline + 2, 'lifetime', True),
+                         'closed by the fixture')
+        revoked = NETT.Subscriber(WORKS, {'OPS'}, 'grace')
+        revoked.revoked_at = deadline + 0.5
+        self.assertEqual(NETT.why_stopped(revoked, deadline + 1, deadline, 'lifetime', False), 'lifetime')
+        revoked.revoked_at = deadline - 0.5
+        self.assertEqual(NETT.why_stopped(revoked, deadline + 1, deadline, 'lifetime', False),
+                         'lost authority')
+        self.assertEqual(NETT.why_stopped(revoked, deadline - 1, deadline, 'lifetime', True), None)
+
+    def test_only_the_latest_stream_ends_are_kept(self):
+        with patch.object(NETT, 'MAX_STREAM_ENDS', 2):
+            server = NETT.FixtureServer(port=0, **self.options)
+        self.addCleanup(server.server_close)
+        for _ in range(3):
+            with server.lock:
+                server.stream_ends_total += 1
+                server.stream_ends.append(dict(id=server.stream_ends_total))
+        self.assertEqual([end['id'] for end in server.stream_ends], [2, 3])
 
     def test_streams_need_one_valid_organisation_header_and_known_teams(self):
         self.refused(400, orgs=[])
@@ -1361,7 +1443,7 @@ class UpdateStreamTests(StreamCase):
 
 
 class StreamCloseTests(StreamCase):
-    options = dict(stream_seconds=6, keepalive_seconds=0.3, served=('updates',), auto_approve=True,
+    options = dict(stream_seconds=20, keepalive_seconds=0.3, served=('updates',), auto_approve=True,
                    access_token_seconds=1.2)
 
     def test_a_closed_stream_ends_without_sending_what_is_queued(self):
@@ -1371,7 +1453,7 @@ class StreamCloseTests(StreamCase):
         with subscriber.ready:  # Queue a hint, then lose authority before the stream can send it.
             subscriber.push(dict(projectKey='OPS', issueId=NETT.uid('x'), identifier='OPS-1', version=9))
             subscriber.close('lost authority')
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response))
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'lost authority'))
         deadline = time.monotonic() + 2
         while self.server.subscribers and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -1383,10 +1465,10 @@ class StreamCloseTests(StreamCase):
         self.ready(second)
         status, value, _ = self.call('POST', '/__fixture/updates/close', dict(org=WORKS), token=None)
         self.assertEqual((status, value), (200, dict(closed=1)))
-        self.ends_quickly(works)
+        self.ends_because(works, 'closed by the fixture')
         status, value, _ = self.call('POST', '/__fixture/updates/close', {}, token=None)
         self.assertEqual((status, value), (200, dict(closed=1)))
-        self.ends_quickly(second)
+        self.ends_because(second, 'closed by the fixture')
 
     def test_a_queue_overflow_closes_the_stream(self):
         response = self.open_stream()
@@ -1396,14 +1478,14 @@ class StreamCloseTests(StreamCase):
             for number in range(NETT.STREAM_QUEUE + 1):
                 subscriber.push(dict(projectKey='OPS', issueId=str(number), identifier=f'OPS-{number + 1}', version=1))
             self.assertEqual(subscriber.closed, 'overflow')
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response))
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'overflow'))
 
     def test_an_archived_team_closes_its_streams_and_later_requests_get_404(self):
         response = self.open_stream(keys=('OPS', 'WEB'))
         self.ready(response)
         status, value, _ = self.call('POST', '/__fixture/teams/archive', dict(org=WORKS, key='OPS'), token=None)
         self.assertEqual((status, value['key'], value['closed']), (200, 'OPS', 1))
-        self.ends_quickly(response)
+        self.ends_because(response, 'team archived')
         self.refused(404, keys=('OPS',))
         self.ready(self.open_stream(keys=('WEB',)))
         self.assertIsNotNone(self.get('/issue-teams/OPS')['archivedAt'])
@@ -1416,7 +1498,7 @@ class StreamCloseTests(StreamCase):
         self.assertEqual(status, 200, tokens)
         response = self.open_stream(token=tokens['access_token'])
         self.ready(response)
-        self.ends_quickly(response, within=2.5)  # Long before the six-second lifetime.
+        self.ends_because(response, 'token expired')
         self.assertEqual(self.call('GET', '/api/v1/me', token=tokens['access_token'])[0], 401)
         self.refused(401, token=tokens['access_token'])
         status, rotated, _ = self.call('POST', '/user_management/authenticate', token=None,
@@ -1848,26 +1930,27 @@ class FailureHookTests(FileCase):
         self.assertEqual(self.call('POST', '/__fixture/config', dict(failNext=[dict(method='GET')]), token=None)[0], 400)
 
     def test_a_slow_body_arrives_after_its_headers(self):
+        # The fixture records the headers as sent before it waits, and the
+        # body takes at least the delay: a lower bound, which a busy machine
+        # only lengthens. The held-body test below shows the headers arrive
+        # while the body is still held.
+        def held_last():
+            return self.call('GET', '/__fixture/requests', token=None)[1][-1].get('slowBodyHeadersStatus')
+
         self.configure(slowBody=dict(path='/api/v1/auth/context', seconds=0.8, times=1))
-        connection = http.client.HTTPConnection(urlsplit(self.server.origin).netloc, timeout=5)
-        self.addCleanup(connection.close)
         started = time.monotonic()
-        connection.request('GET', '/api/v1/auth/context', headers={'Authorization': f'Bearer {TOKEN}'})
-        response = connection.getresponse()
-        headers_at = time.monotonic() - started
-        body = json.loads(response.read())
-        body_at = time.monotonic() - started
-        self.assertEqual((response.status, body['userId']), (200, NETT.ADA['userId']))
-        self.assertLess(headers_at, 0.6)
-        self.assertGreaterEqual(body_at, 0.75)
-        started = time.monotonic()
+        code, body, _ = self.call('GET', '/api/v1/auth/context')
+        self.assertGreaterEqual(time.monotonic() - started, 0.75)
+        self.assertEqual((code, body['userId']), (200, NETT.ADA['userId']))
+        self.assertEqual(held_last(), 200)
         self.call('GET', '/api/v1/auth/context')
-        self.assertLess(time.monotonic() - started, 0.6, 'only once')
+        self.assertIsNone(held_last(), 'only once')
         # A path ending in * slows every path under it.
         self.configure(slowBody=dict(path='/api/v1/auth/*', seconds=0.8, times=1))
         started = time.monotonic()
         self.call('GET', '/api/v1/auth/context')
         self.assertGreaterEqual(time.monotonic() - started, 0.75)
+        self.assertEqual(held_last(), 200)
 
     def test_a_held_body_logs_the_sent_headers_and_can_be_released(self):
         path = '/api/v1/auth/context'
@@ -1875,7 +1958,7 @@ class FailureHookTests(FileCase):
         with ThreadPoolExecutor() as pool:
             waiting = pool.submit(self.call, 'GET', path)
             try:
-                deadline = time.monotonic() + 3
+                deadline = time.monotonic() + 8
                 while time.monotonic() < deadline:
                     log = self.call('GET', '/__fixture/requests', token=None)[1]
                     if log and log[-1].get('slowBodyHeadersStatus') == 200:
@@ -1887,6 +1970,22 @@ class FailureHookTests(FileCase):
             finally:
                 self.configure(slowBody=None)
             self.assertEqual(waiting.result(timeout=2)[0], 200)
+
+    def test_a_held_body_whose_limit_ran_out_leaves_the_release_queue(self):
+        # A release after the limit has nothing to let go: a stale entry
+        # would take it and leave the next held body waiting.
+        path = '/api/v1/auth/context'
+        self.configure(slowBody=dict(path=path, seconds=0.3, times=1, waitForRelease=True))
+        self.assertEqual(self.call('GET', path)[0], 200)
+        status, result, _ = self.call('POST', '/__fixture/slowBody/release', {}, token=None)
+        self.assertEqual((status, result['released']), (200, 0))
+        # A hold can outlast a test's waits only while waiting for a release.
+        self.assertEqual(self.call('POST', '/__fixture/config',
+                                   dict(slowBody=dict(path=path, seconds=120, waitForRelease=True)),
+                                   token=None)[0], 200)
+        self.assertEqual(self.call('POST', '/__fixture/config',
+                                   dict(slowBody=dict(path=path, seconds=11)), token=None)[0], 400)
+        self.configure(slowBody=None)
 
     def test_a_dropped_upload_acknowledgement_still_stores_the_bytes(self):
         data = b'# Restore notes\n'
@@ -1948,7 +2047,7 @@ class FailureHookTests(FileCase):
         body, data = self.upload(data=b'x' * 100, draftId=str(uuid.uuid4()))
         prepared = self.ok('POST', '/issues/media/prepare', body)
         url = urlsplit(prepared['upload']['uploadUrl'])
-        slow = http.client.HTTPConnection(url.netloc, timeout=3)
+        slow = http.client.HTTPConnection(url.netloc, timeout=10)
         self.addCleanup(slow.close)
         stop = threading.Event()
 
@@ -1959,7 +2058,10 @@ class FailureHookTests(FileCase):
             except OSError:
                 pass  # The deadline closes the connection.
 
-        with patch.object(NETT.Handler, 'body_timeout', 1), ThreadPoolExecutor() as pool:
+        # A log blocked by the incomplete upload would wait for its
+        # five-second deadline, past the probe's three-second timeout; a busy
+        # machine still answers the probe well within it.
+        with patch.object(NETT.Handler, 'body_timeout', 5), ThreadPoolExecutor() as pool:
             slow.putrequest('PUT', f'{url.path}?{url.query}')
             slow.putheader('Content-Length', str(len(data)))
             slow.putheader('Content-Type', body['contentType'])
@@ -1968,8 +2070,8 @@ class FailureHookTests(FileCase):
             try:
                 # The log is taken at arrival. It must stay readable while the
                 # incomplete request is still receiving bytes.
-                with closing(http.client.HTTPConnection(url.netloc, timeout=0.7)) as probe:
-                    for _ in range(10):
+                with closing(http.client.HTTPConnection(url.netloc, timeout=3)) as probe:
+                    for _ in range(100):
                         probe.request('GET', '/__fixture/requests')
                         reply = probe.getresponse()
                         if any(r['path'] == url.path for r in json.loads(reply.read())):
@@ -2089,13 +2191,13 @@ class StreamReleaseTests(StreamCase):
 
         with patch.object(socket.socket, 'sendall', stall_batch):
             hook(self, 'touch', dict(org=WORKS, issue='OPS-1'))
-            self.assertEqual(self.ends_quickly(response), b'')
+            self.assertEqual(self.ends_because(response, 'write timed out'), b'')
         self.assertEqual(timeouts, [NETT.STREAM_WRITE_SECONDS])
         self.ready(self.open_stream())
 
 
 class StreamRefusalTests(StreamCase):
-    options = dict(stream_seconds=6, keepalive_seconds=0.3, served=('updates',))
+    options = dict(stream_seconds=20, keepalive_seconds=0.3, served=('updates',))
 
     def test_a_stream_can_be_refused_with_401_or_403_and_no_retry_after(self):
         for status in (401, 403):
@@ -2120,7 +2222,7 @@ class StreamRefusalTests(StreamCase):
 
 
 class StreamAuthorityTests(StreamCase):
-    options = dict(stream_seconds=6, keepalive_seconds=0.3, served=('updates',))
+    options = dict(stream_seconds=20, keepalive_seconds=0.3, served=('updates',))
 
     def setUp(self):
         super().setUp()
@@ -2133,7 +2235,7 @@ class StreamAuthorityTests(StreamCase):
         with subscriber.ready:  # Queue a hint, then lose membership before the stream flushes it.
             subscriber.push(dict(projectKey='OPS', issueId=NETT.uid('x'), identifier='OPS-1', version=9))
             hook(self, 'members/revoke', dict(org=WORKS, user='grace', closeStreams=False))
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response))
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'lost authority'))
         self.refused(403, token=GRACE_TOKEN)
 
     def test_revocation_waits_for_delivery_already_authorised(self):
@@ -2168,7 +2270,7 @@ class StreamAuthorityTests(StreamCase):
             finally:
                 resume.set()
             self.assertEqual(request.result(timeout=2)['closed'], 1)
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response))
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'lost authority'))
 
     def test_an_admitted_person_keeps_receiving_while_a_denied_one_is_closed(self):
         ada, grace = self.open_stream(), self.open_stream(token=GRACE_TOKEN)
@@ -2178,13 +2280,13 @@ class StreamAuthorityTests(StreamCase):
         self.call('POST', '/__fixture/touch', dict(org=WORKS, issue='OPS-1'), token=None)
         found = self.records(ada, lambda found: any(name == 'issueChanged' for name, _ in found))
         self.assertEqual([data['identifier'] for name, data in found if name == 'issueChanged'], ['OPS-1'])
-        self.assertNotIn(b'issueChanged', self.ends_quickly(grace))
+        self.assertNotIn(b'issueChanged', self.ends_because(grace, 'lost authority'))
 
     def test_a_revoked_token_closes_its_stream_and_cannot_reopen_it(self):
         response = self.open_stream(token=GRACE_TOKEN)
         self.ready(response)
         self.assertEqual(hook(self, 'tokens/revoke', dict(token=GRACE_TOKEN))['closed'], 1)
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response))
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'lost authority'))
         self.refused(401, token=GRACE_TOKEN)
 
 

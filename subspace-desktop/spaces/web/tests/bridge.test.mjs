@@ -138,10 +138,22 @@ test("native pushes become window events", () => {
   const seen = [];
   window.addEventListener("subspace:theme", event => seen.push(["theme", event.detail.mode]));
   window.addEventListener("subspace:issues-changed", event => seen.push([event.type]));
+  window.addEventListener("subspace:fleets-changed", event => seen.push([event.type]));
   window.__subspaceEvent("theme", { mode: "light" });
   window.__subspaceEvent("issues-changed", null);
+  window.__subspaceEvent("fleets-changed", null);
   window.__subspaceEvent("unknown", {});
-  assert.deepEqual(seen, [["theme", "light"], ["subspace:issues-changed"]]);
+  assert.deepEqual(seen, [["theme", "light"], ["subspace:issues-changed"], ["subspace:fleets-changed"]]);
+});
+
+test("fleets.get sends its method and nothing else", async () => {
+  const { window, messages, answer } = fixture();
+  answer(messages[0], { notificationPermission: "denied" });
+  const fleets = window.subspace.fleets.get();
+  assert.deepEqual(messages[1].operation, { method: "fleets.get" });
+  answer(messages[1], [{ id: "aurora", endpoint: "https://aurora.example.com", token: null, problem: "no-token" }]);
+  assert.equal((await fleets)[0].problem, "no-token");
+  assert.ok(Object.isFrozen(window.subspace.fleets));
 });
 
 test("secrets.set sends a key and a value, or null to delete, and nothing else", async () => {

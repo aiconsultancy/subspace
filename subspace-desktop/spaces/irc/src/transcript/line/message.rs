@@ -19,40 +19,39 @@ pub(crate) fn message(
     cx: &App,
 ) -> (AnyElement, Vec<String>) {
     let tokens = Tokens::current(cx);
-    let hub = context.hub.upgrade();
-    let shown = displayed(original, hub.as_ref().map(|hub| hub.read(cx)));
+    let shown = shown_now(original, context, cx);
     let entry = shown.as_ref().unwrap_or(original);
     let nick = entry.line.from.clone().unwrap_or_default();
     let id: SharedString = format!("irc-line:{}", entry.seq).into();
     let group: SharedString = format!("{id}:hover").into();
     let rendered = markup::rich(&entry.line.text, &context.mentions);
-    let identifiers = identifiers(original, context, rendered.as_ref());
+    let issues = markup::issues(&original.line.text, &context.mentions, rendered.as_ref());
+    let refs = crate::tiles::candidates(markup::references(
+        &original.line.text,
+        &context.mentions,
+        rendered.as_ref(),
+    ));
+    let identifiers = identifiers(original, context, rendered.as_ref(), issues);
     let spoken = spoken(entry, rendered.as_ref());
-    let leading = message_gutter(entry, &nick, continues, &group, cx);
+    let rank = context
+        .roster
+        .verified(&nick, entry.line.account.as_deref());
+    let leading = message_gutter(entry, (&nick, rank), continues, &group, cx);
     let column = v_flex()
         .relative()
         .flex_1()
         .min_w_0()
         .gap_0p5()
         .when(!continues, |column| {
-            column.child(header(entry, &nick, &tokens, cx))
+            column.child(header(entry, &nick, rank, &tokens, cx))
         })
         .when(!entry.line.text.is_empty(), |column| {
             column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
         })
-        .children(crate::transcript::replies::metadata(
-            entry,
-            &context.replies,
-            &tokens,
-        ))
-        .children(crate::issues::tiles(
-            entry,
-            &identifiers,
-            context,
-            &tokens,
-            cx,
-        ))
+        .children(thread_facts(entry, context, &tokens, cx))
+        .children(crate::tiles::row(entry, &refs, context, cx))
         .children(attachments(original, context, &tokens, cx))
+        .children(crate::transcript::reactions::row(entry, context))
         .children(marks::focus_card(entry, context));
     let row = h_flex()
         .id(SharedString::from(format!("{id}:row")))
@@ -71,10 +70,94 @@ pub(crate) fn message(
         .child(leading)
         .child(column)
         .children(marks::focus_ring(entry, context, &tokens, cx));
+    let row = measure_focused(row, entry, context);
     let selected = entry.highlight || context.target == Some(entry.seq);
     let row = filled(row, RowFill::of(selected, unread, &tokens));
     let row = message_frame(id, row, continues);
     (row, identifiers)
+}
+
+/// `original` as the hub shows it now: with resolved uploads' text hidden,
+/// when any is ([`displayed`]).
+fn shown_now(original: &Entry, context: &RowContext, cx: &App) -> Option<Entry> {
+    let hub = context.hub.upgrade();
+    displayed(original, hub.as_ref().map(|hub| hub.read(cx)))
+}
+
+/// A message as the inspector's Thread tab shows it: its sender, rank and
+/// time unless it `continues` their group, then its text with its
+/// references, as the transcript draws them. No avatar, tiles, thread facts
+/// or attachments: the transcript keeps those.
+pub(crate) fn thread_message(
+    original: &Entry,
+    continues: bool,
+    context: &RowContext,
+    cx: &App,
+) -> AnyElement {
+    let tokens = Tokens::current(cx);
+    let shown = shown_now(original, context, cx);
+    let entry = shown.as_ref().unwrap_or(original);
+    let nick = entry.line.from.clone().unwrap_or_default();
+    let rendered = markup::rich(&entry.line.text, &context.mentions);
+    let rank = context
+        .roster
+        .verified(&nick, entry.line.account.as_deref());
+    v_flex()
+        .id(SharedString::from(format!("irc-thread-line:{}", entry.seq)))
+        .role(Role::Group)
+        .aria_label(spoken(entry, rendered.as_ref()))
+        .test_support()
+        .w_full()
+        .min_w_0()
+        .gap_0p5()
+        .when(!continues, |column| {
+            column.child(header(entry, &nick, rank, &tokens, cx))
+        })
+        .when(!entry.line.text.is_empty(), |column| {
+            column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
+        })
+        .children(crate::transcript::reactions::read_only(entry, context))
+        .into_any_element()
+}
+
+/// The keyboard-focused message measures itself into the reaction menu's
+/// anchor, so `r` opens the menu at the message. Other rows are untouched.
+fn measure_focused<E: gpui_kit::base::ElementExt>(
+    row: E,
+    entry: &Entry,
+    context: &RowContext,
+) -> E {
+    let focused = context.focus.is_some_and(|at| at.seq == entry.seq);
+    match context.react_anchor.clone().filter(|_| focused) {
+        Some(anchor) => row.on_prepaint(move |bounds, _, cx| {
+            anchor.update(cx, |anchor, cx| anchor.set_bounds(bounds, cx));
+        }),
+        None => row,
+    }
+}
+
+/// What a message's thread says under it: the reply count, then the status
+/// line of a request in progress or its settled line once it ended. Where
+/// the inspector has a Thread tab, either opens the thread, and a request's
+/// line carries the count itself.
+fn thread_facts(entry: &Entry, context: &RowContext, tokens: &Tokens, cx: &App) -> Vec<AnyElement> {
+    let link = crate::transcript::replies::link(entry, context);
+    let on_status = context.statuses.contains_key(&entry.seq);
+    crate::transcript::replies::metadata(
+        entry,
+        &context.replies,
+        (link.as_ref(), on_status),
+        tokens,
+    )
+    .into_iter()
+    .chain(crate::transcript::status::line(
+        entry,
+        (&context.statuses, link.as_ref()),
+        context.now,
+        tokens,
+        cx,
+    ))
+    .collect()
 }
 
 /// The message's upload thumbnails, from its text as sent.
@@ -88,6 +171,23 @@ fn attachments(
     crate::uploads::tiles(&original.line.text, context, focused, tokens, cx)
 }
 
+/// The issues and pull requests message `original` names that could show
+/// a tile, read exactly as its row reads them.
+pub(crate) fn tile_refs(
+    original: &Entry,
+    hub: Option<&crate::hub::Hub>,
+    mentions: &crate::markup::Mentions,
+) -> Vec<crate::markup::Ref> {
+    let shown = displayed(original, hub);
+    let entry = shown.as_ref().unwrap_or(original);
+    let rendered = markup::rich(&entry.line.text, mentions);
+    crate::tiles::candidates(markup::references(
+        &original.line.text,
+        mentions,
+        rendered.as_ref(),
+    ))
+}
+
 /// `entry` with the sent text of every resolved upload hidden, when any is:
 /// its thumbnail under the text says the same.
 pub(crate) fn displayed(entry: &Entry, hub: Option<&crate::hub::Hub>) -> Option<Entry> {
@@ -99,8 +199,14 @@ pub(crate) fn displayed(entry: &Entry, hub: Option<&crate::hub::Hub>) -> Option<
     })
 }
 
-fn identifiers(entry: &Entry, context: &RowContext, rendered: Option<&Rendered>) -> Vec<String> {
-    let mut keys = markup::issues(&entry.line.text, &context.mentions, rendered);
+/// Every key the row asks the hub about: its `issues`, then its pull
+/// requests and uploads.
+fn identifiers(
+    entry: &Entry,
+    context: &RowContext,
+    rendered: Option<&Rendered>,
+    mut keys: Vec<String>,
+) -> Vec<String> {
     keys.extend(markup::pull_requests(
         &entry.line.text,
         &context.mentions,

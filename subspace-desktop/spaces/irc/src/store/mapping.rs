@@ -15,6 +15,8 @@ use crate::state::is_message;
 const LOCAL: &str = "local";
 pub(crate) const CHANNEL_KIND: &str = "Channel message";
 pub(crate) const PRIVATE_KIND: &str = "Private message";
+/// A request that ended, stored beside its buffer's lines.
+pub(crate) const ENDING_KIND: &str = "Channels request ending";
 
 /// The board's one search scope in app `app`.
 pub(crate) fn scope(app: &str) -> Scope {
@@ -128,9 +130,66 @@ pub(crate) fn metadata(line: &Line) -> IndexMetadata {
     }
 }
 
-/// The line a record holds, back from its payload.
+/// The line a record holds, back from its payload. An ending record holds
+/// none.
 pub(crate) fn line(document: &Document) -> Option<Line> {
-    serde_json::from_str(document.payload.as_deref()?).ok()
+    let payload = document
+        .payload
+        .as_deref()
+        .filter(|_| document.kind != ENDING_KIND)?;
+    serde_json::from_str(payload).ok()
+}
+
+/// A request that completed or failed, by a trusted notice, as the store
+/// keeps it: the buffer, so it restores without any surviving line, the
+/// request's message ID, and how and when it ended. A record stored before
+/// outcomes were kept has neither, and loads as done without a duration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Ended {
+    pub buffer: BufferKey,
+    pub request: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<crate::thread_status::Outcome>,
+    /// The server time of the notice that ended it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<DateTime<Utc>>,
+}
+
+impl Ended {
+    /// The ending as the buffer's requests keep it.
+    pub(crate) fn ending(&self) -> crate::thread_status::Ending {
+        crate::thread_status::Ending {
+            outcome: self.outcome,
+            at: self.at,
+        }
+    }
+}
+
+/// The record of `ended` at `now`: one per request, under its buffer's
+/// parent, so removing the buffer deletes it with the lines. It has no
+/// text, so no search finds it.
+pub(crate) fn ending_document(ended: &Ended, now: DateTime<Utc>) -> Option<Document> {
+    Some(Document {
+        id: format!("ended:{}:{}", ended.buffer.network.0, ended.request),
+        title: String::new(),
+        body: String::new(),
+        metadata: String::new(),
+        parent_id: Some(parent_id(&ended.buffer)),
+        kind: ENDING_KIND.to_owned(),
+        url: None,
+        navigation: String::new(),
+        refreshed_at: now.timestamp(),
+        payload: Some(serde_json::to_string(ended).ok()?),
+    })
+}
+
+/// The ending an ending record holds.
+pub(crate) fn ended(document: &Document) -> Option<Ended> {
+    let payload = document
+        .payload
+        .as_deref()
+        .filter(|_| document.kind == ENDING_KIND)?;
+    serde_json::from_str(payload).ok()
 }
 
 /// Where a record leads, from its navigation.

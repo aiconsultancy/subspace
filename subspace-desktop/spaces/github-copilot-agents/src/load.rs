@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use gpui_kit::{AppContext as _, Context, SharedString, Task as GpuiTask};
 use subspace_framework::client_github::Client as GithubClient;
+use subspace_framework::client_github::PinnedWork;
 use subspace_framework::client_github::copilot_agents::{Subject, Task, TaskDetail};
 use subspace_framework::core::copilot_agent_tasks::{SubjectTaskRef, TaskStore};
 use subspace_framework::core::http::Error;
@@ -17,14 +18,31 @@ use subspace_framework::dashboard::{DashboardEvent, Toast, alerts, refresh};
 use crate::model::Kind;
 use crate::{CopilotAgents, watch};
 
-/// What one list load returns: the task list, the saved references, which
-/// are read from the same background thread, and the work login when the
-/// load was asked to name it.
+/// What one list load returns: the task list with the work account it was
+/// read as, and the saved references, which are read from the same
+/// background thread.
 type ListResult = (
-    Result<Vec<Task>, Error>,
+    Result<(Vec<Task>, WorkIdentity), Error>,
     Vec<SubjectTaskRef>,
-    Option<String>,
 );
+
+/// The work account an answer was read as: the login GitHub verified for
+/// the credential the read was pinned to, and that account's immutable node
+/// ID, which is what anything kept per account is keyed by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorkIdentity {
+    pub(crate) login: String,
+    pub(crate) account_id: String,
+}
+
+impl WorkIdentity {
+    pub(crate) fn of(work: &PinnedWork<'_>) -> Self {
+        Self {
+            login: work.login().to_owned(),
+            account_id: work.account_id().to_owned(),
+        }
+    }
+}
 
 impl CopilotAgents {
     /// Loads the task list and the saved references, unless a load runs.
@@ -38,11 +56,9 @@ impl CopilotAgents {
             return;
         };
         self.loading = true;
-        // The login does not change while the app runs, so one answer lasts.
-        let name_login = self.login.is_none();
         cx.spawn(async move |this, cx| {
             let loaded = cx
-                .background_spawn(async move { list_tasks(&client, store, name_login) })
+                .background_spawn(async move { list_tasks(&client, store) })
                 .await;
             _ = this.update(cx, |this, cx| {
                 this.apply_list(loaded, cx);
@@ -53,14 +69,24 @@ impl CopilotAgents {
         cx.notify();
     }
 
-    fn apply_list(&mut self, (tasks, saved, login): ListResult, cx: &mut Context<Self>) {
+    /// Takes a list answer. A list that loaded names the account it was
+    /// read as, so a changed credential shows on the next load; a failed
+    /// load keeps the account the list on show was read as. When the
+    /// account changed, the open log, which the other account read, goes.
+    fn apply_list(&mut self, (listed, saved): ListResult, cx: &mut Context<Self>) {
         self.loading = false;
         self.saved = saved;
-        if login.is_some() {
-            self.login = login;
-        }
-        match tasks {
-            Ok(tasks) => {
+        match listed {
+            Ok((tasks, identity)) => {
+                if self
+                    .identity
+                    .as_ref()
+                    .is_some_and(|shown| shown.account_id != identity.account_id)
+                {
+                    self.log = None;
+                }
+                self.login = Some(identity.login.clone());
+                self.identity = Some(identity);
                 self.loaded_at = Some(Instant::now());
                 self.error = None;
                 self.tasks = tasks;
@@ -133,6 +159,7 @@ impl CopilotAgents {
                     .insert(detail.task.id.clone(), detail.task.clone());
                 crate::logs::load::prefetch_latest(
                     self.client.clone(),
+                    self.identity.clone(),
                     request.key().clone(),
                     &detail,
                     cx,
@@ -256,30 +283,38 @@ pub(crate) fn record_monitor(
     store.record(&subject, entry)
 }
 
-/// The task list and the saved references, both blocking reads. With
-/// `name_login`, a list that loaded also names the work login it was read
-/// as: one more small request, which the navigator and the status bar show.
-fn list_tasks(
-    client: &GithubClient,
-    store: Option<Arc<TaskStore>>,
-    name_login: bool,
-) -> ListResult {
-    let tasks = client.list_my_copilot_agent_tasks().map(|list| list.tasks);
-    let login = match name_login && tasks.is_ok() {
-        true => client.work_login().ok(),
-        false => None,
-    };
+/// The task list and the saved references, both blocking reads. A list
+/// that loaded also names the work account it was read as, so the
+/// navigator and the status bar follow a changed credential instead of
+/// naming the first account all session. The list and every lookup it
+/// needs go out with one pinned work credential, and the account named is
+/// the one GitHub verified for that very credential, so the list is never
+/// named as another account's.
+fn list_tasks(client: &GithubClient, store: Option<Arc<TaskStore>>) -> ListResult {
+    let listed = client.pin_work().and_then(|work| {
+        let tasks = work.list_my_copilot_agent_tasks()?.tasks;
+        Ok((tasks, WorkIdentity::of(&work)))
+    });
     let saved = store.and_then(|store| store.all().ok()).unwrap_or_default();
-    (tasks, saved, login)
+    (listed, saved)
 }
 
-/// One request per monitored task. The detail endpoint is the only one that
-/// needs no repository path, so it serves as the cheap state read too.
+/// Why an answer read as another work account than the one the Space shows
+/// was refused.
+pub(crate) const ACCOUNT_CHANGED: &str =
+    "The GitHub work account changed during the read. Refresh to read it again.";
+
+/// One request per monitored task, all with one pinned work credential.
+/// The detail endpoint is the only one that needs no repository path, so it
+/// serves as the cheap state read too.
 fn poll_tasks(client: &GithubClient, ids: &[String]) -> Vec<Result<Task, Error>> {
+    let work = match client.pin_work() {
+        Ok(work) => work,
+        Err(error) => return vec![Err(error)],
+    };
     ids.iter()
         .map(|id| {
-            client
-                .get_copilot_agent_task_detail(id, None::<Subject>)
+            work.get_copilot_agent_task_detail(id, None::<Subject>)
                 .map(|detail| detail.task)
         })
         .collect()

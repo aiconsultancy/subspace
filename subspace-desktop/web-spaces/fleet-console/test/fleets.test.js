@@ -150,6 +150,16 @@ test("resolving: sample without a usable fleet, live with any fleet that has a t
   const both = resolveFleets({ ...base, settings: { endpoint: "https://s.example.com", motion: "Reduced" }, secrets: { token: "t" }, list: [{ id: "fpage00001", name: "Page", endpoint: "https://p.example.com" }] });
   assert.deepEqual(both.fleets.map((fleet) => [fleet.origin, Boolean(fleet.token)]), [["settings", true], ["local", false]]);
   assert.equal(both.motion, "Reduced");
+  // A fleet the Subspace API assigns, without its token: the banner says
+  // what that fleet needs, not that Fleet Console has no address.
+  const apiNoToken = resolveFleets({ ...base, api: [{ id: "aurora", name: "Aurora", endpoint: "https://a.example.com", token: null, problem: "no-token" }] });
+  assert.deepEqual([apiNoToken.mode, apiNoToken.reason], ["sample", "api-no-token"]);
+  const apiMoved = resolveFleets({ ...base, api: [{ id: "aurora", endpoint: "https://a.example.com", problem: "token-address" }] });
+  assert.equal(apiMoved.reason, "api-token-address");
+  const ownFirst = resolveFleets({ ...base, settings: { endpoint: "https://s.example.com" }, api: [{ id: "aurora", endpoint: "https://a.example.com", problem: "no-token" }] });
+  assert.equal(ownFirst.reason, "no-token", "a Settings fleet's own problem comes first");
+  const apiLive = resolveFleets({ ...base, api: [{ id: "aurora", endpoint: "https://a.example.com", token: "k" }] });
+  assert.deepEqual([apiLive.mode, apiLive.fleets.map((fleet) => fleet.origin)], ["live", ["api"]]);
   assert.equal(resolveFleets({ ...base, capabilities: { secrets: true, secretsSet: false } }).canStore, false);
   assert.equal(resolveFleets({ ...base, allowed: { ...allowedAll, saveSecrets: false } }).canStore, false, "storing needs save-secrets");
 });
@@ -530,4 +540,30 @@ test("sample fleets say how to see real ones, inside Subspace or not", () => {
   assert.equal(sampleNote("Fleets can be added only inside Subspace."), "These are sample fleets. Fleets can be added only inside Subspace.");
   const html = landscapePanel({ fleets: [], sample: true, blocker: null });
   assert.doesNotMatch(html, /once Fleet Console runs inside Subspace/);
+});
+
+test("fleets from the Subspace API keep their address and only a token Subspace gave for it", () => {
+  const api = apiFleets(
+    [
+      { id: "aurora", name: "Aurora", endpoint: "https://aurora.example.com/", token: "k", problem: null },
+      { id: "borealis", name: "Borealis", endpoint: "https://borealis.example.com", token: null, problem: "token-address" },
+      { id: "cygnus", name: " ", endpoint: "https://cygnus.example.com", token: null, problem: null },
+      { id: "draco", name: "Draco", endpoint: null, token: null, problem: "no-endpoint" },
+      { id: "eridani", name: "Eridani", endpoint: "http://10.0.0.4:8484", token: "k", problem: null },
+      null,
+    ],
+    normalizeEndpoint,
+  );
+  assert.deepEqual(
+    api.map((fleet) => [fleet.id, fleet.name, fleet.endpoint, fleet.origin, fleet.token, fleet.problem]),
+    [
+      ["api_aurora", "Aurora", "https://aurora.example.com", "api", "k", null],
+      ["api_borealis", "Borealis", "https://borealis.example.com", "api", null, "token-address"],
+      ["api_cygnus", null, "https://cygnus.example.com", "api", null, "no-token"],
+    ],
+  );
+  assert.deepEqual(apiFleets(null, normalizeEndpoint), []);
+  const resolved = resolveFleets({ present: true, allowed: allowedAll, capabilities: caps, settings: {}, secrets: {}, list: [], api: [{ id: "aurora", name: "Aurora", endpoint: "https://aurora.example.com", token: "k" }], normalizeEndpoint });
+  assert.equal(resolved.mode, "live");
+  assert.deepEqual(resolved.fleets.map((fleet) => fleet.origin), ["api"]);
 });

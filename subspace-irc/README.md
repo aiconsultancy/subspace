@@ -1,8 +1,11 @@
 # Subspace IRC
 
 Subspace IRC packages [Ergo](https://ergo.chat/) for the desktop Channels
-Space and Stargate fleets. One server can serve many fleets and desktops.
-Choose distinct account and channel names for each fleet on a shared server.
+Space and Stargate fleets. Run one server for the whole setup, however many
+fleets there are: every fleet and desktop shares it, over a private network
+only. Choose distinct account and channel names for each fleet on it.
+[INSTALL.md](../INSTALL.md#one-fleet-or-several-shared-irc) says where to run
+it.
 
 ## Run locally
 
@@ -41,9 +44,16 @@ Compose file, add `./subspace-irc/compose.yaml` to its `include:` list.
 
 ## Fleet VM or container host
 
-Use the same image and a persistent volume at `/ircd` on a fleet VM or a
-separate host. Run one instance per volume and point the fleets and desktops
-at the server's shared DNS name. Use the advertised TLS host and port in the
+For real use with several fleets, run this image on a container host on the
+private network; we use Azure Container Apps. A fleet VM is fine for a trial
+or a single fleet, and the fleet installer sets that up. No image is
+published: build it from this folder and push it to your own registry.
+[Run the shared IRC server in a container](../INSTALL.md#run-the-shared-irc-server-in-a-container)
+has the rules, the seeding and an Azure example.
+
+Use the same image and a persistent volume at `/ircd` wherever it runs. Run
+one instance per volume and point the fleets and desktops at the server's
+shared DNS name. Use the advertised TLS host and port in the
 fleet's API record. For a direct TLS deployment, set `IRC_SERVER_NAME` to
 that name, mount the real certificate and key read-only, and set
 `IRC_TLS_CERT` and `IRC_TLS_KEY` to their absolute container paths. The key
@@ -120,8 +130,9 @@ Set `IRC_CHANNELS_JSON` or mount a read-only JSON file and set
 
 ```json
 [
-  { "name": "#example-command", "topic": "Fleet coordination" },
-  { "name": "#example-captain", "founder": "example-captain" },
+  { "name": "#example-fleet-starbase", "topic": "Admirals and the rear admiral" },
+  { "name": "#example-fleet-command", "topic": "Fleet coordination" },
+  { "name": "#example-fleet-orion", "founder": "example-orion" },
   { "name": "#example-initiative", "topic": "Initiative discussion", "modes": "+is" }
 ]
 ```
@@ -142,12 +153,14 @@ ChanServ access. A channel with a different registered founder stops startup.
 Use ChanServ to transfer ownership deliberately and then update the seed.
 Removing an entry leaves the registration intact.
 
-Stargate and the installer use `#<fleet-slug>-command` and
-`#<fleet-slug>-<captain-id>` by default. The command channel serves as the
-fleet's Starbase. Use the exact names from the gateway configuration in the
-seed, including any overrides. Initiative channel names come from
-the API's `channels` string as comma- or space-separated names with their
-leading `#`. Seed those names on the initiative's assigned fleet IRC
+Every fleet has the installer's
+[standard channels](../subspace-installer/README.md#channels):
+`#<fleet-slug>-starbase` (Starbase), `#<fleet-slug>-command` (fleet command)
+and `#<fleet-slug>-<captain-id>` for each captain. Seed all of them; the
+installer's `--dry-run` and a fleet's IRC bundle list the exact names. Their
+names are fixed, and other channels sit beside them. Initiative channel names
+come from the API's `channels` string as comma- or space-separated names with
+their leading `#`. Seed those names on the initiative's assigned fleet IRC
 endpoint (`ircHost`, `ircPort`, `ircTls` and optional `ircWebsocketUrl`).
 Use distinct channel names across fleets and organisations sharing the same
 IRC server.

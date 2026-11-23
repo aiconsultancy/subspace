@@ -5,12 +5,15 @@
 
 use gpui_kit::component::v_flex;
 use gpui_kit::{
-    AnyElement, App, Context, IntoElement, ParentElement as _, Render, Styled as _, Window, div,
+    AnyElement, App, Context, InteractiveElement as _, IntoElement, KeyContext, ParentElement as _,
+    Render, Styled as _, Window, div,
 };
 use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
-use subspace_framework::dashboard::{Dashboard as _, Tokens, feedback, list, measure, workspace};
+use subspace_framework::dashboard::{
+    DASHBOARD_CONTEXT, Dashboard as _, Tokens, list, measure, workspace,
+};
 
-use super::{bind_hub, conversations, details, empty};
+use super::{bind_hub, conversations, empty};
 use crate::{Irc, dock, initiatives, join, toolbar};
 
 impl Render for Irc {
@@ -26,9 +29,17 @@ impl Render for Irc {
             frame = frame.navigator(navigator(self, configured, window, cx));
         }
         if configured && self.dock.members_open() {
-            frame = frame.inspector(inspector(self, cx));
+            frame = frame.inspector(super::inspector::inspector(self, cx));
         }
+        // The root carries the Space's key context and focus, so the board
+        // stays focusable and its keys answer while the navigator, whose
+        // list also tracks them, is hidden.
+        let mut context = KeyContext::new_with_defaults(cx.platform_info().os);
+        context.add(DASHBOARD_CONTEXT);
+        context.add(Self::ID);
         v_flex()
+            .key_context(context)
+            .track_focus(&self.focus)
             .relative()
             .size_full()
             .child(frame)
@@ -133,28 +144,4 @@ fn heading(board: &Irc, named: bool, cx: &App) -> Option<AnyElement> {
     let conversation = board.dock.open.get(focused)?.entity.read(cx);
     let heading = conversation.heading(named, cx)?;
     Some(div().flex_1().min_w_0().child(heading).into_any_element())
-}
-
-/// The inspector: the focused channel's members under their count, or a
-/// hint for a buffer that has none.
-fn inspector(board: &Irc, cx: &mut Context<Irc>) -> workspace::Inspector {
-    let members = dock::focused_members(board);
-    let count = members.as_ref().map(|list| list.read(cx).count(cx));
-    let body = match members {
-        Some(list) => list.into_any_element(),
-        None => no_channel(cx),
-    };
-    workspace::Inspector::new("irc-inspector", details::members_title(count))
-        .on_close(
-            "Hide members",
-            cx.listener(|board, _, _, cx| dock::toggle_members(board, cx)),
-        )
-        .child(body)
-}
-
-/// What the inspector says for the server buffer and private conversations.
-fn no_channel(cx: &App) -> AnyElement {
-    let tokens = Tokens::current(cx);
-    let hint = "Open a channel to see its members.";
-    feedback::empty(&tokens, "irc-members-none", "No channel", hint).into_any_element()
 }

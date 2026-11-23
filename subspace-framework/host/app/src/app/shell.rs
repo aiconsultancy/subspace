@@ -186,11 +186,11 @@ impl SubspaceApp {
     }
 
     /// The docks of the Space on show, for the status bar's switches. None
-    /// while another surface, such as the log view or a maximised terminal,
-    /// covers the Space.
+    /// while another surface, such as the log view, a maximised terminal or
+    /// zoomed Help, covers the Space.
     pub(super) fn space_docks(&self, cx: &App) -> SpaceDocks {
         self.dashboard()
-            .filter(|_| self.main.is_board() && !self.terminal_maximized())
+            .filter(|_| self.main.is_board() && !self.terminal_maximized() && !self.help_zoomed(cx))
             .map_or(SpaceDocks::NONE, |dashboard| dashboard.docks(cx))
     }
 

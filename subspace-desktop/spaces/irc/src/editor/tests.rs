@@ -15,7 +15,7 @@ fn saved() -> Map<String, Value> {
              "password": "server-secret",
              "sasl": {"username": "fixture", "password": "account-secret"},
              "channels": ["#subspace"], "futureKey": 7},
-            {"id": "local", "name": "Local Ergo", "host": "127.0.0.1", "port": 16667,
+            {"id": "local", "name": "Acme IRC", "host": "127.0.0.1", "port": 16667,
              "tls": false, "nickname": "subspace"}
         ],
         "highlights": ["rocket"],
@@ -207,8 +207,5 @@ fn removing_asks_with_the_network_name(cx: &mut TestAppContext) {
 
 #[test]
 fn the_confirmation_names_the_network() {
-    assert_eq!(
-        super::view::removal_title("Local Ergo"),
-        "Remove “Local Ergo”?"
-    );
+    assert_eq!(super::view::removal_title("Acme IRC"), "Remove “Acme IRC”?");
 }

@@ -100,7 +100,10 @@ fn the_refreshed_lists_announce_changed_and_answer_v2(cx: &mut TestAppContext) {
     assert_eq!(listed_title(&board, cx).as_deref(), Some(V2));
     cx.run_until_parked();
     let reads = mock.requests().iter().filter(|r| is_detail_read(r)).count();
-    assert_eq!(reads, 0, "the refreshed list answers without another read");
+    assert_eq!(
+        reads, 1,
+        "the refreshed list answers at once; one read fetches its check runs"
+    );
 }
 
 #[gpui_kit::test]

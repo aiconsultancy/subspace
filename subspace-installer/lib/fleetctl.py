@@ -9,6 +9,7 @@ import sys
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+import fleet_records
 from runtime import APP, ETC, UUID, Invalid, pattern, read_json, require, validate
 
 
@@ -43,7 +44,7 @@ class Api:
             raise ApiError(method, error.code) from None
         except (URLError, OSError, ValueError):
             raise Invalid(f"Could not read the Subspace API response for {method}.") from None
-        require(isinstance(value, dict), "Unexpected Subspace API response.")
+        require(isinstance(value, (dict, list)), "Unexpected Subspace API response.")
         return value
 
     def assign(self, initiative, fleet_id):
@@ -52,32 +53,19 @@ class Api:
 
 
 def register(cfg):
+    """Register the fleet, its standard channels, ships and officers (fleet_records), then its initiatives."""
     if not cfg["api"]:
         return
     api = Api(cfg)
-    irc = cfg["irc"].get("advertise", cfg["irc"])
-    fields = {
-        "slug": cfg["slug"], "name": cfg["name"], "ircHost": irc["host"], "ircPort": irc["port"],
-        "ircTls": irc["tls"], "ircWebsocketUrl": irc.get("websocketUrl"),
-        "vmHost": cfg["api"].get("vmHost"),
-    }
-    path = f"/fleets/{cfg['slug']}"
+    fields = fleet_records.fleet_fields(cfg)
     try:
-        fleet = api.request("GET", path)
-    except ApiError as error:
-        if error.status != 404:
-            raise
-        try:
-            fleet = api.request("POST", "/fleets", fields)
-        except ApiError as conflict:
-            if conflict.status != 409:
-                raise
-            fleet = api.request("GET", path)
-    changes = {key: value for key, value in fields.items() if fleet.get(key) != value}
-    if changes:
-        fleet = api.request("PATCH", path, changes)
+        fleet = fleet_records.register(api.request, fields, fleet_records.roster(cfg))
+    except fleet_records.Refused as error:
+        raise Invalid(str(error)) from None
     fleet_id = pattern(fleet.get("id"), UUID, "API fleet UUID")
-    print(f"Fleet {cfg['slug']} registered as {fleet_id}.")
+    print(f"Fleet {cfg['slug']} registered as {fleet_id}, with its standard channels, ships and officers.")
+    if fields["fleetApiUrl"]:
+        print(f"Desktops reach its Stargate Fleet API at {fields['fleetApiUrl']}; the desktop app asks for its token once.")
     for initiative in cfg["api"]["initiatives"]:
         current = api.request("GET", f"/initiatives/{initiative}")
         if current.get("fleetId") != fleet_id:
@@ -85,9 +73,11 @@ def register(cfg):
 
 
 def attach(member):
-    member = pattern(member, r"[a-z][a-z0-9-]{0,28}", "member ID")
+    member = pattern(member, r"[a-z][a-z0-9-]{0,19}", "rear-admiral or captain ID")
     units = (ETC / "units").read_text().splitlines()
-    require(f"subspace-fleet-engine-{member}.service" in units, "No installed OpenCode engine for this member.")
+    require(f"subspace-fleet-engine-{member}.service" in units,
+            "No installed OpenCode engine for this member. Crew run on their captain's server: "
+            "attach to the captain and open the crew member's session from its session list.")
     settings = ETC / f"engine-{member}.json"
     require(settings.is_file(), "Unknown fleet member.")
     os.execvp("runuser", ["runuser", "--pty", "-u", f"ss-{member}", "--",
@@ -107,11 +97,11 @@ def api_token():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("register", help="sync the configured fleet and initiatives")
+    sub.add_parser("register", help="sync the configured fleet, its channels, ships, officers and initiatives")
     assign = sub.add_parser("assign", help="assign an initiative to a fleet")
     assign.add_argument("initiative")
     assign.add_argument("fleet", help="fleet slug, UUID, or 'none'")
-    tty = sub.add_parser("attach", help="open a fleet member's OpenCode tmux session")
+    tty = sub.add_parser("attach", help="open the rear admiral's or a captain's OpenCode tmux session (crew sessions are on the captain's server)")
     tty.add_argument("member")
     sub.add_parser("api-token", help="print the Stargate Fleet API token for an operator's client")
     args = parser.parse_args()

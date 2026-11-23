@@ -598,15 +598,15 @@ include_str!("../../../../../shared.rs");
                     package["dependencies"] = []
 
     def test_original_e8_host_help_includes_are_forbidden_without_exemptions(self) -> None:
-        board = self.root / "spaces/board-lab"
+        board = self.root / "spaces/space-lab"
         board.mkdir()
-        (board / "Cargo.toml").write_text("[package]\nname = 'board-lab'\n")
-        self.packages[board] = {"name": "board-lab", "dependencies": []}
+        (board / "Cargo.toml").write_text("[package]\nname = 'space-lab'\n")
+        self.packages[board] = {"name": "space-lab", "dependencies": []}
         for source, target, syntax in (
             ("contents_tests.rs", "spaces/actions/help.md", "include_str"),
-            ("contents_runtime_tests.rs", "spaces/board-lab/src/help_images.rs", "path"),
-            ("image_tests.rs", "spaces/board-lab/help.md", "include_str"),
-            ("image_tests.rs", "spaces/board-lab/help-assets/dashboard.webp", "include_bytes"),
+            ("contents_runtime_tests.rs", "spaces/space-lab/src/help_images.rs", "path"),
+            ("image_tests.rs", "spaces/space-lab/help.md", "include_str"),
+            ("image_tests.rs", "spaces/space-lab/help-assets/dashboard.webp", "include_bytes"),
         ):
             with self.subTest(source=source, syntax=syntax):
                 path = "host/app/src/app/help_dock/" + source
@@ -692,7 +692,7 @@ include_str!("../../../../../shared.rs");
         self.assertTrue(all("unsupported" in failure for failure in failures))
 
     def test_retired_harness_packages_and_cargo_edges_fail_closed(self) -> None:
-        retired = self.root / "prototypes/board-lab/managed-runtimes"
+        retired = self.root / "prototypes/space-lab/managed-runtimes"
         with self.assertRaisesRegex(ValueError, "Unclassified internal package"):
             CHECK.group(retired)
         package = self.packages[self.root / "src"]
@@ -708,7 +708,7 @@ include_str!("../../../../../shared.rs");
         for syntax in ("include_str", "include_bytes", "path"):
             with self.subTest(syntax=syntax):
                 self.include("src/lib.rs",
-                             "prototypes/board-lab/managed-runtimes/src/main.rs", syntax)
+                             "prototypes/space-lab/managed-runtimes/src/main.rs", syntax)
                 failures = self.failures()
                 self.assertEqual(len(failures), 1, failures)
                 self.assertIn("unowned/outside source include", failures[0])

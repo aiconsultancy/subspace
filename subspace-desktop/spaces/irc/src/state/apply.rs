@@ -7,15 +7,26 @@ use subspace_client_irc::{BufferKey, Event, Line, LineKind, Member, NetworkId, T
 
 use super::{
     Attention, AttentionKind, Entry, HISTORY_MAX, HistoryState, IrcState, LINE_CAP, Topic, counts,
-    typing_expiry,
+    folding, typing_expiry,
 };
 
 mod status;
 
+/// Applies `event`, then folds any request progress it made trustworthy.
 pub(super) fn event(state: &mut IrcState, event: Event, now: DateTime<Utc>) -> Option<Attention> {
+    let scope = folding::scope(&event);
+    let attention = dispatch(state, event, now);
+    scope.iter().for_each(|scope| folding::refold(state, scope));
+    attention
+}
+
+fn dispatch(state: &mut IrcState, event: Event, now: DateTime<Utc>) -> Option<Attention> {
     match event {
-        // Protocol foundation only; the conversation row follows separately.
-        Event::NickStatus { .. } => {}
+        Event::NickStatus {
+            network,
+            nick,
+            status,
+        } => nick_status(state, &network, &nick, status.as_deref()),
         Event::Line(line) => return append(state, line),
         // A bouncer's replay counts for the badges but is not news.
         Event::Replayed(line) => {
@@ -35,7 +46,7 @@ pub(super) fn event(state: &mut IrcState, event: Event, now: DateTime<Utc>) -> O
         } => self::typing(state, buffer, nick, typing, now),
         Event::ChannelList { network, channels } => listed(state, &network, channels, now),
         Event::Sent { id, result, .. } => {
-            state.sends.insert(id, result);
+            state.sends.answers.insert(id, result);
         }
         other => membership(state, other),
     }
@@ -84,14 +95,19 @@ fn buffer_membership(state: &mut IrcState, event: Event) {
             state.buffers.entry(buffer).or_default().members = members;
         }
         Event::MemberJoined { buffer, member } => member_joined(state, buffer, member),
-        Event::MemberLeft { buffer, nick } => member_left(state, &buffer, &nick),
+        Event::MemberLeft { buffer, nick } => {
+            member_left(state, &buffer, &nick);
+            status_if_gone(state, &buffer.network, &nick);
+        }
         Event::MemberChanged {
             buffer,
             old_nick,
             member,
         } => {
+            let network = buffer.network.clone();
             member_left(state, &buffer, &old_nick);
             member_joined(state, buffer, member);
+            status_if_gone(state, &network, &old_nick);
         }
         _ => {}
     }
@@ -136,6 +152,45 @@ fn member_left(state: &mut IrcState, buffer: &BufferKey, nick: &str) {
     }
 }
 
+/// A nick's status set, changed or cleared on `network`. It is held for the
+/// whole nick, never for a buffer or a message, and cleaned again on the way
+/// in: the Space does not rely on the runtime having done it.
+fn nick_status(state: &mut IrcState, network: &NetworkId, nick: &str, status: Option<&str>) {
+    if let Some(network) = network_mut(state, network) {
+        network.statuses.set(nick, status);
+    }
+}
+
+/// After `nick` left a channel of `network`: when no channel of that
+/// network we hold still lists it, its status goes. The runtime clears a
+/// status when the last channel we share with the nick ends, so this only
+/// keeps the Space right should that clear come late. A private
+/// conversation's peer keeps a status it set while sharing no channel,
+/// because no channel departure concerns it.
+fn status_if_gone(state: &mut IrcState, network: &NetworkId, nick: &str) {
+    // Most departures concern a nick without a status: skip the scan.
+    let held = state
+        .network(network)
+        .is_some_and(|held| held.statuses.get(nick).is_some());
+    if held
+        && !in_a_channel(state, network, nick)
+        && let Some(network) = network_mut(state, network)
+    {
+        network.statuses.remove(nick);
+    }
+}
+
+/// Whether a channel of `network` we hold lists `nick`, ignoring ASCII case.
+fn in_a_channel(state: &IrcState, network: &NetworkId, nick: &str) -> bool {
+    state.buffers.iter().any(|(key, held)| {
+        &key.network == network
+            && held
+                .members
+                .iter()
+                .any(|member| member.nick.eq_ignore_ascii_case(nick))
+    })
+}
+
 fn read_marker(state: &mut IrcState, key: &BufferKey, time: DateTime<Utc>) {
     let Some(buffer) = state.buffers.get_mut(key) else {
         return;
@@ -162,15 +217,20 @@ fn typing(
 }
 
 /// A live line: appended, counted, and reported when it may need attention.
+/// Trusted progress folds into its request's status line and never counts.
 fn append(state: &mut IrcState, line: Line) -> Option<Attention> {
     if super::merge::known(state, &line) {
         return None;
     }
     let highlight = super::is_highlight(&line, &state.highlights);
     let key = line.buffer.clone();
+    folding::make_room(state, &key);
     let seq = state.next_seq;
     state.next_seq += 1;
+    let arrival = crate::thread_status::arrival(state, &line, seq);
     let buffer = state.buffers.entry(key.clone()).or_default();
+    // A line ends its sender's typing notice but not their status, which
+    // the gateway clears itself when the turn ends.
     if let Some(from) = &line.from {
         buffer.typing.remove(from);
     }
@@ -182,15 +242,10 @@ fn append(state: &mut IrcState, line: Line) -> Option<Attention> {
         line,
         highlight,
     };
-    let unread = counts::count(buffer, &key, &entry);
+    let unread = counts::count(buffer, &key, &entry, arrival.folds());
     let attention = unread.then(|| attention(&entry)).flatten();
     buffer.entries.push_back(entry);
-    let cap = LINE_CAP + buffer.history.extra;
-    while buffer.entries.len() > cap {
-        if let Some(dropped) = buffer.entries.pop_front() {
-            buffer.unread_entries.remove(&dropped.seq);
-        }
-    }
+    folding::arrived(state, &key, &arrival);
     attention
 }
 

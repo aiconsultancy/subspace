@@ -81,14 +81,27 @@ function failed(state, event, now, random) {
   };
 }
 
+const SUBSPACE_FLEETS = "Subspace Settings › Fleets";
+
 /**
- * Why a page fleet has no token to use, from its entry's `problem`: a short
- * status and what to do. A token saved for another address is never sent.
+ * Why a fleet has no token to use, from its entry's `problem` and where it
+ * came from (`origin`): a short status and what to do. A token saved for
+ * another address is never sent.
  */
-export function tokenProblem(problem) {
+export function tokenProblem(problem, origin = "local") {
+  if (origin === "api") return apiTokenProblem(problem);
   if (problem === "token-address") return { short: "Token for another address", title: "Its token was saved for another address", body: "Edit the fleet and paste the token for this address." };
   if (problem === "token-unbound") return { short: "Paste the token again", title: "Its token needs pasting again", body: "Fleet Console now keeps each token with its address. Edit the fleet and paste its token once more." };
   return { short: "No token saved", title: "No token saved", body: "Edit the fleet in the inspector and paste its token again." };
+}
+
+/** The same for a fleet from the Subspace API, whose token is set in Subspace. */
+function apiTokenProblem(problem) {
+  if (problem === "token-address") return { short: "Address changed", title: "Its address changed since its token was saved", body: `Check the new address, then paste the fleet's token again in ${SUBSPACE_FLEETS}.` };
+  if (problem === "token-checking") return { short: "Reading token", title: "Subspace is reading its saved token", body: "Fleet Console connects as soon as it has it." };
+  // Only Retry asks Subspace to read the keychain again.
+  if (problem === "token-store") return { short: "Token not read", title: "Subspace could not read its saved token", body: "Unlock your system keychain, then choose Retry.", retry: true };
+  return { short: "No token saved", title: "No token saved", body: `Paste the fleet's token in ${SUBSPACE_FLEETS}.` };
 }
 
 /** True while the window should keep showing that the data may be old. */
@@ -126,6 +139,23 @@ const SAMPLE_REASONS = {
   "no-token": {
     title: "Sample fleet: no API token",
     body: `Run stargate api token on the fleet VM and save it as the API token in ${SETTINGS_PATH}, then choose Retry.`,
+  },
+  // A fleet the Subspace API assigns, whose token is set in Subspace.
+  "api-no-token": {
+    title: "Sample fleet: your fleet's token is not saved",
+    body: `Paste the fleet's Fleet API token in ${SUBSPACE_FLEETS}. Fleet Console connects as soon as it is saved.`,
+  },
+  "api-token-address": {
+    title: "Sample fleet: your fleet's address changed",
+    body: `Its token was saved for another address and is not sent to the new one. Check the new address, then paste the fleet's token again in ${SUBSPACE_FLEETS}.`,
+  },
+  "api-token-checking": {
+    title: "Sample fleet: reading your fleet's token",
+    body: "Fleet Console connects as soon as Subspace has it.",
+  },
+  "api-token-store": {
+    title: "Sample fleet: your fleet's token could not be read",
+    body: "Unlock your system keychain, then choose Retry.",
   },
 };
 

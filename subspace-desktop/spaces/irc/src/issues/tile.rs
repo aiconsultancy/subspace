@@ -1,20 +1,21 @@
 //! Stateless issue compositions. Session ownership stays in IssueReferences.
 mod accent;
 mod activity;
+mod compact;
 mod facts;
 mod label;
 mod tracker;
 pub(crate) use activity::relative;
+pub(super) use compact::tile;
 pub(super) use label::label;
 #[cfg(test)]
 mod tests;
 
 use super::tooltip::state_glyph;
 use chrono::{DateTime, Utc};
-use gpui_kit::component::{ActiveTheme as _, Icon, h_flex};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::{AnyElement, App, Div, IntoElement as _, ParentElement as _, Styled as _, div};
-use subspace_framework::contracts::issues::IssueSummary;
+use subspace_framework::contracts::issues::{IssueSummary, ResolutionState};
 use subspace_framework::dashboard::{
     Tokens,
     reference_card::{self, Treatment},
@@ -26,7 +27,6 @@ pub(super) enum Variant {
     Tracker,
 }
 const CARD_WIDTH_REM: f32 = 400. / subspace_framework::dashboard::density::REFERENCE_REM;
-const CHIP_TITLE_REM: f32 = 10.;
 const TITLE_REM: f32 = 14. / subspace_framework::dashboard::density::REFERENCE_REM;
 const TITLE_LINES: usize = 2;
 
@@ -72,34 +72,15 @@ pub(super) fn content(
         Variant::Tracker => tracker::card(summary, now, tokens, cx).into_any_element(),
     }
 }
-pub(super) fn chip(summary: &IssueSummary, tokens: &Tokens, cx: &App) -> Div {
-    let (glyph, tone) = state_glyph(summary.state.kind);
-    h_flex()
-        .min_w_0()
-        .gap_1p5()
-        .text_size(tokens.secondary_size())
-        .child(
-            Icon::from(glyph)
-                .size(tokens.secondary_size())
-                .text_color(tokens.tone(tone)),
-        )
-        .child(key(summary.identifier.clone(), tokens, cx))
-        .child(
-            div()
-                .min_w_0()
-                .max_w(gpui_kit::rems(CHIP_TITLE_REM))
-                .text_ellipsis()
-                .whitespace_nowrap()
-                .child(summary.title.clone()),
-        )
-        .when_some(summary.assignee.as_deref(), |row, name| {
-            row.child(reference_card::avatar(
-                name,
-                facts::is_agent(summary),
-                true,
-                tokens,
-            ))
-        })
+/// The short reason an answered reference has no summary; `None` while it
+/// has no answer yet.
+pub(super) fn absence(state: Option<&ResolutionState>) -> Option<&'static str> {
+    match state {
+        Some(ResolutionState::Unavailable) => Some("Unavailable"),
+        Some(ResolutionState::SignedOut) => Some("Signed out"),
+        Some(ResolutionState::Failed) => Some("Couldn't load"),
+        _ => None,
+    }
 }
 fn key(label: String, tokens: &Tokens, cx: &App) -> Div {
     div()

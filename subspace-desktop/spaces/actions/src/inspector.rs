@@ -71,7 +71,7 @@ pub(crate) fn render(this: &Actions, cx: &mut Context<Actions>) -> Option<worksp
         .on_close("Close inspector", close)
         .children(body(this, record, cx));
     Some(match record.run {
-        Some(_) => inspector.footer(footer(this, Some(record))),
+        Some(_) => inspector.footer(footer(this, this.write_target())),
         None => inspector,
     })
 }

@@ -166,6 +166,8 @@ pub(crate) fn close(
 pub(crate) fn toggle_buffers(board: &mut Irc, cx: &mut Context<Irc>) {
     board.dock.buffers.open = !board.dock.buffers.open;
     super::persist::docks_changed(board, cx);
+    // The navigator's fleets are followed only while it shows.
+    crate::live::watch::sync(board, cx);
 }
 
 /// Shows or hides the inspector's member list.
@@ -224,6 +226,9 @@ fn conversation_event(
             }
         }
         ConversationEvent::Closed => closed(board, conversation, window, cx),
+        ConversationEvent::OpenThread(root) => {
+            crate::thread::open(board, &buffer, root.clone(), window, cx);
+        }
     }
 }
 
@@ -250,6 +255,7 @@ fn closed(
         board.find_revision = board.find_revision.wrapping_add(1);
         cx.notify();
         view::publish_visible(board, cx);
+        crate::live::watch::sync(board, cx);
     }
     show_placeholder(board, window, cx);
 }

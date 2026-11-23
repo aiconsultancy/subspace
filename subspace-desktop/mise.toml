@@ -8,6 +8,7 @@ mr-boxington = "1.19.0"
 
 [tools."github:EmbarkStudios/cargo-about"]
 version = "0.9.3"
+os = ["linux", "macos/arm64", "windows"]
 
 # SHA-256 digests published with the corresponding upstream release archives.
 [tools."github:EmbarkStudios/cargo-about".platforms]
@@ -44,9 +45,9 @@ run = [
     "cargo test --locked -p subspace -p subspace-descriptor",
 ]
 
-[tasks.board-lab-examples]
+[tasks.space-lab-examples]
 description = "Check live examples through Python, Node and Bun helpers; pass --python, --node and --bun executable paths"
-run = "python3 spaces/board-lab/src/project_browser/examples/test_live_examples.py"
+run = "python3 spaces/space-lab/src/project_browser/examples/test_live_examples.py"
 
 [tasks.prepare-onnx-runtime]
 description = "Prepare and verify the native ONNX archive before cached macOS builds"

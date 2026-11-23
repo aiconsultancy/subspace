@@ -19,7 +19,8 @@ Issues crate.
 | Module | Holds |
 | --- | --- |
 | `model` | The navigator's choices (view, maker, project, tag) and the `DecisionQuery` they and the search build. |
-| `load` | The `Reader`: a list read (account, projects, people, then every page of decisions) and a detail read, run with `cx.background_spawn`. Tests replace it with fixture answers. |
+| `load` | The `Reader`: a list read (account, projects, people, then every page of decisions), a detail read and the `Lease` each read returns on the account of the client that made it, run with `cx.background_spawn`. A list read carries a `Stop` that a newer read sets. Tests replace the reader with fixture answers. |
+| `account` | Following the signed-in account: the watch that notices an account or organisation change, and what the Space drops when it does. |
 | `state`, `listing`, `words`, `peek` | Pure: what the Space holds between reads, the status groups and their first folds, the counts, the wording and the inspector's facts. |
 | `board`, `search`, `page` | The Space's changes: reads and answers, choices, the debounced search, and the decision page with its tab. |
 | `navigator`, `toolbar`, `menus`, `lanes`, `inspector`, `page/view`, `render` | The workspace: navigator, tab strip and toolbar, the row lanes, the inspector and the reading column. |
@@ -30,19 +31,50 @@ Issues crate.
 A read builds a `DecisionQuery` from the view (one status, or none), the
 maker (`human` or `agent`), the project key, the tag and the committed search
 text (`q`, at most 200 characters), and asks for pages of 100 until the last,
-at most ten pages. A repeated cursor fails the read. The first read, a reload
+at most ten pages. A repeated cursor fails the read. One read therefore lists
+at most 1,000 matching decisions: when more match, the count ends in **+**,
+and the decisions after the first thousand cannot be paged to in the same
+view; narrowing the view, maker, project, tag or search reaches them, as the
+[in-app guide](../spaces/decisions/help.md) says. The first read, a reload
 and showing a list that is more than a minute old also read `GET /me`, every
 project and the account's people (`Client::issue_choices` with
 `ChoiceSource::Assignees`), which name the people who made and recorded
 decisions. A failure of the projects or people read leaves those parts empty.
 
-Each list read has a number; an answer to an older read is dropped. A failed
-sign-in, a refusal or a missing organisation clears what was read with that
-account. A network failure keeps the decisions on screen under the shared
+Each list read has a number; an answer to an older read is dropped. A newer
+read also sets the superseded read's `Stop`, so it asks for no further page.
+A new choice or a committed search clears the listed rows before it reads,
+so a failed read never shows the rows found for the previous choice or text
+under the new one; it shows the reason with **Retry**. A failed sign-in, a
+refusal or a missing organisation clears what was read with that account. A
+network failure on reload keeps the decisions on screen under the shared
 list's banner.
 
 The page reads `GET /decisions/{id}` once, again on **Retry** and on reload.
 Not found shows that the decision is no longer available.
+
+### Following the account
+
+Each read, list or page, returns a `Lease` on the account and organisation
+of the very client that made it, so the lease is as old as the client and
+an account change at any point after the client was made ends it. A read
+that can make no client reads nothing for any account: it has no lease,
+shows only its refusal, and leaves the Space watching the account what it
+holds was read for. The Space looks for an account or organisation change, or a
+sign-out, every quarter of a second while it lives, shown or hidden (the
+same interval as the Issues Space's hub poll), and again when it is shown or
+drawn, before it opens a decision or a linked issue, and on a Back from
+another Space.
+
+When the lease has moved, the Space drops everything read for the previous
+account: the list, the selection, the open page and its tab, the directory
+(account, projects and people), the tags, the chosen tag and the search,
+including the search field's text and any open menu, which a frame that
+finds the change clears before it is drawn. Reads in flight stop,
+and an answer that arrives under the old lease is discarded and drops what
+the Space holds, as the change itself does. The Space bumps its account
+epoch, then reads the list for the new account while it shows, or when it
+is next shown. The view, maker and project choices stay.
 
 ## Linked issues
 
@@ -52,10 +84,20 @@ contract, as Channels and web Spaces open them. The Space declares
 `{api_origin}/v1/issues/{identifier}` and binds it to the scope with
 `IssueScope::navigation_url`, then emits `DashboardEvent::Navigate` with
 `MessageKey::request::<CurrentScope>()` as the responder key. The shell calls
-the answering Space's `open_link` and switches to it; its Back returns to the
-open decision through `Dashboard::return_location`. With no answering Space,
-or an identifier outside its scope, the Space shows a notice instead. The
-declared role is in [the Spaces audit](spaces-audit.md#declared-contracts).
+the answering Space's `open_link` and switches to it. With no answering
+Space, or an identifier outside its scope, the Space shows a notice instead.
+Nothing opens once the decision it was listed under was read for an account
+that is no longer signed in. The declared role is in
+[the Spaces audit](spaces-audit.md#declared-contracts).
+
+The navigation carries an explicit `origin` for the destination's Back: the
+open page (key `decision:<epoch>:<id>`), or, when the list shows, the
+decision selected there (key `decision-row:<epoch>:<id>`), named by its
+title. `Dashboard::return_location` gives the open page alone, for the
+shell's own history. On a Back, `return_to` opens that page again, or shows
+the list with that decision selected when the list still holds it. The
+account epoch in the key changes on every account change, so a Back to a
+place shown for a previous account does not return there.
 
 ## Stored choices and privacy
 
@@ -74,3 +116,6 @@ fixture data. The crate's tests use their own fictional decisions in
 `src/fixtures.rs`: pure tests of the query, grouping, folds, counts, wording,
 peek and page facts, and headless tests of the list, the navigator, the
 toolbar, the inspector, the page and the linked-issue navigation.
+`src/fixtures/accounts.rs` switches between two fictional signed-in
+accounts, so the account tests show what an account change, a sign-out and
+an answer read for the previous account each leave on screen.

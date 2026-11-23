@@ -3,10 +3,16 @@
 //! scroll position and composer draft, follows the hub itself, and tells its
 //! host about navigation through [`ConversationEvent`]s.
 
+mod clock;
+#[cfg(test)]
+pub(crate) use clock::ticking;
 pub(crate) mod find;
 mod header;
+pub(crate) use header::vouched_status;
 mod keys;
+mod owners;
 mod panel;
+pub(crate) mod reacting;
 pub(crate) mod summaries;
 
 pub(crate) use keys::{KEYS, bind_keys};
@@ -30,8 +36,10 @@ use subspace_framework::dashboard::ChatInput;
 use subspace_framework::dashboard::Tokens;
 
 use crate::compose::{self, Draft};
+use crate::fleet::{ChannelKind, Roster};
 use crate::hub::Hub;
 use crate::markup::{Mentions, Ref};
+use crate::thread_status;
 use crate::transcript::{self, Claim, Row, RowContext, Scroller};
 
 /// What a conversation asks its host to do.
@@ -45,6 +53,9 @@ pub(crate) enum ConversationEvent {
     Closed,
     /// The displayed local-find document changed.
     FindScopeChanged,
+    /// The thread of the message with this ID was chosen, from its reply
+    /// count or its request's status line.
+    OpenThread(String),
 }
 
 pub(crate) struct Conversation {
@@ -54,6 +65,13 @@ pub(crate) struct Conversation {
     scroll: Scroller,
     pub(crate) summaries: summaries::Summaries,
     replies: Rc<transcript::replies::Counts>,
+    statuses: clock::Lines,
+    /// Reactions on the held messages and what reacting waits to hear.
+    pub(crate) reacting: reacting::Reacting,
+    /// The fleet roles on the buffer's network.
+    pub(crate) roster: Rc<Roster>,
+    /// Which message keeps each reference's tile, read before rows show.
+    tiles: Rc<crate::tiles::Tiles>,
     pub(crate) draft: Draft,
     pub(crate) tray: crate::uploads::outgoing::Tray,
     pub(crate) upload_viewer: Option<crate::uploads::viewer::Viewer>,
@@ -98,6 +116,12 @@ impl Conversation {
                 compose::handle(this, event, window, cx);
             }),
         ];
+        let seen_refusal = hub
+            .read(cx)
+            .reactions
+            .refusal(&buffer)
+            .map_or(0, |refusal| refusal.serial);
+        let reacting = reacting::Reacting::new(seen_refusal, cx);
         let mut conversation = Self {
             me: cx.entity().downgrade(),
             buffer,
@@ -105,6 +129,10 @@ impl Conversation {
             scroll: Scroller::new(cx),
             summaries: Default::default(),
             replies: Rc::default(),
+            statuses: clock::Lines::default(),
+            reacting,
+            roster: Rc::default(),
+            tiles: Rc::default(),
             draft,
             tray: crate::uploads::outgoing::Tray::default(),
             upload_viewer: None,
@@ -158,25 +186,34 @@ impl Conversation {
 
     /// Shows the buffer from its latest line.
     fn show_latest(&mut self, cx: &mut Context<Self>) {
+        self.refresh_roster(cx);
         self.refresh_replies(cx);
+        self.refresh_statuses(cx);
+        reacting::refresh(self, cx);
+        clock::follow(self, cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
+        self.tiles = Rc::default();
+        self.tiles = owners::follow(self, &rows, cx);
         self.scroll.reset(rows, ids, cx);
     }
 
     /// Scrolls to the line numbered `seq` and selects it, as opening a
-    /// search result does. False when the buffer does not hold it.
+    /// search result does. Folded progress shows its request instead. False
+    /// when the buffer does not hold it.
     pub fn reveal(&mut self, seq: i64, cx: &mut Context<Self>) -> bool {
         let (rows, ids) = self.current_rows(cx);
-        let at = self
+        let shown = self
             .hub
             .read(cx)
             .state
             .buffer(&self.buffer)
-            .and_then(|held| held.entries.iter().position(|entry| entry.seq == seq));
-        let index = at.and_then(|at| transcript::row_of(&rows, at));
+            .and_then(|held| thread_status::shown_entry(held, seq));
+        let index = shown.and_then(|(at, _)| transcript::row_of(&rows, at));
+        self.tiles = Rc::default();
+        self.tiles = owners::follow(self, &rows, cx);
         self.scroll.replace(rows, ids, cx);
-        let Some(index) = index else {
+        let (Some(index), Some((_, seq))) = (index, shown) else {
             return false;
         };
         self.target = Some(seq);
@@ -195,14 +232,28 @@ impl Conversation {
 
     /// Re-reads the buffer after the hub changed, keeping the reader's place.
     fn sync(&mut self, cx: &mut Context<Self>) {
-        let previous = self.replies.clone();
+        let previous = (self.replies.clone(), self.statuses.shown.clone());
+        let ranks_changed = self.refresh_roster(cx);
         self.refresh_replies(cx);
+        self.refresh_statuses(cx);
+        let reactions_before = reacting::refresh(self, cx);
+        clock::follow(self, cx);
         self.prune_summaries(cx);
         let (rows, ids) = self.current_rows(cx);
-        let changed = self.changed_reply_rows(&rows, &previous, cx);
+        let changed = if ranks_changed {
+            (0..rows.len()).collect()
+        } else {
+            let mut changed = self.changed_reply_rows(&rows, (&*previous.0, &*previous.1), cx);
+            changed.extend(reacting::changed_rows(self, &rows, &reactions_before, cx));
+            changed.sort_unstable();
+            changed.dedup();
+            changed
+        };
         let revision = self.find_active.then(|| find::revision(self, cx));
         let find_changed = self.scroll.rows() != rows || self.find_source != revision;
         self.find_source = revision;
+        self.tiles = Rc::default();
+        self.tiles = owners::follow(self, &rows, cx);
         self.scroll.replace(rows, ids, cx);
         self.scroll.remeasure(&changed, cx);
         if find_changed {
@@ -215,10 +266,11 @@ impl Conversation {
         cx.notify();
     }
 
+    /// Root rows whose reply count or request status changed, to remeasure.
     fn changed_reply_rows(
         &self,
         rows: &[Row],
-        previous: &transcript::replies::Counts,
+        (replies, statuses): (&transcript::replies::Counts, &thread_status::Statuses),
         cx: &App,
     ) -> Vec<usize> {
         self.hub
@@ -226,9 +278,32 @@ impl Conversation {
             .state
             .buffer(&self.buffer)
             .map(|held| {
-                transcript::replies::changed_rows(rows, &held.entries, previous, &self.replies)
+                let entries = &held.entries;
+                let mut changed =
+                    transcript::replies::changed_rows(rows, entries, replies, &*self.replies);
+                changed.extend(transcript::replies::changed_rows(
+                    rows,
+                    entries,
+                    statuses,
+                    &*self.statuses.shown,
+                ));
+                changed.sort_unstable();
+                changed.dedup();
+                changed
             })
             .unwrap_or_default()
+    }
+
+    /// Reads the fleet roles again, keeping the shared one while they are
+    /// unchanged. True when they changed, so rows that show a rank are
+    /// measured again.
+    fn refresh_roster(&mut self, cx: &App) -> bool {
+        let roster = self.hub.read(cx).roster(&self.buffer.network, cx);
+        let changed = *self.roster != *roster;
+        if changed {
+            self.roster = roster;
+        }
+        changed
     }
 
     fn refresh_replies(&mut self, cx: &App) {
@@ -242,9 +317,23 @@ impl Conversation {
         self.replies = Rc::new(counts);
     }
 
+    /// Rebuilds the request status lines; markers held from before the
+    /// network's current connection read as stale.
+    fn refresh_statuses(&mut self, cx: &App) {
+        let state = &self.hub.read(cx).state;
+        let connected = state
+            .network(&self.buffer.network)
+            .and_then(|network| network.held_at_connect.as_ref());
+        let statuses = state
+            .buffer(&self.buffer)
+            .map(|held| thread_status::statuses(held, connected))
+            .unwrap_or_default();
+        self.statuses.shown = Rc::new(statuses);
+    }
+
     /// The shared row facts: who may be mentioned, today, and where
     /// reference clicks go.
-    fn row_context(&self, cx: &App) -> RowContext {
+    pub(crate) fn row_context(&self, cx: &App) -> RowContext {
         RowContext {
             conversation: self.me.clone(),
             mentions: mentions(self, cx),
@@ -256,7 +345,17 @@ impl Conversation {
             focus: self.keyboard.at,
             card: self.keyboard.at.and(self.keyboard.card.clone()),
             upload_focus: keys::focused_upload(self, cx),
-            replies: self.replies.clone(),
+            // Shared counts, not copies: each row takes a reference.
+            replies: Rc::clone(&self.replies),
+            statuses: Rc::clone(&self.statuses.shown),
+            now: chrono::Utc::now(),
+            roster: Rc::clone(&self.roster),
+            tiles: Rc::clone(&self.tiles),
+            threads: crate::thread::has_tab(&self.roster, &self.buffer),
+            reactions: Rc::clone(&self.reacting.shown),
+            stops: Rc::clone(&self.reacting.stops),
+            can_react: self.reacting.supported,
+            react_anchor: Some(self.reacting.anchor.clone()),
         }
     }
 
@@ -272,6 +371,19 @@ impl Conversation {
         transcript::row(row, held, (&self.hub, &self.buffer), &context, cx)
     }
 
+    /// A ship channel's ship as its fleet's Fleet API reports it, while
+    /// the board follows the fleet and it is live.
+    fn ship_live(&self, kind: Option<&ChannelKind>, cx: &App) -> Option<crate::live::ShipLive> {
+        let Some(ChannelKind::Ship { captain }) = kind else {
+            return None;
+        };
+        let Target::Channel(channel) = &self.buffer.target else {
+            return None;
+        };
+        let lives = &self.hub.read(cx).fleets;
+        crate::live::fleet_of(lives, &self.roster, channel)?.ship(captain)
+    }
+
     fn header_facts(&self, cx: &App) -> Option<header::HeaderFacts> {
         let state = &self.hub.read(cx).state;
         let held = state.buffer(&self.buffer);
@@ -283,24 +395,29 @@ impl Conversation {
             Target::Server => (network.name.clone(), crate::view::server_summary(network)),
             Target::Query(name) | Target::Channel(name) => (name.clone(), network.name.clone()),
         };
+        let kind = match &self.buffer.target {
+            Target::Channel(name) => self.roster.channel(name).cloned(),
+            _ => None,
+        };
+        let members = held.map(|held| held.members.as_slice()).unwrap_or_default();
+        let ship = self.ship_live(kind.as_ref(), cx);
+        let live = header::live(kind.as_ref(), &network.statuses, members, ship.as_ref());
         Some(header::HeaderFacts {
             title,
             network: context,
             topic,
+            kind,
+            live,
         })
     }
 
-    /// The transcript and the typing line under it.
+    /// The transcript and the line under it: agents' status lines and who
+    /// is typing.
     pub fn render_transcript(&self, cx: &App) -> AnyElement {
         let tokens = Tokens::current(cx);
         let me = self.me.clone();
         let hub = self.hub.downgrade();
-        let typing = self
-            .hub
-            .read(cx)
-            .state
-            .buffer(&self.buffer)
-            .map(|held| transcript::typing_line(held, &tokens));
+        let activity = transcript::activity::line(&self.hub.read(cx).state, &self.buffer, &tokens);
         v_flex()
             .id("irc-transcript-pane")
             .test_support()
@@ -328,7 +445,7 @@ impl Conversation {
                     row
                 },
             )))
-            .children(typing)
+            .children(activity)
             .into_any_element()
     }
 }
@@ -379,7 +496,9 @@ impl Render for Conversation {
         let transcript = keys::transcript(self, cx)
             .flex_1()
             .min_h_0()
-            .child(self.render_transcript(cx));
+            .child(self.render_transcript(cx))
+            .child(self.reacting.anchor.clone());
+        let notice = reacting::notice(self, cx);
         let content = v_flex()
             .id("irc-conversation")
             .track_focus(&self.focus)
@@ -395,12 +514,17 @@ impl Render for Conversation {
             .bg(tokens.surface)
             .children(header)
             .child(transcript)
-            .child(div().flex_shrink_0().child(self.draft.render(
-                &self.tray,
-                !matches!(self.buffer.target, Target::Server)
-                    && subspace_api_client::capabilities().chat_uploads,
-                cx,
-            )))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .children(notice)
+                    .child(self.draft.render(
+                        &self.tray,
+                        !matches!(self.buffer.target, Target::Server)
+                            && subspace_api_client::capabilities().chat_uploads,
+                        cx,
+                    )),
+            )
             .into_any_element();
         find::scope(self, content, cx)
     }

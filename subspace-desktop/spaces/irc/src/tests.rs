@@ -6,10 +6,9 @@ use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 use subspace_client_irc::{Command, ConnectionStatus, Event};
 use subspace_framework::dashboard::{ChatInputEvent, Dashboard as _, ListDashboard as _};
 
-use crate::config::Settings;
 use crate::fixtures::{at, channel, config, member, message, network_id};
 use crate::hub::{self, Hub};
-use crate::{Irc, rows, view};
+use crate::{Irc, config::Settings, rows, view};
 
 mod back;
 mod completion;
@@ -17,6 +16,7 @@ mod conversation;
 mod counter;
 mod focus;
 mod formatting;
+mod hidden_navigator;
 mod initiatives;
 mod issues;
 mod items;
@@ -24,11 +24,14 @@ mod keys;
 mod listing;
 mod notifications;
 mod pull_requests;
+mod reactions;
 mod remove;
 mod replies;
 mod selection;
 mod settings;
+mod statuses;
 mod stored;
+mod thread_status;
 mod uploads;
 
 pub(crate) fn settings() -> Settings {
@@ -149,7 +152,7 @@ fn rows_show_networks_buffers_and_unread_state(cx: &mut TestAppContext) {
     cx.update(|_, cx| {
         let board = board.read(cx);
         let group = &board.list().groups()[0];
-        assert_eq!(group.name.as_ref(), "Local Ergo");
+        assert_eq!(group.name.as_ref(), "Acme IRC");
         assert_eq!(group.count.as_deref(), Some("Connected"));
         let titles: Vec<&str> = group.rows.iter().map(|row| row.title.as_ref()).collect();
         assert_eq!(titles, ["Server", "#subspace"]);
@@ -184,7 +187,7 @@ fn opening_a_channel_shows_its_lines_members_and_reads_it(cx: &mut TestAppContex
                     title.label() == Some("#subspace")
                         && title.description().is_some_and(|description| {
                             description
-                                .ends_with("Local Ergo · Fixture channel · https://example.org")
+                                .ends_with("Acme IRC · Fixture channel · https://example.org")
                         })
                 })
         );
@@ -193,7 +196,8 @@ fn opening_a_channel_shows_its_lines_members_and_reads_it(cx: &mut TestAppContex
             Some("alice: hello there"),
             "first message"
         );
-        assert_eq!(window.find("irc-unread:0").label(), Some("New messages"));
+        let unread = window.find("irc-unread:0").label().map(str::to_owned);
+        assert_eq!(unread.as_deref(), Some("2 new messages since you left"));
         assert!(
             window.try_find("irc-history").is_some(),
             "older history control"

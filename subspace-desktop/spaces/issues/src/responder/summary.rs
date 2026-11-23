@@ -43,6 +43,7 @@ pub(super) fn from_card(snapshot: &IrcSnapshot, card: &ReferenceCard) -> IssueSu
         }))
         .with_due_date(facts.due_date.as_deref())
         .with_latest_activity(facts.latest_activity.as_ref().map(activity))
+        .with_ready_for_agents(facts.ready_for_agents)
 }
 
 fn count(value: i32) -> u32 {

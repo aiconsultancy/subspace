@@ -7,6 +7,7 @@ board, channel and update source, are in the
 | Term | Meaning |
 | --- | --- |
 | Subspace App | The app. Binary `subspace`. Bundle `Subspace.app`. |
+| Space Lab | The alpha Space for native dashboards backed by managed Python, Node or Bun projects, on macOS ARM64 only. Called Board Lab until November 2026; its board id, crate, Cargo feature and tools now say `space-lab` or `space_lab`. Release builds leave it out. See [Space Lab](space-lab.md). |
 | Channels | The Space for IRC networks, channels and private messages, called IRC until 0.4.0. Its board id, crates, settings file and stored data keep the `irc` name. Not a release channel (see Channel). |
 | Run | In Actions, one GitHub workflow execution. Active runs are queued, in progress, waiting, requested or pending. |
 | Pending deployment | In Actions, an environment deployment waiting for review on a workflow run. |
@@ -17,7 +18,7 @@ board, channel and update source, are in the
 
 ## Proposed managed-board terms
 
-These terms describe the accepted managed board environment intent. Board Lab exposes an experimental subset; the general Framework capability remains a proposal.
+These terms describe the accepted managed board environment intent. Space Lab exposes an experimental subset; the general Framework capability remains a proposal.
 
 | Term | Proposed meaning |
 | --- | --- |

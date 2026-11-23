@@ -17,6 +17,13 @@ use crate::action::{Intent, icon_button};
 use crate::tokens::Tokens;
 use crate::typography::heading_font;
 
+mod tabs;
+#[cfg(test)]
+mod tabs_tests;
+
+use tabs::InspectorTabs;
+pub use tabs::{INSPECTOR_MAX_TABS, InspectorTab};
+
 /// The label column of a fact row, wide enough for "Created by".
 const FACT_LABEL_WIDTH_PX: f32 = 84.;
 
@@ -34,6 +41,7 @@ pub struct Inspector {
     children: Vec<AnyElement>,
     footer: Option<AnyElement>,
     scroll: Option<ScrollHandle>,
+    tabs: Option<InspectorTabs>,
 }
 
 // qual:allow(dry, boilerplate) reason: "The dock's header controls, footer and scroll handle are independent options on a GPUI element; a fluent builder keeps call sites readable."
@@ -48,7 +56,29 @@ impl Inspector {
             children: Vec::new(),
             footer: None,
             scroll: None,
+            tabs: None,
         }
+    }
+
+    /// Tabs in place of the header's title, each a different subject for the
+    /// same selection, such as "Thread" and "People" for a channel. The
+    /// title stays the tab list's accessible name. `selected` is the open
+    /// tab's index, and `on_select` gets the index of the tab chosen. The
+    /// inspector shows at most [`INSPECTOR_MAX_TABS`]; with none it keeps
+    /// its title. Close stays the last header control.
+    pub fn tabs(
+        mut self,
+        tabs: impl IntoIterator<Item = InspectorTab>,
+        selected: usize,
+        on_select: impl Fn(usize, &ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        let tabs: Vec<_> = tabs.into_iter().collect();
+        self.tabs = (!tabs.is_empty()).then(|| InspectorTabs {
+            tabs,
+            selected,
+            on_select: Rc::new(on_select),
+        });
+        self
     }
 
     /// A header control after the title, in call order, such as Open.
@@ -90,14 +120,8 @@ impl ParentElement for Inspector {
 impl RenderOnce for Inspector {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let tokens = Tokens::current(cx);
-        let title = header::title(
-            "workspace-inspector-title",
-            self.title,
-            FontWeight::SEMIBOLD,
-            heading_font(cx),
-            &tokens,
-        )
-        .test_support();
+        let panel = self.tabs.as_ref().and_then(tabs::panel_label);
+        let title = heading(self.title, self.tabs, &tokens, cx);
         let close = self.close.map(|(label, on_close)| {
             icon_button(
                 "workspace-inspector-close",
@@ -121,6 +145,9 @@ impl RenderOnce for Inspector {
             .when_some(self.scroll.as_ref(), |body, scroll| {
                 body.track_scroll(scroll)
             })
+            .when_some(panel, |body, label| {
+                body.role(Role::TabPanel).aria_label(label)
+            })
             .gap_6()
             .px(text_edge(&tokens))
             .py_4()
@@ -136,6 +163,32 @@ impl RenderOnce for Inspector {
             .child(head)
             .child(body)
             .children(self.footer.map(|footer| foot(footer, &tokens)))
+    }
+}
+
+/// The header's lead: the title, or the tab list in its place. The tab list
+/// fills the room the title would, so the header controls stay at the end.
+fn heading(
+    title: SharedString,
+    tabs: Option<InspectorTabs>,
+    tokens: &Tokens,
+    cx: &App,
+) -> AnyElement {
+    match tabs {
+        Some(tabs) => div()
+            .flex_1()
+            .min_w_0()
+            .child(tabs::tab_list(title, tabs, tokens, cx))
+            .into_any_element(),
+        None => header::title(
+            "workspace-inspector-title",
+            title,
+            FontWeight::SEMIBOLD,
+            heading_font(cx),
+            tokens,
+        )
+        .test_support()
+        .into_any_element(),
     }
 }
 

@@ -1,13 +1,17 @@
-//! The actions of the pane's toolbar: connect or disconnect the selected
-//! network, join a channel, and leave or close the selected buffer. The
-//! navigator's header repeats Join. The workspace's own switch shows and
-//! hides the members.
+//! The actions of the pane's toolbar: find in the conversation, and the
+//! More menu, which connects or disconnects the selected network, joins a
+//! channel, and leaves or closes the selected buffer. While the navigator is
+//! hidden they act on the conversation the toolbar names instead. The
+//! navigator's header repeats Join, and the command palette offers Join,
+//! Connect and Disconnect too. The workspace's own switch shows and hides
+//! the members.
 
 use gpui_kit::component::{Disableable as _, menu::PopupMenuItem};
 use gpui_kit::{App, Context, Entity, IntoElement as _, Window};
 use subspace_client_irc::{BufferKey, Command, ConnectionStatus, NetworkId};
 use subspace_framework::dashboard::action::{Intent, action_button, icon_button};
 use subspace_framework::dashboard::anchored;
+use subspace_framework::dashboard::find_in_page;
 use subspace_framework::dashboard::icon_button::IconButton;
 use subspace_framework::dashboard::overflow_toolbar::{OverflowToolbar, OverflowUnit, PopupEntry};
 use subspace_framework::dashboard::panel::IconName;
@@ -16,6 +20,8 @@ use crate::remove::{self, Removal};
 use crate::{Irc, join};
 
 const UNMEASURED_WIDTH: f32 = 0.;
+/// The find button's label, also its menu entry when the toolbar overflows.
+const FIND: &str = "Find in conversation";
 
 /// Connected, or on the way there: Disconnect applies.
 pub(crate) fn is_online(status: &ConnectionStatus) -> bool {
@@ -35,61 +41,68 @@ pub(crate) fn render(board: &mut Irc, cx: &mut Context<Irc>) -> Option<Entity<Ov
         board.toolbar = None;
         return None;
     };
-    let network = board.selected_network(cx);
+    // While the navigator is hidden, the conversation the toolbar names.
+    let network = board.toolbar_network();
     let status = network
         .as_ref()
         .and_then(|id| state.network(id))
         .map(|known| &known.status);
-    let units = vec![
+    let network_items = [
         connection(board, network, status.is_some_and(is_online)),
         join(board, join_unavailable(status)),
-        more(board, cx),
     ];
+    let units = vec![find(), more(board, network_items, cx)];
     Some(OverflowToolbar::sync(&mut board.toolbar, units, cx))
 }
 
+/// A command of the More menu, which runs `run` when chosen.
+#[derive(Clone)]
 struct Control {
-    id: &'static str,
     label: &'static str,
     icon: IconName,
     unavailable: Option<&'static str>,
+    run: std::rc::Rc<dyn Fn(&mut Window, &mut App)>,
 }
 
 impl Control {
-    fn unit(self, run: impl Fn(&mut Window, &mut App) + Clone + 'static) -> OverflowUnit {
-        let Self {
-            id,
-            label,
-            icon,
-            unavailable,
-        } = self;
-        let run_popup = run.clone();
-        let popup = PopupEntry::new(move || {
-            let run = run_popup.clone();
-            let title =
-                unavailable.map_or_else(|| label.to_owned(), |reason| format!("{label}: {reason}"));
-            PopupMenuItem::new(title)
-                .icon(icon)
-                .disabled(unavailable.is_some())
-                .on_click(move |_, window, cx| run(window, cx))
-        });
-        // A changed icon needs a different projection key. The button ID is stable.
-        OverflowUnit::inline(
-            label,
-            UNMEASURED_WIDTH,
-            move |_, _| {
-                let run = run.clone();
-                action_button(id, Intent::Neutral, Some(icon), label)
-                    .disabled(unavailable.is_some())
-                    .tooltip(unavailable.unwrap_or(label))
-                    .on_click(move |_, window, cx| run(window, cx))
-            },
-            vec![popup],
-        )
+    /// The menu item, disabled with its reason while unavailable.
+    fn item(&self) -> PopupMenuItem {
+        let run = self.run.clone();
+        let title = self.unavailable.map_or_else(
+            || self.label.to_owned(),
+            |reason| format!("{}: {reason}", self.label),
+        );
+        PopupMenuItem::new(title)
+            .icon(self.icon)
+            .disabled(self.unavailable.is_some())
+            .on_click(move |_, window, cx| run(window, cx))
     }
 }
 
-fn connection(board: &Irc, network: Option<NetworkId>, online: bool) -> OverflowUnit {
+/// The search button, which opens find in the conversation in front.
+fn find() -> OverflowUnit {
+    let open = |window: &mut Window, cx: &mut App| {
+        window.dispatch_action(Box::new(find_in_page::Open), cx);
+    };
+    let popup = PopupEntry::new(move || {
+        PopupMenuItem::new(FIND)
+            .icon(IconName::Search)
+            .on_click(move |_, window, cx| open(window, cx))
+    });
+    OverflowUnit::inline(
+        FIND,
+        UNMEASURED_WIDTH,
+        move |_, _| {
+            icon_button("irc-find", Intent::Quiet, IconName::Search, FIND)
+                .focus_on_click()
+                .tooltip(FIND)
+                .on_click(move |_, window, cx| open(window, cx))
+        },
+        vec![popup],
+    )
+}
+
+fn connection(board: &Irc, network: Option<NetworkId>, online: bool) -> Control {
     let (icon, label) = if online {
         (IconName::Unplug, "Disconnect")
     } else {
@@ -97,25 +110,24 @@ fn connection(board: &Irc, network: Option<NetworkId>, online: bool) -> Overflow
     };
     let owner = board.me.clone();
     Control {
-        id: "irc-connection",
         label,
         icon,
         unavailable: network.is_none().then_some("Select a network"),
+        run: std::rc::Rc::new(move |_, cx| {
+            let Some(network) = network.clone() else {
+                return;
+            };
+            let command = if online {
+                Command::Disconnect {
+                    network,
+                    reason: String::new(),
+                }
+            } else {
+                Command::Connect(network)
+            };
+            _ = owner.update(cx, |board, cx| board.send(command, cx));
+        }),
     }
-    .unit(move |_, cx| {
-        let Some(network) = network.clone() else {
-            return;
-        };
-        let command = if online {
-            Command::Disconnect {
-                network,
-                reason: String::new(),
-            }
-        } else {
-            Command::Connect(network)
-        };
-        _ = owner.update(cx, |board, cx| board.send(command, cx));
-    })
 }
 
 /// Why Join is unavailable for the selected network's `status`, if it is.
@@ -127,24 +139,23 @@ pub(crate) fn join_unavailable(status: Option<&ConnectionStatus>) -> Option<&'st
     }
 }
 
-fn join(board: &Irc, unavailable: Option<&'static str>) -> OverflowUnit {
+fn join(board: &Irc, unavailable: Option<&'static str>) -> Control {
     let owner = board.me.clone();
     Control {
-        id: "irc-join",
         label: "Join…",
         icon: IconName::Hash,
         unavailable,
+        run: std::rc::Rc::new(move |window, cx| {
+            _ = owner.update(cx, |board, cx| join::open(board, window, cx));
+        }),
     }
-    .unit(move |window, cx| {
-        _ = owner.update(cx, |board, cx| join::open(board, window, cx));
-    })
 }
 
 /// The navigator header's Join: the same dialog behind a glyph, unavailable
 /// for the same reasons as **Join…**.
 pub(crate) fn navigator_join(board: &Irc, cx: &mut Context<Irc>) -> IconButton {
     const LABEL: &str = "Join a channel";
-    let network = board.selected_network(cx);
+    let network = board.selected_network();
     let unavailable = board.hub.as_ref().and_then(|hub| {
         let state = &hub.read(cx).state;
         let known = network.as_ref().and_then(|id| state.network(id));
@@ -156,27 +167,42 @@ pub(crate) fn navigator_join(board: &Irc, cx: &mut Context<Irc>) -> IconButton {
         .on_click(cx.listener(|board, _, window, cx| join::open(board, window, cx)))
 }
 
-/// Project the removal choices directly into the overflow menu.
-fn more(board: &Irc, cx: &App) -> OverflowUnit {
+/// The More menu: the network's commands, Connect or Disconnect and
+/// **Join…**, then the selected buffer's removal choices. Its entries are
+/// projected straight into the overflow menu.
+fn more(board: &Irc, network_items: [Control; 2], cx: &App) -> OverflowUnit {
     let owner = board.me.clone();
     let items = removal_items(board, cx);
-    let entries = items
+    let commands = network_items
         .iter()
-        .map(|(removal, buffer)| {
-            let (owner, removal, buffer) = (owner.clone(), *removal, buffer.clone());
-            PopupEntry::new(move || remove::item(owner.clone(), removal, buffer.clone()))
-        })
+        .cloned()
+        .map(|control| PopupEntry::new(move || control.item()));
+    let separator = PopupEntry::new(|| PopupMenuItem::Separator);
+    let removals = items.iter().map(|(removal, buffer)| {
+        let (owner, removal, buffer) = (owner.clone(), *removal, buffer.clone());
+        PopupEntry::new(move || remove::item(owner.clone(), removal, buffer.clone()))
+    });
+    let entries = commands
+        .chain(std::iter::once(separator))
+        .chain(removals)
         .collect();
-    // Leaving a joined room and removing an unjoined one have different icons.
-    let key = items[0].0.label();
+    // Each entry's icon can change, which needs a different projection key:
+    // connecting and disconnecting, leaving a joined room and removing an
+    // unjoined one.
+    let key = format!("{}|{}", network_items[0].label, items[0].0.label());
     OverflowUnit::inline(
         key,
         UNMEASURED_WIDTH,
         move |_, _| {
-            let (owner, items) = (owner.clone(), items.clone());
+            let (owner, items, network_items) =
+                (owner.clone(), items.clone(), network_items.clone());
             let button = action_button("irc-more", Intent::Quiet, Some(IconName::Ellipsis), "More")
                 .dropdown_caret(true);
             anchored::dropdown_menu(button, move |menu, _, _| {
+                let menu = network_items
+                    .iter()
+                    .fold(menu, |menu, control| menu.item(control.item()))
+                    .separator();
                 items.iter().fold(menu, |menu, (removal, buffer)| {
                     menu.item(remove::item(owner.clone(), *removal, buffer.clone()))
                 })
@@ -188,7 +214,7 @@ fn more(board: &Irc, cx: &App) -> OverflowUnit {
 }
 
 fn removal_items(board: &Irc, cx: &App) -> [(Removal, Option<BufferKey>); 2] {
-    let selected = board.selected_buffer().cloned();
+    let selected = board.toolbar_buffer().cloned();
     let state = board.hub.as_ref().map(|hub| &hub.read(cx).state);
     let removal = selected
         .as_ref()

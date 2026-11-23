@@ -166,6 +166,41 @@ with `PATCH /api/v1/ships/{shipId}`. The fleet reports its agents in rank and
 name order, and its ships in name order. The deprecated leadership fields
 `rearAdmiralName` and `captainNames` come from linked agents.
 
+A fleet records its standard IRC channels: `starbaseChannel` (people, the
+rear admiral and the captains) and `commandChannel` (the rear admiral and its
+captains), each optional and set on create or with `PATCH`. A ship records its
+captain's ship channel in `channel`, set when the ship is created or renamed;
+a rename that leaves `channel` out keeps it, and `null` clears it. Because a
+ship's channel decides every member's autojoin, as the fleet's channels do,
+only a human organisation administrator may set or change it; a member who
+creates a ship with a channel, or renames one with a different channel,
+receives 403. Channel
+names start with `#` and hold no whitespace, commas, colons or control
+characters, so the desktop joins each as one channel. The
+fleet's `agents` repeat each linked ship's channel as `shipChannel`. An
+initiative's `channels` are its own channels beyond its fleet's standard ones.
+
+A fleet also records `fleetApiUrl`, the address at which a desktop reaches
+the fleet's Stargate Fleet API to show its live state. The fleet installer
+sends it when it registers the fleet. It is an absolute `https` URL on any
+host, or `http` only on `localhost`, `127.0.0.1` or `[::1]`, such as the local
+end of an SSH tunnel. It carries no credentials, query or fragment and is at
+most 2,048 characters. The API stores it with a lower-case scheme and host and
+no trailing slash. It is optional on create; an edit that leaves it out keeps
+it, and `null` clears it. Like the fleet's other fields, only a human
+organisation administrator can set it, never an agent, because the desktop
+sends the fleet's token to that address. The token itself is never stored in or
+returned by this API: the desktop app asks for the fleet's token once and keeps
+it on the user's own machine. Fleet responses, including the fleet embedded in
+initiative responses, report it.
+
+Each agent may record `ircNick`, its nick on the fleet's IRC server, which
+fleet IRC servers tie to the account of the same name. Desktop clients mark an
+agent's rank in IRC only by this nick, never by its name. A nick starts with a
+letter and holds letters, digits, `-` and `_`, at most 64 characters, and is
+unique within the organisation, ignoring case. An edit that leaves `ircNick`
+out keeps it; `null` clears it. The fleet's `agents` report it.
+
 Agent registration and editing accept `fleetId` and `shipId`. An ID takes
 precedence over its text field. Legacy fleet names resolve within the caller's
 organisation. A ship name creates a ship only within a matched fleet. Captains
@@ -197,7 +232,7 @@ share the REST services and their version and authorisation checks.
 
 Human organisation administrators register and deactivate API agent identities under
 `/api/v1/agents`. Register an agent with `name`, `rank`, `fleet`, `defaultModel`,
-`serviceTokenClientId` and `ship` for captains. The ranks are `rearAdmiral`,
+`serviceTokenClientId`, `ship` for captains and, optionally, `ircNick`. The ranks are `rearAdmiral`,
 `captain` and `crew`. The `serviceTokenClientId` field carries the verified
 provider subject for the agent in that organisation. Use the WorkOS `sub`,
 the Entra `oid` or the email used by local dev sign-in. Authenticate as that
@@ -223,6 +258,8 @@ the referenced issue for its flag.
 The flag marks an unassigned, open issue as available for a fleet's captains
 to take. Anyone who may edit an issue can set it on create with
 `POST /api/v1/issues` or on edit with `PATCH /api/v1/issues/{reference}`.
+An agent registered to a fleet can set it only on issues its fleet may
+dispatch. See [Fleet ownership](#fleet-ownership).
 
 - A write that would leave the issue with an assignee and asks for
   `readyForAgents: true` fails with 400. An edit that clears the assignee and
@@ -257,6 +294,68 @@ also accepts an agent's user ID and combines with `updatedSince`. The MCP
 tools `subspace_create_issue`, `subspace_update_issue` and
 `subspace_list_issues` accept the same field and filter, and every MCP issue
 result carries the field.
+
+## Fleet ownership
+
+A project belongs to its initiative's fleet, or else to the fleet of that
+initiative's nearest ancestor with one. A project without an initiative, or
+with no fleet anywhere on its initiative path, belongs to no fleet.
+
+An agent registered to a fleet, shown by `kind: "agent"` and a non-null
+`fleetId` on `GET /api/v1/me`, may dispatch issues only in its own fleet's
+projects and in projects that belong to no fleet. Dispatching means sending a
+non-null `assigneeId`, or `readyForAgents` with either value, to
+`POST /api/v1/issues` or `PATCH /api/v1/issues/{reference}`. When the issue's
+project belongs to another fleet, the API refuses the write with 403 and the
+usual problem document, and changes nothing: no issue is created, and the
+issue's fields, version and activity stay as they were. On edit, the archive,
+version and empty-change checks come first, so a stale version still
+receives 409.
+
+Moves follow the same ownership. When such an agent calls
+`POST /api/v1/issues/{reference}/move`, the API refuses the move with 403 if
+the source or the destination project belongs to another fleet, and moves
+nothing. Moves between the agent's own fleet's projects and projects without
+a fleet are allowed. The checks on the projects, the issue version and the
+moved issues come first, and `POST /api/v1/issues/{reference}/move-preview`
+does not apply the ownership check.
+
+Because initiatives inherit their fleet in the same way, reparenting follows
+the same ownership. An initiative belongs to its own fleet, or else to the
+fleet of its nearest ancestor with one. An initiative's owner can be an agent,
+and owners may change `parentId` with `PATCH /api/v1/initiatives/{id}`. When
+such an agent changes `parentId`, the API refuses the change with 403 if the
+initiative, or the new parent, belongs to another fleet, and changes nothing.
+This stops an agent taking another fleet's branch, and the projects under it,
+out of that fleet, and stops it placing a branch under another fleet. Moves to
+and from the agent's own fleet's initiatives and initiatives without a fleet,
+including making the initiative a root, are allowed. The permission, version,
+archive and hierarchy checks come first. Setting or clearing an initiative's
+fleet with `PUT /api/v1/initiatives/{id}/fleet` needs an organisation
+administrator, which an agent never is, and no MCP tool changes an
+initiative's parent or fleet.
+
+- Humans and agents without a fleet are not restricted.
+- Clearing the assignee with `assigneeId: null` is allowed, as are edits that
+  send neither field. The server clearing the flag as a side effect of
+  another change, such as a terminal state, is not a dispatch.
+- Comments are not restricted. They change no ownership or dispatch state,
+  and fleets legitimately discuss each other's work.
+- The MCP tools `subspace_create_issue`, `subspace_update_issue` and
+  `subspace_move_issue` apply the same rules and return the same problems as
+  tool errors.
+
+The check runs inside the write's transaction. It reads the agent's
+registration, the project and each initiative on the path up to the first one
+with a fleet, holding a share lock on each row until the write commits. A
+move checks its source and destination in project ID order, the order in
+which it already locks the two project rows. A reparent checks the initiative
+and its new parent in initiative ID order, after taking the organisation's
+initiative write lock. A concurrent project move, initiative reparenting,
+fleet assignment or agent re-registration therefore either commits first and
+is enforced, or waits until the write has committed.
+A dispatcher that read an issue before its project moved to another fleet
+receives 403 even though the issue version is unchanged.
 
 ## Planning and stakeholders
 
@@ -319,7 +418,10 @@ The repository's pre-push hook runs type checking, lint and `bun test` on API
 code changes. Install the API dependencies before pushing code.
 
 The HTTP tests require a clean loopback Compose stack and create synthetic
-organisations. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`. For signed pull request and deployment tests, sign in first as
+organisations. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`.
+The fleet ownership race test holds a row lock in the API's own database while
+an agent writes, so when both variables are set, `TEST_DATABASE_URL` must name
+the database that `TEST_API_URL` serves, as in the example above. For signed pull request and deployment tests, sign in first as
 `admin@example.com` to a dedicated dev organisation. Start the API with that
 organisation's internal UUID in `GITHUB_ORGANISATION_ID` and a local
 `GITHUB_WEBHOOK_SECRET`. Set `TEST_GITHUB_ORGANISATION` to its dev sign-in slug

@@ -101,9 +101,12 @@ pub(crate) fn open_picker(
 
 pub(crate) fn picker_values(this: &Actions, kind: Picker) -> Vec<String> {
     match kind {
+        // The selected run's failed jobs only: none while the jobs loaded
+        // belong to an earlier selection.
         Picker::Log => this
-            .detail
-            .jobs
+            .selected_detail()
+            .map(|detail| detail.jobs.as_slice())
+            .unwrap_or_default()
             .iter()
             .filter(|job| matches!(job.status.as_str(), "failure" | "timed_out"))
             .map(|job| format!("{} · {}", job.id, job.name))

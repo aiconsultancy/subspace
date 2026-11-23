@@ -8,12 +8,14 @@ use crate::proto::{parse, serialise};
 
 mod anchors;
 mod autojoin;
+mod client_tags;
 mod forget;
 mod history;
 mod listing;
 mod members;
 mod messages;
 mod metadata;
+mod reactions;
 mod registration;
 mod replies;
 mod spelling;
@@ -67,6 +69,7 @@ pub(super) fn feed(session: &mut Session, lines: &[&str]) -> Output {
         let out = session.receive(parse(line).unwrap(), now());
         all.send.extend(out.send);
         all.events.extend(out.events);
+        all.updates.now.extend(out.updates.now);
         all.quit |= out.quit;
     }
     all

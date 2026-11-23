@@ -17,6 +17,9 @@ pub(super) struct Session {
     issue: Due,
     list: Due,
     live_since: Option<Instant>,
+    /// The id of this stream's `ready` while its catch-up is not taken.
+    #[cfg(test)]
+    ready_owed: Option<u64>,
 }
 
 impl Session {
@@ -26,6 +29,8 @@ impl Session {
             issue: Due::new(ISSUE_SPACING),
             list: Due::new(LIST_SPACING),
             live_since: None,
+            #[cfg(test)]
+            ready_owed: None,
         }
     }
 
@@ -56,7 +61,7 @@ impl Session {
         let Some(shared) = weak.upgrade() else {
             return Ok(());
         };
-        self.note_ready(&lock(&shared.state));
+        self.note_ready(&mut lock(&shared.state));
         drop(shared);
         self.forward(weak, &mut stream).await
     }
@@ -81,7 +86,12 @@ impl Session {
         }
     }
 
-    fn note_ready(&mut self, state: &crate::hub::State) {
+    fn note_ready(&mut self, state: &mut crate::hub::State) {
+        #[cfg(test)]
+        {
+            state.live_reads.latest_ready += 1;
+            self.ready_owed = Some(state.live_reads.latest_ready);
+        }
         let now = Instant::now();
         self.live_since = Some(now);
         self.issue.note(state.issue_key(), now);
@@ -114,6 +124,13 @@ impl Session {
         }
         if self.list.take(state.list_key(), now) {
             hints::reread_list(shared, &mut state);
+        }
+        #[cfg(test)]
+        if !self.issue.waiting()
+            && !self.list.waiting()
+            && let Some(ready) = self.ready_owed.take()
+        {
+            state.live_reads.caught_up_ready = ready;
         }
     }
 }

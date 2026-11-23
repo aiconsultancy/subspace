@@ -8,7 +8,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use gpui_kit::{App, AppContext as _, Context, Entity, Global, Subscription, Task};
 use subspace_api_client::initiatives::Catalog;
-use subspace_client_irc::{BufferKey, Command, Event, NetworkConfig, Runtime};
+use subspace_client_irc::{BufferKey, Command, Event, NetworkConfig, NetworkId, Runtime, Update};
 use subspace_framework::dashboard::{Services, full_text_service, notifications, prefs};
 
 use crate::config::{self, Settings};
@@ -66,12 +66,33 @@ pub(crate) struct Hub {
     /// Issue references: the contract's scope and the answers shown.
     pub issues: IssueReferences,
     pub pull_requests: PullRequestReferences,
+    /// Which message keeps each reference's tile, per conversation.
+    pub tiles: crate::tiles::Sessions,
     /// Clock sampled by the existing drain timer, never by tile rendering.
     pub now: DateTime<Utc>,
     pub uploads: crate::uploads::cache::References,
+    /// What the Fleet API says of each fleet a Channels view shows, by
+    /// fleet id, for the conversations' headers: the union of
+    /// [`Self::fleet_views`], which each view keeps current.
+    pub fleets: crate::live::Lives,
+    /// Message reactions, reaction support per network and refusals.
+    pub reactions: crate::reactions::Reactions,
+    /// Each view's share of [`Self::fleets`], by the view's entity id.
+    pub fleet_views: crate::live::Shares,
     captain_notifications: captain_notifications::Monitor,
     _timer: Option<Task<()>>,
     _settings: Option<Subscription>,
+}
+
+impl Hub {
+    /// The fleet roles on `network`, from the initiatives catalogue.
+    pub(crate) fn roster(
+        &self,
+        network: &NetworkId,
+        cx: &App,
+    ) -> std::rc::Rc<crate::fleet::Roster> {
+        self.initiatives.roster(&self.applied.networks, network, cx)
+    }
 }
 
 /// Starts the runtime with the configured networks; once per process.
@@ -215,9 +236,13 @@ impl Hub {
             recall: persist::Recall::waiting(running),
             issues: IssueReferences::default(),
             pull_requests: PullRequestReferences::default(),
+            tiles: crate::tiles::Sessions::default(),
             now: Utc::now(),
             captain_notifications: Default::default(),
             uploads: Default::default(),
+            fleets: Default::default(),
+            reactions: Default::default(),
+            fleet_views: Default::default(),
             _timer: None,
             _settings: None,
         }
@@ -228,6 +253,8 @@ impl Hub {
     pub fn remove(&mut self, buffer: &BufferKey, cx: &mut Context<Self>) {
         if self.state.remove(buffer) {
             self.recall.forget(buffer);
+            self.reactions.forget(buffer);
+            self.tiles.forget(buffer);
             self.save_removed(cx);
             cx.notify();
         }
@@ -265,8 +292,8 @@ impl Hub {
         }
         crate::uploads::session::refresh(self, cx);
         self.serve_tools(cx);
-        let events = match &self.outbox {
-            Outbox::Runtime(runtime) => runtime.drain(),
+        let updates = match &self.outbox {
+            Outbox::Runtime(runtime) => runtime.drain_updates(),
             #[cfg(test)]
             Outbox::Recorded(_) => Vec::new(),
         };
@@ -275,13 +302,7 @@ impl Hub {
             cx.notify();
         }
         self.now = now;
-        if events.is_empty() {
-            if self.state.expire_typing(now) {
-                cx.notify();
-            }
-        } else {
-            self.ingest(events, now, cx);
-        }
+        receive(self, updates, now, cx);
         self.flush_store(false, cx);
         captain_notifications::tick(self, cx);
     }
@@ -296,10 +317,20 @@ impl Hub {
         if requests.is_empty() {
             return;
         }
-        for request in requests {
-            for command in agent_tools::serve(&mut self.state, request) {
-                self.send(command);
-            }
+        let (initiatives, networks) = (&self.initiatives, &self.applied.networks);
+        let app: &App = cx;
+        let agents = |network: &NetworkId, nick: &str| {
+            let roster = initiatives.roster(networks, network, app);
+            crate::compose::AgentNotice::refusing(&roster, nick, |_| false)
+                .map(|notice| notice.words())
+        };
+        let state = &mut self.state;
+        let commands: Vec<Command> = requests
+            .into_iter()
+            .flat_map(|request| agent_tools::serve(state, request, &agents))
+            .collect();
+        for command in commands {
+            self.send(command);
         }
         cx.notify();
     }
@@ -324,6 +355,7 @@ impl Hub {
             .collect();
         self.state.expire_typing(now);
         self.recall.keep(&self.state, stored);
+        self.recall.keep_endings(&mut self.state);
         self.read_visible();
         self.save_removed(cx);
         save_directories(self, cx);
@@ -426,6 +458,33 @@ impl Hub {
     pub fn resolve(&self, target: u64) -> Option<BufferKey> {
         let index = usize::try_from(target.checked_sub(1)?).ok()?;
         self.targets.get(index).cloned()
+    }
+}
+
+/// Takes the runtime's updates in order: reactions and their support go
+/// to [`crate::reactions::Reactions`], which also follows every event
+/// before it is applied; the events are then ingested together.
+pub(crate) fn receive(
+    hub: &mut Hub,
+    updates: Vec<Update>,
+    now: DateTime<Utc>,
+    cx: &mut Context<Hub>,
+) {
+    let mut events = Vec::new();
+    let mut changed = false;
+    for update in updates {
+        match update {
+            Update::Event(event) => {
+                hub.reactions.observe(&event);
+                events.push(event);
+            }
+            other => changed |= crate::reactions::react(&mut hub.reactions, &hub.state, other),
+        }
+    }
+    if !events.is_empty() {
+        hub.ingest(events, now, cx);
+    } else if hub.state.expire_typing(now) || changed {
+        cx.notify();
     }
 }
 

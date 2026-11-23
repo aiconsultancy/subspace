@@ -11,7 +11,7 @@ pub(crate) fn network_id() -> NetworkId {
 
 pub(crate) fn config() -> NetworkConfig {
     serde_json::from_value(serde_json::json!({
-        "id": NETWORK, "name": "Local Ergo", "host": "127.0.0.1", "port": 16667,
+        "id": NETWORK, "name": "Acme IRC", "host": "127.0.0.1", "port": 16667,
         "tls": false, "nickname": "subspace", "channels": ["#subspace"]
     }))
     .unwrap_or_else(|error| panic!("fixture config: {error}"))

@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::model::{BufferKey, Event, Target};
+use crate::model::{BufferKey, Event, Target, Update};
 
 #[derive(Debug, Default)]
 pub struct Spellings {
@@ -69,5 +69,15 @@ pub(super) fn buffers_mut(event: &mut Event) -> Vec<&mut BufferKey> {
         | Event::Capabilities { .. }
         | Event::OwnNick { .. }
         | Event::ChannelList { .. } => Vec::new(),
+    }
+}
+
+/// Every buffer key an update names.
+pub(super) fn update_buffers_mut(update: &mut Update) -> Vec<&mut BufferKey> {
+    match update {
+        Update::Event(event) => buffers_mut(event),
+        Update::Reaction(reaction) => vec![&mut reaction.buffer],
+        Update::ReactionRefused { buffer, .. } => vec![buffer],
+        Update::ReactionSupport { .. } => Vec::new(),
     }
 }

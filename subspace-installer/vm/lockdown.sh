@@ -6,7 +6,7 @@
 #
 # Usage:
 #   lockdown.sh isolate --operator USER [--operator USER2] [--operator-only-port PORT]...
-#                       [--protect-metadata] [--metadata-user USER]...
+#                       [--port-user PORT:USER]... [--protect-metadata] [--metadata-user USER]...
 #   lockdown.sh apply   --operator USER [--operator USER2] [--ssh-from CIDR]...
 #                       [--tailscale | --cloudflare] [--ssh-port PORT]... [--allow-port PORT]...
 #                       [isolate options] [--timeout SECONDS] [--confirm-now]
@@ -19,8 +19,9 @@
 # users other than root and the operators can connect to, so it cannot lock
 # you out: it applies at once, loads at boot and is never rolled back.
 # --operator-only-port keeps a loopback or container port to root and the
-# operators; --protect-metadata does the same for the cloud metadata service,
-# plus any --metadata-user accounts.
+# operators; --port-user also lets one service user reach one of those ports,
+# such as Stargate's gateway user the API for agent dispatch. --protect-metadata
+# does the same for the cloud metadata service, plus any --metadata-user accounts.
 #
 # The inbound firewall and sshd hardening (`apply`, table inet subspace_lockdown)
 # can lock you out, so a change stays pending: `apply` schedules a rollback
@@ -75,8 +76,8 @@ ssh_listen_ports() {
 
 parse() {
     # parse OPTIONS...: set the option globals shared by isolate and apply.
-    operators=() v4=() v6=() allow=() protected=() ssh_ports=() metadata_users=()
-    uids=(0) metadata_uids=()
+    operators=() v4=() v6=() allow=() protected=() ssh_ports=() metadata_users=() port_users=()
+    uids=(0) metadata_uids=() port_uids=()
     tailscale=false cloudflare=false protect_metadata=false
     local user source uid
     while (( $# )); do
@@ -94,6 +95,9 @@ parse() {
             --ssh-port) [[ ${2:?} =~ ^[0-9]{1,5}$ ]] || die 'Invalid --ssh-port.'; ssh_ports+=("$2"); shift 2 ;;
             --protect-metadata) protect_metadata=true; shift ;;
             --metadata-user) metadata_users+=("${2:?}"); shift 2 ;;
+            --port-user)
+                [[ ${2:?} =~ ^[0-9]{1,5}:[a-z_][a-z0-9_.-]{0,31}$ ]] || die 'Invalid --port-user (use PORT:USER).'
+                port_users+=("$2"); shift 2 ;;
             *) die "Unknown option $1." ;;
         esac
     done
@@ -108,6 +112,11 @@ parse() {
         uid=$(id -u -- "$user" 2>/dev/null) || die "No Linux user $user."
         metadata_uids+=("$uid")
     done
+    for user in ${port_users[@]+"${port_users[@]}"}; do
+        [[ ${user#*:} != root ]] || die 'Invalid --port-user root.'
+        uid=$(id -u -- "${user#*:}" 2>/dev/null) || die "No Linux user ${user#*:}."
+        port_uids+=("${user%%:*}:$uid")
+    done
     if grep -Eqs '"keyVault": *"[^"]+"' /root/fleet/answers.json; then
         protect_metadata=true  # A Key Vault identity on this VM must never reach the agents.
     fi
@@ -116,6 +125,7 @@ parse() {
 isolation_wanted() { "$protect_metadata" || (( ${#protected[@]} )); }
 
 render_isolation() {
+    local entry
     {
         printf 'add table inet subspace_isolation\ndelete table inet subspace_isolation\n'
         isolation_wanted || return 0
@@ -126,6 +136,9 @@ render_isolation() {
         # not pass through this chain.
         printf '        type filter hook output priority -110; policy accept;\n'
         if (( ${#protected[@]} )); then
+            for entry in ${port_uids[@]+"${port_uids[@]}"}; do
+                printf '        oifname "lo" tcp dport %s meta skuid %s accept\n' "${entry%%:*}" "${entry#*:}"
+            done
             printf '        oifname "lo" tcp dport { %s } meta skuid != { %s } reject with tcp reset\n' \
                 "$(unique_list "${protected[@]}")" "$(unique_list "${uids[@]}")"
             printf '        oifname { "docker0", "br-*" } tcp dport { %s } meta skuid != { %s } reject with tcp reset\n' \

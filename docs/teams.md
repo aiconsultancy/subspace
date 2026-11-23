@@ -1,8 +1,9 @@
 # Connect a fleet to Microsoft Teams
 
 The fleet's **rear admiral** can talk to your stakeholders in Microsoft Teams.
-**Teams bots cannot message each other**, a Teams limitation, so captains and
-crew cannot coordinate through Teams; they stay on IRC. This guide connects
+**Teams bots cannot message each other**, a Teams limitation, so captains
+cannot coordinate through Teams; they stay on IRC, and crew work only through
+their captain. This guide connects
 the rear admiral. In our reference setup a captain also has its own Teams
 bot for working with people, which this installer doesn't configure. If your
 stakeholders use Slack, [Slack](slack.md) is simpler.
@@ -122,7 +123,7 @@ other tenants, people and channels, and messages from bots.
   admiral; see [Slack](slack.md).
 - **Approvals in Teams:** Stargate can offer native permission decisions to
   chosen allowed users. See
-  [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/df03d10b039c126a2fc0b5522bf7841ef07bc799/docs/teams.md),
+  [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/teams.md),
   which also covers authentication and delivery in detail.
 - **Several fleets:** each fleet's rear admiral needs its own Azure Bot,
   identity, Teams app and callback hostname.

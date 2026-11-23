@@ -5,9 +5,10 @@ mod backoff;
 mod issue;
 mod updates;
 
-use super::{TOKEN, organisation, server::NettMock, wait_for};
+use super::{TOKEN, organisation, server::NettMock, wait, wait_for};
 use crate::hub::{Hub, LiveStatus};
 use crate::{Client, ListQuery, ListTab};
+use std::time::Duration;
 use subspace_framework::core::Secret;
 
 const STREAM: &str = "/api/v1/updates";
@@ -35,6 +36,20 @@ fn arrivals(mock: &NettMock, method: &str, suffix: &str) -> Vec<f64> {
         .collect()
 }
 
+/// A few tenths of a second after the stream turns live, the hub reads the
+/// list head and the open issue once more, in the same step. A test that
+/// acts in that window races those reads, and a slow machine widens it: a
+/// landing issue read starts the attachment list again, and a list read
+/// takes a slow answer meant for the test's own. Waits until the hub has
+/// taken the catch-up for the latest `ready` and everything it read and
+/// queued is back. A request path cannot tell it apart: count reads use the
+/// list's path too.
+fn wait_for_ready_catch_up(hub: &Hub) {
+    wait("the catch-up after ready", Duration::from_secs(10), &|| {
+        hub.caught_up_after_ready()
+    });
+}
+
 fn works_hub(mock: &NettMock) -> (String, Hub) {
     let org = organisation(mock, "Fixture Works");
     let hub = hub(mock, &org);
@@ -45,6 +60,7 @@ fn wait_for_live_list(hub: &Hub) {
     wait_for("a live stream", &|| {
         hub.snapshot().list().is_some() && hub.snapshot().live() == LiveStatus::Live
     });
+    wait_for_ready_catch_up(hub);
 }
 
 fn open_live_issue(hub: &Hub) {
@@ -56,4 +72,5 @@ fn open_live_issue(hub: &Hub) {
                 .issue()
                 .is_some_and(|issue| issue.detail().is_some())
     });
+    wait_for_ready_catch_up(hub);
 }

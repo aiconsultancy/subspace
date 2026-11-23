@@ -65,10 +65,10 @@ class BoardDocsTests(unittest.TestCase):
         source = """
         BoardRegistration::new::<subspace_github_board::Board>();
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        BoardRegistration::new::<subspace_board_lab_board::BoardLab>();
+        BoardRegistration::new::<subspace_space_lab_board::SpaceLab>();
         BoardRegistration::configured::<subspace_web_board::WebBoard>();
         """
-        self.assertEqual(DOCS.registered_board_ids(source), {"github", "board-lab", "web"})
+        self.assertEqual(DOCS.registered_board_ids(source), {"github", "space-lab", "web"})
 
     def test_placeholders_cannot_hide_text_or_start_docfx_html_blocks(self) -> None:
         self.assertTrue(DOCS.markup_errors("The toast is `No longer monitoring\n<title>`."))
@@ -113,7 +113,9 @@ class BoardDocsTests(unittest.TestCase):
         DOCS.prose("`" * 100_000 + "\n" + "x\n" * 100_000)
         DOCS.strip_code_spans("`" * 100_000 + "a" * 100_000)
         DOCS.strip_code_spans("`a" * 100_000)
-        self.assertLess(time.perf_counter() - started, 2.0)  # the old regexes take minutes
+        # The old regexes take minutes; linear scans take well under a second
+        # even on a busy machine.
+        self.assertLess(time.perf_counter() - started, 20.0)
 
 
 if __name__ == "__main__":

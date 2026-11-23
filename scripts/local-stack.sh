@@ -20,8 +20,10 @@ stack="$root/.stack"
 irc="$stack/irc"
 email=developer@example.com
 organisation=local
-# The desktop user and the fleets' rear admirals and captains.
-accounts=(developer aurora-admiral aurora-lyra aurora-orion borealis-admiral borealis-rigel)
+# The desktop user and the fleets' rear admirals and captains. An agent's
+# account and nick is <fleet>-<captain-id>, and each captain has the ship
+# channel #<fleet>-<captain-id> in scripts/local-stack/irc-channels.json.
+accounts=(developer aurora-admiral aurora-lyra aurora-orion aurora-vega aurora-castor borealis-admiral borealis-rigel)
 
 die() { echo "local-stack: $*" >&2; exit 1; }
 

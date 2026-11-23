@@ -42,6 +42,11 @@ impl Issues {
         self.cancel_search_fallback();
         self.editor = None;
         self.issue_view = Default::default();
+        // The page goes, and with it where its Back went: after an account
+        // change that may be a view, such as a decision, of the old account.
+        // The arrival stays, as a link opening now polls the hub first and
+        // the shell has just named the view it came from.
+        self.back.closed();
         self.activity.clear();
         self.hub_id = link.as_ref().map(|link| link.id);
         self.hub = link.map(|link| link.hub);

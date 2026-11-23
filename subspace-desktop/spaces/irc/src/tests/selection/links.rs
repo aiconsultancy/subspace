@@ -220,3 +220,39 @@ fn a_click_on_a_markdown_link_follows_it_after_a_drag_in_its_row_released_outsid
         Some(URL)
     );
 }
+
+/// From a continuing row's top to the middle of its first text line.
+const LINE_OFFSET_PX: f32 = 10.;
+
+#[gpui_kit::test]
+fn a_drag_over_an_issue_chip_with_its_state_dot_copies_the_reference_as_written(
+    cx: &mut TestAppContext,
+) {
+    let (_, hub, _, cx) = crate::tests::issues::open_board(cx, true, "See TST-12 blocks TST-13.");
+    let dots = cx.update(|window, cx| {
+        window.render_frame(cx);
+        gpui_kit::base::test_support::snapshots(window)
+            .into_iter()
+            .filter(|node| {
+                node.path()
+                    .last()
+                    .is_some_and(|id| id.to_string().starts_with("irc-reference-state:"))
+            })
+            .count()
+    });
+    assert_eq!(dots, 1, "the answered reference shows its state");
+    // The drag runs along the chip's own text line, from the plain word
+    // before the chips to past the line's end, so it never leaves the row.
+    // The answered reference's tile sits under the line, so the line is
+    // near the row's top.
+    let room = channel("#subspace");
+    let row = super::bounds(&super::row_ids(&hub, &room, cx)[2], cx);
+    let column = super::column(&hub, &room, cx);
+    let line = row.top() + gpui_kit::px(LINE_OFFSET_PX);
+    let copied = super::drag(
+        gpui_kit::point(column + gpui_kit::px(1.), line),
+        gpui_kit::point(row.right() - gpui_kit::px(4.), line),
+        cx,
+    );
+    assert_eq!(copied.trim_end_matches('\n'), "See TST-12 blocks TST-13.");
+}

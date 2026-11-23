@@ -16,6 +16,9 @@ fn messaging_and_navigation_builders_caption_every_state(cx: &mut TestAppContext
             messaging::messages(g, t, w, cx),
             messaging::senders(g, t, w, cx),
             messaging::members(g, t, w, cx),
+            messaging::agents(g, t, w, cx),
+            messaging::externals(g, t, w, cx),
+            messaging::crew_meters(g, t, w, cx),
             navigation::nav_buttons(g, t, w, cx),
             navigation::glass_controls(g, t, w, cx),
             navigation::overflow_toolbars(g, t, w, cx),
@@ -25,6 +28,7 @@ fn messaging_and_navigation_builders_caption_every_state(cx: &mut TestAppContext
             navigation::workspace::dock_switches(g, t, w, cx),
             navigation::workspace::panes(g, t, w, cx),
             navigation::workspace::inspectors(g, t, w, cx),
+            navigation::workspace::inspector_tabs(g, t, w, cx),
             navigation::token_swatches(g, t, w, cx),
         ]
     });

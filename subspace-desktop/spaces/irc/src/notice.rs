@@ -40,7 +40,7 @@ mod tests {
             kind,
             from: from.map(str::to_owned),
         };
-        let notice = notice(&attention, "Local Ergo");
+        let notice = notice(&attention, "Acme IRC");
         let body = notice.system_body().cloned().unwrap_or_default();
         (notice.text().to_string(), body.to_string())
     }
@@ -53,10 +53,7 @@ mod tests {
                 AttentionKind::Highlight,
                 Some("alice")
             ),
-            (
-                "alice mentioned you in #subspace".into(),
-                "Local Ergo".into()
-            )
+            ("alice mentioned you in #subspace".into(), "Acme IRC".into())
         );
         assert_eq!(
             said(channel("#subspace"), AttentionKind::Highlight, None).0,

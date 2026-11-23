@@ -1,12 +1,9 @@
 //! The board's view: the workspace (buffer list, conversations, member
 //! list), rows from the state, and keeping the hub told which buffer is read.
 
-use gpui_kit::component::{Icon, Sizable as _, h_flex};
-use gpui_kit::{
-    AnyElement, App, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Styled as _, TestSupportExt as _, WeakEntity, Window, div,
-};
+use gpui_kit::{AnyElement, App, Context, Entity, SharedString, WeakEntity, Window};
 use subspace_client_irc::{BufferKey, Target};
+use subspace_framework::dashboard::list::GroupIndicator;
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::row_menu::{MenuCommand, MenuGroup};
 use subspace_framework::dashboard::{
@@ -21,12 +18,19 @@ mod details;
 mod empty;
 mod frame;
 mod hosting;
+mod inspector;
+mod navigator;
 
 use details::{kind, kind_icon};
 
 pub(crate) use details::{server_summary, status_line};
 pub(crate) use frame::{space_docks, toggle_space_dock};
 pub(crate) use hosting::{Hosted, open_channel};
+pub(crate) use inspector::InspectorTab;
+#[cfg(test)]
+pub(crate) use inspector::reason as inspector_reason;
+#[cfg(test)]
+pub(crate) use inspector::thread::PROMPT as THREAD_PROMPT;
 /// Fewer lines than this on open asks the server for recent history.
 const HISTORY_ON_OPEN: usize = 50;
 /// Lines asked for per history request.
@@ -44,6 +48,16 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         list: ListState::default(),
         buffers: Default::default(),
         listed: Default::default(),
+        group_networks: Default::default(),
+        ships: Default::default(),
+        people: Default::default(),
+        captions: Default::default(),
+        watch: Default::default(),
+        inspector_tab: Default::default(),
+        threads: Default::default(),
+        seen_fleets: Default::default(),
+        absorbing: Default::default(),
+        selection_group: None,
         hub: None,
         hub_subscription: None,
         networks: Vec::new(),
@@ -75,6 +89,7 @@ pub(crate) fn bind_hub(board: &mut Irc, cx: &mut Context<Irc>) {
         .as_ref()
         .map(|hub| cx.observe(hub, |board, _, cx| sync(board, cx)));
     board.hub = current;
+    board.watch.forget_hub();
     board.dock.reset();
     board.find_revision = board.find_revision.wrapping_add(1);
     let owner = cx.entity().downgrade();
@@ -102,12 +117,8 @@ pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
         .filter(|buffer| state.joins.retired(buffer))
         .cloned()
         .collect();
-    let layout = rows::layout(state);
     board.networks = state.networks().to_vec();
-    board.buffers = layout.buffers;
-    board.listed = layout.listed;
-    board.search = std::rc::Rc::new(rows::search(&layout.groups));
-    board.list.set_groups(layout.groups);
+    navigator::apply(board, &hub, cx);
     let opened = hub.update(cx, |hub, _| hub.state.take_opened());
     if let Some(query) = opened {
         reveal(board, &query, cx);
@@ -119,6 +130,9 @@ pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
     }
     publish_visible(board, cx);
     crate::reveal::settle(board, cx);
+    crate::live::watch::sync(board, cx);
+    crate::thread::refresh(board, cx);
+    inspector::want_in_play(board, cx);
     cx.notify();
 }
 
@@ -214,24 +228,18 @@ impl ListDashboard for Irc {
         })
     }
 
+    /// A ship channel leads with its captain's agent icon as the Icons
+    /// setting asks, else the quiet `#`; a person in `People` with a
+    /// presence dot; any other buffer with its kind's quiet glyph.
     fn row_leading(&self, row: &Row, cx: &App) -> Option<AnyElement> {
-        let buffer = self
-            .buffers
-            .get(&row.key)
-            .or_else(|| self.listed.get(&row.key))?;
-        let tokens = Tokens::current(cx);
-        Some(
-            div()
-                .id(SharedString::from(format!("irc-row:{}", row.key)))
-                .test_support()
-                .flex_shrink_0()
-                .child(
-                    Icon::from(kind_icon(&buffer.target))
-                        .xsmall()
-                        .text_color(tokens.muted),
-                )
-                .into_any_element(),
-        )
+        navigator::leading(self, row, cx)
+    }
+
+    /// `People` leads with the people glyph; the other groups with their
+    /// connection state's dot.
+    fn group_leading(&self, group: &Group, cx: &App) -> Option<AnyElement> {
+        let network = self.group_networks.get(&group.key)?;
+        (rows::people_group_key(network) == group.key).then(|| navigator::people_mark(cx))
     }
 
     /// Networks and their buffers start on the workspace's one text edge,
@@ -240,39 +248,28 @@ impl ListDashboard for Irc {
         Some(self.text_edge)
     }
 
-    /// An unread count or a channel's user count, as a navigator row's
-    /// quiet count: small, at the trailing edge.
+    /// A mention's `@` mark, then an unread count or a channel's user
+    /// count, as a navigator row's quiet count, then a ship's one dot at the
+    /// trailing edge.
     fn row_trailing(&self, row: &Row, cx: &App) -> Option<AnyElement> {
-        let tokens = Tokens::current(cx);
-        Some(
-            h_flex()
-                .flex_shrink_0()
-                .gap_1()
-                .children(row.trailing.iter().map(|glyph| {
-                    div()
-                        .flex_shrink_0()
-                        .text_size(tokens.caption_size())
-                        .text_color(tokens.glyph(glyph))
-                        .child(glyph.text.clone())
-                }))
-                .into_any_element(),
-        )
+        Some(navigator::trailing(self, row, cx))
     }
 
+    /// Every row with unread lines reads emphasised.
     fn row_emphasis(&self, row: &Row, cx: &App) -> bool {
-        self.buffer_state(&row.key, cx).is_some_and(|buffer| {
-            buffer.highlights > 0 || Irc::is_query_row(self, row) && buffer.unread > 0
-        })
+        navigator::unread(self, &row.key, cx)
     }
 
     fn row_accessible_label(&self, row: &Row, cx: &App) -> SharedString {
         if self.listed.contains_key(&row.key) {
             return rows::listed_accessible_label(row);
         }
-        match self.buffer_state(&row.key, cx) {
+        let base = match self.buffer_state(&row.key, cx) {
             Some(buffer) => rows::accessible_label(&row.title, &buffer),
             None => row.title.clone(),
-        }
+        };
+        let mark = navigator::spoken_mark(self, &row.key);
+        rows::activity::spoken(&base, mark.as_deref()).into()
     }
 
     /// A click selects a channel we are not in; a double click joins it.
@@ -286,6 +283,21 @@ impl ListDashboard for Irc {
 
     fn group_menu(&self, group: &Group) -> Option<RowMenu> {
         Some(listing::group_menu(group))
+    }
+
+    /// `Ships` above a fleet's first ship channel, and `Channels` above its
+    /// other channels after them.
+    fn group_captions(
+        &self,
+        group: &Group,
+        _cx: &App,
+    ) -> Vec<subspace_framework::dashboard::list::GroupCaption> {
+        navigator::captions(self, group)
+    }
+
+    /// A folded group says when it hides a mention or unread messages.
+    fn group_indicators(&self, group: &Group, cx: &App) -> Vec<GroupIndicator> {
+        navigator::group_indicators(self, group, cx)
     }
 
     fn empty_message(&self) -> (SharedString, SharedString) {

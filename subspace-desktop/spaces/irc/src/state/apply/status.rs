@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use chrono::{DateTime, Utc};
 use subspace_client_irc::{BufferKey, ConnectionStatus, Line, LineKind, NetworkId};
 
@@ -6,6 +8,8 @@ use crate::state::server_key;
 
 /// A status change, with a local error line in the server buffer when the
 /// connection failed, so the reason stays readable after it changes again.
+/// Any state but connected drops every nick status of the network, whether
+/// or not the runtime's clears arrived, so none outlives its connection.
 pub(super) fn apply(
     state: &mut IrcState,
     id: &NetworkId,
@@ -13,12 +17,16 @@ pub(super) fn apply(
     now: DateTime<Utc>,
 ) {
     let error = failure(&status);
+    let held = state.first_seq..state.next_seq;
     let Some(network) = network_mut(state, id) else {
         return;
     };
     if let ConnectionStatus::Connected { nick } = &status {
         network.nick = nick.clone();
+    } else {
+        network.statuses.clear();
     }
+    network.held_at_connect = held_at_connect(network.held_at_connect.take(), &status, held);
     network.status = status;
     if let Some(error) = error {
         let key = server_key(id);
@@ -30,6 +38,20 @@ pub(super) fn apply(
         if !repeated {
             append(state, local_error(key, error, now));
         }
+    }
+}
+
+/// The lines held when the connection `status` reports began: kept while it
+/// stays connected, `held` (every sequence held now) when it has just
+/// connected, `None` otherwise.
+fn held_at_connect(
+    current: Option<Range<i64>>,
+    status: &ConnectionStatus,
+    held: Range<i64>,
+) -> Option<Range<i64>> {
+    match status {
+        ConnectionStatus::Connected { .. } => Some(current.unwrap_or(held)),
+        _ => None,
     }
 }
 

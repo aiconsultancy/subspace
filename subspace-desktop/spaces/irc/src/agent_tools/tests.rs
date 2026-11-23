@@ -4,7 +4,7 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 
 use serde_json::{Value, json};
-use subspace_client_irc::{Command, ConnectionStatus, Event, LineKind};
+use subspace_client_irc::{Command, ConnectionStatus, Event, LineKind, NetworkId};
 use subspace_framework::agent_tools::test_support::{app_environment, environment};
 use subspace_framework::core::config::Config;
 
@@ -73,6 +73,11 @@ fn message_to(target: &str, text: &str) -> Write {
     operation(json!({"action":"message","network":"local","target":target,"text":text}))
 }
 
+/// A network whose nicks are all people: no fleet serves it.
+fn people(_: &NetworkId, _: &str) -> Option<String> {
+    None
+}
+
 /// A thread standing in for the hub: it answers every request from `state`
 /// until the last link is gone, then returns the commands it would send.
 fn hub_thread(mut state: IrcState) -> (Link, JoinHandle<Vec<Command>>) {
@@ -80,7 +85,7 @@ fn hub_thread(mut state: IrcState) -> (Link, JoinHandle<Vec<Command>>) {
     let handle = std::thread::spawn(move || {
         receiver
             .into_iter()
-            .flat_map(|request| serve(&mut state, request))
+            .flat_map(|request| serve(&mut state, request, &people))
             .collect()
     });
     (Link::Fixed(sender), handle)

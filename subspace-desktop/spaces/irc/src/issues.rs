@@ -9,7 +9,7 @@
 mod follow;
 mod preview;
 mod tile;
-mod tooltip;
+pub(crate) mod tooltip;
 
 use std::collections::HashMap;
 
@@ -22,7 +22,7 @@ use subspace_framework::dashboard::contracts::{BoardContracts, ContractError, De
 use crate::markup::IssueKeys;
 
 pub(crate) use follow::{attach, open, want};
-pub(crate) use preview::tiles;
+pub(crate) use preview::{panel, slot};
 pub(crate) use tile::relative;
 pub(crate) use tooltip::tooltip;
 

@@ -85,6 +85,15 @@ restart. **Notify ship captains** is on by default and applies on Save. It
 posts PR merge and deployment updates to matching initiative channels on
 the initiative's IRC connection while automatic board refresh is enabled. See [Channels](../spaces/irc/help.md#notify-ship-captains).
 
+**Settings > Application > Fleets** lists each fleet your initiatives belong
+to, with the Fleet API address the Subspace API records for it and its state
+(no token, address changed, live, token refused, unreachable and so on).
+Paste the fleet's token and choose **Save token**; **Test connection** reads
+the fleet once; **Clear token** forgets it. These apply at once, outside Save
+and Cancel. The token is kept in the system keychain with the address it was
+saved for and only sent there: when the recorded address changes, paste the
+token again. See [Fleets and the Fleet API](fleet-api.md).
+
 In a build with the terminal, **Settings > Terminal** (under Application) sets
 the terminal's font family and size for open and new sessions on Save, as
 `fontFamily` and `fontSize` in the config file's `terminal` object. See
@@ -107,8 +116,9 @@ choosing **Save**: the tab goes at once and the config file's `boards` entry
 matches what Settings writes. Closing the current Space opens the tab before
 it, or the next tab when it was first. The last open Space can't be closed;
 its menu says so. Nor can the last Space the config file leaves on, if the
-file was edited outside the app. A notice says where to add it again: the
-plus in the title bar. **Space settings…** in the same menu opens that
+file was edited outside the app. A notice says where to add it again: "the
+plus in the title bar" with horizontal navigation, or "the plus at the end of
+the navigation rail" with vertical navigation. **Space settings…** in the same menu opens that
 Space's Settings page.
 
 To turn a Space back on without opening Settings, choose the plus after the
@@ -266,8 +276,13 @@ Save applies and remembers both choices without a restart. Cancel leaves
 navigation unchanged. The command palette's **Toggle vertical navigation**
 command and the rail's collapse button remain available.
 
-**Cupertino Dark** is the shared default unless a build or product chooses
-another theme. Available saved user choices still win.
+A new Subspace install opens in **Twilight Two**: its first desktop start,
+with no config or state file yet, saves that choice, so Settings shows it
+selected. An install with no saved theme, such as one from before Twilight
+Two, shows **Cupertino Dark**, the shared default, unless a build or product
+chooses another theme. Available saved user choices still win. Subspace does
+not follow the system appearance, so a new install opens in Twilight Two,
+which is dark only, on a light-mode system too.
 **Automatic (Subspace default)** uses the original font fallback stack:
 JetBrains Mono, SF Mono, Menlo, Consolas, then common Linux monospace fonts
 and the system font. Density settings remain separate and unchanged.

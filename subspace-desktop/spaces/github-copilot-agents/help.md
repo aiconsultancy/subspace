@@ -150,7 +150,8 @@ has three filter buttons and **Clear filters**. **Hide navigator** and **Hide
 inspector**, at the two ends of the status bar, hide the navigator and the
 inspector. When the pane is narrow, the filter buttons move to an overflow
 menu. Under an opened task the toolbar has **Back**, which shows the list
-again, and **Browser (o)**.
+again, and **Browser (o)**. Pressing `1`, `2` or `3` on an opened task shows
+the list first, then opens that filter's menu from its button.
 
 | Filter | Key | Choices |
 | --- | --- | --- |
@@ -235,7 +236,9 @@ Double-click a row, press Enter on it, or choose **Open** in the inspector to
 open it as a tab beside the list's tab. Opening another row replaces it.
 Choose the list's tab or **Back**, or press Escape, to show the list again;
 the tab stays open. Close the tab with the X on it. Choosing a view or a
-repository in the navigator also shows the list.
+repository in the navigator also shows the list. If the task leaves the list,
+the page reads `This task is no longer listed.` and its tab, now named
+**Not listed**, still closes with its X.
 
 The page shows the title and state, then
 **Properties** and the sections below, in a column no wider than easy reading.
@@ -351,7 +354,7 @@ reads `Select a chat session or a cloud task first`.
 If the task's sessions are still loading, a toast reads `The task is still
 loading. Show the log again in a moment`.
 
-Subspace reads the log of the task's last session, only when you ask for it. It
+Subspace shows the log of the task's last session only when you ask for it. It
 shows **Loading the session log…**, then the log as Markdown.
 
 - The log is limited to 2 MB. A cut log ends with `The log was cut at 2 MB; this
@@ -366,9 +369,20 @@ shows **Loading the session log…**, then the log as Markdown.
   With no open cloud task, it reads `Open a cloud task first`.
 - Turn session logs on or off with **Session logs** in the command palette. They
   are on by default.
-- One log is open at a time. Subspace keeps up to 8 logs, at most 4 MB in total,
-  in `github-copilot-agents-session-log.json`. While the open task still runs, each watcher
-  round reads the log again.
+- One log is open at a time. The logs you show are kept in
+  `github-copilot-agents-session-log.json`: up to 8 logs, at most 4 MB in
+  total, the oldest dropped first, each under the GitHub account that read it.
+  A kept log shows again without asking GitHub, also offline, once the work
+  account's credential has been checked since Subspace started. While the open
+  task still runs, each watcher round reads the log again.
+- A log is shown only for the GitHub account the list shows. If the work
+  account's credential changed to another account, the log reads **Log
+  unavailable.** and the list loads again for the new account.
+- While session logs are on and this Space's full-text search policy is on,
+  loading a task's sessions (selecting it with the inspector shown, or opening
+  it) also reads its last session log for the search index, without showing
+  it or adding it to that file. With the policy off, nothing is read for the
+  index.
 
 ### Agent tools
 
@@ -475,7 +489,7 @@ config file, not in the Keychain.
 | The views and repositories are missing. | The navigator is hidden. Choose **Show navigator** at the leading end of the status bar. |
 | **Cannot load sessions** | Read the error and choose **Retry**. |
 | `Open GitHub Agents in browser` | GitHub did not supply a task page or a pull request. The GitHub Agents home page opens instead. |
-| **Log unavailable.** | The read failed, or the answer held no log. The log needs an OAuth sign-in: sign in as the work account with **Sign in with GitHub** or `gh auth login`, and unset `GH_TOKEN` and `GITHUB_TOKEN`. The endpoint is undocumented. |
+| **Log unavailable.** | The read failed, the answer held no log, or the work credential now belongs to another account than the list shows (the list then loads again). The log needs an OAuth sign-in: sign in as the work account with **Sign in with GitHub** or `gh auth login`, and unset `GH_TOKEN` and `GITHUB_TOKEN`. The endpoint is undocumented. |
 | No alert for a task. | Press `m` to monitor it. Check that **Background updates** and the global automatic refresh are on. A task seen for the first time does not alert. |
 | An agent tool refuses a repository. | Star it with **Repositories…** in the PRs board, or add it in Settings and save. |
 | A task start returned an unclear result. | Do not start it again. Read this board and keep any returned GitHub link. |

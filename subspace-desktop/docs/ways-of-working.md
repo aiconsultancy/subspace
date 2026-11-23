@@ -182,9 +182,33 @@ pull request per project against `main`:
 Each pull request also updates its project's `CHANGELOG.md` and carries the
 four lockfiles: Release Please cannot run Cargo, so the workflow commits
 what `scripts/sync-lockfiles.py` changes (only local packages' versions)
-to the pull request's branch after Cargo accepts it with `--locked`. When
+to the pull request's branch after Cargo accepts it with `--locked`, then
+starts the `lockfiles` check (`.github/workflows/lockfiles.yml`, which runs
+`scripts/sync-lockfiles.py --check`) on that branch. Every other pull request
+gets the check from its own `pull_request` run; a release pull request does
+not, because the release workflow's token starts no other workflow. Do not
+merge a release pull request without a passing `lockfiles` check. When
 one release merges, the other's pull request falls behind `main` and the
 workflow has Release Please rebuild it (`scripts/release-rebuild.sh`).
+
+Each app release also carries the fleet installer, which pins Stargate by
+commit, and every Subspace release pins Stargate's latest release. The same
+script starts the `stargate-pin` check (`.github/workflows/stargate-pin.yml`,
+which runs `scripts/stargate-pin.py --check`) on each release branch, beside
+`lockfiles`, on every push to `main` and nightly. On the app's branch it fails
+while the pin is not Stargate's latest release, and when GitHub's API cannot
+be reached, so a pin it could not check never passes; on the Framework's
+branch, which does not carry the installer, it is skipped. Do not merge the
+app's release pull request without a passing `stargate-pin` check. When it
+fails, merge the Stargate bump pull request first, after its checklist, and
+Release Please rebuilds the release pull request on the new `main`. The
+`stargate-bump` workflow opens that pull request daily when Stargate has a
+newer release, with the release notes, the installer's test results and what
+to check. When a release cannot be adopted yet, a reviewed hold file lets
+the check pass with its reason as a warning until a date or a newer release.
+See [Stargate pin](../../subspace-installer/README.md#stargate-pin). This
+check needs the network, so `make release-check` and the push hooks, which
+work offline, do not run it.
 
 1. Merge commits to `main` as usual. Release Please opens or updates the
    release pull requests on each push.

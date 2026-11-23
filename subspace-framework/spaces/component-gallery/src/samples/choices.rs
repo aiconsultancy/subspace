@@ -25,14 +25,14 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "segmented::control",
         source: "board-kit/dashboard/src/segmented.rs",
-        used_in: "Exclusive choices in Actions dialogs, Board Lab and GitHub diff.",
+        used_in: "Exclusive choices in Actions dialogs, Space Lab and GitHub diff.",
         samples: segmented_controls,
         kit: None,
     },
     Item {
         name: "tabs::tab_bar",
         source: "board-kit/dashboard/src/tabs.rs",
-        used_in: "Section and resource tabs with tabs::tab in Actions, Board Lab, Channels, GitHub, Issues, Terminal, chat, logs and search.",
+        used_in: "Section and resource tabs with tabs::tab in Actions, Space Lab, Channels, GitHub, Issues, Terminal, chat, logs and search.",
         samples: tab_bars,
         kit: None,
     },
@@ -67,7 +67,7 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "slider::control",
         source: "board-kit/dashboard/src/slider.rs",
-        used_in: "Numeric project values in the Board Lab project view.",
+        used_in: "Numeric project values in the Space Lab project view.",
         samples: sliders,
         kit: None,
     },

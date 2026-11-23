@@ -1,9 +1,12 @@
 //! Reading Subspace API. Client calls block, so the Space runs them in the
 //! background (`cx.background_spawn`) through a [`Reader`], which the tests
-//! replace with fixture answers.
+//! replace with fixture answers. Each read returns a [`Lease`] on the
+//! account of the client that made it, and a list read carries a [`Stop`]
+//! that a newer read sets.
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use subspace_api_client::issue_writes::ChoiceSource;
 use subspace_api_client::model::{DecisionDetail, DecisionListItem, Me, Page, Project};
@@ -16,11 +19,46 @@ use crate::words::People;
 const MAX_PAGES: usize = 10;
 
 /// What a list read asks for: the decisions for this query, and first the
-/// account, its projects and its people when `directory` is set.
+/// account, its projects and its people when `directory` is set. `stop`
+/// ends the read before its next page once its answer is no longer wanted.
 #[derive(Clone)]
 pub(crate) struct Plan {
     pub(crate) query: DecisionQuery,
     pub(crate) directory: bool,
+    pub(crate) stop: Stop,
+}
+
+/// Set when a newer read, or another account, supersedes a list read: the
+/// read stops before its next page, and its answer is dropped.
+#[derive(Clone, Default)]
+pub(crate) struct Stop(Arc<AtomicBool>);
+
+impl Stop {
+    pub(crate) fn stop(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn stopped(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+/// The account and organisation a read was made for. Once either changes,
+/// what the read found belongs to no one on screen.
+#[derive(Clone)]
+pub(crate) struct Lease(Arc<dyn Fn() -> bool + Send + Sync>);
+
+impl Lease {
+    /// A lease that ends once `moved` answers true.
+    pub(crate) fn new(moved: impl Fn() -> bool + Send + Sync + 'static) -> Self {
+        Self(Arc::new(moved))
+    }
+
+    /// Whether the signed-in account or organisation changed since the
+    /// lease was taken, including a sign-out.
+    pub(crate) fn moved(&self) -> bool {
+        (self.0)()
+    }
 }
 
 /// The signed-in account, the projects it can see and its people's names.
@@ -43,10 +81,32 @@ pub(crate) struct Answer {
     pub(crate) found: Result<Found, Error>,
 }
 
-pub(crate) type ListRead = Arc<dyn Fn(&Plan) -> Answer + Send + Sync>;
-pub(crate) type DetailRead = Arc<dyn Fn(&str) -> Result<DecisionDetail, Error> + Send + Sync>;
+/// What one read returned. A read through a client comes with a lease on
+/// that client's own account, so whatever it found is watched for the
+/// account it was read for. A read that could make no client read nothing
+/// for any account: it has no lease, and only its refusal.
+pub(crate) enum Leased<T> {
+    Read(Lease, T),
+    Unread(Error),
+}
 
-/// The Space's two reads: a list and one decision.
+impl<T> Leased<T> {
+    /// The read's lease, if it had a client, and its value, or for a read
+    /// without a client the value `refused` makes of its error.
+    pub(crate) fn split(self, refused: impl FnOnce(Error) -> T) -> (Option<Lease>, T) {
+        match self {
+            Leased::Read(lease, value) => (Some(lease), value),
+            Leased::Unread(error) => (None, refused(error)),
+        }
+    }
+}
+
+pub(crate) type ListRead = Arc<dyn Fn(&Plan) -> Leased<Answer> + Send + Sync>;
+pub(crate) type DetailRead =
+    Arc<dyn Fn(&str) -> Leased<Result<DecisionDetail, Error>> + Send + Sync>;
+
+/// The Space's two reads, a list and one decision, each returning a lease
+/// on the account of the client that made it.
 #[derive(Clone)]
 pub(crate) struct Reader {
     pub(crate) list: ListRead,
@@ -60,6 +120,27 @@ impl Reader {
             list: Arc::new(read_list),
             detail: Arc::new(read_detail),
         }
+    }
+}
+
+/// Reads through `client` under a lease on that same client's account,
+/// which `changed` says has since changed. The lease is as old as the
+/// client, so an account change at any point after the client was made,
+/// during the read included, ends it. Without a client nothing is read.
+fn leased<C, T>(
+    client: Result<C, Error>,
+    changed: fn(&C) -> bool,
+    read: impl FnOnce(&C) -> T,
+) -> Leased<T>
+where
+    C: Send + Sync + 'static,
+{
+    match client {
+        Ok(client) => {
+            let value = read(&client);
+            Leased::Read(Lease::new(move || changed(&client)), value)
+        }
+        Err(error) => Leased::Unread(error),
     }
 }
 
@@ -123,19 +204,17 @@ pub(crate) fn failure(error: Error) -> Failure {
     }
 }
 
-fn read_list(plan: &Plan) -> Answer {
-    let client = match Client::new() {
-        Ok(client) => client,
-        Err(error) => return refused(plan, error),
-    };
-    let directory = plan.directory.then(|| read_directory(&client));
-    if let Some(Err(error)) = &directory {
-        return refused(plan, *error);
-    }
-    Answer {
-        directory,
-        found: all_pages(|page| client.decisions(&plan.query, page)),
-    }
+fn read_list(plan: &Plan) -> Leased<Answer> {
+    leased(Client::new(), Client::account_changed, |client| {
+        let directory = plan.directory.then(|| read_directory(client));
+        if let Some(Err(error)) = &directory {
+            return refused(plan, *error);
+        }
+        Answer {
+            directory,
+            found: all_pages(&plan.stop, |page| client.decisions(&plan.query, page)),
+        }
+    })
 }
 
 /// Every part of the answer failed with `error`.
@@ -165,13 +244,17 @@ fn read_directory(client: &Client) -> Result<Directory, Error> {
     })
 }
 
-fn read_detail(id: &str) -> Result<DecisionDetail, Error> {
-    Client::new()?.decision(id)
+fn read_detail(id: &str) -> Leased<Result<DecisionDetail, Error>> {
+    leased(Client::new(), Client::account_changed, |client| {
+        client.decision(id)
+    })
 }
 
 /// Reads pages with `read` until the last, or until [`MAX_PAGES`], and
-/// refuses a cursor that repeats.
+/// refuses a cursor that repeats. A read that `stop` ends asks for no
+/// further page; its answer is dropped, so what it returns does not matter.
 pub(crate) fn all_pages(
+    stop: &Stop,
     mut read: impl FnMut(&PageRequest) -> Result<Page<DecisionListItem>, Error>,
 ) -> Result<Found, Error> {
     let mut page = PageRequest::default();
@@ -179,6 +262,9 @@ pub(crate) fn all_pages(
     let mut items = Vec::new();
     let mut cursors = HashSet::new();
     for _ in 0..MAX_PAGES {
+        if stop.stopped() {
+            return Ok(Found { items, more: true });
+        }
         let found = read(&page)?;
         items.extend(found.items);
         let Some(cursor) = found.next_cursor else {
@@ -194,12 +280,55 @@ pub(crate) fn all_pages(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use serde_json::json;
     use subspace_api_client::Error;
     use subspace_api_client::model::{DecisionListItem, Page};
 
-    use super::{Failure, all_pages, failure};
+    use super::{Failure, Leased, Stop, all_pages, failure, leased};
     use crate::fixtures;
+
+    /// A client whose account the test changes, as a sign-out or a switch
+    /// of account or organisation does.
+    struct Watched(Arc<AtomicBool>);
+
+    fn changed(client: &Watched) -> bool {
+        client.0.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn a_read_is_leased_on_the_account_of_its_own_client() {
+        let switched = Arc::new(AtomicBool::new(false));
+        let during = switched.clone();
+        let read = leased(Ok(Watched(switched.clone())), changed, |_| {
+            // The account changes while the read runs, after its client
+            // was made: the answer it returns belongs to no one on screen.
+            during.store(true, Ordering::SeqCst);
+            "found"
+        });
+        let Leased::Read(lease, found) = read else {
+            panic!("a read through a client comes with that client's lease");
+        };
+        assert_eq!(found, "found");
+        assert!(lease.moved(), "the change after the client ends its lease");
+        switched.store(false, Ordering::SeqCst);
+        assert!(!lease.moved(), "the lease watches that same client");
+    }
+
+    #[test]
+    fn a_read_that_can_make_no_client_reads_nothing_and_has_no_lease() {
+        let mut asked = false;
+        let read = leased(Err::<Watched, _>(Error::InvalidRequest), changed, |_| {
+            asked = true;
+            "found"
+        });
+        assert!(!asked, "nothing is read without a client");
+        let (lease, found) = read.split(|_| "refused");
+        assert!(lease.is_none());
+        assert_eq!(found, "refused");
+    }
 
     fn page(ids: &[&str], next: Option<&str>) -> Page<DecisionListItem> {
         let item = |id: &str| fixtures::item_value(id, "NAV", "Fixture", "accepted", "2026-11-19");
@@ -210,7 +339,7 @@ mod tests {
     #[test]
     fn every_page_is_read_until_the_last() {
         let mut asked = Vec::new();
-        let found = all_pages(|request| {
+        let found = all_pages(&Stop::default(), |request| {
             asked.push((request.limit, request.cursor.clone()));
             Ok(match request.cursor.as_deref() {
                 None => page(&["a", "b"], Some("next")),
@@ -226,17 +355,33 @@ mod tests {
 
     #[test]
     fn a_repeated_cursor_is_refused_and_a_long_list_stops_with_more() {
-        let repeated = all_pages(|_| Ok(page(&["a"], Some("same"))));
+        let go = Stop::default();
+        let repeated = all_pages(&go, |_| Ok(page(&["a"], Some("same"))));
         assert!(matches!(repeated, Err(Error::InvalidResponse)));
         let mut cursor = 0;
-        let long = all_pages(|_| {
+        let long = all_pages(&go, |_| {
             cursor += 1;
             Ok(page(&["a"], Some(cursor.to_string().as_str())))
         })
         .unwrap();
         assert!(long.more);
         assert_eq!(long.items.len(), 10);
-        assert!(all_pages(|_| Err(Error::Network)).is_err());
+        assert!(all_pages(&go, |_| Err(Error::Network)).is_err());
+    }
+
+    #[test]
+    fn a_stopped_read_asks_for_no_further_page() {
+        let stop = Stop::default();
+        let mut asked = 0;
+        let found = all_pages(&stop, |_| {
+            asked += 1;
+            // A newer read supersedes this one while its first page loads.
+            stop.stop();
+            Ok(page(&["a"], Some(asked.to_string().as_str())))
+        })
+        .unwrap();
+        assert_eq!(asked, 1, "no page after the stop");
+        assert_eq!(found.items.len(), 1);
     }
 
     #[test]

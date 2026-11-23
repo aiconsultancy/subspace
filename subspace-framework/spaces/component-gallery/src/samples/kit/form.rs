@@ -62,7 +62,7 @@ pub(crate) const ITEMS: &[Item] = &[
     Item {
         name: "gpui_kit::component::select::Select",
         source: kit_source!("select.rs"),
-        used_in: "Pickers in Settings, the theme designer, Board Lab and the Web manager, always built with anchored::select.",
+        used_in: "Pickers in Settings, the theme designer, Space Lab and the Web manager, always built with anchored::select.",
         samples: fields::selects,
         kit: Some(Kit {
             paths: &["select::Select", "select::SelectState"],

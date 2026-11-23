@@ -161,13 +161,19 @@ const fleetGroup = HttpApiGroup.make("fleets")
       payload: CreateShip,
       success: Ship.pipe(HttpApiSchema.status(201)),
       error: endpointErrors,
-    }),
+    }).annotate(
+      OpenApi.Description,
+      "Any human member may create a ship. Setting its channel requires a human organisation administrator, as the channel decides every member's autojoin; a member who supplies one receives 403.",
+    ),
     HttpApiEndpoint.patch("renameShip", "/ships/:shipId", {
       params: { shipId: Uuid },
       payload: RenameShip,
       success: Ship,
       error: endpointErrors,
-    }),
+    }).annotate(
+      OpenApi.Description,
+      "Any human member may rename a ship. Changing its channel requires a human organisation administrator; a member who supplies a different channel receives 403. Leaving channel out keeps it, and null clears it.",
+    ),
   )
   .annotate(HttpApi.PayloadParseOptions, { onExcessProperty: "error" })
   .prefix(prefix)
@@ -198,7 +204,10 @@ const initiativeGroup = HttpApiGroup.make("initiatives")
       payload: UpdateInitiative,
       success: InitiativeDetail,
       error: endpointErrors,
-    }),
+    }).annotate(
+      OpenApi.Description,
+      "An agent registered to a fleet that changes parentId receives 403 when the initiative, or the new parent, belongs to another fleet. An initiative belongs to its own fleet, or else to the fleet of its nearest ancestor with one.",
+    ),
     HttpApiEndpoint.post("archiveInitiative", "/initiatives/:id/archive", {
       params: initiativeParams,
       payload: versionPayload,
@@ -336,7 +345,9 @@ const fleetLive = HttpApiBuilder.group(api, "fleets", (handlers) =>
     )
     .handle("createShip", ({ params, payload }) =>
       handleDb(
-        Effect.flatMap(CurrentMember, (member) => createShip(member, params.fleetId, payload.name)),
+        Effect.flatMap(CurrentMember, (member) =>
+          createShip(member, params.fleetId, payload.name, payload.channel),
+        ),
       ),
     )
     .handle("renameShip", ({ params, payload }) =>

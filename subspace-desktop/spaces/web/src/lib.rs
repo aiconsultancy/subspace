@@ -1,10 +1,12 @@
 //! Web boards: each `webBoards` entry in the config file is a board that
 //! shows one web page, or a web app from a folder of built files, in a
 //! native web view. The app registers one instance per entry with
-//! [`create`].
+//! [`create`], and adds the entries of the web Spaces it ships with
+//! [`builtin::install`].
 
 mod app;
 mod bridge;
+pub mod builtin;
 pub mod install;
 pub mod manager;
 mod manifest;
@@ -67,7 +69,7 @@ impl WebBoard {
         Self::watch(cx);
         Self {
             start: source::start(&config),
-            bridge: bridge::Bridge::new(&config, source::recorded(&config.id, cx).as_ref()),
+            bridge: bridge::Bridge::new(&config, source::entry(&config.id, cx).as_ref()),
             config,
             focus: cx.focus_handle(),
             page: None,
@@ -309,6 +311,7 @@ impl Dashboard for WebBoard {
         self.active = true;
         self.ensure_page(window, cx);
         page_bridge::attach_issues(self, cx);
+        page_bridge::attach_fleets(self, cx);
         self.sync_shown(cx);
     }
 

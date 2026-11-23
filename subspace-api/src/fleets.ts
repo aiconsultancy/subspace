@@ -17,6 +17,57 @@ const Websocket = Schema.String.check(
   Schema.isMaxLength(2048),
   Schema.isPattern(/^wss?:\/\/[^\s/@?#]+(?:[/?#][^\s]*)?$/u),
 );
+/**
+ * An IRC channel name that the desktop joins as one channel: `#`, then no whitespace, commas,
+ * colons or control characters, as the desktop's autojoin rule requires.
+ */
+export const IrcChannel = Schema.String.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^#[^\p{White_Space}\p{Cc},:]+$/u),
+);
+/** Hosts a plain-`http` Fleet API address may name: only this machine. */
+const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const fleetApiUrlShape = /^[Hh][Tt][Tt][Pp][Ss]?:\/\/[^\s/?#@\\]+(?:\/[^\s?#\\]*)?$/u;
+const fleetApiUrlLimit = 2048;
+/**
+ * Returns a Fleet API address in its stored form, or undefined when it is not
+ * one. An address is an absolute `https` URL on any host, or `http` only on
+ * loopback, with no credentials, query or fragment. The stored form has a
+ * lower-case scheme and host and no trailing slash.
+ */
+export function normaliseFleetApiUrl(value: string): string | undefined {
+  if (!fleetApiUrlShape.test(value)) return undefined;
+  if (Array.from(value).some((c) => c.charCodeAt(0) < 33 || c.charCodeAt(0) === 127))
+    return undefined;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return undefined;
+  }
+  if (url.username || url.password || url.search || url.hash || !url.hostname) return undefined;
+  const plainLoopback = url.protocol === "http:" && loopbackHosts.has(url.hostname);
+  if (url.protocol !== "https:" && !plainLoopback) return undefined;
+  const normalised = `${url.origin}${url.pathname}`.replace(/\/+$/u, "");
+  return normalised.length <= fleetApiUrlLimit ? normalised : undefined;
+}
+/**
+ * The address of a fleet's Stargate Fleet API, which the desktop reads for the
+ * fleet's live state. The desktop sends the fleet's token there, so plain
+ * `http` is accepted only on loopback, such as the SSH tunnel's local end.
+ */
+export const FleetApiUrl = Schema.String.check(
+  Schema.isMaxLength(fleetApiUrlLimit),
+  Schema.isPattern(fleetApiUrlShape),
+  Schema.makeFilter((value) => normaliseFleetApiUrl(value) !== undefined, {
+    expected:
+      "an absolute https URL, or http on localhost, 127.0.0.1 or [::1], without credentials, query or fragment",
+  }),
+);
+const normaliseFields = <T extends { fleetApiUrl?: string | null }>(fields: T): T =>
+  typeof fields.fleetApiUrl === "string"
+    ? { ...fields, fleetApiUrl: normaliseFleetApiUrl(fields.fleetApiUrl) ?? fields.fleetApiUrl }
+    : fields;
 const editable = {
   slug: Slug.check(Schema.makeFilter((slug) => !isUuid(slug), { expected: "a slug, not a UUID" })),
   name: Name,
@@ -25,6 +76,9 @@ const editable = {
   ircTls: Schema.Boolean,
   ircWebsocketUrl: Schema.optional(Schema.NullOr(Websocket)),
   vmHost: Schema.optional(Schema.NullOr(Host)),
+  starbaseChannel: Schema.optional(Schema.NullOr(IrcChannel)),
+  commandChannel: Schema.optional(Schema.NullOr(IrcChannel)),
+  fleetApiUrl: Schema.optional(Schema.NullOr(FleetApiUrl)),
 };
 export const CreateFleet = Schema.Struct(editable).annotate({
   parseOptions: { onExcessProperty: "error" },
@@ -37,15 +91,24 @@ export const UpdateFleet = Schema.Struct({
   ircTls: Schema.optional(Schema.Boolean),
   ircWebsocketUrl: editable.ircWebsocketUrl,
   vmHost: editable.vmHost,
+  starbaseChannel: editable.starbaseChannel,
+  commandChannel: editable.commandChannel,
+  fleetApiUrl: editable.fleetApiUrl,
   version: Schema.optional(Version),
 });
 export const ShipName = Line(64);
-export const CreateShip = Schema.Struct({ name: ShipName });
-export const RenameShip = Schema.Struct({ name: ShipName, version: Schema.optional(Version) });
+const ShipChannel = Schema.optional(Schema.NullOr(IrcChannel));
+export const CreateShip = Schema.Struct({ name: ShipName, channel: ShipChannel });
+export const RenameShip = Schema.Struct({
+  name: ShipName,
+  channel: ShipChannel,
+  version: Schema.optional(Version),
+});
 export const Ship = Schema.Struct({
   id: Uuid,
   fleetId: Uuid,
   name: Schema.String,
+  channel: Schema.NullOr(Schema.String),
   createdAt: Timestamp,
   updatedAt: Timestamp,
   version: Version,
@@ -56,6 +119,8 @@ const FleetAgent = Schema.Struct({
   rank: AgentRank,
   shipId: Schema.NullOr(Uuid),
   ship: Schema.NullOr(Schema.String),
+  ircNick: Schema.NullOr(Schema.String),
+  shipChannel: Schema.NullOr(Schema.String),
   available: Schema.Boolean,
 });
 export const Fleet = Schema.Struct({
@@ -67,6 +132,9 @@ export const Fleet = Schema.Struct({
   ircTls: Schema.NullOr(Schema.Boolean),
   ircWebsocketUrl: Schema.NullOr(Websocket),
   vmHost: Schema.NullOr(Host),
+  starbaseChannel: Schema.NullOr(Schema.String),
+  commandChannel: Schema.NullOr(Schema.String),
+  fleetApiUrl: Schema.NullOr(Schema.String),
   rearAdmiralName: Schema.NullOr(Schema.String),
   captainNames: Schema.Array(Schema.String),
   irc: Schema.Struct({
@@ -79,7 +147,9 @@ export const Fleet = Schema.Struct({
   updatedAt: Timestamp,
   version: Version,
   agents: Schema.Array(FleetAgent),
-  ships: Schema.Array(Schema.Struct({ id: Uuid, name: Schema.String })),
+  ships: Schema.Array(
+    Schema.Struct({ id: Uuid, name: Schema.String, channel: Schema.NullOr(Schema.String) }),
+  ),
 }).annotate({ identifier: "Fleet" });
 export const FleetRef = Schema.String.check(
   Schema.isMinLength(1),
@@ -94,10 +164,19 @@ const byName = (a: { name: string }, b: { name: string }) =>
   compare(a.name.toUpperCase(), b.name.toUpperCase());
 const byShip = (a: ShipRow, b: ShipRow) => byName(a, b) || compare(a.id, b.id);
 
-export const shipDto = ({ id, fleetId, name, createdAt, updatedAt, version }: ShipRow) => ({
+export const shipDto = ({
   id,
   fleetId,
   name,
+  channel,
+  createdAt,
+  updatedAt,
+  version,
+}: ShipRow) => ({
+  id,
+  fleetId,
+  name,
+  channel,
   createdAt: dateTime(createdAt),
   updatedAt: dateTime(updatedAt),
   version,
@@ -116,7 +195,7 @@ export function loadFleetDtos(db: Db, organisationId: string, rows: FleetRow[]) 
       .from(users)
       .where(and(eq(users.organisationId, organisationId), inArray(users.agentFleetId, ids)));
     const shipsByFleet = Map.groupBy(shipRows.sort(byShip), ({ fleetId }) => fleetId);
-    const shipsById = new Map(shipRows.map((ship) => [ship.id, ship.name]));
+    const shipsById = new Map(shipRows.map((ship) => [ship.id, ship]));
     const agentsByFleet = Map.groupBy(agents, ({ agentFleetId }) => agentFleetId);
     return new Map(
       rows.map((row) => {
@@ -129,8 +208,11 @@ export function loadFleetDtos(db: Db, organisationId: string, rows: FleetRow[]) 
                   rank: agent.agentRank,
                   shipId: agent.agentShipId,
                   ship:
-                    (agent.agentShipId ? shipsById.get(agent.agentShipId) : undefined) ??
+                    (agent.agentShipId ? shipsById.get(agent.agentShipId)?.name : undefined) ??
                     agent.agentShip,
+                  ircNick: agent.agentIrcNick,
+                  shipChannel:
+                    (agent.agentShipId ? shipsById.get(agent.agentShipId)?.channel : null) ?? null,
                   available: agent.active,
                 },
               ]
@@ -150,6 +232,9 @@ export function loadFleetDtos(db: Db, organisationId: string, rows: FleetRow[]) 
             ircTls: row.ircTls,
             ircWebsocketUrl: row.ircWebsocketUrl,
             vmHost: row.vmHost,
+            starbaseChannel: row.starbaseChannel,
+            commandChannel: row.commandChannel,
+            fleetApiUrl: row.fleetApiUrl,
             rearAdmiralName: roster.find(({ rank }) => rank === "rearAdmiral")?.name ?? null,
             captainNames: roster.filter(({ rank }) => rank === "captain").map(({ name }) => name),
             irc: {
@@ -162,7 +247,11 @@ export function loadFleetDtos(db: Db, organisationId: string, rows: FleetRow[]) 
             updatedAt: dateTime(row.updatedAt),
             version: row.version,
             agents: roster,
-            ships: (shipsByFleet.get(row.id) ?? []).map(({ id, name }) => ({ id, name })),
+            ships: (shipsByFleet.get(row.id) ?? []).map(({ id, name, channel }) => ({
+              id,
+              name,
+              channel,
+            })),
           },
         ];
       }),
@@ -262,7 +351,7 @@ export const createFleet = (member: Member, payload: typeof CreateFleet.Type) =>
       Effect.gen(function* () {
         const [row] = yield* tx
           .insert(fleets)
-          .values({ ...payload, organisationId: member.organisationId })
+          .values({ ...normaliseFields(payload), organisationId: member.organisationId })
           .onConflictDoNothing({ target: [fleets.organisationId, fleets.slug] })
           .returning();
         if (!row) return yield* Effect.fail(problem(409, duplicateFleet));
@@ -281,7 +370,8 @@ export const updateFleet = (member: Member, reference: string, payload: typeof U
   Effect.gen(function* () {
     if (member.role !== "admin" || member.agentRank)
       return yield* Effect.fail(problem(403, "Fleet changes require organisation admin access."));
-    const { version, ...fields } = payload;
+    const { version, ...given } = payload;
+    const fields = normaliseFields(given);
     if (!Object.keys(fields).length)
       return yield* Effect.fail(validationProblem("fleet", "Supply at least one fleet field."));
     const db = yield* Database;
@@ -324,10 +414,14 @@ export const listShips = (member: Member, id: string) =>
     return rows.sort(byShip).map(shipDto);
   });
 
-export const createShip = (member: Member, id: string, name: string) =>
+const shipChannelAdminOnly = "Setting a ship's channel requires organisation admin access.";
+
+export const createShip = (member: Member, id: string, name: string, channel?: string | null) =>
   Effect.gen(function* () {
     if (member.agentRank)
       return yield* Effect.fail(problem(403, "Only humans may manage fleets and ships."));
+    if (channel != null && member.role !== "admin")
+      return yield* Effect.fail(problem(403, shipChannelAdminOnly));
     const db = yield* Database;
     const [fleet] = yield* db
       .select({ id: fleets.id })
@@ -336,7 +430,7 @@ export const createShip = (member: Member, id: string, name: string) =>
     if (!fleet) return yield* Effect.fail(problem(404, "Fleet not found."));
     const [ship] = yield* db
       .insert(ships)
-      .values({ organisationId: member.organisationId, fleetId: id, name })
+      .values({ organisationId: member.organisationId, fleetId: id, name, channel })
       .onConflictDoNothing()
       .returning();
     if (!ship) return yield* Effect.fail(problem(409, duplicateShip));
@@ -354,10 +448,13 @@ export const renameShip = (member: Member, id: string, payload: typeof RenameShi
         if (!old) return yield* Effect.fail(problem(404, "Ship not found."));
         if (payload.version !== undefined && payload.version !== old.version)
           return yield* Effect.fail(stale("ship", old.version));
-        if (old.name === payload.name) return shipDto(old);
+        const channel = payload.channel === undefined ? old.channel : payload.channel;
+        if (old.channel !== channel && member.role !== "admin")
+          return yield* Effect.fail(problem(403, shipChannelAdminOnly));
+        if (old.name === payload.name && old.channel === channel) return shipDto(old);
         const [ship] = yield* tx
           .update(ships)
-          .set({ name: payload.name, version: old.version + 1, updatedAt: sql`now()` })
+          .set({ name: payload.name, channel, version: old.version + 1, updatedAt: sql`now()` })
           .where(shipScope(member, id))
           .returning()
           .pipe(

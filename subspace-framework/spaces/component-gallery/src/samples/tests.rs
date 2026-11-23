@@ -248,6 +248,7 @@ fn content_and_list_builders_caption_every_state(cx: &mut TestAppContext) {
             content::person(g, t, w, cx),
             content::group(g, t, w, cx),
             lists::list_render(g, t, w, cx),
+            lists::group_captions(g, t, w, cx),
             lists::native_grid(g, t, w, cx),
             lists::chart(g, t, w, cx),
         ]

@@ -7,8 +7,8 @@
   ],
   "harness": { "type": "opencode", "family": "codex", "model": "gpt-5.4" },
   "crew": {
-    "claude": { "count": 2, "type": "opencode", "model": "claude-sonnet-5-5" },
-    "codex": { "count": 2, "type": "opencode", "model": "gpt-5.4" }
+    "claude": { "count": 2, "model": "claude-sonnet-5-5" },
+    "codex": { "count": 2, "model": "gpt-5.4" }
   },
   "repositories": [],
   "operatorUsers": [],
@@ -31,6 +31,12 @@
     "channel": "#example-fleet-starbase",
     "target": "atlas"
   },
+  "agentDispatch": {
+    "enabled": false,
+    "pollIntervalSeconds": 120,
+    "answerTimeoutSeconds": 300,
+    "retryLadderSeconds": [3600, 10800, 21600, 43200]
+  },
   "usage": {
     "families": {
       "claude": {},
@@ -41,8 +47,6 @@
   "irc": {
     "mode": "remote",
     "host": "irc.example.com",
-    "commandChannel": "#example-fleet-starbase",
-    "starbaseChannel": "#example-fleet-starbase",
     "allowedAccounts": ["operator"]
   }
 }

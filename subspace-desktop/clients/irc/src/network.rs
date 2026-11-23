@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod cleanroom_acceptance;
 mod offline;
+pub(crate) use offline::refuse_reaction;
 mod secrets;
 #[cfg(test)]
 mod tests;
@@ -19,7 +20,7 @@ use tokio::time::{self, Instant};
 
 use crate::codec::{self, LineBuffer};
 use crate::connection::{self, BoxStream, Timeouts};
-use crate::model::{Command, ConnectionStatus, Event, NetworkConfig};
+use crate::model::{Command, ConnectionStatus, Event, NetworkConfig, Update};
 use crate::proto::{self, Message};
 use crate::session::{self, Carry, Output, Session};
 
@@ -37,14 +38,36 @@ pub(crate) enum NetCommand {
     Shutdown,
 }
 
+/// Everything reported to owners, in order: events and reaction updates.
 #[derive(Clone, Default)]
-pub(crate) struct EventSink(pub Arc<Mutex<VecDeque<Event>>>);
+pub(crate) struct EventSink(pub Arc<Mutex<VecDeque<Update>>>);
 
 impl EventSink {
     pub fn extend(&self, events: impl IntoIterator<Item = Event>) {
+        self.extend_updates(events.into_iter().map(Update::Event));
+    }
+
+    pub fn extend_updates(&self, updates: impl IntoIterator<Item = Update>) {
         if let Ok(mut queue) = self.0.lock() {
-            queue.extend(events);
+            queue.extend(updates);
         }
+    }
+
+    /// The events reported so far, without reaction updates.
+    #[cfg(test)]
+    pub fn events(&self) -> Vec<Event> {
+        self.0
+            .lock()
+            .map(|queue| queue.iter().cloned().filter_map(into_event).collect())
+            .unwrap_or_default()
+    }
+}
+
+/// The event an update carries, if it is one.
+pub(crate) fn into_event(update: Update) -> Option<Event> {
+    match update {
+        Update::Event(event) => Some(event),
+        _ => None,
     }
 }
 
@@ -194,6 +217,8 @@ impl Network {
         let mut link = Link::new(stream, session, self.events.clone());
         let end = link.run(&mut self.commands).await;
         self.events.extend(link.session.abandon());
+        self.events
+            .extend_updates([session::reactions_ended(self.config.id.clone())]);
         self.carry = link.session.into_carry();
         end
     }
@@ -215,6 +240,7 @@ fn answer_offline(
     events.extend(session::configure_autojoin(carry, config, command));
     carry.forget(command);
     events.extend(offline::reply(config, command));
+    events.extend_updates(offline::refuse_reaction(command));
 }
 
 fn connection_failed(error: connection::ConnectError) -> End {
@@ -345,15 +371,18 @@ impl Link {
 
     async fn deliver(&mut self, output: Output) -> Option<End> {
         self.events.extend(output.events);
+        self.events.extend_updates(output.updates.now);
         let bytes: Vec<u8> = output.send.iter().flat_map(codec::encode).collect();
         if !bytes.is_empty()
             && let Err(error) = self.write_output(&bytes).await
         {
             self.events.extend(output.unwritten);
+            self.events.extend_updates(output.updates.unwritten);
             return Some(self.lost(error));
         }
         self.session.written(&output.written);
         self.events.extend(output.written);
+        self.events.extend_updates(output.updates.written);
         output
             .fatal
             .map(End::Fatal)

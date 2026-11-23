@@ -1,6 +1,7 @@
 //! The tray above the composer: one small thumbnail per attachment with ×,
-//! "Check upload" for an upload that may have completed, the limit notice,
-//! "Send as attachment…" and one muted line about who can see files.
+//! "Check upload" for an upload that may have completed, the limit notice
+//! and "Send as attachment…". Who can see files is said at the end of the
+//! composer's hint row (`compose/hints.rs`).
 use super::{Item, ItemState, Pending, Phase, Tray};
 use crate::conversation::Conversation;
 use crate::uploads::intake::Preview;
@@ -22,7 +23,8 @@ use subspace_framework::dashboard::{
 };
 use subspace_framework::lucide::IconName;
 
-/// Who can read an attachment, said once.
+/// Who can read an attachment, in full: the accessible name of the hint
+/// row's shorter notice.
 pub(crate) const VISIBILITY: &str =
     "Visible to signed-in Subspace users for 30 days. Don’t paste credentials into chat.";
 
@@ -59,7 +61,7 @@ pub(crate) fn controls(
                 .map(|text| div().text_sm().text_color(tokens.orange).child(text)),
         )
         .children((!checks.is_empty()).then(|| h_flex().gap_2().children(checks)))
-        .child(send_row(empty || !idle, &tokens, cx))
+        .child(send_row(empty || !idle, cx))
         .into_any_element()
 }
 
@@ -87,30 +89,18 @@ fn status_line(
 }
 
 /// One quiet line above the composer: **Send as attachment…** behind its
-/// paperclip, then who can see files.
-fn send_row(disabled: bool, tokens: &Tokens, cx: &mut Context<Conversation>) -> gpui_kit::Div {
-    h_flex()
-        .w_full()
-        .min_w_0()
-        .gap_2()
-        .child(
-            icon_button(
-                "irc-send-attachment",
-                Intent::Quiet,
-                IconName::Paperclip,
-                "Send as attachment…",
-            )
-            .disabled(disabled)
-            .on_click(cx.listener(|this, _, window, cx| super::text(this, window, cx))),
+/// paperclip.
+fn send_row(disabled: bool, cx: &mut Context<Conversation>) -> gpui_kit::Div {
+    h_flex().w_full().min_w_0().gap_2().child(
+        icon_button(
+            "irc-send-attachment",
+            Intent::Quiet,
+            IconName::Paperclip,
+            "Send as attachment…",
         )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_size(tokens.caption_size())
-                .text_color(tokens.muted)
-                .child(VISIBILITY),
-        )
+        .disabled(disabled)
+        .on_click(cx.listener(|this, _, window, cx| super::text(this, window, cx))),
+    )
 }
 
 /// What the tray is doing, while it is doing something.

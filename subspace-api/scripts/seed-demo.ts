@@ -4,6 +4,12 @@ import { client, type Client, type Identified, type SeedIssue, type Versioned } 
 import { conversations } from "./demo/conversations";
 import { dateAt, decisions, evidence, initiatives, labels, people, projects } from "./demo/data";
 import { demoGitHub } from "./demo/github";
+import {
+  missingFleetFields,
+  nickEdit,
+  type RegisteredAgent,
+  type SeededFleet,
+} from "./demo/backfill";
 import { seedHistory, type SeedHistory } from "./demo/history";
 import { chatScreenshot, image, issueFile } from "./demo/media";
 import { defaults } from "./demo/settings";
@@ -24,6 +30,9 @@ function port(name: string, fallback: number) {
   return value;
 }
 
+// An agent's name is its IRC nick and account, <fleet>-<captain-id> or
+// <fleet>-admiral. A captain's ship is named after it, which gives its ship
+// channel #<fleet>-<captain-id> (the standard fleet channels).
 const fleets = [
   {
     slug: "aurora",
@@ -31,10 +40,13 @@ const fleets = [
     ircHost,
     ircPort: port("SEED_IRC_PLAIN_PORT", 6667),
     ircTls: false,
+    commandChannel: "#aurora-command",
     agents: [
-      { handle: "aurora-admiral", name: "Rear-Admiral-Vega", rank: "rearAdmiral", ship: null },
-      { handle: "aurora-lyra", name: "Captain-Lyra", rank: "captain", ship: "Lattice" },
-      { handle: "aurora-orion", name: "Captain-Orion", rank: "captain", ship: "Plover" },
+      { handle: "aurora-admiral", name: "aurora-admiral", rank: "rearAdmiral", ship: null },
+      { handle: "aurora-lyra", name: "aurora-lyra", rank: "captain", ship: "Lyra" },
+      { handle: "aurora-orion", name: "aurora-orion", rank: "captain", ship: "Orion" },
+      { handle: "aurora-vega", name: "aurora-vega", rank: "captain", ship: "Vega" },
+      { handle: "aurora-castor", name: "aurora-castor", rank: "captain", ship: "Castor" },
     ],
   },
   {
@@ -43,15 +55,16 @@ const fleets = [
     ircHost,
     ircPort: port("SEED_IRC_TLS_PORT", 6697),
     ircTls: true,
+    commandChannel: "#borealis-command",
     agents: [
-      { handle: "borealis-admiral", name: "Rear-Admiral-Polaris", rank: "rearAdmiral", ship: null },
-      { handle: "borealis-rigel", name: "Captain-Rigel", rank: "captain", ship: "Lantern" },
+      { handle: "borealis-admiral", name: "borealis-admiral", rank: "rearAdmiral", ship: null },
+      { handle: "borealis-rigel", name: "borealis-rigel", rank: "captain", ship: "Rigel" },
     ],
   },
 ] as const;
 
 type Actor = { userId: string; api: Client };
-type Fleet = Identified & { irc: { host: string; port: number; tls: boolean } };
+type Fleet = Identified & SeededFleet;
 type Initiative = Identified & {
   name: string;
   fleetId: string | null;
@@ -81,35 +94,41 @@ async function seedFleets(admin: Client) {
     let fleet = await admin.find<Fleet>(`/fleets/${slug}`);
     if (!fleet) {
       fleet = await admin.write<Fleet>("POST", "/fleets", { slug, ...fields });
-    } else if (
-      fleet.irc.host !== fields.ircHost ||
-      fleet.irc.port !== fields.ircPort ||
-      fleet.irc.tls !== fields.ircTls
-    ) {
-      fleet = await admin.write<Fleet>("PATCH", `/fleets/${slug}`, {
-        ircHost: fields.ircHost,
-        ircPort: fields.ircPort,
-        ircTls: fields.ircTls,
-      });
+    } else {
+      const changes = missingFleetFields(fleet, fields);
+      if (Object.keys(changes).length) {
+        fleet = await admin.write<Fleet>("PATCH", `/fleets/${slug}`, changes);
+      }
     }
     ids.set(slug, fleet.id);
   }
   return ids;
 }
 
+/** Give an agent registered before nicks were recorded its nick, unless it already has one. */
+async function recordNick(api: Client, agent: RegisteredAgent, ircNick: string) {
+  const edit = nickEdit(agent, ircNick);
+  // A 409 means another agent already holds the nick: leave both as someone set them.
+  if (edit) await api.optionalWrite("PUT", `/agents/${agent.userId}`, edit, [409]);
+}
+
 async function seedActors(developer: Actor) {
   const actors = new Map([["developer", developer]]);
   const { api } = developer;
-  const existing = await api.all<{ serviceTokenClientId: string }>("/agents");
+  const existing = await api.all<RegisteredAgent>("/agents");
   for (const person of people) {
     actors.set(person.handle, await signIn(`${person.handle}@example.com`, person.name));
   }
   for (const fleet of fleets) {
     for (const { handle, ...agent } of fleet.agents) {
       const email = `${handle}@example.com`;
-      if (!existing.some((row) => row.serviceTokenClientId === email)) {
+      const registered = existing.find((row) => row.serviceTokenClientId === email);
+      if (registered) {
+        await recordNick(api, registered, handle);
+      } else {
         await api.write("POST", "/agents", {
           ...agent,
+          ircNick: handle,
           fleet: fleet.slug,
           defaultModel: "rehearsal-model",
           serviceTokenClientId: email,

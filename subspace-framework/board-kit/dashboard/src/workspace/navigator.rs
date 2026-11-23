@@ -1,19 +1,28 @@
 //! The navigator: the leading dock where a Space lists what there is to look
 //! at, such as views, projects, networks or repositories.
+//!
+//! Its body is a tree of destinations, as a desktop sidebar is: each row is a
+//! tree item that says whether it is selected. A row with a click handler is
+//! a tab stop; the list keys move between rows (`SelectNext`,
+//! `SelectPrevious`), stopping at the first and the last, and Enter or Space
+//! chooses one, as a click does. A click chooses a row without taking the
+//! keyboard focus, so the list keys still move the Space's own list after it.
 
 use std::rc::Rc;
 
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Div, ElementId, FontWeight, InteractiveElement, IntoElement,
+    AnyElement, App, ClickEvent, Div, ElementId, FontWeight, Hsla, InteractiveElement, IntoElement,
     ParentElement, RenderOnce, Role, SharedString, Stateful, StatefulInteractiveElement as _,
     Styled, TestSupportExt as _, Window, div,
 };
 use subspace_lucide::SvgIcon;
 
-use super::row_parts::{ClickHandler, MenuBuilder, count_mark, fill, with_menu};
-use super::{header, text_edge};
+use super::row_parts::{
+    ClickHandler, MenuBuilder, count_mark, fill, row_focus, with_handlers, with_menu,
+};
+use super::{header, row_order, text_edge};
 use crate::row_menu::GroupedMenu;
 use crate::tokens::Tokens;
 use crate::truncated;
@@ -68,8 +77,12 @@ impl ParentElement for Navigator {
 }
 
 impl RenderOnce for Navigator {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        // The rows draw after this, each taking its place in this navigator's
+        // own row order.
+        row_order::begin(window, cx);
         let tokens = Tokens::current(cx);
+        let tree_label = self.title.clone();
         // The Space's name takes the accent, so it reads as where you are.
         let title = header::title(
             "workspace-navigator-title",
@@ -96,6 +109,9 @@ impl RenderOnce for Navigator {
             .child(
                 v_flex()
                     .id("workspace-navigator-body")
+                    .test_support()
+                    .role(Role::Tree)
+                    .aria_label(tree_label)
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -245,9 +261,10 @@ impl NavRow {
     }
 
     /// A right-click menu built from the standard groups, which `commands`
-    /// fills as the menu opens. A right-click first does what a click does,
-    /// so the highlighted row is the one the menu acts on. Without it, the
-    /// row has no menu.
+    /// fills as the menu opens. A right-click on a row that is not selected
+    /// first does what a click does, so the highlighted row is the one the
+    /// menu acts on; on the selected row it only opens the menu. Without it,
+    /// the row has no menu.
     pub fn menu(
         mut self,
         commands: impl Fn(&mut Window, &mut App) -> GroupedMenu + 'static,
@@ -258,35 +275,26 @@ impl NavRow {
 }
 
 impl RenderOnce for NavRow {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let tokens = Tokens::current(cx);
+        let (focus, rows) = row_focus(&self.key, self.on_click.is_some(), window, cx);
+        let ring = focus.is_focused(window) && window.last_input_was_keyboard();
         let group = SharedString::from(format!("nav-row:{}", self.key));
         let title_id = SharedString::from(format!("nav-row-title:{}", self.key));
-        let colour = if self.selected || self.strong {
-            tokens.fg_strong
-        } else if self.quiet {
-            tokens.muted
-        } else {
-            tokens.fg
-        };
+        let colour = self.text_colour(&tokens);
         let edge = text_edge(&tokens);
         let mono = cx.theme().mono_font_family.clone();
-        let leading = self.leading.or_else(|| {
-            self.icon.map(|icon| {
-                Icon::from(icon)
-                    .xsmall()
-                    .flex_shrink_0()
-                    .text_color(tokens.muted)
-                    .into_any_element()
-            })
-        });
+        let leading = leading_mark(self.leading, self.icon, &tokens);
         let row = h_flex()
             .id(ElementId::Name(self.key))
             .test_support()
+            // Only a row that does something is a tab stop.
+            .when(self.on_click.is_some(), |row| row.track_focus(&focus))
             .group(group.clone())
-            .role(Role::Button)
+            .role(Role::TreeItem)
             .aria_label(self.label.clone())
             .aria_selected(self.selected)
+            .aria_level(usize::from(self.indent) + 1)
             .relative()
             .w_full()
             .flex_shrink_0()
@@ -297,14 +305,44 @@ impl RenderOnce for NavRow {
             .text_size(tokens.row_font)
             .text_color(colour)
             .when(self.strong, |row| row.font_weight(FontWeight::SEMIBOLD))
-            .child(fill(group, self.selected, &tokens))
+            .child(fill(group, self.selected, ring, &tokens))
             .children(leading)
             .child(truncated::text(title_id, self.label).flex_1())
             .children(self.count.map(|count| count_mark(count, mono, &tokens)))
-            .children(self.trailing)
-            .when_some(self.on_click.clone(), |row, on_click| {
-                row.on_click(move |event, window, cx| on_click(event, window, cx))
-            });
-        with_menu(row, self.menu, self.on_click)
+            .children(self.trailing);
+        let row = with_handlers(row, focus, rows, self.on_click.clone());
+        // The selected row is already the one its menu acts on.
+        let select = self.on_click.filter(|_| !self.selected);
+        with_menu(row, self.menu, select)
     }
+}
+
+impl NavRow {
+    /// Strong for the selected row or a parent row, muted for a quiet one.
+    fn text_colour(&self, tokens: &Tokens) -> Hsla {
+        if self.selected || self.strong {
+            tokens.fg_strong
+        } else if self.quiet {
+            tokens.muted
+        } else {
+            tokens.fg
+        }
+    }
+}
+
+/// The element before the label: the row's own, or its glyph, muted.
+fn leading_mark(
+    leading: Option<AnyElement>,
+    icon: Option<SvgIcon>,
+    tokens: &Tokens,
+) -> Option<AnyElement> {
+    leading.or_else(|| {
+        icon.map(|icon| {
+            Icon::from(icon)
+                .xsmall()
+                .flex_shrink_0()
+                .text_color(tokens.muted)
+                .into_any_element()
+        })
+    })
 }

@@ -29,6 +29,24 @@ pub enum CheckStatus {
     Pending,
 }
 
+/// How many of the head commit's checks passed, out of how many, such as
+/// 4 of 5. `passed` is never more than `total`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct CheckCounts {
+    pub passed: u32,
+    pub total: u32,
+}
+
+impl CheckCounts {
+    pub fn new(passed: u32, total: u32) -> Self {
+        Self {
+            passed: passed.min(total),
+            total,
+        }
+    }
+}
+
 /// A short pull request summary, held only in memory for this account.
 #[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -43,6 +61,9 @@ pub struct PullRequestDetails {
     pub author: Option<String>,
     pub review: Option<ReviewStatus>,
     pub checks: Option<CheckStatus>,
+    /// How many checks passed out of how many, beside `checks`; `None` when
+    /// the responder has not read them.
+    pub check_counts: Option<CheckCounts>,
     /// When it last changed, as RFC 3339.
     pub updated_at: Option<String>,
     pub head_ref: Option<String>,
@@ -62,6 +83,7 @@ impl PullRequestDetails {
             author: None,
             review: None,
             checks: None,
+            check_counts: None,
             updated_at: None,
             head_ref: None,
             base_ref: None,
@@ -84,6 +106,13 @@ impl PullRequestDetails {
 
     pub fn with_checks(mut self, checks: Option<CheckStatus>) -> Self {
         self.checks = checks;
+        self
+    }
+
+    /// How many checks passed out of how many.
+    // qual:api - Consumed by app crates through the Framework facade.
+    pub fn with_check_counts(mut self, counts: Option<CheckCounts>) -> Self {
+        self.check_counts = counts;
         self
     }
 

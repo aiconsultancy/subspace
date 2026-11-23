@@ -1,7 +1,8 @@
 # Appearance
 
 **Cupertino Dark** is the framework default for Subspace and products that
-do not declare another default. **Subspace One Dark**, **Cupertino Light**,
+do not declare another default. A new Subspace install opens in
+[Twilight Two](#a-theme-for-new-installs) instead. **Subspace One Dark**, **Cupertino Light**,
 [Subspace Channel](#subspace-channel) Light and Dark,
 [macOS Classic Dark Remix](#macos-classic-dark-remix) and
 [Twilight Two](#twilight-two) remain available.
@@ -110,7 +111,9 @@ Cupertino Dark's glass tones.
 ## Twilight Two
 
 **Twilight Two** is the look of the workspace shell's approved mock-ups, and
-the theme screenshots of the app are taken in. It has one dark variant: a
+the theme screenshots of the app are taken in. A new Subspace App install
+opens in it (see [A theme for new installs](#a-theme-for-new-installs)). It
+has one dark variant: a
 warm near-black canvas (`#131312`); one warm dark surface (`#1a1a18`) for
 the docks, the tab strip, the title bar and the status bar; warm hairlines
 (`#2b2a27`); and Twilight's gold (`#cfa95e`) for the accent, primary
@@ -211,6 +214,26 @@ These dimensions follow the interface's relative scale. Changing the icon-button
 choice does not change the interface base font or visible button text size. The
 theme, interface zoom and display rounding determine the resolved dimensions.
 
+## Agent icons
+
+Open **Settings > Application > Appearance** and choose **Icons**: **Large**,
+**Small** or **Off**. It sets how fleet agents' and ships' icons show in
+Spaces. **Small** is the default (`avatar::DEFAULT_AGENT_ICONS`), and a state
+file without the choice reads as it. **Save** keeps the choice under
+`app.agent-icons` and applies it without a restart; **Cancel** leaves the
+saved choice unchanged.
+
+- **Large** draws each icon as its surface always has, such as the agent
+  avatar beside a ship in a list.
+- **Small** draws the same avatar at 12 px (`avatar::MARK_SIZE_PX`), the size
+  of a row's leading glyph, where that glyph would sit.
+- **Off** leaves the icon out, and the text beside it closes up.
+
+A Space reads the choice with `AgentIcons::current` and passes each agent
+avatar through the one helper, `avatar::agent_icon`, so every surface
+follows it the same way. People's initials, message authors' avatars and
+text role marks are not agent icons and do not change.
+
 ## Design a theme
 
 1. Open the theme designer and select a base theme. Solarized Light and Solarized Dark
@@ -295,3 +318,21 @@ documents. A blank or padded name fails product validation; an unknown name
 stops the app at startup. Saved user theme choices still take priority over the
 compiled default. An explicit product default comes next when no build override
 exists, followed by the framework fallback.
+
+### A theme for new installs
+
+A product can give new installs a theme other than its default, without
+moving existing installs. Before the desktop starts, and only when it starts
+the desktop app, the product's entrypoint calls
+`shell::record_new_install_theme(&context, "Twilight Two")`. When the
+product has neither a config file nor a state file, a new install, it saves
+that variant as `appearance.theme` in a new state file, so it is the user's
+saved choice from then on and a later change of default never moves it. An
+install with either file is left alone, including one whose files are
+unreadable or malformed, so an install with no saved theme keeps showing the
+product's default. The variant must be in the product's theme catalogue; if
+it is not, or the files' folder cannot be read, nothing is written and the
+call returns the reason. The Subspace App records Twilight Two this way and
+keeps Cupertino Dark as its default; a build that sets
+`SUBSPACE_DEFAULT_THEME` records nothing. Command-line and headless runs
+never call it.

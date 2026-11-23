@@ -33,7 +33,7 @@ fn install_services(settings: serde_json::Value, cx: &mut gpui_kit::App) {
 
 fn local_and_example() -> serde_json::Value {
     serde_json::json!({"networks": [
-        {"id": "local", "name": "Local Ergo", "host": "127.0.0.1", "port": 16667,
+        {"id": "local", "name": "Acme IRC", "host": "127.0.0.1", "port": 16667,
          "tls": false, "nickname": "subspace", "channels": ["#subspace"]},
         {"id": "example", "name": "Example Network", "host": "irc.example.net",
          "nickname": "subspace"}
@@ -95,7 +95,7 @@ fn saved_settings_reconfigure_the_runtime_and_keep_unchanged_buffers(cx: &mut Te
             .iter()
             .map(|network| network.name.as_str())
             .collect();
-        assert_eq!(names, ["Local Ergo", "Example Network"]);
+        assert_eq!(names, ["Acme IRC", "Example Network"]);
         assert!(hub.state.buffer(&channel("#subspace")).is_some(), "kept");
         assert!(
             matches!(

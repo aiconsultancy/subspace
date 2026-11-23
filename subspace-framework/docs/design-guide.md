@@ -33,7 +33,7 @@ app imports it as `subspace_framework::dashboard::workspace`.
 | Tab strip, the top of the pane | What is open: the list or view on show, and an opened item beside it. | The Space's views; those are navigator rows. | `--strip-h` high |
 | Toolbar, under the tab strip | Search and filters on the leading side, actions for what is open on the trailing side. | A Space title, a line of context, actions that need a selection to make sense, the dock switches. | at least `--toolbar-h` high |
 | Content | The list, the page, the conversation or the graph. | A heading for the Space, its own outer padding. | the rest of the pane |
-| Inspector or detail panel, the trailing dock | The detail of the selection, with the actions that act on it in its footer. | Views, filters, the Space's own state. | `--inspector-w` wide, or the detail panel's own width; header `--strip-h` high |
+| Inspector or detail panel, the trailing dock | The detail of the selection, with the actions that act on it in its footer. Tabs only under [Inspector tabs](#inspector-tabs). | Views, filters, the Space's own state. | `--inspector-w` wide, or the detail panel's own width; header `--strip-h` high |
 | Status bar, the shell's | Account, connection, counts and sync time, from `Dashboard::status`; the navigator's switch at its leading end and the inspector's at its trailing end, from `Dashboard::docks`. | Any other control of the Space's. Besides the dock switches, it holds only the shell's own commands, such as About and Help. | the shell's |
 
 Inside every panel, text starts at `--pad-x` plus `--row-inset`. The defaults
@@ -45,15 +45,19 @@ Above the Space, the title bar's Space tabs end with a plus, **Add a Space**
 (at the end of the navigation rail when that layout is on). Its menu lists
 the Spaces that are switched off, each with its glyph, title and one-line
 description, and ends with **Manage Spaces…**. Choosing a Space turns it on
-as its Settings switch and Save do, and opens it. A Space adds nothing to
-this control.
+as its Settings switch and Save do, and opens it; when the change waits for
+a restart, the app opens on that Space when it starts again. A Space adds
+nothing to this control.
 
 ## The rules
 
 1. **Panels tile to the window's edges.** The docks and the pane meet the
    window and each other, separated by hairlines. A Space has no outer
    padding and no margin around the workspace. The room is inside each
-   panel.
+   panel. In a narrow window the docks give up width first, so the pane
+   keeps at least `workspace::PANE_MIN_WIDTH_PX` (320 px) and nothing runs
+   past the workspace's edge. A `Workspace::detail` panel yields the same
+   way.
 2. **One text edge.** Text starts at `workspace::text_edge(&tokens)`, the
    content inset plus the row inset, in every panel: dock headers, navigator
    rows, the toolbar, list rows and the content. A Space has no side inset
@@ -70,8 +74,12 @@ this control.
    time go through `Dashboard::status`. There is no large Space heading and
    no line of context above the content; the Space's name is the
    navigator's title.
-7. **Selection shows through the row's own fill.** No leading bars, no
-   coloured edges.
+7. **Selection shows through surface and text.** A selected row shows it
+   through its own fill; a selected tab takes the surface it adjoins, with
+   the stronger text colour at medium weight. Never an accent line on one
+   edge: no leading bars, underlines or coloured edges, on rows, tabs or
+   blocks. Functional marks stay: focus rings, a drag's insertion mark and
+   full dividers between regions.
 8. **One primary action per toolbar.** A pane toolbar has at most one
    primary action: the Space's main one, at the trailing end, such as
    **New issue…**, **Trigger…** or **New project**, built with
@@ -80,6 +88,31 @@ this control.
    decision, such as Save.
 9. **Shared components and tokens only.** No literal colours or sizes, no
    one-off styled controls. Read sizes from `Tokens::current(cx)`.
+
+### Inspector tabs
+
+The owner has approved one exception to the zones above: the inspector may
+carry tabs in place of its title, as Channels' "Ship", "Thread" and
+"People 5" do. Build them with `Inspector::tabs` and `InspectorTab`, and
+only on these terms:
+
+- **One selection, several subjects.** Every tab is about the item selected
+  in the pane or the navigator, such as a channel's ship, its thread and its
+  people. Choosing a tab changes what the inspector says about that
+  selection, never the selection itself.
+- **Not a second navigator.** A tab never lists the Space's views, projects
+  or places to go, and choosing one never changes the pane. Those are
+  navigator rows.
+- **Few tabs.** At most `INSPECTOR_MAX_TABS` (3), each a short noun with an
+  optional count, such as "People 5". The shell draws no more than that.
+- **Only when the subjects compete for room.** If the facts fit as
+  `section`s one under another, use sections and keep the title.
+- **The shell's control.** The tabs are a segmented tab list in the header:
+  tab and tab-list roles, each tab reached with Tab and chosen with Enter,
+  Space or a click, as the other segmented controls are. Close stays the
+  last header control, and the inspector's title becomes the tab list's
+  accessible name. The Space keeps which tab is open and may remember it
+  with its other stored choices.
 
 ## Interaction in list Spaces
 
@@ -95,6 +128,18 @@ this control.
   puts their switches at the two ends of the status bar.
 - With the navigator hidden, its views stay reachable from a view menu at
   the start of the toolbar, a `menu_button` that names the current view.
+- A shared list's group may carry captions inside it, such as **SHIPS** and
+  **PEOPLE** above a fleet's ships and people
+  (`ListDashboard::group_captions`). A caption is a quiet label, not a row:
+  the list keys, the panel's previous and next and the selection pass over
+  it, and folding the group hides it.
+- Navigator rows are tree items (`Role::TreeItem`) in a tree
+  (`Role::Tree`) named after the Space. Tab reaches them, the list keys
+  (down or j, up or k) move between them and stop at the first and the
+  last row, and Enter or Space chooses one.
+  A click chooses a row without taking the keyboard focus, so j and k keep
+  driving the list. A row reached from the keyboard shows its focus as an
+  accent border on its fill.
 
 ## Context menus
 
@@ -117,7 +162,13 @@ The rules:
 - **Every command has a Lucide glyph** in the menu's icon slot.
 - **Right-click selects first.** The highlighted row is always the one the
   menu acts on. Shared list rows, group headers and `workspace::NavRow`
-  select the line before the menu opens.
+  select the line before the menu opens. Right-clicking the navigator row
+  that is already selected only opens its menu.
+- **A blocked list keeps what still works.** While a dialog of the Space's
+  blocks navigation, a list row's menu cannot select its row. It keeps
+  Open in and the copies, shows Open, Add to chat and Fold or Unfold
+  disabled with the reason "Finish the open dialog first.", and leaves out
+  the Space's own commands.
 - **Say why not.** A command that exists but cannot run now stays in its
   place, disabled, with one line under it saying why, such as "The last
   open Space can't be closed."
@@ -286,6 +337,24 @@ and the web Space's toolbar (`spaces/web/src/toolbar.rs`).
    }
    ```
 
+   An inspector whose subjects compete for room may swap its title for tabs
+   under the rules in [Inspector tabs](#inspector-tabs):
+
+   ```rust
+   let tabs = [
+       workspace::InspectorTab::new("Note"),
+       workspace::InspectorTab::new("People").count(people.len().to_string()),
+   ];
+   let notes = cx.entity().downgrade();
+   workspace::Inspector::new("notes-inspector", "Note details").tabs(
+       tabs,
+       self.inspector_tab,
+       move |index, _, _, cx| {
+           _ = notes.update(cx, |this, cx| this.show_inspector_tab(index, cx));
+       },
+   )
+   ```
+
    A panel that owns its width, such as the shared detail panel
    (`panel::frame`), goes in with `Workspace::detail` instead. Use `detail`
    or `inspector`, not both.
@@ -307,7 +376,8 @@ and the web Space's toolbar (`spaces/web/src/toolbar.rs`).
 6. **The dock switches.** Tell the shell which docks the Space has and
    whether each shows, and take a switch's click back. The status bar draws
    the navigator's switch at its leading end and the inspector's at its
-   trailing end.
+   trailing end. It draws neither while another surface covers the Space,
+   such as the log view, a maximised terminal or zoomed Help.
 
    ```rust
    use subspace_framework::dashboard::workspace::{SpaceDock, SpaceDocks};
@@ -368,11 +438,15 @@ A reviewer ticks:
 - [ ] Account, connection, counts and sync time are in the status bar.
 - [ ] There is no large Space heading or line of context.
 - [ ] Only shared components and theme tokens are used.
-- [ ] Selection shows through the row's fill, with no leading bar.
+- [ ] Selection shows through the row's fill or the tab's surface, with no
+      leading bar or accent edge.
 - [ ] The Space's name in the navigator takes the accent, and section
       labels show in capitals.
-- [ ] The open tab joins the content, with no accent line along its top.
+- [ ] The open tab joins the content by its surface and text, with no accent
+      line on any edge, in every tab bar.
 - [ ] Each toolbar has at most one primary action, the Space's main one.
+- [ ] Inspector tabs, if any, are at most three subjects of the same
+      selection, never views or destinations.
 - [ ] The dock switches end the status bar, the navigator's first and the
       inspector's last, quiet glyphs that take the accent while on.
 

@@ -1,6 +1,8 @@
 //! Applies the desktop initiative selection to the verified IRC runtime.
 
-use std::collections::HashSet;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use gpui_kit::{Context, Entity, Subscription};
 use subspace_api_client::initiatives::{Catalog, IdentityObservation};
@@ -8,12 +10,13 @@ use subspace_api_client::model::{Fleet, MemberInitiative};
 use subspace_client_irc::{BufferKey, Command, NetworkConfig, NetworkId, Target};
 
 use crate::Irc;
+use crate::fleet::Roster;
 use crate::hub::Hub;
 
-const MAX_CHANNEL_BYTES: usize = 200;
-
+mod channels;
 mod endpoint;
 mod picker;
+pub(crate) use channels::{channel_names, focus_channel, initiative_channels};
 pub(crate) use endpoint::Endpoint;
 pub(crate) use picker::{Picker, button, command, dismiss_stale_picker, hint};
 
@@ -25,6 +28,9 @@ pub(crate) struct InitiativeIrc {
     /// The server initiatives use when their fleet names none.
     default: Endpoint,
     loopback_fixture: bool,
+    /// Each network's fleet roles, built once for the catalogue and the
+    /// networks as they are, and forgotten when either changes.
+    rosters: RefCell<HashMap<NetworkId, Rc<Roster>>>,
     _subscription: Option<Subscription>,
 }
 
@@ -36,6 +42,7 @@ impl InitiativeIrc {
             network: None,
             default: Endpoint::configured(),
             loopback_fixture,
+            rosters: RefCell::default(),
             _subscription: None,
         }
     }
@@ -96,6 +103,14 @@ impl InitiativeIrc {
         })
     }
 
+    /// The selected initiative's fleet id: `None` with no initiative
+    /// selected, `Some(None)` for one without a fleet.
+    pub(crate) fn selected_fleet(&self) -> Option<Option<&str>> {
+        self.selection
+            .as_ref()
+            .map(|initiative| initiative.fleet_id.as_deref())
+    }
+
     pub(crate) fn selected_for_runtime(&self) -> bool {
         self.network.is_some()
     }
@@ -107,6 +122,58 @@ impl InitiativeIrc {
     ) -> bool {
         endpoint.unwrap_or(&self.default).matches(network)
     }
+
+    /// The fleet roles on `network`: those of the catalogue's fleets whose
+    /// IRC server it is, as an initiative of that fleet would pick it among
+    /// `networks`. None for a network that serves no fleet.
+    /// Built once until the catalogue or the networks change.
+    pub(crate) fn roster(
+        &self,
+        networks: &[NetworkConfig],
+        network: &NetworkId,
+        cx: &gpui_kit::App,
+    ) -> Rc<Roster> {
+        if let Some(held) = self.rosters.borrow().get(network) {
+            return Rc::clone(held);
+        }
+        let memberships = self.catalog.read(cx).memberships();
+        let roster = Rc::new(Roster::for_initiatives(&initiatives_on(
+            memberships,
+            networks,
+            network,
+            self.loopback_fixture,
+        )));
+        self.rosters
+            .borrow_mut()
+            .insert(network.clone(), Rc::clone(&roster));
+        roster
+    }
+
+    /// Forgets the built rosters, after the catalogue or the networks
+    /// changed.
+    pub(crate) fn forget_rosters(&self) {
+        self.rosters.borrow_mut().clear();
+    }
+}
+
+/// The initiatives with a fleet whose server is `network` among `networks`.
+fn initiatives_on<'a>(
+    initiatives: &'a [MemberInitiative],
+    networks: &[NetworkConfig],
+    network: &NetworkId,
+    loopback_fixture: bool,
+) -> Vec<&'a MemberInitiative> {
+    initiatives
+        .iter()
+        .filter(|initiative| {
+            Endpoint::from_fleet(initiative).is_some_and(|endpoint| {
+                eligible(networks, &endpoint, loopback_fixture)
+                    .iter()
+                    .any(|eligible| eligible.id == *network)
+            })
+        })
+        .filter(|initiative| initiative.fleet.is_some())
+        .collect()
 }
 
 pub(crate) fn loopback_fixture() -> bool {
@@ -120,6 +187,7 @@ impl Hub {
         self.initiatives.sync_selection(cx);
         self.initiatives._subscription =
             Some(cx.observe(&self.initiatives.catalog, |hub, _, cx| {
+                hub.initiatives.forget_rosters();
                 // Any change is applied, so a selection that went with its
                 // scope also takes its autojoin with it. Without initiative
                 // channels (a NETT organisation that does not serve them),
@@ -162,9 +230,11 @@ impl Hub {
             .as_ref()
             .filter(|_| subspace_api_client::capabilities().initiative_channels)
             .zip(self.configured_initiative_network());
-        let intent =
-            selection.map(|(initiative, network)| (network, channel_names(&initiative.channels)));
-        let new_network = intent.as_ref().map(|(network, _)| network.clone());
+        let intent = selection.map(|(initiative, network)| {
+            let focus = focus_channel(initiative);
+            (network, initiative_channels(initiative), focus)
+        });
+        let new_network = intent.as_ref().map(|(network, ..)| network.clone());
         let old_network = std::mem::replace(&mut self.initiatives.network, new_network.clone());
         let changed_network = old_network != new_network;
         if let Some(network) = old_network.filter(|_| changed_network) {
@@ -176,7 +246,7 @@ impl Hub {
         if focus || changed_network {
             self.focus_initiative(intent.as_ref().and_then(first_channel));
         }
-        if let Some((network, channels)) = intent {
+        if let Some((network, channels, _)) = intent {
             self.send(Command::SetAutojoin {
                 network,
                 channels: Some(channels),
@@ -244,10 +314,13 @@ fn eligible<'a>(
     if exact.is_empty() { loopback } else { exact }
 }
 
-fn first_channel((network, channels): &(NetworkId, Vec<String>)) -> Option<BufferKey> {
+/// The channel shown when an initiative is chosen, on its network.
+fn first_channel(
+    (network, _, focus): &(NetworkId, Vec<String>, Option<String>),
+) -> Option<BufferKey> {
     Some(BufferKey {
         network: network.clone(),
-        target: Target::Channel(channels.first()?.clone()),
+        target: Target::Channel(focus.clone()?),
     })
 }
 
@@ -258,35 +331,6 @@ pub(crate) fn refresh(board: &Irc, cx: &mut Context<Irc>) {
             hub.initiatives.catalog.clone().update(cx, Catalog::refresh);
         }
     }
-}
-
-/// A JOIN accepts a single channel token. Store and show the first spelling,
-/// with the same ASCII case-insensitive comparison as registration.
-pub(crate) fn channel_names(text: &str) -> Vec<String> {
-    let mut seen = HashSet::new();
-    text.split(',')
-        .flat_map(|entry| {
-            let names = entry
-                .trim()
-                .split([' ', '\t'])
-                .filter(|name| !name.is_empty());
-            names
-                .clone()
-                .all(valid_channel)
-                .then_some(names)
-                .into_iter()
-                .flatten()
-        })
-        .filter(|name| seen.insert(name.to_ascii_lowercase()))
-        .map(str::to_owned)
-        .collect()
-}
-
-fn valid_channel(name: &str) -> bool {
-    // Leave room on the 512-byte IRC line for the JOIN command.
-    (2..=MAX_CHANNEL_BYTES).contains(&name.len())
-        && name.starts_with(['#', '&', '+', '!'])
-        && !name.contains(|c: char| c.is_whitespace() || c.is_control() || c == ':')
 }
 
 #[cfg(test)]
@@ -339,6 +383,105 @@ mod tests {
         // No exact match: any loopback network, as the fixture API's fleets
         // need not name the local test server.
         assert_eq!(ids("ircs://irc.example.com:6697").len(), 2);
+    }
+
+    #[test]
+    fn fleet_roles_belong_only_to_the_network_on_the_fleet_s_server() {
+        let initiatives: Vec<subspace_api_client::model::MemberInitiative> =
+            serde_json::from_value(serde_json::json!([
+                {"id": "one", "name": "One", "channels": "#aurora-starbase", "fleetId": "aurora",
+                 "fleet": {"id": "aurora", "slug": "aurora", "ircHost": "irc.example.com",
+                           "ircPort": 6697, "ircTls": true, "captainNames": ["Lyra"]}},
+                {"id": "two", "name": "Two", "channels": "#local", "fleetId": null, "fleet": null}
+            ]))
+            .unwrap();
+        let mut fleet = config();
+        fleet.host = "irc.example.com".into();
+        fleet.port = 6697;
+        fleet.tls = true;
+        let mut local = config();
+        local.id = subspace_client_irc::NetworkId("home".into());
+        local.host = "irc.example.org".into();
+        let networks = [fleet.clone(), local.clone()];
+        let slugs = |network: &NetworkConfig| {
+            super::initiatives_on(&initiatives, &networks, &network.id, false)
+                .iter()
+                .filter_map(|initiative| initiative.fleet.as_ref())
+                .map(|fleet| fleet.slug.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(slugs(&fleet), ["aurora"]);
+        assert!(
+            slugs(&local).is_empty(),
+            "a local-only network serves no fleet"
+        );
+    }
+
+    #[test]
+    fn two_initiatives_of_one_fleet_give_its_roles_once() {
+        let fleet = serde_json::json!({
+            "id": "aurora", "slug": "aurora", "ircHost": "irc.example.com", "ircPort": 6697,
+            "ircTls": true,
+            "agents": [{"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra",
+                        "available": true}]
+        });
+        let initiatives: Vec<subspace_api_client::model::MemberInitiative> =
+            serde_json::from_value(serde_json::json!([
+                {"id": "one", "name": "One", "channels": "", "fleetId": "aurora", "fleet": fleet},
+                {"id": "two", "name": "Two", "channels": "", "fleetId": "aurora", "fleet": fleet}
+            ]))
+            .unwrap();
+        let mut network = config();
+        network.host = "irc.example.com".into();
+        network.port = 6697;
+        network.tls = true;
+        let networks = [network.clone()];
+        let held = super::initiatives_on(&initiatives, &networks, &network.id, false);
+        assert_eq!(held.len(), 2, "one per initiative");
+        let roster = crate::fleet::Roster::for_initiatives(&held);
+        assert_eq!(
+            roster.rank("aurora-lyra"),
+            Some(crate::fleet::Rank::Captain),
+            "the shared fleet is no clash with itself"
+        );
+    }
+
+    #[test]
+    fn an_initiative_joins_its_fleet_s_recorded_channels_then_its_own() {
+        let initiative: subspace_api_client::model::MemberInitiative =
+            serde_json::from_value(serde_json::json!({
+                "id": "one", "name": "One", "channels": "#aurora-nav, #Aurora-Starbase",
+                "fleetId": "aurora",
+                "fleet": {"id": "aurora", "slug": "aurora",
+                          "starbaseChannel": "#aurora-starbase", "commandChannel": "#aurora-command",
+                          "agents": [{"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra",
+                                      "shipChannel": "#aurora-lyra"}],
+                          "ships": [{"id": "s1", "name": "Lattice", "channel": "#aurora-lyra"},
+                                    {"id": "s2", "name": "Plover", "channel": null}]}
+            }))
+            .unwrap();
+        assert_eq!(
+            super::initiative_channels(&initiative),
+            [
+                "#aurora-starbase",
+                "#aurora-command",
+                "#aurora-lyra",
+                "#aurora-nav"
+            ],
+            "the fleet's first, each once ignoring case, then the initiative's own"
+        );
+        let unrecorded: subspace_api_client::model::MemberInitiative =
+            serde_json::from_value(serde_json::json!({
+                "id": "two", "name": "Two", "channels": "#local", "fleetId": "aurora",
+                "fleet": {"id": "aurora", "slug": "aurora",
+                          "agents": [{"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra"}]}
+            }))
+            .unwrap();
+        assert_eq!(
+            super::initiative_channels(&unrecorded),
+            ["#local"],
+            "no guessed standard names are joined"
+        );
     }
 
     #[test]

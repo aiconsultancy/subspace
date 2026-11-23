@@ -1,0 +1,106 @@
+# Proposes moving the fleet installer's Stargate pin
+# (subspace-installer/lib/runtime.py) to Stargate's latest release, so that each
+# Subspace release carries it. See subspace-installer/README.md#stargate-pin.
+#
+# - Daily and by hand. When Stargate has a newer release than the pin, and no
+#   hold in subspace-installer/stargate-hold.json covers it, the first job
+#   moves the pin in a read-only checkout and runs the installer's offline
+#   tests; the second commits the same change to automation/stargate-pin and
+#   opens a pull request, or updates the open one, that says what changed, what
+#   to check and whether the tests passed. It never merges anything, and never
+#   overwrites a commit someone else pushed to the branch.
+# - The pull request is opened with this workflow's token, which starts no
+#   pull_request run: push to the branch, or close and reopen the pull request,
+#   to start its checks. Only a personal access token or a GitHub App token
+#   would avoid that, and none is used.
+# - It fails when GitHub's API cannot be reached, so a missed proposal shows.
+name: stargate-bump
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: stargate-bump
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test the latest Stargate release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      state: ${{ steps.status.outputs.state }}
+      tag: ${{ steps.status.outputs.tag }}
+      main: ${{ steps.status.outputs.main }}
+      status: ${{ steps.status.outputs.status }}
+      results: ${{ steps.tests.outputs.results }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Ask GitHub for Stargate's latest release
+        id: status
+        env:
+          # Read-only requests for public data, made with this run's token for
+          # its higher rate limit.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/stargate-pin.py
+          python3 scripts/stargate-pin.py --json >"$RUNNER_TEMP/status.json"
+          delimiter="status-$RANDOM$RANDOM"
+          {
+            echo "state=$(jq -r .state "$RUNNER_TEMP/status.json")"
+            echo "tag=$(jq -r .latest.tag "$RUNNER_TEMP/status.json")"
+            echo "main=$(git rev-parse HEAD)"
+            echo "status<<$delimiter"
+            cat "$RUNNER_TEMP/status.json"
+            echo "$delimiter"
+          } >>"$GITHUB_OUTPUT"
+      - name: Move the pin and run the installer's tests
+        id: tests
+        if: steps.status.outputs.state == 'behind'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.status.outputs.tag }}
+        run: |
+          set -euo pipefail
+          bash scripts/stargate-bump.sh test "$TAG" "$RUNNER_TEMP/results.md"
+          delimiter="results-$RANDOM$RANDOM"
+          {
+            echo "results<<$delimiter"
+            cat "$RUNNER_TEMP/results.md"
+            echo "$delimiter"
+          } >>"$GITHUB_OUTPUT"
+
+  propose:
+    name: Propose the bump
+    needs: test
+    if: needs.test.outputs.state == 'behind'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # Push the bump commit to automation/stargate-pin.
+      pull-requests: write # Open the bump pull request, or update its title and description.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The main the tests ran on.
+          ref: ${{ needs.test.outputs.main }}
+      - name: Commit the pin and open or update the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ needs.test.outputs.status }}
+          RESULTS: ${{ needs.test.outputs.results }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$STATUS" >"$RUNNER_TEMP/status.json"
+          printf '%s\n' "$RESULTS" >"$RUNNER_TEMP/results.md"
+          bash scripts/stargate-bump.sh propose "$RUNNER_TEMP/status.json" "$RUNNER_TEMP/results.md"

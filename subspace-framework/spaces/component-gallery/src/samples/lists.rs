@@ -1,4 +1,5 @@
-//! Lists and tables: the native grid and charts.
+//! Lists and tables: the shared list and its captions, the native grid and
+//! charts.
 //!
 //! `panel::frame` is not here: its resize handle saves the app-wide panel
 //! width, and the gallery must not write preferences.
@@ -18,6 +19,7 @@ use crate::catalog::Item;
 const GRID_BOX: (f32, f32) = (420., 160.);
 const LIST_BOX: (f32, f32) = (420., 260.);
 const NOTES_BOX: (f32, f32) = (420., 240.);
+const CAPTIONS_BOX: (f32, f32) = (420., 220.);
 const CHART_BOX: (f32, f32) = (420., 220.);
 const CHART_HEIGHT: f32 = 200.;
 const BUILDS: [f64; 3] = [4., 9., 6.];
@@ -31,20 +33,39 @@ pub(crate) const ITEMS: &[Item] = &[
         kit: None,
     },
     Item {
+        name: "list::GroupCaption",
+        source: "board-kit/dashboard/src/list/view/rows.rs",
+        used_in: "Captions inside a group from ListDashboard::group_captions, such as SHIPS and PEOPLE in a fleet's group. Not rows: the arrow keys pass over them, and folding the group hides them.",
+        samples: group_captions,
+        kit: None,
+    },
+    Item {
         name: "native_grid::NativeGrid",
         source: "board-kit/dashboard/src/native_grid.rs",
-        used_in: "Tabular results in the Board Lab project view.",
+        used_in: "Tabular results in the Space Lab project view.",
         samples: native_grid,
         kit: None,
     },
     Item {
         name: "chart::Chart",
         source: "board-kit/dashboard/src/chart.rs",
-        used_in: "Result charts in Board Lab and chat canvases.",
+        used_in: "Result charts in Space Lab and chat canvases.",
         samples: chart,
         kit: None,
     },
 ];
+
+pub(super) fn group_captions(
+    gallery: &ComponentGallery,
+    tokens: &Tokens,
+    _: &mut Window,
+    _: &mut Context<ComponentGallery>,
+) -> Vec<Sample> {
+    vec![sample(
+        "A fleet's ships and people, each under its caption",
+        bounded(CAPTIONS_BOX, tokens, gallery.retained.list_captions.clone()),
+    )]
+}
 
 pub(super) fn native_grid(
     gallery: &ComponentGallery,

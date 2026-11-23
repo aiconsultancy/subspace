@@ -487,7 +487,7 @@ export const subspaceContentSamples: Record<string, ComponentType> = {
   'native_grid::NativeGrid': GridSample,
   'chart::Chart': ChartSample,
   'github::mode_switch': ModeSwitchSample,
-  'board-lab::row_actions': RowActionsSample,
+  'space-lab::row_actions': RowActionsSample,
   'github::check_run_link': CheckRunSample,
   'inline-confirmations': ConfirmationSample,
   'inconsistencies::size_and_radius_strip': SizeStripSample,

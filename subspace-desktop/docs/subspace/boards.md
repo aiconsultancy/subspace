@@ -10,12 +10,13 @@ an alternative. These links open the same source guides published in the app.
 | Copilot Agents | [Copilot agent tasks](../../spaces/github-copilot-agents/help.md) |
 | Channels | [IRC networks, channels and private messages](../../spaces/irc/help.md) |
 | Issues | [Subspace API issues and comments](../../spaces/issues/help.md) |
-| Board Lab | [Native dashboards and managed environments](../../spaces/board-lab/help.md) |
+| Decisions | [Subspace API decisions](../../spaces/decisions/help.md) |
+| Space Lab | [Native dashboards and managed environments](../../spaces/space-lab/help.md) |
 | Actions | [GitHub Actions](../../spaces/actions/help.md) |
 | Component gallery | [Shared UI components for developers](https://github.com/aiconsultancy/subspace/blob/main/subspace-framework/spaces/component-gallery/help.md) |
 | Web Spaces | [Websites and installed web Spaces](../../spaces/web/help.md) |
 
-Board Lab and the Component gallery are not ready to ship, so released
+Space Lab and the Component gallery are not ready to ship, so released
 builds of Subspace do not include them. They are in developer builds made
 with their Cargo features (`make run-unreleased`), and start off there until
 you turn them on in Settings or from **Add a Space**.

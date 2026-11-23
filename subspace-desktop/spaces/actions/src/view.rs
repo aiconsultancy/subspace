@@ -126,8 +126,16 @@ mod tests {
     /// A drawn board signed in as `ann`, with one finished run in `ann/app`,
     /// wide enough for the navigator, a run row's lanes and the inspector.
     fn mounted(cx: &mut TestAppContext) -> (Entity<Actions>, &mut VisualTestContext) {
+        mounted_at(cx, 1400.)
+    }
+
+    /// The same board, `width` wide.
+    fn mounted_at(
+        cx: &mut TestAppContext,
+        width: f32,
+    ) -> (Entity<Actions>, &mut VisualTestContext) {
         cx.update(|cx| prefs::init_file(None, cx));
-        let (board, cx) = cx.mount_toolbar(1400., root);
+        let (board, cx) = cx.mount_toolbar(width, root);
         board.update(cx, |board, cx| {
             board.login = Some("ann".into());
             board.repos = vec!["ann/app".into()];
@@ -396,6 +404,34 @@ mod tests {
             assert!(enabled("actions-intent-Cancel run"), "it is still running");
             let status = window.find("actions-inspector-status");
             assert_eq!(status.label(), Some("Waiting for approval"));
+        });
+    }
+
+    /// The lanes once crowded out the title: their fixed columns were
+    /// wider than the narrowest list.
+    #[gpui_kit::test]
+    fn a_narrow_list_keeps_room_for_the_run_title(cx: &mut TestAppContext) {
+        let (board, cx) = mounted_at(cx, 360.);
+        board.update(cx, |board, cx| {
+            board.docks.navigator = false;
+            board.docks.inspector = false;
+            cx.notify();
+        });
+        draw(cx);
+        cx.update(|window, _| {
+            // The board is drawn from the window's left edge, 360 wide.
+            let width = gpui_kit::px(360.);
+            let lanes = window.find(run_row()).bounds();
+            let share = crate::lanes::LANES_MAX_SHARE;
+            assert!(
+                lanes.size.width <= width * share + gpui_kit::px(1.),
+                "the lanes take at most their share of the row"
+            );
+            assert!(lanes.right() <= width, "and stay inside it");
+            assert!(
+                lanes.left() >= width * (1. - share) - gpui_kit::px(1.),
+                "the title keeps the rest"
+            );
         });
     }
 

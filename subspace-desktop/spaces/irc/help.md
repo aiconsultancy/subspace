@@ -4,12 +4,20 @@
 Evidence: spaces/irc/src/{lib,view,view/frame,view/conversations,
 view/details,dock,dock/layout,rows,state,state/apply,state/counts,
 state/removed,remove,lines,style,text,transcript,transcript/scroll,
-transcript/fill,members,compose,compose/recall,compose/complete,
+transcript/fill,transcript/activity,state/statuses,members,compose,
+compose/recall,compose/complete,
 compose/suggest,compose/offer,join,listing,toolbar,hub,hub/running,config,setup,prompt,schema,editor,
 editor/{draft,validate,form,view,network_view},agent_tools,
 agent_tools/{bridge,read,write,read/search},notice,store,store/{mapping,links},
 hub/persist,state/merge,state/directory,reveal,commands,context,issues,issues/{follow,tooltip},
-markup/issue,conversation/keys,transcript/focus,transcript/line/marks}.rs;
+markup/issue,conversation/keys,transcript/focus,transcript/line/marks,
+thread_status,thread_status/model,thread_status/trust,state/folding,
+transcript/status,transcript/replies,fleet,fleet/places,conversation/header,
+conversation/clock,rows/sections,rows/groups,rows/activity,view/navigator,compose/ask,
+compose/hints,text/look,
+text/references,reactions,reactions/choices,reactions/stop,
+conversation/reacting,transcript/reactions}.rs;
+scripts/irc-thread-status-fixture.py;
 subspace-framework/services/search
 (records, migration); subspace-framework/board-kit/dashboard/src/
 {lib,chat_input,chat_input/completion,notifications}.rs (LIST_KEYS, recall
@@ -19,7 +27,12 @@ clients/irc/src/session/input.rs (COMMANDS);
 clients/irc/src/session/listing.rs (LIST); docs/irc.md;
 docs/changes/irc-board; docs/changes/irc-mention-notifications;
 docs/changes/irc-search-history; docs/changes/irc-issue-references;
-docs/changes/channel-list. The channel list was checked against a local Ergo
+docs/changes/channel-list; docs/changes/channels-navigator-and-requests;
+docs/changes/channels-reactions (reactions: checked by tests and captures
+against a loopback Ergo server, not against a deployed gateway);
+docs/changes/irc-thread-status (request status
+lines: checked by tests and the local fixture only, not against a deployed
+gateway). The channel list was checked against a local Ergo
 server's LIST reply. Linux OS
 notification delivery checked against a local Ergo server. Not checked in
 this pass: a live public network, SASL against a real account and macOS
@@ -77,11 +90,17 @@ channel you are working in.
 The toolbar at the top of the pane names the conversation in front in strong
 text, with its topic beside it in quieter text (its network while it has no
 topic). The initiative picker, when you have one, comes before
-that name. **Connect** or **Disconnect**, **Join…** and **More** are on the
-right. The switches at the two ends of the status bar, at the bottom of the
+that name. A fleet's ship channel leads with its captain's avatar, and the
+Starbase or command channel with a glyph. A ship's channel ends with a pill
+holding its captain's current status, such as *Lyra is delegating NAV-2*,
+while the captain has one and is signed in to its own account; a long
+status ends in an ellipsis. The
+search button and **More** are on the right; **More** holds **Connect** or
+**Disconnect** and **Join…**. The switches at the two ends of the status bar, at the bottom of the
 window, show or hide the navigator and the inspector. While the navigator is
 hidden, a menu at the start of the toolbar names the conversation in front and lists every network's
-conversations; choose one to show it.
+conversations; choose one to show it. The commands in **More** then act on
+that conversation and its network.
 
 Drag the inner edge of the navigator or the inspector to resize it, and
 double-click the edge to go back to the default width. Every Space shares
@@ -119,18 +138,75 @@ connection state in words: **Disconnected**, **Connecting…**, **Signing in…*
    They are greyed out and show how many people are in each, such as
    `7 users`. See [Join channels from the list](#join-channels-from-the-list).
 
-A row's small trailing number counts unread messages. It uses the accent colour and
-the row title turns bold when the unread messages mention you. In a private
-conversation any unread message makes the title bold. Joins, parts and other
-membership lines never count as unread.
+On a network that serves a Subspace fleet, the fleet's channels have a group
+named after the fleet and showing the network's connection state. A fleet's
+group lists its Starbase, its command channel, its ships' channels under
+**Ships**, then the other channels of its initiatives, each without the
+fleet's prefix: `#aurora-lyra` shows as `lyra`. When the network holds only
+that fleet, its group also holds the network's other channels under
+**Other**, with the **Server** row last. When it holds several fleets, the
+network's own group comes after them, named after the network. Every
+channel leads with a `#`, and a ship's channel with its captain's icon as
+**Settings > Application > Appearance > Icons** asks: **Large**, **Small**
+(the default) or **Off**, which shows the `#`. A ship's channel ends with a
+dot: filled green while any of its crew is working and a ring while none
+is, when Subspace can read the fleet; hover the dot to see who is working
+and on what. Without the fleet's live state the dot follows the captain's
+own status. Several fleets on one server each have a group. Fleets other than
+the selected initiative's start folded; with no initiative selected, every
+fleet starts open. Private conversations with people
+are listed under **People**, after the fleets, each with a dot that is
+filled while that person is in a channel you share and not away. An older private conversation
+with a fleet agent stays under its network, as agents talk only in channels.
+Channels that belong to no fleet, and networks that serve none, are listed
+as before.
+
+A row with unread messages has a bold title and a small trailing number. When
+they mention you, an **@** mark comes before the number, which uses the accent
+colour. Joins, parts and other membership lines never count as unread.
 
 ### Transcript
 
 A message with replies shows their count and the last reply's local time
 beneath it. This counts only replies loaded on this computer, including
 replies to replies. Loading older history can increase the count. It works
-in channels and private conversations. Replies still appear inline; the
-count does not open a pane yet.
+in channels and private conversations. Replies still appear inline. In a
+ship's channel or a Starbase the count reads `3 replies ›`: choose it to
+open the thread in the inspector (see [Follow a thread](#follow-a-thread)).
+
+A request to an agent can show one live status line beneath it, such as
+**astra · Using a tool**, while the agent works on it. It reads **Receipt
+unconfirmed**, **Accepted**, **Queued**, **Thinking**, **Using a tool**,
+**Waiting to retry**, **Waiting for your answer** when the agent asked you
+something, **Answer received** or **Writing a reply**, and updates in place.
+After it come how long ago you asked, such as `0:35`, and a small meter of
+five steps with the step's name: **accepted**, **working**, **waiting**,
+**reply** and **done**. Each request has its own line, also when two
+requests share a thread. When the request finishes, its line settles into a
+quiet **Done in 42 m**, or **Failed after 3 m** when it failed, and keeps it
+after a restart. A request that ended before this version shows **Done**
+without a time. In a ship's channel or a Starbase the line also ends with
+the request's reply count, such as `Done in 42 m · 3 replies ›`, when it has
+replies, and choosing the line opens the request's thread.
+
+The line comes from progress notices that the agent's gateway marks for that
+request. Channels uses them only when the IRC server confirms they come from
+the account of the agent your request addresses: start the request with the
+agent's nick, as `astra:` or `@astra`.
+Those notices are then not shown as messages, counted as replies or unread,
+or notified. Questions, answer instructions, final replies, ordinary notices
+and any notice from another account stay as messages, as before.
+
+Channels trusts a notice only when it comes from the account named after
+the agent your request addresses, so if someone else takes the agent's nick,
+their notices cannot change or end the request. An agent whose account has
+a different name gets no status line, and its notices stay as messages. On
+a Subspace fleet's IRC server each nick belongs to the account of the same
+name, so this always holds there.
+
+While the network is disconnected, after reconnecting or restarting, or when
+the agent reports losing its own connection, the line shows when it was
+last updated and a **Stale** pill until the agent reports again.
 
 Opening a row shows its conversation. Message text is at most 760 px wide,
 so a wide window does not stretch its lines. Messages are grouped by sender: the
@@ -139,6 +215,30 @@ that stays the same for that nick (your own nick uses the strong text colour)
 and the local time (`HH:MM`) in monospace. Further messages from the same person within
 five minutes follow without repeating them; point at one to see its time.
 The message or line under the pointer is shaded, as in Slack.
+A fleet's captains and rear admiral have a round avatar with their rank's
+mark (an arrow for a captain, a diamond for the rear admiral) and their name
+in blue or the accent colour, followed by a **CAPTAIN** or **REAR ADMIRAL**
+pill in the same colour; crew have a muted **CREW** pill. Channels knows them
+from your Subspace initiatives: the Subspace API records each agent's rank
+and IRC nick, and a message or member is marked only when the server says it
+is signed in to the account of that nick. Their names never decide it.
+Only active agents are marked: one the API reports as retired shows as a
+person. A run of messages from one nick starts again where the account it
+is signed in to changes. Anyone else, and every nick on another connection,
+shows as a person.
+
+All communication with a fleet's agents happens in channels, where everyone
+can see it: private messages are for people only. Choosing an agent in the
+member list or a reference to it, `/msg`, `/query` or `/notice` to it (alone
+or in a comma-separated list), a PRIVMSG or NOTICE to it through `/raw` or
+`/quote`, or a message or attachment in an older private conversation with
+it opens, uploads and sends nothing; instead a short notice above the
+message box names the agent's channel (its ship's channel, or the Starbase
+for the rear admiral). **Go to** shows that channel when your initiative
+records it or it is already in your list. If nothing of the agent's network
+is showing, as after a notification, Channels shows the agent's channel, or
+the network's server buffer, with the notice. An older private conversation
+with an agent stays readable.
 `/me` actions are italic and notices are muted and marked **Notice**. Lines
 that mention you have a highlighted background. Each day starts with
 **Today**, **Yesterday** or the date between two hairlines.
@@ -158,7 +258,8 @@ and an image shows as a link, so nothing loads from the internet. `http`,
 `https` and `mailto` links open in your browser.
 `#channel` names are links: choosing one shows the channel, or joins it when it
 is not in the list. `@nick`, or a member's nick and a colon at the start of a
-message, is highlighted; choosing it opens a private conversation.
+message, is highlighted; choosing it opens a private conversation, or for a
+fleet agent says where it talks.
 
 To copy part of the conversation, drag from any point in one line to any
 point in another, as in Slack. Every message, server line and joined or left
@@ -179,7 +280,8 @@ another buffer and back; **Jump to latest** returns to the newest line.
 
 If you have Subspace initiative memberships and a Subspace IRC connection,
 open the initiative menu at the start of the toolbar. Search for an initiative and
-select it to join its channels. **Local channels** restores the autojoin
+select it to join its channels and show its own first channel, or its
+fleet's Starbase when it has none of its own. **Local channels** restores the autojoin
 list in your IRC settings. The initiative choice also filters the Projects
 menu in Issues. You can change or clear the selection from either Space.
 
@@ -197,11 +299,10 @@ Subspace API is temporarily unreachable.
 
 | Control | What it does |
 | --- | --- |
-| **Connect** / **Disconnect** | Connects or disconnects the network of the selected row or group. Disabled until you select one. |
-| **Join…** | Opens **Join a channel on** the selected network. The **+** in the navigator's header does the same. |
+| Search | Opens **Find** in the conversation in front, as `⌘F` does. |
 | **Show navigator** / **Hide navigator** | The first button of the status bar shows or hides the list of networks and buffers. |
 | **Show inspector** / **Hide inspector** | The last button of the status bar shows or hides the member list. |
-| **More** | **Leave channel** leaves the selected channel and removes it from the list; for a channel you are no longer in, it reads **Remove from list**. **Close conversation** removes the selected private conversation from the list. Each is disabled for other kinds of row, as is **Leave channel** for a channel you are in while its network is not connected. |
+| **More** | Acts on the selected row, or while the navigator is hidden on the conversation in front. **Connect** or **Disconnect** connects or disconnects its network, and is disabled until you select one. **Join…** opens **Join a channel on** that network; the **+** in the navigator's header does the same. The command palette offers all three too. **Leave channel** leaves the selected channel and removes it from the list; for a channel you are no longer in, it reads **Remove from list**. **Close conversation** removes the selected private conversation from the list. Each is disabled for other kinds of row, as is **Leave channel** for a channel you are in while its network is not connected. |
 
 The board has no filters. Reload (`r`) connects every network that is
 disconnected or failed.
@@ -214,8 +315,13 @@ button of the toolbar opens the member list in the inspector, whose title
 counts the members, such as **Members · 4**. It follows the conversation you
 are working in and lists **Operators**, **Voiced** and **Members**, each
 sorted by nick with a small avatar and the nick. A quiet note follows where
-Channels knows more: **you** for your own nick, and **owner**, **admin** or
-**half-operator** among the operators. Away members are dimmed. Choose a member to open a private conversation with them, or × to
+Channels knows more: **you** for your own nick, **captain** or **rear
+admiral** for a fleet's agents, and **owner**, **admin** or
+**half-operator** among the operators. Completing `@` names shows the same
+note. A member with a status line, as an
+agent has while it works, shows it under the nick, in quiet text and cut with an ellipsis when it
+is longer than the row; point at it to read it whole. Away members are
+dimmed. Choose a member to open a private conversation with them, or × to
 hide the list. For the **Server** buffer and private conversations the
 inspector says **No channel**.
 
@@ -232,8 +338,16 @@ the top of the transcript asks for the 100 lines before the oldest one shown.
 The control disappears when the server has no more.
 
 Above the message input, a line names who is typing, such as
-`alice is typing…`. The empty input reads `Message #channel` or
-`Message nick`.
+`alice is typing…`. While an agent in the conversation is working, the
+same line shows its status first, such as
+`Galactica is thinking… · alice is typing…`: the agent's own words, shown
+as plain text, in place of its typing notice. A status is about the agent's
+nick as a whole, not about any message, and never appears in the
+transcript. Only the channel's members, or the person in a private
+conversation, show their status there. The agent clears its status when it
+finishes; it also goes when the agent leaves your last shared channel or
+disconnects, and when your own connection drops. The empty input reads
+`Message #channel` or `Message nick`.
 
 ## Actions
 
@@ -262,6 +376,16 @@ Above 2,048 bytes, it also shows the size in KB (1 KB is 1,024 UTF-8 bytes).
 It uses a warning tone from 80% of either limit and a danger tone above a
 limit. Commands use the 10-line cap; `//text` is literal text and can use
 the 100-line cap on a batching connection.
+
+A slim row under the input names its keys: `@` to mention someone, `/` for
+commands, `↑` to recall a line you sent (IRC cannot edit a sent message, so
+recalling puts it back in the input to send again) and `⇧⏎` for a new line.
+
+In a fleet's ship channel or its Starbase, `/ask` comes first: `/ask` and
+your text send the text to the channel's agent, the ship's captain or the
+rear admiral, as `aurora-lyra: <text>`, so its status line shows under your
+message as the agent works on it. Elsewhere, or with nothing after it,
+`/ask` sends nothing and the input says why.
 
 Commands start with `/`. Type `/` at the start of the input to see them all,
 each with its arguments and what it does: `/join`, `/part`, `/msg`,
@@ -301,8 +425,9 @@ message is kept." If the connection drops while your message is being sent,
 your text and attachments stay and the composer says some lines may have
 gone: check the channel before you press **Enter** again.
 
-One quiet line above the composer, beside the paperclip, says “Visible to
-signed-in Subspace users for 30 days. Don’t paste credentials into chat.” Put material worth retaining on an issue.
+The end of the hint row under the composer says “Subspace users see it for
+30 days. No credentials.”: what you send is visible to signed-in Subspace
+users for 30 days, so don't paste credentials. Hover it to read it in full. Put material worth retaining on an issue.
 
 Received attachments show as a row of thumbnails under the message, in the
 order they were sent; the reference text is hidden once it resolves. Images
@@ -432,17 +557,26 @@ highlights identifiers with the loaded project keys, such as `SUB-827`.
 Lowercase identifiers (`sub-827`), `UTF-8`, text in code and URLs stay plain
 issue text or ordinary links. App links and Linear links are not issue references.
 
-Readable issues always appear below the message as compact chips, even when
-only one is available. The row wraps to fit the transcript. Click a chip or
-press `Enter` on it to open the same issue in Issues.
+The first message in a conversation to name an issue shows a tile for it
+underneath: the state dot and identifier, the title, then one line of what
+the tracker says (**Ready for agents**, **Tracker**, the state, who it is
+with and when it is due) and, for a tracker with sub-issues, a small bar
+such as **1 of 2**. Every later mention of that issue in the conversation is
+only the inline reference, so the transcript does not repeat it. A tile
+takes its place as soon as the message shows, as an outline with grey bars
+while the issue loads, so nothing below it moves when it arrives. An issue
+that cannot be shown settles to one grey line in the same box, such as
+**Unavailable**. If the message that first showed a tile scrolls out of the
+kept history, the next new mention shows it again. Click a tile, or press
+`Enter` on it, to open the same issue in Issues.
 
-Use the small chevron beside a chip to show its summary under the chip row.
-Press it again to close the panel, or choose another chip’s chevron to switch
+Use the small chevron on a tile to show its summary under the tiles.
+Press it again to close the panel, or choose another tile’s chevron to switch
 the one panel for that message. This keeps you in Channels. Older issues show
 **No summary yet**. The panel grows and fades over 200 ms; reduced motion makes
 the change instant. A transcript at the bottom stays at the bottom.
 
-Point at a chip or an inline reference, or move the keyboard to a reference,
+Point at a tile or an inline reference, or move the keyboard to a reference,
 to see the same floating card. An ordinary issue shows its state edge,
 identifier, urgent or high priority, title and state. A supplied summary sits
 below the title in muted text, wrapped to at most three lines. When supplied, its footer
@@ -451,6 +585,12 @@ a different owner and the latest activity time. A green dot marks activity
 within the last hour. Tracker cards show sub-issue progress, open pull requests
 and known checks, merged pull requests and a due date. Missing facts are omitted.
 The cards have no controls and do not take keyboard focus.
+
+Once its summary arrives, an inline reference leads with a dot for its
+state, in the colour of its hover card's state icon: yellow while started,
+blue in review, the accent colour when done, grey when cancelled or a
+duplicate, and a hollow ring before work starts (orange in triage). Copying it copies the
+identifier as written.
 
 Until a summary arrives the reference shows `Loading SUB-827…`. An unavailable
 reference turns grey and underlined, and its note says
@@ -465,7 +605,8 @@ are not stored with your messages or searchable.
 ### Pull request references
 
 Channels shows a GitHub pull request as an inline chip: the pull request glyph
-and `repo#number`, such as `api#421`. The owner appears only when the same
+and `repo#number`, such as `api#421`. Once its details arrive, the glyph is
+blue while open, magenta once merged and grey when closed or a draft. The owner appears only when the same
 message also names another owner's repository of that name
 (`octo-org/api#421` beside `acme/api#5`). These become chips:
 
@@ -479,7 +620,16 @@ A marker and a link to the same pull request are the same chip. A bare
 `#123` or a marker without an owner (`[PR:repo#123]`) stays plain text:
 Channels has no repository to read it in. A pull request inside code (between
 backticks or in a code block) stays text too. Other GitHub links stay ordinary
-links. No extra card appears under the message.
+links.
+
+The first message in a conversation to name a pull request shows a tile for
+it underneath: its glyph in its status colour and `#number`, the title, then
+its status when not open, the repository and the lines changed, and its
+checks as a small bar such as **4/5** when the PRs Space has read them.
+Later mentions are only the chip. Like an issue tile, it holds its place as
+grey bars while it loads, and settles to one grey line, such as
+**Unavailable**, when it cannot be shown, including while the PRs Space is
+off. Click it to open the pull request as the chip does.
 
 Point at a chip, or move the keyboard to it with `Tab`, to see its card. It shows the state (open, draft, merged or
 closed), `repo#number`, the title, branches and changed lines when known, the
@@ -498,6 +648,91 @@ instead of opening it. **Copy** keeps the text as written; **Copy link**
 copies the link as written, or `https://github.com/owner/repo/pull/number` for
 a marker. Card details stay in memory only: they are not stored with your
 messages or searchable.
+
+### Follow a thread
+
+In a ship's channel or a Starbase, the inspector has a **Thread** tab between
+**Ship** (or **Starbase**) and **People**. Choose a message's `N replies ›`
+or a request's status line, or press `Enter` on a focused message that has
+either, to open its thread there. Until you do, the tab says how.
+
+The tab shows the message you chose, with its author, time and references.
+For a request it then lists **Status**: each step the agent reported, such as
+**Accepted**, **Working**, **Writing the reply** and **Done**, with when it
+began and how long it took, the last with how long the whole request took.
+These come only from the agent's own progress notices, the ones that also
+drive the status line; a notice from anyone else is a reply, never a step.
+Then come the **Replies**, grouped by author as in the transcript, or **No
+replies yet.** A reply belongs to the thread only when the IRC server's reply
+tag says so. New replies and steps appear as they arrive. Replies still
+appear in the channel too; the tab is another view of them.
+
+Each conversation remembers its thread while Subspace runs, also when you
+switch tabs or conversations. It goes once its first message is no longer
+loaded. If only the end of a request is loaded, the tab says the earlier
+steps are not, with **Load around this message** when the server keeps
+history.
+
+**Reply in thread**, at the foot of the tab, puts the message input into
+reply mode: a line above it says **Replying in thread to** and whose message,
+with × to cancel (`Esc` cancels too). Your reply goes to the channel, where
+everyone sees it, marked as a reply in that thread; it is never a private
+message. Commands and attachments can't be sent as a reply; cancel the reply
+first. When the server can't mark replies (it lacks `message-tags`) or the
+network is not connected, the tab says so in place of the action. If the
+message you are replying to is no longer loaded, your reply is kept but
+not sent, and `Esc` keeps it so: choose **Write to the channel** to send it
+as an ordinary message instead. Choosing **Reply in thread** on another
+thread then doesn't move it there by itself: choose **Move to** that
+author's **thread** to reply there with it, or empty the message input
+first. Choosing yet another thread withdraws that offer.
+
+A long thread shows its latest 40 replies and says how many earlier ones
+are in the channel. A long **Status** list shows its latest 24 steps and
+says how many earlier ones it leaves out.
+
+### React to a message
+
+Reactions show under a message as small pills, each a reaction and how
+many people chose it, in the order they were first added. Yours has a
+filled pill and bold text. Hover a pill to see who reacted. Select a pill to
+add your reaction, or select one that is yours to take it back. After ten
+pills, **+N** lists the rest.
+
+To add a reaction, choose **Add reaction** at the end of a message's pills,
+or focus the message (`Shift+Tab` from the message input, then `↑` or `↓`)
+and press `r`. The menu offers a few common reactions; a ticked one is yours,
+and choosing it again takes it back. A reaction goes to the conversation the
+message is in. Your reaction appears once the server has it; if it can't be
+sent, a short note above the message input says why. Taking yours back
+removes exactly the reaction you made.
+
+You can't react in a private conversation with a fleet agent: agents talk
+in channels, where everyone can see, so the pills there are read-only.
+Reactions in a private conversation with a person are ordinary.
+
+Reactions need a server that supports them (IRCv3 `message-tags`). Without
+that, or while the network is disconnected, the pills stay but you can't
+add or take back a reaction. A message without a server message ID can't
+take one.
+
+**Stop an agent.** On a request to a fleet agent that is still running, or
+the agent's reply to it, **Add reaction** also lists ✋ **Raised hand** and
+🛑 **Stop sign** apart, under **Stop** and the agent's name. Choosing one
+asks Stargate to stop the agent's turn, if you are signed in to an account
+on the server. The note above the message input then says only that the
+reaction was sent; the request's status line shows whether the agent
+stopped, when Stargate reports it. Taking the reaction back does not undo a
+stop. Subspace sends a ✋ or 🛑 of yours only from that labelled item:
+selecting someone else's ✋ or 🛑 pill, or choosing one under **+N**, sends
+nothing and says where the deliberate stop is, on any message, as an agent
+can be stopped before its request shows a status line. On a request to a
+fleet agent, or its reply, the pill also says it asked the agent to stop.
+You can still take back a ✋ or 🛑 of your own. A fleet can configure other
+stop reactions, which Subspace can't see: those are sent like any other
+reaction.
+
+The inspector's **Thread** tab shows the same pills, read-only.
 
 ### Move through messages with the keyboard
 
@@ -566,8 +801,9 @@ reaches its size limit.
 
 ### Notifications and read state
 
-Opening a channel or private conversation marks it read. A **New** line and
-a tinted background show which messages were unread when you opened it.
+Opening a channel or private conversation marks it read. A **NEW SINCE YOU
+LEFT** line with the number of new messages, and a tinted background, show
+which messages were unread when you opened it.
 With `draft/read-marker`, the read position syncs with your other clients,
 and reading elsewhere clears unread counts here.
 
@@ -592,8 +828,10 @@ server.
 
 Subspace reads the issue key from the PR description, for example `Closes APL-7`.
 The issue assignee identifies the ship and the project identifies the initiative.
-Subspace posts to that initiative's `#<initiative>-<ship>` channel and mentions
-the captain. You must have joined the matching channel. Subspace skips the
+Subspace posts to the ship's channel, the same one its conversation uses: the
+channel the fleet records for the ship, else its captain's `#<nick>`. If the
+fleet does not list the assignee, it posts to the initiative's
+`#<initiative>-<ship>` channel. It mentions the captain. You must have joined the matching channel. Subspace skips the
 update if it cannot resolve one issue and one channel.
 
 Updates include PR merges and deployments of the merge commit that GitHub
@@ -641,12 +879,14 @@ the message input is ordinary text input.
 | `Shift+Enter` (`Shift+Return`) or `Option+Enter` | New line in the message input |
 | `Up` / `Down` in the message input | Recall sent lines from an empty or one-line draft, move between a longer draft's lines, or move through the completion list |
 | `Tab` in the message input | Complete a nick, or insert the highlighted choice |
-| `Esc` in the message input | Close the completion list |
+| `Esc` in the message input | Close the completion list, or leave reply mode |
 | `Esc` in **Join a channel** | Cancel |
 | `Shift+Tab` in the message input | Move to the newest message |
 | `↑` / `↓` on a message | Previous or next message |
 | `Tab` / `Shift+Tab` on a message | Next or previous link or reference in it |
 | `Enter` on a link or reference | Open it |
+| `Enter` on a message with replies or a request | Open its thread in the inspector |
+| `r` on a message | Add or take back a reaction |
 | `Esc` on a message | Back to the message input |
 
 ### Shared keys

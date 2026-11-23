@@ -51,6 +51,7 @@ pub(super) fn status_row(
     let colour = tokens.glyph(&row.glyph);
     let url = row.url.and_then(|url| links::safe_url(&url).map(|_| url));
     let name_id = SharedString::from(format!("{prefix}-name:{index}"));
+    let name = row.name.clone();
     h_flex()
         .id((prefix, index))
         .aria_label(format!("{}: {}", row.name, row.word))
@@ -82,7 +83,7 @@ pub(super) fn status_row(
             line.child(
                 div()
                     .id(("gh-check-link", index))
-                    .aria_label("Open the check on GitHub")
+                    .aria_label(link_label(&name, &url))
                     .cursor_pointer()
                     .text_color(tokens.accent)
                     .child("↗")
@@ -92,4 +93,61 @@ pub(super) fn status_row(
             )
         })
         .into_any_element()
+}
+
+/// The spoken name of a check's link: the check, and the site it opens,
+/// since a check's page is often another CI service's rather than GitHub's.
+pub(crate) fn link_label(name: &str, url: &str) -> String {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    // A bracketed IPv6 host holds colons of its own: the port follows the
+    // closing bracket.
+    let host = if host.starts_with('[') {
+        host.find(']').map_or(host, |end| &host[..=end])
+    } else {
+        host.split(':').next().unwrap_or_default()
+    }
+    .to_lowercase();
+    if host.is_empty() {
+        return format!("Open the {name} check's page");
+    }
+    let github = host == "github.com" || host.ends_with(".github.com");
+    let site = if github { "GitHub" } else { host.as_str() };
+    format!("Open the {name} check on {site}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::link_label;
+
+    #[test]
+    fn a_check_link_names_the_site_it_opens() {
+        assert_eq!(
+            link_label("build", "https://github.com/octo-org/api/actions/runs/7"),
+            "Open the build check on GitHub"
+        );
+        assert_eq!(
+            link_label("deploy", "https://ci.example.com:8443/jobs/12?tab=log"),
+            "Open the deploy check on ci.example.com"
+        );
+        assert_eq!(
+            link_label("lint", "https://bot@CI.Example.org/run/3"),
+            "Open the lint check on ci.example.org"
+        );
+    }
+
+    #[test]
+    fn a_check_link_on_an_ipv6_host_names_the_whole_address() {
+        assert_eq!(
+            link_label("build", "http://[2001:DB8::7]:8080/runs/7"),
+            "Open the build check on [2001:db8::7]"
+        );
+        assert_eq!(
+            link_label("lint", "https://bot@[::1]/run/3"),
+            "Open the lint check on [::1]"
+        );
+    }
 }

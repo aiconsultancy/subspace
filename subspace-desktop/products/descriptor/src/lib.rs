@@ -10,13 +10,20 @@ pub const SUBSPACE_PRODUCT_ID: &str = "subspace";
 pub const SUBSPACE_BINARY_NAME: &str = "subspace";
 /// The app's version, which decides whether this build updates itself.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The theme a new install opens in: the first desktop start of an install
+/// with no config or state file records it as the saved theme. Twilight Two
+/// has only a dark variant, so a new install opens dark whatever the system
+/// appearance.
+pub const NEW_INSTALL_THEME: &str = "Twilight Two";
+/// The bundled theme document that holds [`NEW_INSTALL_THEME`].
+const NEW_INSTALL_THEME_DOCUMENT: &str = "twilight-two";
 
 const SUBSPACE_THEMES: &[&str] = &[
     "one-dark",
     DEFAULT_THEME_DOCUMENT,
     "subspace-channel",
     "macos-classic-dark-remix",
-    "twilight-two",
+    NEW_INSTALL_THEME_DOCUMENT,
     "adventure",
     "alduin",
     "asciinema",
@@ -47,8 +54,8 @@ pub fn subspace_descriptor() -> ProductDescriptor {
 
 /// Subspace: every board this build includes, with board commands under
 /// their ids. The display name, bundle id and release stream follow
-/// `channel`. Board Lab and the Component gallery are listed only with the
-/// `board-lab` and `component-gallery` features, which the app turns on with
+/// `channel`. Space Lab and the Component gallery are listed only with the
+/// `space-lab` and `component-gallery` features, which the app turns on with
 /// its own, and start off in every build profile.
 pub fn subspace_descriptor_for(channel: Channel) -> ProductDescriptor {
     descriptor_for_version(channel, VERSION)
@@ -64,6 +71,9 @@ fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor 
         icon_paths: icon_paths(channel, "subspace", "subspace-app"),
         credits: Vec::new(),
         themes: SUBSPACE_THEMES.iter().map(|id| (*id).to_owned()).collect(),
+        // What an install with no saved theme shows. It stays the Framework
+        // default so that installs from before Twilight Two keep their look;
+        // new installs get NEW_INSTALL_THEME recorded instead.
         default_theme: Some(DEFAULT_THEME.into()),
         boards: vec![
             board("github", true),
@@ -71,9 +81,9 @@ fn descriptor_for_version(channel: Channel, version: &str) -> ProductDescriptor 
             board("irc", cfg!(debug_assertions)),
             board("issues", cfg!(debug_assertions)),
             board("decisions", cfg!(debug_assertions)),
-            #[cfg(all(feature = "board-lab", target_os = "macos", target_arch = "aarch64"))]
-            board("board-lab", false),
-            board("actions", false),
+            #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
+            board("space-lab", false),
+            board("actions", true),
             #[cfg(feature = "component-gallery")]
             board("component-gallery", false),
         ],
@@ -144,13 +154,13 @@ fn board(id: &str, default_enabled: bool) -> BoardDescriptor {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn board_lab_is_listed_only_with_its_feature_and_starts_off() {
+    fn space_lab_is_listed_only_with_its_feature_and_starts_off() {
         let full = super::subspace_descriptor();
-        let lab = full.boards.iter().find(|board| board.id == "board-lab");
+        let lab = full.boards.iter().find(|board| board.id == "space-lab");
         assert_eq!(
             lab.is_some(),
             cfg!(all(
-                feature = "board-lab",
+                feature = "space-lab",
                 target_os = "macos",
                 target_arch = "aarch64"
             ))
@@ -162,14 +172,14 @@ mod tests {
     }
 
     #[test]
-    fn actions_is_default_off_and_listed_before_the_gallery() {
+    fn actions_is_default_on_and_listed_before_the_gallery() {
         let full = super::subspace_descriptor();
         let actions = full
             .boards
             .iter()
             .find(|board| board.id == "actions")
             .unwrap();
-        assert!(!actions.default_enabled);
+        assert!(actions.default_enabled);
         let ids: Vec<_> = full.boards.iter().map(|board| board.id.as_str()).collect();
         let tail: &[&str] = if cfg!(feature = "component-gallery") {
             &["actions", "component-gallery"]
@@ -194,8 +204,8 @@ mod tests {
         }
     }
     use super::{
-        SUBSPACE_BINARY_NAME, SUBSPACE_PRODUCT_ID, known_product_descriptors, subspace_descriptor,
-        subspace_descriptor_for,
+        NEW_INSTALL_THEME, SUBSPACE_BINARY_NAME, SUBSPACE_PRODUCT_ID, known_product_descriptors,
+        subspace_descriptor, subspace_descriptor_for,
     };
     use subspace_framework::product::{
         Channel, DEFAULT_THEME, DEFAULT_THEME_DOCUMENT, ProductError, ValidatedProduct,
@@ -330,8 +340,8 @@ mod tests {
                 "irc",
                 "issues",
                 "decisions",
-                #[cfg(all(feature = "board-lab", target_os = "macos", target_arch = "aarch64"))]
-                "board-lab",
+                #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
+                "space-lab",
                 "actions",
                 #[cfg(feature = "component-gallery")]
                 "component-gallery"
@@ -355,7 +365,7 @@ mod tests {
         for (id, enabled) in [
             ("github", true),
             ("github-copilot-agents", false),
-            ("actions", false),
+            ("actions", true),
         ] {
             let board = products[0]
                 .boards
@@ -365,7 +375,7 @@ mod tests {
             assert_eq!(board.default_enabled, enabled, "{id}");
         }
         // The unreleased Spaces, listed only with their features, start off.
-        for id in ["board-lab", "component-gallery"] {
+        for id in ["space-lab", "component-gallery"] {
             if let Some(board) = products[0]
                 .boards
                 .iter()
@@ -376,8 +386,11 @@ mod tests {
         }
     }
 
+    /// New installs open in Twilight Two; an install with no saved theme
+    /// keeps Cupertino Dark, the Framework default, as before.
     #[test]
-    fn the_catalogue_defaults_to_cupertino_dark_and_keeps_one_dark() {
+    fn new_installs_open_in_twilight_two_and_unsaved_installs_keep_cupertino_dark() {
+        assert_eq!(NEW_INSTALL_THEME, "Twilight Two");
         assert_eq!(DEFAULT_THEME, "Cupertino Dark");
         assert_eq!(DEFAULT_THEME_DOCUMENT, "cupertino");
         let products = known_products().unwrap();
@@ -391,7 +404,7 @@ mod tests {
                     .iter()
                     .any(|theme| theme.contains("shell"))
             );
-            for id in ["one-dark", DEFAULT_THEME_DOCUMENT] {
+            for id in ["one-dark", DEFAULT_THEME_DOCUMENT, "twilight-two"] {
                 assert!(
                     descriptor.themes.iter().any(|theme| theme == id),
                     "{}: {id}",

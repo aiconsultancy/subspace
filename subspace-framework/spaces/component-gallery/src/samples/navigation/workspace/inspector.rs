@@ -1,20 +1,24 @@
 //! The inspector's samples: a header action, Close, sections of facts and
-//! footer actions, and a plain one with a title and body only.
+//! footer actions, and a plain one with a title and body only; and its tabs,
+//! the one approved exception, in place of the title.
 
 use gpui_kit::component::h_flex;
 use gpui_kit::{App, Context, Div, ParentElement as _, Stateful, Styled as _, Window};
 use subspace_dashboard::Tokens;
 use subspace_dashboard::action::{self, Intent};
-use subspace_dashboard::workspace::{self, Inspector};
+use subspace_dashboard::workspace::{self, Inspector, InspectorTab};
 use subspace_lucide::IconName;
 
 use crate::ComponentGallery;
 use crate::catalog::Item;
-use crate::samples::{Sample, bounded, ignore_click, sample};
+use crate::samples::{Sample, bounded, ignore_click, ignore_index, sample};
 
 const INSPECTOR_SOURCE: &str = "board-kit/dashboard/src/workspace/inspector.rs";
 const INSPECTOR_BOX: (f32, f32) = (320., 340.);
 const PLAIN_INSPECTOR_BOX: (f32, f32) = (320., 180.);
+const TABBED_INSPECTOR_BOX: (f32, f32) = (320., 220.);
+/// The least width the inspector dock keeps, to show the tabs still fit.
+const NARROW_INSPECTOR_BOX: (f32, f32) = (260., 220.);
 
 pub(in crate::samples) const INSPECTOR: Item = Item {
     name: "workspace::Inspector",
@@ -23,6 +27,58 @@ pub(in crate::samples) const INSPECTOR: Item = Item {
     samples: inspectors,
     kit: None,
 };
+
+pub(in crate::samples) const INSPECTOR_TAB: Item = Item {
+    name: "workspace::InspectorTab",
+    source: "board-kit/dashboard/src/workspace/inspector/tabs.rs",
+    used_in: "Inspector::tabs: at most three subjects of the same selection, such as a channel's ship, its thread and its people, in place of the inspector's title. Not a second navigator.",
+    samples: inspector_tabs,
+    kit: None,
+};
+
+pub(in crate::samples) fn inspector_tabs(
+    _: &ComponentGallery,
+    tokens: &Tokens,
+    _: &mut Window,
+    cx: &mut Context<ComponentGallery>,
+) -> Vec<Sample> {
+    let cx = &*cx;
+    vec![
+        sample(
+            "Three tabs, one with a count, the second open, and Close",
+            bounded(
+                TABBED_INSPECTOR_BOX,
+                tokens,
+                tabbed_inspector("gallery-sample:inspector-tabs", cx),
+            ),
+        ),
+        sample(
+            "At the dock's least width",
+            bounded(
+                NARROW_INSPECTOR_BOX,
+                tokens,
+                tabbed_inspector("gallery-sample:inspector-tabs-narrow", cx),
+            ),
+        ),
+    ]
+}
+
+/// A channel's inspector: its ship, its thread and its people.
+fn tabbed_inspector(id: &'static str, cx: &App) -> Inspector {
+    let tabs = [
+        InspectorTab::new("Ship"),
+        InspectorTab::new("Thread"),
+        InspectorTab::new("People").count("5"),
+    ];
+    Inspector::new(id, "Channel details")
+        .tabs(tabs, 1, ignore_index)
+        .on_close("Close inspector", ignore_click)
+        .child(
+            workspace::section("Thread", cx)
+                .child(workspace::fact("Started by", "Ada Example", cx))
+                .child(workspace::fact("Replies", "12", cx)),
+        )
+}
 
 pub(in crate::samples) fn inspectors(
     _: &ComponentGallery,

@@ -23,7 +23,7 @@ fn networks_and_buffers_are_compact_and_plain() {
     let networks = ok(&mut state, json!({"action":"networks"}));
     assert_eq!(
         networks["networks"][0],
-        json!({"id":"local","name":"Local Ergo","status":"Connected","connected":true,"nick":"subspace","chathistory":true})
+        json!({"id":"local","name":"Acme IRC","status":"Connected","connected":true,"nick":"subspace","chathistory":true})
     );
     let buffers = ok(&mut state, json!({"action":"buffers","network":"local"}));
     let room = buffers["buffers"]

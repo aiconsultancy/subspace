@@ -18,10 +18,10 @@ use subspace_product::ValidatedProduct;
 pub(crate) use background::sync_backgrounds;
 pub use configuration::BoardConfiguration;
 pub use configured::ConfiguredBoards;
-#[cfg(test)]
-pub(crate) use configured::apply_board_selection;
 pub use configured::reload_configured_boards;
 pub(crate) use configured::retain_provider;
+#[cfg(test)]
+pub(crate) use configured::{apply_board_selection, forget_provider};
 pub(crate) use configured::{apply_running_config, desktop_sets, enables_a_board};
 
 /// Creates a board's view. Compiled-in boards use `DashboardHandle::new`;
@@ -515,20 +515,20 @@ mod tests {
 
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     #[test]
-    fn board_lab_defaults_off_in_release_builds_and_keeps_a_saved_choice() {
+    fn space_lab_defaults_off_in_release_builds_and_keeps_a_saved_choice() {
         let mut descriptor = subspace_product::fixture::descriptor();
-        descriptor.boards.retain(|board| board.id == "board-lab");
+        descriptor.boards.retain(|board| board.id == "space-lab");
         assert_eq!(descriptor.boards.len(), 1);
         let product = validate_product(&descriptor).unwrap();
-        let available = [board("board-lab")];
+        let available = [board("space-lab")];
         let initial = registration_sets(&product, &available, &Config::default()).unwrap();
-        assert_eq!(ids(&initial.included), ["board-lab"]);
+        assert_eq!(ids(&initial.included), ["space-lab"]);
         assert_eq!(initial.active.is_empty(), !cfg!(debug_assertions));
         let enabled =
-            selected_registrations(&product, &available, &config(&[("board-lab", true)])).unwrap();
-        assert_eq!(ids(&enabled), ["board-lab"]);
+            selected_registrations(&product, &available, &config(&[("space-lab", true)])).unwrap();
+        assert_eq!(ids(&enabled), ["space-lab"]);
         let disabled =
-            selected_registrations(&product, &available, &config(&[("board-lab", false)])).unwrap();
+            selected_registrations(&product, &available, &config(&[("space-lab", false)])).unwrap();
         assert!(disabled.is_empty());
     }
 

@@ -1,5 +1,6 @@
 //! Server feature advertisement and IRC name comparison.
 
+/// How a network compares nicks and channel names (ISUPPORT `CASEMAPPING`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Casemapping {
     Ascii,
@@ -9,18 +10,25 @@ pub enum Casemapping {
 
 impl Casemapping {
     pub fn fold(self, name: &str) -> String {
-        if self == Self::Ascii {
-            return name.to_ascii_lowercase();
+        name.chars().map(|c| self.fold_char(c)).collect()
+    }
+
+    /// Whether `one` and `other` are the same name under this mapping,
+    /// without allocating a folded copy of either.
+    pub fn same(self, one: &str, other: &str) -> bool {
+        one.chars()
+            .map(|c| self.fold_char(c))
+            .eq(other.chars().map(|c| self.fold_char(c)))
+    }
+
+    fn fold_char(self, c: char) -> char {
+        match c {
+            '[' if self != Self::Ascii => '{',
+            ']' if self != Self::Ascii => '}',
+            '\\' if self != Self::Ascii => '|',
+            '~' if self == Self::Rfc1459 => '^',
+            other => other.to_ascii_lowercase(),
         }
-        name.chars()
-            .map(|c| match c {
-                '[' => '{',
-                ']' => '}',
-                '\\' => '|',
-                '~' if self == Self::Rfc1459 => '^',
-                other => other.to_ascii_lowercase(),
-            })
-            .collect()
     }
 }
 
@@ -37,6 +45,9 @@ pub struct Isupport {
     pub param_modes: String,
     pub set_param_modes: String,
     pub whox: bool,
+    /// `CLIENTTAGDENY`: client-only tags (without `+`) the server refuses;
+    /// `*` is every tag and `-name` exempts one.
+    pub client_tag_deny: Vec<String>,
 }
 
 impl Default for Isupport {
@@ -53,6 +64,7 @@ impl Default for Isupport {
             param_modes: "k".into(),
             set_param_modes: "l".into(),
             whox: false,
+            client_tag_deny: Vec::new(),
         }
     }
 }
@@ -99,12 +111,28 @@ impl Isupport {
             }
             "NICKLEN" => self.nicklen = value.parse().ok().filter(|&limit| limit > 0),
             "-NICKLEN" => self.nicklen = None,
+            "CLIENTTAGDENY" => {
+                self.client_tag_deny = value
+                    .split(',')
+                    .filter(|tag| !tag.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+            }
+            "-CLIENTTAGDENY" => self.client_tag_deny.clear(),
             _ => {}
         }
     }
 
     pub fn fold(&self, name: &str) -> String {
         self.casemapping.fold(name)
+    }
+
+    /// Whether `CLIENTTAGDENY` lets clients send the client-only `tag`
+    /// (named without `+`).
+    pub fn allows_tag(&self, tag: &str) -> bool {
+        let listed = |name: &str| self.client_tag_deny.iter().any(|held| held == name);
+        let denied = listed("*") || listed(tag);
+        !denied || listed(&format!("-{tag}"))
     }
 
     pub fn channel<'a>(&self, target: &'a str) -> Option<&'a str> {
@@ -114,5 +142,34 @@ impl Isupport {
 
     pub fn symbols(&self) -> Vec<char> {
         self.prefix.iter().map(|&(_, symbol)| symbol).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Casemapping;
+
+    #[test]
+    fn same_agrees_with_fold_under_each_mapping() {
+        let pairs = [
+            ("Bob[1]", "bob{1}"),
+            ("a\\b", "A|B"),
+            ("x~y", "X^Y"),
+            ("café", "CAFÉ"),
+            ("bob", "bobby"),
+        ];
+        for mapping in [
+            Casemapping::Ascii,
+            Casemapping::Rfc1459,
+            Casemapping::StrictRfc1459,
+        ] {
+            for (one, other) in pairs {
+                assert_eq!(
+                    mapping.same(one, other),
+                    mapping.fold(one) == mapping.fold(other),
+                    "{mapping:?} {one} {other}"
+                );
+            }
+        }
     }
 }

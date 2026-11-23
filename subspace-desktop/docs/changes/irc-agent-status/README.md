@@ -13,6 +13,11 @@ typing gates the future row, people and agents follow the same rules, no
 members-panel status, status editor or Stop button. The Channels reducer
 explicitly ignores the new event for now.
 
+Later: on 21 November 2026 the owner superseded the typing gate and the
+"no members-panel status" point. The Channels Space now shows statuses
+above the input and in the member list; see
+[Channels agent status lines](../channels-agent-status/intent.md).
+
 ## Spec
 
 - Request `draft/metadata-2` only with its `batch` dependency available.

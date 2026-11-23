@@ -69,7 +69,7 @@ test("calls are gated by granted permissions and detected methods", async () => 
   await bridge.notify({ title: "t", body: "b" });
   assert.deepEqual(host.calls, [["badge", "2"]]);
   assert.equal(bridge.issues.available(), false, "issues need the permission");
-  assert.deepEqual(bridge.capabilities(), { theme: true, secrets: true, secretsSet: false, issues: true });
+  assert.deepEqual(bridge.capabilities(), { theme: true, secrets: true, secretsSet: false, issues: true, fleets: false });
   const granted = await connectBridge(fakeHost({ permissions: ALL }));
   assert.equal(granted.issues.available(), true);
   assert.deepEqual((await granted.issues.scope()).teamKeys, ["ABC"]);
@@ -146,4 +146,63 @@ test("the Settings token is never written through secrets.set", async () => {
   assert.ok(SETTINGS_SECRETS.has("token"));
   for (const value of ["replacement", null]) await assert.rejects(bridge.setSecret("token", value), /Settings/);
   assert.deepEqual(writes, []);
+});
+
+test("the app's fleets are read only with the secrets permission, and changes are heard", async () => {
+  const host = fakeHost({ permissions: ["secrets"] });
+  const fleets = [{ id: "aurora", name: "Aurora", endpoint: "https://aurora.example.com", token: "k", problem: null }];
+  host.subspace.fleets = { get: async () => fleets };
+  const bridge = await connectBridge(host);
+  assert.equal(bridge.capabilities().fleets, true);
+  assert.deepEqual(await bridge.fleets(), fleets);
+  let heard = 0;
+  const stop = bridge.onFleetsChanged(() => heard++);
+  host.listeners["subspace:fleets-changed"]();
+  assert.equal(heard, 1);
+  stop();
+  assert.equal(host.listeners["subspace:fleets-changed"], undefined);
+
+  const denied = fakeHost({ permissions: [] });
+  denied.subspace.fleets = { get: async () => fleets };
+  assert.equal(await (await connectBridge(denied)).fleets(), null);
+  // An older Subspace, or another app's page, has no fleets.
+  const older = await connectBridge(fakeHost({ permissions: ["secrets"] }));
+  assert.equal(older.capabilities().fleets, false);
+  assert.equal(await older.fleets(), null);
+  // A refusal from Subspace (any page but the built-in Fleet Console) reads as none.
+  const refused = fakeHost({ permissions: ["secrets"] });
+  refused.subspace.fleets = { get: async () => Promise.reject(new Error("Only the built-in Fleet Console reads the fleets of your initiatives.")) };
+  assert.equal(await (await connectBridge(refused)).fleets(), null);
+  assert.equal(await (await connectBridge({})).fleets(), null);
+});
+
+test("only a Retry asks Subspace to read its keychain again", async () => {
+  const host = fakeHost({ permissions: ["secrets"] });
+  const asked = [];
+  host.subspace.fleets = { get: async () => (asked.push("get"), []), retry: async () => (asked.push("retry"), []) };
+  const bridge = await connectBridge(host);
+  await bridge.fleets();
+  await bridge.fleets(false);
+  await bridge.fleets("yes");
+  assert.deepEqual(asked, ["get", "get", "get"]);
+  await bridge.fleets(true);
+  assert.deepEqual(asked, ["get", "get", "get", "retry"]);
+  // An older Subspace without retry is asked plainly.
+  const older = fakeHost({ permissions: ["secrets"] });
+  older.subspace.fleets = { get: async () => (asked.push("older"), []) };
+  await (await connectBridge(older)).fleets(true);
+  assert.equal(asked.at(-1), "older");
+});
+
+test("the page asks for a re-read only from its Retry button", async () => {
+  const { readFileSync } = await import("node:fs");
+  const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+  // Every reconfigure but the Retry button's is a plain one, so a
+  // subspace:fleets-changed, a focus or a visibility change never reads
+  // the keychain again.
+  const calls = [...main.matchAll(/\breconfigure\(([^)]*)\)/g)].map((match) => match[1]);
+  assert.deepEqual(calls.filter((argument) => argument !== "" && argument !== "retry = false"), ["true"]);
+  assert.match(main, /retry\.addEventListener\("click", \(\) => \{\s*reconfigure\(true\);/);
+  assert.match(main, /onFleetsChanged\(\(\) => reconfigure\(\)\)/);
+  assert.match(main, /bridge\.fleets\(retry\)/);
 });

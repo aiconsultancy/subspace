@@ -138,6 +138,20 @@ the new flow; the manual tag steps go.
   Framework release, `release.yml` marks the newest published
   `subspace-desktop-v*` release Latest again. The updater and
   `install-release.sh` choose by tag prefix and were not affected.
+- **The 0.11.0 changelog was completed by hand, once.** Release Please's
+  0.11.0 section listed 57 of the 89 releasable commits under
+  `subspace-desktop/` since 0.10.0: it left out the 32 fixes that came in
+  through two pull requests merged with a merge commit, and listed 11 merge
+  commits beside the commits they merged. On the owner's instruction the
+  section was corrected by hand after the release, with the same entries as
+  the published release notes: every releasable commit once, no merge
+  commits. This is the one exception to "Release Please owns the changelog".
+  The cause appears to be how Release Please reads pull requests merged with
+  a merge commit; it is not confirmed and not fixed. Until it is, compare
+  the next app release pull request's notes with the `feat`, `fix`, `perf`
+  and `revert` commits, and the breaking commits of any type (`!` or a
+  `BREAKING CHANGE:` footer), in
+  `git log --no-merges <last subspace-desktop-v* tag>..main -- subspace-desktop/`.
 - **Root-level release tooling.** The configuration, the sync and its tests
   span both projects, and each project's scripts may not read the other's
   folder, so they live at the repository root (`scripts/`), with

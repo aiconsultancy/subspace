@@ -36,6 +36,252 @@ message history and manually joined channels.
 
 See the [change record](changes/subspace-api-accounts/README.md).
 
+## Fleet roles
+
+Channels reads fleet roles from the same memberships (`fleet.rs`). A
+connection carries a fleet's roles when it is the one an initiative of that
+fleet would use, by the rule above; any other connection, such as a
+local-only one, has none. A fleet that several initiatives share counts once,
+by its id. The hub builds each network's `Roster` once and forgets it when
+the catalogue or the configured networks change.
+
+An agent's rank comes from the Subspace API, never from its name. The
+fleet's `agents` give each agent's `rank` (`rearAdmiral`, `captain` or
+`crew`) and, when the API knows it, its `ircNick`, which fleet IRC servers
+tie to the account of the same name. An agent without a known nick is not
+marked, and only active agents are: one the API reports as not `available`,
+such as a retired captain, has no rank and is treated as a person. A sender, member or completion row has a rank only when its server
+account equals that nick, ignoring ASCII case (`Roster::verified`), the same
+rule as request status trust; a missing account is unknown. A transcript
+group of one sender breaks where the server account changes, so a
+continuation never sits under an avatar and rank the account no longer
+earns. Nicks and channels compare ignoring ASCII case, as Ergo's `ascii`
+casemapping does. The roster indexes agents and channels by case-folded
+name and each fleet's captains by ship.
+
+The fleet's channels come from its record: `starbaseChannel`,
+`commandChannel` and each ship's `channel` (repeated on its captain as
+`shipChannel`). Without a record the standard names stand in:
+`#<slug>-starbase`, `#<slug>-command` and, for a captain, `#<nick>` (the
+installer names a captain's nick and ship channel both `<slug>-<id>`). A
+crew member talks in its ship's recorded channel, else in that of its ship's
+one active captain (a ship with several has none), and the rear admiral in
+the Starbase. An initiative joins its fleet's recorded channels, then its own
+(`initiative_channels`); a guessed standard name is never joined. Choosing
+an initiative shows its own first channel, else its fleet's recorded
+Starbase, else the first channel it joins (`focus_channel`), so two
+initiatives of one fleet each land in their own place.
+
+Nothing is guessed. A nick or channel that two roles claim, such as the rear
+admiral and a captain with one nick, or a ship whose channel is the
+Starbase's, is unknown and draws as a plain person or channel, and a ship
+channel whose captain is unknown is a plain channel.
+
+- **Transcript.** A captain or the rear admiral has the shared agent avatar
+  (`avatar::agent`) in the gutter and a name in blue or the accent, followed
+  by a `CAPTAIN` or `REAR ADMIRAL` pill (`badge::Pill::hue`) in the same tone,
+  named *captain* or *rear admiral*. Crew keep a person's avatar and tone
+  and a muted `CREW` pill.
+- **Members and completion.** The member list shows the small agent avatar
+  as the app's **Icons** setting asks (`avatar::agent_icon`: as drawn for
+  Large, at a row glyph's size for Small, none for Off, the name closing
+  up) and its note, and the `@` completion row's trailing mark, says `captain`,
+  `rear admiral` or `crew`.
+- **Heading.** A ship's channel leads with its captain's small agent avatar,
+  the Starbase and the command channel with a glyph, and a ship's channel
+  shows its captain's status (see [Design](#design)).
+
+### The navigator by fleet
+
+The navigator groups a network's buffers by fleet (`rows.rs`,
+`rows/sections.rs`, `rows/groups.rs`). The roster carries each fleet on the
+network (`fleet/places.rs`, `FleetPlace`): its API id and name, its slug, and
+the channels it claims, being its Starbase, command and ship channels as the
+roster names them and the channels its initiatives name. A channel that two
+fleets on one network claim belongs to neither.
+
+- **One group per fleet**, named from the API, keyed
+  `irc␟<network>␟f␟<fleet id>`, holding that fleet's channels: the Starbase,
+  the command channel, the ships, then the rest, each by the name the row
+  shows. A fleet's rows drop the `#` and the `<slug>-` prefix
+  (`#aurora-lyra` shows as `lyra`); search still finds the full name. The
+  captions `Ships` (above the first ship) and `Channels` (above the fleet's
+  other channels after its ships) come through `ListDashboard::group_captions`.
+  A fleet with no buffer open has no group, unless it is its network's only
+  fleet. The header carries the network's connection state.
+- **A network that holds one fleet is one group** (`rows/arrange.rs`): the
+  fleet's, named after the fleet, which also holds, under an `Other`
+  caption, the network's channels no fleet claims, its older private
+  conversations with agents and its listed channels, with the Server row
+  last. So one IRC server for an organisation that holds one fleet shows one
+  heading, not the fleet's and the network's.
+- **People**, keyed `irc␟<network>␟p`, follows the fleets on a network that
+  serves one and holds the private conversations with people. A private
+  conversation with a nick the roster knows as an agent stays in the
+  network's group, so history stays reachable but `People` never offers an
+  agent. With more than one network it reads `People · <network>`.
+- **The network's group**, on a network that holds several fleets, comes
+  last, keeps its key and holds the server row, the channels of no fleet,
+  those older private conversations and the listed channels. It is named
+  after the network, or `<name> network` when a fleet has the same name
+  ignoring case, so the same heading never shows twice. A network that
+  serves no fleet has only this group, as before. Search finds a row by its
+  group and its network (`Layout::network_names`), merged or not.
+- Row keys are the buffers' own (`rows::row_key`), so selection, the dock
+  layout (`dock/layout.rs`, which stores buffers) and search results restore
+  as before; only group keys are new. `Irc::group_networks` maps each group
+  key to its network for the toolbar, Join and the list's menu.
+- Rows are plain, as the owner asked: every channel row, the Starbase and
+  the command channel included, leads with the muted `#` (`view::kind_icon`),
+  and a person in `People` with a presence dot (`avatar::activity_dot`,
+  filled while they are in a channel we share and not away, a muted ring
+  while away or in none; `rows::activity::presence`). A ship's row leads
+  with its captain's agent icon as the app's **Icons** setting asks
+  (`avatar::agent_icon`): **Large** the small agent avatar
+  (`avatar::agent(...).small()`), **Small**, the default, the same avatar at
+  the `#`'s size, **Off** the `#`.
+- A ship's row ends with one dot (`view/navigator.rs`, `ship_dot`): filled
+  green while the ship is working, a muted ring while not, named
+  *aurora-lyra: working* or *aurora-lyra: idle* (the row's spoken name ends
+  with the same words), and showing Kit's tooltip on hover: the captain's
+  what is at work. Whether a ship is working comes from one function,
+  `rows::activity::ship`. With live fleet data (see
+  [Live fleet state](#live-fleet-state)) it follows the crew: filled while at
+  least one crew member has a task, named *aurora-lyra: 3 crew working*,
+  and the tooltip reads `3 crew working` then one line per member and task.
+  Without it, the captain's nick status while the server vouches for it, by
+  the heading pill's rule (`conversation::vouched_status`: a member with the
+  captain's nick signed in to its account), so nothing is invented without
+  one.
+- Every row with unread messages is emphasised. A mention adds an `@` mark
+  in `Tone::Red` before the count, which keeps the accent.
+- A fleet group that is not the selected initiative's fleet starts folded
+  the first time it appears (`view/navigator.rs`, `fold_new_fleets`); with no initiative
+  selected every fleet starts open. A network's only fleet's group, which
+  takes in the network's other channels and Server row, keeps the fold of
+  the network's group instead. Revealing a row in a folded group
+  unfolds it, a folded group the selected row moves into opens, and later
+  syncs leave it as the user left it.
+- `People` stays a group of its own: it is a different kind of row from a
+  fleet's channels, and the design guide's caption is for runs inside one
+  group.
+
+See the [change record](changes/channels-navigator-and-requests/README.md).
+
+### Live fleet state
+
+Channels reads each fleet's live state from its Stargate Fleet API through
+the app's one fleet service ([Fleets and the Fleet API](fleet-api.md)),
+in `live.rs` and `live/`.
+
+- **Following** (`live/watch.rs`): while the Space is in front, the board
+  holds one `FleetFollow` for each fleet whose group is in the navigator,
+  while the navigator shows, or whose channel is the conversation in front, once the fleet's state is
+  `Ready` (a token saved for the address the Subspace API records) or
+  followed, and drops it when the fleet is no longer shown or the Space is
+  hidden. The service opens at most one stream per fleet and closes it with
+  the last handle. What the service says of each shown fleet goes to
+  the hub as the view's share (`Hub::fleet_views`), only when it changed;
+  `Hub::fleets`, where the navigator, the headers and the inspector read
+  it, is the union of every view's share, so a hidden view never empties
+  what a shown one publishes, and a closed view's share goes with it. The
+  board reaches the fleet service only once a fleet is on show, so a
+  Channels that shows no fleet never starts it, reads no token and never
+  asks to unlock the keychain. The hub holds only what Channels draws (each
+  ship as `ShipLive`), so an activity line or a sample time redraws
+  nothing. A fleet with no address, no token, a changed address or no
+  answer keeps today's behaviour everywhere.
+- **Matching a ship** (`live/ship.rs`): a ship's channel names its captain
+  by the roster (the Subspace API's agent of rank captain), and its Fleet
+  API ship is the one whose registration ID equals that captain's API nick,
+  ignoring ASCII case, as the installer names both. Nothing is matched from
+  a nick seen on IRC, a channel name or message text. The Starbase lists
+  only the Fleet API's ships whose ID is the nick of a roster captain of
+  the Starbase's own fleet. Names, models, tasks and phases from the API
+  are untrusted: they are bounded (32, 40 and 120 characters), stripped of
+  control and bidirectional formatting characters, put on one line and
+  drawn as text; a ship keeps at most 24 crew lines, chosen before they are
+  formatted, while its figures count everyone.
+- **Live** means `FleetState::is_live()`: streamed or polled. Otherwise no
+  live figure shows anywhere, and nothing stale is kept. A ship's crew
+  detail that Stargate kept after a failed read (`detailStale`), or that
+  the overview or the detail marks unavailable, gives no crew lines (the
+  overview's totals stand in), and a kept overview (`overviewStale`) shows
+  no ships. Each says so: the Ship and Starbase tabs say **Not current**
+  for a kept overview and **Waiting** before the first one, and **Not
+  listed** only when a current overview lacks the ship; the crew says its
+  detail is kept from an earlier read rather than that it has not
+  arrived.
+- **A ship's dot** follows its crew: a crew member is working while one of
+  its contexts has a current task, as Stargate counts `busy`. From the
+  ship's detail once it arrives, else the overview's `crew.busy`. A ship
+  whose crew the API cannot read or does not have falls back to the
+  captain's status.
+- **The header pill** on a ship's channel: the captain's vouched status, or
+  else the Fleet API's word for the captain (`Lyra is working`, `has work
+  queued`, `is idle`), then `N of M crew busy` when the API counts the crew.
+  Without live data, the vouched status alone, as before.
+- **The inspector** (`view/inspector.rs` and `view/inspector/`) has tabs on
+  a ship's channel (**Ship**, **Thread**, **People**) and a Starbase
+  (**Starbase**, **Thread**, **People**), through `Inspector::tabs` under
+  the design guide's *Inspector tabs*; **Thread** is described in
+  [The Thread tab](#the-thread-tab). The tab
+  list is named `<channel> details`. Other conversations keep the member
+  list under its title. **People** is today's member list. **Ship**: a card
+  with the captain's agent avatar and crew ring (the Icons setting, through
+  `avatar::agent_icon`), the ship's name, `captain · <model>`, a pill with
+  the captain's state and the figures **Crew busy**, **Queued** (crew with
+  queued work) and **Done** (the captain's done jobs), each only when the
+  API gives it; **Crew**, each member with a dot, the task's phase and
+  summary, and how long (`dates::age`); **In play here**, the issues and pull
+  requests the conversation's tiles show, in order, with their state, or
+  **Loading** until answered and **Unavailable** when they cannot be shown
+  (the section asks for its own answers, as a tile's message may be out of
+  view, but only while it is on screen: the Space in front, the inspector
+  shown on a ship's Ship tab; an ordinary conversation, a Starbase or a
+  hidden view asks for nothing); and
+  **Here now**, the channel's members. **Starbase**: **Ships**, one row
+  each with the captain's icon, name, state and `avatar::crew_meter`.
+  While the fleet is not live the tab says why in one sentence
+  (`view/inspector/reason.rs`): the state's `label()` and its `help()`, and
+  for **No token** or **Address changed** where to act, Settings › Fleets.
+- **Left out** because no API gives it yet: **Last decision** (the Decisions
+  data has no per-conversation record Channels can reach), the Fleet
+  Console footer action (the built-in Fleet Console takes no request to open
+  on a ship), the queued figure as the mock-up's job count, the captain's
+  `delegating` word (Stargate's captain activity is `running`, `queued` or
+  `idle`), the crew's issue key apart from the task's text, and the
+  Starbase's stakeholders and ready work. See the
+  [change record](changes/channels-fleet-live/README.md).
+
+### Direct messages are for people only
+
+All communication with a fleet's agents happens in channels, where everyone
+can see it (an owner decision). When a private conversation would start with
+a nick the roster knows as an agent, Channels opens, uploads and sends
+nothing and shows a notice above the composer (`compose/agents.rs`) naming
+the agent's channel, with **Dismiss** and, when the API records that channel
+or the user's channel list holds it, **Go to** that channel; a standard name
+standing in is only named, as joining it would create it. The composer
+checks what a draft would send, through the IRC client's
+`private_recipients`, the same parse the session sends it with: every nick
+of a `/msg`, `/notice` or `/query` target list, the PRIVMSG or NOTICE that
+`/raw`, `/quote` or an unknown command carries, and text, `/me` or
+attachments in an older private conversation; a channel target is never
+refused. The member list, a nick reference and a notification for a closed
+conversation check the nick, and `irc_write` refuses a message to an
+agent's nick. When nothing of the agent's network is in front, as after a
+notification click while another network shows, Channels shows the agent's
+channel if the list holds it, else the network's server buffer, with the
+notice there. An older private conversation with an agent stays readable.
+This is a client-side rule: the server still delivers a private message
+sent another way. Stargate
+answers one unless its registration sets `dmPolicy: "redirect"`, which makes
+every connection answer a direct message with a notice pointing to its
+first channel and start no turn.
+
+See the [change record](changes/channels-fleet-roles/README.md).
+
 
 ## Configuration
 
@@ -86,7 +332,7 @@ server uses its host name, port `6697` and TLS with certificate checks.
   "networks": [
     {
       "id": "local",
-      "name": "Local Ergo",
+      "name": "Acme IRC",
       "host": "127.0.0.1",
       "port": 16667,
       "tls": false,
@@ -156,7 +402,9 @@ them: `cap-notify`, `sasl` (PLAIN, EXTERNAL), `server-time`, `message-tags`,
 `invite-notify`, `setname`, `chghost`, `standard-replies`,
 `draft/chathistory` (with `draft/event-playback`), `draft/read-marker` and
 `draft/multiline` and `draft/metadata-2` (requires `batch`), plus the
-`+typing` client tag. It reads ISUPPORT
+`+typing` client tag and reactions (`+draft/react` and `+draft/unreact`
+with `message-tags`; see [Reactions protocol](#reactions-protocol)). It
+reads ISUPPORT
 (`CHANTYPES`, `PREFIX`, `NETWORK`, `CASEMAPPING`, `CHATHISTORY`), answers
 `PING`, falls back to another nick on collision and reconnects with backoff.
 Opening the TCP connection and the TLS handshake each time out after 15
@@ -175,7 +423,7 @@ What the board does with them:
 | `draft/chathistory` | Joining a channel, or registering with a stored private conversation, asks only for what was missed since the newest stored line (`LATEST <target> msgid=…`, up to 500 lines), else the latest 100. Opening a buffer with fewer than 50 lines loads recent history; **Load older messages** loads 100 more. Opening a search result the buffer does not hold asks for the 50 lines around it (`AROUND`). Without the capability, the first request reports that there is no history and the row disappears. |
 | `draft/read-marker` | Opening a buffer sends `MARKREAD`; markers from other clients clear unread counts. |
 | `+typing` | Typing notices are sent at most every 3 seconds while you type and `done` when you clear the input; others' notices show above the input and expire after 6 (active) or 30 (paused) seconds. |
-| `draft/metadata-2` | The client subscribes to nickname `status` after registration. It emits `Event::NickStatus { network, nick, status }`; the Space currently ignores it. No visible status row yet. |
+| `draft/metadata-2` | The client subscribes to nickname `status` after registration and emits `Event::NickStatus { network, nick, status }`. The Space holds each network's statuses and shows them above the input and in the member list; see [Agent status lines](#agent-status-lines). |
 | `multi-prefix` | The member column groups members by their highest prefix. |
 | `away-notify` | Away members are muted in the member column. |
 | `echo-message` | Your own lines appear once, as the server delivered them. |
@@ -219,7 +467,52 @@ Markdown, URLs, mentions and issue references remain literal plain text;
 consumers must not interpret them as markup or interactive content.
 
 See [the status protocol change record](changes/irc-agent-status/README.md)
-for sources, tests and delivery gates. The conversation row follows in PR 2.
+for sources, tests and delivery gates.
+
+### Agent status lines
+
+The Space shows what the runtime reports. `Event::NickStatus` sets, replaces
+or clears a nick's status in `Network::statuses` (`state/statuses.rs`): one
+map per network, because a status describes the whole nick, never a buffer
+or a message. It is never stored: the hub's store keeps lines only, and the
+reconnect carry data has no statuses. The value is untrusted, so the
+reducer cleans it again with the client's own cleaner,
+`subspace_client_irc::status_text`, rather than relying on the runtime: one
+plain line of at most 80 characters, where nothing left means cleared.
+Nicks compare ignoring ASCII case, as `members::note` does, because the
+Space does not know the network's case mapping and the runtime reports a
+status under the first spelling it saw.
+
+- **Above the input.** `transcript/activity.rs` composes the line that used
+  to show only who is typing. A conversation shows the statuses of the nicks
+  in it: a channel's members, or a private conversation's peer, never our
+  own nick and never anyone else. The status texts come first, verbatim and
+  joined with ` · `, then the typing notice for the nicks without a status,
+  so an agent that has a status and is also typing shows its status only.
+  The line keeps its height, shows plain text (no Markdown, links, mentions
+  or issue references), is cut with an ellipsis and offers the whole text
+  in a tooltip (`truncated::text`). Its accessible name says whose each
+  status is, such as `Status of galactica: Galactica is thinking…`. With no
+  status, the line reads exactly as the typing line did.
+- **In the member list.** A member with a status has a second, quiet line
+  under the nick in the same row, one line cut with an ellipsis, and the
+  row's accessible name adds it: `Open private messages with galactica,
+  Galactica is thinking…`, then `, away` as before.
+- **Clearing.** A status goes when the runtime clears it (the gateway ends
+  the turn, or the nick quits, changes nick, leaves the last channel we
+  share or the capability goes), and the Space also drops:
+  - every status of a network as soon as its connection is anything but
+    connected, so none survives a reconnect even if the runtime's clears
+    were missed;
+  - a nick's status when it leaves a channel (`MemberLeft`, or the old nick
+    of `MemberChanged`) and no channel of that network we hold still lists
+    it. This matches the runtime's rule for the last shared channel. A
+    private conversation's peer that shares no channel with us has no
+    channel departure, so it keeps its status there.
+
+  A line from the nick ends its typing notice but not its status, which the
+  gateway clears itself. See
+  [the agent status change record](changes/channels-agent-status/intent.md).
 
 ### Reply protocol foundation
 
@@ -250,6 +543,174 @@ retain it. Ordinary composer and agent sends are unchanged.
 See the [protocol change record](changes/irc-reply-tags/README.md) for tests
 and proof commands.
 
+The runtime also keeps a short allow-list of client-only tags (`+` prefix)
+of a `PRIVMSG` or `NOTICE` as `Line::client_tags`, live and in history, so
+a Space can read a machine-readable marker that another client added:
+`subspace_client_irc::KEPT_CLIENT_TAGS`, today only `+stargate/progress`
+(`PROGRESS_TAG`), with values of at most 64 bytes. Any sender can add
+client-only tags, so every other one, and a longer value, is dropped rather
+than held and stored. A multiline message takes them from its opening
+`BATCH` only. They are stored with the line.
+
+### Reactions protocol
+
+The runtime sends and reads IRCv3 reactions (the work-in-progress
+[react client tag](https://ircv3.net/specs/client-tags/react)): a `TAGMSG`
+to the conversation with `+draft/react=<reaction>` or
+`+draft/unreact=<reaction>`, and `+draft/reply=<msgid>` naming the message.
+Channels shows them as described in
+[Reactions in Channels](#reactions-in-channels).
+
+- **Support.** Reactions need `message-tags`, which the runtime already
+  requests, and no `CLIENTTAGDENY` that blocks `draft/react`,
+  `draft/unreact` or `draft/reply`, on a registered connection. The runtime
+  reports `Update::ReactionSupport { network, supported }` once the
+  connection is welcomed, with every later capability report, when
+  `CLIENTTAGDENY` changes, and as `false` when the connection ends, so a UI
+  can hide reactions; nothing reports support during capability
+  negotiation. `reactions::reactions_supported`
+  answers from the capability list alone.
+- **Sending.** `Command::React` and `Command::Unreact` (checked first with
+  `reactions::check_reaction`, which returns the same typed error) send
+  exactly one `TAGMSG`, such as
+  `@+draft/react=👍;+draft/reply=<msgid> TAGMSG #channel`. Without a
+  registered connection, support, one valid destination (a channel the
+  server calls a channel, or a nick that is not one, without spaces or
+  commas), a valid `msgid` (at most 128 bytes, no spaces or controls) or a
+  valid reaction (1 to 32 characters, no controls or surrounding spaces)
+  nothing is sent; a destination too long for the `TAGMSG` to fit one line
+  is refused as `InvalidTarget` rather than cut short, and the runtime answers `Update::ReactionRefused` with a
+  `ReactionError`. A reaction for a network that is not configured is
+  refused as `NotConnected`. Without `echo-message` the runtime echoes our
+  reaction locally, but only after the write succeeds; a failed write is
+  answered with `ConnectionLost` (it may or may not have arrived).
+- **Receiving.** A reaction is a `Reaction` (message, reaction, added or
+  removed, nick, account, ours, time, live or history, and the network's
+  case mapping), reported as
+  `Update::Reaction`. Updates come in one order with the events through
+  `Runtime::drain_updates`; `Runtime::drain` still returns events only, so
+  existing owners are unchanged (it drops the updates, so use one drain or
+  the other). Reactions are not new `Event` variants because the Channels
+  Space matches `Event` exhaustively. Network input is untrusted: a `TAGMSG`
+  with both tags, without a nick or reply `msgid`, or with an invalid value
+  is ignored. A reaction is ours when its account is ours, both being
+  known (our account comes from `RPL_LOGGEDIN`). Live traffic without
+  accounts falls back to our current nick; history never does, since
+  someone else may have held that nick then. `+reply` is read when `+draft/reply` is missing, as Stargate
+  does; unprefixed `+react` is not read, as the draft says.
+- **Aggregation.** `reactions::ReactionBook` holds, per buffer and
+  `msgid`, each reaction and who reacted (nick, account, ours) in
+  first-reacted order: `reactions(&buffer, msgid)` and `reacted(&buffer,
+  msgid, reaction)`. It keeps the latest operation per message, reaction
+  and person by time, so an older replay never overwrites a newer change,
+  and remembers removals for that. Each person's place is when their
+  current addition started; an older replayed addition can only move a
+  shown person's place earlier. When a message's places for remembered
+  removals run out, the oldest group holding only removals is dropped, and
+  a remembered removal gives way by when it was removed. A remembered
+  removal never becomes visible past the display limits, and an addition
+  that could not show drops nothing. Of two operations at the same server
+  time, a live one wins over one from history, and an older replayed
+  addition never moves a place back across a known removal. It follows nick changes through
+  `observe` (`Event::MemberChanged`) or `rename`, skipping entries with
+  another known account and merging nobody, and keeps reactions to
+  messages not loaded yet. Each reaction's `stops_agent` marks Stargate's
+  default stop reactions. People are the same when both are ours, when both
+  have the same account, or when neither has an account and their nicks
+  match under the network's current case mapping; after an accountless
+  rename leaves two records with one nick, the one that most recently took
+  the nick is that person. It keeps at most 2,048 loaded messages (dropping
+  the least recently changed), and apart from them 256 messages not seen
+  loaded yet, at most 64 per conversation, so reactions naming unknown
+  messages never displace loaded ones; `observe` marks the messages of
+  lines as loaded, and `mark_seen` does it for lines an owner loads itself.
+  `forget` drops a conversation, and `reacted_messages` lists the messages
+  in one that show reactions. It shows 20 reactions per message and 100
+  people per reaction, with as many again remembered removals.
+  Local echoes carry the local clock, so a large clock skew against the
+  server can misorder our own operations.
+- **Agent stop reactions.** `reactions::agent_stop` describes, as data only,
+  the reactions that stop an agent in Stargate (`main` at `da242f8`, the
+  same behaviour as v0.43.0, and unchanged at `d4842b8`): ✋ and 🛑 by default, ignoring skin tones and
+  the variation selector, as a `TAGMSG` naming the message with
+  `+draft/reply` (or `+reply`), from a person with an account, on the
+  request or an agent message answering it, while the turn is active and
+  the gateway's `reactions` feature is on. History reactions never stop a
+  turn, and an unreact does not undo a stop. A fleet can configure other
+  stop reactions in `irc[].stopReactions`, which the client cannot see.
+
+Ergo 2.19.1 relays a `TAGMSG` only to clients with `message-tags`, and
+echoes it only with `echo-message` as well. It stores a `TAGMSG` in history
+only when it carries a tag listed in `history.tagmsg-storage.whitelist`,
+and replays it in `chathistory` only to clients with
+`draft/event-playback`, which the runtime requests. Our `ircd.yaml.tmpl`
+lists `+draft/react`, `+draft/unreact` and `+react`, so removals are
+replayed too. History recorded before `+draft/unreact` was listed holds
+additions without their removals, so a reaction taken back then can
+return when that history loads, unless the client saw the removal.
+
+See the [reactions change record](changes/irc-client-reactions/README.md).
+
+### Reactions in Channels
+
+Channels reads the runtime with `drain_updates`, and the hub keeps one
+`ReactionBook` (`reactions.rs`), fed every reaction and every event before
+the event applies; a reaction to a line the conversation already holds,
+such as one restored from the store, marks that message loaded first.
+Removing a conversation drops its reactions. Each conversation rebuilds
+what its messages show on every sync and measures again only the rows
+whose reactions changed (`conversation/reacting.rs`), so a row appearing or
+growing moves nothing else; tiles keep their fixed box.
+
+- **Pills** (`transcript/reactions.rs`): under a message, one small pill per
+  reaction with its count, in the book's order, wrapping, with the rest
+  after ten behind **+N**. Ours is a latched button with semibold text; no
+  edge line marks anything. The tooltip and accessible name say who
+  reacted (`👍 from alice, bob and you`), with names cleaned and cut as
+  status lines' are, and values shown without spaces, control or invisible
+  format characters (`shown_value`; the zero-width joiner stays); the exact
+  value held is what is sent back. Selecting a pill asks
+  `reacting::toggle` for `Command::React` or `Command::Unreact` to the
+  message's own conversation. Ours shows only once
+  the client reports it (the echo, or the local echo after a successful
+  write); a `ReactionRefused` shows as a brief notice above the composer.
+- **Adding** (`reactions/choices.rs`): **Add reaction** ends a row with
+  pills, and `r` on a keyboard-focused message opens the same menu at the
+  message. It offers six common reactions, ticked when ours (by the folded
+  key; taking ours back sends each exact value we hold); there is no emoji
+  picker and the stop reactions are never among them.
+- **The sending rule** (`reactions/gate.rs`): every path, pills, **+N**,
+  the menus and `r`, sends through `reacting::toggle`, which asks
+  `gate::gate` first. Nothing goes to the server buffer or to a fleet
+  agent in a private conversation (`AgentNotice::refusing`; the controls
+  are hidden there too, and reactions between people in private are
+  ordinary). A new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only
+  from the labelled `Stop <ship>` item in a channel; asked for any other
+  way it is explained and not sent, whether or not the app recognises the
+  message as an agent's, since Stargate stops a queued turn before any
+  status line exists. Taking back our own stop still goes.
+- **Stop reactions** (`reactions/stop.rs`): in a channel, on a held request
+  to a fleet agent on the roster whose status line is trusted (the agent's
+  account is named after the nick asked) and still running and current, or on that agent's own reply
+  to it (its nick and account both name that nick), the menu lists ✋ and 🛑
+  apart under `Stop <ship>`. Choosing one sends the reaction; once the
+  client reports that exact reaction on that message, the notice says it
+  was sent and that the status line shows the result when Stargate reports
+  it (pending stops are kept per message and reaction, so another reaction
+  in between loses none). A ✋ or 🛑 pill on a request to a verified agent,
+  or its reply, also says it asked the agent to stop. One msgid index per
+  rebuild finds each reply's request.
+  This follows Stargate `main` at `d4842b8` (`routeIrcStop`,
+  `src/irc/ship.ts`): a person with an account, on the request or an agent
+  message answering it, while the turn is active. A fleet's own
+  `stopReactions` and whether our account counts as a person are not
+  visible to the app.
+- **Support**: without `Update::ReactionSupport` true for the network, the
+  controls go and the pills stay read-only; a message without a `msgid`
+  cannot take a reaction. The Thread tab shows the pills read-only.
+
+See the [change record](changes/channels-reactions/README.md).
+
 ### Loaded reply counts
 
 A root message with loaded replies shows their count and the latest reply's
@@ -263,16 +724,183 @@ no count until it loads, and cyclic relationships get no count.
 `Line::thread_root`'s cycle and missing-parent behaviour. Each conversation
 retains the resulting summaries and shares them across its virtual rows.
 
-Replies remain inline, so every message stays readable. Counts are read-only;
-the pane, reply action, composer and hiding replies from the room come in PR 3.
-Unread and notification behaviour are unchanged in this slice. See the
+Replies remain inline, so every message stays readable. In a ship's channel
+or a Starbase the count reads `3 replies ›` and opens the message's thread
+in the inspector ([The Thread tab](#the-thread-tab)); elsewhere it is
+read-only. Unread and notification behaviour are unchanged. See the
 [count change record](changes/irc-reply-count/README.md).
 
+### The Thread tab
+
+A ship's channel and a Starbase have a **Thread** tab in the inspector,
+between the subject and **People** (`thread.rs`, `view/inspector/thread.rs`).
+It shows one thread at a time: a request, or any message with replies.
+
+- **Opening it.** Choosing a message's `N replies ›`, a request's status
+  line, or Enter on a focused message that has either, opens the inspector
+  on the Thread tab for that message (`ConversationEvent::OpenThread`). In
+  these channels a request's running or settled line carries its count,
+  `Done in 42 m · 3 replies ›`, only when it has replies, and the separate
+  count row is left out. With no thread chosen the tab says, in one line,
+  how to open one.
+- **Contents**, top to bottom: the root message (author, rank, time and
+  text with its reference chips, as the transcript draws them, without
+  avatar or tiles); for a request with trusted progress or an ending,
+  **Status**, a plain list of the steps the agent reported, one per change
+  of the status line's stage (**Accepted**, **Working**, **Waiting for an
+  answer**, **Writing the reply**, then **Done**, **Failed** or **Ended**),
+  each with its server time and how long it lasted, the ending with the
+  request's whole time (`in 42 m`) and a running step with `since 17:50`,
+  the latest 24 kept by the model and drawn, the rest counted (`N earlier
+  steps are not shown.`), so an agent that waits and works again many
+  times never builds a row per change on each render; then **Replies · N**, grouped by author by the transcript's rule, the
+  latest 40 drawn and the rest counted (`N earlier replies are in the
+  channel.`), or `No replies yet.`
+- **Membership and trust.** A reply is a message whose `+draft/reply`
+  leads, through held parents, to the root of the conversation's thread
+  the chosen message is in, read by the same `ThreadRoots` as the counts,
+  so the tab's replies and the count agree. A follow-up request made as a
+  reply shows its own steps with that thread's replies, under the heading
+  **Replies in this thread**, so the answers to it, and a reply sent from
+  its tab, appear there; its own status line counts no replies, as only a
+  thread's first message carries the thread's count. A kept ending is
+  always the timeline's end: a held notice that ended the request
+  otherwise, or came after the kept ending, is not a step. Nothing in a
+  message's text places it in a thread. A step is a notice the buffer
+  folded under the status line's trust rule (its server account equals the
+  nick the held request asks); an untrusted notice is an ordinary reply and
+  never a step. A request whose ending was kept but none of whose notices
+  before it are held (none at all, or only the ending's) says `The steps before the end are not loaded.`, with **Load
+  around this message** (`Command::LoadAround`) while the network is
+  connected and keeps `draft/chathistory`.
+- **Lifetime.** The chosen thread is kept per conversation for the session
+  (`thread::Threads`), across the inspector's tabs and switching
+  conversations. It is rebuilt only when its buffer's held lines change, by
+  a fingerprint of their count, ends, folded count and the root's ending,
+  so a sync that leaves the buffer alone reads none of its lines; it goes
+  once its root is no longer held (the line cap, or the conversation
+  removed). A reply being written to it then stays in reply mode, marked
+  gone: the row says the thread is no longer loaded, Enter sends nothing,
+  not even a command, Escape keeps it, and only **Write to the channel**
+  leaves reply mode, keeping the text. **Reply in thread** on another
+  thread does not take such a draft with it: while the draft holds text,
+  the row adds **Move to \<author\>'s thread**, and only that choice moves
+  it; choosing yet another thread withdraws the offer, as does that
+  thread's root going; an emptied draft starts the new reply at once. New replies and steps show
+  live. A linked status line keeps a zero-size status element beside its
+  button, not inside it, so its changes are still announced however nested
+  roles are flattened.
+- **Replying.** **Reply in thread**, the tab's footer action, puts the
+  composer into reply mode (`compose/reply.rs`): a row above the input says
+  `Replying in thread to <author>: <start of the root>`, with **Cancel
+  reply** (Escape also cancels), and the placeholder reads
+  `Reply in thread to <author>`. Sending sends `Command::Reply` to the
+  channel with `+draft/reply=<root msgid>`, so everyone in the channel sees
+  it, then leaves reply mode. A `/command` is refused in reply mode (`//`
+  is a literal slash), as are attachments, with the reason in the
+  composer. Reply mode exists only in a channel and never sends a private
+  message. Without a connection, or on a connection that did not agree
+  `message-tags`, the action is replaced by the reason.
+- **Left out**: the mock-up's `Wren closed NAV-6` on the settled line and
+  the *delegated* and *pull request* steps, which Stargate's progress tag
+  does not carry; a reply count from the server rather than the loaded
+  lines (the reply-search follow-up). See the
+  [change record](changes/channels-thread-tab/README.md).
+
 **Join…** is available only while the selected network is connected; its
-tooltip says why otherwise. Commands that need the server while a network is
+menu entry says why otherwise. Commands that need the server while a network is
 disconnected or still connecting (input, joins, leaving a channel) leave a
 **Not connected** error line instead of being dropped. Your user modes read as
 `Your user modes are +Zi` (`RPL_UMODEIS`) or `Your user modes changed: +w`.
+
+### Request status lines
+
+Stargate reports progress on a request as a `NOTICE` carrying
+`+stargate/progress=<stage>` (`thread_status::PROGRESS_TAG`) and
+`+draft/reply=<the request's msgid>`. Channels folds trusted progress into
+one line under that request, such as `astra · Using a tool`, updated in
+place, instead of a reply row per notice. It never reads the notice's
+prose. The contract, the trust rule and its sources, and the stage mapping
+are in the [change record](changes/irc-thread-status/spec.md).
+
+- **Trust.** A notice folds only when it replies to a message or action
+  this buffer holds (in a private conversation, our own), and its
+  server-set `account` tag equals the nick that request asks, ignoring
+  ASCII case. The request asks a ship: the nick its first word addresses
+  (`nick:`, `nick,` or `@nick`), or a private conversation's partner. A
+  request whose sender's nick, or sender's `account` tag, is the addressed
+  nick asks no one. Member lists play no part, so whoever holds the nick
+  later, only the account named after it folds. This is the owner's rule
+  (21 November 2026), and the reason for it: fleet IRC servers are private and tie each nick to the account of the
+  same name (`force-nick-equals-account`), so only the agent itself can
+  send as its nick there. On other servers, an agent whose account is not
+  named after its nick gets no status lines. Untrusted, unrecognised and
+  uncorrelated notices, questions, answer instructions and final replies
+  stay ordinary messages, counted and notified as before.
+- **One line per request**, keyed by the request's own message ID, so two
+  requests in one thread each have one. The newest trusted notice by
+  server time (of two at the same time, the later one held) sets
+  **Receipt unconfirmed**, **Accepted**, **Queued**, **Thinking**, **Using a
+  tool**, **Waiting to retry**, **Waiting for your answer**, **Answer
+  received** or **Writing a reply**; an update to one request leaves the
+  others alone.
+  The agent is the nick on the newest trusted notice, shown as plain
+  text on one line and cut to 32 characters.
+- **Clock and stage meter.** While a request runs, its line also shows the
+  time since the request was sent by the server (`0:35`, `1:02:03` past an
+  hour) in quiet monospace, and Kit's `Progress` as a five-step stage meter
+  with the stage's word. Stargate's fixed stages map onto the meter:
+  `received`, `submitting`, `accepted`, `queued` and `delivered` are
+  *accepted*; `model`, `reasoning`, `tool` and `retry` *working*; `waiting`
+  and `clarified` *waiting*; `reply` *reply*; `completed` and `failed`
+  *done* (`thread_status::Stage`). The meter is named *Stage N of 5:
+  <stage>*. Nothing else is shown: Stargate's data has no delegation or
+  pull request stage. The conversation redraws once a second
+  (`conversation::clock::follow`) only while a line runs and is not stale,
+  and drops the timer once none does.
+- **Endings.** `completed` or `failed` settles its request's line, for good:
+  no later or older notice reopens it. The settled line is quiet: a check
+  and **Done in 42 m**, or a cross and **Failed after 3 m**, from the request's
+  server time to the ending notice's (`35 s`, `42 m` or `2 h 5 m`), named
+  *<agent>: Done in 42 m*. In a ship's channel or a Starbase the line
+  carries the reply count and opens the thread; elsewhere the count stays
+  above it. Owner
+  decision, 22 November 2026: a finished request keeps a settled line, where
+  the line used to disappear. The ending is kept apart from the notice with
+  its outcome and server time (`thread_status::Ending`), and stored with
+  them (`store::Ended`'s `outcome` and `at`), so it holds after the notice
+  is dropped by the line cap, after a restart, and when a partial or Search
+  reload brings back earlier progress without it. An ending record stored
+  before outcomes were kept loads as a neutral **Ended** (a plain circle,
+  never a check) without a duration; a held ending notice later fills it
+  in once. On a restart the stored endings are loaded before the restored
+  notices fold, so a restored notice never turns a Failed request into
+  Done. A main-room final reply without a
+  reply tag clears nothing.
+- **Stale.** The line shows the last stage, its time and a **Stale** pill
+  when the notice carried `,disconnected`, while the network is not
+  connected, or when the notice was already held when the network's current
+  connection began (`Network::held_at_connect`): restored from the store or
+  seen before a reconnect. Anything received on the current connection,
+  live or as history, is current.
+- **Counting.** `Buffer::folded` holds the trusted notices
+  (`state/folding.rs`). A live line is taken in by itself, without reading
+  the buffer again; a history page, backfill or restore folds its buffer
+  again; member list changes fold nothing again. A line stays folded while
+  it and its request are held: when the line cap drops the request, its
+  notices show as ordinary notices again, counted as history is: unread and
+  highlighted only when newer than a known read marker. Folded
+  notices make no row, are not replies, never count as unread and never
+  notify, live or from history. They are stored and searchable; opening one
+  from Search shows its request.
+- **Reopening.** Statuses are rebuilt from the held lines on every change,
+  so a restart or a reopened thread reads the same.
+- The composer's typing line is unchanged and stays conversation-wide.
+- This status belongs to one request, by its message ID. It is not the
+  nick-wide `status` metadata from `draft/metadata-2`
+  (`Event::NickStatus`), which Channels shows above the input and in the
+  member list through the separate `channels-agent-status` change (see
+  [Agent status lines](#agent-status-lines)); the two are kept apart.
 
 ## Message history and search
 
@@ -290,7 +918,13 @@ is the [change record](changes/irc-search-history/spec.md).
   network as the `project` filter; and an exact `ReferenceIdentity::github`
   (`mentioned-pull-request` or `mentioned-issue`) for each GitHub pull
   request or issue URL in it, so `related_items` for that item lists the
-  message.
+  message. Beside them, each agent request that completed or failed is one
+  record of kind `Channels request ending` under the same buffer, holding
+  only the buffer and the request's message ID, with no searchable text
+  (see [Request status lines](#request-status-lines)). Endings are written
+  in the same batches as the lines waiting with them, before those lines.
+  The restore loads each buffer's newest 20,000 endings, also when none of
+  its lines survive.
 - **When it is written**: in order on the background executor, in batches of
   at most 100, about a second after new lines arrive and when the board stops
   (`hub/persist.rs`).
@@ -318,7 +952,8 @@ is the [change record](changes/irc-search-history/spec.md).
 A joined channel's row menu offers **Leave channel**, a channel we are no
 longer in (after a kick or a typed `/part`) offers **Remove from list**, and a
 private conversation's offers **Close conversation**. The toolbar's **More**
-menu has the same items for the selected row. The server row offers none
+menu has the same items for the selected row, after **Connect** or
+**Disconnect** and **Join…**. The server row offers none
 (`spaces/irc/src/remove.rs`).
 
 - **Leave channel** sends `Command::Part`, then `Command::Forget`, and
@@ -528,7 +1163,9 @@ rows near the viewport, so a drag that auto-scrolls far past them can lose
 its start; a fix needs a Kit selection adapter for virtual lists. Right-click
 **Copy** on a row copies the selection, or the row's whole text.
 
-The unread **New** divider is also a label: it does not interrupt selection
+The unread divider, **NEW SINCE YOU LEFT · N** with the number of messages
+that arrived since the conversation was last read (spoken as *N new
+messages since you left*), is also a label: it does not interrupt selection
 or add its label to copied text. Unread row fills remain visible behind a
 text selection. Literal links and references retain their native look and
 cards through Kit inline objects. Right-click **Copy** on an issue link
@@ -607,10 +1244,17 @@ IRC shows issue references through the `issues` contract
   project keys change. A refused `resolve` drops the scope until the next `changed`.
 - **Looks** (`text/references.rs`, `transcript/line/marks.rs`): references are accent on
   a tint, as `#channel` references are; `Unavailable` is muted and
-  underlined; the keyboard's reference is accent on a strong tint. Formatted
+  underlined; the keyboard's reference is accent on a strong tint. An
+  available issue leads with a dot for its state category (`text/look.rs`)
+  in the tone of the hover card's `state_glyph`: started yellow (a started
+  state named for review blue), completed the accent, cancelled or duplicate
+  muted, and a hollow ring before work starts (triage orange, backlog muted,
+  unstarted the foreground). A
+  reference still loading or unresolved has no dot. The dot is a child of
+  the inline object, so selection and Copy keep the reference as written. Formatted
   (Markdown) lines show issue references as links (`subspace-irc:issue/…`)
   without an inline muted look.
-- **Hover cards** (`issues/tooltip.rs`) share one observed view for chip hover,
+- **Hover cards** (`issues/tooltip.rs`) share one observed view for tile hover,
   inline-reference hover and the keyboard's focused reference. The view reads
   the hub on each draw, so `Pending` (*Loading SUB-42…*) becomes the current
   summary after `changed`. Available summaries use the A accent or B tracker
@@ -620,24 +1264,67 @@ IRC shows issue references through the `issues` contract
   view itself, with no surrounding Kit tooltip frame and no interactive
   children or focus. Pending, Unavailable, SignedOut and Failed keep plain
   Kit tooltip notes. The keyboard card floats through `anchored::floating`.
-- **Issue chips** (`issues/preview.rs`, `issues/tile/`) use the same batched
-  lookup as the hover card. Every available issue is a compact chip, including
-  a message with one available issue; the row always wraps. Chips retain their
-  full accessible names and native activation. A and B cards appear only on
-  hover or reference keyboard focus. Ordinary hover cards have a state edge,
+- **Tiles once** (`tiles.rs`): within one conversation, the first message
+  to name an issue or a pull request keeps its tile under it; every later
+  mention is only the inline reference. On every sync with the hub, before
+  any new row is laid out, `conversation/owners.rs` reads the messages not
+  read yet, in transcript order, and `TileOwners::claim` gives each
+  reference nobody owns to the earliest of them. Only messages not read yet
+  claim, so no message already drawn gains a tile or changes height: history
+  loaded above or lines merged from the store are read after the held ones,
+  so an older mention found later stays a chip. An owner the conversation no
+  longer shows (dropped by the line cap, folded into its request) lets go of
+  its claim, so the next new message that names the reference shows the
+  tile; a removed conversation's owners are forgotten. A new issue scope
+  reads every message again and claims issues afresh within that scope;
+  pull requests keep their owners. A sync with nothing new copies nothing.
+  Owners live in the hub per conversation for the session, in memory only,
+  so reopening a conversation keeps them and a restart decides again from
+  the messages then held. See the
+  [change record](changes/channels-tiles-once/README.md) and the
+  [fixes carried to the next one](changes/channels-fleet-live/README.md).
+- **Issue tiles** (`issues/preview.rs`, `issues/tile/compact.rs`,
+  `tiles/frame.rs`) use the same batched lookup as the hover card. A tile
+  leads with the inline reference's state dot and the key, then the title,
+  then one line of what the summary carries: **Ready for agents** (when
+  `ready_for_agents` is true), **Tracker**, **Archived**, the state's name,
+  the assignee (an agent captain's or rear admiral's icon before the name,
+  through `avatar::agent_icon` and the Icons setting; people get none) or
+  else the owner, and the due date (`due Wed`, or a date after seven days);
+  the assignee or owner, untrusted text, is the part that gives way on a
+  full line. A tracker (the summary's tracker flag) with sub-items ends with
+  a small bar and **1 of 2**. A missing
+  fact leaves no gap. Tiles keep their full accessible names and native
+  activation; the A and B hover cards appear on hover or reference keyboard
+  focus. Ordinary hover cards have a state edge,
   mono key, urgent or high priority pill, state pill, two-line title and
   optional assignment and latest-activity footer. Tracker hover cards show a
   progress bar and available pull request and due-date facts.
-  Code spans and blocks do not request chips. The additive summary builders
+  Code spans and blocks do not request tiles. The additive summary builders
   carry priority, owner, assignee kind/rank, progress, pull requests, due date
   and latest activity without coupling Channels to the API client.
-  `reference_card` supplies shared chip and passive card treatments, pills
-  and avatars; Kit supplies icons and progress. Colours come from `Tokens`.
+  `reference_card` supplies the outline surface and passive card treatments,
+  pills and avatars; Kit supplies icons and progress. Colours come from `Tokens`.
   Pure UTC formatting uses `hub.now`: minutes, hours, days, then a British date
   after seven days; future activity says *just now* without a recent dot.
   Activity within an hour has a success dot. Missing or malformed optional
   dates are omitted. See the [change record](changes/subspace-api-accounts/README.md).
-- **Opening an issue** works from a chip, resolved reference click or `Enter` on a resolved
+- **Reserved tiles** (`tiles/frame.rs`): every tile, loaded, loading or
+  unresolved, has the same fixed width (340 px at the reference text size,
+  capped at the row's width) and two-line height, so an answer never changes
+  how tiles wrap or how tall the message is, and nothing above or below it
+  moves. The slot is drawn from the message's first frame. With no answer
+  yet or `Pending`, it is an inert outline tile with the known key and
+  static skeleton bars in `Tokens::line`, the shared list skeleton's colour;
+  nothing animates, so reduced motion needs no case. `Unavailable`,
+  `SignedOut` and `Failed` settle to a muted `CircleSlash`, the key and
+  **Unavailable**, **Signed out** or **Couldn't load** on one line in the
+  same box; the inline reference still opens it, and the hover note gives
+  the reason. An answer already held draws its tile on the first frame.
+  Only recognition changes the reservation: a scope that arrives later,
+  changes or is withdrawn still adds or removes references. See the
+  [earlier change record](changes/channels-reserve-issue-tile-space/README.md).
+- **Opening an issue** works from a tile, resolved reference click or `Enter` on a resolved
   reference. The shell opens the issue in the answering board after it checks
   the profile on the navigation request.
   A reference without a summary keeps its browser destination while the
@@ -679,15 +1366,31 @@ GitHub client or the PRs board.
   request URL is a chip rather than a link. In a formatted message, code spans
   and fenced code stay text, and `Rendered::refs` lists the chips outside
   code for the keyboard and the hub.
-- **Chip** (`text/references.rs`): the `GitPullRequest` glyph and `repo#n`,
+- **Chip** (`text/references.rs`): the `GitPullRequest` glyph, tinted by an
+  available answer's status (open blue, merged magenta, closed or draft
+  muted; `text/look.rs`), and `repo#n`,
   with the owner only beside another owner's same-named repository in the
   message (`PrRef::label_among`). The node text stays as written, so Copy
-  keeps it; Copy link gives `PrRef::url`. No preview row is added under the
-  message.
+  keeps it; Copy link gives `PrRef::url`.
+- **Tile** (`pull_requests/slot.rs`, `pull_requests/compact.rs`), under the
+  message that keeps it (see *Tiles once* above): the status glyph in its
+  tone and `#n`, the title, then the status in words when not open, the
+  repository and the lines added and removed, and the checks as a small bar
+  with **4/5** (`check_counts`; red once a check failed, green when all
+  passed, yellow while running). The PRs Space answers a pull request it
+  holds only from a list at once, without counts, and reads it once for its
+  check runs; the bar appears when that read lands, inside the tile's fixed
+  box (`spaces/github/src/references.rs`). A missing fact leaves no gap. It shares the
+  issue tile's fixed box, loading skeleton and unresolved line; a click
+  opens the pull request as the chip does, and hovering shows the chip's
+  card.
 - **Answers** (`pull_requests.rs`, `pull_requests/follow.rs`): the hub asks
   for the distinct keys a frame shows in one request of at most 50, keeps the
   answers in memory and forgets them, and the wanted keys, on every `changed`.
-  A refused request records `Unavailable`. Nothing reaches IRC's store,
+  A refused request records `Unavailable`, so with the PRs Space off a
+  pull request's tile settles to its muted **Unavailable** line in its
+  reserved box rather than vanishing and moving the lines under it.
+  Nothing reaches IRC's store,
   search, state file or logs.
 - **Hover tile** (`pull_requests/tooltip.rs`, `pull_requests/tile.rs`): a
   passive 320 px `reference_card` (accent treatment) with state edge and pill,
@@ -782,6 +1485,23 @@ with a topic, through a client named `fixture-bot`, such as
 Ergo removes an empty channel, so without it `LIST` shows only the channels
 someone is in.
 
+`scripts/irc-agent-status-fixture.py` (Python standard library only) keeps
+fictional agents with status lines, and a person typing, in `#agent-status`
+until it is stopped, and writes the matching Channels configuration for
+`CAPTURE_IRC_CONFIG` or a dev build. The
+[agent status change record](changes/channels-agent-status/delivery.md#evidence)
+has the commands.
+
+`scripts/irc-thread-status-fixture.py --config <file>` plays a fictional
+ship, `astra`, answering three requests in `#thread-status` with tagged
+progress: two in one thread, a question and its answer, a lookalike notice
+from another account (`nova`), a lost event stream, a main-room final reply
+and one request completing, timed from when the capture build joins. Both
+register throwaway accounts on the local server. Once the server has
+answered, it writes the Channels configuration for `CAPTURE_IRC_CONFIG`
+(mode `0600`, never through a symbolic link) and prints `ready`. Its capture
+command is in the [change record](changes/irc-thread-status/delivery.md).
+
 The runtime's integration test against the same server runs when
 `IRC_TEST_SERVER` is set (`IRC_TEST_SERVER=127.0.0.1:16667 cargo test -p
 subspace-client-irc`) and is skipped otherwise. With the same variable,
@@ -814,7 +1534,7 @@ messages after its anchor.
   holds the rules. Saved passwords stay in the saved object and are written
   back only when untouched.
 - `state.rs` is a pure reducer over runtime events: networks, buffers, topics,
-  members, typing, read markers and unread and mention counts. Live lines keep
+  members, typing, nick statuses, read markers and unread and mention counts. Live lines keep
   a buffer at 2,000 lines, dropping the oldest. Loaded history raises that
   buffer's limit by the lines it added, up to 10,000; a page that would pass
   10,000 keeps its newest lines that fit and ends **Load older messages**.
@@ -822,9 +1542,10 @@ messages after its anchor.
   mentions us or is in a private conversation raises `Attention`. History
   (`chathistory` batches, with their `draft/event-playback` events), a
   bouncer's replay (`Event::Replayed`, from ZNC's `znc.in/playback` batch),
-  our own lines, the **Server** buffer and lines the read marker covers
-  never do. The hub raises it for conversations not on screen (the focused
-  one and each tab group's displayed tab, published by the board), as a
+  our own lines, the **Server** buffer, lines the read marker covers and
+  folded request progress never do. The hub raises it for conversations not
+  on screen (the focused one and each tab group's displayed tab, published
+  by the board), as a
   `Notice::described` from `notice.rs`: who and where, with the network as
   the OS body, never the message. IRC declares OS delivery with the Glass
   sound as its notification defaults. See
@@ -835,10 +1556,17 @@ messages after its anchor.
   `Conversation::heading` gives the pane's toolbar the name in strong text
   and the topic in quiet text (`HeaderFacts::quiet`: the network, or the
   server buffer's status, while there is no topic); its accessible name
-  still says the network. A channel also has a `MemberList` view
+  still says the network. A fleet channel (see [Fleet roles](#fleet-roles))
+  leads with its captain's agent avatar (a ship) or a glyph for its kind,
+  and a ship's channel ends with a pill holding its captain's current nick
+  status (`header::live`), at most 40 characters, named
+  *Captain <nick>: <status>*, and nothing while the captain has none or no
+  member with its nick is signed in to its account. A channel also has a `MemberList` view
   (`members.rs`), which draws the rank groups under captions such as
   `Operators · 1`, each member with a small avatar, the nick and a quiet
-  note (`members::note`: `you`, `owner`, `admin` or `half-operator`), and
+  note (`members::note`: `you`, a fleet's `captain`, `rear admiral` or `crew`,
+  `owner`, `admin` or `half-operator`), with
+  the member's status line, if any, under the nick, and
   leaves the heading and the scrolling to its host. Both observe
   the hub and report navigation as events.
 - `view/frame.rs` composes the Framework's workspace shell
@@ -850,9 +1578,12 @@ messages after its anchor.
   `Irc::text_edge`, refreshed each render), rows keep the theme's row
   height (not `comfortable_rows`), and `row_trailing` draws unread and user
   counts at caption size, as `NavRow`'s count. The pane's toolbar leads with the initiative picker and the heading
-  of the conversation in front, and trails with **Connect** or
-  **Disconnect**, **Join…** and **More** (`toolbar.rs`) between the two dock
-  switches. The inspector is titled **Members**, with the count for a
+  of the conversation in front, and trails with a search button, which
+  opens find in the conversation (`find_in_page::Open`), and **More**
+  (`toolbar.rs`). **More** holds **Connect** or **Disconnect** and **Join…**
+  for the network, then the selected buffer's removal. Join is also in the
+  navigator's header, and the command palette offers Join, Connect and
+  Disconnect. The inspector is titled **Members**, with the count for a
   channel, and holds the focused channel's `MemberList`. While the navigator
   is hidden, `view/conversations.rs` adds a menu of every network's
   conversations at the start of the toolbar. Before a network is configured
@@ -895,13 +1626,29 @@ messages after its anchor.
   at low opacity; a row that mentions us keeps its `select` fill
   (`transcript/fill.rs`). Message and compact-line text is capped at
   `workspace::READING_WIDTH_PX`; the row's fill runs the pane's width.
+  `thread_status.rs` reads the progress marker and `thread_status/trust.rs`
+  decides which notices the server vouches for; `state/folding.rs` keeps
+  each buffer's folded set, which `lines.rs` leaves out of the rows.
+  `thread_status/model.rs` rebuilds each request's status from the folded
+  notices on every conversation sync, beside the reply counts, and
+  `transcript/status.rs` draws it under the request with GPUI Kit's
+  `Marker`, with Kit's `Progress` as the stage meter while it runs, and a
+  quiet settled line once it ends (see
+  [Request status lines](#request-status-lines)).
   See [GPUI-Kit messaging reuse](../../subspace-framework/docs/ui-components.md#gpui-kit-messaging-reuse).
 - The composer (`compose.rs`) is the shared `ChatInput::message` in plain-text
   mode with recall keys, under the shared completion list. `Enter` sends and
   `Shift+Enter` breaks the line, which the hint under the input names
-  (`Return` on macOS). With uploads on, one quiet line above it holds the
-  paperclip (`irc-send-attachment`, **Send as attachment…**) and the
-  retention notice (`uploads/outgoing/view.rs`). `ChatInput` draws its frame
+  (`Return` on macOS). Under the input, a slim row (`compose/hints.rs`,
+  `irc-composer-hints`) names the keys with Kit's `Kbd`: `@` mention, `/`
+  commands, `↑` recall (IRC cannot edit a sent message) and `⇧⏎` new line,
+  each named `<word>: <key>` (*mention: at sign*); with uploads on, the
+  notice ends that row in a shorter form that says who can see what is
+  sent, “Subspace users see it for 30 days. No credentials.”, named in full
+  and shown in full on hover; a narrow pane truncates it. With uploads on,
+  one quiet line above the input holds the paperclip
+  (`irc-send-attachment`, **Send as attachment…**,
+  `uploads/outgoing/view.rs`). `ChatInput` draws its frame
   edge to edge, so the field is not rounded. Up and Down recall sent lines while the draft is empty,
   one line or a recalled line not yet edited (`ChatInput::set_recalled`), so
   a multi-line message does not stop the walk; they move between the lines of
@@ -914,7 +1661,15 @@ messages after its anchor.
     for the recipient, because `@` is not part of a nick.
   - `/` at the start of the draft offers the commands that the client parser
     (`subspace_client_irc::COMMANDS`, beside `parse_input`) handles, with
-    their arguments and a description. Choosing one inserts `/name `.
+    their arguments and a description. Choosing one inserts `/name `. In a
+    ship's channel or a Starbase the channel's own command comes first:
+    `/ask <text>` (`compose/ask.rs`), *Ask <agent> and track the answer*,
+    named as a command of this channel. The shared list has no section
+    caption, so nothing heads it. `/ask` sends `<agent>: <text>` as
+    `Command::Say` to the ship's captain or the Starbase's rear admiral
+    (`Roster::asked_in`), so the request status line tracks it; anywhere
+    else, or with no text, the draft stays and the input shows why. `ask`
+    names no client command, which a test checks.
   - The first argument of `/join` offers the network's channels. `/part` and
     `/topic` offer the channels you are in. `/msg`, `/query`, `/notice`,
     `/whois`, `/invite` and `/kick` offer everyone on the network.
@@ -933,15 +1688,15 @@ messages after its anchor.
 
 ## Inline issue summaries
 
-Each available issue chip has a separate compact shared `IconButton` chevron.
+Each available issue tile has a separate compact shared `IconButton` chevron.
 Its accessible name is **Show summary of SUB-2** or **Hide summary of SUB-2**,
-and Kit receives expanded state. Activation stops propagation; the chip’s
+and Kit receives expanded state. Activation stops propagation; the tile’s
 other button still navigates to Issues. Hover cards A and B show a supplied
 summary below the title in muted text, clamped to three lines; null is omitted.
 
 `Conversation::summaries` retains one selection per message, keyed by message
 sequence and issue identifier. Redraws keep the selection. The panel sits under
-the wrapping chip row; null uses **No summary yet**. The dashboard kit’s
+the wrapping tile row; null uses **No summary yet**. The dashboard kit’s
 `animated_collapsible::AnimatedCollapsible` composes a GPUI animation clock and
 standard GPUI layout. `DISCLOSURE_DURATION` is 200 ms with `ease_in_out`;
 height and opacity follow the same progress in both directions. The animation ID

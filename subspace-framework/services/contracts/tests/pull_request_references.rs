@@ -3,8 +3,8 @@
 
 use subspace_contracts::github::recognition::PullRequestLink;
 use subspace_contracts::github::{
-    Changed, CheckStatus, MAX_RESOLVE, PullRequestDetails, PullRequestStatus, Resolution,
-    ResolutionState, ResolvePullRequests, ReviewStatus,
+    Changed, CheckCounts, CheckStatus, MAX_RESOLVE, PullRequestDetails, PullRequestStatus,
+    Resolution, ResolutionState, ResolvePullRequests, ReviewStatus,
 };
 use subspace_contracts::{MessageKey, MessageKind};
 
@@ -115,6 +115,7 @@ fn details_build_without_struct_literals() {
     .with_author(Some("octo"))
     .with_review(Some(ReviewStatus::ChangesRequested))
     .with_checks(Some(CheckStatus::Failure))
+    .with_check_counts(Some(CheckCounts::new(4, 5)))
     .with_updated_at(Some("2026-11-17T10:00:00Z"))
     .with_branches(Some("feat"), Some("main"))
     .with_changes(Some(12), Some(3));
@@ -123,6 +124,13 @@ fn details_build_without_struct_literals() {
     assert_eq!(details.author.as_deref(), Some("octo"));
     assert_eq!(details.review, Some(ReviewStatus::ChangesRequested));
     assert_eq!(details.checks, Some(CheckStatus::Failure));
+    let counts = details.check_counts.unwrap();
+    assert_eq!((counts.passed, counts.total), (4, 5));
+    assert_eq!(
+        CheckCounts::new(7, 5).passed,
+        5,
+        "never more passed than run"
+    );
     assert_eq!(details.updated_at.as_deref(), Some("2026-11-17T10:00:00Z"));
     assert_eq!(details.head_ref.as_deref(), Some("feat"));
     assert_eq!(details.base_ref.as_deref(), Some("main"));

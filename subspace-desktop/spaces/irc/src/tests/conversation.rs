@@ -108,7 +108,7 @@ fn a_conversation_stands_alone_without_the_board(cx: &mut TestAppContext) {
     cx.update(|window, _| {
         assert_eq!(
             window.find("irc-header").label(),
-            Some("#subspace, Local Ergo, topic: Fixture channel · https://example.org")
+            Some("#subspace, Acme IRC, topic: Fixture channel · https://example.org")
         );
         assert_eq!(
             window.find("irc-line:1:row").label(),
@@ -200,7 +200,7 @@ fn assert_workspace_alignment(window: &mut Window, title: Bounds<Pixels>) {
 fn assert_workspace_words(window: &mut Window) {
     assert_eq!(
         window.within("irc-toolbar").find("irc-header").label(),
-        Some("#subspace, Local Ergo, topic: Fixture channel · https://example.org"),
+        Some("#subspace, Acme IRC, topic: Fixture channel · https://example.org"),
         "the toolbar names the conversation in front, its network and topic"
     );
     assert_eq!(
@@ -287,7 +287,7 @@ fn conversation_tabs_keep_short_names_and_describe_unread_and_topic(cx: &mut Tes
         assert_eq!(title.label(), Some("#subspace"));
         assert_eq!(
             title.description(),
-            Some("#subspace, 1 unread item, mentions you, Local Ergo · Fixture channel · https://example.org")
+            Some("#subspace, 1 unread item, mentions you, Acme IRC · Fixture channel · https://example.org")
         );
         assert_eq!(
             bar.within(id).find("close-tab").label(),

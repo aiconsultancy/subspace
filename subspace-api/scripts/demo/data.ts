@@ -28,18 +28,20 @@ export const labels = [
   { name: "reliability", color: "#008c95" },
 ];
 
+// Each initiative lists its fleet's Starbase and command channels and the ship
+// channels of the captains working on its projects.
 export const initiatives = [
   {
     name: "Navigation console",
     fleet: "aurora",
-    channels: "#aurora-nav #aurora-command",
+    channels: "#aurora-starbase #aurora-command #aurora-lyra #aurora-orion",
     description: "Get survey crews from route planning to the first verified burn.",
     stakeholders: ["mira", "sela"],
   },
   {
     name: "Warp diagnostics",
     fleet: "borealis",
-    channels: "#borealis-warp #borealis-command",
+    channels: "#borealis-starbase #borealis-command #borealis-rigel",
     description:
       "Give operators enough context to distinguish simulator drift from a real incident.",
     stakeholders: ["tavi", "mira"],
@@ -47,7 +49,7 @@ export const initiatives = [
   {
     name: "Relay reliability",
     fleet: "aurora",
-    channels: "#aurora-relay #aurora-command",
+    channels: "#aurora-starbase #aurora-command #aurora-orion",
     description: "Recover gracefully when trackside relays disappear mid-survey.",
     stakeholders: ["mira", "tavi"],
   },

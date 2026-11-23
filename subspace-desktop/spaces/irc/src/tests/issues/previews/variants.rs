@@ -1,5 +1,6 @@
 //! The native card and chip controls keep their names and activation paths.
 use super::super::{TRACKER, open_board};
+use super::TILE_MAX_PX;
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{TestAppContext, px};
 use std::{cell::RefCell, rc::Rc};
@@ -45,7 +46,7 @@ fn compact_chips_keep_scoped_click_and_reference_keyboard_navigation(cx: &mut Te
     cx.run_until_parked();
     cx.update(|window, cx| {
         window.render_frame(cx);
-        assert!(window.find(TILE).bounds().size.height < px(40.));
+        assert!(window.find(TILE).bounds().size.height < px(TILE_MAX_PX));
         assert_eq!(
             window.find("irc-line:2:issue-preview:TST-12:open").label(),
             Some("Open TST-12 in Issues: Fixture tile, In progress")
@@ -138,7 +139,7 @@ fn chip_rows_wrap_and_keep_long_titles_inside_the_transcript(cx: &mut TestAppCon
                 chip.right() <= transcript.right(),
                 "{identifier} stays inside the transcript"
             );
-            assert!(chip.size.height < px(40.));
+            assert!(chip.size.height < px(TILE_MAX_PX));
         }
         let first = window.find("irc-line:2:issue-preview:TST-18").bounds();
         let last = window.find("irc-line:2:issue-preview:TST-20").bounds();
@@ -146,13 +147,14 @@ fn chip_rows_wrap_and_keep_long_titles_inside_the_transcript(cx: &mut TestAppCon
     });
 }
 #[gpui_kit::test]
-fn a_single_available_issue_is_always_a_chip(cx: &mut TestAppContext) {
+fn a_single_available_issue_keeps_one_tile_height(cx: &mut TestAppContext) {
     let (_, _, tracker, cx) = open_board(cx, true, "TST-12 TST-15");
     let tracker = tracker.unwrap();
     let phases = [
         ResolutionState::Unavailable,
         ResolutionState::Available(summary("TST-15")),
     ];
+    let mut heights = Vec::new();
     for second in phases {
         cx.update(|_, cx| {
             tracker.update(cx, |tracker, _| {
@@ -166,7 +168,12 @@ fn a_single_available_issue_is_always_a_chip(cx: &mut TestAppContext) {
         cx.update(|window, cx| {
             window.render_frame(cx);
             let height = window.find(TILE).bounds().size.height;
-            assert!(height < px(40.), "chip height {height:?}");
+            assert!(height < px(TILE_MAX_PX), "tile height {height:?}");
+            heights.push(height);
         });
     }
+    assert_eq!(
+        heights[0], heights[1],
+        "a neighbour's answer never changes it"
+    );
 }

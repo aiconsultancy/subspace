@@ -1,6 +1,7 @@
 //! Render, click and keyboard tests of the Space in a window, reading the
 //! fictional fixture decisions. The pure modules keep their own tests.
 
+mod account;
 mod issues;
 mod list;
 mod page;

@@ -17,8 +17,9 @@ builds default those boards to enabled. GitHub defaults to enabled. Copilot Agen
 An explicit `true` or `false` in `boards` overrides that default. Settings
 writes `true` when you enable a default-off board.
 
-For example, the Subspace App's experimental Actions board defaults to
-disabled in every build. Its Enabled setting is its only gate. Flow has no separate feature flag.
+For example, the Subspace App's Copilot Agents board defaults to disabled in
+every build, and its Enabled setting is its only gate. The Actions board
+defaults to enabled; its Flow view has no separate feature flag.
 
 A disabled board's feature choices remain saved, but its features resolve to
 off. Re-enabling the board restores those choices. App features are independent

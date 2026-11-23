@@ -17,8 +17,10 @@ The app checks for updates at launch by default. To check manually, open
 ## Developer overview
 
 A desktop dashboard app built with Rust and
-[GPUI Kit](https://github.com/longbridge/gpui-kit). It opens in the Cupertino Dark
-theme, with Space tabs in the title bar and a ⌘K command palette. Every Space
+[GPUI Kit](https://github.com/longbridge/gpui-kit). A new install opens in the
+Twilight Two theme, and an install from before that keeps the theme it shows
+([why](docs/changes/default-twilight-two/README.md)). It has Space tabs in the
+title bar and a ⌘K command palette. Every Space
 uses the same workspace shell: a navigator on the left, a tab strip and
 toolbar above the content, an inspector on the right and the status bar
 (see the [design guide](../subspace-framework/docs/design-guide.md)).
@@ -37,13 +39,13 @@ prototype [Channels Space](docs/irc.md) (IRC), the [Issues](docs/issues.md)
 and [Decisions](docs/decisions.md) Spaces for Subspace API, and the default-off
 [Actions board](docs/actions.md). Two Spaces are not ready to ship and are
 left out of the default and release builds: the
-[Board Lab alpha](docs/board-lab.md) (macOS ARM64 only) and the developer
+[Space Lab alpha](docs/space-lab.md) (macOS ARM64 only) and the developer
 [Component gallery](../subspace-framework/spaces/component-gallery/help.md), which shows the shared UI
 controls in their states, with fixture data. Build them in with the
-product's `board-lab` and `component-gallery` features, or both with
+product's `space-lab` and `component-gallery` features, or both with
 `unreleased-spaces` (`make run-unreleased`); they start off there.
-The standalone Board Lab developer harnesses are retired; the integrated board
-and its [historical design evidence](docs/agents/board-lab/README.md) remain.
+The standalone Space Lab developer harnesses are retired; the integrated board
+and its [historical design evidence](docs/agents/space-lab/README.md) remain.
 Debug builds dock a [terminal](docs/terminal.md) beside every Space, as they
 do the chat, through the optional `terminal` feature, on macOS, Linux and, as
 an experiment, Windows (ConPTY). Each dashboard reads its service
@@ -68,9 +70,10 @@ screenshots.
 | Channels | [IRC networks, channels and private messages](spaces/irc/help.md) |
 | Issues | [Subspace API issues and comments](spaces/issues/help.md) |
 | Decisions | [Subspace API decisions](spaces/decisions/help.md) |
-| Board Lab | [Native dashboards and managed environments](spaces/board-lab/help.md) |
+| Space Lab | [Native dashboards and managed environments](spaces/space-lab/help.md) |
 | Actions | [GitHub Actions](spaces/actions/help.md) |
 | Component gallery | [Shared UI components for developers](../subspace-framework/spaces/component-gallery/help.md) |
+| Fleet Console | [Fleet Console web Space](web-spaces/fleet-console/README.md) |
 | Web Spaces | [Websites and installed web Spaces](spaces/web/help.md) |
 
 Availability depends on the platform, build features and enabled boards. Configured web Spaces share the Web Spaces guide.
@@ -183,10 +186,11 @@ Build and run from source with `make run`. On macOS this builds a fresh debug
 it does not sign or replace `dist/Subspace.app`. Pass app arguments with
 `make run ARGS='...'`. Arguments run headless, including on macOS.
 `make run-unreleased` does the same with the Spaces that are not ready to
-ship, Board Lab (macOS ARM64) and the Component gallery, built in through the
+ship, Space Lab (macOS ARM64) and the Component gallery, built in through the
 product's `unreleased-spaces` feature. Both start off: turn them on in
-Settings or from **Add a Space**. Release, packaging and capture builds
-never include them.
+Settings or from **Add a Space**. Release and packaging builds never include
+them; capture builds include them only when `CAPTURE_FEATURES` names them
+([Desktop capture](docs/capture.md)).
 Use `make capture OUT=<dir>` for isolated fixture screenshots on macOS or
 Linux. Linux uses the native executable on a private Xvfb display; see
 [Desktop capture](docs/capture.md) for prerequisites and options.
@@ -280,17 +284,19 @@ products/descriptor         subspace-descriptor            the app's product des
 spaces/github               subspace-github-board          GitHub pull requests, issues, diffs
 spaces/github-copilot-agents subspace-github-copilot-agents-board GitHub Copilot cloud agent tasks and chats
 spaces/actions              subspace-actions-board         experimental GitHub Actions runs, deployments, releases and job graphs
-spaces/board-lab            subspace-board-lab-board       alpha native dashboards and managed runtimes (macOS ARM64; `board-lab` feature)
-spaces/board-lab/crates/mxc-worker subspace-mxc-worker     MXC Seatbelt worker adapter; unsupported platforms fail closed
+spaces/space-lab            subspace-space-lab-board       alpha native dashboards and managed runtimes (macOS ARM64; `space-lab` feature)
+spaces/space-lab/crates/mxc-worker subspace-mxc-worker     MXC Seatbelt worker adapter; unsupported platforms fail closed
 spaces/irc                  subspace-irc-board             IRC networks, channels and private messages ([docs](docs/irc.md))
 spaces/issues               subspace-issues-board          Subspace issues, activity, comments and attachments
 spaces/decisions            subspace-decisions-board       Subspace decisions, read only
 spaces/web                  subspace-web-board             web pages and installed web Spaces in a native web view
 clients/irc                 subspace-client-irc            IRC and IRCv3 protocol, connections and runtime
 clients/subspace-api        subspace-api-client            Subspace API reads, writes, live updates and development sign-in
+clients/fleet               subspace-client-fleet          Stargate Fleet API reads and stream, per-fleet tokens and the fleet service ([docs](docs/fleet-api.md))
 terminal/panel              subspace-terminal-panel        the docked terminal panel (excluded Zig workspace, feature `terminal`; [docs](docs/terminal.md))
 terminal/runtime            subspace-terminal              PTY/ConPTY sessions with libghostty VT emulation (excluded Zig workspace)
 terminal/ghostty-config     subspace-ghostty-config        Zig-free Ghostty configuration and theme parser
+web-spaces/fleet-console    (not a crate)                  Fleet Console web Space, built into the app
 web-spaces/examples/weather (not a crate)                  installable Weather web Space package
 ```
 
@@ -318,7 +324,10 @@ a dashboard runs them in `cx.background_spawn` and applies the result with
 
 ## Settings and stored state
 
-The Subspace App can add [web Spaces](spaces/web/help.md) immediately from
+The Subspace App ships one web Space, [Fleet Console](web-spaces/fleet-console/README.md),
+in the tab strip on macOS and Windows from the first start: the build embeds
+its package files and the app adds its `webBoards.fleet-console` entry at
+start. It can add other [web Spaces](spaces/web/help.md) immediately from
 **Settings > Application > Web Spaces**, using URLs, built folders, ZIPs or
 organization-authorized GitHub sources. It includes an installable UK-postcode
 Weather example. Local apps can declare native settings and request a
@@ -329,6 +338,13 @@ packages live in [web-spaces/](web-spaces/README.md).
 The [full-text Search view](../subspace-framework/docs/search.md) searches opted-in retained board
 content. Open it with **Cmd/Ctrl+Shift+F**. It shares its read-only query service
 with Copilot Chat and MCP. BM25 works without the optional local ONNX model.
+
+Each fleet's Fleet API token is saved once in **Settings > Application >
+Fleets** and used by every Space that shows the fleet, the built-in Fleet
+Console included. It is kept in the system keychain (in debug builds, the
+owner-only `fleet-api-tokens.json` beside `state.json`) with the address it
+was saved for, and only ever sent there; the address comes from the
+Subspace API. See [Fleets and the Fleet API](docs/fleet-api.md).
 
 Product GUI settings and preferences are separate. Existing native Subspace
 locations remain supported. A product also checks `~/.config/<binary>/config.json`
@@ -347,7 +363,7 @@ excluded boards. The Subspace App uses prefixed commands.
 Enable or disable boards on their pages in Settings. Each included board has an
 Enabled checkbox, including boards that default to off. Save applies the
 choice without a restart: an enabled board gets its tab, background work and
-agent tools, and a disabled board loses them. Board Lab only hides its tab
+agent tools, and a disabled board loses them. Space Lab only hides its tab
 while disabled, so its project workers keep running until you quit or enable
 the board again. Full-text
 search adds a newly enabled board after a restart. Settings cannot add boards
@@ -386,19 +402,19 @@ values keyed by ID: `{"boards":{"github":false,"irc":true}}`. An omitted
 board uses that product's default for the current build. In a Subspace release
 build, Channels and Issues default to disabled. They remain compiled and
 you can enable them in Settings. Debug builds enable Channels and Issues
-by default. GitHub defaults to enabled in both builds; Copilot Agents and Actions default to disabled.
+by default. GitHub and Actions default to enabled in both builds; Copilot Agents defaults to disabled.
 An explicit `true` or `false`
 overrides the product default. Restart to apply changes made in the file;
 Settings applies them on Save. Disabled boards have
 no UI or agent tools. Config cannot enable a board excluded from a product.
-Actions defaults to disabled in both builds. Enable it in Settings and save;
-its Flow view needs no separate experiment flag.
-Board Lab and the Component gallery are in the binary only with the
-`board-lab` and `component-gallery` features, which release builds leave off.
+Actions defaults to enabled in both builds. Its Flow view needs no separate
+experiment flag.
+Space Lab and the Component gallery are in the binary only with the
+`space-lab` and `component-gallery` features, which release builds leave off.
 Built in, each defaults to disabled in both builds: enable it in Settings and
-save, or choose it from **Add a Space**. Opening Board Lab does not install
+save, or choose it from **Add a Space**. Opening Space Lab does not install
 runtimes or packages; provisioning requires an explicit action. Linux and
-Windows do not include Board Lab, even with its feature.
+Windows do not include Space Lab, even with its feature.
 Each board bundles Markdown help for the app and the
 read-only `board_help` tool in agent chat/MCP.
 
@@ -506,7 +522,7 @@ keeps the collapse control.
 | \` | Theme designer |
 | ? | Show or hide the Help dock panel |
 | Cmd+Shift+/ (Ctrl+Shift+/ on Windows and Linux) | Show or hide Keyboard Shortcuts. Type to filter by key or action; Esc closes it and restores focus |
-| F1 to F12 | Dashboard switch keys with Secondary+1 to Secondary+9. Enabled product order. With every Subspace board on: F1 GitHub, F2 Copilot Agents, F3 Channels, F4 Issues, F5 Decisions, F6 Actions. A build with the unreleased Spaces adds the Component gallery after Actions and, on macOS ARM64, Board Lab after Decisions. Disabled boards take no slot. Unused positions do nothing. |
+| F1 to F12 | Dashboard switch keys with Secondary+1 to Secondary+9. Enabled product order. With every Subspace board on: F1 GitHub, F2 Copilot Agents, F3 Channels, F4 Issues, F5 Decisions, F6 Actions. A build with the unreleased Spaces adds the Component gallery after Actions and, on macOS ARM64, Space Lab after Decisions. Disabled boards take no slot. Unused positions do nothing. |
 | Secondary+1 to Secondary+9 | Product dashboard order; unused positions do nothing. |
 | Cmd+Shift+L (Ctrl+Shift+L elsewhere) | Show the log viewer |
 | Cmd+Shift+C (Super+Shift+C on Linux, Ctrl+Shift+C on Windows) | Show or hide chat |
@@ -567,7 +583,7 @@ target lists the targets.
 | Build every crate | `make build` |
 | Update compatible dependencies | `make update-deps` |
 | Run the desktop app | `make run` |
-| Run it with Board Lab and the Component gallery | `make run-unreleased` |
+| Run it with Space Lab and the Component gallery | `make run-unreleased` |
 | Tests | `make test` |
 | Format check, lint and tests | `make check` |
 | Format the sources | `make format` |

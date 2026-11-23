@@ -48,6 +48,7 @@ pub use registry::{BoardRegistration, ConfiguredBoards};
 pub use search_runtime::RerankerFactory;
 pub use settings::extensions::SettingsExtension;
 pub use startup::{ProductBuild, launch};
+pub use theme::record_new_install_theme;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

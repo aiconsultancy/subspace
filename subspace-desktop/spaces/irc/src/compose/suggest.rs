@@ -1,13 +1,15 @@
 //! What the word at the cursor could become: an `@member`, a `/command`, a
-//! command's first argument or a `#channel`. Pure: [`Facts`] are gathered
-//! from the hub's state, and the result is shown in the shared completion
-//! list above the composer.
+//! command's first argument or a `#channel`. In a fleet channel, its own
+//! commands ([`super::ask`]) come before the IRC client's. Pure: [`Facts`]
+//! are gathered from the hub's state, and the result is shown in the shared
+//! completion list above the composer.
 
 use std::ops::Range;
 
 use subspace_client_irc::{BufferKey, COMMANDS, CommandHelp, FirstArgument, Member, Target};
 use subspace_framework::dashboard::chat_input::completion::{CompletionItem, word_before};
 
+use crate::fleet::{Rank, Roster};
 use crate::state::{IrcState, is_message};
 
 /// Lines read back for who spoke recently.
@@ -22,6 +24,10 @@ pub(crate) struct Person {
     /// The highest channel prefix, such as `@`.
     pub prefix: Option<char>,
     pub away: bool,
+    /// The fleet rank the Space knows for the nick.
+    pub rank: Option<Rank>,
+    /// The member's server account, which must be the nick for a rank.
+    pub account: Option<String>,
 }
 
 impl Person {
@@ -30,6 +36,8 @@ impl Person {
             nick: nick.to_owned(),
             prefix: None,
             away: false,
+            rank: None,
+            account: None,
         }
     }
 
@@ -38,6 +46,8 @@ impl Person {
             nick: member.nick.clone(),
             prefix: member.prefixes.chars().next(),
             away: member.away,
+            rank: None,
+            account: member.account.clone(),
         }
     }
 }
@@ -54,6 +64,9 @@ pub(crate) struct Facts {
     pub channels: Vec<String>,
     /// The channels we are in, by name.
     pub joined: Vec<String>,
+    /// The agent `/ask` addresses in this channel, when it is a fleet's
+    /// ship channel or Starbase.
+    pub ask: Option<String>,
 }
 
 /// One choice: the row shown, and the text that replaces the word.
@@ -128,7 +141,7 @@ fn command_before(before: &str) -> Option<&'static CommandHelp> {
 
 fn choices(trigger: Trigger<'_>, facts: &Facts) -> Vec<Suggestion> {
     match trigger {
-        Trigger::Command(query) => commands(query),
+        Trigger::Command(query) => commands(query, facts.ask.as_deref()),
         Trigger::Mention(query) => people(&facts.people, query, "@"),
         Trigger::Channel(query) => channels(&facts.joined, query),
         Trigger::Argument(FirstArgument::Nick, query) => {
@@ -140,10 +153,15 @@ fn choices(trigger: Trigger<'_>, facts: &Facts) -> Vec<Suggestion> {
     }
 }
 
-/// Commands whose name or alias starts with `query`, in catalogue order.
-fn commands(query: &str) -> Vec<Suggestion> {
+/// Commands whose name or alias starts with `query`: the channel's own
+/// first, when it has an agent to `ask`, then the IRC client's in
+/// catalogue order.
+fn commands(query: &str, ask: Option<&str>) -> Vec<Suggestion> {
     let query = query.to_ascii_lowercase();
-    COMMANDS
+    let own = ask
+        .filter(|_| super::ask::NAME.starts_with(&query))
+        .map(ask_suggestion);
+    let client = COMMANDS
         .iter()
         .filter(|command| {
             std::iter::once(&command.name)
@@ -158,8 +176,21 @@ fn commands(query: &str) -> Vec<Suggestion> {
             )
             .spoken(format!("{}, {}", command.usage(), command.description)),
             insert: format!("/{} ", command.name),
-        })
-        .collect()
+        });
+    own.into_iter().chain(client).collect()
+}
+
+/// `/ask`, which addresses `agent`, as a command of this channel.
+fn ask_suggestion(agent: &str) -> Suggestion {
+    let description = super::ask::description(agent);
+    let name = super::ask::NAME;
+    let args = super::ask::ARGS;
+    Suggestion {
+        item: CompletionItem::command(format!("/{name}"), args, description.clone()).spoken(
+            format!("/{name} {args}, {description}, a command of this channel"),
+        ),
+        insert: format!("/{name} "),
+    }
 }
 
 /// People whose nick starts with `query`, ignoring case, each inserted
@@ -177,16 +208,26 @@ fn people(people: &[Person], query: &str, sigil: &str) -> Vec<Suggestion> {
         .collect()
 }
 
+/// A person's row: the channel prefix and the fleet rank as the trailing
+/// mark, as the member list notes them, such as `@ · captain`.
 fn person_item(person: &Person) -> CompletionItem {
     let rank = match person.prefix {
         Some('~' | '&' | '@' | '%') => ", operator",
         Some('+') => ", voiced",
         _ => "",
     };
+    let fleet = person
+        .rank
+        .map(|rank| format!(", {}", rank.note()))
+        .unwrap_or_default();
     let away = if person.away { ", away" } else { "" };
-    let mark = person.prefix.map(String::from).unwrap_or_default();
-    CompletionItem::person(person.nick.clone(), mark, person.away)
-        .spoken(format!("{}{rank}{away}", person.nick))
+    let prefix = person.prefix.map(String::from);
+    let mark: Vec<String> = prefix
+        .into_iter()
+        .chain(person.rank.map(|rank| rank.note().to_owned()))
+        .collect();
+    CompletionItem::person(person.nick.clone(), mark.join(" · "), person.away)
+        .spoken(format!("{}{rank}{fleet}{away}", person.nick))
 }
 
 /// Channels whose name starts with `query`, with or without its `#`.
@@ -216,7 +257,22 @@ impl Facts {
             everyone: ordered(network_people(state, buffer), &recent, &own),
             channels,
             joined,
+            ask: None,
         }
+    }
+
+    /// The same facts with the agent `/ask` addresses, when there is one.
+    pub fn asking(mut self, agent: Option<&str>) -> Self {
+        self.ask = agent.map(str::to_owned);
+        self
+    }
+
+    /// The same facts with each person's fleet rank from `roster`.
+    pub fn ranked(mut self, roster: &Roster) -> Self {
+        for person in self.people.iter_mut().chain(self.everyone.iter_mut()) {
+            person.rank = roster.verified(&person.nick, person.account.as_deref());
+        }
+        self
     }
 }
 

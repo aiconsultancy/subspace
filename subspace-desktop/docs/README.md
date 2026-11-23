@@ -47,6 +47,10 @@ which, read the [layout](../README.md#layout) and the
   sign-in and the Subspace API.
 - [Issues and Subspace API](issues.md): the API connection, projects, the
   shared hub, live updates, comments and offline fixtures.
+- [Fleets and the Fleet API](fleet-api.md): the Stargate Fleet API client,
+  the app-wide fleet service a Space follows a fleet through, one saved
+  token per fleet bound to its address, Settings › Fleets and what the
+  built-in Fleet Console receives.
 
 ## Code quality and checks
 
@@ -95,7 +99,7 @@ then fill in its [board checklist](../../subspace-framework/docs/board-checklist
 | Channels | [IRC networks, channels and private messages](../spaces/irc/help.md) | [Channels](irc.md): configuration, protocol support, initiatives and fleets, agent tools |
 | Issues | [Subspace API issues and comments](../spaces/issues/help.md) | [Issues and Subspace API](issues.md): connection, shared hub and offline fixtures |
 | Decisions | [Subspace API decisions](../spaces/decisions/help.md) | [Decisions](decisions.md): reads, stored choices and opening linked issues |
-| Board Lab | [Native dashboards and managed environments](../spaces/board-lab/help.md) | [Board Lab](board-lab.md): enablement and safety; [design evidence](agents/board-lab/README.md): retired harness history |
+| Space Lab | [Native dashboards and managed environments](../spaces/space-lab/help.md) | [Space Lab](space-lab.md): enablement and safety; [design evidence](agents/space-lab/README.md): retired harness history |
 | Actions | [GitHub Actions](../spaces/actions/help.md) | [Actions board](actions.md) |
 | Component gallery | [Shared UI components](../../subspace-framework/spaces/component-gallery/help.md) | |
 | Web Spaces | [Websites and installed web Spaces](../spaces/web/help.md) | [Web Space reference](web-spaces-reference.md): manifest, install sources, package rules, bridge; [authoring guide](web-spaces-guide.md) |
@@ -138,6 +142,9 @@ If you want to know where settings, credentials and state are stored, read
   `config.json`, credential priority, `state.json` and caches.
 - [Settings and appearance](settings.md): the Settings dialog, updates and
   service connections.
+- [Fleet API tokens](fleet-api.md#where-tokens-are-stored): where each
+  fleet's token is kept (keychain, or `fleet-api-tokens.json` in debug
+  builds) and the rule that sends it only to the address it was saved for.
 
 ## Releases, packaging and installation
 
@@ -169,6 +176,9 @@ shared quick-start fragments live in `subspace/includes/`.
 
 - [Selectable find results and link menus](changes/gpui-text-patch/README.md):
   before-and-after evidence from the Component gallery fixture.
+- [Fleet API client and shared fleet tokens](changes/fleet-api-client/README.md):
+  native reads and the event stream of each initiative's fleet, one token
+  per fleet in Settings › Fleets, and the built-in Fleet Console's share.
 - [Subspace API, accounts and fleets](changes/subspace-api-accounts/README.md):
   the Issues client, provider-neutral sign-in, initiative and fleet switching
   in Channels, and what came across from a downstream fork.
@@ -198,8 +208,45 @@ record. [Change records](changes/README.md) explains the convention.
   the plus after the last Space tab and its menu of the Spaces that are off.
 - [Decisions Space](changes/decisions-space/intent.md): a read-only Space
   listing every decision, built on the workspace shell.
+- [Fleet roles in Channels](changes/channels-fleet-roles/README.md): rank
+  marks for captains and the rear admiral, a ship channel's live status,
+  connection commands in **More**, state dots on references and a counted
+  unread divider.
+- [Agent identity in Channels](changes/channels-agent-identity/README.md):
+  ranks from the API's agent nicks and the fleet's recorded channels, agent
+  avatars and coloured marks, no private conversation with an agent, and
+  the base pull request's review fixes.
+- [Channels navigator, request lines and composer hints](changes/channels-navigator-and-requests/README.md):
+  the navigator grouped by fleet with a People section, request status lines
+  that settle into `Done in …`, and the composer's hint row with `/ask`.
+- [Channels fleet live](changes/channels-fleet-live/README.md): each
+  fleet's live state from its Fleet API in Channels: a ship's dot, the
+  header pill and the Ship, Starbase and People inspector tabs.
+- [Channels Thread tab](changes/channels-thread-tab/README.md): the
+  inspector's Thread tab with a request's status timeline and its replies,
+  reply counts and status lines that open it, and reply mode.
+- [Channels reactions](changes/channels-reactions/README.md): message
+  reactions as pills in Channels, toggling yours, the stop reactions on a
+  running request, and the client layer's review findings closed.
+- [Channels tiles once](changes/channels-tiles-once/README.md): an issue or
+  pull request tile only under the first message that names it, and fuller
+  two-line tiles of a fixed size for both.
 - [Bundled Inter and JetBrains Mono](changes/bundled-fonts/README.md): the
   fonts the Subspace App embeds for Twilight Two, and why themes that name no
   font keep the platform's fonts.
-- [Unreleased Spaces](changes/unreleased-spaces/intent.md): Board Lab and the
-  Component gallery as Cargo features left out of release builds.
+- [Unreleased Spaces](changes/unreleased-spaces/intent.md): Space Lab (then
+  Board Lab) and the Component gallery as Cargo features left out of release
+  builds.
+- [Fleet Console built in](changes/fleet-console-built-in/README.md): Fleet
+  Console in every macOS and Windows build without an install, and the
+  fictional Stargate Fleet API that captures show it live against.
+- [Workspace shell review findings](changes/workspace-shell-review-findings/intent.md):
+  the follow-up that takes every open review finding of the workspace shell,
+  starting with Decisions dropping what it read when the account changes.
+- [Space Lab rename](changes/space-lab-rename/intent.md): Board Lab renamed
+  Space Lab, in its display name and every identifier, with no migration.
+- [Space Lab store race](changes/space-lab-store-race/intent.md): Space Lab's
+  project folders created without a start-up race.
+- [Twilight Two for new installs](changes/default-twilight-two/README.md): a
+  new install opens in Twilight Two, recorded at its first start, while an
+  existing install keeps the theme it shows.

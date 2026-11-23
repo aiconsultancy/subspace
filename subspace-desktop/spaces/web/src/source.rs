@@ -44,12 +44,16 @@ pub fn settings_fields(board: &WebBoard) -> Option<BoardFields> {
     })
 }
 
-/// Board `id`'s recorded install source, from the config file.
-pub(crate) fn recorded(id: &str, cx: &gpui_kit::App) -> Option<crate::install::ManagedSource> {
+/// Board `id`'s raw entry in the config file, which records where it was
+/// installed from.
+pub(crate) fn entry(
+    id: &str,
+    cx: &gpui_kit::App,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
     let services = cx.try_global::<subspace_framework::dashboard::Services>()?;
     let file =
         subspace_framework::core::settings::SettingsFile::open(&services.config_file).ok()?;
-    crate::bridge::secrets::owner::recorded(&file.web_board(id)?)
+    file.web_board(id)
 }
 
 /// What decides whether `board`'s page opens again when the config file

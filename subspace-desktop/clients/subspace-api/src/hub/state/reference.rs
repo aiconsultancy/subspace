@@ -35,6 +35,7 @@ impl ReferenceCard {
                 pull_requests: fields.pull_request_summary,
                 due_date: fields.due_date,
                 latest_activity: fields.last_activity,
+                ready_for_agents: fields.ready_for_agents,
             },
         }
     }
@@ -149,4 +150,6 @@ pub struct ReferenceFacts {
     pub pull_requests: Option<PullRequestSummary>,
     pub due_date: Option<String>,
     pub latest_activity: Option<LastActivity>,
+    /// Whether the issue is flagged Ready for agents; `None` when unknown.
+    pub ready_for_agents: Option<bool>,
 }

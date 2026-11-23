@@ -1,6 +1,6 @@
 // Stamps the build the app reports through `ProductBuild`, sets its build
-// configuration, including the optional organisation branding, and
-// embeds the Windows resources.
+// configuration, including the optional organisation branding, embeds the
+// Windows resources and lists the files of the built-in web Spaces.
 
 #[path = "build/branding.rs"]
 mod branding;
@@ -12,6 +12,8 @@ mod config;
 mod settings;
 #[path = "build/stamp.rs"]
 mod stamp;
+#[path = "build/web_spaces.rs"]
+mod web_spaces;
 #[path = "build/windows_resources.rs"]
 mod windows_resources;
 
@@ -26,6 +28,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = std::env::var_os(branding::CONFIG_ENV)
         .map_or_else(|| branding::DEFAULT_CONFIG.into(), PathBuf::from);
     branding::embed(&manifest.join(config), &output)?;
+    // products/<product>/ inside this workspace.
+    web_spaces::embed(&manifest.join("../.."), &output)?;
     for line in stamp::directives(&build_env())
         .into_iter()
         .chain(config::directives(&overrides()))
@@ -42,7 +46,6 @@ fn overrides() -> config::Overrides {
     }
 }
 
-// qual:allow(test_quality, untested) reason: "Reads Cargo's build-script environment, which exists only while the build script runs; the stamp it feeds is tested in the app's tests."
 fn build_env() -> stamp::BuildEnv {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap_or_default());
     stamp::BuildEnv {

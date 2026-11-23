@@ -13,7 +13,7 @@ use subspace_framework::dashboard::{Tokens, feedback, workspace};
 
 use crate::graph::GraphJob;
 use crate::model::{Record, View};
-use crate::panel::RunDetail;
+use crate::panel::{LogState, RunDetail};
 use crate::{Actions, inspector, lanes};
 
 /// The item open beside the view.
@@ -44,6 +44,7 @@ pub(crate) fn shows_opened(index: usize) -> bool {
 impl Actions {
     /// Opens record `key` of the current view in the second tab and shows
     /// it. A run whose jobs the selection has not read yet reads them now.
+    /// Reopening the same attempt of the same item keeps its log.
     pub(crate) fn open_tab(&mut self, key: &str, cx: &mut Context<Self>) {
         let Some(record) = self
             .records()
@@ -58,17 +59,21 @@ impl Actions {
         {
             self.load_detail(target.clone(), cx);
         }
-        let log = self
+        let kept = self
             .open
             .take()
-            .filter(|open| open.key == key)
-            .and_then(|open| open.detail.log);
+            .filter(|open| open.key == key && open.detail.target == record.run)
+            .map(|open| (open.detail.log, open.detail.log_request));
         let detail = match &record.run {
-            Some(_) => RunDetail {
-                log,
-                selected_job: None,
-                ..self.detail.clone()
-            },
+            Some(_) => {
+                let (log, log_request) = kept.unwrap_or_default();
+                RunDetail {
+                    log,
+                    log_request,
+                    selected_job: None,
+                    ..self.detail.clone()
+                }
+            }
             None => RunDetail::default(),
         };
         self.open = Some(OpenTab {
@@ -86,12 +91,37 @@ impl Actions {
         cx.notify();
     }
 
-    /// Shows the view's tab (index 0) or the opened item's.
+    /// Shows the view's tab (index 0) or the opened item's. Showing the
+    /// opened item selects it again, in its own view, so the inspector and
+    /// the writes act on the item the page shows.
     pub(crate) fn select_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+        let shows = shows_opened(index);
+        if let Some((key, view)) = self
+            .open
+            .as_ref()
+            .filter(|_| shows)
+            .map(|open| (open.key.clone(), open.view))
+        {
+            self.follow_opened(&key, view, cx);
+        }
         if let Some(open) = &mut self.open {
-            open.active = shows_opened(index);
+            open.active = shows;
         }
         cx.notify();
+    }
+
+    /// Makes the opened item, still loaded in `view`, the selection.
+    fn follow_opened(&mut self, key: &str, view: View, cx: &mut Context<Self>) {
+        if !self.records_in(view).iter().any(|record| record.key == key) {
+            return;
+        }
+        if self.view != view {
+            self.set_view(view, cx);
+        }
+        if self.list.selected().map(AsRef::as_ref) != Some(key) {
+            let key = SharedString::from(key.to_owned());
+            list::update(self, cx, |list| list.select(key));
+        }
     }
 
     /// The opened item, while its tab is the one showing.
@@ -146,9 +176,25 @@ pub(crate) fn page(this: &Actions, open: &OpenTab, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+/// Whether `detail` was read for `record`'s current attempt. A run's facts
+/// and its jobs and log show together only then: after a re-run the tab
+/// waits for the new attempt rather than mixing the two.
+pub(crate) fn reads_current_attempt(record: &Record, detail: &RunDetail) -> bool {
+    record.run.is_some() && detail.target == record.run
+}
+
 /// The lead and facts, the record's own sections, then a run's jobs and log.
 fn sections(record: &Record, detail: &RunDetail, cx: &App) -> Vec<AnyElement> {
     let tokens = Tokens::current(cx);
+    let waiting = RunDetail {
+        loading: true,
+        ..RunDetail::default()
+    };
+    let detail = if reads_current_attempt(record, detail) {
+        detail
+    } else {
+        &waiting
+    };
     let mut parts = vec![inspector::lead(record, None, cx), properties(record, cx)];
     parts.extend(
         record
@@ -169,14 +215,36 @@ fn sections(record: &Record, detail: &RunDetail, cx: &App) -> Vec<AnyElement> {
     if record.run.is_some() {
         parts.push(jobs(detail, cx));
     }
-    parts.extend(detail.log.as_ref().map(|log| {
-        let body = list::render_body("actions-job-log", &Body::Text(log.clone().into()), &tokens);
+    parts.extend(job_log(&detail.log, &tokens, cx));
+    parts
+}
+
+/// The failed job's log once asked for: loading, the log, or why it did
+/// not load. A failed log leaves the jobs above it as they were.
+fn job_log(log: &LogState, tokens: &Tokens, cx: &App) -> Option<AnyElement> {
+    let body = match log {
+        LogState::None => return None,
+        LogState::Loading => {
+            feedback::loading_line(tokens, "actions-job-log-loading", "Loading the job log…")
+                .into_any_element()
+        }
+        LogState::Loaded(text) => {
+            list::render_body("actions-job-log", &Body::Text(text.clone().into()), tokens)
+                .into_any_element()
+        }
+        LogState::Failed(error) => feedback::empty_line(
+            tokens,
+            "actions-job-log-error",
+            format!("The job log did not load: {error}"),
+        )
+        .into_any_element(),
+    };
+    Some(
         workspace::section("Job log", cx)
             .child(body)
             .test_support()
-            .into_any_element()
-    }));
-    parts
+            .into_any_element(),
+    )
 }
 
 /// Every property the service gave, with the run's branch, actor and
@@ -260,8 +328,28 @@ fn job_block(job: &GraphJob, tokens: &Tokens) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{shows_opened, tab_label};
+    use super::{reads_current_attempt, shows_opened, tab_label};
+    use crate::panel::RunDetail;
     use crate::test_support::run;
+
+    #[test]
+    fn a_run_page_shows_jobs_only_from_the_attempt_it_names() {
+        let mut record = run("octo/app");
+        let read = RunDetail {
+            target: record.run.clone(),
+            ..RunDetail::default()
+        };
+        assert!(reads_current_attempt(&record, &read));
+        if let Some(run) = record.run.as_mut() {
+            run.attempt = 2;
+        }
+        assert!(
+            !reads_current_attempt(&record, &read),
+            "attempt 1's jobs never show beside attempt 2's facts"
+        );
+        record.run = None;
+        assert!(!reads_current_attempt(&record, &RunDetail::default()));
+    }
 
     #[test]
     fn a_run_tab_is_named_by_its_id_and_another_item_by_its_title() {

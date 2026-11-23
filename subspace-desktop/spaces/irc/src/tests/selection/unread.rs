@@ -20,7 +20,16 @@ fn a_drag_across_the_unread_divider_copies_both_sides_through_the_copy_action(
     ];
     let (hub, cx) = shown(cx, &room, live, older);
     cx.update(|window, _| {
-        assert_eq!(window.find("irc-unread:0").label(), Some("New messages"));
+        assert_eq!(
+            window.find("irc-unread:0").label(),
+            Some("2 new messages since you left")
+        );
+        let drawn: Vec<String> = gpui_kit::base::test_support::texts(window)
+            .into_iter()
+            .filter(|text| text.path().contains(&"irc-unread:0".into()) && text.visible())
+            .map(|text| text.text().to_owned())
+            .collect();
+        assert_eq!(drawn, ["NEW SINCE YOU LEFT · 2"]);
     });
     hub.read_with(cx, |hub, _| {
         let held = hub.state.buffer(&room).unwrap();

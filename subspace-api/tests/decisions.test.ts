@@ -29,6 +29,7 @@ function member(id: string, displayName: string, fields: Partial<Member> = {}): 
     agentShipId: null,
     agentShip: null,
     agentModel: null,
+    agentIrcNick: null,
     registeredById: null,
     deactivatedById: null,
     deactivatedAt: null,
@@ -48,6 +49,7 @@ const agent = member("00000000-0000-4000-8000-000000000005", "Example Captain", 
   agentFleet: "Example fleet",
   agentShip: "Example ship",
   agentModel: "example-model",
+  agentIrcNick: null,
 });
 
 function row(id: string, actor: Member, status: Row["decision"]["status"] = "proposed"): Row {

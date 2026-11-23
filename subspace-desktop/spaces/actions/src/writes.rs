@@ -180,11 +180,11 @@ impl Actions {
         if self.pending.is_some() {
             return;
         }
-        if let Some(reason) = unavailable(operation, self.selected()) {
+        if let Some(reason) = unavailable(operation, self.write_target()) {
             cx.emit(DashboardEvent::Toast(Toast::error(reason)));
             return;
         }
-        let Some(record) = self.selected().cloned() else {
+        let Some(record) = self.write_target().cloned() else {
             return;
         };
         self.filter_popup = None;

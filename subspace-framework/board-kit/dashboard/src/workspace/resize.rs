@@ -1,6 +1,8 @@
 //! Dock widths. Each dock is as wide as its density token, held inside the
 //! window, and its inner edge drags to resize it. A double click on the edge
-//! goes back to the default width.
+//! goes back to the default width. When the workspace is too narrow for both
+//! docks and the pane's least width, the docks yield (see
+//! [`super::PANE_MIN_WIDTH_PX`]).
 
 use gpui_kit::{
     AnyElement, App, AppContext as _, BorrowAppContext as _, ClickEvent, Div, EmptyView,
@@ -70,7 +72,7 @@ pub(super) fn navigator_slot(dock: AnyElement, tokens: &Tokens, viewport: f32) -
         .on_click(|event, window, cx| reset_on_double_click(NAVIGATOR_TOKEN, event, window, cx))
         .test_support();
     slot("workspace-navigator-slot", width)
-        .child(dock)
+        .child(clipped(dock))
         .child(handle)
         .on_drag_move::<NavigatorResize>(|event, window, cx| {
             let width = event.event.position.x - event.bounds.left();
@@ -87,7 +89,7 @@ pub(super) fn inspector_slot(dock: AnyElement, tokens: &Tokens, viewport: f32) -
         .on_click(|event, window, cx| reset_on_double_click(INSPECTOR_TOKEN, event, window, cx))
         .test_support();
     slot("workspace-inspector-slot", width)
-        .child(dock)
+        .child(clipped(dock))
         .child(handle)
         .on_drag_move::<InspectorResize>(|event, window, cx| {
             let width = event.bounds.right() - event.event.position.x;
@@ -95,15 +97,26 @@ pub(super) fn inspector_slot(dock: AnyElement, tokens: &Tokens, viewport: f32) -
         })
 }
 
-/// A dock's fixed-width place in the workspace row.
+/// A dock's place in the workspace row: its width while there is room, and
+/// narrower, down to nothing, when the pane would otherwise lose its least
+/// width. Docks shrink in proportion to their widths.
 fn slot(id: &'static str, width: f32) -> Stateful<Div> {
     div()
         .id(id)
         .relative()
-        .flex_shrink_0()
+        .flex_shrink_1()
+        .min_w_0()
         .w(px(width))
         .max_w(relative(FULL_PARENT_WIDTH))
         .h_full()
+}
+
+/// A dock's content, clipped to its slot, so content that cannot shrink,
+/// such as header buttons, never draws over the pane when the dock yields.
+/// The resize handle sits outside the clip, so it keeps its whole width, and
+/// menus and popovers draw deferred, so the clip never cuts them off.
+fn clipped(dock: AnyElement) -> Div {
+    div().size_full().overflow_hidden().child(dock)
 }
 
 /// A draggable edge; the caller places it on the dock's inner side.

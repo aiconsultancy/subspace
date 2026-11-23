@@ -1,5 +1,7 @@
 //! Building displayable lines: buffers, timestamps, ownership and highlights.
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 
 use super::{Session, send::REPLY};
@@ -30,6 +32,7 @@ pub(super) fn line(
             .tag(REPLY)
             .filter(|id| !id.is_empty() && matches!(message.command.as_str(), "PRIVMSG" | "NOTICE"))
             .map(str::to_string),
+        client_tags: client_tags(message),
         time: message
             .tag("time")
             .and_then(parse_time)
@@ -53,6 +56,7 @@ pub(super) fn local_line(session: &Session, target: Target, kind: LineKind, text
         buffer: session.buffer(target),
         id: None,
         reply_to: None,
+        client_tags: BTreeMap::new(),
         time: session.now,
         kind,
         from: own.then(|| session.reg.nick.clone()),
@@ -61,6 +65,35 @@ pub(super) fn local_line(session: &Session, target: Target, kind: LineKind, text
         highlight: false,
         own,
     }
+}
+
+/// The client-only tag by which an agent gateway (Stargate) marks request
+/// progress on a `NOTICE`, read by Channels.
+pub const PROGRESS_TAG: &str = "+stargate/progress";
+
+/// The client-only tags a line keeps, besides the reply reference that
+/// [`Line::reply_to`] holds: only those a Space reads. Any sender can add
+/// client-only tags, so the rest are dropped rather than held and stored.
+pub const KEPT_CLIENT_TAGS: &[&str] = &[PROGRESS_TAG];
+
+/// The longest value a kept client-only tag may have, in bytes; a longer
+/// one is dropped. Progress values are a stage name and a short suffix.
+const CLIENT_TAG_VALUE_MAX: usize = 64;
+
+/// The kept client-only tags ([`KEPT_CLIENT_TAGS`]) of a `PRIVMSG` or
+/// `NOTICE` with short values. Other commands keep none.
+fn client_tags(message: &Message) -> BTreeMap<String, String> {
+    let message_or_notice = matches!(message.command.as_str(), "PRIVMSG" | "NOTICE");
+    message
+        .tags
+        .iter()
+        .filter(|(key, value)| {
+            message_or_notice
+                && KEPT_CLIENT_TAGS.contains(&key.as_str())
+                && value.len() <= CLIENT_TAG_VALUE_MAX
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
 }
 
 pub(super) fn parse_time(text: &str) -> Option<DateTime<Utc>> {

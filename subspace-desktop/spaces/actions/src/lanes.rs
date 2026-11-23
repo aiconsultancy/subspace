@@ -2,11 +2,15 @@
 //! after the title the branch as a chip, who started the run and why, the
 //! status in its tone and the age. Fixed widths keep the columns aligned
 //! across rows and groups. A record with no run shows only its status.
+//!
+//! The lanes never take more than [`LANES_MAX_SHARE`] of the row, so the
+//! title keeps the rest. In a narrow list the branch and the actor columns
+//! yield first, then the status word is cut; the age keeps its width.
 
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::{
     AnyElement, App, Div, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Styled as _, TestSupportExt as _, div, rems,
+    SharedString, Styled as _, TestSupportExt as _, div, relative, rems,
 };
 use subspace_framework::dashboard::list::Row;
 use subspace_framework::dashboard::{Tokens, truncated};
@@ -21,6 +25,11 @@ const BY_WIDTH_REM: f32 = 9.;
 const STATUS_WIDTH_REM: f32 = 5.5;
 /// Wide enough for "11mo".
 const AGE_WIDTH_REM: f32 = 2.5;
+/// The most of a row the lanes take; the title keeps the rest.
+pub(crate) const LANES_MAX_SHARE: f32 = 0.6;
+/// How readily the status word gives way, beside the branch and actor
+/// columns' 1: only once they have all but gone.
+const STATUS_SHRINK: f32 = 0.05;
 
 /// The record a list row draws.
 fn record<'a>(this: &'a Actions, row: &Row) -> Option<&'a Record> {
@@ -64,7 +73,10 @@ pub(crate) fn trailing(this: &Actions, row: &Row, cx: &App) -> Option<AnyElement
     let lanes = h_flex()
         .id(SharedString::from(format!("actions-lanes:{}", row.key)))
         .test_support()
-        .flex_shrink_0()
+        .flex_shrink_1()
+        .min_w_0()
+        .max_w(relative(LANES_MAX_SHARE))
+        .overflow_hidden()
         .gap_3()
         .text_xs();
     let status = status_lane(record, &tokens);
@@ -78,7 +90,7 @@ pub(crate) fn trailing(this: &Actions, row: &Row, cx: &App) -> Option<AnyElement
         lanes
             .child(branch_chip(&row.key, &run.branch, &tokens, cx))
             .child(
-                column(BY_WIDTH_REM)
+                yielding(BY_WIDTH_REM)
                     .text_color(tokens.muted)
                     .child(truncated::text(by_id, by)),
             )
@@ -99,10 +111,18 @@ fn column(width: f32) -> Div {
     h_flex().flex_shrink_0().min_w_0().w(rems(width))
 }
 
+/// A column that is `width` wide while the row has room, and gives way
+/// down to nothing when it has not.
+fn yielding(width: f32) -> Div {
+    column(width).flex_shrink_1().overflow_hidden()
+}
+
 /// The status as a word in its tone, so it reads without the colour too.
 fn status_lane(record: &Record, tokens: &Tokens) -> Div {
     let (_, tone) = rows::status_look(&record.status);
     column(STATUS_WIDTH_REM)
+        .flex_shrink(STATUS_SHRINK)
+        .overflow_hidden()
         .font_weight(FontWeight::MEDIUM)
         .text_color(tokens.tone(tone))
         .child(
@@ -115,7 +135,7 @@ fn status_lane(record: &Record, tokens: &Tokens) -> Div {
 
 /// The branch as a quiet monospace chip, cut to its column.
 fn branch_chip(key: &str, branch: &str, tokens: &Tokens, cx: &App) -> Div {
-    let slot = column(BRANCH_WIDTH_REM);
+    let slot = yielding(BRANCH_WIDTH_REM);
     if branch.is_empty() {
         return slot;
     }

@@ -67,7 +67,9 @@ impl Server {
 
     pub(crate) fn peer(&self) -> Peer {
         self.peers
-            .recv_timeout(Duration::from_secs(5))
+            // A reconnection can wait out the hub's backoff, several
+            // seconds, before a busy machine adds its own delay.
+            .recv_timeout(Duration::from_secs(15))
             .expect("no SSE stream connected")
     }
 }

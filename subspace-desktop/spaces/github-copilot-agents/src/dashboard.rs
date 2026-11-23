@@ -106,6 +106,7 @@ impl Dashboard for CopilotAgents {
             error: None,
             loaded_at: None,
             login: None,
+            identity: None,
             navigator_open,
             inspector_open,
             item: Default::default(),

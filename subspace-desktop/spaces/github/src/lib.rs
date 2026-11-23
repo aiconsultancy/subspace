@@ -276,6 +276,9 @@ struct ComposerState {
     entity: Entity<Composer>,
     key: String,
     mode: Mode,
+    /// Whether this draft is being sent. Other writes, such as an
+    /// assignment, also set the board's `writing`, but leave the draft free.
+    sending: bool,
     _subscription: Subscription,
 }
 
@@ -569,6 +572,9 @@ impl Github {
         if changed {
             self.navigation = None;
             self.repo_filter = None;
+            // A draft belongs to the account it was started under: never let
+            // another account send it.
+            self.composer = None;
         }
         references::account_chosen(self, changed, cx);
         search_index::account_changed(self, changed, cx);
@@ -598,6 +604,7 @@ impl Github {
         }
         account.reloading_sections = matches!(refresh, SectionRefresh::Manual);
         account.loaded_at = Some(Instant::now());
+        references::refreshing(self);
         for section in sections_of(ItemKind::Pr) {
             self.load_section(client.clone(), login.clone(), section.id, cx);
         }
@@ -642,7 +649,7 @@ impl Github {
                 account.reloading_sections &= account.loading();
                 if loaded {
                     this.save_cache(cx);
-                    references::landed(this, &login, since, cx);
+                    references::section_landed(this, &login, since, cx);
                 }
                 search_index::start_prefetch(this, cx);
                 this.rebuild(cx);
@@ -930,6 +937,9 @@ impl Github {
             emit_toast(Toast::error("You cannot comment here"), cx);
             return;
         }
+        if self.keep_draft(&item.key, mode, window, cx) {
+            return;
+        }
         // The composer takes the inspector's footer, so the inspector shows.
         if self.diff.is_none() {
             self.set_inspector(true, cx);
@@ -953,10 +963,45 @@ impl Github {
             entity,
             key: item.key.clone(),
             mode,
+            sending: false,
             _subscription: subscription,
         });
         self.ensure_detail(cx);
         cx.notify();
+    }
+
+    /// Whether an open composer keeps its draft instead of a new one
+    /// replacing it. On the same pull request the composer switches to
+    /// `mode` and keeps its text; a draft on another pull request stays, and
+    /// a toast says where it is.
+    fn keep_draft(
+        &mut self,
+        key: &str,
+        mode: Mode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(open) = &self.composer else {
+            return false;
+        };
+        // A draft being sent keeps its mode until GitHub answers. Another
+        // write in flight, such as an assignment, leaves the draft free.
+        if open.sending {
+            return true;
+        }
+        if open.key == key {
+            if self.diff.is_none() {
+                self.set_inspector(true, cx);
+            }
+            self.set_mode(mode, window, cx);
+            return true;
+        }
+        if open.entity.read(cx).text(cx).trim().is_empty() {
+            return false;
+        }
+        let message = format!("Send or cancel the draft on {} first", open.key);
+        emit_toast(Toast::error(message), cx);
+        true
     }
 
     fn set_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
@@ -989,13 +1034,14 @@ impl Github {
             });
             return;
         }
-        self.writing = true;
+        self.start_sending();
         entity.update(cx, |composer, cx| composer.set_busy(true, cx));
         let number = model::split_key(&key).map_or(0, |(_, number)| number);
         cx.spawn(async move |this, cx| {
-            let write_key = key.clone();
+            let (write_key, writer) = (key.clone(), login.clone());
             let result = cx
                 .background_spawn(async move {
+                    let login = writer;
                     match mode {
                         Mode::Approve => {
                             client.review(&login, &write_key, ReviewEvent::Approve, &body)
@@ -1008,17 +1054,12 @@ impl Github {
                 })
                 .await;
             _ = this.update(cx, |this, cx| {
-                this.writing = false;
+                this.finish_sending(&entity);
                 match result {
                     Ok(detail) => {
-                        this.apply_detail(detail, cx);
-                        this.composer = None;
-                        let message = match mode {
-                            Mode::Approve => format!("Approved #{number}"),
-                            Mode::Changes => format!("Requested changes on #{number}"),
-                            Mode::Comment => format!("Commented on #{number}"),
-                        };
-                        emit_toast(Toast::info(message), cx);
+                        this.apply_detail(detail, &login, cx);
+                        this.close_sent_composer(&entity);
+                        emit_toast(Toast::info(written_message(mode, number)), cx);
                     }
                     Err(error) => {
                         entity.update(cx, |composer, cx| {
@@ -1032,13 +1073,47 @@ impl Github {
         .detach();
     }
 
-    /// Fresh detail from a write replaces the panel and the rows (REQ-62).
-    fn apply_detail(&mut self, detail: GhItemDetail, cx: &mut Context<Self>) {
-        let item = model::row_of(&detail);
-        if let Some(account) = self.account_data_mut() {
-            patch_sections(&mut account.sections, &item);
-            account.details.insert(item.key.clone(), detail);
+    /// Marks the board as writing and the open draft as the one sending.
+    fn start_sending(&mut self) {
+        self.writing = true;
+        if let Some(open) = self.composer.as_mut() {
+            open.sending = true;
         }
+    }
+
+    /// Ends the send once GitHub has answered, freeing the composer that
+    /// sent if it is still open.
+    fn finish_sending(&mut self, sent: &Entity<Composer>) {
+        self.writing = false;
+        if let Some(open) = self
+            .composer
+            .as_mut()
+            .filter(|open| open.entity.entity_id() == sent.entity_id())
+        {
+            open.sending = false;
+        }
+    }
+
+    /// Closes the composer that sent, but not one opened since, as under
+    /// another account.
+    fn close_sent_composer(&mut self, sent: &Entity<Composer>) {
+        if self
+            .composer
+            .as_ref()
+            .is_some_and(|open| open.entity.entity_id() == sent.entity_id())
+        {
+            self.composer = None;
+        }
+    }
+
+    /// Fresh detail from a write replaces the panel and the rows (REQ-62),
+    /// in the data of `login`, the account that wrote, even if the selected
+    /// account has changed since.
+    fn apply_detail(&mut self, detail: GhItemDetail, login: &str, cx: &mut Context<Self>) {
+        let item = model::row_of(&detail);
+        let account = self.data.entry(login.to_lowercase()).or_default();
+        patch_sections(&mut account.sections, &item);
+        account.details.insert(item.key.clone(), detail);
         self.save_cache(cx);
         references::announce(cx);
         self.rebuild(cx);
@@ -1151,7 +1226,7 @@ impl Github {
             .any(|known| same_login(&known.login, &user));
         self.writing = true;
         cx.spawn(async move |this, cx| {
-            let (write_key, write_user) = (key.clone(), user.clone());
+            let (write_key, write_user, writer) = (key.clone(), user.clone(), login.clone());
             let result = cx
                 .background_spawn(async move {
                     let (add, remove) = if assigned {
@@ -1159,7 +1234,7 @@ impl Github {
                     } else {
                         (vec![write_user], Vec::new())
                     };
-                    client.set_assignees(&login, &write_key, &add, &remove)
+                    client.set_assignees(&writer, &write_key, &add, &remove)
                 })
                 .await;
             _ = this.update(cx, |this, cx| {
@@ -1168,7 +1243,7 @@ impl Github {
                 let short = short_login(&user).to_string();
                 match result {
                     Ok(detail) => {
-                        this.apply_detail(detail, cx);
+                        this.apply_detail(detail, &login, cx);
                         let message = if assigned {
                             format!("Unassigned {short} from #{number}")
                         } else {
@@ -1855,14 +1930,15 @@ impl Github {
     }
 
     /// The current view's counts, such as `8 open PRs · 4 repos`, once its
-    /// list has loaded.
+    /// list has loaded. Both counts are the whole view's: a repository
+    /// filter is named after them, not counted into them.
     fn view_counts(&self) -> Option<String> {
         let data = self.account_data()?.sections.get(self.section)?;
         let noun = match self.kind() {
             ItemKind::Pr => "open PRs",
             ItemKind::Issue => "open issues",
         };
-        let repos = self.list.groups().len();
+        let repos = model::group_by_repo(&data.items).len();
         let counts = layout::counts_line(data.items.len(), data.total, repos, noun);
         Some(counts)
     }
@@ -1887,6 +1963,15 @@ impl Github {
                 cx.notify();
             });
         }
+    }
+}
+
+/// The toast after a review or comment on pull request `number` is sent.
+fn written_message(mode: Mode, number: u32) -> String {
+    match mode {
+        Mode::Approve => format!("Approved #{number}"),
+        Mode::Changes => format!("Requested changes on #{number}"),
+        Mode::Comment => format!("Commented on #{number}"),
     }
 }
 

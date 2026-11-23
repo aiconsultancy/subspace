@@ -14,17 +14,20 @@ mod context;
 mod conversation;
 mod dock;
 mod editor;
+mod fleet;
 mod hub;
 mod initiatives;
 mod issues;
 mod join;
 mod lines;
 mod listing;
+mod live;
 mod markup;
 mod members;
 mod notice;
 mod prompt;
 mod pull_requests;
+mod reactions;
 mod remove;
 mod reveal;
 mod rows;
@@ -34,6 +37,9 @@ mod state;
 mod store;
 mod style;
 mod text;
+mod thread;
+mod thread_status;
+mod tiles;
 mod toolbar;
 mod transcript;
 mod uploads;
@@ -67,6 +73,32 @@ pub struct Irc {
     buffers: HashMap<SharedString, BufferKey>,
     /// The channel each listed row we are not in names.
     listed: HashMap<SharedString, BufferKey>,
+    /// The network each group header stands for.
+    group_networks: HashMap<SharedString, NetworkId>,
+    /// Each ship row's activity, for its dot.
+    ships: HashMap<SharedString, rows::Activity>,
+    /// Each `People` row's presence, for its mark.
+    people: HashMap<SharedString, rows::Presence>,
+    /// The captions inside each fleet group, by group key.
+    captions: HashMap<SharedString, Vec<(SharedString, &'static str)>>,
+    /// The fleets followed while the navigator or the conversation in front
+    /// shows them.
+    watch: live::watch::Watch,
+    /// The inspector's open tab for a fleet channel: its ship or Starbase,
+    /// or its people.
+    inspector_tab: view::InspectorTab,
+    /// The thread chosen in each conversation, for the inspector's Thread
+    /// tab.
+    threads: thread::Threads,
+    /// The fleet groups shown so far, so a fleet's group folds only when it
+    /// first appears.
+    seen_fleets: std::collections::HashSet<SharedString>,
+    /// The fleet groups that took in their network's own rows at the last
+    /// layout, so a group that begins to fold as the network's group did.
+    absorbing: std::collections::HashSet<SharedString>,
+    /// The group that held the selected row at the last layout, so a
+    /// folded group the selection moves into opens.
+    selection_group: Option<SharedString>,
     hub: Option<Entity<hub::Hub>>,
     hub_subscription: Option<Subscription>,
     /// The networks as last synced, for panels that read without a context.
@@ -220,6 +252,7 @@ impl Dashboard for Irc {
         }
         join::close(self, window, cx);
         view::publish_visible(self, cx);
+        live::watch::sync(self, cx);
     }
 
     fn open_notification(&mut self, target: u64, _window: &mut Window, cx: &mut Context<Self>) {
@@ -379,7 +412,7 @@ impl Irc {
     }
 
     /// The network of the selected row or group header.
-    fn selected_network(&self, cx: &App) -> Option<NetworkId> {
+    fn selected_network(&self) -> Option<NetworkId> {
         if let Some(buffer) = self.selected_buffer().or_else(|| self.selected_listed()) {
             return Some(buffer.network.clone());
         }
@@ -390,12 +423,26 @@ impl Irc {
                 .as_ref()
                 .map(|buffer| buffer.network.clone());
         };
-        let hub = self.hub.as_ref()?.read(cx);
-        hub.state
-            .networks()
-            .iter()
-            .find(|network| &rows::group_key(&network.id) == selected)
-            .map(|network| network.id.clone())
+        self.group_networks.get(selected).cloned()
+    }
+
+    /// The buffer the pane's toolbar acts on. While the navigator is hidden
+    /// its selection is out of sight, so the toolbar acts on the
+    /// conversation it names; otherwise on the selected row.
+    fn toolbar_buffer(&self) -> Option<&BufferKey> {
+        match self.dock.focused.as_ref() {
+            Some(focused) if !self.dock.buffers_open() => Some(focused),
+            _ => self.selected_buffer(),
+        }
+    }
+
+    /// The network the pane's toolbar acts on, by the same rule as
+    /// [`Self::toolbar_buffer`].
+    fn toolbar_network(&self) -> Option<NetworkId> {
+        match self.dock.focused.as_ref() {
+            Some(focused) if !self.dock.buffers_open() => Some(focused.network.clone()),
+            _ => self.selected_network(),
+        }
     }
 
     fn send(&self, command: Command, cx: &mut App) {
@@ -404,11 +451,21 @@ impl Irc {
         }
     }
 
-    /// Opens a private conversation with `nick` and shows it.
+    /// Opens a private conversation with `nick` and shows it. A fleet agent
+    /// gets none: the conversation in front says where the agent talks.
     fn open_query(&mut self, network: &NetworkId, nick: &str, cx: &mut Context<Self>) {
         let Some(hub) = self.hub.clone() else {
             return;
         };
+        let roster = hub.read(cx).roster(network, cx);
+        let state = &hub.read(cx).state;
+        let notice = compose::AgentNotice::refusing(&roster, nick, |channel| {
+            compose::listed_channel(state, network, channel).is_some()
+        });
+        if let Some(notice) = notice {
+            self.refuse_query(network, notice, cx);
+            return;
+        }
         let buffer = hub.update(cx, |hub, cx| {
             hub.send(Command::Query {
                 network: network.clone(),
@@ -422,14 +479,45 @@ impl Irc {
         view::reveal(self, &buffer, cx);
     }
 
+    /// Shows `notice` above the composer of the conversation in front on
+    /// `network`, in place of a private conversation with an agent. When
+    /// nothing of that network is in front, as after a notification click
+    /// while another network shows, it shows the agent's channel if the
+    /// user's channel list holds it, else the network's server buffer, and
+    /// the notice there, so the user sees why nothing opened.
+    fn refuse_query(
+        &mut self,
+        network: &NetworkId,
+        notice: compose::AgentNotice,
+        cx: &mut Context<Self>,
+    ) {
+        let front = self
+            .dock
+            .focused
+            .as_ref()
+            .filter(|buffer| &buffer.network == network)
+            .and_then(|buffer| self.dock.open.get(buffer))
+            .map(|hosted| hosted.entity.clone());
+        if let Some(conversation) = front {
+            show_notice(&conversation, notice, cx);
+            return;
+        }
+        let Some(hub) = self.hub.clone() else {
+            return;
+        };
+        let place = notice_place(&hub.read(cx).state, network, &notice);
+        view::reveal(self, &place, cx);
+        dock::with_window(self, cx, move |board, _, cx| {
+            if let Some(hosted) = board.dock.open.get(&place) {
+                show_notice(&hosted.entity.clone(), notice, cx);
+            }
+        });
+    }
+
     /// A row's buffer state, copied out of the hub for list hooks.
     fn buffer_state(&self, key: &str, cx: &App) -> Option<state::Buffer> {
         let buffer = self.buffers.get(key)?;
         self.hub.as_ref()?.read(cx).state.buffer(buffer).cloned()
-    }
-
-    fn is_query_row(&self, row: &subspace_framework::dashboard::Row) -> bool {
-        self.buffers.get(&row.key).is_some_and(Irc::is_query)
     }
 
     /// The network's display name as last synced, else its id.
@@ -448,8 +536,33 @@ impl Irc {
             _ => rows::title(buffer).to_owned().into(),
         }
     }
+}
 
-    fn is_query(buffer: &BufferKey) -> bool {
-        matches!(buffer.target, Target::Query(_))
-    }
+/// Puts `notice` above `conversation`'s composer.
+fn show_notice(
+    conversation: &gpui_kit::Entity<conversation::Conversation>,
+    notice: compose::AgentNotice,
+    cx: &mut App,
+) {
+    conversation.update(cx, |conversation, cx| {
+        conversation.draft.agent_notice = Some(notice);
+        cx.notify();
+    });
+}
+
+/// Where a notice shows when nothing of `network` is in front: the agent's
+/// channel when the user's channel list holds it, else the server buffer.
+fn notice_place(
+    state: &state::IrcState,
+    network: &NetworkId,
+    notice: &compose::AgentNotice,
+) -> BufferKey {
+    notice
+        .channel
+        .as_deref()
+        .and_then(|channel| compose::listed_channel(state, network, channel))
+        .unwrap_or_else(|| BufferKey {
+            network: network.clone(),
+            target: Target::Server,
+        })
 }

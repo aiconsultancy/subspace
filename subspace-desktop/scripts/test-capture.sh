@@ -9,7 +9,7 @@ cd "$root"
 source "$root/scripts/product-fixture.sh"
 setup_product_fixture ""
 host_platform="$(/usr/bin/uname -s)"
-cp "$root/scripts/"{capture.sh,github_test_server.py,subspace_api_test_server.py} "$fixture/scripts/"
+cp "$root/scripts/"{capture.sh,github_test_server.py,subspace_api_test_server.py,fleet_api_test_server.py} "$fixture/scripts/"
 
 # The capture launcher is macOS-only, but its shell contract is portable:
 # validate the generated plist without depending on macOS's plutil binary.
@@ -41,7 +41,15 @@ while [ $# -gt 0 ]; do
         shift ;;
     --env)
         case "$2" in
-        HOME=*) cp "${2#HOME=}/Library/Application Support/subspace/"*.json "$log/" ;;
+        HOME=*)
+            cp "${2#HOME=}/Library/Application Support/subspace/"*.json "$log/"
+            fleet="$(jq -r '.webBoards["fleet-console"].settings.endpoint // empty' "$log/config.json")"
+            if [ -n "$fleet" ]; then
+                printf '%s\n' "$fleet" >>"$log/urls.txt"
+                fleet_token="$(jq -r '.webBoards["fleet-console"].secrets.token // empty' "$log/config.json")"
+                curl -s -H "Authorization: Bearer $fleet_token" -o /dev/null -w 'fleet-api %{http_code}\n' "$fleet/api/v1/fleet" >>"$log/servers.txt"
+            fi
+            ;;
         GH_CONFIG_DIR=*) ls "${2#*=}" >"$log/gh.txt" ;;
         SUBSPACE_GITHUB_API_URL=*) printf '%s\n' "${2#*=}" >>"$log/urls.txt"; curl -s -o /dev/null -w 'github %{http_code}\n' "${2#*=}/user" >>"$log/servers.txt" ;;
         SUBSPACE_GITHUB_OAUTH_URL=*) curl -s -o /dev/null -w 'oauth %{http_code}\n' -d client_id=fixture "${2#*=}/login/device/code" >>"$log/servers.txt" ;;
@@ -66,12 +74,14 @@ shots="$(cd "$fixture/shots" && pwd)"
 fail() { echo "capture: $*" >&2; exit 1; }
 if [[ "$host_platform" = Darwin ]]; then
 TMPDIR="$fixture/tmp" XDG_CONFIG_HOME=/real-user/config GH_CONFIG_DIR=/real-user/gh GH_TOKEN=real-user-token \
-    CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" CAPTURE_CONFIG='{"boards": {"actions": true}}' \
+    CAPTURE_FEATURES='' CAPTURE_LEAK_MARK=real-user CAPTURE_THEME="One Dark" \
+    CAPTURE_CONFIG='{"boards": {"actions": true}, "webBoards": {"notes": {"path": "/apps/notes"}}}' \
     CAPTURE_DECISION_SCENARIO=forbidden CAPTURE_MOVE_UNCONFIRMED=1 CAPTURE_UPLOAD_SCENARIO=unknown \
-    bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >"$fixture/capture.out"
+    CAPTURE_FLEET_API=1 bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >"$fixture/capture.out"
 
 args="$fixture/open/args.txt"
 grep -Fq "build --locked -p subspace --features capture" "$fixture/cargo.log" || fail "no capture build"
+grep -Eq -e '--features capture( --features terminal)?$' "$fixture/cargo.log" || fail "the capture build added features by default"
 for flag in -g -n -W; do grep -Fxq -- "$flag" "$args" || fail "open without $flag"; done
 if grep -F real-user "$fixture/open/env.txt"; then fail "the caller's environment reached open"; fi
 if grep -F real-user "$args"; then fail "a real value reached the app"; fi
@@ -96,24 +106,52 @@ grep -Eq '^github [1-5][0-9][0-9]$' "$fixture/open/servers.txt" || fail "the Git
 grep -Eq '^subspace-api 200$' "$fixture/open/servers.txt" || fail "the Subspace API fixture did not answer"
 grep -Eq '^decisions 403$' "$fixture/open/servers.txt" || fail "the Decisions fixture scenario was not applied"
 grep -Eq '^oauth 200$' "$fixture/open/servers.txt" || fail "the sign-in fixture did not answer"
+grep -Eq '^fleet-api 200$' "$fixture/open/servers.txt" || fail "the Fleet API fixture did not answer"
+jq -e '.webBoards["fleet-console"] | (.settings.endpoint | test("^http://127\\.0\\.0\\.1:[0-9]+$")) and .secrets.token == "fixture-fleet"' \
+    "$fixture/open/config.json" >/dev/null || fail "Fleet Console is not pointed at the Fleet API fixture"
+test "$(jq -r '.webBoards.notes.path' "$fixture/open/config.json")" = /apps/notes ||
+    fail "CAPTURE_CONFIG's web Spaces were not merged with Fleet Console"
 test "$(jq -r '."appearance.theme"' "$fixture/open/state.json")" = "One Dark" || fail "theme not saved"
 test "$(jq -c '[.repos[0], .boards.actions]' "$fixture/open/config.json")" = '["acme/web",true]' || fail "config not merged"
 grep -Fq 'captured main' "$fixture/capture.out" || fail "capture result not reported"
 test -z "$(ls -A "$fixture/tmp")" || fail "the fixture home was left behind"
 # Check the actual listening endpoints; process listing is unavailable in some sandboxes.
 while IFS= read -r address; do
-    for _ in $(seq 20); do
-        curl -s --max-time 1 -o /dev/null "$address" || break
+    # Allow a busy machine 20 seconds to stop them, each probe capped at
+    # what is left; a server left running fails below.
+    deadline=$((SECONDS + 20))
+    while ((SECONDS < deadline)); do
+        curl -s --max-time "$((deadline - SECONDS > 0 ? deadline - SECONDS : 1))" -o /dev/null "$address" || break
         sleep 0.1
     done
     if curl -s --max-time 1 -o /dev/null "$address"; then fail "a fixture server is still listening"; fi
 done <"$fixture/open/urls.txt"
 grep -Fxq hosts.yml "$fixture/open/gh.txt" || fail "the fixture gh accounts are missing"
+# Settings > Fleets: the aurora fleet's token is saved for the Fleet API fixture's address.
+fleet_address="$(jq -r '.webBoards["fleet-console"].settings.endpoint' "$fixture/open/config.json")"
+jq -e --arg address "$fleet_address" '."fleet-api:aurora" | fromjson | .v == 1 and .endpoint == $address and .token == "fixture-fleet"' \
+    "$fixture/open/fleet-api-tokens.json" >/dev/null || fail "the aurora token is not saved for the Fleet API fixture"
 rm -rf "$fixture/open"
-TMPDIR="$fixture/tmp" CAPTURE_NO_GH=1 bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null
+TMPDIR="$fixture/tmp" CAPTURE_FLEET_API=1 CAPTURE_FLEET_TOKEN=none \
+    bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null
+test ! -e "$fixture/open/fleet-api-tokens.json" || fail "CAPTURE_FLEET_TOKEN=none saved a token"
+rm -rf "$fixture/open"
+TMPDIR="$fixture/tmp" CAPTURE_FLEET_API=1 CAPTURE_FLEET_TOKEN=moved \
+    bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null
+jq -e '."fleet-api:aurora" | fromjson | .endpoint == "https://aurora-old.example.test" and .token == "fixture-fleet-moved"' \
+    "$fixture/open/fleet-api-tokens.json" >/dev/null || fail "CAPTURE_FLEET_TOKEN=moved did not save a token for the old address"
+if TMPDIR="$fixture/tmp" CAPTURE_FLEET_TOKEN=other bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null 2>&1; then
+    fail "an unknown fleet token scenario was accepted"
+fi
+rm -rf "$fixture/open"
+TMPDIR="$fixture/tmp" CAPTURE_NO_GH=1 CAPTURE_FEATURES=space-lab,component-gallery \
+    bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null
+grep -Eq -e '--features capture( --features terminal)? --features space-lab,component-gallery$' "$fixture/cargo.log" ||
+    fail "CAPTURE_FEATURES did not reach the build"
 if grep -Fxq hosts.yml "$fixture/open/gh.txt"; then fail "CAPTURE_NO_GH left gh accounts"; fi
 if grep -Fq SUBSPACE_CAPTURE_MOVE_UNCONFIRMED "$fixture/open/args.txt"; then fail "the move fixture is on by default"; fi
 if grep -Fq SUBSPACE_CAPTURE_UPLOAD_SCENARIO "$fixture/open/args.txt"; then fail "the upload fixture is on by default"; fi
+if jq -e '.webBoards' "$fixture/open/config.json" >/dev/null; then fail "the Fleet API fixture is on by default"; fi
 if TMPDIR="$fixture/tmp" CAPTURE_UPLOAD_SCENARIO=other bash "$fixture/scripts/capture.sh" "$fixture/shots" 'wait:10;shot:main' >/dev/null 2>&1; then
     fail "an unknown upload scenario was accepted"
 fi
@@ -127,7 +165,9 @@ fixture="$(cd "$(dirname "$0")/../.." && pwd)"
 mkdir -p "$fixture/native"
 env >"$fixture/native/env.txt"
 ls "$GH_CONFIG_DIR" >"$fixture/native/gh.txt"
-cp "$XDG_STATE_HOME/subspace/state.json" "$XDG_CONFIG_HOME/subspace/config.json" "$fixture/native/"
+for file in "$XDG_STATE_HOME/subspace/state.json" "$XDG_CONFIG_HOME/subspace/config.json"; do
+    if [ -e "$file" ]; then cp "$file" "$fixture/native/"; fi
+done
 curl -s -o /dev/null -w 'github %{http_code}\n' "$SUBSPACE_GITHUB_API_URL/user" >"$fixture/native/servers.txt"
 curl -s -o /dev/null -w 'oauth %{http_code}\n' -d client_id=fixture "$SUBSPACE_GITHUB_OAUTH_URL/login/device/code" >>"$fixture/native/servers.txt"
 token=fixture-access
@@ -200,6 +240,18 @@ CAPTURE_NO_GH=1 run_linux >"$fixture/capture-linux-no-gh.out"
 if grep -Fxq hosts.yml "$fixture/native/gh.txt"; then fail 'Linux CAPTURE_NO_GH left accounts'; fi
 grep -Fq captured "$fixture/capture-linux.out" || fail 'Linux capture result not reported'
 test -z "$(ls -A "$fixture/tmp")" || fail 'Linux fixture home was left behind'
+
+# A first run starts with neither file, and refuses options that write one.
+rm "$fixture/native/state.json" "$fixture/native/config.json"
+FAKE_UNAME=Linux TMPDIR="$fixture/tmp" CAPTURE_FIRST_RUN=1 \
+    bash "$fixture/scripts/capture.sh" "$shots" 'wait:10;shot:main' >"$fixture/capture-first-run.out"
+grep -Fq captured "$fixture/capture-first-run.out" || fail 'first-run capture result not reported'
+test ! -e "$fixture/native/state.json" || fail 'CAPTURE_FIRST_RUN wrote a state file'
+test ! -e "$fixture/native/config.json" || fail 'CAPTURE_FIRST_RUN wrote a config file'
+if FAKE_UNAME=Linux TMPDIR="$fixture/tmp" CAPTURE_FIRST_RUN=1 CAPTURE_THEME='One Dark' \
+    bash "$fixture/scripts/capture.sh" "$shots" 'wait:10;shot:main' >/dev/null 2>&1; then
+    fail 'CAPTURE_FIRST_RUN took a theme'
+fi
 
 # A caller's desktop connection must never reach the private capture display.
 rm "$fixture/xvfb-args.txt"

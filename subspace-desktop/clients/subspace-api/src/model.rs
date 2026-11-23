@@ -14,7 +14,7 @@ pub use decision::{
     DecisionListItem, DecisionMakerType, DecisionMember, DecisionProvenance, DecisionScope,
     DecisionStatus, DecisionSummary,
 };
-pub use initiative::{Fleet, MemberInitiative};
+pub use initiative::{Fleet, FleetAgent, FleetShip, MemberInitiative};
 pub use media::IssueMedia;
 pub(crate) use media::MediaBinding;
 pub use person::{Agent, Person};
@@ -117,6 +117,10 @@ pub struct IssueFields {
     pub cycle: Option<CycleSummary>,
     pub cycle_id: Option<String>,
     pub pull_request_summary: Option<PullRequestSummary>,
+    /// Whether the issue is flagged Ready for agents, for a fleet's agents to
+    /// pick up; `None` when the service did not send it.
+    #[serde(default)]
+    pub ready_for_agents: Option<bool>,
     /// NETT only: the planning project, apart from the issue team that the
     /// desktop calls the issue's project.
     #[serde(default)]

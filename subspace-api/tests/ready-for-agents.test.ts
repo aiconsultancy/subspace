@@ -165,6 +165,7 @@ const human: Member = {
   agentShipId: null,
   agentShip: null,
   agentModel: null,
+  agentIrcNick: null,
   registeredById: null,
   deactivatedById: null,
   deactivatedAt: null,

@@ -1,5 +1,5 @@
-//! Palette commands for the selected network and buffer: the toolbar's and
-//! row menu's actions, reachable from ⌘K.
+//! Palette commands for the network and buffer the toolbar acts on: the
+//! toolbar's and row menu's actions, reachable from ⌘K.
 
 use gpui_kit::{App, Context, WeakEntity, Window};
 use subspace_client_irc::{BufferKey, Command, NetworkId};
@@ -52,16 +52,18 @@ pub(crate) fn offers(
     offers
 }
 
-/// The palette commands of the board's selection.
+/// The palette commands for what the toolbar acts on: the selection, or,
+/// while the navigator is hidden, the conversation the toolbar names, so a
+/// command such as Join channel… offers and opens on the same network.
 pub(crate) fn commands(board: &Irc, cx: &Context<Irc>) -> Vec<PaletteCommand> {
     let Some(hub) = board.hub.as_ref() else {
         return Vec::new();
     };
-    let network = board.selected_network(cx);
+    let network = board.toolbar_network();
     let offers = offers(
         &hub.read(cx).state,
         network.as_ref(),
-        board.selected_buffer(),
+        board.toolbar_buffer(),
     );
     offers
         .into_iter()
@@ -119,7 +121,7 @@ mod tests {
         let mut state = IrcState::new(&[config()], Vec::new());
         let room = channel("#subspace");
         let offline = offers(&state, Some(&network_id()), None);
-        assert_eq!(offline, [Offer::Connect(network_id(), "Local Ergo".into())]);
+        assert_eq!(offline, [Offer::Connect(network_id(), "Acme IRC".into())]);
         state.apply(
             Event::Status {
                 network: network_id(),
@@ -142,7 +144,7 @@ mod tests {
             [
                 Offer::Join,
                 Offer::Refresh(network_id()),
-                Offer::Disconnect(network_id(), "Local Ergo".into()),
+                Offer::Disconnect(network_id(), "Acme IRC".into()),
                 Offer::MarkRead(room.clone(), "#subspace".into()),
                 Offer::Remove(Removal::Leave, room),
             ]

@@ -642,6 +642,51 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "starbaseChannel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "commandChannel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "fleetApiUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 2048,
+                        "pattern": "^[Hh][Tt][Tt][Pp][Ss]?:\\/\\/[^\\s/?#@\\\\]+(?:\\/[^\\s?#\\\\]*)?$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -982,6 +1027,51 @@
                       }
                     ]
                   },
+                  "starbaseChannel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "commandChannel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "fleetApiUrl": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 2048,
+                        "pattern": "^[Hh][Tt][Tt][Pp][Ss]?:\\/\\/[^\\s/?#@\\\\]+(?:\\/[^\\s?#\\\\]*)?$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "version": {
                     "anyOf": [
                       {
@@ -1236,6 +1326,7 @@
             }
           }
         },
+        "description": "Any human member may create a ship. Setting its channel requires a human organisation administrator, as the channel decides every member's autojoin; a member who supplies one receives 403.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1246,6 +1337,21 @@
                     "type": "string",
                     "maxLength": 64,
                     "minLength": 1
+                  },
+                  "channel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -1374,6 +1480,7 @@
             }
           }
         },
+        "description": "Any human member may rename a ship. Changing its channel requires a human organisation administrator; a member who supplies a different channel receives 403. Leaving channel out keeps it, and null clears it.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1384,6 +1491,21 @@
                     "type": "string",
                     "maxLength": 64,
                     "minLength": 1
+                  },
+                  "channel": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^#[^\\p{White_Space}\\p{Cc},:]+$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "version": {
                     "anyOf": [
@@ -2060,6 +2182,7 @@
             }
           }
         },
+        "description": "An agent registered to a fleet that changes parentId receives 403 when the initiative, or the new parent, belongs to another fleet. An initiative belongs to its own fleet, or else to the fleet of its nearest ancestor with one.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -16984,6 +17107,7 @@
             }
           }
         },
+        "description": "An agent registered to a fleet that sets a non-null assigneeId, or sends readyForAgents, receives 403 when the issue's project belongs to another fleet. A project belongs to its initiative's fleet, or else to the fleet of that initiative's nearest ancestor with one.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -17950,6 +18074,7 @@
             }
           }
         },
+        "description": "An agent registered to a fleet that sets a non-null assigneeId, or sends readyForAgents, receives 403 when the issue's project belongs to another fleet. A project belongs to its initiative's fleet, or else to the fleet of that initiative's nearest ancestor with one.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -19656,6 +19781,7 @@
             }
           }
         },
+        "description": "An agent registered to a fleet receives 403 when the source or destination project belongs to another fleet. The preview does not apply this check.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -31298,6 +31424,16 @@
                             "maxLength": 256,
                             "minLength": 1
                           },
+                          "ircNick": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "isActive": {
                             "type": "boolean"
                           },
@@ -31350,6 +31486,7 @@
                           "shipId",
                           "defaultModel",
                           "serviceTokenClientId",
+                          "ircNick",
                           "isActive",
                           "deactivatedAt",
                           "deactivatedByUserId",
@@ -31547,6 +31684,16 @@
                       "maxLength": 256,
                       "minLength": 1
                     },
+                    "ircNick": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "isActive": {
                       "type": "boolean"
                     },
@@ -31599,6 +31746,7 @@
                     "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
+                    "ircNick",
                     "isActive",
                     "deactivatedAt",
                     "deactivatedByUserId",
@@ -31778,6 +31926,21 @@
                     "type": "string",
                     "maxLength": 200,
                     "minLength": 1
+                  },
+                  "ircNick": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -31890,6 +32053,16 @@
                       "maxLength": 256,
                       "minLength": 1
                     },
+                    "ircNick": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "isActive": {
                       "type": "boolean"
                     },
@@ -31942,6 +32115,7 @@
                     "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
+                    "ircNick",
                     "isActive",
                     "deactivatedAt",
                     "deactivatedByUserId",
@@ -32132,6 +32306,16 @@
                       "maxLength": 256,
                       "minLength": 1
                     },
+                    "ircNick": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "isActive": {
                       "type": "boolean"
                     },
@@ -32184,6 +32368,7 @@
                     "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
+                    "ircNick",
                     "isActive",
                     "deactivatedAt",
                     "deactivatedByUserId",
@@ -32364,6 +32549,21 @@
                     "maxLength": 200,
                     "minLength": 1
                   },
+                  "ircNick": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 64,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+                      },
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "version": {
                     "anyOf": [
                       {
@@ -32487,6 +32687,16 @@
                       "maxLength": 256,
                       "minLength": 1
                     },
+                    "ircNick": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "isActive": {
                       "type": "boolean"
                     },
@@ -32539,6 +32749,7 @@
                     "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
+                    "ircNick",
                     "isActive",
                     "deactivatedAt",
                     "deactivatedByUserId",
@@ -32756,6 +32967,16 @@
                       "maxLength": 256,
                       "minLength": 1
                     },
+                    "ircNick": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "isActive": {
                       "type": "boolean"
                     },
@@ -32808,6 +33029,7 @@
                     "shipId",
                     "defaultModel",
                     "serviceTokenClientId",
+                    "ircNick",
                     "isActive",
                     "deactivatedAt",
                     "deactivatedByUserId",
@@ -39822,6 +40044,36 @@
               }
             ]
           },
+          "starbaseChannel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "commandChannel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fleetApiUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "rearAdmiralName": {
             "anyOf": [
               {
@@ -39949,6 +40201,26 @@
                     }
                   ]
                 },
+                "ircNick": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "shipChannel": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "available": {
                   "type": "boolean"
                 }
@@ -39959,6 +40231,8 @@
                 "rank",
                 "shipId",
                 "ship",
+                "ircNick",
+                "shipChannel",
                 "available"
               ],
               "additionalProperties": false
@@ -39976,11 +40250,22 @@
                 },
                 "name": {
                   "type": "string"
+                },
+                "channel": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
                 "id",
-                "name"
+                "name",
+                "channel"
               ],
               "additionalProperties": false
             }
@@ -39995,6 +40280,9 @@
           "ircTls",
           "ircWebsocketUrl",
           "vmHost",
+          "starbaseChannel",
+          "commandChannel",
+          "fleetApiUrl",
           "rearAdmiralName",
           "captainNames",
           "irc",
@@ -40293,6 +40581,16 @@
           "name": {
             "type": "string"
           },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "createdAt": {
             "type": "string"
           },
@@ -40309,6 +40607,7 @@
           "id",
           "fleetId",
           "name",
+          "channel",
           "createdAt",
           "updatedAt",
           "version"

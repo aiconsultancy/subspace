@@ -186,6 +186,9 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       });
       await call(403, "/agents", rank, "POST", agentInput(rank));
       await call(403, `/initiatives/${initiativeId}/fleet`, rank, "PUT", { fleetId });
+      await call(403, `/fleets/${fleetId}`, rank, "PATCH", {
+        fleetApiUrl: "https://elsewhere.example.com",
+      });
     },
   );
 
@@ -196,14 +199,30 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       ircHost: "irc.example.test",
       ircPort: 6697,
       ircTls: true,
+      starbaseChannel: "#example-starbase",
+      commandChannel: "#example-command",
     };
     await call(403, "/fleets", "member", "POST", fleet);
     await call(400, "/fleets", "admin", "POST", { ...fleet, rearAdmiralName: "Ignored name" });
+    await call(400, "/fleets", "admin", "POST", { ...fleet, commandChannel: "no hash" });
     const registered = await call<Versioned>(201, "/fleets", "admin", "POST", fleet);
     await call(409, "/fleets", "admin", "POST", fleet);
     await call(403, `/fleets/${registered.id}/ships`, "captain", "POST", { name: "Forbidden" });
-    const ship = await call<Versioned>(201, `/fleets/${registered.id}/ships`, "member", "POST", {
+    await call(400, `/fleets/${registered.id}/ships`, "member", "POST", {
       name: "Aurora",
+      channel: "#two words",
+    });
+    await call(403, `/fleets/${registered.id}/ships`, "member", "POST", {
+      name: "Aurora",
+      channel: "#example-zeta",
+    });
+    await call(201, `/fleets/${registered.id}/ships`, "member", "POST", {
+      name: "Member ship",
+      channel: null,
+    });
+    const ship = await call<Versioned>(201, `/fleets/${registered.id}/ships`, "admin", "POST", {
+      name: "Aurora",
+      channel: "#example-zeta",
     });
     await call(409, `/fleets/${registered.id}/ships`, "admin", "POST", { name: "aUrOrA" });
     const captain = {
@@ -212,10 +231,17 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       serviceTokenClientId: "zeta@example.test",
     };
     await call(400, "/agents", "admin", "POST", { ...captain, fleetId, shipId: ship.id });
+    await call(400, "/agents", "admin", "POST", {
+      ...captain,
+      fleetId: registered.id,
+      shipId: ship.id,
+      ircNick: "#not-a-nick",
+    });
     const linked = await call<{ userId: string }>(201, "/agents", "admin", "POST", {
       ...captain,
       fleetId: registered.id,
       shipId: ship.id,
+      ircNick: "example-zeta",
     });
     await call(201, "/agents", "admin", "POST", {
       ...captain,
@@ -224,25 +250,73 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       fleet: fleet.slug,
       ship: "zenith",
     });
+    await call(409, "/agents", "admin", "POST", {
+      ...captain,
+      name: "Other-captain",
+      serviceTokenClientId: "other@example.test",
+      fleetId: registered.id,
+      shipId: ship.id,
+      ircNick: "Example-Zeta",
+    });
     await call(201, "/agents", "admin", "POST", {
       ...agentInput("rearAdmiral"),
+      ircNick: "example-admiral",
       name: "Roster-admiral",
       serviceTokenClientId: "roster-admiral@example.test",
       fleetId: registered.id,
     });
-    await call(200, `/ships/${ship.id}`, "member", "PATCH", {
+    await call(403, `/ships/${ship.id}`, "member", "PATCH", {
       version: ship.version,
       name: "Borealis",
+      channel: "#example-other",
+    });
+    await call(403, `/ships/${ship.id}`, "member", "PATCH", {
+      version: ship.version,
+      name: "Borealis",
+      channel: null,
+    });
+    const renamed = await call<Versioned>(200, `/ships/${ship.id}`, "member", "PATCH", {
+      version: ship.version,
+      name: "Borealis",
+      channel: "#example-zeta",
     });
     await call(409, `/ships/${ship.id}`, "admin", "PATCH", {
       version: ship.version,
       name: "Stale",
+    });
+    await call(200, `/ships/${ship.id}`, "admin", "PATCH", {
+      version: renamed.version,
+      name: "Borealis",
+      channel: "#example-moved",
+    });
+    await call(200, `/ships/${ship.id}`, "admin", "PATCH", {
+      version: renamed.version + 1,
+      name: "Borealis",
+      channel: "#example-zeta",
+    });
+    const shipTool = { fleetId: registered.id, name: "Tool ship", channel: "#example-tool" };
+    expect(await tool("subspace_create_ship", shipTool, "member")).toMatchObject({
+      isError: true,
+    });
+    const toolShip = await tool<Versioned>("subspace_create_ship", shipTool, "admin");
+    expect(toolShip.isError).toBe(false);
+    const toolRename = { shipId: toolShip.structuredContent.id, name: "Tool ship renamed" };
+    expect(
+      await tool(
+        "subspace_rename_ship",
+        { ...toolRename, channel: "#example-elsewhere" },
+        "member",
+      ),
+    ).toMatchObject({ isError: true });
+    expect(await tool("subspace_rename_ship", toolRename, "member")).toMatchObject({
+      isError: false,
     });
     expect(await call(200, `/agents/${linked.userId}`)).toMatchObject({
       fleetId: registered.id,
       fleet: fleet.slug,
       shipId: ship.id,
       ship: "Borealis",
+      ircNick: "example-zeta",
     });
     const signInResponse = await http("/auth/dev/token", undefined, "POST", {
       email: captain.serviceTokenClientId,
@@ -261,17 +335,45 @@ describe.skipIf(!origin)("round two HTTP contracts", () => {
       ship: "Borealis",
     });
     expect(await call(200, `/fleets/${fleet.slug}`)).toMatchObject({
+      starbaseChannel: "#example-starbase",
+      commandChannel: "#example-command",
       rearAdmiralName: "Roster-admiral",
       captainNames: ["Alpha-captain", "Zeta-captain"],
       agents: [
-        { name: "Roster-admiral", rank: "rearAdmiral", shipId: null, ship: null },
-        { name: "Alpha-captain", rank: "captain", ship: "zenith" },
-        { name: "Zeta-captain", rank: "captain", shipId: ship.id, ship: "Borealis" },
+        {
+          name: "Roster-admiral",
+          rank: "rearAdmiral",
+          shipId: null,
+          ship: null,
+          ircNick: "example-admiral",
+        },
+        {
+          name: "Alpha-captain",
+          rank: "captain",
+          ship: "zenith",
+          ircNick: null,
+          shipChannel: null,
+        },
+        {
+          name: "Zeta-captain",
+          rank: "captain",
+          shipId: ship.id,
+          ship: "Borealis",
+          ircNick: "example-zeta",
+          shipChannel: "#example-zeta",
+        },
       ],
-      ships: [{ id: ship.id, name: "Borealis" }, { name: "zenith" }],
+      ships: [
+        { id: ship.id, name: "Borealis", channel: "#example-zeta" },
+        { name: "Member ship", channel: null },
+        { name: "Tool ship renamed", channel: "#example-tool" },
+        { name: "zenith", channel: null },
+      ],
     });
     expect(await call(200, `/fleets/${registered.id}/ships`, "member")).toMatchObject([
       { id: ship.id, fleetId: registered.id, name: "Borealis" },
+      { fleetId: registered.id, name: "Member ship" },
+      { fleetId: registered.id, name: "Tool ship renamed" },
       { fleetId: registered.id, name: "zenith" },
     ]);
     await call(404, `/fleets/${registered.id}/ships`, "other");

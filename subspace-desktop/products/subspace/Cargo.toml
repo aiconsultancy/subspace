@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 subspace-framework = { workspace = true, features = ["host", "search-onnx", "gpui-kit-text-patch"] }
 subspace-api-client = { path = "../../clients/subspace-api" }
+subspace-client-fleet.workspace = true
 subspace-github-board = { path = "../../spaces/github" }
 subspace-github-copilot-agents-board = { path = "../../spaces/github-copilot-agents" }
 subspace-actions-board = { path = "../../spaces/actions" }
@@ -21,7 +22,7 @@ subspace-terminal-panel = { path = "../../terminal/panel", optional = true }
 url.workspace = true
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
-subspace-board-lab-board = { path = "../../spaces/board-lab", optional = true }
+subspace-space-lab-board = { path = "../../spaces/space-lab", optional = true }
 
 [features]
 default = ["report-issue"]
@@ -32,8 +33,8 @@ terminal = ["dep:subspace-terminal-panel"]
 # packaging builds leave them out. Each also turns on the descriptor's
 # feature of the same name, so the descriptor lists exactly the Spaces this
 # binary registers. Built in, each starts off until turned on in Settings.
-# Board Lab, on macOS ARM64 only.
-board-lab = ["dep:subspace-board-lab-board", "subspace-descriptor/board-lab"]
+# Space Lab, on macOS ARM64 only.
+space-lab = ["dep:subspace-space-lab-board", "subspace-descriptor/space-lab"]
 # The Framework's Component gallery.
 component-gallery = [
     "subspace-framework/component-gallery",
@@ -41,7 +42,7 @@ component-gallery = [
 ]
 # Both, for development: `make run-unreleased`, and the workspace lint and
 # tests.
-unreleased-spaces = ["board-lab", "component-gallery"]
+unreleased-spaces = ["space-lab", "component-gallery"]
 # The debug-only screenshot capture build.
 capture = ["subspace-framework/capture"]
 

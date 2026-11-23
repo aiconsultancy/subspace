@@ -12,7 +12,10 @@ use crate::markup::{self, Ref, Rendered};
 use crate::style::Styled;
 use crate::transcript::Claim;
 
+pub(crate) mod look;
 mod references;
+
+pub(crate) use look::{Look, RefLook};
 
 const MIRC_TINT: f32 = 0.16;
 
@@ -48,6 +51,8 @@ pub(crate) type RefTooltip =
 pub(crate) struct RefHandlers {
     pub open: Claim,
     pub tooltip: RefTooltip,
+    /// The answered state a reference's chip shows.
+    pub look: RefLook,
     pub styled: Option<Styled>,
 }
 

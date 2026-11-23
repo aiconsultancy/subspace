@@ -35,14 +35,14 @@ fn default_off_boards_keep_their_fields() {
         !subspace_descriptor::subspace_descriptor()
             .boards
             .iter()
-            .find(|board| board.id == "actions")
+            .find(|board| board.id == "github-copilot-agents")
             .unwrap()
             .default_enabled
     );
     assert!(
         !boards
             .iter()
-            .find(|board| board.id == "actions")
+            .find(|board| board.id == "github-copilot-agents")
             .unwrap()
             .connection_settings()
             .fields()

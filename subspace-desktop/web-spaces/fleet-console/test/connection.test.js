@@ -102,10 +102,29 @@ test("every state says what it is and what to do", () => {
   assert.match(unreachable.banner.body, /Retrying in 3 s/);
   const reconnecting = describeConnection(run([{ type: "open" }, { type: "closed" }], () => 0), { now: 0 });
   assert.match(reconnecting.label, /Reconnecting/);
-  for (const reason of ["no-bridge", "no-settings", "no-endpoint", "bad-endpoint", "no-secrets", "no-secrets-api", "no-token"]) {
+  for (const reason of ["no-bridge", "no-settings", "no-endpoint", "bad-endpoint", "no-secrets", "no-secrets-api", "no-token", "api-no-token", "api-token-address", "api-token-checking", "api-token-store"]) {
     const sample = describeConnection(run([{ type: "sample", reason }]));
     assert.equal(sample.label, "Sample");
     assert.ok(sample.banner.title.startsWith("Sample fleet"), reason);
     assert.equal(sample.banner.retry, reason !== "no-bridge");
   }
+});
+
+test("sample mode for a fleet from the Subspace API points at Subspace Settings › Fleets", () => {
+  for (const reason of ["api-no-token", "api-token-address"]) {
+    const sample = describeConnection(run([{ type: "sample", reason }]));
+    assert.match(sample.banner.body, /Subspace Settings › Fleets/, reason);
+    assert.doesNotMatch(sample.banner.body, /Settings > Spaces > Fleet Console/, reason);
+  }
+});
+
+test("a fleet from the Subspace API says to set its token in Subspace Settings", async () => {
+  const { tokenProblem } = await import("../src/connection.js");
+  assert.match(tokenProblem("no-token", "api").body, /Subspace Settings › Fleets/);
+  assert.match(tokenProblem("token-address", "api").title, /address changed/);
+  assert.match(tokenProblem("token-store", "api").body, /keychain, then choose Retry/);
+  assert.equal(tokenProblem("token-store", "api").retry, true, "the banner offers Retry");
+  assert.equal(tokenProblem("no-token", "api").retry, undefined);
+  assert.match(tokenProblem("token-checking", "api").title, /reading/);
+  assert.match(tokenProblem("token-address").body, /Edit the fleet/);
 });

@@ -19,6 +19,10 @@ use crate::{Decisions, inspector, keys, navigator, page, toolbar};
 
 impl Render for Decisions {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Nothing read for an account that is no longer signed in is drawn,
+        // nor the search or menu that account had open.
+        self.follow_account(cx);
+        self.clear_controls(window, cx);
         let tokens = Tokens::current(cx);
         // The shared list asks for its inset without the tokens, so it
         // reads the text edge this frame worked out.

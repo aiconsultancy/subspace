@@ -45,17 +45,36 @@ Linux writes `state.json` under the fixture's `.local/state/subspace/` and
 `Library/Application Support/subspace/`. The fixture directories, servers and
 private display are removed when capture exits.
 
-`CAPTURE_THEME` selects a theme; without it the build starts in Cupertino
-Dark, the app's default. Screenshots for pull requests and the README are
-taken in Twilight Two (`CAPTURE_THEME="Twilight Two"`), as
+`CAPTURE_THEME` selects a theme. The fixture always writes both files, so
+a capture is an existing install: without `CAPTURE_THEME` it has no saved
+theme and starts in Cupertino Dark, the app's default. Screenshots for pull
+requests and the README are taken in Twilight Two
+(`CAPTURE_THEME="Twilight Two"`), as
 [UI change evidence](../AGENTS.md#ui-change-evidence) says.
+`CAPTURE_FIRST_RUN=1` writes neither file, as at a new install's first
+start, which opens in Twilight Two; it refuses `CAPTURE_THEME`,
+`CAPTURE_STATE`, `CAPTURE_CONFIG`, `CAPTURE_IRC_CONFIG` and
+`CAPTURE_FLEET_API`. With no saved window bounds the window opens at its
+default size, so add a `resize:<width>,<height>` step, such as
+`resize:1440,900`, before the shot to capture it at another size.
 `CAPTURE_STATE` and `CAPTURE_CONFIG` merge JSON keys into the fixture files. `CAPTURE_IRC_CONFIG` copies a configuration for a
-local IRC fixture. `CAPTURE_NO_UPDATES_STREAM=1` starts the Subspace API fixture
+local IRC fixture. `CAPTURE_FLEET_API=1` starts the Stargate Fleet API fixture
+(see [Fleet fixture](#fleet-fixture)) and points the built-in Fleet Console at
+it. `CAPTURE_FLEET=1` adds the fleet's issues to the Subspace API fixture. `CAPTURE_NO_UPDATES_STREAM=1` starts the Subspace API fixture
 without its live updates stream. `CAPTURE_CHANGE_AFTER=<seconds>` retitles
 SUB-1 that long after the first detail read to simulate a change made
-elsewhere. `CAPTURE_KEEP_LOG=1` keeps the app and API fixture logs in
+elsewhere. `CAPTURE_ITEM_DELAY=<seconds>` holds each GitHub
+issue or pull request detail read that long, so a Channels pull request
+tile can be captured while it loads. `CAPTURE_KEEP_LOG=1` keeps the app and API fixture logs in
 the output directory for diagnosis. A failed launch or render fails the
 command; inspect retained logs before using the evidence.
+
+`CAPTURE_FEATURES=<features>` adds Cargo features of the app to the capture
+build, for evidence of a Space that the default build leaves out. Without it
+the capture build is unchanged and shows neither unreleased Space. A Space
+built in this way still starts off, so turn it on with `CAPTURE_CONFIG`, for
+example `CAPTURE_FEATURES=space-lab
+CAPTURE_CONFIG='{"boards":{"space-lab":true}}'` on macOS ARM64.
 
 The step syntax is listed in [AGENTS.md](../AGENTS.md#ui-change-evidence).
 Capture uses the same steps and fixture data on both platforms. Window
@@ -69,6 +88,83 @@ the theme, so screenshots in Twilight Two use those fonts on both platforms
 whether or not the machine has them installed, and start without a font
 notice. Themes that name no font still use the machine's own fonts. See
 [Embedded fonts](../../subspace-framework/docs/appearance.md#embedded-fonts).
+
+## Fleet fixture
+
+`CAPTURE_FLEET_API=1` runs `scripts/fleet_api_test_server.py` on loopback: a
+fictional Stargate Fleet API v1 serving the demo world's `aurora` fleet (host
+`aurora-vm-01`, Stargate 0.43.0) with the routes, fields and event stream of
+Stargate's `src/api/v1/types.ts`. The rear admiral `aurora-admiral` runs four
+ships, Lyra, Orion, Vega and Castor, with 16 crew: nine busy, five tasks
+queued, one uncertain, idle and not yet provisioned crew, branches, pull
+requests, subagents and 24 hours of outcomes. Every few seconds a crew member
+moves to the next phase, opens a pull request, finishes or picks up queued
+work, so the stream stays live. The capture writes its address and the
+fictional token `fixture-fleet` into `webBoards.fleet-console`, and the app
+adds its built-in Fleet Console to that entry at start, with its permissions
+allowed, so Fleet Console shows the fleet live, not in sample mode.
+
+`CAPTURE_FLEET_API=1` also saves the aurora fleet's token for the fixture's
+address, as **Settings › Fleets** keeps it (`fleet-api-tokens.json`). Only
+with `CAPTURE_FLEET=1` as well does the Subspace API fixture's aurora fleet
+record that address as its `fleetApiUrl`, so the app lists the fleet and
+uses the token. `CAPTURE_FLEET_TOKEN` chooses that token:
+`saved` (the default), `none` (no token saved), or `moved`, which saves the
+fictional `fixture-fleet-moved` for `https://aurora-old.example.test`, so the
+fleet shows **Address changed** and the token must never reach the fixture.
+The fixture prints one line per request, with a fingerprint of its
+`Authorization` header (the first 12 hex digits of its SHA-256, or `none`),
+never the header itself; `CAPTURE_KEEP_LOG=1` keeps that log as
+`fleet-api.log`. To show only the API's fleet in Fleet Console, without its
+own Settings fleet at the same address, pass
+`CAPTURE_CONFIG='{"webBoards":{"fleet-console":{}}}'`.
+
+Crew work names issues of the demo world's projects `NAV`, `MAP`, `WARP` and
+`RELAY`. `CAPTURE_FLEET=1` adds those projects to the Subspace API fixture as
+a busy team's tracker: 58 issues in every workflow state, trackers with their
+sub-issues, labels, priorities, estimates, due dates, people and captains as
+assignees, linked pull requests and comments, and 13 decisions in every status
+with supersession chains, made by people and by captains. The issues the
+crew works on have the same numbers, titles and states, so Fleet Console's
+issue tiles resolve through the Issues Space. It also adds the neutral `FLT`
+project. The GitHub fixture's pull requests and Actions runs include the same
+work. The repository README's desktop screenshots use both options:
+
+```bash
+CAPTURE_THEME="Twilight Two" CAPTURE_FLEET_API=1 CAPTURE_FLEET=1 \
+  CAPTURE_STATE='{"app.dashboard":"issues","app.window":"[40,40,1440,900]"}' \
+  make capture OUT=dist/capture STEPS='wait:6000;shot:issues'
+```
+
+The README's Fleet Console image is the fleet tier, live:
+
+```bash
+CAPTURE_THEME="Twilight Two" CAPTURE_FLEET_API=1 CAPTURE_FLEET=1 \
+  CAPTURE_STATE='{"app.dashboard":"fleet-console","app.window":"[40,40,1440,900]"}' \
+  make capture OUT=dist/capture STEPS='wait:9000;shot:fleet-console'
+```
+
+For the Channels image, start `scripts/irc-test-server.sh`, then
+`scripts/irc-history-fixture.py`, which posts a fictional `#aurora-lyra`
+conversation between people and captains that names fixture issues and links
+the GitHub fixture's pull requests, and stays connected so the server keeps
+it as chat history. Pass `CAPTURE_IRC_CONFIG` a config for that server with
+`#aurora-lyra` in its channels, with `CAPTURE_FLEET=1` so the issue tiles
+resolve. `CAPTURE_FLEET=1` also lists the aurora fleet's initiative,
+never selected, so Channels marks its captains and rear admiral on any
+loopback connection. `--status` gives `aurora-lyra` a nick status, and
+`--late-after <s>` posts three more lines that many seconds after the
+capture build joins, so a capture that shows another buffer meanwhile finds
+them new; `--thread` adds two requests to `aurora-lyra` with its threaded
+progress notices and replies, one finished and one still working, for the
+Thread tab; `--reactions` has people react to some lines and, with
+`--thread`, sela react with ✋ to the running request; restart the server
+and the fixture before each capture.
+
+Run `python3 scripts/fleet_api_test_server.py --port 18484` to serve the same
+fleet for an installed copy of the app, and `--snapshot` to print it as one
+JSON document. Like Stargate, the fixture answers only the app's own web
+Space origins, so a Fleet Console opened in a browser cannot read it.
 
 ## Decisions fixture
 

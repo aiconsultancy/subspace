@@ -17,7 +17,12 @@ pub(super) fn refresh(conversation: &mut Conversation, cx: &mut Context<Conversa
 fn current(conversation: &Conversation, cx: &App) -> Option<Offer> {
     let input = conversation.draft.entity.read(cx);
     let (text, cursor) = (input.text(cx), input.cursor(cx));
-    let facts = Facts::gather(&conversation.hub.read(cx).state, &conversation.buffer);
+    let facts = Facts::gather(&conversation.hub.read(cx).state, &conversation.buffer)
+        .ranked(&conversation.roster)
+        .asking(super::ask::agent(
+            &conversation.roster,
+            &conversation.buffer,
+        ));
     suggest(&text, cursor, &facts)
 }
 

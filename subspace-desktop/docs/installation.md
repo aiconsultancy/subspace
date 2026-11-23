@@ -46,7 +46,7 @@ build cache.
 ```bash
 make build      # debug build of every crate
 make run        # start the desktop app
-make run-unreleased # with Board Lab and the Component gallery, off until enabled
+make run-unreleased # with Space Lab and the Component gallery, off until enabled
 make check      # format check, clippy and tests
 make interfaces # real headless product interface
 make run ARGS='--help' # headless CLI help
@@ -118,14 +118,16 @@ and Python 3 to check the locked Rust graph against `about.toml` and generate
 `THIRD_PARTY_LICENSES` for the target and build features. The report
 includes pinned texts that the scanner misses, identifies any remaining
 generic SPDX texts and gives exact source downloads for MPL-2.0 crates.
-Native ONNX Runtime notices are in `licenses/onnxruntime/`, and the Windows
-archive includes the WebView2 loader notices in `licenses/webview2/`.
+The macOS and Linux archives include ONNX Runtime notices in
+`licenses/onnxruntime/`, and the Windows archive includes the WebView2
+loader notices in `licenses/webview2/`.
 Packaging checks the selected crates and notice digests in
-[`native-notices.json`](../native-notices.json) before compiling. Packaging
-rejects ONNX Runtime linkage overrides and checks that Cargo used the pinned
-crate's static download. The crate verifies the downloaded archive against a
-SHA-256 in its pinned distribution table before linking. Update the pins and
-verify the upstream notices together when either native dependency changes.
+[`native-notices.json`](../native-notices.json) before compiling. Required
+asset notices must also be present. Packaging rejects caller-supplied ONNX
+Runtime linkage overrides, verifies the compressed distribution against the
+pinned table's SHA-256 and extracts it into a private build directory.
+Cargo's build output must confirm linkage to that directory. Update the pins
+and verify the upstream notices together when either native dependency changes.
 The archive's `NOTICE` indexes the files relative to its own location.
 Ordinary builds share a Cargo cache by target and feature set. The packaging
 helper holds a lock until it has copied the executable for this run's licence
@@ -137,8 +139,10 @@ unchanged from the release compiler's sysroot into `licenses/rust-std/`.
 It stops before compilation if a notice is missing or the compiler version
 differs from the pin in `mise.toml`.
 `make licence-check` checks the policy across release targets with Terminal
-and the default features enabled. It also compares the copied notices when
-Cargo resolves the Framework from a local checkout.
+and the default features enabled. It compares the copied Markdown notice
+with the resolved parser's licence and compares the Framework notices when
+Cargo resolves a local Framework checkout. On Intel Macs the policy check
+skips if cargo-about is unavailable. Packaging always requires it.
 
 Scripts read names, bundle IDs, icons, themes and version through the headless
 `subspace-product-metadata` utility. It does not initialize GPUI to obtain

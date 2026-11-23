@@ -276,3 +276,37 @@ fn installing_over_an_unrecorded_source_hides_ownerless_keys() {
         json!({"fleet-b": "folder and manifest"})
     );
 }
+
+#[test]
+fn a_built_in_space_keeps_its_owner_when_its_files_or_folder_change() {
+    let built_in = json!({"path": "/store/a", "builtIn": true})
+        .as_object()
+        .unwrap()
+        .clone();
+    let first = Owner::of_entry(FIRST, &folder("a"), "fleet", Some(&built_in));
+    let updated = Owner::of_entry(SECOND, &folder("b"), "fleet", Some(&built_in));
+    assert_eq!(first.stored_key("token"), updated.stored_key("token"));
+    // A page key saved under the earlier folder-and-manifest owner is still
+    // the app's.
+    assert_eq!(
+        updated.claims(&format!("{}:token", &SECOND[..32])),
+        Some(("token", 1))
+    );
+    assert_eq!(updated.claims("token"), None);
+    // Another built-in Space, and an entry the user installed, have others.
+    let other = Owner::of_entry(FIRST, &folder("a"), "notes", Some(&built_in));
+    assert_ne!(other.stored_key("token"), first.stored_key("token"));
+    let mut installed = built_in.clone();
+    installed.insert(
+        "managedSource".into(),
+        serde_json::to_value(zip("c1")).unwrap(),
+    );
+    assert_eq!(
+        Owner::of_entry(FIRST, &folder("a"), "fleet", Some(&installed)),
+        Owner::new(FIRST, &folder("a"), Some(&zip("c1")))
+    );
+    assert_eq!(
+        Owner::of_entry(FIRST, &folder("a"), "fleet", None),
+        Owner::new(FIRST, &folder("a"), None)
+    );
+}

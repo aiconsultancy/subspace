@@ -2,6 +2,7 @@
 //! runtime's [`Event`]s in order. Pure data: no GPUI, no sockets.
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::ops::Range;
 
 use chrono::{DateTime, Duration, Utc};
 use subspace_client_irc::{
@@ -12,14 +13,17 @@ use subspace_client_irc::{
 mod apply;
 mod counts;
 mod directory;
+mod folding;
 mod joins;
 mod merge;
 mod removed;
+mod statuses;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use directory::{CACHE_FILE as DIRECTORY_CACHE, Directories};
 pub(crate) use removed::{KEY as REMOVED_KEY, Removed};
+pub(crate) use statuses::Statuses;
 
 /// Lines kept per buffer; older live lines are dropped first.
 pub(crate) const LINE_CAP: usize = 2000;
@@ -38,6 +42,14 @@ pub(crate) struct Network {
     /// Our current nick, or the configured one before registration.
     pub nick: String,
     pub caps: Vec<String>,
+    /// Nick-wide status lines while connected; dropped when the connection
+    /// ends and never stored.
+    pub statuses: Statuses,
+    /// The sequences of every line already held when the current connection
+    /// began, such as lines restored from the store or seen on an earlier
+    /// connection; `None` while not connected. Lines outside the range, live
+    /// or from history, arrived on this connection.
+    pub held_at_connect: Option<Range<i64>>,
 }
 
 /// A line with a local sequence number: a stable identity for lines that
@@ -93,6 +105,14 @@ pub(crate) struct Buffer {
     pub read_marker: Option<DateTime<Utc>>,
     pub joined: bool,
     pub history: History,
+    /// The held lines that are trusted request progress, by sequence: the
+    /// transcript folds them into their request's status line, and they
+    /// never count as unread. A line stays folded while it and its request
+    /// are held.
+    pub folded: HashSet<i64>,
+    /// The requests this buffer holds and the notices on them, and the
+    /// requests that ended, which are also stored.
+    pub requests: crate::thread_status::Requests,
 }
 
 impl Buffer {
@@ -139,11 +159,19 @@ pub(crate) struct IrcState {
     /// and saves them in a cache file.
     pub directories: Directories,
     pub joins: joins::Joins,
-    /// The runtime's answers to `SendAll` sends, by send ID. The
-    /// sender takes its answer.
-    sends: BTreeMap<u64, SendResult>,
+    /// Request endings the store kept for buffers that held no lines when
+    /// it restored, by buffer, until the buffer holds lines.
+    parked: BTreeMap<BufferKey, Vec<(String, crate::thread_status::Ending)>>,
+    sends: Sends,
+}
+
+/// The runtime's answers to `SendAll` sends.
+#[derive(Debug, Clone, Default)]
+struct Sends {
+    /// The answers by send ID. The sender takes its answer.
+    answers: BTreeMap<u64, SendResult>,
     /// The last `SendAll` ID handed out.
-    last_send: u64,
+    last: u64,
 }
 
 impl IrcState {
@@ -175,6 +203,8 @@ impl IrcState {
         self.directories.retain(configs);
         self.buffers
             .retain(|key, _| configs.iter().any(|config| config.id == key.network));
+        self.parked
+            .retain(|key, _| configs.iter().any(|config| config.id == key.network));
         for (key, buffer) in next.buffers {
             self.buffers.entry(key).or_insert(buffer);
         }
@@ -185,8 +215,10 @@ impl IrcState {
                 if let Some(old) = self.network(&network.id) {
                     network.status = old.status.clone();
                     network.caps = old.caps.clone();
+                    network.held_at_connect = old.held_at_connect.clone();
                     if matches!(old.status, ConnectionStatus::Connected { .. }) {
                         network.nick = old.nick.clone();
+                        network.statuses = old.statuses.clone();
                     }
                 }
                 network
@@ -231,15 +263,15 @@ impl IrcState {
     /// A new ID for [`Command::SendAll`](subspace_client_irc::Command::SendAll),
     /// with no answer yet; [`Self::take_send`] returns its answer.
     pub fn next_send(&mut self) -> u64 {
-        self.last_send += 1;
-        self.sends.remove(&self.last_send);
-        self.last_send
+        self.sends.last += 1;
+        self.sends.answers.remove(&self.sends.last);
+        self.sends.last
     }
 
     /// The answer to the `SendAll` `id`, once it came; taking it
     /// forgets it.
     pub fn take_send(&mut self, id: u64) -> Option<SendResult> {
-        self.sends.remove(&id)
+        self.sends.answers.remove(&id)
     }
 
     /// Everything up to the newest line was read here. Returns that line's
@@ -318,13 +350,61 @@ impl IrcState {
     /// configured network, unless the user removed it. They count as
     /// nothing: no unread, no mention, no notification.
     pub fn restore(&mut self, key: &BufferKey, lines: Vec<Line>) {
-        if self.network(&key.network).is_none()
-            || key.target == Target::Server
-            || self.removed.get(key).is_some()
-        {
+        if !self.restorable(key) {
             return;
         }
         merge::merge(self, key, lines, false);
+        folding::refold(self, &folding::Scope::Buffer(key.clone()));
+    }
+
+    /// Restores buffer `key` from the store: its `lines`, when any survive,
+    /// and the requests that `ended` there, oldest first. The endings are
+    /// taken in before the lines fold, so a restored notice never overrides
+    /// how a request was seen to end (it still fills in an ending stored
+    /// without its outcome). Endings for a buffer that holds no lines wait
+    /// in [`Self::parked`] until it does, so they never bring a buffer back
+    /// into the list by themselves.
+    pub fn restore_buffer(
+        &mut self,
+        key: &BufferKey,
+        lines: Vec<Line>,
+        ended: &[(String, crate::thread_status::Ending)],
+    ) {
+        if !self.restorable(key) {
+            return;
+        }
+        if !ended.is_empty() {
+            self.parked
+                .entry(key.clone())
+                .or_default()
+                .extend(ended.iter().cloned());
+        }
+        if !lines.is_empty() {
+            self.restore(key, lines);
+        }
+        folding::adopt(self, key);
+    }
+
+    /// Whether the store may restore buffer `key`: a channel or private
+    /// conversation of a configured network that the user did not remove.
+    fn restorable(&self, key: &BufferKey) -> bool {
+        self.network(&key.network).is_some()
+            && key.target != Target::Server
+            && self.removed.get(key).is_none()
+    }
+
+    /// The requests that ended in each buffer since the last call, for the
+    /// store.
+    pub fn take_endings(
+        &mut self,
+    ) -> Vec<(BufferKey, Vec<(String, crate::thread_status::Ending)>)> {
+        self.buffers
+            .iter_mut()
+            .filter_map(|(key, buffer)| {
+                let ended = buffer.requests.take_endings();
+                (!ended.is_empty()).then(|| (key.clone(), ended))
+            })
+            .collect()
     }
 
     /// The newest message each channel and private conversation of
@@ -397,6 +477,7 @@ impl IrcState {
         if key.target == Target::Server {
             return false;
         }
+        self.parked.remove(key);
         let newest = self
             .buffers
             .remove(key)
@@ -443,6 +524,8 @@ fn network(config: &NetworkConfig) -> Network {
         status: ConnectionStatus::Disconnected,
         nick: config.nickname.clone(),
         caps: Vec::new(),
+        statuses: Statuses::default(),
+        held_at_connect: None,
     }
 }
 

@@ -5,14 +5,24 @@
 
 # Subspace
 
-Subspace makes agentic coding multiplayer. Humans and AI coding agents work
-together in IRC channels and a shared issue tracker, while the agents run on
+Subspace makes AI-assisted development multiplayer. Your team and your coding
+agents share one workspace: live IRC channels, an issue tracker, a decision
+log and a console that shows what every agent is doing. The agents run on
 their own fleet machines instead of on your laptop.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/diagrams/overview-dark.svg">
+  <img src="docs/assets/diagrams/overview-light.svg" alt="Your team works in the Subspace desktop app, sharing IRC channels, issues, decisions and the Fleet Console with fleets of coding agents. Each fleet is one VM run by Stargate, with a rear admiral, captains and their crews. Stakeholders reach the same agents from Slack or Microsoft Teams. Subspace and the fleets sit inside a private network, and the agents' work reaches GitHub as pull requests">
+</picture>
+
 **Get started:** clone this repository, open your coding agent in it and ask it
-to set Subspace up. [INSTALL.md](INSTALL.md) tells it (and you) how: it creates
-a private fleet VM on your computer or uses one of yours, installs the agents,
-IRC and the API on it, and connects the desktop app.
+to set Subspace up. [INSTALL.md](INSTALL.md) tells it (and you) how. We
+recommend a fleet VM in your cloud, reached over a private network: Subspace
+is meant to be multiplayer, and that keeps the agents' builds off your
+machine. Your agent can create the VM with your cloud provider and set the
+private network up for you. To just try Subspace out, a VM on your own
+computer is the quickest way. Either way it installs the agents, IRC and the
+API on the VM and connects the desktop app.
 
 **Bring your own agents.** Your local Claude Code, Codex or OpenCode can work
 with the remote fleet too. They use the issue tracker, decisions, documents,
@@ -22,19 +32,124 @@ are an agent acting for you, for example
 `[on behalf of George (Claude Opus 5.5)]`. See
 [agent-skills/](agent-skills/README.md) and `./install.sh skills`.
 
-<a href="docs/assets/screenshots/desktop-issues-twilight-two.png"><img src="docs/assets/screenshots/desktop-issues-twilight-two.png" width="800" alt="The Issues Space, with views and projects in the navigator on the left, issues grouped by workflow state in the middle and the selected issue in the inspector on the right"></a>
+<a href="docs/assets/screenshots/desktop-channels-twilight-two.png"><img src="docs/assets/screenshots/desktop-channels-twilight-two.png" width="800" alt="The Channels Space in a ship channel: the fleet's Starbase, fleet-command and ship channels in the navigator, people and a captain discussing issues with a tile under each message, and the live tile for one issue open under the pointer"></a>
+
+## What is Subspace
+
+Subspace is a desktop app, an API and an IRC server. Paired with
+[Stargate](https://github.com/aiconsultancy/stargate), which the installer
+sets up on a VM for you, they put your people and your coding agents in the
+same room.
+
+- **A desktop app** for macOS, Windows and Linux, written in Rust on GPUI, so
+  the whole interface is drawn on the GPU. Its Channels Space is a custom IRC
+  client that shows live tiles for the issues and pull requests people
+  mention, so you can follow their status, and what the agents are talking
+  about, at a glance. Other Spaces cover Issues, Decisions, pull requests and
+  the Fleet Console.
+- **An API** in TypeScript. It holds the issue tracker, with images and
+  documents on issues, plus initiatives, the decision log and the fleets, and
+  gives agents an MCP endpoint. The API is headless: it has no web interface
+  of its own, and the desktop app is its only client today.
+- **An IRC server**, [Ergo](https://ergo.chat/) in a container. Yes, IRC. It
+  is great to be back. Run one for your whole setup, however many fleets:
+  we run it on Azure Container Apps, reachable only over the private
+  network. A trial or a single fleet keeps it on the fleet VM
+  ([where to run it](INSTALL.md#one-fleet-or-several-shared-irc)).
+- **Fleets.** A fleet is one VM, run by Stargate on OpenCode. Stargate also
+  drives the Claude and Codex SDKs, and its OpenCode integration goes
+  furthest.
+
+### Who is in a fleet
+
+- **The rear admiral** writes no code. It has your repositories and the API,
+  so it can raise and update issues, and it is on hand for whatever you
+  configure it to do, such as keeping stakeholders in the loop. Ours is Fable.
+- **Captains** each run OpenCode in tmux under their own Linux user, with
+  their own checkouts of the repositories. Issues are assigned to captains
+  and to nobody else in the fleet. A captain plans the work and delegates it
+  to a crew whose size you choose. Captains share the fleet's rules, and each
+  can have rules of its own.
+- **Crew** do the work. They run under their captain's Linux user, and each
+  has its own static Git worktree of every repository the captain has. You
+  talk to the rear admiral and the captains, not to crew: like a subagent on
+  your own machine, a crew member reports through its captain.
+
+### What you can do with it
+
+- **Hand work over.** Assign an issue or a tracker to a captain and it gets
+  delivered, or flag it *Ready for agents* and it joins the work queue. See
+  [Agent dispatch](#agent-dispatch).
+- **Solve problems in the open.** Tag a captain or a colleague in a channel
+  and work it through together, live.
+- **Keep the decisions.** The decision log shows what was decided on each
+  issue, whether a person or an agent decided it, and what later superseded
+  it. Over time that record is the data for making better decisions.
+- **Ask for a spec first.** A project can require a written spec, kept as a
+  document on the issue, and say which reviews it needs before the build
+  starts, for example one by a Sol crew member and one by an Opus one. Each
+  reviewer records its review and approval against the exact revision.
+- **Keep stakeholders close.** Ask the rear admiral to reach a stakeholder on
+  Slack or Microsoft Teams, send screenshots of a new feature or get a domain
+  expert's input, while the development team carries on with the captains in
+  IRC. The rear admiral and the captains reply on whichever medium you used
+  to reach them.
+- **Run several fleets.** One IRC server serves them all, and the tracker
+  assigns initiatives to fleets. With, say, four VMs, each running a rear
+  admiral and four captains, picking an initiative takes you to the channels
+  of its fleet: the captains with access to those repositories, working to
+  those shared rules.
+- **Watch the fleet.** The Fleet Console reads Stargate's API to show every
+  fleet's state and its VM's CPU and memory. Drill into a captain or a crew
+  member to see the task, the issue, the repository and the branch.
+- **Stay inside your quotas.** A configurable cool-down scales crews down as
+  a usage quota runs low and back up when it is restored. See
+  [How we run it](#how-we-run-it).
+- **Run it in your cloud, privately.** This is what we recommend. Point your
+  coding agent at [INSTALL.md](INSTALL.md), the setup guide written for it:
+  it can create a VM with your cloud provider and put it on a private network
+  with Tailscale, Cloudflare Zero Trust or similar. Nothing faces the
+  internet; that is a firm requirement. We use Cloudflare Zero Trust.
+  Tailscale works just as well, and we have tested it. See
+  [Private access](docs/private-access.md).
+- **Or try it on your own machine.** The same guide runs a fleet in a VM on
+  your computer and connects the desktop app, with demo data (fictional
+  fleets, initiatives and issues) to look around in straight away. It is the
+  easiest way to see Subspace, though the agents then share your machine.
+
+All of this is configurable.
+
+### What there is no client for yet
+
+- **Phones.** The desktop app runs on macOS, Windows and Linux, and there is
+  no mobile or web client. To talk to your agents from a phone, connect them
+  to Slack as well. The installer sets this up for the rear admiral (see the
+  [Slack guide](docs/slack.md)); Stargate can put captains on Slack too.
+- **Administration.** There is no admin interface yet. One that ships with
+  Subspace is planned. Until then, your own coding agents can manage the API
+  on your behalf through its MCP server: see
+  [agent-skills/](agent-skills/README.md).
+- **Your own front end.** The API is open to build on, so you can put a web
+  interface of your own on it if you want one.
 
 ## Why Subspace
 
-Agentic coding today is a solo activity. Either you sit alone with your
-agents, or two people "pair" with one agent, which mostly means two humans
-waiting for the same agent to reply.
+We have been doing AI-assisted coding, to unhealthy levels, since LLMs first
+became usable for it. AI coding fatigue is real. You sit in your own silo
+with a crowd of agents, and working out how any of it joins up with your
+human colleagues is left to you. Two people "pairing" with one agent mostly
+means two humans waiting for the same reply.
+
+Subspace puts the problem-solving back in a shared room: you, your agents
+and your teammates, colleagues and friends, live, in one workspace. We
+dogfood it. Subspace was built with Subspace and Stargate. We started with
+Stargate on Slack, wanted more and deeper integration, and built this.
 
 Subspace changes where the agents live and how the team talks to them:
 
-- **Agents are not on your computer.** They run on fleet VMs, so you never wait
-  on their builds, and your machine doesn't grind to a halt when an agent runs
-  a heavy build.
+- **Agents are not on your computer.** They run on fleet VMs, which we
+  recommend you keep in the cloud, so you never wait on their builds and your
+  machine doesn't grind to a halt when an agent runs a heavy build.
 - **The whole team is in the same room.** Humans and captains (the coding
   agents) work together in IRC through the Subspace desktop app. Captains can
   talk to each other as well as to you.
@@ -66,12 +181,19 @@ out:
 - **Assigned to a captain.** Assign an issue to a captain and the rear
   admiral asks that captain in chat to pick it up, assign it to a crew
   member and get it done.
-- **In the open.** Offers, answers and requests go to the fleet's channel,
-  so people watch them in the Channels Space and can step in.
+- **In the open.** Offers, answers and requests go to the fleet's command
+  channel, so people watch them in the Channels Space and can step in.
+- **Own fleet only.** The API refuses a fleet agent's assignment or *Ready
+  for agents* change on an issue whose project belongs to another fleet,
+  even when the project moved after the dispatcher last read it. It also
+  refuses the agent's moves of issues into or out of another fleet's
+  projects. Projects that belong to no fleet stay open to every fleet, and
+  comments are not restricted.
 - **Opt in per fleet.** Dispatch is off by default and switched on per
   fleet. The polling interval, the time each captain has to answer and the
   retry timings are configurable, and the installer asks whether to switch
-  it on.
+  it on
+  ([how the installer sets it up](subspace-installer/README.md#agent-dispatch)).
 
 ## How it fits together
 
@@ -79,6 +201,7 @@ out:
 flowchart LR
   subgraph Humans
     D[Subspace desktop app]
+    ST[Slack and<br/>Microsoft Teams]
   end
   subgraph Services
     API[Subspace API<br/>issues, initiatives, fleets]
@@ -98,7 +221,14 @@ flowchart LR
   C2 -- IRC --> IRC
   RA -- REST / MCP --> API
   C1 -- REST / MCP --> API
+  ST <-- Slack / Teams --> RA
+  ST <-- Slack / Teams --> C1
+  ST <-- Slack / Teams --> C2
 ```
+
+The rear admiral and the captains reply on whichever medium you used to reach
+them: IRC, Slack or Teams. Which of them is connected to what is configurable
+per fleet.
 
 - **Desktop app** ([`subspace-desktop/`](subspace-desktop/README.md)). A Rust and
   GPUI app with Spaces for Channels (IRC), Issues, Decisions, GitHub pull
@@ -120,19 +250,22 @@ flowchart LR
   development provider.
 - **IRC** ([`subspace-irc/`](subspace-irc/README.md)). Ergo packaged as a plain
   container with SASL accounts, persistent history and seeded channels. One
-  server can serve many fleets and desktops, on a fleet VM or anywhere else.
+  server serves every fleet and desktop: we recommend running it in a
+  container on your private network, and on the fleet VM only for a trial or
+  a single fleet.
 - **Fleet installer** ([`subspace-installer/`](subspace-installer/README.md)).
   Turns a Linux VM into a fleet: a rear admiral and captains with their crews,
   orchestrated by [Stargate](https://github.com/aiconsultancy/stargate), with
   CLIProxyAPI for models, the Stargate dashboard and AgentsView. Fleets default
   to OpenCode as the agent harness. The installer can register its fleet with
   the API.
-- **A GitHub App per agent.** Every captain and the rear admiral has its own
-  GitHub App, so each one commits, comments and opens pull requests under its
-  own identity. The installer provisions each agent's App metadata and private
-  key as owner-only files under `~/.config/subspace/` in that agent's Linux
-  home, from a secrets directory the operator supplies, and wires up Git
-  credentials, the commit identity and a scoped `gh` wrapper.
+- **A GitHub App per captain and rear admiral.** Every captain and the rear
+  admiral has its own GitHub App, so each one commits, comments and opens pull
+  requests under its own identity. Crew run under their captain's Linux user
+  and commit as their captain. The installer provisions each App's metadata
+  and private key as owner-only files under `~/.config/subspace/` in its
+  agent's Linux home, from a secrets directory the operator supplies, and
+  wires up Git credentials, the commit identity and a scoped `gh` wrapper.
 
 Our reference deployment ran on Azure, with credentials such as the agents'
 GitHub App keys in Azure Key Vault. The public version uses per-agent
@@ -141,12 +274,46 @@ credential files that the installer provisions instead.
 ## Screenshots
 
 The desktop app in its Twilight Two theme, with fictional fixture data.
+Select an image to see it full size.
 
-| Issues, with the selected issue in the inspector | An open issue |
-| --- | --- |
-| <a href="docs/assets/screenshots/desktop-issues-twilight-two.png"><img src="docs/assets/screenshots/desktop-issues-twilight-two.png" width="440" alt="The Issues Space listing issues by workflow state, with views and projects in the navigator and the selected issue in the inspector"></a> | <a href="docs/assets/screenshots/desktop-issue-page-twilight-two.png"><img src="docs/assets/screenshots/desktop-issue-page-twilight-two.png" width="440" alt="An issue open in a tab beside the list, with its description and activity, and its properties in the inspector"></a> |
-| **Pull requests** | **Decisions** |
-| <a href="docs/assets/screenshots/desktop-pull-requests-twilight-two.png"><img src="docs/assets/screenshots/desktop-pull-requests-twilight-two.png" width="440" alt="The PRs Space listing pull requests across repositories, with the selected pull request in the inspector"></a> | <a href="docs/assets/screenshots/desktop-decisions-twilight-two.png"><img src="docs/assets/screenshots/desktop-decisions-twilight-two.png" width="440" alt="The Decisions Space listing decisions grouped by status, with the selected decision's maker, linked issues and supersession in the inspector"></a> |
+### Channels and the tracker
+
+<table>
+<tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-channels-twilight-two.png"><img src="docs/assets/screenshots/desktop-channels-twilight-two.png" width="440" alt="Channels, a custom IRC client, with the pointer over an issue reference so its live tile shows the issue's title, state and progress"></a><br><b>Channels.</b> People and captains in a ship channel. Hovering an issue shows its live tile.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-issues-twilight-two.png"><img src="docs/assets/screenshots/desktop-issues-twilight-two.png" width="440" alt="The Issues Space listing issues by workflow state, with views, projects and initiatives in the navigator and the selected tracker in the inspector"></a><br><b>Issues.</b> Grouped by workflow state, with the selected tracker in the inspector.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-issue-page-twilight-two.png"><img src="docs/assets/screenshots/desktop-issue-page-twilight-two.png" width="440" alt="A tracker issue open in a tab, with an image, an attachment, its sub-issues and linked pull requests, and its properties in the inspector"></a><br><b>An issue.</b> A tracker with an image, an attached document, sub-issues and its pull requests.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-decisions-twilight-two.png"><img src="docs/assets/screenshots/desktop-decisions-twilight-two.png" width="440" alt="The Decisions Space listing decisions by status, with filters for people and agents and the selected decision's maker, linked issues and evidence in the inspector"></a><br><b>Decisions.</b> What was decided, by a person or an agent, and what superseded it.</td>
+</tr>
+</table>
+
+### Fleet Console
+
+<table>
+<tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-fleet-console-twilight-two.png"><img src="docs/assets/screenshots/desktop-fleet-console-twilight-two.png" width="440" alt="The Fleet Console at fleet tier: the rear admiral in the centre with four captains in orbit, and the fleet's host and system figures in the inspector"></a><br><b>Fleet Console.</b> A fleet: its rear admiral, four captains, and the VM's CPU, memory and disks.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-fleet-console-warp-twilight-two.png"><img src="docs/assets/screenshots/desktop-fleet-console-warp-twilight-two.png" width="440" alt="The Fleet Console part-way through the warp from a captain into one of its crew"></a><br><b>Warping in.</b> From a captain to one of its crew.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-fleet-console-ship-twilight-two.png"><img src="docs/assets/screenshots/desktop-fleet-console-ship-twilight-two.png" width="440" alt="The Fleet Console at ship tier: a captain with its four crew, each showing its branch and linked issue, and the captain's queue in the inspector"></a><br><b>A ship.</b> The captain, its queue and each crew member's branch and issue.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-fleet-console-crew-twilight-two.png"><img src="docs/assets/screenshots/desktop-fleet-console-crew-twilight-two.png" width="440" alt="The Fleet Console at crew tier: a crew member's current task, issues, Git state and pull request"></a><br><b>A crew member.</b> Its current task, issues, Git state and pull request.</td>
+</tr>
+</table>
+
+### Pull requests and Actions
+
+<table>
+<tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-pull-requests-twilight-two.png"><img src="docs/assets/screenshots/desktop-pull-requests-twilight-two.png" width="440" alt="The PRs Space listing pull requests across repositories, with the selected pull request's reviewers and checks in the inspector"></a><br><b>Pull requests.</b> Across repositories, with reviewers and checks in the inspector.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-pull-request-page-twilight-two.png"><img src="docs/assets/screenshots/desktop-pull-request-page-twilight-two.png" width="440" alt="A pull request open in a tab, with its description, testing notes and review activity"></a><br><b>A pull request.</b> Its description, review activity and checks, with approve and comment to hand.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-actions-twilight-two.png"><img src="docs/assets/screenshots/desktop-actions-twilight-two.png" width="440" alt="The Actions Space listing workflow runs by workflow, with a failed run selected and its jobs in the inspector"></a><br><b>Actions.</b> Workflow runs across repositories, with the selected run's jobs in the inspector.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-actions-run-twilight-two.png"><img src="docs/assets/screenshots/desktop-actions-run-twilight-two.png" width="440" alt="A failed workflow run open in a tab, with its trigger, commit, jobs and steps"></a><br><b>A workflow run.</b> Its trigger, commit, jobs and steps.</td>
+</tr>
+</table>
 
 ## Run the whole system locally
 
@@ -178,15 +345,34 @@ in the local database. Use `DEMO=0` to skip the rehearsal.
 Everything binds to `127.0.0.1` only. The `local` organisation has the
 `developer@example.com` account, the bootstrap Local workspace, and IRC
 accounts for the developer and fleet agents. The two demo fleets share Ergo:
-`aurora` uses the plain listener and `borealis` uses TLS.
+`aurora` uses the plain listener and `borealis` uses TLS. An agent's IRC
+nick, SASL account and API agent name are the same: `<fleet>-admiral` for
+the rear admiral and `<fleet>-<captain-id>` for a captain. Aurora has
+`aurora-admiral` and the captains `aurora-lyra`, `aurora-orion`,
+`aurora-vega` and `aurora-castor`. Borealis has `borealis-admiral` and
+`borealis-rigel`.
+
+Ergo registers the Local workspace's `#subspace` and each fleet's
+[standard channels](subspace-installer/README.md#channels):
+
+| Channel | Aurora's | What the demo shows there |
+| --- | --- | --- |
+| Starbase | `#aurora-starbase` | People and the rear admiral talk. |
+| Fleet command | `#aurora-command` | The rear admiral and the captains coordinate. |
+| Ship, one per captain | `#aurora-lyra` and so on | People talk to the captain about its work. |
 
 The default seed adds the fictional Fallow Reach rehearsal. Navigation console,
 Warp diagnostics and Relay reliability span four projects (`NAV`, `MAP`,
 `WARP` and `RELAY`) with 48 issues, decision records, threaded comments, todos,
 review screenshots and local simulated pull requests and deployments. The
-Channels Space has conversation history in six channels, including a screenshot
-in `#aurora-nav`. The same screenshot is kept on the issue for when the IRC
-upload expires. No agent processes or GitHub credentials are needed.
+Channels Space has conversation history in `#subspace`, both fleets'
+Starbase and command channels, and the ship channels `#aurora-lyra`
+(navigation, including a screenshot), `#aurora-orion` (the relay rollout)
+and `#borealis-rigel` (warp diagnostics). `#aurora-vega` and
+`#aurora-castor` start empty. The same screenshot is kept on the issue for
+when the IRC upload expires. Each initiative lists its fleet's Starbase and
+command channels and the ship channels of the captains on its projects. No
+agent processes or GitHub credentials are needed.
 
 To start with the developer account, fleet records, IRC accounts and just the
 bootstrap workspace, use either command on a fresh stack:
@@ -266,8 +452,9 @@ the other fleet switches connection.
 use a fresh checkout with a distinct `COMPOSE_PROJECT_NAME` and spare ports
 for all five bindings. Set `SUBSPACE_STACK_DESKTOP_CONFIG=0` to skip the
 desktop config write, start that stack with `DEMO=0`, then run
-`make stack-check STACK_LIVE=1` with the same environment. It adds the demo
-and checks that a second seed preserves the API and IRC data.
+`make stack-check STACK_LIVE=1` with the same environment. It adds the demo,
+checks that the agents and channels follow the standard, and checks that a
+second seed preserves the API and IRC data.
 
 ## How we run it
 
@@ -280,20 +467,26 @@ configurable.
   of the work, and it assigns work to the captains so things keep moving.
   **Captains** are Opus 5.5, each with a **crew** of two Claude and two Codex
   workers.
-- **Channels.** Each captain has its own channel. The other captains are in it
-  too, but only the owning captain is woken by its messages; the others wake
-  only when tagged. The **Starbase** channel is where admirals talk to the rear
-  admiral and to each other.
+- **Channels.** Every fleet has the same
+  [standard channels](subspace-installer/README.md#channels). Each captain
+  has its own ship channel. The other captains are in it too, but only the
+  owning captain is woken by its messages; the others wake only when tagged.
+  The **Starbase** channel is where admirals talk to the rear admiral and to
+  each other. In the **fleet command** channel the rear admiral and the
+  captains coordinate.
 - **Checkouts.** Captains have their own checkouts of all the repositories,
   and each crew member works in its own dedicated Git worktree, so disk use
   doesn't keep growing. Stargate manages all of this; it is the glue.
+- **A GitHub App per captain.** Each captain commits, reviews and opens pull
+  requests under its own GitHub App, so GitHub shows what was done by which
+  captain. Issues already record which captain was responsible for the work.
 - **Cloud access.** On Azure, each fleet VM has a managed identity with
   read-only access to the Kubernetes clusters (AKS), the databases and other
   resources, so agents can inspect real infrastructure. Agents also have
   GitHub access to read CI and troubleshoot failures. The public equivalent is
   per-agent read-only credentials (a kubeconfig, a read-only database user and
-  GitHub App permissions), which the installer provisions into each agent's
-  home.
+  GitHub App permissions), which the installer provisions into the rear
+  admiral's and each captain's home; crew use their captain's.
 - **Medical ship.** The optional installer service watches selected Sentry
   projects for unresolved errors and fatal issues and posts links to fleet
   IRC. It can address a captain or the rear admiral for read-only triage.
@@ -317,16 +510,12 @@ Select an image to see it full size.
 
 <table>
 <tr>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-approved.png"><img src="docs/assets/screenshots/fleet-captain-review-approved.png" width="400" alt="GitHub approval from a captain’s app, with a Go verdict and a list of release checks"></a><br>A captain approves a Release Please pull request after checking the version bump and matching lockfiles.</td>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-changes.png"><img src="docs/assets/screenshots/fleet-captain-review-changes.png" width="400" alt="GitHub review from a captain’s app, with a No go verdict and a blocking finding about duplicate Effect versions"></a><br>A captain requests changes on a dependency update that would load two copies of Effect.</td>
-</tr>
-<tr>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-review-tested.png"><img src="docs/assets/screenshots/fleet-captain-review-tested.png" width="400" alt="GitHub approval from another captain’s app, after running the crate tests and Clippy on the exact commit"></a><br>Another captain runs the crate tests and Clippy on the exact commit before it approves.</td>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-teams.png"><img src="docs/assets/screenshots/fleet-captain-teams.png" width="400" alt="A captain’s Teams reply compares memory-based and CPU-only autoscaling for staging and production"></a><br>A captain works through a staging and production capacity plan in Microsoft Teams.</td>
 </tr>
 <tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-captain-teams.png"><img src="docs/assets/screenshots/fleet-captain-teams.png" width="400" alt="A captain’s Teams reply compares memory-based and CPU-only autoscaling for staging and production"></a><br>A captain works through a staging and production capacity plan in Microsoft Teams.</td>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-rear-admiral-slack-asked.png"><img src="docs/assets/screenshots/fleet-rear-admiral-slack-asked.png" width="400" alt="An admiral asks Kirk about the Stargate repository in Slack, and Kirk shows that it is thinking"></a><br>An admiral asks the rear admiral for its take on Stargate in Slack.</td>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/fleet-rear-admiral-slack-review.png"><img src="docs/assets/screenshots/fleet-rear-admiral-slack-review.png" width="400" alt="Kirk’s Slack reply highlights Stargate’s security and restart handling, then flags the pace of change and a breaking rename"></a><br>The rear admiral replies in the thread with what looks good and what it would watch.</td>
 </tr>
 </table>
 

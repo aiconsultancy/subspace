@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import { estimatePoints } from "./estimates";
+import { requireMoveOwnership } from "./fleet-ownership";
 import { Database } from "./db";
 import { type Member } from "./identity";
 import { Version } from "./initiative-contract";
@@ -167,6 +168,7 @@ export const moveIssue = (member: Member, reference: string, input: typeof MoveR
         yield* lockIssues(tx, member);
         const before = yield* readIssue(tx, member, reference);
         const plan = yield* planning(tx, member, reference, input, true);
+        yield* requireMoveOwnership(tx, member, plan.source.id, plan.destination.id);
         if (input.token !== plan.token)
           return yield* Effect.fail(problem(409, "The move changed. Request a fresh preview."));
         yield* tx.insert(issueAliases).values(

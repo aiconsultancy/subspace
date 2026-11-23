@@ -148,7 +148,8 @@ def issue(ref, title, kind, now):
                 priority=2, estimate=3, dueDate=None, parentId=None, blocked=False, progress=None,
                 archivedAt=None, createdAt=now, updatedAt=now, version=1, commentCount=0,
                 todoCounts=dict(total=0, done=0), lastActivityAt=now, lastActivity=None,
-                cycle=None, cycleId=None, milestoneId=None, relayedCrew=None, provenance=None, pullRequestSummary=None)
+                cycle=None, cycleId=None, milestoneId=None, relayedCrew=None, provenance=None, pullRequestSummary=None,
+                readyForAgents=False)
 
 
 def comment(issue_id, body, parent, now, author=ADA):
@@ -175,7 +176,7 @@ def decision_record(key, title, status, at, decided, project_row, linked_issues,
     agent = maker['kind'] == 'agent'
     provenance = dict(madeByType=maker['kind'], madeByUserId=None if agent else maker['userId'],
                       madeByAgentName=maker['displayName'] if agent else None,
-                      madeByAgentRank='crew' if agent else None,
+                      madeByAgentRank=maker.get('agent', {}).get('rank', 'crew') if agent else None,
                       madeByAgentModel='fixture-model' if agent else None,
                       evidenceKind='documentOrUrl', evidenceReference='https://example.invalid/fixture-review',
                       evidenceExcerpt='A fictional review note for Desktop capture.')
@@ -273,27 +274,316 @@ def seed_issues(now):
     return rows
 
 
-# --fleet: a third fictional project, FLT, whose issues a web Space's capture
-# evidence (Fleet Console) references with a neutral key. Identifier, title,
-# state type and assignee.
-FLEET_ISSUES = (
-    ('FLT-198', 'Serve the Fleet API over a private network', 'completed', 'Rosa Fixture'),
-    ('FLT-205', 'Stream fleet events to web Spaces', 'started', 'Jo Fixture'),
+# --fleet: the demo world's projects (subspace-api/scripts/demo/data.ts),
+# populated as a busy team's tracker for screenshots and web Space evidence,
+# beside the neutral FLT project. The Fleet API fixture's aurora fleet works on
+# these issues under the same numbers, titles and states. Every person,
+# captain and repository is fictional.
+FLEET_PEOPLE = dict(mira='Mira Fenwick', tavi='Tavi Quill', sela='Sela Bracken')
+FLEET_CAPTAINS = {'lyra': ('aurora-lyra', 'aurora'), 'orion': ('aurora-orion', 'aurora'),
+                  'castor': ('aurora-castor', 'aurora'), 'vega': ('aurora-vega', 'aurora'),
+                  'rigel': ('borealis-rigel', 'borealis')}
+# --fleet: the aurora fleet's initiative, so Channels knows its roles: on the
+# fleet's connection (any loopback one in a capture) the API's agents give
+# each rank by IRC nick: aurora-admiral is the rear admiral (named
+# admiral-vance, so no name rule could guess it), aurora-lyra, aurora-orion,
+# aurora-castor and aurora-vega are the captains of the ships Lyra, Orion,
+# Castor and Vega (a captain is named by its ship), and Wren is Lyra's crew.
+# The fleet records #aurora-starbase and #aurora-command; each captain's ship
+# channel is the standard #<nick>. Never selected, so it joins nothing. Its
+# Fleet API address is the Fleet API fixture's default port unless
+# --fleet-api-url names the one a capture started.
+FLEET_API_URL = 'http://127.0.0.1:18484'
+FLEET_AGENTS = [dict(userId='fixture-agent-admiral', name='admiral-vance', rank='rearAdmiral', shipId=None,
+                     ship=None, ircNick='aurora-admiral', shipChannel=None, available=True)] + [
+    dict(userId=f'fixture-agent-{code}', name=f'aurora-{code}', rank='captain', shipId=f'fixture-ship-{code}',
+         ship=code.title(), ircNick=f'aurora-{code}', shipChannel=None, available=True)
+    for code in ('castor', 'lyra', 'orion', 'vega')] + [
+    dict(userId='fixture-agent-wren', name='Wren', rank='crew', shipId='fixture-ship-lyra', ship='Lyra',
+         ircNick=None, shipChannel=None, available=True)]
+FLEET_INITIATIVE = dict(
+    id='5d1f0c2e-5b7a-4f0e-9a51-2a8f3c6d7e10', name='Fallow Reach', channels='#aurora-starbase, #aurora-lyra',
+    fleetId='aurora', fleet=dict(id='aurora', slug='aurora', name='Aurora', ircHost='irc.example.test', ircPort=6697,
+                                 ircTls=True, ircWebsocketUrl=None, rearAdmiralName='admiral-vance',
+                                 captainNames=['aurora-castor', 'aurora-lyra', 'aurora-orion', 'aurora-vega'],
+                                 vmHost=None, fleetApiUrl=FLEET_API_URL,
+                                 starbaseChannel='#aurora-starbase', commandChannel='#aurora-command',
+                                 agents=FLEET_AGENTS,
+                                 ships=[dict(id=agent['shipId'], name=agent['ship'], channel=None)
+                                        for agent in FLEET_AGENTS if agent['rank'] == 'captain']))
+
+
+def fleet_initiative(fleet_api_url):
+    """The aurora initiative, its fleet's Fleet API at `fleet_api_url`."""
+    initiative = copy.deepcopy(FLEET_INITIATIVE)
+    initiative['fleet']['fleetApiUrl'] = fleet_api_url or FLEET_API_URL
+    return initiative
+
+
+FLEET_LABELS = dict(bug='#e5484d', feature='#5b5bd6', performance='#f76b15', docs='#30a46c',
+                    design='#ab4aba', reliability='#008c95')
+# Per project: key, name, lead, then issues as (title, state type, label,
+# priority, parent number, assignee, extras). Extras: e estimate, d due in
+# days, c comments, p (open, merged) pull requests.
+FLEET_PROJECTS = (
+    ('NAV', 'Navigation console', 'mira', (
+        ('Render star chart tiles off the UI thread', 'started', 'performance', 2, None, 'castor', dict(d=3, c=6, p=(1, 2))),
+        ('Course correction preview ignores relay drift', 'unstarted', 'bug', 1, None, 'mira', dict(e=5, d=6, c=3)),
+        ('Add waypoint search to the console', 'backlog', 'feature', 3, None, None, dict(e=8)),
+        ('Document the telemetry frame format', 'completed', 'docs', 4, None, 'sela', dict(e=2, c=2, p=(0, 1))),
+        ('Retry telemetry uploads with backoff', 'triage', 'bug', 2, None, None, dict(c=1, p=(1, 0))),
+        ('Capture a chart-pan baseline on the pilot laptop', 'completed', 'performance', 3, 1, 'tavi', dict(e=2, c=4)),
+        ('Cancel tile decodes that leave the viewport', 'started', 'performance', 2, 1, 'lyra', dict(e=3, d=2, c=5, p=(1, 0))),
+        ('Label unconfirmed burns in the route preview', 'unstarted', 'design', 2, 2, 'sela', dict(e=3, d=8, p=(1, 0))),
+        ('Retire the legacy route wizard', 'canceled', 'feature', 4, None, None, dict(c=2)),
+        ('Route editor jumps when panning across a seam', 'duplicate', 'bug', 3, None, None, dict(c=1)),
+        ('Tab from a chart marker to the burn summary', 'started', 'design', 2, None, 'lyra', dict(e=3, d=5, c=2, p=(1, 0))),
+        ('Make the training route available offline', 'backlog', 'reliability', 4, None, 'tavi', dict(e=5)),
+        ('Pan inertia overshoots on trackpads', 'triage', 'bug', 3, None, None, dict(c=2)),
+        ('Show sector names on the minimap', 'unstarted', 'feature', 3, None, 'lyra', dict(e=2, d=10)),
+        ('Remember the last chart zoom per route', 'unstarted', 'feature', 4, None, None, dict(e=1)),
+        ('Telemetry parser rejects empty checksums', 'completed', 'bug', 2, None, 'lyra', dict(e=1, c=3, p=(0, 1))),
+        ('Export the route as a printable briefing', 'canceled', 'feature', 4, None, None, dict()),
+        ('Chart stalls when crossing sector seams', 'duplicate', 'performance', 3, None, None, dict(c=1)),
+        ('Recentre the chart on the ship with one key', 'started', 'design', 3, None, 'sela', dict(e=2, d=1, c=1)),
+        ('Burn summary announces the fuel reserve twice', 'triage', 'bug', 2, None, None, dict(c=1)),
+    )),
+    ('MAP', 'Sector atlas', 'sela', (
+        ('Show the survey corridor at every zoom level', 'started', 'design', 2, None, 'orion', dict(e=5, d=4, c=4, p=(1, 0))),
+        ('Pick atlas label density by zoom band', 'unstarted', 'design', 2, 1, 'orion', dict(e=3, d=7)),
+        ('Record the high-contrast map palette', 'completed', 'docs', 3, 1, 'sela', dict(e=1, c=2)),
+        ('Detect outdated sector packs at startup', 'unstarted', 'reliability', 2, None, None, dict(e=3)),
+        ('Cache the last viewed sector', 'backlog', 'feature', 3, None, None, dict(e=2)),
+        ('Investigate clipped labels on narrow windows', 'triage', 'bug', 2, None, None, dict(c=3)),
+        ('Keyboard shortcuts for layer toggles', 'backlog', 'feature', 4, None, None, dict(e=3)),
+        ('Move the scale bar above the annotation tray', 'completed', 'design', 3, None, 'sela', dict(e=1, p=(0, 1))),
+        ('Reject route manifests with mismatched atlas versions', 'started', 'reliability', 2, None, 'orion', dict(e=3, d=2, c=2, p=(1, 0))),
+        ('Drop the separate night palette preview', 'canceled', 'design', 4, None, None, dict()),
+        ('Compare tile cache hit rates after warm-up', 'completed', 'performance', 3, None, 'tavi', dict(e=2, c=1)),
+        ('Surface route provenance in the atlas', 'backlog', 'feature', 4, None, None, dict(e=5)),
+        ('Labels collide at the eastern crossing', 'duplicate', 'bug', 3, None, None, dict(c=1)),
+    )),
+    ('WARP', 'Warp diagnostics', 'tavi', (
+        ('Alert when plasma temperature trends upwards', 'started', 'feature', 2, None, 'rigel', dict(e=5, d=3, c=7, p=(1, 1))),
+        ('Diagnostics report times out on long runs', 'unstarted', 'bug', 1, None, 'tavi', dict(e=3, d=-1, c=2)),
+        ('Export simulator runs as CSV', 'backlog', 'feature', 3, None, None, dict(e=3)),
+        ('Suppress alert chatter during calibration', 'completed', 'reliability', 2, None, 'rigel', dict(e=3, c=3, p=(0, 1))),
+        ('Record the trace used in alert acceptance tests', 'completed', 'docs', 3, 1, 'tavi', dict(e=1)),
+        ('Show the time window used by each alert', 'started', 'design', 2, 1, 'sela', dict(e=2, d=5, c=1)),
+        ('Page diagnostics by sample range', 'started', 'performance', 2, 2, 'rigel', dict(e=5, d=6, c=2, p=(1, 0))),
+        ('Distinguish sensor silence from stable temperature', 'triage', 'bug', 1, None, None, dict(c=2)),
+        ('Remove the manual alarm reset command', 'canceled', 'feature', 4, None, None, dict()),
+        ('Add an empty-state message for new test runs', 'completed', 'design', 4, None, 'sela', dict(e=1)),
+        ('Describe the simulator replay controls', 'backlog', 'docs', 4, None, None, dict(e=2)),
+        ('Verify alarms after a mid-run reconnect', 'unstarted', 'reliability', 2, None, 'rigel', dict(e=3, d=9)),
+        ('Alert fires twice on the 09:42 replay', 'duplicate', 'bug', 3, None, None, dict(c=1)),
+    )),
+    ('RELAY', 'Relay handover', 'mira', (
+        ('Recover queued frames after a relay swap', 'started', 'reliability', 1, None, 'orion', dict(e=8, d=2, c=8, p=(1, 1))),
+        ('Add sequence counters to the handover dashboard', 'completed', 'feature', 2, 1, 'orion', dict(e=2, c=2, p=(0, 1))),
+        ('Replay a duplicate acknowledgement in the simulator', 'started', 'bug', 2, 1, 'orion', dict(e=3, d=1, c=4, p=(1, 0))),
+        ('Cap the retry queue on slow relays', 'unstarted', 'performance', 2, None, None, dict(e=3, d=12)),
+        ('Publish the pilot handover runbook', 'completed', 'docs', 3, None, 'vega', dict(e=2, c=1)),
+        ('Show when the backup relay last responded', 'started', 'design', 3, None, 'castor', dict(e=2, d=4, c=1)),
+        ('Retry a stale DNS lookup after stand-down', 'triage', 'bug', 2, None, None, dict(c=1)),
+        ('Prototype peer-to-peer relay discovery', 'canceled', 'feature', 4, None, None, dict(c=3)),
+        ('Limit simultaneous handover candidates', 'backlog', 'reliability', 3, None, None, dict(e=3)),
+        ('Write an operator checklist for clean rollback', 'unstarted', 'docs', 2, None, 'mira', dict(e=2, d=5)),
+        ('Track reconnect time at the 95th percentile', 'backlog', 'performance', 3, None, None, dict(e=3)),
+        ('Replay edge-case sequence gaps during rollout', 'completed', 'reliability', 2, None, 'orion', dict(e=3, c=2)),
+    )),
+)
+FLEET_ISSUES = tuple((f'{key}-{number}', title, kind, assignee)
+                     for key, _, _, rows in FLEET_PROJECTS
+                     for number, (title, kind, _, _, _, assignee, _) in enumerate(rows, 1)) + (
+    ('FLT-198', 'Serve the Fleet API over a private network', 'completed', None),
+    ('FLT-205', 'Stream fleet events to web Spaces', 'started', None),
     ('FLT-207', 'Resume event streams after a drop', 'unstarted', None),
-    ('FLT-212', 'Warp transitions between fleet tiers', 'started', 'Bo Sample'),
+    ('FLT-212', 'Warp transitions between fleet tiers', 'started', None),
     ('FLT-230', 'Offline mode for the fleet map', 'backlog', None),
 )
+FLT_ASSIGNEES = {'FLT-198': 'Rosa Fixture', 'FLT-205': 'Jo Fixture', 'FLT-212': 'Bo Sample'}
+# Decisions: project, key, title, status, days ago, issue numbers, maker
+# (person or captain), tags, why; then supersessions as (old key, new key).
+FLEET_DECISIONS = (
+    ('NAV', 'two-workers', 'Keep two tile workers on the pilot console', 'superseded', 16, (1, 6), 'mira',
+     ('performance',), 'Flight operations runs the pilot on a shared laptop.'),
+    ('NAV', 'viewport-pool', 'Size the tile pool to the current viewport', 'accepted', 9, (1, 7), 'lyra',
+     ('performance',), 'A bounded adaptive pool reduced panning stalls without holding obsolete frames.'),
+    ('NAV', 'drift-overlay', 'Show drift as a separate route overlay', 'proposed', 4, (2, 8), 'sela',
+     ('design', 'navigation'), 'Operators need to compare the planned and corrected path in one view.'),
+    ('NAV', 'wizard', 'Keep the legacy route wizard beside the editor', 'rejected', 12, (9,), 'tavi',
+     ('workflow',), 'The pilot route editor loads every supported waypoint format.'),
+    ('WARP', 'any-crossing', 'Alert on any crossing of the warning band', 'superseded', 20, (1,), 'tavi',
+     ('alerts',), 'The simplest rule to explain during the first rehearsal.'),
+    ('WARP', 'sustained-rise', 'Require a sustained rise before alerting', 'accepted', 11, (1, 5, 6), 'rigel',
+     ('alerts', 'reliability'), 'A single crossing caused excess alerts in the calibration replay.'),
+    ('WARP', 'sample-pages', 'Page long diagnostics reports by sample range', 'proposed', 2, (2, 7), 'rigel',
+     ('performance',), 'Reports over six hours of samples exceed the request timeout.'),
+    ('MAP', 'route-layer', 'Pin the route layer across zoom bands', 'accepted', 7, (1, 2), 'sela',
+     ('design',), 'The survey crew uses the corridor to orient themselves before reading place names.'),
+    ('MAP', 'night-preview', 'Offer a separate night palette preview', 'rejected', 8, (10,), 'orion',
+     ('design',), 'The theme picker already offers the approved dark map.'),
+    ('RELAY', 'immediate-replay', 'Replay pending frames as soon as the backup relay connects', 'rejected', 6, (1, 3), 'orion',
+     ('handover',), 'Waiting for the acknowledgement window avoids duplicate traffic at the receivers.'),
+    ('RELAY', 'hold-rollout', 'Hold the handover rehearsal at 25% traffic', 'proposed', 1, (1, 10), 'orion',
+     ('handover', 'rollout'), 'One retransmission appeared in the simulated far-side relay.'),
+    ('RELAY', 'manual-handover', 'Hand over relays manually during rehearsals', 'superseded', 14, (1,), 'mira',
+     ('handover',), 'Operators wanted to watch every swap during the first rehearsal.'),
+    ('RELAY', 'window-handover', 'Hand over after the acknowledgement window closes', 'accepted', 5, (1, 2, 3), 'mira',
+     ('handover', 'reliability'), 'It keeps confirmed frames from being replayed after a swap.'),
+)
+FLEET_SUPERSESSIONS = (('two-workers', 'viewport-pool'), ('any-crossing', 'sustained-rise'),
+                       ('manual-handover', 'window-handover'))
+FLEET_DESCRIPTIONS = {
+    'NAV-1': '## Fallow Reach chart pans\n\nPanning the chart stalls while tiles decode on the UI thread. '
+             'Move decoding to a worker pool and keep the pointer path under 4 ms.\n\n'
+             '- Warm pans hold at **41 ms** on the pilot replay.\n'
+             '- The first cross-sector pan still peaks at 87 ms; the cold pass is the release gate.\n\n'
+             '```sh\natlas replay --route fallow-reach --cache cold\n```\n',
+}
+FLEET_COMMENTS = {
+    'NAV-1': (('mira', 'Can you rerun the pan with a cold tile cache before the pilot review?'),
+              ('castor', 'Cold pass re-run on the pilot laptop: 87 ms peak on the first seam, 41 ms warm. '
+                         'Trace attached to the pull request.'),
+              ('tavi', 'Matches the baseline from NAV-6. Leaving the cold pass as the gate.')),
+    'RELAY-1': (('mira', 'Hold the rollout at 25% until the rollback run completes.'),
+                ('orion', 'Rollback run queued for the Fallow Reach rehearsal; no lost frames so far.')),
+}
+FLEET_RELATIONS = {'NAV-1': ('NAV-18', 'MAP-11'), 'NAV-18': ('NAV-1',)}
+# The GitHub fixture's repositories, and the numbers of its pull requests.
+FLEET_REPOSITORIES = dict(NAV='acme/web', MAP='acme/design-system', WARP='acme/api', RELAY='acme/api')
+FLEET_PULLS = {'NAV-1': 491, 'NAV-5': 1183, 'NAV-7': 492, 'NAV-8': 106, 'NAV-11': 489, 'MAP-1': 493,
+               'WARP-7': 1186, 'RELAY-1': 1188, 'RELAY-3': 1187}
+
+
+FLEET_FOLLOW_UPS = ('Record the trace in the pilot review notes', 'Add the benchmark to CI',
+                    'Split the change behind a setting')
+
+
+def fleet_person(code):
+    if code in FLEET_PEOPLE:
+        return person(FLEET_PEOPLE[code])
+    name, fleet = FLEET_CAPTAINS[code]
+    # A captain is its ship: nick aurora-lyra is the captain of the ship Lyra.
+    return dict(person(name), kind='agent', agent=dict(rank='captain', fleet=fleet, ship=code.title()))
+
+
+def fleet_pull_requests(row, open_count, merged, now):
+    repository = FLEET_REPOSITORIES[row['projectKey']]
+    if row['identifier'] in ('NAV-5', 'MAP-1'):
+        repository = {'NAV-5': 'acme/api', 'MAP-1': 'acme/web'}[row['identifier']]
+    owner, name = repository.split('/')
+    number = FLEET_PULLS.get(row['identifier'], 300 + int(row['identifier'].split('-')[1]) * 3)
+    rows = []
+    for index in range(open_count + merged):
+        state = 'open' if index < open_count else 'merged'
+        rows.append(dict(id=uid(f"pr-{row['identifier']}-{index}"), repository=dict(
+            owner=owner, name=name, fullName=repository, url=f'https://github.com/{repository}'),
+            number=number - 7 * index, url=f'https://github.com/{repository}/pull/{number - 7 * index}',
+            title=f"{row['title']} ({row['identifier']})" if index == 0 else f"{FLEET_FOLLOW_UPS[index % 3]} ({row['identifier']})",
+            authorLogin='octo-dev',
+            state=state, isDraft=False, headBranch=f"{row['identifier'].lower()}-{number - 7 * index}", baseBranch='main',
+            referenceKind='closes', referenceSources=['title', 'branch'], referenceActive=True,
+            completion='completed' if state == 'merged' else 'none', mergedAt=now if state == 'merged' else None,
+            closedAt=now if state == 'merged' else None, githubUpdatedAt=now, lastObservedAt=now))
+    return rows
 
 
 def add_fleet(fixture, now):
+    today = datetime.now(timezone.utc).date()
+    labels = {name: dict(id=uid('label-' + name), name=name, color=color, state='active')
+              for name, color in FLEET_LABELS.items()}
+    for key, name, lead, rows in FLEET_PROJECTS:
+        lead_person = person(FLEET_PEOPLE[lead])
+        fixture.projects.append(dict(project(key, name, now), leadId=lead_person['userId'], leadName=lead_person['displayName']))
+        for number, (title, kind, label, priority, parent, assignee, extra) in enumerate(rows, 1):
+            row = issue(f'{key}-{number}', title, kind, now)
+            row.update(assignee=fleet_person(assignee) if assignee else None, owner=person(FLEET_PEOPLE[lead]),
+                       labels=[labels[label]], priority=priority, estimate=extra.get('e'),
+                       commentCount=extra.get('c', 0),
+                       dueDate=(today + timedelta(days=extra['d'])).isoformat() if 'd' in extra else None,
+                       summary=f'Fictional {name} work on the Fallow Reach rehearsal.',
+                       parentId=uid(f'{key}-{parent}') if parent else None, subIssueRank=number if parent else None)
+            if 'p' in extra:
+                fixture.pull_requests[row['id']] = fleet_pull_requests(row, *extra['p'], now)
+                row['pullRequestSummary'] = pull_request_summary(fixture.pull_requests[row['id']])
+            fixture.issues.append(row)
+            fixture.creators[row['id']] = person(FLEET_PEOPLE[lead])
+            fixture.events[row['id']] = [activity(row, now)]
+        trackers = {r['parentId'] for r in fixture.issues if r['parentId'] and r['projectKey'] == key}
+        for row in fixture.issues:
+            if row['id'] in trackers:
+                children = [r for r in fixture.issues if r['parentId'] == row['id']]
+                row.update(type='tracker', estimate=None, progress=dict(
+                    done=sum(r['state']['type'] == 'completed' for r in children), total=len(children),
+                    canceled=0, duplicate=0, hasMore=False,
+                    sample=[dict(id=r['id'], stateType=r['state']['type']) for r in children]))
+    project_row = {p['key']: p for p in fixture.projects}
     fixture.projects.append(project('FLT', 'Fleet fixture', now))
-    for ref, title, kind, assignee in FLEET_ISSUES:
-        row = issue(ref, title, kind, now)
-        row.update(assignee=person(assignee) if assignee else None,
-                   summary='Fictional fleet work for web Space evidence.')
-        fixture.issues.append(row)
-        fixture.creators[row['id']] = ADA
-        fixture.events[row['id']] = [activity(row, now)]
+    for ref, title, kind, _ in FLEET_ISSUES:
+        if ref.startswith('FLT'):
+            row = issue(ref, title, kind, now)
+            assignee = FLT_ASSIGNEES.get(ref)
+            row.update(assignee=person(assignee) if assignee else None,
+                       summary='Fictional fleet work for web Space evidence.')
+            fixture.issues.append(row)
+            fixture.creators[row['id']] = ADA
+            fixture.events[row['id']] = [activity(row, now)]
+    for ref, body in FLEET_DESCRIPTIONS.items():
+        fixture.descriptions[uid(ref)] = body
+    nav = fixture.find_issue('NAV-1')
+    fixture.add_media(nav, 'Cold-cache pan trace.png', 'image/png', fixture_png(), True)
+    fixture.add_media(nav, 'Pilot review notes.md', 'text/markdown',
+                      b'# Pilot review\n\nWarm pans: 41 ms. First cross-sector pan: 87 ms.\n', False)
+    nav.update(milestoneId=uid('NAVmilestone'), lastActivityAt=now,
+               summary='Panning the chart stalls while tiles decode; move decoding to a worker pool.')
+    mira, castor = fleet_person('mira'), fleet_person('castor')
+    fixture.todos[nav['id']] = [
+        dict(id=uid(f'nav-1-todo-{index}'), issueId=nav['id'], text=text, done=done, position=index,
+             createdBy=mira, createdAt=now, doneBy=castor if done else None, doneAt=now if done else None,
+             updatedBy=castor if done else None, updatedAt=now, version=1)
+        for index, (text, done) in enumerate((('Move tile decoding to a worker pool', True),
+                                              ('Capture the warm-pan baseline (NAV-6)', True),
+                                              ('Cancel decodes that leave the viewport (NAV-7)', False),
+                                              ('Re-run the cold-cache pan on the pilot laptop', False)), 1)]
+    nav['todoCounts'] = dict(total=4, done=2)
+    for ref, notes in FLEET_COMMENTS.items():
+        row = fixture.find_issue(ref)
+        for code, body in notes:
+            posted = comment(row['id'], body, None, now, fleet_person(code))
+            fixture.comments.append(posted)
+            fixture.events[row['id']].insert(0, activity(row, now, 'comment.created', posted))
+        row['commentCount'] = len(notes)
+        row['lastActivity'] = dict(kind='comment.created', occurredAt=now, actor=actor(fleet_person(notes[-1][0])))
+    add_fleet_decisions(fixture, project_row, now)
+
+
+def add_fleet_decisions(fixture, project_row, now):
+    instant_now = parse_instant(now)
+    records = {}
+    leads = {key: lead for key, _, lead, _ in FLEET_PROJECTS}
+    for key, slug, title, status, days, numbers, maker, tags, why in FLEET_DECISIONS:
+        linked = [fixture.find_issue(f'{key}-{number}') for number in numbers]
+        at = (instant_now - timedelta(days=days, hours=2)).isoformat().replace('+00:00', 'Z')
+        decided = (instant_now - timedelta(days=days)).date().isoformat()
+        row, detail = decision_record(slug, title, status, at, decided, project_row[key], linked,
+                                      title + '.', maker=fleet_person(maker))
+        row.update(tags=list(tags), evidenceExcerpt=why,
+                   recordedByUserId=person(FLEET_PEOPLE[leads[key]])['userId'])
+        detail['why'] = why
+        detail['provenance'] = dict(detail['provenance'], evidenceExcerpt=why)
+        records[slug] = (row, detail, maker)
+    for old, new in FLEET_SUPERSESSIONS:
+        old_row, new_row = records[old][0], records[new][0]
+        old_row.update(supersededById=new_row['id'], supersededBy=decision_summary(new_row), revisionNumber=2, version=2)
+        new_row.update(supersedesId=old_row['id'], supersedes=decision_summary(old_row))
+    for row, detail, maker in records.values():
+        fixture.decisions[row['id']] = (row, detail)
+        for link in row['issues']['items']:
+            event = activity(link, row['createdAt'], 'decision.logged')
+            event.update(actor=actor(fleet_person(maker)), data=dict(decisionId=row['id']))
+            fixture.events[link['id']].insert(0, event)
 
 
 class IssueWrites:
@@ -454,7 +744,8 @@ def issue_write_route(handler, method, path, query):
     if method == 'GET' and path == '/api/v1/users':
         now = instant()
         people = [dict(id=p['userId'], displayName=p['displayName'], kind=p['kind'], email=None,
-                       createdAt=now, updatedAt=now, lastActiveAt=now) for p in (ADA, GRACE, AGENT)]
+                       createdAt=now, updatedAt=now, lastActiveAt=now)
+                  for p in (ADA, GRACE, AGENT) + (tuple(map(person, FLEET_PEOPLE.values())) if fixture.fleet else ())]
         if 'kind' in query:
             people = [p for p in people if p['kind'] in query['kind']]
         return 200, page(people, query, 'users')
@@ -556,6 +847,8 @@ class Fixture(IssueWrites):
         self.events[root['issueId']].insert(0, activity(self.issues[0], now, 'comment.created', root))
         self.issues[0]['lastActivityAt'] = now
         self.issues[0]['lastActivity'] = dict(kind='comment.created', occurredAt=now, actor=actor(ADA))
+        self.fleet = fleet
+        self.todos = {}
         if fleet:
             add_fleet(self, created)
 
@@ -600,6 +893,9 @@ class Fixture(IssueWrites):
         return dict(issue=self.detail(row), moved=preview['issues'])
 
     def relations(self, row):
+        if row['projectKey'] not in ('SUB', 'OPS'):
+            related = [self.find_issue(ref) for ref in FLEET_RELATIONS.get(row['identifier'], ())]
+            return [dict(target, kind='relatedTo') for target in related]
         target = self.issues[4] if row['projectKey'] == 'SUB' else self.issues[1]
         return [dict(target, kind='relatedTo')]
 
@@ -615,7 +911,7 @@ class Fixture(IssueWrites):
         return dict(row, description=body,
                     createdBy=self.creators.get(row['id']), startedAt=row['createdAt'] if row['state']['type'] == 'started' else None,
                     completedAt=row['createdAt'] if row['state']['type'] == 'completed' else None,
-                    canceledAt=None, archivedBy=ADA if row['archivedAt'] else None, todos=[], mentions=[],
+                    canceledAt=None, archivedBy=ADA if row['archivedAt'] else None, todos=self.todos.get(row['id'], []), mentions=[],
                     parent=reference(parent), duplicateOf=None,
                     children=dict(items=children[:20], nextCursor=None),
                     relations=dict(items=self.relations(row), nextCursor=None),
@@ -944,9 +1240,13 @@ def write_hint(fixture, method, path, status, value):
 
 class FixtureServer(ThreadingHTTPServer):
     daemon_threads = True
+    # socketserver's default listen queue of 5 overflows when a client's
+    # burst arrives while the accept loop is behind, and macOS resets each
+    # connection past it. Hold a burst instead (capped at somaxconn).
+    request_queue_size = 128
 
     def __init__(self, port, access_jwt, fail_chat_uploads=None, updates_stream=True, change_after=None,
-                 decision_scenario='normal', fleet=False):
+                 decision_scenario='normal', fleet=False, fleet_api_url=None):
         if not access_jwt:
             raise ValueError('A non-empty fixture Access JWT is required.')
         self.access_jwt = access_jwt
@@ -957,6 +1257,7 @@ class FixtureServer(ThreadingHTTPServer):
         self.updates = UpdateFeed(updates_stream)
         self.change_after = change_after
         self.decision_scenario = decision_scenario
+        self.fleet_api_url = fleet_api_url
         super().__init__(('127.0.0.1', port), Handler)
 
     def change_later(self, seconds, identifier='SUB-1'):
@@ -1069,7 +1370,7 @@ class Handler(BaseHTTPRequestHandler):
             return 200, dict(items=[
                 dict(id='ca2aabe7-68bd-4e82-9b76-d577ddf987ac', name='Design Studio', channels='#design, #releases'),
                 dict(id='47d093d1-2498-4943-b0fd-b816d3b83425', name='Observatory', channels='#data, #forecast'),
-            ])
+            ] + ([fleet_initiative(self.server.fleet_api_url)] if fixture.fleet else []))
         if method == 'GET' and path == '/api/v1/projects':
             return 200, page(fixture.projects, query, 'projects')
         match = re.fullmatch(r'/api/v1/projects/([^/]+)/workflow-states', path)
@@ -1321,11 +1622,14 @@ def main():
     parser.add_argument('--decision-scenario', choices=DECISION_SCENARIOS, default='normal',
                         help='Choose which fictional Decisions response to capture.')
     parser.add_argument('--fleet', action='store_true',
-                        help='Add the fictional FLT project and its issues, for web Space evidence.')
+                        help='Add the fictional FLT, NAV, MAP, WARP and RELAY projects and their issues, for web Space evidence.')
+    parser.add_argument('--fleet-api-url', metavar='URL',
+                        help="With --fleet, the aurora fleet's Fleet API address (default http://127.0.0.1:18484).")
     args = parser.parse_args()
     with FixtureServer(args.port, args.access_jwt, fail_chat_uploads=args.fail_chat_uploads,
                        updates_stream=not args.no_updates_stream, change_after=args.change_after,
-                       decision_scenario=args.decision_scenario, fleet=args.fleet) as server:
+                       decision_scenario=args.decision_scenario, fleet=args.fleet,
+                       fleet_api_url=args.fleet_api_url) as server:
         print(f'Subspace API fixture on {server.origin}', flush=True)
         print(f'SUBSPACE_API_URL={server.origin}/api', flush=True)
         server.serve_forever()

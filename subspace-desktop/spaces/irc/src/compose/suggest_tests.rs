@@ -9,6 +9,16 @@ fn person(nick: &str, prefix: Option<char>) -> Person {
         nick: nick.into(),
         prefix,
         away: false,
+        rank: None,
+        account: None,
+    }
+}
+
+/// `person` signed in to the account of its own nick.
+fn signed(nick: &str, prefix: Option<char>) -> Person {
+    Person {
+        account: Some(nick.into()),
+        ..person(nick, prefix)
     }
 }
 
@@ -23,6 +33,7 @@ fn facts() -> Facts {
         everyone: vec![person("galactica-captain", None), person("apollo", None)],
         channels: vec!["#ship-galactica".into(), "#ship-pegasus".into()],
         joined: vec!["#ship-galactica".into()],
+        ask: None,
     }
 }
 
@@ -76,6 +87,47 @@ fn rows_show_the_mode_prefix_and_speak_rank_and_away() {
     assert_eq!(
         item.spoken_label().as_ref(),
         "galactica-captain, operator, away"
+    );
+}
+
+#[test]
+fn a_fleet_agent_s_row_notes_its_rank_as_the_member_list_does() {
+    let aurora: subspace_api_client::model::Fleet = serde_json::from_value(serde_json::json!({
+        "id": "aurora", "slug": "aurora", "agents": [
+            {"name": "Vance", "rank": "rearAdmiral", "ircNick": "aurora-admiral", "available": true},
+            {"name": "Lyra", "rank": "captain", "ircNick": "aurora-lyra", "available": true},
+            {"name": "Orion", "rank": "captain", "ircNick": "aurora-orion", "available": true}
+        ]
+    }))
+    .unwrap();
+    let roster = crate::fleet::Roster::new([&aurora]);
+    let facts = Facts {
+        people: vec![
+            signed("aurora-lyra", Some('@')),
+            signed("aurora-admiral", None),
+            person("aurora-orion", None),
+            person("lyra", None),
+        ],
+        ..Facts::default()
+    }
+    .ranked(&roster);
+    let spoken = |query: &str| {
+        suggest(query, query.len(), &facts)
+            .map(|offer| offer.choices[0].item.spoken_label().to_string())
+    };
+    assert_eq!(
+        spoken("@aurora-l").as_deref(),
+        Some("aurora-lyra, operator, captain")
+    );
+    assert_eq!(
+        spoken("@aurora-a").as_deref(),
+        Some("aurora-admiral, rear admiral")
+    );
+    assert_eq!(spoken("@lyra").as_deref(), Some("lyra"), "a person");
+    assert_eq!(
+        spoken("@aurora-o").as_deref(),
+        Some("aurora-orion"),
+        "no account, no rank"
     );
 }
 
@@ -201,4 +253,38 @@ fn a_private_conversation_offers_the_other_person() {
     let state = joined_state();
     let facts = Facts::gather(&state, &query("starbuck"));
     assert_eq!(inserts(suggest("@", 1, &facts)), ["@starbuck "]);
+}
+
+#[test]
+fn a_fleet_channel_offers_ask_before_the_irc_client_s_commands() {
+    let facts = facts().asking(Some("aurora-lyra"));
+    let offer = suggest("/", 1, &facts).unwrap_or_else(|| panic!("an offer"));
+    let labels: Vec<String> = offer
+        .choices
+        .iter()
+        .map(|choice| choice.item.label().to_string())
+        .collect();
+    assert_eq!(labels.first().map(String::as_str), Some("/ask"));
+    assert!(labels.len() > 1, "the client's commands follow");
+    let ask = &offer.choices[0];
+    assert_eq!(ask.insert, "/ask ");
+    assert_eq!(
+        ask.item.spoken_label().as_ref(),
+        "/ask <text>, Ask aurora-lyra and track the answer, a command of this channel"
+    );
+    assert_eq!(
+        inserts(suggest("/as", 3, &facts))
+            .first()
+            .map(String::as_str),
+        Some("/ask ")
+    );
+    assert!(
+        !inserts(suggest("/jo", 3, &facts)).contains(&"/ask ".to_owned()),
+        "only when the name matches"
+    );
+}
+
+#[test]
+fn ask_is_not_offered_outside_a_fleet_channel() {
+    assert!(!inserts(suggest("/", 1, &facts())).contains(&"/ask ".to_owned()));
 }

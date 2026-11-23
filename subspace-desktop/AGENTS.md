@@ -79,11 +79,13 @@ forwards the app's targets here.
   unreleased Spaces built in, then on the app alone in its release
   configuration.
 - `make build`, `make run`, `make format`.
-- Board Lab and the Component gallery are not ready to ship: they are the
-  app's `board-lab` and `component-gallery` features (both:
-  `unreleased-spaces`), never in `default`, so release, packaging and capture
-  builds leave them out. `make run-unreleased` runs the app with both; they
-  start off, so turn them on in Settings or from **Add a Space**.
+- Space Lab and the Component gallery are not ready to ship: they are the
+  app's `space-lab` and `component-gallery` features (both:
+  `unreleased-spaces`), never in `default`, so release and packaging builds
+  leave them out, and capture builds do too unless `CAPTURE_FEATURES` names
+  one. The release packaging scripts refuse a `SUBSPACE_BUILD_FEATURES` that
+  names them. `make run-unreleased` runs the app with both; they start off,
+  so turn them on in Settings or from **Add a Space**.
 - `make interfaces` checks the real headless product interface.
 - `MISE_ENV=terminal make check-terminal` checks the excluded terminal crates
   with Zig.
@@ -103,8 +105,11 @@ forwards the app's targets here.
 ## Structure
 
 - This folder is a project of its own: its own Cargo workspace, lockfile,
-  checks, docs and baseline. Installable web Space packages live under
-  `web-spaces/` (examples in `web-spaces/examples/`); the `web-space` skill
+  checks, docs and baseline. Web Space packages live under `web-spaces/`
+  (examples in `web-spaces/examples/`). Fleet Console
+  (`web-spaces/fleet-console`) is built into the app: the product's build
+  script embeds its package files and `products/subspace/src/web_spaces.rs`
+  adds it through `subspace_web_board::builtin` at start. The `web-space` skill
   ([.agents/skills/web-space](.agents/skills/web-space/SKILL.md)) scaffolds,
   tests and packages them.
 - **One import.** Every crate here reaches the Framework only through
@@ -299,7 +304,9 @@ compare them yourself before asking for review.
   fictional `octo-dev` gh accounts, and the fictional GitHub
   (`scripts/github_test_server.py`) and Subspace API servers on loopback, so no real
   API or Keychain session is used. Options are in the script's header:
-  `CAPTURE_THEME`, `CAPTURE_STATE`, `CAPTURE_CONFIG` (such as enabled boards)
+  `CAPTURE_THEME`, `CAPTURE_STATE`, `CAPTURE_CONFIG` (such as enabled boards),
+  `CAPTURE_FEATURES` (extra Cargo features, such as
+  `space-lab,component-gallery`, which `CAPTURE_CONFIG` must still turn on)
   and `CAPTURE_IRC_CONFIG` for a config naming the local Ergo server from
   `scripts/irc-test-server.sh` (`127.0.0.1:16667`). The build runs in your
   environment, so `SUBSPACE_REPORT_ISSUE_REPOSITORY= make capture …`
@@ -307,6 +314,8 @@ compare them yourself before asking for review.
 - `STEPS` is a `;` list of `wait:<ms>`, `action:<name>` (for example
   `subspace_app::OpenSettings`), `click:<x>,<y>`, `right-click:<x>,<y>`,
   `move:<x>,<y>` (the pointer without a click, for hover states),
+  `resize:<width>,<height>` (the window's content size, for a start with no
+  saved window bounds),
   `drag:<x1>,<y1>,<x2>,<y2>` (a left-button drag, for text selection),
   `scroll:<x>,<y>,<dy>`, `type:<text>` (each character as a key press),
   `key:<keystrokes>` (space-separated, such as `down tab`),
@@ -330,16 +339,26 @@ compare them yourself before asking for review.
   events (`spaces/web/src/mirror.rs`); keys do not reach the page. The page
   is also told it is visible, because the capture window sits behind others.
   `CAPTURE_CONFIG` can install a folder web Space with its grants and
-  secrets; `CAPTURE_FLEET=1` adds the neutral `FLT` project whose issues
-  such a page can reference.
+  secrets; `CAPTURE_FLEET=1` adds the neutral `FLT` project and the demo
+  world's `NAV`, `MAP`, `WARP` and `RELAY` issues that such a page can
+  reference. `CAPTURE_FLEET_API=1` serves a fictional Stargate Fleet API on
+  loopback and points the built-in Fleet Console at it
+  ([Fleet fixture](docs/capture.md#fleet-fixture)).
 - Capture in the bundled **Twilight Two** theme, the approved mock-ups'
   colours and sizes, so the images can be compared with them: pass
-  `CAPTURE_THEME="Twilight Two"` to `make capture`. The capture script's
-  default stays Cupertino Dark, the app's default theme. Capture other
-  themes only when the change is about a theme, colour or contrast.
+  `CAPTURE_THEME="Twilight Two"` to `make capture`. The capture script
+  writes a state file, so without `CAPTURE_THEME` a capture is an existing
+  install with no saved theme and shows Cupertino Dark, the app's default
+  theme; `CAPTURE_FIRST_RUN=1` captures a new install's first start, which
+  opens in Twilight Two. Capture other themes only when the change is about
+  a theme, colour or contrast.
 - Show each changed state:
   - For a change to existing UI, show before (an `origin/main` build) and
-    after, side by side or as a pair.
+    after, side by side or as a pair, both in the same theme. If the before
+    build does not have the prescribed theme, capture the pair in a theme
+    both builds have, such as the default Cupertino Dark, add the after
+    state in the prescribed theme, and say so in the captions. Check that
+    each image shows the theme you asked for.
   - For a setting with variants, show each variant.
   - For a theme, colour or contrast change, show each affected theme, in its
     light and dark variants.

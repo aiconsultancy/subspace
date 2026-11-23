@@ -34,5 +34,5 @@ repo = "local"
 hooks = [
     { id = "check-push", name = "check changed projects", entry = "python3 scripts/check-push.py", language = "system", stages = ["pre-push"], always_run = true, require_serial = true, verbose = true },
     { id = "check-push-tests", name = "test project check routing", entry = "python3 -B scripts/test-check-push.py", language = "system", stages = ["pre-push"], files = "^(prek\\.toml|scripts/(test-)?check-push\\.py)$", pass_filenames = false },
-    { id = "release-check", name = "release: make release-check", entry = "make release-check", language = "system", stages = ["pre-push"], files = "^(scripts/|\\.github/|release-please-config\\.json$|\\.release-please-manifest\\.json$|.*Cargo\\.(toml|lock)$)", exclude = "(?i)\\.md$", pass_filenames = false },
+    { id = "release-check", name = "release: make release-check", entry = "make release-check", language = "system", stages = ["pre-push"], files = "^(scripts/|\\.github/|release-please-config\\.json$|\\.release-please-manifest\\.json$|subspace-installer/stargate-hold\\.json$|.*Cargo\\.(toml|lock)$)", exclude = "(?i)\\.md$", pass_filenames = false },
 ]

@@ -1,0 +1,245 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="994" viewBox="0 0 1200 994">
+  <!--
+    Editable source for overview-dark.svg and overview-light.svg. Edit this
+    file, then run ./build.sh in this folder. The built files have their text
+    outlined, so they look the same wherever they are shown. The colours below
+    are the dark theme (Twilight Two); build.sh holds the light ones, and the
+    page size there must match this canvas.
+
+    The canvas is 1200 wide because a README shows it at about 830 to 1010
+    pixels. Keep text at 13px or larger (12.5px for monospace) so it stays
+    readable at that size.
+  -->
+  <defs>
+    <style>
+      :root {
+        --bg: #131312; --card: #1b1a18; --inset: #131312; --tile: #201f1d;
+        --stack-1: #181716; --stack-2: #161514;
+        --border: #2b2a27; --border-strong: #3a3833; --tree: #4a4740;
+        --fg: #d6d3cc; --bright: #f0eee9; --muted: #96938a;
+        --accent: #cfa95e; --accent-text: #cfa95e; --accent-bg: #2e2b22; --chip-border: #4a4130;
+        --human: #c49bc0; --human-text: #c49bc0; --human-bg: #2a2229;
+        --captain: #8aa4c8; --captain-text: #8aa4c8; --captain-bg: #1d2430;
+        --crew: #a3bd6c; --crew-text: #a3bd6c; --crew-bg: #222a19;
+        --warn: #e0a94a; --wire: #96938a; --star: #f0eee9;
+        --logo: #f0efed; --gate-1: #f0eee9; --gate-2: #aaa69c; --gate-3: #77746c;
+      }
+      text { font-family: Inter, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: var(--fg); }
+      .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .bright { fill: var(--bright); }
+      .muted { fill: var(--muted); }
+      .gold { fill: var(--accent-text); }
+      .t-human { fill: var(--human-text); }
+      .t-captain { fill: var(--captain-text); }
+      .t-crew { fill: var(--crew-text); }
+      .title { font-size: 24px; font-weight: 700; }
+      .h2 { font-size: 22px; font-weight: 700; }
+      .h3 { font-size: 15px; font-weight: 600; }
+      .lead { font-size: 15px; }
+      .body { font-size: 14px; }
+      .small { font-size: 13px; }
+      .b { font-weight: 600; }
+      .heavy { font-weight: 700; }
+      .mid { text-anchor: middle; }
+      .end { text-anchor: end; }
+      .bg { fill: var(--bg); }
+      .card { fill: var(--card); stroke: var(--border); }
+      .hero { fill: var(--card); stroke: var(--accent); stroke-width: 1.5; }
+      .fleet { fill: var(--card); stroke: var(--border-strong); }
+      .stack-1 { fill: var(--stack-1); stroke: var(--border); }
+      .stack-2 { fill: var(--stack-2); stroke: var(--border); }
+      .inset { fill: var(--inset); stroke: var(--border); }
+      .tile { fill: var(--tile); stroke: var(--border); }
+      .rule { stroke: var(--border); }
+      .zone { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 7; }
+      .chip { fill: var(--bg); stroke: var(--chip-border); }
+      .human { fill: var(--human-bg); stroke: var(--human); stroke-width: 1.5; }
+      .admiral { fill: var(--accent-bg); stroke: var(--accent); stroke-width: 1.5; }
+      .captain { fill: var(--captain-bg); stroke: var(--captain); stroke-width: 1.5; }
+      .crew { fill: var(--crew-bg); stroke: var(--crew); stroke-width: 1.5; }
+      .f-human { fill: var(--human); }
+      .f-accent { fill: var(--accent); }
+      .f-captain { fill: var(--captain); }
+      .f-crew { fill: var(--crew); }
+      .f-wire { fill: var(--wire); }
+      .f-star { fill: var(--star); }
+      .line { fill: none; stroke-width: 1.6; }
+      .s-accent { stroke: var(--accent); }
+      .s-captain { stroke: var(--captain); }
+      .s-crew { stroke: var(--crew); }
+      .s-warn { stroke: var(--warn); }
+      .s-human { stroke: var(--human); }
+      .s-wire { stroke: var(--wire); }
+      .wire { fill: none; stroke-width: 2; stroke-linecap: round; }
+      .tree { fill: none; stroke: var(--tree); stroke-width: 1.5; }
+      .logo { fill: none; stroke: var(--logo); stroke-width: 18; }
+      .gate { fill: none; stroke-width: 55; }
+    </style>
+    <marker id="a-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="f-accent"/></marker>
+    <marker id="a-captain" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="f-captain"/></marker>
+    <marker id="a-crew" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="f-crew"/></marker>
+    <marker id="a-human" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="f-human"/></marker>
+    <marker id="a-wire" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="f-wire"/></marker>
+  </defs>
+
+  <!-- Canvas -->
+  <rect width="1200" height="994" rx="20" class="bg"/>
+  <g class="f-star">
+    <circle cx="572" cy="60" r="1.2" opacity=".3"/><circle cx="960" cy="40" r="1" opacity=".25"/>
+    <circle cx="1140" cy="232" r="1.3" opacity=".25"/><circle cx="420" cy="290" r="1" opacity=".22"/>
+    <circle cx="700" cy="884" r="1.2" opacity=".25"/><circle cx="210" cy="962" r="1" opacity=".3"/>
+    <circle cx="470" cy="968" r="1.3" opacity=".22"/><circle cx="790" cy="960" r="1" opacity=".28"/>
+  </g>
+
+  <!-- People: your team -->
+  <rect x="24" y="24" width="524" height="220" rx="14" class="card"/>
+  <text x="48" y="64" class="h2 bright">Your team</text>
+  <text x="48" y="90" class="lead muted">in the Subspace desktop app</text>
+  <circle cx="396" cy="62" r="17" class="human"/><text x="396" y="66.5" class="small b mid t-human">MK</text>
+  <circle cx="436" cy="62" r="17" class="human"/><text x="436" y="66.5" class="small b mid t-human">JT</text>
+  <circle cx="476" cy="62" r="17" class="human"/><text x="476" y="66.5" class="small b mid t-human">AR</text>
+  <circle cx="516" cy="62" r="17" class="human"/><text x="516" y="66.5" class="small b mid t-human">SO</text>
+  <line x1="48" y1="110" x2="524" y2="110" class="rule"/>
+  <circle cx="53" cy="133" r="3" class="f-human"/>
+  <text x="66" y="138" class="lead">Work with captains and each other in live IRC channels</text>
+  <circle cx="53" cy="161" r="3" class="f-human"/>
+  <text x="66" y="166" class="lead">Assign issues to a captain, or flag them Ready for agents</text>
+  <circle cx="53" cy="189" r="3" class="f-human"/>
+  <text x="66" y="194" class="lead">See what every agent is working on</text>
+  <text x="48" y="226" font-size="12.5" class="mono muted">native · Rust · GPU-rendered</text>
+
+  <!-- People: stakeholders -->
+  <rect x="596" y="24" width="324" height="220" rx="14" class="card"/>
+  <text x="620" y="64" class="h2 bright">Stakeholders and experts</text>
+  <text x="620" y="90" class="lead muted">stay in Slack or Microsoft Teams</text>
+  <line x1="620" y1="110" x2="896" y2="110" class="rule"/>
+  <circle cx="625" cy="133" r="3" class="f-human"/>
+  <text x="638" y="138" class="lead">Get screenshots of new features</text>
+  <circle cx="625" cy="161" r="3" class="f-human"/>
+  <text x="638" y="166" class="lead">Answer the questions only they can</text>
+  <circle cx="625" cy="189" r="3" class="f-human"/>
+  <text x="638" y="194" class="lead">Nothing new to install or learn</text>
+
+  <!-- Slack and Teams -->
+  <rect x="1000" y="94" width="176" height="80" rx="14" class="card"/>
+  <text x="1088" y="128" font-size="16" class="heavy bright mid">Slack</text>
+  <text x="1088" y="152" font-size="16" class="heavy bright mid">Microsoft Teams</text>
+
+  <!-- Private network boundary -->
+  <rect x="24" y="316" width="1152" height="520" rx="18" class="zone"/>
+  <rect x="48" y="821" width="603" height="30" rx="15" class="chip"/>
+  <rect x="62" y="836" width="12" height="9" rx="2" class="f-accent"/>
+  <path d="M64.5 836V834a3.5 3.5 0 0 1 7 0v2" class="line s-accent"/>
+  <text x="84" y="840.5" class="small gold heavy" letter-spacing="1">PRIVATE NETWORK</text>
+  <text x="240" y="840.5" class="small muted">Cloudflare Zero Trust or Tailscale · nothing on the public internet</text>
+
+  <!-- Subspace: the shared workspace -->
+  <rect x="48" y="340" width="492" height="468" rx="16" class="hero"/>
+  <svg x="68" y="358" width="40" height="40" viewBox="136 136 240 240"><g transform="translate(256 256) rotate(-45)" class="logo"><path d="M-160 0H160"/><path d="M-104 0A104 104 0 0 1 92.2605 -48H-52"/><path d="M104 0A104 104 0 0 1-92.2605 48H52"/></g></svg>
+  <text x="120" y="384" class="title bright">Subspace</text>
+  <text x="120" y="406" class="lead muted">the shared workspace</text>
+
+  <!-- Channels panel -->
+  <rect x="68" y="428" width="452" height="210" rx="10" class="inset"/>
+  <text x="86" y="453" class="small mono gold"># starbase</text>
+  <text x="502" y="453" class="small muted end">Channels · IRC</text>
+  <line x1="68" y1="466" x2="520" y2="466" class="rule"/>
+  <circle cx="96" cy="493" r="12" class="human"/>
+  <text x="118" y="487" class="small b t-human">maya</text>
+  <text x="118" y="506" class="body">Search is timing out on NAV-42. Who can take it?</text>
+  <circle cx="96" cy="539" r="12" class="captain"/>
+  <text x="118" y="534" class="small b t-captain">enterprise</text>
+  <rect x="191" y="521" width="60" height="18" rx="9" class="captain" style="stroke-width:1"/>
+  <text x="221" y="534.5" class="small mid t-captain">captain</text>
+  <text x="118" y="554" class="body">On it. Two crew assigned, PR within the hour.</text>
+  <rect x="118" y="566" width="184" height="58" rx="8" class="tile"/>
+  <circle cx="137" cy="595" r="5" class="line s-warn" style="stroke-width:2"/>
+  <text x="153" y="588" class="small mono bright">NAV-42</text>
+  <text x="153" y="609" class="small muted">In progress</text>
+  <rect x="314" y="566" width="184" height="58" rx="8" class="tile"/>
+  <circle cx="333" cy="595" r="5" class="f-crew"/>
+  <text x="349" y="588" class="small mono bright">PR #128</text>
+  <text x="349" y="609" class="small muted">Checks passing</text>
+
+  <!-- Feature tiles -->
+  <rect x="68" y="652" width="452" height="40" rx="9" class="tile"/>
+  <g transform="translate(82 665)" class="line s-captain"><circle cx="7" cy="7" r="6.2"/><path d="M4 7.2l2.2 2.2L10.2 5"/></g>
+  <text x="106" y="677.5" class="h3 bright">Issues</text>
+  <text x="214" y="677.5" class="body muted">Assign a captain, or flag it Ready for agents</text>
+
+  <rect x="68" y="700" width="452" height="40" rx="9" class="tile"/>
+  <g transform="translate(82 713)" class="line s-accent"><path d="M2 1h10v12H2z"/><path d="M4.5 5h5M4.5 8h5"/></g>
+  <text x="106" y="725.5" class="h3 bright">Decisions</text>
+  <text x="214" y="725.5" class="body muted">What was decided, by whom and when</text>
+
+  <rect x="68" y="748" width="452" height="40" rx="9" class="tile"/>
+  <g transform="translate(82 761)"><circle cx="7" cy="7" r="6.2" class="line s-crew"/><circle cx="7" cy="7" r="2" class="f-crew"/></g>
+  <text x="106" y="773.5" class="h3 bright">Fleet Console</text>
+  <text x="214" y="773.5" class="body muted">Every fleet, ship and crew, live</text>
+
+  <!-- Fleets -->
+  <rect x="708" y="364" width="444" height="444" rx="16" class="stack-2"/>
+  <rect x="696" y="352" width="444" height="444" rx="16" class="stack-1"/>
+  <rect x="684" y="340" width="444" height="444" rx="16" class="fleet"/>
+  <svg x="704" y="358" width="40" height="40" viewBox="40 60 944 820"><g transform="translate(512 470)" class="gate"><path d="M-430 350H-175V303.1089A350 350 0 1 1 175 303.1089V350H430" style="stroke:var(--gate-1)"/><circle r="245" style="stroke:var(--gate-2)"/><circle r="140" style="stroke:var(--gate-3)"/><circle r="27.5" class="f-accent" style="stroke:none"/></g></svg>
+  <text x="756" y="384" class="title bright">Fleet</text>
+  <text x="756" y="406" class="lead muted">one VM, run by Stargate</text>
+  <text x="1108" y="384" class="small muted end">add fleets as you grow</text>
+
+  <!-- Rear admiral -->
+  <rect x="756" y="432" width="300" height="56" rx="28" class="admiral"/>
+  <path transform="translate(784 460)" d="M0-10l2.9 6.2 6.6.8-4.9 4.6 1.3 6.6L0 4.9-5.9 8.2l1.3-6.6-4.9-4.6 6.6-.8z" class="f-accent"/>
+  <text x="806" y="455" class="h3 heavy bright">Rear admiral</text>
+  <text x="806" y="474" class="small muted">coordinates, keeps people in the loop</text>
+
+  <!-- Chain of command -->
+  <path class="tree" d="M906 488V508M762 528V508H1050V528M906 508V528"/>
+  <rect x="700" y="528" width="124" height="56" rx="10" class="captain"/>
+  <rect x="844" y="528" width="124" height="56" rx="10" class="captain"/>
+  <rect x="988" y="528" width="124" height="56" rx="10" class="captain"/>
+  <text x="762" y="551" class="h3 heavy bright mid">Captain</text><text x="762" y="570" class="small muted mid">plans, delegates</text>
+  <text x="906" y="551" class="h3 heavy bright mid">Captain</text><text x="906" y="570" class="small muted mid">plans, delegates</text>
+  <text x="1050" y="551" class="h3 heavy bright mid">Captain</text><text x="1050" y="570" class="small muted mid">plans, delegates</text>
+  <path class="tree" d="M762 584V600M720 612V600H804V612M748 600V612M776 600V612 M906 584V600M864 612V600H948V612M892 600V612M920 600V612 M1050 584V600M1008 612V600H1092V612M1036 600V612M1064 600V612"/>
+  <circle cx="720" cy="621" r="9" class="crew"/><circle cx="748" cy="621" r="9" class="crew"/><circle cx="776" cy="621" r="9" class="crew"/><circle cx="804" cy="621" r="9" class="crew"/>
+  <circle cx="864" cy="621" r="9" class="crew"/><circle cx="892" cy="621" r="9" class="crew"/><circle cx="920" cy="621" r="9" class="crew"/><circle cx="948" cy="621" r="9" class="crew"/>
+  <circle cx="1008" cy="621" r="9" class="crew"/><circle cx="1036" cy="621" r="9" class="crew"/><circle cx="1064" cy="621" r="9" class="crew"/><circle cx="1092" cy="621" r="9" class="crew"/>
+  <text x="906" y="662" class="body mid"><tspan class="t-crew b">Crew</tspan> do the work, each in its own Git worktree,</text>
+  <text x="906" y="682" class="body mid">and report back through their captain</text>
+  <rect x="786" y="700" width="86" height="28" rx="14" class="tile"/><text x="829" y="718.5" class="small mono mid">OpenCode</text>
+  <rect x="882" y="700" width="71" height="28" rx="14" class="tile"/><text x="917.5" y="718.5" class="small mono mid">Claude</text>
+  <rect x="963" y="700" width="63" height="28" rx="14" class="tile"/><text x="994.5" y="718.5" class="small mono mid">Codex</text>
+  <text x="906" y="760" class="small muted mid">crews scale down as usage quotas run low, then back up</text>
+
+  <!-- Wires: team to Subspace -->
+  <path class="wire s-human" d="M294 247V337" marker-start="url(#a-human)" marker-end="url(#a-human)"/>
+
+  <!-- Wires: Subspace to fleet -->
+  <text x="612" y="450" class="body mid">chat, live</text>
+  <path class="wire s-accent" d="M543 460H681" marker-start="url(#a-accent)" marker-end="url(#a-accent)"/>
+  <text x="612" y="546" class="body mid">issues dispatched</text>
+  <path class="wire s-captain" d="M543 556H681" marker-end="url(#a-captain)"/>
+  <text x="612" y="630" class="body mid">fleet status</text>
+  <path class="wire s-crew" d="M681 640H543" marker-end="url(#a-crew)"/>
+
+  <!-- Wires: stakeholders, Slack and Teams, fleet -->
+  <path class="wire s-human" d="M923 134H997" marker-start="url(#a-human)" marker-end="url(#a-human)"/>
+  <path class="wire s-accent" d="M1088 177V337" marker-start="url(#a-accent)" marker-end="url(#a-accent)"/>
+  <text x="1072" y="270" class="body end">the rear admiral shares progress and asks for input</text>
+  <text x="1072" y="292" class="body muted end">agents reply wherever you spoke to them</text>
+
+  <!-- Wires: fleet to GitHub -->
+  <path class="wire s-wire" d="M1056 811V877" marker-end="url(#a-wire)"/>
+  <text x="1068" y="864" class="body">pull requests</text>
+  <rect x="900" y="880" width="276" height="90" rx="12" class="card"/>
+  <text x="920" y="908" font-size="17" class="heavy bright">GitHub</text>
+  <text x="920" y="932" class="body muted">every agent commits and reviews</text>
+  <text x="920" y="952" class="body muted">under its own identity</text>
+
+  <!-- Legend -->
+  <circle cx="55" cy="925" r="7" class="human"/><text x="70" y="929.5" class="small muted">people</text>
+  <circle cx="139" cy="925" r="7" class="admiral"/><text x="154" y="929.5" class="small muted">rear admiral</text>
+  <circle cx="254" cy="925" r="7" class="captain"/><text x="269" y="929.5" class="small muted">captains</text>
+  <circle cx="352" cy="925" r="7" class="crew"/><text x="367" y="929.5" class="small muted">crew</text>
+  <text x="820" y="930" class="small mono gold end">/join #starbase  ·  yes, it's IRC</text>
+</svg>

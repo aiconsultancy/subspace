@@ -10,7 +10,7 @@ the desktop app talks to `127.0.0.1` on your own computer.
 
 | Method | Good for | What crosses the network |
 | --- | --- | --- |
-| [SSH tunnel](#ssh-tunnel) (default) | One person, local VMs, getting started | SSH only |
+| [SSH tunnel](#ssh-tunnel) (default for a local VM) | One person, local VMs, getting started | SSH only |
 | [Tailscale](#tailscale) | Cloud VMs with no public IP; several fleets; shared IRC | WireGuard between your devices |
 | [Cloudflare Zero Trust](#cloudflare-zero-trust) | Cloud VMs with no inbound ports at all; identity-checked access; free for up to 50 users | An outbound tunnel from the VM to Cloudflare |
 
@@ -78,8 +78,10 @@ WireGuard network (a tailnet). It has a free plan for personal use.
    }
    ```
 
-   Keep your existing rules for other devices. Add `tag:fleet:6697` for
-   fleets and desktops that use a [shared IRC server](../INSTALL.md#one-fleet-or-several-shared-irc).
+   Keep your existing rules for other devices. For a
+   [shared IRC server](../INSTALL.md#one-fleet-or-several-shared-irc) on a
+   tailnet VM, add `tag:fleet:6697` to that rule's destinations for the
+   desktops, and a rule from `tag:fleet` to `tag:fleet:6697` for the fleets.
 3. Point the installer at the VM's tailnet name and limit SSH to the tailnet:
 
    ```sh

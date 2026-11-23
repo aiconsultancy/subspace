@@ -10,7 +10,7 @@ use subspace_api_client::Error;
 use subspace_api_client::model::DecisionListItem;
 use subspace_framework::dashboard::{ListState, Row, Tokens, list, prefs, workspace};
 
-use crate::load::{self, Answer, Directory, Failure, Found, Plan};
+use crate::load::{self, Answer, Directory, Failure, Found, Leased, Plan, Stop};
 use crate::model::{self, Choice, Maker, ProjectChoice, View};
 use crate::state::{self, Listing, Session, Status};
 use crate::{Decisions, listing, search, words};
@@ -45,6 +45,12 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Decisions>) -> Decisions
         showing_page: false,
         reader: load::Reader::service(),
         reads: 0,
+        stop: Stop::default(),
+        page_reads: 0,
+        lease: None,
+        account_epoch: 0,
+        active: false,
+        tidy: false,
         folds: Folds::default(),
         text_edge: workspace::text_edge(&Tokens::current(cx)),
         menu_anchors: Default::default(),
@@ -52,6 +58,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Decisions>) -> Decisions
         _read: None,
         _page_read: None,
         _search_task: None,
+        _watch: crate::account::watch(window, cx),
         _subscriptions: vec![typing],
     }
 }
@@ -80,9 +87,12 @@ impl Decisions {
     pub(crate) fn read(&mut self, directory: bool, cx: &mut Context<Self>) {
         self.reads = self.reads.wrapping_add(1);
         let number = self.reads;
+        // The read this one supersedes stops before its next page.
+        std::mem::take(&mut self.stop).stop();
         let plan = Plan {
             query: model::query(&self.choice, &self.query),
             directory: directory || self.session.account.is_none(),
+            stop: self.stop.clone(),
         };
         let reader = self.reader.list.clone();
         self.listing.status = Status::Loading;
@@ -94,8 +104,12 @@ impl Decisions {
         self.sync_lines(cx);
     }
 
-    fn finish_read(&mut self, number: u64, answer: Answer, cx: &mut Context<Self>) {
-        if number == self.reads {
+    fn finish_read(&mut self, number: u64, answer: Leased<Answer>, cx: &mut Context<Self>) {
+        let (lease, answer) = answer.split(|error| Answer {
+            directory: None,
+            found: Err(error),
+        });
+        if self.landed(number == self.reads, lease.as_ref(), cx) {
             self.apply(answer, Instant::now(), cx);
         }
     }
@@ -268,6 +282,9 @@ impl Decisions {
     /// it selects that decision's row, unfolding its group, or opens it
     /// when the list does not hold it.
     pub(crate) fn follow(&mut self, id: &str, title: &str, cx: &mut Context<Self>) {
+        if self.follow_account(cx) {
+            return;
+        }
         let group = self
             .item(id)
             .filter(|_| !self.showing_page)
@@ -296,12 +313,11 @@ impl Decisions {
     }
 
     pub(crate) fn status_line(&self, now: Instant) -> String {
-        state::status_line(
-            subspace_api_client::service_name(),
-            self.session.account.as_deref(),
-            &self.listing,
-            now,
-        )
+        let service = subspace_api_client::service_name();
+        if self.account_moved() {
+            return service.to_owned();
+        }
+        state::status_line(service, self.session.account.as_deref(), &self.listing, now)
     }
 
     pub(crate) fn account_line(&self) -> String {

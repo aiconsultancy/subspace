@@ -17,7 +17,7 @@ gpui-base = { path = "../subspace-framework/vendor/gpui-base" }
 markdown = { path = "../subspace-framework/vendor/markdown" }
 
 [workspace.package]
-version = "0.10.0"
+version = "0.12.1"
 publish = false
 edition = "2024"
 rust-version = "1.99.0"
@@ -30,6 +30,7 @@ unicode-general-category = "=1.1.0"
 subspace-framework = { path = "../subspace-framework", version = "0.2.0" }
 subspace-client-irc = { path = "clients/irc" }
 subspace-api-client = { path = "clients/subspace-api" }
+subspace-client-fleet = { path = "clients/fleet" }
 regex = "1"
 subspace-descriptor = { path = "products/descriptor" }
 

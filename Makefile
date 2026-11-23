@@ -22,12 +22,13 @@ help: ## Show available targets
 hooks: ## Install the prek commit and push hooks for both projects
 	prek install
 
-release-check: ## Release Please's config, the lockfile sync and the release workflows
+release-check: ## Release Please's config, the lockfile sync, the Stargate pin tooling and the release workflows (offline)
 	@cmp -s LICENSE $(FRAMEWORK)/LICENSE || { echo "The Framework's LICENSE must match the repository LICENSE" >&2; exit 1; }
 	mise -C $(DESKTOP) exec -- python3 "$(CURDIR)/scripts/test-release-tooling.py"
 	bash scripts/test-release-lockfiles.sh
 	bash scripts/test-release-rebuild.sh
 	bash scripts/test-windows-release-resolve.sh
+	bash scripts/test-stargate-bump.sh
 	python3 scripts/check-release-config.py
 	mise -C $(DESKTOP) exec -- python3 "$(CURDIR)/scripts/sync-lockfiles.py" --check
 	@if command -v actionlint >/dev/null; then actionlint .github/workflows/*.yml; else echo "actionlint is not installed; workflows not linted"; fi
