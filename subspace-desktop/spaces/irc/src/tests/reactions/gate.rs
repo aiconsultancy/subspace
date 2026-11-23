@@ -112,3 +112,29 @@ fn taking_back_our_own_stop_and_an_ordinary_pill_still_send(cx: &mut TestAppCont
     });
     assert!(click_sends(&hub, format!("irc-line:{m1}:reaction:1"), cx));
 }
+
+#[gpui_kit::test]
+fn a_stop_s_acknowledgement_survives_another_reaction_sent_before_its_echo(
+    cx: &mut TestAppContext,
+) {
+    let (board, hub, cx) = open(cx);
+    let conversation = board.read_with(cx, |board, _| board.dock.open[&room()].entity.clone());
+    conversation.update(cx, |view, cx| {
+        let stop = Some("astra".to_owned());
+        crate::conversation::reacting::toggle(view, ("r1".into(), HAND.into()), true, stop, cx);
+        crate::conversation::reacting::toggle(view, ("m1".into(), "👍".into()), true, None, cx);
+    });
+    receive(
+        &hub,
+        vec![
+            reaction("m1", "👍", "subspace"),
+            reaction("r1", HAND, "subspace"),
+        ],
+        cx,
+    );
+    assert_eq!(
+        notice(cx),
+        crate::conversation::reacting::stop_sent(HAND, "astra"),
+        "the stop's notice once its own echo arrives"
+    );
+}
