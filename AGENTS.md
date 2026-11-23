@@ -112,6 +112,18 @@ See the [Framework glossary](subspace-framework/docs/glossary.md) and
   `example.com` in docs and `.env.example` files. Configure identity
   providers and service endpoints at build or run time.
 - Keep generated build output out of commits.
+- **Code that needs the Subspace API** lives in the product crate or a
+  Space, never in a Framework crate that a build without the API also uses.
+  The existing build options select it (`api_backend`, `identity_provider`,
+  or a product's own configuration such as its GitHub OAuth App), and a
+  build without it shows no trace of it: no menu item, settings page, empty
+  state or error. Against an API that lacks the endpoint it needs, it turns
+  itself off and the manual path keeps working. Two examples: account
+  networks in Channels turn themselves off against an API without their
+  endpoint, leaving the networks configured in Settings › Channels; Sign in
+  with GitHub appears only when the product supplies an OAuth App. Subspace
+  API integration in Stargate is on only with an explicit setting, off by
+  default. The installer may assume the API; the desktop Framework may not.
 - Build a new or changed Space to the
   [design guide](subspace-framework/docs/design-guide.md): the same
   workspace shell, zones and rules in every Space.

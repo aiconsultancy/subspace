@@ -131,6 +131,13 @@ Use the make targets. Plain `make` lists them.
   `#[cfg(feature = "report-issue")]`, and `make check` tests and lints the
   shell with and without it. Tests use fictional values
   (`example-org/example-app`).
+- Nothing here may need the Subspace API, which an app built from the
+  Framework need not have. Follow the repository's
+  [working rule](../AGENTS.md#working-rules): a feature that needs the API
+  lives in an app's product crate or Space, and a Framework surface that
+  depends on an app's service takes it as an optional part of
+  `ProductBuild`, as `account` and `github_oauth` do, and shows nothing
+  without it.
 - Client calls block: run them in `cx.background_spawn`, never in render.
   Start panel loads from `ListDashboard::on_open`, not from `render`.
 - Keep large caches out of `state.json`: write them with
