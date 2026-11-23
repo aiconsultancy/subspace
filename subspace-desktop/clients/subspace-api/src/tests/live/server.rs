@@ -65,15 +65,6 @@ impl Server {
             .count()
     }
 
-    pub(crate) fn count_if(&self, keep: impl Fn(&Seen) -> bool) -> usize {
-        self.seen
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|seen| keep(seen))
-            .count()
-    }
-
     pub(crate) fn peer(&self) -> Peer {
         self.peers
             // A reconnection can wait out the hub's backoff, several

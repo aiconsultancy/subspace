@@ -85,30 +85,17 @@ fn hub(server: &Server) -> Hub {
     hub
 }
 
-/// Reads of the list head. Count reads ask for no rows, and polling while
-/// the stream connects reads only the open issue.
-fn list_heads(server: &Server) -> usize {
-    server.count_if(|seen| {
-        seen.method == "GET"
-            && route(&seen.path) == GROUPS
-            && !seen.path.contains("limitPerGroup=0")
-    })
-}
-
 /// Sends `ready` and waits until the hub has caught up after it. A few
 /// tenths of a second after `ready` the hub reads the list head and the open
 /// issue again, in the same step; the issue read waits for any poll already
 /// out, and once back it starts the issue's media lists again. A test that
 /// acts before that has landed races it, and a busy machine delays it, so
-/// wait for the list head read and for both reads to be back rather than
-/// for a fixed time.
-fn ready_and_caught_up(server: &Server, hub: &Hub, peer: &mut Peer) {
-    let heads = list_heads(server);
+/// wait for the hub to report the catch-up taken and landed rather than for
+/// a fixed time.
+fn ready_and_caught_up(hub: &Hub, peer: &mut Peer) {
     peer.ready();
     wait(hub, |snapshot| snapshot.live() == LiveStatus::Live);
-    wait(hub, |_| {
-        list_heads(server) > heads && hub.live_reads_settled()
-    });
+    wait(hub, |_| hub.caught_up_after_ready());
 }
 
 fn version(hub: &Hub) -> i64 {
@@ -208,7 +195,7 @@ fn ready_stream_resyncs_and_reads_again_after_a_hint() {
     let server = Server::new(api(current.clone()));
     let hub = hub(&server);
     let mut peer = server.peer();
-    ready_and_caught_up(&server, &hub, &mut peer);
+    ready_and_caught_up(&hub, &mut peer);
     let details = server.count("GET", DETAIL);
     // Collaboration writes keep the version: a hint still reads once.
     peer.changed("SUB-1", 1);

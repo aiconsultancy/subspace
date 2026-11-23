@@ -96,6 +96,12 @@ impl Due {
         }
     }
 
+    /// Whether a noted refresh is still waiting to be taken.
+    #[cfg(test)]
+    pub(crate) fn waiting(&self) -> bool {
+        self.first.is_some()
+    }
+
     pub(crate) fn take(&mut self, key: ReadKey, now: Instant) -> bool {
         let Some((held, first)) = self.first else {
             return false;

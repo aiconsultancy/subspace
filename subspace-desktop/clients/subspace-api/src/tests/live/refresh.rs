@@ -131,7 +131,7 @@ fn live(shown: &Arc<Shown>) -> (Server, Hub, super::server::Peer) {
     let server = Server::new(move |seen| answer.answer(seen));
     let hub = hub(&server);
     let mut peer = server.peer();
-    ready_and_caught_up(&server, &hub, &mut peer);
+    ready_and_caught_up(&hub, &mut peer);
     (server, hub, peer)
 }
 
