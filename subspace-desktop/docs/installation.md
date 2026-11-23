@@ -278,10 +278,12 @@ the [windows-release workflow](#the-windows-release-workflow), which attaches
 the signed Windows archive to the draft and can take a couple of hours.
 `make release-macos` publishes the release without checking for that archive,
 so wait until the draft lists `subspace-<version>-x86_64-pc-windows-msvc.zip`
-and its `.sha256`. Then, on the Mac of whichever maintainer is releasing:
+and its `.sha256`, both `uploaded` and not empty (a failed upload can leave an
+empty asset in the `starter` state). Then, on the Mac of whichever maintainer
+is releasing:
 
 ```bash
-gh release view subspace-desktop-v<version> -R aiconsultancy/subspace --json assets --jq '.assets[].name'
+gh release view subspace-desktop-v<version> -R aiconsultancy/subspace --json assets --jq '.assets[] | "\(.name) \(.state) \(.size)"'
 git fetch --tags origin
 git switch --detach subspace-desktop-v<version>
 make release-macos
