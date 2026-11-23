@@ -9,6 +9,7 @@ import { CurrentMember } from "./identity";
 import { BearerAuth, ValidationErrors, versionedApi } from "./middleware";
 import { endpointErrors, problem } from "./problems";
 import { organisations, users } from "./schema";
+import { canonicalName } from "./usernames";
 import { Host, Port } from "./validation";
 
 /**
@@ -237,8 +238,8 @@ const decide = (hook: Hook, secret: Secret, hosts: readonly string[], text: stri
         ? "organisation"
         : !user.username
           ? "no username"
-          : (input.accountName ?? "").split("@", 1)[0]!.toLowerCase() !==
-              user.username.toLowerCase()
+          : canonicalName((input.accountName ?? "").split("@", 1)[0]!) !==
+              canonicalName(user.username)
             ? "account"
             : null;
     if (rejection) return { ...refused(rejection), userId: credential.userId };

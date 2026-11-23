@@ -101,7 +101,7 @@ function splitName(name: string) {
   return fromWords(name.slice(comma + 1).split(/\s+/u), name.slice(0, comma));
 }
 
-/** The words of an e-mail local part, such as `ada.lovelace+tag`. */
+/** The words of an e-mail local part, such as `tamsin.quarrie+tag`. */
 function splitEmail(email: string) {
   const local = email.slice(0, Math.max(email.lastIndexOf("@"), 0)).split("+", 1)[0]!;
   return fromWords(local.split(/[._-]+/u));
@@ -304,6 +304,11 @@ export const setUsername = (
         new UsernameRefused(
           "Use a letter, then letters, digits, - or _, at most 32 characters in all.",
         ),
+      );
+    // An operator's reserved name may be given deliberately; the IRC server's own may not.
+    if (isReservedUsername(name, new Set()))
+      return yield* Effect.fail(
+        new UsernameRefused("That name belongs to the IRC server's services or guests."),
       );
     return yield* db.transaction((tx) =>
       Effect.gen(function* () {

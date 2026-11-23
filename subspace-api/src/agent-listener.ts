@@ -7,6 +7,7 @@ import { CurrentMember, type Member } from "./identity";
 import { BearerAuth } from "./middleware";
 import { problem } from "./problems";
 import { fleets, organisations, ships, users } from "./schema";
+import { canonicalName, usernameKey } from "./usernames";
 
 /**
  * The agent listener: a second, optional listener on which a request names its registered agent
@@ -92,7 +93,8 @@ export const agentLookup = (
   listener: AgentListener,
   reference: string,
 ) => {
-  const lower = reference.toLowerCase();
+  // The same ASCII comparison as usernames and Ergo, whatever the database locale.
+  const key = canonicalName(reference);
   return db
     .select({ member: users, fleet: fleets.slug, ship: ships.name })
     .from(users)
@@ -105,8 +107,8 @@ export const agentLookup = (
         eq(organisations.externalId, listener.externalOrganisation),
         isNotNull(users.agentRank),
         or(
-          sql`lower(${users.displayName}) = ${lower}`,
-          sql`lower(${users.agentIrcNick}) = ${lower}`,
+          sql`${usernameKey(users.displayName)} = ${key}`,
+          sql`${usernameKey(users.agentIrcNick)} = ${key}`,
         ),
       ),
     )

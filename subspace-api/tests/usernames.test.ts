@@ -567,6 +567,10 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
     );
     expect(await set(first.userId, "kerra")).toBe("kerra");
     expect(await set(second.userId, "two words")).toContain("Use a letter");
+    for (const name of ["NickServ", "global", "guest", "Guest-7"])
+      expect(await set(second.userId, name)).toBe(
+        "That name belongs to the IRC server's services or guests.",
+      );
     expect(await set(second.userId, "x", crypto.randomUUID())).toContain("No member");
     const [{ subject: agentSubject }] = (
       await database.client.query(

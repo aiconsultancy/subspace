@@ -284,6 +284,8 @@ test("the agent lookup puts active records first, before its limit", () => {
   const { sql: text, params } = agentLookup(db as never, listener, "Orion").toSQL();
   expect(text).toMatch(/order by "users"\."active" desc, "users"\."id" asc limit \$\d+$/u);
   expect(params).toContain("orion");
+  // Names compare in ASCII, as usernames and Ergo do, whatever the database locale.
+  expect(text).toContain('lower("users"."agent_irc_nick" COLLATE "C")');
 });
 
 test("one active agent resolves however many deactivated records share its name or nick", async () => {
