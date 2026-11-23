@@ -164,7 +164,11 @@ stays **Keychain locked** while it is read again, the page hears
 service reads one fleet's token again at most once every five seconds,
 whoever asks; a **Retry** asked sooner reads each fleet it covered once,
 when that fleet's own five seconds end, never one saved, cleared or removed
-since, and never again on a timer.
+since, and never again on a timer. The five seconds run from when a read
+starts, not from when it was asked for or scheduled, so a waiting Retry
+whose timer runs late, or a read queued behind others, still leaves the
+keychain alone for five seconds after it. A Retry asked while a read is
+still in flight waits for its five seconds rather than being lost.
 
 Every read, save and clear of a fleet's token runs on that fleet's one
 ordered path (`service/queue.rs`; each fleet has its own, so a keychain

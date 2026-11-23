@@ -214,3 +214,50 @@ fn a_retry_still_reading_never_brings_back_a_replaced_token(cx: &mut TestAppCont
     cx.run_until_parked();
     assert_eq!(token(&service, cx).as_deref(), Some("newer"));
 }
+
+/// A waiting Retry whose timer runs late: its read starts well after the
+/// deadline it was set for, and the interval runs from that start, so a
+/// Retry soon after it does not read the keychain again.
+#[gpui_kit::test]
+fn a_late_deferred_retry_measures_its_interval_from_when_the_read_starts(cx: &mut TestAppContext) {
+    let (service, _locked, count) = locked_service(cx);
+    let start = cx.executor().now();
+    retry_at(&service, start, cx);
+    assert_eq!(reads(&count), 2);
+    // The app's clock runs ahead of the deadline the Retry is given, as
+    // when the timer that serves it runs late.
+    cx.executor().advance_clock(Duration::from_secs(10));
+    retry_at(&service, start + Duration::from_secs(1), cx);
+    assert_eq!(reads(&count), 2, "waits for its interval");
+    cx.executor().advance_clock(Duration::from_secs(4));
+    cx.run_until_parked();
+    assert_eq!(reads(&count), 3, "read late, at second 14");
+    retry_at(&service, start + Duration::from_secs(16), cx);
+    assert_eq!(
+        reads(&count),
+        3,
+        "two seconds after that read began: not read again"
+    );
+}
+
+/// A Retry asked while an earlier read is still in flight is kept, not
+/// lost: it reads once its interval ends, once only.
+#[gpui_kit::test]
+fn a_retry_while_a_read_is_in_flight_waits_rather_than_being_lost(cx: &mut TestAppContext) {
+    let (service, _locked, count) = locked_service(cx);
+    let start = cx.executor().now();
+    retry_at(&service, start, cx);
+    assert_eq!(reads(&count), 2);
+    service.update(cx, |service, cx| {
+        service.reload_unreadable_at(start + Duration::from_secs(6), cx);
+        service.reload_unreadable_at(start + Duration::from_secs(12), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(reads(&count), 3, "the first read; the second Retry waits");
+    cx.executor().advance_clock(Duration::from_secs(10));
+    cx.run_until_parked();
+    assert_eq!(reads(&count), 4, "the waiting Retry reads");
+    cx.executor().advance_clock(Duration::from_secs(60));
+    cx.run_until_parked();
+    assert_eq!(reads(&count), 4, "once, and never on a timer");
+}

@@ -288,11 +288,30 @@ impl FleetApi {
         }
     }
 
-    /// Reads again each unreadable token not read within the interval.
+    /// Reads again each unreadable token not read within the interval. A
+    /// fleet whose read is still in flight keeps this Retry waiting rather
+    /// than losing it: it is read once the interval ends, if that read did
+    /// not settle it.
     fn read_due(&mut self, now: Instant, cx: &mut Context<Self>) {
-        directory::due_rereads(&self.tokens, &mut self.reads.last, now, REREAD_INTERVAL)
-            .into_iter()
-            .for_each(|fleet| self.reread(fleet, cx));
+        for fleet in
+            directory::due_rereads(&self.tokens, &mut self.reads.last, now, REREAD_INTERVAL)
+        {
+            if self.reads.rereading.contains(&fleet) {
+                self.defer_reread(fleet, now, now + REREAD_INTERVAL, cx);
+            } else {
+                self.reread(fleet, cx);
+            }
+        }
+    }
+
+    /// A read of `fleet`'s token starts at `now`: its interval runs from
+    /// here, not from when it was asked for or scheduled, so a read that
+    /// waited behind others, or a Retry whose timer ran late, still leaves
+    /// the keychain alone for the whole interval after it.
+    fn read_starts(&mut self, fleet: &str, now: Instant) {
+        if let Some(last) = self.reads.last.get_mut(fleet) {
+            *last = (*last).max(now);
+        }
     }
 
     /// Queues a re-read of `fleet`'s token unless one is queued and not

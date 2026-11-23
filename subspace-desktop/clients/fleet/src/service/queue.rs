@@ -62,9 +62,15 @@ impl FleetApi {
         let store = Arc::clone(&self.store);
         let id = fleet.to_owned();
         let (answer, answered) = tokio::sync::oneshot::channel();
+        let reading = matches!(op, Op::Read);
         let tail = cx.spawn(async move |this, cx| {
             if let Some(previous) = previous {
                 previous.await;
+            }
+            if reading {
+                _ = this.update(cx, |this, cx| {
+                    this.read_starts(&id, cx.background_executor().now());
+                });
             }
             let account = id.clone();
             let outcome = cx
