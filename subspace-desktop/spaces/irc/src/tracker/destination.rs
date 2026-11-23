@@ -41,9 +41,37 @@ fn names(client: &Client, scope: &IssueScope) -> bool {
         && !client.account_changed()
 }
 
+/// Whether two API bases are the same: scheme, host and port compared as
+/// URLs compare them (without case, the scheme's default port filled in),
+/// and the base path compared exactly, as a server may route paths that
+/// differ only in case to different trackers.
 fn same_origin(one: &str, other: &str) -> bool {
-    one.trim_end_matches('/')
-        .eq_ignore_ascii_case(other.trim_end_matches('/'))
+    match (base(one), base(other)) {
+        (Some(one), Some(other)) => one == other,
+        _ => false,
+    }
+}
+
+/// The default ports a base URL leaves out.
+const HTTP_PORT: u16 = 80;
+const HTTPS_PORT: u16 = 443;
+
+/// A base URL's scheme, host, port and path, normalised.
+fn base(url: &str) -> Option<(String, String, u16, String)> {
+    let (scheme, rest) = url.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) if !port.contains(']') => (host, Some(port.parse().ok()?)),
+        _ => (authority, None),
+    };
+    let port = port.or(match scheme.as_str() {
+        "http" => Some(HTTP_PORT),
+        "https" => Some(HTTPS_PORT),
+        _ => None,
+    })?;
+    let path = path.trim_end_matches('/').to_owned();
+    Some((scheme, host.to_ascii_lowercase(), port, path))
 }
 
 #[cfg(test)]
@@ -77,5 +105,31 @@ mod tests {
             Some(NO_CLIENT.to_owned())
         );
         assert!(matching(client("http://127.0.0.1:9/api"), None).is_err());
+    }
+
+    #[test]
+    fn hosts_compare_as_urls_do_and_paths_exactly() {
+        use super::same_origin;
+        assert!(same_origin(
+            "HTTP://Tracker.Example.com/api",
+            "http://tracker.example.com:80/api/"
+        ));
+        assert!(same_origin(
+            "https://tracker.example.com/api",
+            "https://TRACKER.example.com:443/api"
+        ));
+        assert!(!same_origin(
+            "https://tracker.example.com/TeamA/api",
+            "https://tracker.example.com/teama/api"
+        ));
+        assert!(!same_origin(
+            "https://tracker.example.com/api",
+            "http://tracker.example.com/api"
+        ));
+        assert!(!same_origin(
+            "https://tracker.example.com:8443/api",
+            "https://tracker.example.com/api"
+        ));
+        assert!(!same_origin("not a url", "not a url"));
     }
 }
