@@ -120,3 +120,27 @@ pub(super) fn history(buffer: BufferKey, ids: &[&str]) -> Event {
         complete: false,
     }
 }
+
+#[test]
+fn reacted_messages_lists_only_this_conversation_s_shown_ones() {
+    let mut book = ReactionBook::new();
+    let mut before = reaction("a0", "👍", "alice", 1);
+    before.buffer.target = Target::Channel("#a".into());
+    let mut after = reaction("z9", "👍", "alice", 1);
+    after.buffer.target = Target::Channel("#zz".into());
+    apply_all(
+        &mut book,
+        &[
+            before,
+            after,
+            reaction("m1", "👍", "alice", 1),
+            reaction("m2", "🎉", "bob", 1),
+            removed(reaction("m2", "🎉", "bob", 2)),
+        ],
+    );
+    assert_eq!(
+        book.reacted_messages(&room()),
+        ["m1"],
+        "a message only remembering a removal shows nothing"
+    );
+}

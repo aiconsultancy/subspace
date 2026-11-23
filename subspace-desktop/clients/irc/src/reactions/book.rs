@@ -26,7 +26,7 @@ const REMOVALS_FACTOR: usize = 2;
 const MAX_SEEN_IDS: usize = 8192;
 
 mod groups;
-use groups::{Group, record, summaries};
+use groups::{Group, record, shows, summaries};
 
 /// Someone who reacted.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,13 +161,20 @@ impl ReactionBook {
             .unwrap_or_default()
     }
 
-    /// The messages in `buffer` that show reactions, by message ID.
+    /// The messages in `buffer` that show reactions, by message ID. Reads
+    /// only `buffer`'s messages, and builds no summaries to find them.
     pub fn reacted_messages(&self, buffer: &BufferKey) -> Vec<&str> {
         self.messages
-            .iter()
-            .filter(|((held, _), entry)| held == buffer && !summaries(&entry.groups).is_empty())
+            .range((buffer.clone(), String::new())..)
+            .take_while(|((held, _), _)| held == buffer)
+            .filter(|(_, entry)| shows(&entry.groups))
             .map(|((_, msgid), _)| msgid.as_str())
             .collect()
+    }
+
+    /// Whether the message `msgid` in `buffer` is known to be loaded.
+    pub fn is_seen(&self, buffer: &BufferKey, msgid: &str) -> bool {
+        self.seen.ids.contains(&(buffer.clone(), msgid.to_owned()))
     }
 
     /// Whether we reacted to the message with `reaction`.

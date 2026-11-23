@@ -125,8 +125,12 @@ impl Reactions {
 /// Takes one reaction update into `reactions`, knowing what `state`
 /// holds; see [`Reactions::update`].
 pub(crate) fn react(reactions: &mut Reactions, state: &IrcState, update: Update) -> bool {
+    // A message already known loaded needs no look through the buffer.
     let held = match &update {
-        Update::Reaction(reaction) => holds(state.buffer(&reaction.buffer), &reaction.msgid),
+        Update::Reaction(reaction) => {
+            !reactions.book.is_seen(&reaction.buffer, &reaction.msgid)
+                && holds(state.buffer(&reaction.buffer), &reaction.msgid)
+        }
         _ => false,
     };
     reactions.update(update, held)
