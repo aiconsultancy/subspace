@@ -868,7 +868,7 @@ subnets in the user's virtual network. Run it only when the user asks.
    - before any service starts, keeps the agents' Linux users away from the
      API's main port, PostgreSQL and the cloud metadata service (agent
      isolation, which never blocks your own login and is never rolled back),
-     leaving them only the API's agent listener;
+     and lets only the officers' users reach the API's agent listener;
    - runs the [fleet installer](subspace-installer/README.md): the latest
      Stargate (its newest `vX.Y.Z` release, looked up on every run and pinned
      in `fleet.json`; pass `--stargate-ref <SHA>` to stay on one commit),
@@ -1034,11 +1034,13 @@ The API resolves only an active agent record of the fleet's organisation and
 acts as that agent, which is never an administrator; the listener serves no
 sign-in route and no administrator route or tool. It refuses any request from a
 browser page (one with an `Origin` header) and any request addressed to a host
-other than `127.0.0.1`, `localhost` or `[::1]`. This trusts the VM's local
-users as development sign-in does, minus administrator access: anyone who can
-reach port 3001 can act as any registered agent of that organisation, so one
-agent can act as another. `./install.sh audit` checks that port 3001 serves
-no sign-in route and that the main port stays closed to the agents. To turn
+other than `127.0.0.1`, `localhost` or `[::1]`. The lockdown lets only root,
+your operator login and the officers' own Linux users (the rear admiral's and
+each captain's; crew run as their captain) reach port 3001, not the fleet's
+other service users or containers. Any of those can act as any registered
+agent of that organisation, so one agent can act as another.
+`./install.sh audit` checks that port 3001 is limited that way and serves no
+sign-in route, and that the main port stays closed to the agents. To turn
 the listener off, set `AGENT_PORT=` in `/root/fleet/api.env` and run setup
 again; the agents then have no Subspace MCP server. Switching the API to WorkOS or
 Entra (development sign-in off) turns the agent listener off too, and the

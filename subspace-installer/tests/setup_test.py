@@ -4,6 +4,8 @@ Run with Python 3.10 or later: python3 -B subspace-installer/tests/setup_test.py
 """
 
 import argparse
+import re
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -533,14 +535,49 @@ class AgentDispatchSetupTests(unittest.TestCase):
                 patch.object(fleet_setup, "metadata_users", return_value=[]):
             self.assertNotIn("--port-user", fleet_setup.isolation_args(answers))
 
-    def test_agents_may_reach_the_agent_listener_and_not_the_api(self):
+    def test_only_the_officers_may_reach_the_agent_listener(self):
         answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": []}
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
+            "rearAdmiral": {"id": "atlas"}, "captains": [{"id": "orion"}, {"id": "vega"}]})
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "metadata_users", return_value=[]):
             args = fleet_setup.isolation_args(answers)
         protected = [args[i + 1] for i, arg in enumerate(args) if arg == "--operator-only-port"]
-        self.assertEqual(protected, [str(fleet_setup.API_PORT), "5432"])
-        self.assertNotIn(str(fleet_setup.AGENT_API_PORT), " ".join(args))
-        self.assertNotEqual(fleet_setup.AGENT_API_PORT, fleet_setup.API_PORT)
+        self.assertEqual(protected, [str(fleet_setup.API_PORT), "5432", str(fleet_setup.AGENT_API_PORT)])
+        exceptions = [args[i + 1] for i, arg in enumerate(args) if arg == "--port-user"]
+        self.assertEqual(exceptions, ["3000:ss-fleet-gateway", "3001:ss-atlas", "3001:ss-orion", "3001:ss-vega"])
+        # Officers not yet created get no exception; setup isolates again after the installer has run.
+        with patch.object(fleet_setup.pwd, "getpwnam", side_effect=KeyError), \
+                patch.object(fleet_setup, "metadata_users", return_value=[]):
+            args = fleet_setup.isolation_args(answers)
+        self.assertIn(str(fleet_setup.AGENT_API_PORT), args)
+        self.assertNotIn("--port-user", args)
+
+    def test_lockdown_admits_only_the_named_users_to_each_protected_port(self):
+        script = Path(fleet_setup.HERE) / "lockdown.sh"
+        source = script.read_text()
+        functions = re.findall(r"^(?:unique_list|isolation_wanted)\(\).*$", source, re.M)
+        render = re.search(r"^render_isolation\(\) \{.*?^\}$", source, re.M | re.S).group(0)
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "isolation.nft"
+            program = "\n".join([
+                *functions, render,
+                "protected=(3000 5432 3001) uids=(0 1000) port_uids=(3000:900 3001:901 3001:902)",
+                "metadata_uids=() protect_metadata=false", f"render_isolation {out}",
+            ])
+            subprocess.run(["bash", "-c", program], check=True)
+            rules = [line.strip() for line in out.read_text().splitlines()]
+        accepts = [rule for rule in rules if rule.endswith("accept") and "dport" in rule]
+        self.assertEqual(accepts, [
+            'oifname "lo" tcp dport 3000 meta skuid 900 accept',
+            'oifname "lo" tcp dport 3001 meta skuid 901 accept',
+            'oifname "lo" tcp dport 3001 meta skuid 902 accept',
+        ])
+        reject = 'oifname "lo" tcp dport { 3000,5432,3001 } meta skuid != { 0,1000 } reject with tcp reset'
+        self.assertIn(reject, rules)
+        # The exceptions come before the reject, so they win; container addresses get no exceptions.
+        self.assertLess(rules.index(accepts[-1]), rules.index(reject))
+        self.assertIn('oifname { "docker0", "br-*" } tcp dport { 3000,5432,3001 } meta skuid != { 0,1000 } '
+                      'reject with tcp reset', rules)
 
 
 class IrcServerTests(unittest.TestCase):

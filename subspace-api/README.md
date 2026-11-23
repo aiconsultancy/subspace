@@ -285,7 +285,8 @@ either listener; other reads and writes need no initiative membership.
 This trusts the listener's network as development sign-in does, minus
 administrator access: anyone who can reach the agent port can act as any
 registered agent of that organisation, and agents can act as each other.
-Expose it only to the agents' own users, as the fleet installer does.
+Expose it only to the agents' own users: the fleet installer's lockdown admits
+only root, the operator and the officers' Linux users to it.
 
 Issue creators, assignees and commenters follow issues automatically unless
 they explicitly unsubscribe. A member can change their subscription under

@@ -183,6 +183,12 @@ if [[ -n $agent_port ]]; then
         # An invalid body: a served sign-in route answers 400 without signing anyone in; the agent listener has none.
         status=$(curl -s -o /dev/null -m 5 -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
             --data '{"email":1}' "http://127.0.0.1:$agent_port/api/v1/auth/dev/token" 2>/dev/null)
+        # Like port 3000: only root, the operator and the officers' users (allowed before this rule) may reach it.
+        if grep -Eq "dport (\{ )?([0-9]+, )*${agent_port}[ ,}].*skuid" <<<"$isolation$ruleset"; then
+            pass "The agent listener on port $agent_port is limited to root, your operator login and the officers."
+        else
+            fail "Every local user can reach the agent listener on port $agent_port and act as any agent. Re-run the installer, which limits it to the officers."
+        fi
         case $status in
             404) pass "Agents reach the API only on its agent listener (port $agent_port), which serves no sign-in route." ;;
             000) warn "The API's agent listener on port $agent_port did not answer. Is the API running?" ;;

@@ -1131,8 +1131,9 @@ def setup(args):
     installer(config_path)
     if not answers["api"]:
         api_down()
-    if answers["agentDispatch"]:
-        # The installer has created Stargate's gateway user: let it, and only it, reach the API's port.
+    if answers["agentDispatch"] or answers["api"]:
+        # The installer has created the officers' users and Stargate's gateway user: let the gateway, and only it,
+        # reach the API's port, and the officers, and only they, reach the agent listener.
         run(HERE / "lockdown.sh", "isolate", *isolation_args(answers))
     if stargate_api is None:
         source = installed_stargate_source()
@@ -1202,12 +1203,33 @@ def isolation_args(answers):
         except KeyError:
             gateway = False  # Not yet created: setup isolates again once the installer has run.
         if gateway:
-            # Agent dispatch: Stargate's gateway polls the API as the rear admiral. Agents never reach this port;
-            # they reach only the agent listener (AGENT_API_PORT), which is never operator-only.
+            # Agent dispatch: Stargate's gateway polls the API as the rear admiral. Agents never reach this port.
             args += ["--port-user", f"{API_PORT}:{GATEWAY_USER}"]
+        # The agent listener: only the operator and the officers' own users (crew run as their captain's),
+        # never the fleet's other service users or containers.
+        args += ["--operator-only-port", str(AGENT_API_PORT)]
+        for user in officer_users():
+            args += ["--port-user", f"{AGENT_API_PORT}:{user}"]
     for user in metadata_users(answers):
         args += ["--metadata-user", user]
     return args
+
+
+def officer_users():
+    """The rear admiral's and captains' Linux users that exist, from the fleet's inputs."""
+    config = read_json(INPUTS / "fleet.json", {})
+    people = [config.get("rearAdmiral") or {}, *(config.get("captains") or [])]
+    users = []
+    for person in people:
+        agent_id = person.get("id") if isinstance(person, dict) else None
+        if not (isinstance(agent_id, str) and NAME_ID.fullmatch(agent_id)):
+            continue
+        try:
+            pwd.getpwnam(f"ss-{agent_id}")
+        except KeyError:
+            continue  # Not yet created: setup isolates again once the installer has run.
+        users.append(f"ss-{agent_id}")
+    return users
 
 
 def metadata_users(answers):

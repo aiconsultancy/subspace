@@ -34,8 +34,9 @@ reached it, with an eight-hour rear admiral token.
   The fleet limits on dispatch, Ready for agents and moves are unchanged.
 - **Installer.** `subspace-setup` turns the listener on at `127.0.0.1:3001`
   for the development sign-in organisation and keeps port 3000 and PostgreSQL
-  operator-only, so the agents' users reach port 3001 only. The audit fails
-  if port 3001 answers the sign-in route or shares an operator port. Each
+  operator-only, and admits only the operator and the officers' users to
+  port 3001. The audit fails if port 3001 is open to every local user,
+  answers the sign-in route or shares an operator port. Each
   OpenCode officer's engine gets the MCP server `subspace` with its IRC
   account in the header and a `subspace_*` permission grant; Claude Agent SDK
   officers get it through Stargate's `mcpServers` and a header helper, which

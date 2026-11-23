@@ -427,10 +427,13 @@ records, through its MCP server, without WorkOS, Entra or a token.
   agents then have no way into the API yet. Setup then adds
   `api.agentUrl: "http://127.0.0.1:3001"` to the fleet configuration.
 - **The lockdown** keeps port 3000 (the main listener, with development
-  sign-in) and PostgreSQL operator-only and leaves port 3001 open to the
-  agents' users. The audit fails if the agent port is 3000 or 5432, or if it
-  answers the development sign-in route; it still fails if port 3000 is open
-  to the agents.
+  sign-in) and PostgreSQL operator-only, and admits to port 3001 only root,
+  the operator and the officers' Linux users (`--port-user 3001:ss-<id>` for
+  the rear admiral and each captain; crew run as their captain). The fleet's
+  other service users and containers cannot reach it. The audit fails if the
+  agent port is open to every local user, is 3000 or 5432, or answers the
+  development sign-in route; it still fails if port 3000 is open to the
+  agents.
 - **OpenCode officers.** With `api.agentUrl` set, each officer's engine
   configuration (`/etc/subspace-fleet/opencode-<id>.json`) gets a remote MCP
   server `subspace` at `<agentUrl>/mcp` with the header
@@ -457,7 +460,8 @@ records, through its MCP server, without WorkOS, Entra or a token.
   and the API's rules for issues, trackers, decisions and the rest.
 
 The agent listener trusts its network as development sign-in does, minus
-administrator access: anyone who can reach port 3001 on the VM can act as any
+administrator access: anyone who can reach port 3001 on the VM, which the
+lockdown limits to root, the operator and the officers' users, can act as any
 registered agent of the organisation, so agents can act as each other. It
 serves no sign-in route and no administrator route or MCP tool, it never
 resolves a person, and it refuses browser requests (an `Origin` header) and
