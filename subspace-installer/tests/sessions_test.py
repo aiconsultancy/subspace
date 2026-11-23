@@ -742,6 +742,53 @@ class InstalledFleet(unittest.TestCase):
         # Like turning agent dispatch off, the rear admiral's IRC goes back to a session per conversation.
         self.assertNotIn("sessionID", irc["atlas"])
 
+    def test_a_rear_admiral_pinned_by_its_slack_bot_before_any_repository_keeps_its_root(self):
+        # Agent dispatch needs a captain with crew, so it never pinned a rear admiral without repositories; the
+        # rear admiral's own Slack bot does. Adding repositories later must neither move that root nor be refused.
+        config, secrets = crew_fleet("orion")
+        config["repositories"] = []
+        config["rearAdmiral"]["slack"] = {"appId": "AFIXTURE1", "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"]}
+        extra = {"tokens": {}, "cloud": {}, "slack": {"atlas": {
+            "slack-app-token": "xapp-1-fixture-atlas", "slack-bot-token": "xoxb-1-fixture-atlas"}}}
+        for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
+            (self.etc / name).write_text(json.dumps(value))
+            (self.etc / name).chmod(0o600)
+        self.start(patch.object(runtime, "reconcile_workspaces", side_effect=lambda cfg, homes: (
+            self.state / "references/atlas" if cfg["repositories"] else None)))
+        server = FakeOpenCode()
+        self.start(patch.object(runtime.sessions, "OpenCode", return_value=server))
+        workspace = self.state / "agents/atlas/workspace"
+        runtime.render(runtime.validate(config, secrets), extra)
+        runtime.commission(False)
+        record = json.loads((self.etc / "sessions/atlas.json").read_text())
+        self.assertEqual(record["directory"], str(workspace))
+        self.assertEqual(server.sessions[record["sessionID"]]["location"], {"directory": str(workspace)})
+
+        def served():
+            stargate = json.loads((self.etc / "stargate.json").read_text())
+            return (next(entry["backend"] for entry in stargate["irc"] if entry["id"] == "atlas"),
+                    next(bot["backend"] for bot in stargate["bots"] if bot["id"] == "fleet-slack-atlas"))
+
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        cfg = runtime.validate(config, secrets)
+        self.assertEqual(runtime.rear_pin(cfg), record["sessionID"])
+        runtime.render(cfg, extra)
+        irc, bot = served()
+        self.assertEqual((irc["directory"], irc["sessionID"]), (str(workspace), record["sessionID"]))
+        self.assertEqual(bot, irc)
+        self.assertEqual(json.loads((self.etc / "engine-atlas.json").read_text())["directory"], str(workspace))
+        # Without a root to keep, the rear admiral works in its reference checkout of the first repository.
+        del config["rearAdmiral"]["slack"]
+        self.assertEqual(runtime.rear_workspace(runtime.validate(config, secrets)),
+                         self.state / "references/atlas/project")
+        # A root pinned in a reference checkout is fixed, and the refusal names the rear admiral, not a captain.
+        config["rearAdmiral"]["slack"] = {"appId": "AFIXTURE1", "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"]}
+        record["directory"] = str(self.state / "references/atlas/project")
+        (self.etc / "sessions/atlas.json").write_text(json.dumps(record))
+        config["repositories"].insert(0, {"id": "library", "url": "https://github.com/example/library.git"})
+        with self.assertRaisesRegex(runtime.Invalid, "^Rear admiral atlas: its first repository is fixed"):
+            runtime.rear_pin(runtime.validate(config, secrets))
+
 
 if __name__ == "__main__":
     unittest.main()

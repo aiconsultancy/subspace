@@ -1126,9 +1126,12 @@ puts at the start of each pinned Slack request.
   ([Captain sessions](#captain-sessions)). Its bot, like its IRC
   registration, joins the gateway once the pin is rendered.
 - **The rear admiral** gets a pinned root when it has its own bot, as it does
-  for [agent dispatch](#agent-dispatch). Its first repository is then fixed,
-  as for a captain. Remove its bot, with dispatch off, and its IRC goes back
-  to a session per conversation.
+  for [agent dispatch](#agent-dispatch), in its reference checkout of the
+  first repository. Its first repository is then fixed, as for a captain. In
+  a fleet without repositories the root is pinned in the rear admiral's
+  workspace and stays there when repositories are added, because the
+  installer never moves a pinned session. Remove its bot, with dispatch off,
+  and its IRC goes back to a session per conversation.
 - **A captain without crew** has no pinned root, and the installer does not
   pin one for Slack, because a pin fixes its crew roster. Its bot answers,
   but Slack threads and IRC conversations keep separate sessions. Give it

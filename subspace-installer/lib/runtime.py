@@ -310,7 +310,7 @@ def slack_bot_id(agent_id):
 
 
 def officer_title(person):
-    return f"{'Rear admiral' if person['role'] == 'rear_admiral' else 'Captain'} {person['id']}"
+    return f"{'Rear admiral' if person.get('role') == 'rear_admiral' else 'Captain'} {person['id']}"
 
 
 def check_officer_slack(agents, stakeholder):
@@ -1329,7 +1329,7 @@ def pinned_session(person, workspace, project=None):
         require(project is None or record.get("project", record.get("directory")) == str(project), fixed)
         return pattern(record.get("sessionID"), sessions.SESSION_ID.pattern, "pinned captain session ID")
     except (Invalid, sessions.SessionError) as error:
-        raise Invalid(f"Captain {person['id']}: {error}") from None
+        raise Invalid(f"{officer_title(person)}: {error}") from None
 
 
 def recorded_roots():
@@ -1434,15 +1434,33 @@ def captain_pins(cfg, roots=None):
     return pins
 
 
+def pinned_directory(person):
+    """The directory of an officer's confirmed root session, or None (also when this user cannot read the records)."""
+    if not os.access(SESSIONS, os.R_OK | os.X_OK):
+        return None
+    try:
+        record = sessions.SessionRecord(SESSIONS, person["id"]).load()
+    except sessions.SessionError as error:
+        raise Invalid(f"{officer_title(person)}: {error}") from None
+    return Path(str(record.get("directory"))) if record and record.get("confirmed") else None
+
+
 def rear_workspace(cfg):
-    """The rear admiral's working directory: its reference checkout of the first repository, if any."""
-    rear = cfg["members"][0]["id"]
+    """The rear admiral's working directory: its reference checkout of the first repository, if any.
+
+    Its own Slack bot pins its root even in a fleet without repositories, in its workspace. Like a captain's, a
+    pinned root never moves, so it stays in the workspace when repositories are added (rear_root_lines says so).
+    """
+    rear = cfg["members"][0]
+    workspace = STATE / "agents" / rear["id"] / "workspace"
     first = next(iter(cfg["repositories"]), None)
-    return STATE / "references" / rear / first if first else STATE / "agents" / rear / "workspace"
+    if first and rear_root(cfg) and pinned_directory(rear) == workspace:
+        return workspace
+    return STATE / "references" / rear["id"] / first if first else workspace
 
 
 def rear_pin(cfg):
-    """The rear admiral's pinned root session while agent dispatch is on, or None.
+    """The rear admiral's pinned root session while agent dispatch is on or it has its own Slack bot, or None.
 
     Captains name it in their fleetControl target, which is how they recognise their rear admiral's offers.
     """
@@ -2130,6 +2148,7 @@ def render(cfg, extra, prune=False):
     roots = captain_roots(cfg)
     pins = captain_pins(cfg, roots)
     rear_session = rear_pin(cfg)
+    rear_directory = rear_workspace(cfg)
     withdraw_ready(pins)
     # Record each captain's root before its checkouts are cloned, so a later run keeps it (captain_roots).
     write(ETC / "session-roots.json",
@@ -2177,21 +2196,19 @@ def render(cfg, extra, prune=False):
                 ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "cloud", str(prune).lower()],
                 input=json_text(files), text=True, check=True,
             )
-    references = reconcile_workspaces(cfg, homes)
+    reconcile_workspaces(cfg, homes)
     databases, engines = [], []
     registrations, environments = {}, {}
     for person in cfg["members"]:
         agent_id = person["id"]
         home = homes[agent_id]
         harness = person["harness"]
-        workspace = home / "workspace"
-        if references:
-            if person["role"] == "rear_admiral":
-                workspace = references
-            workspace /= next(iter(cfg["repositories"]))
         if person["role"] == "captain":
             # The captain's session root: its workspace above the checkouts, or where it was installed or pinned.
             workspace = roots[agent_id]["path"]
+        else:
+            # The rear admiral's reference checkout of the first repository, or the workspace its root is pinned in.
+            workspace = rear_directory
         if harness["type"] == "opencode":
             pin = rear_session if person["role"] == "rear_admiral" else pins.get(agent_id)
             unit, backend, headers, database = render_engine(
