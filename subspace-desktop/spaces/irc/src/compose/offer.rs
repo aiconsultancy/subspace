@@ -3,6 +3,7 @@
 //! keys or a click choose from it.
 
 use gpui_kit::{App, Context, Entity, Window};
+use subspace_framework::dashboard::chat_input::CompletionKey;
 use subspace_framework::dashboard::chat_input::completion::{CompletionEvent, CompletionList};
 
 use super::suggest::{Facts, Offer, suggest};
@@ -64,18 +65,26 @@ pub(super) fn close(conversation: &mut Conversation, cx: &mut Context<Conversati
     show(conversation, None, cx);
 }
 
-/// Replaces the word with the highlighted choice, or the one at `index`.
+/// How a row was chosen: a click on it, or a key on the highlighted one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Pick {
+    Clicked(usize),
+    Key(CompletionKey),
+}
+
+/// Replaces the word with the chosen choice. A row that runs the draft
+/// runs only on Return or a click: Tab only inserts, so on a highlighted
+/// run row it takes the first row that inserts, and never writes.
 pub(super) fn accept(
     conversation: &mut Conversation,
-    index: Option<usize>,
+    pick: Pick,
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
     let draft = &conversation.draft;
-    let Some(index) = index.or_else(|| draft.list.read(cx).active()) else {
-        return;
-    };
+    let active = draft.list.read(cx).active();
     let Some((range, insert, run)) = draft.offer.as_ref().and_then(|offer| {
+        let index = chosen(offer, pick, active)?;
         let choice = offer.choices.get(index)?;
         Some((offer.range.clone(), choice.insert.clone(), choice.run))
     }) else {
@@ -94,6 +103,21 @@ pub(super) fn accept(
     });
 }
 
+/// The row `pick` chooses in `offer`, `active` being the highlighted one:
+/// Tab passes over rows that run the draft.
+fn chosen(offer: &Offer, pick: Pick, active: Option<usize>) -> Option<usize> {
+    match pick {
+        Pick::Clicked(index) => Some(index),
+        Pick::Key(CompletionKey::Enter) => active,
+        Pick::Key(CompletionKey::Tab) => {
+            let inserts = |index: &usize| offer.choices.get(*index).is_some_and(|c| !c.run);
+            active
+                .filter(inserts)
+                .or_else(|| (0..offer.choices.len()).find(inserts))
+        }
+    }
+}
+
 /// A click on a row of the list.
 pub(super) fn clicked(
     conversation: &mut Conversation,
@@ -103,6 +127,6 @@ pub(super) fn clicked(
     cx: &mut Context<Conversation>,
 ) {
     match event {
-        CompletionEvent::Accept(index) => accept(conversation, Some(*index), window, cx),
+        CompletionEvent::Accept(index) => accept(conversation, Pick::Clicked(*index), window, cx),
     }
 }

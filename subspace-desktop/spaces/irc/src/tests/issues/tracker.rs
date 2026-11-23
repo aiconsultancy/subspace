@@ -20,6 +20,8 @@ use crate::hub::Hub;
 use crate::tests::completion::{focused_composer as composer, labels, reveal, text};
 use crate::tests::{channel_events, inject, mount, settings};
 
+mod composer;
+
 fn with_id(mut line: Line, id: &str) -> Line {
     line.id = Some(id.into());
     line
@@ -111,6 +113,14 @@ fn notice(cx: &mut VisualTestContext) -> String {
     })
 }
 
+/// A tracker where the person is signed in and no issue exists.
+fn signed_in() -> Mock {
+    Mock::new(|request| match request.path.as_str() {
+        "/api/v1/me" => (200, me()),
+        _ => (404, "{}".into()),
+    })
+}
+
 fn me() -> String {
     json!({"userId":"user-me","kind":"human","displayName":"Mira"}).to_string()
 }
@@ -158,10 +168,7 @@ fn without_a_tracker_a_command_is_kept_and_never_sent_to_irc(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn a_refused_write_keeps_the_draft_and_says_why(cx: &mut TestAppContext) {
-    let mock = Mock::new(|request| match request.path.as_str() {
-        "/api/v1/me" => (200, me()),
-        _ => (404, "{}".into()),
-    });
+    let mock = signed_in();
     let (conversation, hub, cx) = open(cx, true, Some(&mock));
     let input = composer(&conversation, cx);
     cx.simulate_input("/ready NAV-9");
