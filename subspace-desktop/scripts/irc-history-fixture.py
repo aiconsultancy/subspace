@@ -145,33 +145,47 @@ def keep_alive(sock):
         pass
 
 
+# Lines a socket's reader took but did not use, with the incomplete line
+# after them, by socket, for the next reader of that socket: the late-lines watcher must still see a JOIN that
+# arrived while the threads were being played.
+UNREAD = {}
+
+
 def late_lines(sock, socks, nick, delay, late):
     """Waits for `nick` to join the ship channel on `sock`, then, after
-    `delay` seconds, posts the late lines there."""
+    `delay` seconds, posts the late lines there. Lines an earlier reader
+    left unread on `sock` are seen first."""
     joined = f' JOIN {CHANNEL}'.encode()
-    buffer = b''
+
+    def handle(line):
+        if line.startswith(b'PING'):
+            sock.sendall(b'PONG' + line[4:] + b'\r\n')
+        elif line.startswith(f':{nick}!'.encode()) and line.endswith(joined):
+            time.sleep(delay)
+            for speaker, text in late:
+                socks[speaker].sendall(f'PRIVMSG {CHANNEL} :{text}\r\n'.encode())
+                time.sleep(0.4)
+            print(f'posted {len(late)} late lines to {CHANNEL}', flush=True)
+
+    unread, buffer = UNREAD.pop(sock, ([], b''))
     try:
+        for line in unread:
+            handle(line)
         while chunk := sock.recv(4096):
             buffer += chunk
             lines = buffer.split(b'\r\n')
             buffer = lines.pop()
             for line in lines:
-                if line.startswith(b'PING'):
-                    sock.sendall(b'PONG' + line[4:] + b'\r\n')
-                elif line.startswith(f':{nick}!'.encode()) and line.endswith(joined):
-                    time.sleep(delay)
-                    for speaker, text in late:
-                        socks[speaker].sendall(f'PRIVMSG {CHANNEL} :{text}\r\n'.encode())
-                        time.sleep(0.4)
-                    print(f'posted {len(late)} late lines to {CHANNEL}', flush=True)
+                handle(line)
     except OSError:
         pass
 
 
 def await_msgid(sock, text):
     """Reads `sock` until the server echoes `text` back, and returns the
-    message ID it gave it. Needs `echo-message` and `message-tags`."""
-    buffer = b''
+    message ID it gave it. Needs `echo-message` and `message-tags`. Every
+    other line it reads is kept for the socket's next reader."""
+    unread, buffer = UNREAD.pop(sock, ([], b''))
     while True:
         chunk = sock.recv(4096)
         if not chunk:
@@ -179,13 +193,15 @@ def await_msgid(sock, text):
         buffer += chunk
         lines = buffer.split(b'\r\n')
         buffer = lines.pop()
-        for line in lines:
+        for at, line in enumerate(lines):
             if line.startswith(b'PING'):
                 sock.sendall(b'PONG' + line[4:] + b'\r\n')
                 continue
             decoded = line.decode(errors='replace')
             if f'PRIVMSG {CHANNEL} :{text}' in decoded and (found := re.search(r'msgid=([^; ]+)', decoded)):
+                UNREAD[sock] = (unread + lines[at + 1:], buffer)
                 return found.group(1)
+            unread.append(line)
 
 
 def play_threads(socks):
