@@ -156,10 +156,13 @@ pub(crate) fn refreshing(board: &mut Github) {
     board.references.refresh_due = true;
 }
 
-/// Marks every answer stale, once per refresh.
+/// Marks every answer stale, once per refresh, and every refused pull
+/// request, which a forget leaves without an answer: each is read again
+/// when next asked, so a refusal never outlives a refresh unchecked.
 fn mark_stale(references: &mut References) {
     if std::mem::take(&mut references.refresh_due) {
-        references.stale = references.answers.keys().cloned().collect();
+        let refused = access::refused_keys(references);
+        references.stale = references.answers.keys().cloned().chain(refused).collect();
         references.refreshes = references.refreshes.wrapping_add(1);
     }
 }

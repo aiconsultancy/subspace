@@ -94,6 +94,16 @@ pub(super) fn refused(references: &References, key: &Key) -> bool {
     references.access.get(key).is_some_and(Access::refused)
 }
 
+/// Every pull request refused now, whichever account it belongs to.
+pub(super) fn refused_keys(references: &References) -> Vec<Key> {
+    references
+        .access
+        .iter()
+        .filter(|(_, access)| access.refused())
+        .map(|(key, _)| key.clone())
+        .collect()
+}
+
 /// Records that a read of `key` that started at `started` landed with
 /// `decision`, and whether it is the latest read that decided, so its
 /// answer may be kept. A success that makes the pull request readable
