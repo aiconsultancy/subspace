@@ -90,8 +90,15 @@ export async function entraTenant() {
     if (url === keyUrl) return Response.json({ keys: [{ ...jwk, kid: "test" }] });
     throw new Error("Unexpected provider URL");
   };
-  /** An access token for `oid`, with any claim replaced or added. */
-  const sign = (oid: string, claims: JWTPayload = {}) =>
+  /**
+   * An access token for `oid`, with any claim replaced or added. `expires` sets the expiry, as
+   * jose reads it, and `key` signs with a key the tenant does not publish.
+   */
+  const sign = (
+    oid: string,
+    claims: JWTPayload = {},
+    options: { expires?: string | number; key?: CryptoKey } = {},
+  ) =>
     new SignJWT({
       oid,
       ver: "2.0",
@@ -104,8 +111,8 @@ export async function entraTenant() {
       .setIssuer(issuer)
       .setAudience((claims.aud as string | undefined) ?? audience)
       .setIssuedAt()
-      .setExpirationTime("1h")
-      .sign(privateKey);
+      .setExpirationTime(options.expires ?? "1h")
+      .sign(options.key ?? privateKey);
   return {
     tenant,
     sign,

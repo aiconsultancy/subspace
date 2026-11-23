@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { generateKeyPair } from "jose";
 import { jwtVerifiers } from "../src/auth";
 import { autoRegister, config } from "../src/config";
 import { profileFromClaims } from "../src/registration";
@@ -280,6 +281,20 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
     }
     expect(await count("users")).toBe(users);
     expect(await count("organisations")).toBe(organisations);
+  });
+
+  test("an expired token or one signed by an untrusted key registers nobody", async () => {
+    const users = await count("users");
+    const organisations = await count("organisations");
+    const audits = await count("audit_logs");
+    const { privateKey: untrusted } = await generateKeyPair("RS256");
+    for (const options of [{ expires: "-1m" }, { key: untrusted }]) {
+      const token = await tenant.sign(crypto.randomUUID(), { name: "Nobody Here" }, options);
+      expect((await api.call("/api/v1/me", token)).status).toBe(401);
+    }
+    expect(await count("users")).toBe(users);
+    expect(await count("organisations")).toBe(organisations);
+    expect(await count("audit_logs")).toBe(audits);
   });
 
   test("concurrent first requests from one person register one member", async () => {
