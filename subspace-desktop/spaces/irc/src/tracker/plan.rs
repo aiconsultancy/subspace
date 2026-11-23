@@ -60,6 +60,9 @@ pub(crate) struct Facts {
     pub ship: Option<String>,
     /// Every fleet agent of the network, by nick.
     pub agents: Vec<AgentChoice>,
+    /// The tracker the Issues scope names (its profile and API origin),
+    /// which a run row is bound to.
+    pub tracker: Option<(String, String)>,
 }
 
 impl Facts {

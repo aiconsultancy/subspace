@@ -12,6 +12,9 @@ pub(crate) struct Suggestion {
     pub insert: String,
     /// Choosing it sends the draft instead of completing a word.
     pub run: bool,
+    /// For a run row, what it said it would do and for which tracker: the
+    /// draft runs only while a fresh row says the same.
+    pub shows: String,
 }
 
 impl Suggestion {
@@ -21,15 +24,17 @@ impl Suggestion {
             item,
             insert,
             run: false,
+            shows: String::new(),
         }
     }
 
-    /// The row that runs the draft, as Return would.
-    pub(crate) fn run(item: CompletionItem) -> Self {
+    /// The row that runs the draft, as Return would, having said `shows`.
+    pub(crate) fn run(item: CompletionItem, shows: String) -> Self {
         Self {
             item,
             insert: String::new(),
             run: true,
+            shows,
         }
     }
 }

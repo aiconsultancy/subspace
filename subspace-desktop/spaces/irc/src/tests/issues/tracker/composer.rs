@@ -77,3 +77,37 @@ fn a_tracker_command_in_reply_mode_is_kept_and_never_reaches_irc(cx: &mut TestAp
         assert!(said(hub).is_empty(), "{:?}", said(hub))
     });
 }
+
+#[gpui_kit::test]
+fn a_run_row_runs_only_the_plan_it_showed(cx: &mut TestAppContext) {
+    use subspace_framework::contracts::issues::IssueScope;
+    let mock = signed_in();
+    let (conversation, hub, cx) = open(cx, true, Some(&mock));
+    let input = composer(&conversation, cx);
+    cx.simulate_input("/assign NAV-9 to me");
+    assert_eq!(
+        labels(&conversation, cx).first().map(String::as_str),
+        Some("/assign")
+    );
+    // The tracker changes under the row before Return.
+    hub.update(cx, |hub, cx| {
+        let other = IssueScope::new("subspace-api", "Subspace API", "http://127.0.0.1:10/api")
+            .with_project_keys(["NAV"]);
+        hub.issues.set_scope(Some(other));
+        cx.notify();
+    });
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(text(&input, cx), "/assign NAV-9 to me", "the draft stays");
+    assert_eq!(
+        input.read_with(cx, |input, _| input.error().map(str::to_owned)),
+        Some(crate::compose::RUN_CHANGED.to_owned())
+    );
+    assert_eq!(
+        labels(&conversation, cx).first().map(String::as_str),
+        Some("/assign"),
+        "the new row shows for a fresh Return"
+    );
+    assert!(mock.requests().is_empty(), "nothing was written");
+    hub.read_with(cx, |hub, _| assert!(said(hub).is_empty()));
+}

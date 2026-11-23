@@ -70,8 +70,10 @@ fn preview(text: &str, facts: &Facts) -> Option<Suggestion> {
     };
     let words = plan.preview(known);
     let label = format!("/{}", typed.name.word());
+    let shows = format!("{words}\n{:?}\n{plan:?}", facts.tracker);
     Some(Suggestion::run(
         CompletionItem::command(label, "", words.clone()).spoken(words),
+        shows,
     ))
 }
 

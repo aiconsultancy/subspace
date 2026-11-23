@@ -96,25 +96,51 @@ pub(super) fn accept(
 ) {
     let draft = &conversation.draft;
     let active = draft.list.read(cx).active();
-    let Some((range, insert, run)) = draft.offer.as_ref().and_then(|offer| {
+    let Some((range, choice)) = draft.offer.as_ref().and_then(|offer| {
         let index = chosen(offer, pick, active)?;
-        let choice = offer.choices.get(index)?;
-        Some((offer.range.clone(), choice.insert.clone(), choice.run))
+        Some((offer.range.clone(), offer.choices.get(index)?.clone()))
     }) else {
         return;
     };
     let input = draft.entity.clone();
-    show(conversation, None, cx);
-    if run {
-        let text = input.read(cx).text(cx);
-        super::send::submit(conversation, text, window, cx);
+    if choice.run {
+        run(conversation, &choice.shows, window, cx);
         return;
     }
+    show(conversation, None, cx);
+    let insert = choice.insert;
     input.update(cx, |input, cx| {
         input.replace_range(range, &insert, window, cx);
         input.focus(window, cx);
     });
 }
+
+/// Runs the draft for a run row that said `shown`, while the row the
+/// draft makes now says the same: the plan, its issue, assignee and
+/// tracker. Otherwise nothing runs: the new row shows, for a fresh Return.
+fn run(
+    conversation: &mut Conversation,
+    shown: &str,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    let now = current(conversation, cx);
+    let same = now
+        .as_ref()
+        .is_some_and(|offer| offer.choices.iter().any(|c| c.run && c.shows == shown));
+    let input = conversation.draft.entity.clone();
+    if same {
+        show(conversation, None, cx);
+        let text = input.read(cx).text(cx);
+        super::send::submit(conversation, text, window, cx);
+    } else {
+        show(conversation, now, cx);
+        input.update(cx, |input, cx| input.set_error(RUN_CHANGED.to_owned(), cx));
+    }
+}
+
+/// Why a run row wrote nothing.
+pub(crate) const RUN_CHANGED: &str = "What Return does changed since the list showed it, so nothing was written. Check the first row, then press Return again.";
 
 /// The row `pick` chooses in `offer`, `active` being the highlighted one:
 /// Tab passes over rows that run the draft.

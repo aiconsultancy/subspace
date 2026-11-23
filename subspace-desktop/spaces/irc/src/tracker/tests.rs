@@ -54,6 +54,7 @@ fn facts() -> Facts {
         captain: Some(lyra()),
         ship: Some("Lyra".into()),
         agents: vec![lyra(), orion()],
+        tracker: Some(("subspace-api".into(), "http://127.0.0.1:9".into())),
     }
 }
 

@@ -139,6 +139,9 @@ pub(crate) fn gather(
         .collect();
     let (captain, ship) = captain(roster, buffer).unzip();
     Facts {
+        tracker: issues
+            .scope()
+            .map(|scope| (scope.profile_id.clone(), scope.api_origin.clone())),
         keys: issues.keys().clone(),
         projects: issues
             .scope()

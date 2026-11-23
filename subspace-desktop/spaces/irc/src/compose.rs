@@ -25,6 +25,8 @@ mod complete;
 mod hints;
 mod limits;
 mod offer;
+#[cfg(test)]
+pub(crate) use offer::RUN_CHANGED;
 mod paste;
 mod recall;
 pub(crate) mod reply;
