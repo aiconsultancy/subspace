@@ -107,7 +107,8 @@ function isDomainProblem(error: unknown): error is DomainProblem {
   );
 }
 
-function databaseFailure(error: unknown) {
+/** What may be logged about a failed database operation: its category and SQL state only. */
+export function databaseFailure(error: unknown) {
   const cause = error instanceof EffectDrizzleQueryError ? error.cause : error;
   if (!isSqlError(cause)) {
     return { category: cause instanceof TypeError ? "TypeError" : "UnexpectedError" };

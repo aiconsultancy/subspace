@@ -1,0 +1,307 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "b3a48221-6dbf-4617-9666-41c6b445d964",
+  "prevIds": [
+    "2e01f24f-3402-4019-b648-24b5aacbbc69"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "retired_usernames"
+      ],
+      "writes": [
+        "s|tbl|public.retired_usernames",
+        "n|tbl|public.retired_usernames",
+        "e|tbl|public.retired_usernames",
+        "n|rel|public.retired_usernames",
+        "n|type|public.retired_usernames",
+        "n|rel|public.retired_usernames_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "recreate_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "users",
+        "user_agent_irc_nick"
+      ],
+      "writes": [
+        "s|idx|public.user_agent_irc_nick",
+        "n|idx|public.user_agent_irc_nick",
+        "e|idx|public.user_agent_irc_nick",
+        "n|rel|public.user_agent_irc_nick"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.users.organisation_id"
+      ],
+      "sharedWrites": [],
+      "sqlHash": "acb0d9612f0def79"
+    },
+    {
+      "statementType": "recreate_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "users",
+        "users_username"
+      ],
+      "writes": [
+        "s|idx|public.users_username",
+        "n|idx|public.users_username",
+        "e|idx|public.users_username",
+        "n|rel|public.users_username"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.users.organisation_id"
+      ],
+      "sharedWrites": [],
+      "sqlHash": "a7d77df9c7cb449f"
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "retired_usernames"
+      ],
+      "writes": [
+        "s|fk|public.retired_usernames.retired_usernames_organisation_id_organisations_id_fkey",
+        "n|fk|public.retired_usernames.retired_usernames_organisation_id_organisations_id_fkey",
+        "e|fk|public.retired_usernames.retired_usernames_organisation_id_organisations_id_fkey",
+        "n|con|public.retired_usernames.retired_usernames_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.retired_usernames",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.retired_usernames.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "retired_usernames"
+      ],
+      "writes": [
+        "s|fk|public.retired_usernames.retired_usernames_IgBQRpsBHDVC_fkey",
+        "n|fk|public.retired_usernames.retired_usernames_IgBQRpsBHDVC_fkey",
+        "e|fk|public.retired_usernames.retired_usernames_IgBQRpsBHDVC_fkey",
+        "n|con|public.retired_usernames.retired_usernames_IgBQRpsBHDVC_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.retired_usernames",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.retired_usernames.organisation_id",
+        "n|col|public.retired_usernames.user_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "retired_usernames",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "retired_usernames",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "retired_usernames",
+        "name": "name",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "retired_usernames",
+        "name": "user_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "retired_usernames",
+        "name": "retired_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "retired_usernames",
+        "name": "retired_usernames_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "retired_usernames",
+        "name": "retired_usernames_IgBQRpsBHDVC_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "user_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "retired_usernames",
+        "name": "retired_usernames_pkey",
+        "columns": [
+          "organisation_id",
+          "name"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "retired_usernames",
+        "name": "retired_usernames_canonical",
+        "value": "\"name\" = lower(\"name\" COLLATE \"C\")",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "alter",
+      "key": "indexes\u0000[\"public\",\"user_agent_irc_nick\"]",
+      "set": {
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "lower(\"agent_irc_nick\" COLLATE \"C\")",
+            "isExpression": true,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ]
+      }
+    },
+    {
+      "op": "alter",
+      "key": "indexes\u0000[\"public\",\"users_username\"]",
+      "set": {
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "lower(\"username\" COLLATE \"C\")",
+            "isExpression": true,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ]
+      }
+    }
+  ]
+}

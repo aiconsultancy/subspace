@@ -20,7 +20,8 @@ Use `http://127.0.0.1:3000/api` as the desktop API base and select the developme
 identity provider. The first development sign-in to each organisation creates an
 administrator and grants that user membership of the example initiative. Its
 IRC endpoint defaults to `127.0.0.1:6667`. IRC accounts, channel setup and SASL
-credentials belong to the IRC service.
+credentials belong to the IRC service, unless it signs people in through this API
+as [IRC sign-in](#irc-sign-in) describes.
 
 Mint a development bearer token with either command. Both use the same issuer,
 key and membership records.
@@ -62,9 +63,77 @@ container network. The default server provider outside Compose is WorkOS.
 ## External sign-in
 
 Send the provider's **access token** in `Authorization: Bearer <token>`. The API
-verifies the token and resolves an active local membership. To grant access
-before the user's first request, provision their verified organisation and
-subject from a trusted IdP administrator:
+verifies the token and resolves an active local membership for its verified
+provider, organisation and subject.
+
+### First sign-in
+
+A person who signs in with a configured identity provider is a member from their
+first request: nobody runs a command first. When the token is valid and no record
+exists for its subject, the API registers the person if their provider is listed
+in `AUTO_REGISTER`. In one transaction it creates the organisation's record if it
+is missing and an active member with no initiative memberships, and it audits the
+registration as `memberRegistered`. Concurrent first requests from one person
+create one member, and every one of them succeeds.
+
+- `AUTO_REGISTER` is a comma-separated list of providers, and registration is off
+  unless it lists one: set `AUTO_REGISTER=entra` to turn it on. An empty value or
+  `none` is off, and an unknown person then receives 403. `workos` is refused at
+  start-up until WorkOS registration gains an organisation allow-list. Development
+  sign-in registers its own members, as before, and is not listed.
+- The token's claims fill in the profile, never the identity. The e-mail is the
+  `email` claim when it has the form of an address, and nothing else. The display
+  name is `name`, else the given and family names, else the e-mail, else
+  `preferred_username`, which is a sign-in name rather than a mailbox. Entra puts
+  `name` and `preferred_username` in v2 access tokens when the client asks for the
+  `profile` scope. Add `email`, `given_name` and `family_name` as optional claims on
+  the **access token** in the API's app registration, so that usernames come from
+  the given and family names.
+- Registration refuses a guest of the tenant unless `ENTRA_REGISTER_GUESTS=true`.
+  Microsoft documents the optional `acct` claim as 0 for a member and 1 for a
+  guest; when the token carries it, it decides. Without it, the API falls back to
+  `idp`, which Microsoft documents as the same as the issuer unless the account is
+  not in the issuer's tenant: a token whose `idp` is present and is not the
+  tenant's own issuer is a guest's. Excluding guests reliably therefore needs
+  `acct` as an optional claim on the access token, because a guest whose home
+  tenant is this tenant cannot be told apart from a member without it. A guest
+  whom the membership command has added signs in as usual.
+- Registration admits every member of the tenant who can obtain an access token for
+  the API. To limit it to chosen people or groups, turn on _Assignment required_
+  for the enterprise applications in Entra and assign them.
+- A token for another tenant, audience or client is refused with 401 and creates
+  nothing. A deactivated person stays refused with 403: registration never
+  reactivates anyone, and only the membership command below does.
+
+`ENTRA_ADMIN_ROLE` names an app role defined on the API's app registration. When it
+is set, an Entra token whose `roles` claim holds that value makes its holder an
+administrator, and a token without it makes them a member, on every request. The
+API records the token's role apart from the provisioned role that the membership
+command's `--role` sets, writes it only when it changes and audits each change as
+`memberRoleChanged`. While the setting is configured, the token's role is the
+effective one for Entra members; when it is removed, the provisioned role applies
+again, so the grants it made end with it. An agent record is never an
+administrator, and the database refuses an agent a token role.
+
+### Upgrading
+
+Upgrading from a version without first sign-in changes nobody's access by itself:
+
+- Registration stays off until you set `AUTO_REGISTER=entra`, and even then it
+  refuses guests unless `ENTRA_REGISTER_GUESTS=true`.
+- `bun run db:migrate`, which the image runs at start-up, gives every existing
+  person a [username](#usernames). If the IRC server already has accounts, reserve
+  them first, as [Turning it on for an existing server](#turning-it-on-for-an-existing-server)
+  describes, so that the backfill hands none of them out.
+- `ENTRA_ADMIN_ROLE` never changes the provisioned role, so removing it later
+  returns everyone to the role the membership command gave them.
+- IRC sign-in stays off until its settings are configured.
+
+### The membership command
+
+To grant access before a person's first request, to provision a member when
+registration is off, or to revoke access, run the membership command with the
+verified organisation and subject from a trusted IdP administrator:
 
 ```sh
 bun run auth:member workos org_example user_example --name "Example Operator" --role admin
@@ -81,6 +150,86 @@ name or email. For Entra, use the tenant UUID in `tid` and user object UUID in
 in `azp`, contain the delegated API scope and use the API application's client
 UUID as its audience. Use `--deactivate` with the same organisation and subject
 to revoke API access.
+
+### Usernames
+
+Every person has a `username`, which is also their IRC account name. People and
+agents share one namespace in each organisation, compared without regard to case:
+an agent's username is its IRC nick (`ircNick`), and the database keeps the two in
+step on every write. Names compare in ASCII lower case, as Ergo's `ascii` case
+mapping does, whatever the database's locale: a unique index on the organisation
+and `lower(username COLLATE "C")` guarantees that no two records share a name.
+
+The API allocates a username when it registers a person, and the membership
+command and development sign-in do the same for the people they add.
+Development sign-in without a name takes the username from the e-mail.
+
+1. The first name is `given_name`. Without one, it is the first word of `name`
+   (`Quarrie, Tamsin` names the surname first), then the e-mail local part read as
+   `first.last`, then `user`. The surname is `family_name`, else the rest of `name`
+   or of the local part.
+2. Names are folded to lower-case ASCII: diacritics are removed, letters such as
+   `ß` and `ø` are spelt out, anything outside `a` to `z` and `0` to `9` is dropped,
+   leading digits are dropped, and the result has at most 32 characters. Ergo
+   accepts every such name as an account.
+3. The first free name wins: the first name, then the first name with successive
+   letters of the surname, then the first name with a number from 2. Tamsin Quarrie
+   is `tamsin`, or `tamsinq` when `tamsin` is taken, then `tamsinqu` and so on, then
+   `tamsin2`.
+4. Reserved names are skipped: Ergo's services (`nickserv`, `chanserv`,
+   `operserv`, `hostserv`, `histserv`, `botserv`, `memoserv` and `global`), `guest`
+   and any name starting `guest-`, and the operator's names in
+   `RESERVED_USERNAMES` and `RESERVED_USERNAMES_FILE`.
+
+Allocations in an organisation are serialised with each other and with agent
+registration changes, so people who register at the same moment with the same
+first name receive different usernames. An agent cannot register an IRC nick that
+is a person's username (409) or a reserved name (400). A username never changes by
+itself.
+
+A username that has been issued is never given to anyone else, because its IRC
+account may still exist. When an agent's IRC nick changes or is cleared, or a
+person's username is changed, a database trigger records the old name as retired.
+Allocation skips retired names, an agent cannot register one (409), and the
+database refuses one to any record but the one that held it, which may take it
+back. Only the username command below can release one or hand it on.
+
+`bun run db:migrate`, which the image runs at start-up, gives existing people
+usernames by the same rule, oldest first within each organisation. It runs after
+the migrations have committed, rather than in a SQL migration, because it needs the
+reserved names. Each batch of up to 100 people is a short transaction that locks
+its organisation's row before it touches any user, so the users table stays open
+to other instances meanwhile, and a failed batch is retried. It only fills in
+missing usernames, so running it again, or from several instances at once,
+changes nothing. A person added without one, such as by an older API instance
+during a rolling deployment, is given one on their next request, audited as
+`usernameAllocated`.
+
+`GET /api/v1/me`, every `Person` (assignees, authors and other credited people)
+and `GET /api/v1/users` report `username`. It is null only for an agent without
+an IRC nick.
+
+To give a person a particular username, such as the name of an IRC account they
+already own, or an agent a particular IRC nick, an administrator runs the username
+command with the verified organisation and subject:
+
+```sh
+bun run auth:username entra 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 tamsin_q
+```
+
+It takes a letter, then letters, digits, `-` or `_`, at most 32 characters for a
+person and 64 for an agent, whose username is its IRC nick. It may give an
+operator's reserved name, but refuses Ergo's service and guest names and a name
+another member or agent holds. It refuses a name another record has retired unless
+`--retired` is given, which releases that name to this member or agent: so an agent
+that had to be registered again, because its account subject changed, gets its old
+nick back, and two agents can swap nicks once one of them has given its nick up.
+`bun run auth:username --release <provider> <organisation> <name>` releases a
+retired name so that it may be allocated or given again. The previous name is
+retired, and each change is audited as `usernameSet` or `usernameReleased` with
+source `cli`. The database refuses to release a retired name by any other path.
+Before turning on IRC sign-in for a server that already has accounts, follow
+[Turning it on for an existing server](#turning-it-on-for-an-existing-server).
 
 Local administrators can manage fleets, fleet assignments and initiative channel
 configuration. Initiative membership is explicit. Users see active, explicitly
@@ -108,12 +257,39 @@ links.
 | `WORKOS_AUDIENCE`                                                     | Optional exact audience for AuthKit deployments that set an audience claim.                                     |
 | `WORKOS_API_KEY`                                                      | Optional profile lookup credential for the membership CLI.                                                      |
 | `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_AUDIENCE`, `ENTRA_SCOPE` | Entra tenant, authorised client, API audience and delegated scope (default `API.Access`).                       |
+| `AUTO_REGISTER`                                                       | Providers that register a person at [first sign-in](#first-sign-in), only `entra`. Off unless set.              |
+| `ENTRA_REGISTER_GUESTS`                                               | `true` lets first sign-in register guests of the tenant. Defaults to `false`.                                   |
+| `ENTRA_ADMIN_ROLE`                                                    | Optional Entra app role whose holders are administrators, checked on every request.                             |
+| `RESERVED_USERNAMES`                                                  | Comma-separated operator names that no person or agent may take as a [username](#usernames).                    |
+| `RESERVED_USERNAMES_FILE`                                             | File of further reserved names, such as the IRC server's existing accounts, by line, comma or space.            |
 | `AGENT_PORT`, `AGENT_HOST`, `AGENT_ORGANISATION`                      | Optional [agent listener](#the-agent-listener): port (off when unset), address and `<provider>:<organisation>`. |
 | `DEV_KEY_PATH`                                                        | Private development signing key file, defaulting to `.data/dev-signing-key`.                                    |
 | `DEV_CHANNELS`, `DEV_IRC_HOST`, `DEV_IRC_PORT`                        | Channel text and IRC endpoint for newly created dev organisations.                                              |
 | `STORAGE_DRIVER`, `STORAGE_PATH`                                      | Defaults to `local` and `.data/blobs`. Use `s3` for a private S3-compatible bucket.                             |
 | `S3_BUCKET`, `S3_ENDPOINT`, `S3_REGION`                               | S3 bucket, optional custom endpoint and region.                                                                 |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_SESSION_TOKEN`        | Credentials and optional session token supplied to Bun's S3 client.                                             |
+| `IRC_CREDENTIAL_SECRET`, `IRC_CREDENTIAL_SECRET_FILE`                 | Secret of at least 32 bytes that signs [IRC credentials](#irc-sign-in). Set one source; unset is off.           |
+| `IRC_AUTH_HOOK_TOKEN`, `IRC_AUTH_HOOK_TOKEN_FILE`                     | Bearer token of at least 32 printable bytes for Ergo's auth-script. Set one source.                             |
+| `IRC_AUTH_ORGANISATION`                                               | `<provider>:<organisation>` whose people the IRC server signs in, such as `entra:<tenant UUID>`.                |
+| `IRC_AUTH_SERVERS`                                                    | Comma-separated `host` or `host:port` of this IRC server, which credentials are bound to.                       |
+
+Compose passes every setting above through from the environment or `.env`. A
+`_FILE` setting names a path inside the container, so mount the file there with a
+`compose.override.yaml` beside `compose.yaml`, which Compose reads automatically.
+For example, to reserve the IRC server's existing accounts before the username
+backfill runs at start-up:
+
+```yaml
+services:
+  api:
+    environment:
+      RESERVED_USERNAMES_FILE: /run/config/reserved-usernames
+    volumes:
+      - ./reserved-usernames:/run/config/reserved-usernames:ro
+```
+
+Mount `IRC_CREDENTIAL_SECRET_FILE` and `IRC_AUTH_HOOK_TOKEN_FILE` the same way,
+readable by the container's `bun` user.
 
 The image defaults to `NODE_ENV=production`, which forbids development sign-in.
 Local Compose defaults to `NODE_ENV=development`. Production deployments use TLS
@@ -121,6 +297,142 @@ for clients and the backing database and take credentials from runtime configura
 
 Update streams return 429 at the configured limits and 503 while the listener
 reconnects. Clients can retry with backoff and refresh their issue data over REST.
+
+## IRC sign-in
+
+The API can be the identity authority for an Ergo IRC server, so that a person
+who signed in to the API also signs in to IRC with nothing set up by hand. The
+desktop asks the API for a short-lived credential and gives it to Ergo with SASL
+PLAIN. Ergo's auth-script asks the API whether it is good, and Ergo creates the
+account on the first success. Ergo never talks to an identity provider, so this
+works for every provider the API accepts. The two endpoints below are the
+contract; another implementation of this API must match them exactly.
+
+Both secrets, `IRC_CREDENTIAL_SECRET` and `IRC_AUTH_HOOK_TOKEN`, must be random
+material, never a password someone chose, at least 32 bytes and different from each
+other; the API refuses to start otherwise. Generate each separately, keep both in
+the deployment's secret store or a mounted file, and give the hook token to the IRC
+server only:
+
+```sh
+openssl rand -base64 48 > irc-credential-secret
+openssl rand -base64 48 > irc-auth-hook-token
+```
+
+`IRC_AUTH_SERVERS` lists the hosts at which this deployment's IRC server is
+reached, comma-separated, each optionally with a port, such as
+`irc.example.com:6697,irc.internal.example`. Write an IPv6 address in brackets. A
+credential is issued only for a listed server and works only on one, so a fleet
+that names some other IRC server never receives a password that the real one
+accepts. It is required whenever `IRC_CREDENTIAL_SECRET` is set.
+
+### `POST /api/v1/me/irc-credential`
+
+Any signed-in, active user, human or agent, with their bearer access token on the
+main listener. The agent listener does not serve it, because anyone who reaches
+that listener can act as any agent. The body names the IRC server the client is
+about to connect to, as it will connect:
+
+```json
+{ "host": "irc.example.com", "port": 6697 }
+```
+
+```json
+{ "account": "tamsin", "password": "sirc1.<opaque>", "expiresAt": "2026-11-23T21:10:00Z" }
+```
+
+- `account` is the user's [username](#usernames). For an agent it is its IRC nick.
+- `password` is opaque to clients, at most 200 characters, valid for ten minutes
+  and reusable until it expires. Clients fetch a new one at each connection and
+  keep it in memory only.
+- `expiresAt` is the expiry in UTC to the second.
+- The response carries `Cache-Control: private, no-store`.
+- `host` is a host name or IP address and `port` an integer from 1 to 65535. A
+  missing or malformed body receives 400 with a problem document.
+- The credential is issued only when `host`, compared in ASCII without regard to
+  case, is in `IRC_AUTH_SERVERS`, with `port` too when the entry gives one.
+  Otherwise the route answers 404 with the problem detail
+  `No account sign-in for this server`, and issues nothing.
+- The usual 401 and 403 apply to a missing, invalid or expired token and a
+  deactivated member. The route also answers 404 when `IRC_CREDENTIAL_SECRET` is
+  not set, and 409 for an agent without an IRC nick.
+
+A credential is `sirc1.` followed by the unpadded base64url encoding of 56 bytes:
+
+1. the user's UUID as 16 bytes, in the order its hexadecimal digits are written;
+2. the expiry as an unsigned 64-bit big-endian count of seconds since the Unix
+   epoch;
+3. an HMAC-SHA256, keyed by the UTF-8 bytes of `IRC_CREDENTIAL_SECRET`, over the
+   ASCII text `sirc1.`, the 24 bytes of items 1 and 2, and the requested host in
+   canonical form: ASCII letters in lower case and any IPv6 brackets removed.
+
+The host is not in the credential. It is stateless: nothing is stored. A
+credential is good while the current time is before its expiry, the expiry is no
+more than 660 seconds ahead, and its signature matches one of the hosts in
+`IRC_AUTH_SERVERS`. Each signature is compared in constant time.
+
+### `POST /api/v1/irc/authenticate`
+
+Called only by Ergo's auth-script. It is not part of the OpenAPI document or the
+MCP tools, it is not behind the bearer middleware, and the agent listener does
+not serve it.
+
+- The route answers 404 unless `IRC_AUTH_HOOK_TOKEN`, `IRC_AUTH_ORGANISATION`,
+  `IRC_CREDENTIAL_SECRET` and `IRC_AUTH_SERVERS` are all set. The API refuses to
+  start with only one of the first two, with them but without the credential secret,
+  with the secret but without the servers, or with the same value for the hook
+  token and the secret.
+- It is authorised only by `Authorization: Bearer <IRC_AUTH_HOOK_TOKEN>`, compared
+  in constant time. A missing or wrong token receives 401 with a problem document
+  and `WWW-Authenticate: Bearer`, before the body is read.
+- The body is Ergo's auth-script input as it is:
+  `{ "accountName"?, "passphrase"?, "certfp"?, "peerCerts"?, "ip"? }`. Other
+  properties, such as `oauth2` and `cookies`, are ignored, and so is a body over
+  256 KiB.
+- Once the token is accepted, the answer is always 200 with
+  `{ "success": true, "accountName": "tamsin" }` or `{ "success": false }`, never a
+  problem document, including for a malformed body or a database failure.
+
+The rules, in order:
+
+1. A `passphrase` that starts with `sirc1.` succeeds only if its signature is
+   this deployment's for a host in `IRC_AUTH_SERVERS`, it has not expired, its user exists, is active, belongs to the
+   organisation in `IRC_AUTH_ORGANISATION` and has a username, and the
+   `accountName`, ignoring an `@` and anything after it and compared without
+   regard to case, is that username. The answer names the canonical username,
+   which for an agent is its nick as registered.
+2. A `certfp` with no passphrase answers `success: false`. It is reserved for
+   agent key credentials.
+3. Anything else answers `success: false`, so Ergo falls back to its own
+   accounts: the break-glass operator and any hand-made accounts.
+
+The API never logs a passphrase or the hook token. It logs each decision at debug
+level with its reason and, for a correctly signed credential, the user ID. It
+does not write audit events for these decisions, because Ergo calls the hook for
+every SASL attempt, so their number has no bound.
+
+### Turning it on for an existing server
+
+An IRC server that already has accounts must not hand one of them to whoever the
+API later gives the same username. Before the hook answers for it:
+
+1. List the server's accounts that belong to no registered agent: the operator's
+   and any made by hand.
+2. Reserve them all. Write the names to a file, one per line, and name it in
+   `RESERVED_USERNAMES_FILE`, then restart the API. Under Compose, mount the file
+   into the container as [Configuration](#configuration) shows. Do this before upgrading to a
+   version that allocates usernames or turning on registration, so that neither
+   the username backfill nor a first sign-in hands one of them out.
+3. Give each account a person owns to that person with the username command,
+   `bun run auth:username <provider> <organisation> <subject> <account>`. The
+   person must already be a member: add them with the membership command, or let
+   them sign in once while the hook is still off.
+4. Only then turn on the hook: set `IRC_AUTH_HOOK_TOKEN`, `IRC_AUTH_ORGANISATION`
+   and `IRC_AUTH_SERVERS`, restart the API and enable the IRC server's
+   auth-script.
+
+A reserved name that nobody holds stays with its local account, because the hook
+never names it and Ergo falls back to its own accounts.
 
 ## GitHub App and webhooks
 
@@ -199,8 +511,10 @@ Each agent may record `ircNick`, its nick on the fleet's IRC server, which
 fleet IRC servers tie to the account of the same name. Desktop clients mark an
 agent's rank in IRC only by this nick, never by its name. A nick starts with a
 letter and holds letters, digits, `-` and `_`, at most 64 characters, and is
-unique within the organisation, ignoring case. An edit that leaves `ircNick`
-out keeps it; `null` clears it. The fleet's `agents` report it.
+unique within the organisation, ignoring case. It is also the agent's
+[username](#usernames), so it cannot be a person's username or a reserved name.
+An edit that leaves `ircNick` out keeps it; `null` clears it. The fleet's
+`agents` report it.
 
 Agent registration and editing accept `fleetId` and `shipId`. An ID takes
 precedence over its text field. Legacy fleet names resolve within the caller's
@@ -468,6 +782,9 @@ The HTTP tests require a clean loopback Compose stack and create synthetic
 organisations. The agent listener's HTTP tests also need `AGENT_PORT` published by
 that stack, with `TEST_AGENT_API_URL` set to it and `TEST_AGENT_ORGANISATION`
 to the development organisation slug its `AGENT_ORGANISATION` names. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`.
+The sign-in, username and IRC tests need only `TEST_DATABASE_URL`: each creates
+an isolated database there and runs the API in-process, trusting a fictional
+Entra tenant whose keys only the test holds.
 The fleet ownership race test holds a row lock in the API's own database while
 an agent writes, so when both variables are set, `TEST_DATABASE_URL` must name
 the database that `TEST_API_URL` serves, as in the example above. For signed pull request and deployment tests, sign in first as

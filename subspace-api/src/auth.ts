@@ -22,7 +22,26 @@ export type PrincipalIdentity = {
   subject: string;
 };
 
-type VerifiedIdentity = PrincipalIdentity & { expiresAt: number };
+/**
+ * Profile and role claims from a verified token. They fill in a new person's profile and decide
+ * the administrator role; they never identify anyone, which only the provider, organisation and
+ * subject do.
+ */
+export interface SignInClaims {
+  readonly name?: string;
+  readonly email?: string;
+  readonly preferredUsername?: string;
+  readonly givenName?: string;
+  readonly familyName?: string;
+  readonly roles: readonly string[];
+  /** Whether the token names a guest of the tenant rather than a member of it. */
+  readonly guest?: boolean;
+}
+
+export type VerifiedIdentity = PrincipalIdentity & {
+  expiresAt: number;
+  claims?: SignInClaims;
+};
 type Verifier = (token: string) => Promise<VerifiedIdentity>;
 
 export async function readDevKey(path: string) {
@@ -70,12 +89,57 @@ function claim(payload: JWTPayload, key: string) {
   return value;
 }
 
+/** An optional profile claim: a non-empty string of at most 256 characters, or nothing. */
+function profileClaim(payload: JWTPayload, key: string) {
+  const value = payload[key];
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text && text.length <= 256 ? text : undefined;
+}
+
+function signInClaims(payload: JWTPayload): SignInClaims {
+  const roles = Array.isArray(payload.roles)
+    ? payload.roles
+        .filter((role): role is string => typeof role === "string" && role.length <= 256)
+        .slice(0, 256)
+    : [];
+  return {
+    name: profileClaim(payload, "name"),
+    email: profileClaim(payload, "email"),
+    preferredUsername: profileClaim(payload, "preferred_username"),
+    givenName: profileClaim(payload, "given_name"),
+    familyName: profileClaim(payload, "family_name"),
+    roles,
+  };
+}
+
+/** The fetch that reaches identity providers' discovery documents and keys. */
+export type RemoteFetch = NonNullable<
+  NonNullable<Parameters<typeof createRemoteJWKSet>[1]>[typeof customFetch]
+>;
+
+/**
+ * Whether an Entra token names a guest. Microsoft documents `acct`, an optional claim, as 0 for a
+ * member of the tenant and 1 for a guest, so when it is present it decides; any other value is
+ * treated as a guest. Without it, `idp` is the fallback: Microsoft documents it as the same as the
+ * issuer unless the account is not in the issuer's tenant, such as a guest, so a token is a
+ * guest's when `idp` is present and is not this tenant's issuer, in its v2 or v1 form. A guest
+ * whose account lives in this tenant cannot be told apart without `acct`.
+ */
+function entraGuest(payload: JWTPayload, tenantId: string) {
+  if (payload.acct !== undefined) return !(payload.acct === 0 || payload.acct === "0");
+  const issuers = [
+    `https://login.microsoftonline.com/${tenantId}/v2.0`,
+    `https://sts.windows.net/${tenantId}/`,
+  ];
+  const idp = payload.idp;
+  return idp !== undefined && !(typeof idp === "string" && issuers.includes(idp.toLowerCase()));
+}
+
 export function jwtVerifiers(
   options: Config,
   devKey: Uint8Array | null,
-  fetchRemote: NonNullable<
-    NonNullable<Parameters<typeof createRemoteJWKSet>[1]>[typeof customFetch]
-  > = fetch,
+  fetchRemote: RemoteFetch = fetch,
 ) {
   const verifiers = new Map<string, Verifier>();
 
@@ -151,6 +215,7 @@ export function jwtVerifiers(
         expiresAt: payload.exp!,
         subject: claim(payload, "oid").toLowerCase(),
         externalOrganisation: tenantId,
+        claims: { ...signInClaims(payload), guest: entraGuest(payload, tenantId) },
       };
     });
   }

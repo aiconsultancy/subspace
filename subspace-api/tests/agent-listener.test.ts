@@ -35,6 +35,7 @@ function person(id: string, fields: Partial<Member>): Member {
     email: null,
     displayName: "Example",
     role: "member",
+    tokenRole: null,
     active: true,
     agentRank: null,
     agentFleet: null,
@@ -50,6 +51,8 @@ function person(id: string, fields: Partial<Member>): Member {
     createdAt: created,
     updatedAt: created,
     ...fields,
+    // An agent's username is its IRC nick, as the database keeps it.
+    username: fields.agentRank ? (fields.agentIrcNick ?? null) : (fields.username ?? null),
   };
 }
 
@@ -281,6 +284,8 @@ test("the agent lookup puts active records first, before its limit", () => {
   const { sql: text, params } = agentLookup(db as never, listener, "Orion").toSQL();
   expect(text).toMatch(/order by "users"\."active" desc, "users"\."id" asc limit \$\d+$/u);
   expect(params).toContain("orion");
+  // Names compare in ASCII, as usernames and Ergo do, whatever the database locale.
+  expect(text).toContain('lower("users"."agent_irc_nick" COLLATE "C")');
 });
 
 test("one active agent resolves however many deactivated records share its name or nick", async () => {
@@ -309,6 +314,7 @@ describe("requests on the agent listener", () => {
         kind: "agent",
         displayName: "Orion",
         email: null,
+        username: "orion-irc",
         agentName: "Orion",
         agentRank: "captain",
         fleet: "alpha",

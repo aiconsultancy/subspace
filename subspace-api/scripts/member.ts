@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { Effect, Schema } from "effect";
 import { type PrincipalIdentity } from "../src/auth";
+import { reservedUsernames } from "../src/config";
 import { databaseLayer, databaseUrl } from "../src/db";
 import { provisionMember } from "../src/identity";
 import { Email, Name, Uuid } from "../src/validation";
@@ -74,10 +75,11 @@ const profile = {
   displayName: readName(name ?? "Inactive member"),
   email: email ? readEmail(email) : null,
 };
+const reserved = reservedUsernames(process.env);
 
 try {
   await Effect.runPromise(
-    provisionMember(identity, profile, role, !values.deactivate).pipe(
+    provisionMember(identity, profile, role, !values.deactivate, reserved).pipe(
       Effect.provide(databaseLayer(databaseUrl())),
     ),
   );

@@ -10,9 +10,13 @@ import { defaults, webhookKeyPath } from "./demo/settings";
 const options = config();
 if (options.dev && !options.workos && !options.entra && !options.github.organisationId) {
   const member = await Effect.runPromise(
-    localMember(defaults.email, defaults.name, defaults.organisation, options.dev).pipe(
-      Effect.provide(databaseLayer(options.databaseUrl)),
-    ),
+    localMember(
+      defaults.email,
+      defaults.name,
+      defaults.organisation,
+      options.dev,
+      options.reservedUsernames,
+    ).pipe(Effect.provide(databaseLayer(options.databaseUrl))),
   );
   process.env.GITHUB_ORGANISATION_ID = member.organisationId;
   process.env.GITHUB_WEBHOOK_SECRET = (await readDevKey(webhookKeyPath)).toString("hex");

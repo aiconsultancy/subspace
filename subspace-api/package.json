@@ -8,6 +8,7 @@
     "dev": "bun --watch src/main.ts",
     "start": "bun src/main.ts",
     "auth:member": "bun scripts/member.ts",
+    "auth:username": "bun scripts/username.ts",
     "auth:dev": "bun scripts/dev-token.ts",
     "seed:demo": "bun scripts/seed-demo.ts",
     "lint": "oxlint --deny-warnings . && oxfmt --check .",

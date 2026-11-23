@@ -12,7 +12,7 @@ import {
 } from "effect/http-api";
 import { agentGroup, agentHandlers } from "./agents";
 import { auditGroup, auditHandlers } from "./audit";
-import { devTokenLifetime, jwtVerifiers, mintDevToken } from "./auth";
+import { devTokenLifetime, jwtVerifiers, mintDevToken, type RemoteFetch } from "./auth";
 import { commentGroup, commentHandlers } from "./comment-mutations";
 import { type Config } from "./config";
 import { documentGroup, documentHandlers } from "./documents";
@@ -46,7 +46,10 @@ import {
 } from "./github";
 import { createGitHubClient } from "./github-app";
 import { GithubPollState, githubPollState, pollGitHub } from "./github-poll";
-import { AgentRank, CurrentMember, findMember, localMember, publicProfile } from "./identity";
+import { AgentRank, CurrentMember, localMember, publicProfile } from "./identity";
+import { ircAuthenticateLayer, ircCredentialGroup, ircCredentialHandlers } from "./irc";
+import { signedInMember, type SignInPolicy } from "./registration";
+import { ReservedUsernames } from "./usernames";
 import {
   ChannelChanges,
   ChannelConfiguration,
@@ -73,6 +76,7 @@ import { Email, Name, NullableString, PageQuery, pageOf, Slug, Uuid } from "./va
 
 import {
   BearerAuth,
+  databaseFailure,
   handleDb,
   validationErrors,
   ValidationErrors,
@@ -119,6 +123,7 @@ const identityGroup = HttpApiGroup.make("identity")
         kind: Schema.Literals(["human", "agent"]),
         displayName: Name,
         email: NullableString,
+        username: NullableString,
         agentName: NullableString,
         agentRank: Schema.NullOr(AgentRank),
         fleet: NullableString,
@@ -313,6 +318,7 @@ const api = HttpApi.make("subspace")
   .add(
     healthGroup,
     identityGroup,
+    ircCredentialGroup,
     fleetGroup,
     initiativeGroup,
     stakeholderGroup,
@@ -340,8 +346,9 @@ const api = HttpApi.make("subspace")
 export const documentedApi = api.add(devGroup);
 
 /**
- * The agent listener's API: every group except development sign-in and the signed GitHub
- * webhook. Its administrator routes are refused by `agentRouteFilter` before any handler runs.
+ * The agent listener's API: every group except development sign-in, the signed GitHub webhook and
+ * IRC credentials. Its administrator routes are refused by `agentRouteFilter` before any handler
+ * runs.
  */
 export const agentApi = HttpApi.make("subspace").add(
   ...groups,
@@ -459,7 +466,7 @@ function localUrl(value: string) {
   }
 }
 
-function devLive(dev: NonNullable<Config["dev"]>, key: Uint8Array) {
+function devLive(dev: NonNullable<Config["dev"]>, key: Uint8Array, reserved: ReadonlySet<string>) {
   return HttpApiBuilder.group(documentedApi, "development", (handlers) =>
     handlers.handle("devToken", ({ payload, request }) =>
       handleDb(
@@ -470,11 +477,14 @@ function devLive(dev: NonNullable<Config["dev"]>, key: Uint8Array) {
           }
           const email = (payload.email ?? defaultDevEmail).toLowerCase();
           const organisation = payload.organisation ?? defaultDevOrg;
+          // Without a name, the username comes from the e-mail, not the default display name.
           const member = yield* localMember(
             email,
             payload.name ?? defaultDevName,
             organisation,
             dev,
+            reserved,
+            { name: payload.name, email },
           );
           if (!member.active)
             return yield* Effect.fail(problem(403, "This membership is inactive."));
@@ -544,6 +554,7 @@ function resourceLayers(options: Config, store: (typeof Storage)["Service"]) {
       client: github,
     }),
     Layer.succeed(GithubPollState, githubPollState(options.github)),
+    Layer.succeed(ReservedUsernames, options.reservedUsernames),
   );
   return { dbLayer, github, resources };
 }
@@ -585,9 +596,16 @@ export function routes(
   devKey: Uint8Array | null,
   store: (typeof Storage)["Service"],
   shared: Resources = resourceLayers(options, store),
+  fetchRemote?: RemoteFetch,
 ) {
   const { dbLayer, github, resources } = shared;
-  const verify = jwtVerifiers(options, devKey);
+  const verify = jwtVerifiers(options, devKey, fetchRemote);
+  const signIn: SignInPolicy = {
+    autoRegister: options.autoRegister,
+    entraAdminRole: options.entra?.adminRole ?? null,
+    reservedUsernames: options.reservedUsernames,
+    registerGuests: options.entra?.registerGuests ?? false,
+  };
   const auth = Layer.effect(
     BearerAuth,
     Effect.gen(function* () {
@@ -604,8 +622,11 @@ export function routes(
               return yield* Effect.fail(
                 problem(401, "The bearer access token is invalid or expired."),
               );
-            const member = yield* findMember(identity).pipe(
+            const member = yield* signedInMember(identity, signIn).pipe(
               Effect.provideService(Database, db),
+              Effect.tapError((error) =>
+                Effect.logError("The membership could not be resolved", databaseFailure(error)),
+              ),
               Effect.mapError(() => problem(500, "The membership could not be resolved.")),
             );
             if (member?.agentRank && !member.active)
@@ -631,13 +652,22 @@ export function routes(
     }),
   ).pipe(Layer.provide(dbLayer));
 
-  const common = handlerLayers(new Set());
+  const common = Layer.merge(
+    handlerLayers(new Set()),
+    HttpApiBuilder.group(
+      api,
+      "ircCredentials",
+      ircCredentialHandlers(options.irc.credentialSecret, options.irc.servers),
+    ),
+  );
   const services = Layer.merge(auth, validationErrors);
 
   const endpoints = (
     options.dev && devKey
       ? HttpApiBuilder.layer(documentedApi, { openapiPath: "/openapi.json" }).pipe(
-          Layer.provide(Layer.merge(common, devLive(options.dev, devKey))),
+          Layer.provide(
+            Layer.merge(common, devLive(options.dev, devKey, options.reservedUsernames)),
+          ),
           Layer.provide(services),
         )
       : HttpApiBuilder.layer(api, { openapiPath: "/openapi.json" }).pipe(
@@ -655,8 +685,12 @@ export function routes(
   const polling = Layer.effectDiscard(pollGitHub(options.github, github)).pipe(
     Layer.provide(resources),
   );
+  // Ergo's auth hook: outside the HttpApi, so outside the OpenAPI document and the bearer
+  // middleware, and on this listener only.
+  const ircHook = ircAuthenticateLayer(options.irc).pipe(HttpRouter.provideRequest(resources));
   return Layer.mergeAll(
     endpoints,
+    ircHook,
     cleanup,
     polling,
     sharedProblems("A valid Subspace access token is required."),
@@ -691,11 +725,15 @@ export function agentRoutes(
   );
 }
 
-/** What a test may replace in `server`: the shared resources and the agent directory. */
+/**
+ * What a test may replace in `server`: the shared resources, the agent directory and the fetch
+ * that reaches identity providers' discovery documents and keys.
+ */
 export interface ServerOverrides {
   readonly store?: (typeof Storage)["Service"];
   readonly shared?: Resources;
   readonly directory?: Layer.Layer<AgentDirectory, unknown>;
+  readonly fetchRemote?: RemoteFetch;
 }
 
 export function server(
@@ -705,7 +743,7 @@ export function server(
 ) {
   const store = overrides.store ?? storage(process.env);
   const shared = overrides.shared ?? resourceLayers(options, store);
-  const main = HttpRouter.serve(routes(options, devKey, store, shared), {
+  const main = HttpRouter.serve(routes(options, devKey, store, shared, overrides.fetchRemote), {
     disableLogger: true,
   }).pipe(
     Layer.provide(
