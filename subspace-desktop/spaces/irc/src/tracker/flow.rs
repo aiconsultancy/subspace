@@ -18,6 +18,9 @@ use crate::conversation::Conversation;
 /// Why a tracker command with attachments was kept.
 pub(crate) const ATTACHMENTS: &str =
     "Tracker commands don't take attachments. Send the files on their own.";
+/// Why a write waited: one tracker change runs at a time.
+pub(crate) const BUSY: &str =
+    "Another tracker change is still running. Try again when it has finished.";
 /// Why a draft whose last write was never confirmed is not sent again.
 pub(crate) const UNCONFIRMED_AGAIN: &str = "The tracker didn't confirm the last try, so this may already be saved. Check the tracker; to send it again anyway, change the command first.";
 /// Why a dialog's button wrote nothing after the account, organisation
@@ -158,6 +161,7 @@ pub(crate) fn start_with(
     cx: &mut Context<Conversation>,
 ) {
     if conversation.tracker.busy {
+        wait_for_the_other(conversation, origin, cx);
         return;
     }
     let scope = conversation.hub.read(cx).issues.scope();
@@ -212,6 +216,27 @@ fn finish(
         Origin::Dialog => super::message::finished(conversation, outcome, window, cx),
     }
     cx.notify();
+}
+
+/// Keeps the draft or the dialog's text while another write runs, and
+/// says why nothing was sent.
+fn wait_for_the_other(
+    conversation: &mut Conversation,
+    origin: Origin,
+    cx: &mut Context<Conversation>,
+) {
+    match origin {
+        Origin::Composer => conversation
+            .draft
+            .entity
+            .update(cx, |input, cx| input.set_error(BUSY.to_owned(), cx)),
+        Origin::Dialog => {
+            if let Some(dialog) = conversation.tracker.dialog.as_mut() {
+                dialog.error = Some(BUSY.to_owned());
+            }
+            cx.notify();
+        }
+    }
 }
 
 /// What came of a write, for where it came from.

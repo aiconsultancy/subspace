@@ -111,3 +111,18 @@ fn a_run_row_runs_only_the_plan_it_showed(cx: &mut TestAppContext) {
     assert!(mock.requests().is_empty(), "nothing was written");
     hub.read_with(cx, |hub, _| assert!(said(hub).is_empty()));
 }
+
+#[gpui_kit::test]
+fn a_command_waits_with_its_draft_while_another_write_runs(cx: &mut TestAppContext) {
+    let mock = signed_in();
+    let (conversation, _hub, cx) = open(cx, true, Some(&mock));
+    let input = composer(&conversation, cx);
+    conversation.update(cx, |view, _| view.tracker.busy = true);
+    submit(&input, "/ready NAV-9", cx);
+    assert_eq!(text(&input, cx), "/ready NAV-9", "the draft stays");
+    assert_eq!(
+        input.read_with(cx, |input, _| input.error().map(str::to_owned)),
+        Some(crate::tracker::BUSY.to_owned())
+    );
+    assert!(mock.requests().is_empty());
+}
