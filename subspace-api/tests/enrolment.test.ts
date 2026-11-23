@@ -6,6 +6,7 @@ import { agentKey, agentToken, type AgentKey } from "./certificates";
 import { entraTenant, isolatedDatabase, startApi, testDatabase } from "./entra-stack";
 
 const audience = "https://api.example.com";
+const hookToken = "an-example-hook-token-of-at-least-32-bytes";
 
 describe("enrolment tokens", () => {
   test("a token is senr1. and 64 characters that name its row, stored only as a hash", () => {
@@ -64,6 +65,10 @@ describe.skipIf(!testDatabase)("fleet enrolment over HTTP", () => {
         ENTRA_ADMIN_ROLE: adminRole,
         AGENT_TOKEN_AUDIENCE: audience,
         RESERVED_USERNAMES: "operator",
+        IRC_CREDENTIAL_SECRET: "an example credential secret of at least 32 bytes",
+        IRC_AUTH_HOOK_TOKEN: hookToken,
+        IRC_AUTH_ORGANISATION: `entra:${tenant.tenant}`,
+        IRC_AUTH_SERVERS: "irc.example.com:6697",
       },
       tenant.fetchRemote,
     );
@@ -173,6 +178,18 @@ describe.skipIf(!testDatabase)("fleet enrolment over HTTP", () => {
       ship: "Swift",
     });
     expect((await me(keys.merlin)).body).toMatchObject({ agentName: "Merlin", ship: "Tern" });
+    // The same certificates sign the agents in to IRC through Ergo's hook, where scoped to.
+    const ircHook = async (certfp: string) =>
+      (await api.call("/api/v1/irc/authenticate", hookToken, "POST", { certfp })).json();
+    expect(await ircHook(keys.admiral.fingerprint)).toEqual({
+      success: true,
+      accountName: "Halyard",
+    });
+    expect(await ircHook(keys.kestrel.fingerprint)).toEqual({
+      success: true,
+      accountName: "Kestrel",
+    });
+    expect(await ircHook(keys.merlin.fingerprint)).toEqual({ success: false });
     const fleet = await (await api.call("/api/v1/fleets/alpha", admin)).json();
     expect(fleet.rearAdmiralName).toBe("Halyard");
     expect(fleet.captainNames).toEqual(["Kestrel", "Merlin"]);

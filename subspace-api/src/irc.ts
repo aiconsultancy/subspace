@@ -1,14 +1,15 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ByteSize, Effect, Layer, Redacted, Schema } from "effect";
 import { HttpIncomingMessage, HttpRouter, HttpServerResponse } from "effect/http";
 import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
+import { fingerprintPattern, touchCredential } from "./agent-keys";
 import { canonicalHost, type Config } from "./config";
 import { Database } from "./db";
 import { CurrentMember } from "./identity";
 import { BearerAuth, ValidationErrors, versionedApi } from "./middleware";
 import { endpointErrors, problem } from "./problems";
-import { organisations, users } from "./schema";
+import { agentCredentials, organisations, users } from "./schema";
 import { canonicalName } from "./usernames";
 import { Host, Port } from "./validation";
 
@@ -185,6 +186,9 @@ type Refusal =
         | "body"
         | "no credential"
         | "certificate"
+        | "unknown certificate"
+        | "scope"
+        | "not an agent"
         | "account"
         | "unknown user"
         | "inactive"
@@ -215,13 +219,66 @@ function readInput(text: string) {
   };
 }
 
+/**
+ * The account a client certificate signs in to: its fingerprint, compared as hex without regard to
+ * case, must name an active key credential with scope `irc` of an active agent with an IRC nick,
+ * in the hook's organisation. The answer is the agent's nick as registered.
+ */
+const certificateSignIn = (hook: Hook, certfp: string) =>
+  Effect.gen(function* () {
+    const fingerprint = certfp.toLowerCase();
+    if (!fingerprintPattern.test(fingerprint)) return refused("certificate");
+    const db = yield* Database;
+    const rows = yield* db
+      .select({
+        credentialId: agentCredentials.id,
+        scopes: agentCredentials.scopes,
+        userId: users.id,
+        agentRank: users.agentRank,
+        active: users.active,
+        username: users.username,
+      })
+      .from(agentCredentials)
+      .innerJoin(
+        users,
+        and(
+          eq(users.organisationId, agentCredentials.organisationId),
+          eq(users.id, agentCredentials.userId),
+        ),
+      )
+      .innerJoin(organisations, eq(organisations.id, agentCredentials.organisationId))
+      .where(
+        and(
+          eq(agentCredentials.fingerprint, fingerprint),
+          isNull(agentCredentials.revokedAt),
+          eq(organisations.provider, hook.provider),
+          eq(organisations.externalId, hook.externalOrganisation),
+        ),
+      )
+      .limit(2);
+    if (rows.length !== 1) return refused("unknown certificate");
+    const row = rows[0]!;
+    const rejection = !row.scopes.includes("irc")
+      ? "scope"
+      : !row.agentRank
+        ? "not an agent"
+        : !row.active
+          ? "inactive"
+          : !row.username
+            ? "no username"
+            : null;
+    if (rejection) return { ...refused(rejection), userId: row.userId };
+    yield* touchCredential(row.credentialId);
+    return { ok: true as const, accountName: row.username!, userId: row.userId };
+  });
+
 /** The account a credential signs in to, or why it may not. */
 const decide = (hook: Hook, secret: Secret, hosts: readonly string[], text: string) =>
   Effect.gen(function* () {
     const input = readInput(text);
     if (!input) return refused("body");
     if (input.passphrase === undefined || input.passphrase === "")
-      return refused(input.certfp ? "certificate" : "no credential");
+      return input.certfp ? yield* certificateSignIn(hook, input.certfp) : refused("no credential");
     if (!input.passphrase.startsWith(ircCredentialPrefix)) return refused("no credential");
     const credential = readIrcCredential(secret, input.passphrase, hosts);
     if (!credential.ok) return credential;
@@ -258,7 +315,8 @@ const noStore = { "Cache-Control": "no-store" };
  * OpenAPI document, the MCP tools and the bearer middleware. Only the hook token authorises it.
  * Once the token is accepted the answer is always 200, `{"success":true,"accountName":...}` or
  * `{"success":false}`, so Ergo falls back to its own accounts for anything that is not a good
- * credential of this organisation.
+ * credential of this organisation: a `sirc1.` passphrase, or, with no passphrase, the certfp of an
+ * agent's key credential with scope `irc`.
  */
 export function ircAuthenticateRoute(hook: Hook, secret: Secret, hosts: readonly string[]) {
   return HttpRouter.add("POST", ircAuthenticatePath, (request) =>
