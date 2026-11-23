@@ -71,6 +71,39 @@ case $history_database in
     *) die 'IRC_HISTORY_DATABASE must be sqlite or postgresql' ;;
 esac
 
+# Sign-in through the Subspace API (Ergo's auth-script). Off unless
+# IRC_AUTH_API_URL is set. The hook token is copied into the private run
+# directory, which only UID 10001 can read, and reaches the script by path.
+auth_url=${IRC_AUTH_API_URL:-}
+auth_ca=${IRC_AUTH_API_CA_FILE:-}
+auth_token=$run/auth-token
+auth_block=
+rm -f "$auth_token" "$auth_token.tmp"
+if [ -n "$auth_url" ]; then
+    printf '%s' "$auth_url" |
+        jq -Rse 'test("\\Ahttps?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~-]+)*/?\\z")' >/dev/null ||
+        die 'IRC_AUTH_API_URL must be an http or https URL with a host name and optional port and path, and no credentials, query or fragment'
+    auth_url=${auth_url%/}
+    case "${IRC_AUTH_API_TOKEN_FILE:+file}${IRC_AUTH_API_TOKEN:+env}" in
+        file) jq -Rsj 'sub("\\r?\\n\\z"; "")' < "$IRC_AUTH_API_TOKEN_FILE" > "$auth_token.tmp" ||
+            die 'Cannot read IRC_AUTH_API_TOKEN_FILE' ;;
+        env) printf '%s' "$IRC_AUTH_API_TOKEN" > "$auth_token.tmp" ;;
+        fileenv) die 'Set only one of IRC_AUTH_API_TOKEN and IRC_AUTH_API_TOKEN_FILE' ;;
+        '') die 'IRC_AUTH_API_URL needs the hook token in IRC_AUTH_API_TOKEN_FILE or IRC_AUTH_API_TOKEN' ;;
+    esac
+    jq -Rse 'test("\\A[A-Za-z0-9._~+/=-]{16,1024}\\z")' < "$auth_token.tmp" >/dev/null ||
+        { rm -f "$auth_token.tmp"; die 'The hook token must be 16–1024 characters of letters, digits and . _ ~ + / = -'; }
+    mv "$auth_token.tmp" "$auth_token"
+    if [ -n "$auth_ca" ]; then
+        case "$auth_ca" in /*) ;; *) die 'IRC_AUTH_API_CA_FILE must be an absolute path' ;; esac
+        [ -r "$auth_ca" ] || die 'IRC_AUTH_API_CA_FILE must be readable by UID 10001'
+    fi
+    auth_block=$(printf '    auth-script:\n        enabled: true\n        command: "/ircd-bin/subspace-auth"\n        args: []\n        autocreate: true\n        timeout: 9s\n        kill-timeout: 1s\n        max-concurrency: 64')
+elif [ -n "${IRC_AUTH_API_TOKEN_FILE:-}${IRC_AUTH_API_TOKEN:-}${auth_ca}" ]; then
+    die 'IRC_AUTH_API_TOKEN, IRC_AUTH_API_TOKEN_FILE and IRC_AUTH_API_CA_FILE need IRC_AUTH_API_URL'
+fi
+unset IRC_AUTH_API_TOKEN
+
 # Hold the same lock across provisioning and normal service. Ergo also locks
 # its datastore when running; this lock covers the hand-off between processes.
 exec 9>/ircd/instance.lock
@@ -197,9 +230,10 @@ origins=$(jq -cn --arg origin "$ws_origin" '
 ')
 
 render_config() {
-    SERVER_NAME=$server_name LISTENERS=$1 WS_ORIGINS=$origins OPERS=$opers BCRYPT_COST=$bcrypt_cost \
-        HISTORY_DATABASE=$history_block awk '
+    SERVER_NAME=$server_name LISTENERS=$1 AUTH_SCRIPT=$2 WS_ORIGINS=$origins OPERS=$opers \
+        BCRYPT_COST=$bcrypt_cost HISTORY_DATABASE=$history_block awk '
         /@@LISTENERS@@/ { print ENVIRON["LISTENERS"]; next }
+        /@@AUTH_SCRIPT@@/ { if (ENVIRON["AUTH_SCRIPT"] != "") print ENVIRON["AUTH_SCRIPT"]; next }
         /@@HISTORY_DATABASE@@/ { print ENVIRON["HISTORY_DATABASE"]; next }
         /@@SERVER_NAME@@/ { sub(/@@SERVER_NAME@@/, ENVIRON["SERVER_NAME"]); print; next }
         /@@WS_ORIGINS@@/ { print "        allowed-origins: " ENVIRON["WS_ORIGINS"]; next }
@@ -220,7 +254,10 @@ check_credential() {
 }
 
 provision() {
-    render_config '        "127.0.0.1:16670": {}' > "$temporary/bootstrap.yaml"
+    # The bootstrap server never runs the auth hook. Seeding creates and
+    # verifies local accounts through check_auth, which would otherwise send
+    # seed passwords to the API and could sign in to an API-chosen account.
+    render_config '        "127.0.0.1:16670": {}' '' > "$temporary/bootstrap.yaml"
     token=$("$ergo" gentoken)
     printf 'Authorization: Bearer %s\n' "$token" > "$temporary/auth"
     printf '\napi:\n    enabled: true\n    listener: "127.0.0.1:8089"\n    bearer-tokens: ["%s"]\n' \
@@ -281,7 +318,16 @@ if jq -e 'length > 0' "$temporary/seed" >/dev/null; then
     provision
 fi
 
-render_config "$listeners" > "$run/ircd.yaml"
+render_config "$listeners" "$auth_block" > "$run/ircd.yaml"
 cleanup
 trap - EXIT TERM INT
-exec env -i PATH="$PATH" "$ergo" run --conf "$run/ircd.yaml"
+# Ergo passes its own environment to the auth script. It carries the token's
+# path, never the token, and allow-environment-overrides stays off.
+set -- PATH="$PATH"
+if [ -n "$auth_url" ]; then
+    set -- "$@" IRC_AUTH_API_URL="$auth_url" IRC_AUTH_API_TOKEN_FILE="$auth_token" IRC_OPER_NAME="$oper"
+    if [ -n "$auth_ca" ]; then
+        set -- "$@" IRC_AUTH_API_CA_FILE="$auth_ca"
+    fi
+fi
+exec env -i "$@" "$ergo" run --conf "$run/ircd.yaml"
