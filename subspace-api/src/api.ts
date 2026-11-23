@@ -548,7 +548,7 @@ function resourceLayers(options: Config, store: (typeof Storage)["Service"]) {
   return { dbLayer, github, resources };
 }
 
-type Resources = ReturnType<typeof resourceLayers>;
+export type Resources = ReturnType<typeof resourceLayers>;
 
 /** The handlers of every group but development sign-in, built afresh for each listener. */
 function handlerLayers(hiddenTools: ReadonlySet<string>) {
@@ -687,9 +687,20 @@ export function agentRoutes(
   );
 }
 
-export function server(options: Config, devKey: Uint8Array | null) {
-  const store = storage(process.env);
-  const shared = resourceLayers(options, store);
+/** What a test may replace in `server`: the shared resources and the agent directory. */
+export interface ServerOverrides {
+  readonly store?: (typeof Storage)["Service"];
+  readonly shared?: Resources;
+  readonly directory?: Layer.Layer<AgentDirectory, unknown>;
+}
+
+export function server(
+  options: Config,
+  devKey: Uint8Array | null,
+  overrides: ServerOverrides = {},
+) {
+  const store = overrides.store ?? storage(process.env);
+  const shared = overrides.shared ?? resourceLayers(options, store);
   const main = HttpRouter.serve(routes(options, devKey, store, shared), {
     disableLogger: true,
   }).pipe(
@@ -702,7 +713,7 @@ export function server(options: Config, devKey: Uint8Array | null) {
     ),
   );
   if (!options.agent) return main.pipe(Layer.provide(shared.resources));
-  const agent = HttpRouter.serve(agentRoutes(options.agent, shared), {
+  const agent = HttpRouter.serve(agentRoutes(options.agent, shared, overrides.directory), {
     disableLogger: true,
   }).pipe(
     Layer.provide(
@@ -714,6 +725,10 @@ export function server(options: Config, devKey: Uint8Array | null) {
     ),
   );
   // Build the database pool, update hub and storage once, before either listener, so both
-  // listeners share them rather than each building its own.
+  // listeners share them rather than each building its own. Each HttpRouter.serve builds its app
+  // with a forked MemoMap, so its HttpRouter and routes are private to that listener ("Layers
+  // first built inside the app are private to this server"): the agent port never serves the
+  // main port's sign-in or administrator routes, and the agent guard never runs on the main
+  // port. tests/listeners.test.ts builds this composition and checks both ports.
   return Layer.merge(main, agent).pipe(Layer.provide(shared.resources));
 }
