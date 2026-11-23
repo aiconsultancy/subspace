@@ -113,8 +113,10 @@ clear of P0 and P1) raised these; each was checked against the code.
   account matches only that account, so an accountless removal cannot take
   it; renames skip entries with another known account and merge nobody, so
   no list is deduplicated on a nick change. A rename still scans the
-  network's entries once, comparing pre-folded nicks, which the bounds keep
-  small.
+  network's entries once, comparing nicks under the case mapping without
+  allocating a folded copy (`Casemapping::same`), which the bounds keep
+  small. (Corrected in the Channels reactions change: nothing is
+  pre-folded any more.)
 - **History ownership by current nick** (both): fixed. Ours by account when
   both are known (our account from `RPL_LOGGEDIN`), else by nick.
 - **History re-adds removed reactions** (both): fixed in the book (latest

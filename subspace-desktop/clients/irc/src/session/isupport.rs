@@ -10,18 +10,25 @@ pub enum Casemapping {
 
 impl Casemapping {
     pub fn fold(self, name: &str) -> String {
-        if self == Self::Ascii {
-            return name.to_ascii_lowercase();
+        name.chars().map(|c| self.fold_char(c)).collect()
+    }
+
+    /// Whether `one` and `other` are the same name under this mapping,
+    /// without allocating a folded copy of either.
+    pub fn same(self, one: &str, other: &str) -> bool {
+        one.chars()
+            .map(|c| self.fold_char(c))
+            .eq(other.chars().map(|c| self.fold_char(c)))
+    }
+
+    fn fold_char(self, c: char) -> char {
+        match c {
+            '[' if self != Self::Ascii => '{',
+            ']' if self != Self::Ascii => '}',
+            '\\' if self != Self::Ascii => '|',
+            '~' if self == Self::Rfc1459 => '^',
+            other => other.to_ascii_lowercase(),
         }
-        name.chars()
-            .map(|c| match c {
-                '[' => '{',
-                ']' => '}',
-                '\\' => '|',
-                '~' if self == Self::Rfc1459 => '^',
-                other => other.to_ascii_lowercase(),
-            })
-            .collect()
     }
 }
 
@@ -135,5 +142,34 @@ impl Isupport {
 
     pub fn symbols(&self) -> Vec<char> {
         self.prefix.iter().map(|&(_, symbol)| symbol).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Casemapping;
+
+    #[test]
+    fn same_agrees_with_fold_under_each_mapping() {
+        let pairs = [
+            ("Bob[1]", "bob{1}"),
+            ("a\\b", "A|B"),
+            ("x~y", "X^Y"),
+            ("café", "CAFÉ"),
+            ("bob", "bobby"),
+        ];
+        for mapping in [
+            Casemapping::Ascii,
+            Casemapping::Rfc1459,
+            Casemapping::StrictRfc1459,
+        ] {
+            for (one, other) in pairs {
+                assert_eq!(
+                    mapping.same(one, other),
+                    mapping.fold(one) == mapping.fold(other),
+                    "{mapping:?} {one} {other}"
+                );
+            }
+        }
     }
 }
