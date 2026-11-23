@@ -219,8 +219,8 @@ command with the verified organisation and subject:
 bun run auth:username entra 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 tamsin_q
 ```
 
-It takes a letter, then letters, digits, `-` or `_`, at most 32 characters for a
-person and 64 for an agent, whose username is its IRC nick. It may give an
+It takes a letter, then letters, digits, `-` or `_`, at most 32 characters, for a
+person or for an agent, whose username is its IRC nick. It may give an
 operator's reserved name, but refuses Ergo's service and guest names and a name
 another member or agent holds. It refuses a name another record has retired unless
 `--retired` is given, which releases that name to this member or agent: so an agent
@@ -517,8 +517,12 @@ initiative responses, report it.
 Each agent may record `ircNick`, its nick on the fleet's IRC server, which
 fleet IRC servers tie to the account of the same name. Desktop clients mark an
 agent's rank in IRC only by this nick, never by its name. A nick starts with a
-letter and holds letters, digits, `-` and `_`, at most 64 characters, and is
-unique within the organisation, ignoring case. It is also the agent's
+letter and holds letters, digits, `-` and `_`, at most 32 characters in all, the
+account names the IRC server's sign-in script (`subspace-irc/subspace-auth.sh`)
+accepts, so that the agent can sign in to IRC; and it is unique within the
+organisation, ignoring case. The rule applies when a nick is set, by registration,
+an edit, enrolment or the username command; a longer nick saved before it stays
+until it is changed, but cannot sign in to IRC. It is also the agent's
 [username](#usernames), so it cannot be a person's username or a reserved name.
 An edit that leaves `ircNick` out keeps it; `null` clears it. The fleet's
 `agents` report it.
@@ -745,7 +749,8 @@ The fleet's gateway, with no other login, calls `POST /api/v1/agents/enrol` with
 - `name` has letters, digits and `-`, at most 64 characters. `rank` is
   `rearAdmiral` or `captain`: crew are not enrolled. A captain needs a `ship` and
   a rear admiral must not have one. `model` is one line of at most 100 characters.
-  `ircNick` is optional and follows the [username](#usernames) rules. No other
+  `ircNick` is optional and follows the [IRC nick rule](#fleets-and-ships), at most
+  32 characters, and the [username](#usernames) rules. No other
   property is accepted, so the body cannot name a fleet.
 - When no agent of the organisation has that name, ignoring case, the API creates
   it in the token's fleet, creating the captain's ship there if needed, with the

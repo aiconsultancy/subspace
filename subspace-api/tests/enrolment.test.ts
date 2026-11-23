@@ -512,6 +512,50 @@ describe.skipIf(!testDatabase)("fleet enrolment over HTTP", () => {
     expect((await send("not json", "application/json")).status).toBe(400);
   });
 
+  test("an IRC nick has at most 32 characters, as the IRC server's sign-in accepts", async () => {
+    const issued = await issue();
+    const longest = `N${"a".repeat(30)}-`;
+    expect(longest).toHaveLength(32);
+    for (const ircNick of [`${longest}x`, "1nick", "nick.name", "nick name"]) {
+      const refused = await enrol(
+        issued.token,
+        captain("Kittiwake", "Cliff", agentKey(), { ircNick }),
+      );
+      expect([ircNick, refused.status]).toEqual([ircNick, 400]);
+    }
+    const accepted = await enrol(
+      issued.token,
+      captain("Kittiwake", "Cliff", agentKey(), { ircNick: longest }),
+    );
+    expect(accepted.status).toBe(201);
+    // The administrator's routes apply the same rule.
+    const register = (ircNick: string, name: string) =>
+      api.call("/api/v1/agents", admin, "POST", {
+        name,
+        rank: "captain",
+        fleet: "alpha",
+        ship: "Cliff",
+        defaultModel: "example-model",
+        serviceTokenClientId: crypto.randomUUID(),
+        ircNick,
+      });
+    expect((await register(`M${"b".repeat(32)}`, "Fulmar-Long")).status).toBe(400);
+    const registered = await register(`M${"b".repeat(31)}`, "Fulmar-Long");
+    expect(registered.status).toBe(201);
+    const agent = await registered.json();
+    const edit = await api.call(`/api/v1/agents/${agent.userId}`, admin, "PUT", {
+      name: agent.name,
+      rank: agent.rank,
+      fleetId: agent.fleetId,
+      shipId: agent.shipId,
+      defaultModel: agent.defaultModel,
+      serviceTokenClientId: agent.serviceTokenClientId,
+      ircNick: `M${"c".repeat(32)}`,
+      version: agent.version,
+    });
+    expect(edit.status).toBe(400);
+  });
+
   test("tokens are managed by administrators only, within bounds", async () => {
     const path = "/api/v1/fleets/alpha/enrolment-tokens";
     expect((await api.call(path, member, "POST", {})).status).toBe(403);

@@ -31,11 +31,15 @@ import {
 
 /**
  * The agent's IRC nick, which fleet IRC servers tie to the account of the
- * same name: a letter, then letters, digits, `-` or `_`.
+ * same name: a letter, then letters, digits, `-` or `_`, at most 32 in all,
+ * the account names the IRC server's sign-in script accepts
+ * (`subspace-irc/subspace-auth.sh`). Checked when a nick is set; a longer nick
+ * saved before this rule stays as it is until it is changed.
  */
+export const ircNickPattern = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/u;
 export const IrcNick = Schema.String.check(
-  Schema.isMaxLength(64),
-  Schema.isPattern(/^[A-Za-z][A-Za-z0-9_-]*$/u),
+  Schema.isMaxLength(32),
+  Schema.isPattern(ircNickPattern),
 );
 /** An agent's name: letters, digits and `-`, at most 64 characters, unique in its organisation. */
 export const AgentName = Name.check(Schema.isMaxLength(64), Schema.isPattern(/^[A-Za-z0-9-]+$/u));

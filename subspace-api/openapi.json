@@ -32059,8 +32059,8 @@
                     "anyOf": [
                       {
                         "type": "string",
-                        "maxLength": 64,
-                        "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+                        "maxLength": 32,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$"
                       },
                       {
                         "type": "null"
@@ -32681,8 +32681,8 @@
                     "anyOf": [
                       {
                         "type": "string",
-                        "maxLength": 64,
-                        "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+                        "maxLength": 32,
+                        "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$"
                       },
                       {
                         "type": "null"
@@ -36602,8 +36602,8 @@
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 64,
-                "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+                "maxLength": 32,
+                "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$"
               },
               {
                 "type": "null"

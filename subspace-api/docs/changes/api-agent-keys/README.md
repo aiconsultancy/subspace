@@ -61,6 +61,11 @@ built against, is the API README's
   organisation cannot be registered there again, so a revoked key stays revoked
   even if an enrolment token is still valid. The cost is that registering another
   organisation's active certificate reveals, by a 409, that it is registered.
+- **An agent's IRC nick has at most 32 characters**, a letter then letters, digits,
+  `_` or `-`, the account names the IRC image's sign-in script accepts, so that
+  every agent that can hold the `irc` scope can sign in. It is checked whenever a
+  nick is set, by registration, an edit, enrolment or the username command; nicks
+  saved before keep their value until changed.
 - **Replay protection in PostgreSQL.** The primary key on credential and `jti`
   makes the first insert win on every instance. The purge keeps a five-minute margin
   beyond each token's expiry, so a difference between the database's clock and an
@@ -109,9 +114,9 @@ use at once.
 - Registering another organisation's active certificate answers 409, which reveals
   that the fingerprint is registered somewhere.
 - `lastUsedAt` is updated at most once a minute and is not exact.
-- The IRC image's auth script accepts account names of at most 32 characters,
-  while an agent's nick may have 64, so an agent with a longer nick cannot sign in
-  to IRC by any route. Its README still says to turn on certificate forwarding
+- An agent whose nick of more than 32 characters was saved before this change
+  cannot sign in to IRC until an administrator gives it a shorter one.
+- The IRC image's README still says to turn on certificate forwarding
   (`IRC_AUTH_CERT_LOGINS`) once the API issues agent certificates, which it now
   does.
 - There is no rate limit on agent token checks or enrolment attempts, by the
