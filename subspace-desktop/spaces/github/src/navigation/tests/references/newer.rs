@@ -9,25 +9,26 @@ use subspace_framework::client_test_support::Mock;
 use subspace_framework::contracts::github::{CheckStatus, ResolutionState};
 
 use super::super::{KEY, seed};
-use super::checks::{land_section, listed_only, read_once_then_denied, refresh, relist};
-use super::{ask, response_with_checks, routed};
+use super::checks::{land_section_at, listed_only, read_once_then_denied, refresh, relist};
+use super::{Meanwhile, ask, response_with_checks, routed};
 
 #[gpui_kit::test]
 fn a_later_section_of_the_same_refresh_wins_over_a_read_that_started_before_it(
     cx: &mut TestAppContext,
 ) {
-    let mock = Mock::new(|_| (200, response_with_checks()));
-    let (board, _listener, cx) = routed(cx, Some(&mock));
+    let meanwhile = Meanwhile::new(response_with_checks);
+    let (board, _listener, cx) = routed(cx, Some(&meanwhile.mock));
+    meanwhile.arm(&board, cx);
     board.update(cx, listed_only);
     // The refresh's first section lands and a tile asks: one read starts.
     refresh(&board, 1, cx);
     ask(KEY, cx);
-    // A later section of the same refresh lands before the read does, with
-    // the checks now passing.
-    relist(&board, cx, |item| item.checks = Some(CheckState::Success));
-    land_section(&board, cx);
     cx.run_until_parked();
-    assert_eq!(mock.requests().len(), 1);
+    assert_eq!(meanwhile.mock.requests().len(), 1);
+    // A later section of the same refresh, requested while the read was in
+    // flight, lands with the checks now passing.
+    relist(&board, cx, |item| item.checks = Some(CheckState::Success));
+    land_section_at(&board, meanwhile.started(), cx);
     let ResolutionState::Available(details) = ask(KEY, cx) else {
         panic!("available from the list");
     };

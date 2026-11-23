@@ -23,9 +23,12 @@ use crate::Github;
 
 mod access;
 mod checks;
+mod meanwhile;
 mod newer;
 mod privacy;
 mod refresh;
+
+use meanwhile::Meanwhile;
 
 const ASKER: &str = "fixture-channels";
 const ASKS: BoardContracts = BoardContracts::new(&[

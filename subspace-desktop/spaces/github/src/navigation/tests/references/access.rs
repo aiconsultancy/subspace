@@ -3,15 +3,23 @@
 //! from a read that started earlier is dropped, a refusal is read again on
 //! the next refresh, and a rate limit is a failure, not a refusal.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use gpui_kit::{Entity, TestAppContext, VisualTestContext};
 use subspace_framework::client_test_support::Mock;
-use subspace_framework::contracts::github::ResolutionState;
+use subspace_framework::contracts::github::{ResolutionState, ResolvePullRequests};
 use subspace_framework::core::http::Error;
+use subspace_framework::dashboard::contracts;
 
+use super::super::loading::response;
 use super::super::{KEY, seed};
-use super::checks::listed_only;
-use super::{ask, null_repository, response_with_checks, routed};
+use super::checks::{land_section_at, listed_only};
+use super::{ASKER, Meanwhile, ask, null_repository, response_with_checks, routed};
 use crate::Github;
+
+/// Another pull request in the seeded repository, which no list holds.
+const OTHER: &str = "octo-org/api#7";
 
 fn tick(board: &Entity<Github>, cx: &mut VisualTestContext) -> u64 {
     board.update(cx, |board, _| crate::references::begin(board))
@@ -33,16 +41,6 @@ fn detail_failed(board: &Entity<Github>, error: Error, started: u64, cx: &mut Vi
     });
 }
 
-/// The seeded section, started at `started`, lands.
-fn section_at(board: &Entity<Github>, started: u64, cx: &mut VisualTestContext) {
-    board.update(cx, |board, cx| {
-        let login = board.account.clone().unwrap_or_default();
-        let since = crate::references::since(board);
-        let section = board.section;
-        crate::references::section_landed(board, &login, (section, started), since, cx);
-    });
-}
-
 fn available(cx: &mut VisualTestContext) -> bool {
     matches!(ask(KEY, cx), ResolutionState::Available(_))
 }
@@ -56,13 +54,13 @@ fn a_section_requested_before_a_refusal_never_brings_the_summary_back(cx: &mut T
     let refused = tick(&board, cx);
     detail_failed(&board, status(404), refused, cx);
     assert!(matches!(ask(KEY, cx), ResolutionState::Unavailable));
-    section_at(&board, section, cx);
+    land_section_at(&board, section, cx);
     assert!(
         matches!(ask(KEY, cx), ResolutionState::Unavailable),
         "a section asked for before the refusal changes nothing"
     );
     let later = tick(&board, cx);
-    section_at(&board, later, cx);
+    land_section_at(&board, later, cx);
     assert!(available(cx), "a section asked for after it lifts it");
     cx.run_until_parked();
     assert_eq!(
@@ -74,16 +72,19 @@ fn a_section_requested_before_a_refusal_never_brings_the_summary_back(cx: &mut T
 
 #[gpui_kit::test]
 fn an_older_reference_read_never_overrides_a_newer_detail_refusal(cx: &mut TestAppContext) {
-    let mock = Mock::new(|_| (200, response_with_checks()));
-    let (board, _listener, cx) = routed(cx, Some(&mock));
+    let meanwhile = Meanwhile::new(response_with_checks);
+    let mock = &meanwhile.mock;
+    let (board, _listener, cx) = routed(cx, Some(mock));
+    meanwhile.arm(&board, cx);
     assert!(
         matches!(ask(KEY, cx), ResolutionState::Pending),
-        "a reference read starts"
+        "a reference read is queued"
     );
-    let refused = tick(&board, cx);
-    detail_failed(&board, status(403), refused, cx);
     cx.run_until_parked();
     assert_eq!(mock.requests().len(), 1);
+    // A detail read that started while the reference read's request was in
+    // flight lands refused.
+    detail_failed(&board, status(403), meanwhile.started(), cx);
     assert!(
         matches!(ask(KEY, cx), ResolutionState::Unavailable),
         "the older summary is dropped"
@@ -129,11 +130,50 @@ fn an_opened_pull_request_s_refusal_is_read_again_on_the_next_refresh(cx: &mut T
     assert_eq!(mock.requests().len(), 0, "not before a refresh");
     board.update(cx, |board, _| crate::references::refreshing(board));
     let section = tick(&board, cx);
-    section_at(&board, section, cx);
+    land_section_at(&board, section, cx);
     ask(KEY, cx);
     cx.run_until_parked();
     assert_eq!(mock.requests().len(), 1, "read again once");
     assert!(available(cx), "the newer read lifts it");
+}
+
+/// A reference read of another pull request, then of [`KEY`], in one
+/// batch: the first is served, the second refused with a 403.
+fn other_then_refused() -> Mock {
+    let served = Arc::new(AtomicUsize::new(0));
+    Mock::new(move |_| match served.fetch_add(1, Ordering::SeqCst) {
+        0 => (200, response("PullRequest", 7)),
+        _ => (403, r#"{"message":"Resource not accessible"}"#.to_owned()),
+    })
+}
+
+#[gpui_kit::test]
+fn a_batch_s_later_request_is_newer_than_a_read_started_while_it_waited(cx: &mut TestAppContext) {
+    let mock = other_then_refused();
+    let (board, _listener, cx) = routed(cx, Some(&mock));
+    board.update(cx, listed_only);
+    // One reference read of two pull requests is queued; KEY is listed, so
+    // it answers from the list meanwhile.
+    cx.update(|_, cx| {
+        let keys = ResolvePullRequests::new([OTHER, KEY]);
+        let answers =
+            contracts::request(ASKER, &keys, cx).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(answers.len(), 2);
+    });
+    // While the batch waits on its first key, this Space's own detail read
+    // of KEY starts and succeeds; access is lost after it.
+    let detail = tick(&board, cx);
+    board.update(cx, |board, _| {
+        let login = board.account.clone().unwrap_or_default();
+        crate::references::detail_landed(board, &login, (KEY, KEY), detail);
+    });
+    // The batch reaches KEY only now, and GitHub refuses it.
+    cx.run_until_parked();
+    assert_eq!(mock.requests().len(), 2, "one request per key, in turn");
+    assert!(
+        matches!(ask(KEY, cx), ResolutionState::Unavailable),
+        "the refusal started after the detail read, so it answers"
+    );
 }
 
 #[gpui_kit::test]

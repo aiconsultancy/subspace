@@ -58,12 +58,17 @@ pub(super) fn read_once_then_denied() -> Mock {
 
 /// One section of a refresh lands, listing the seeded pull request.
 pub(super) fn land_section(board: &Entity<Github>, cx: &mut VisualTestContext) {
+    let tick = board.update(cx, |board, _| crate::references::begin(board));
+    land_section_at(board, tick, cx);
+}
+
+/// The seeded section, started at `started`, lands.
+pub(super) fn land_section_at(board: &Entity<Github>, started: u64, cx: &mut VisualTestContext) {
     board.update(cx, |board, cx| {
         let login = board.account.clone().unwrap_or_default();
         let since = crate::references::since(board);
         let section = board.section;
-        let tick = crate::references::begin(board);
-        crate::references::section_landed(board, &login, (section, tick), since, cx);
+        crate::references::section_landed(board, &login, (section, started), since, cx);
     });
 }
 

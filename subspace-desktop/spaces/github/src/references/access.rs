@@ -1,7 +1,8 @@
 //! One rule for who may see a pull request, whichever path read it: every
 //! read takes a tick of one clock when it starts (a list section, this
-//! Space's own detail read, or a reference read), and a result is weighed
-//! by that tick, never by when it lands.
+//! Space's own detail read, or each request of a reference read, which
+//! reads its keys in turn), and a result is weighed by that tick, never by
+//! when it lands.
 //!
 //! **The invariant.** For each account and pull request the service keeps
 //! only two numbers ([`Access`]): the latest start tick of a read that
@@ -23,6 +24,9 @@
 //! account opened ([`super::held::wants_read`]), so one that was about
 //! something passing does not stick.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use gpui_kit::Context;
 use subspace_framework::contracts::github::ResolutionState;
 use subspace_framework::core::http::Error;
@@ -32,14 +36,22 @@ use crate::Github;
 
 type Key = (String, String);
 
-/// Starts a read: its tick of the one clock.
-pub(crate) fn begin(board: &mut Github) -> u64 {
-    tick(&mut board.references)
+/// The one read clock. It is shared with the background reads, so each
+/// request of a reference read takes its own tick as it starts, after any
+/// requests before it in the same batch, not when the batch was queued.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Clock(Arc<AtomicU64>);
+
+impl Clock {
+    /// The next tick.
+    pub(crate) fn tick(&self) -> u64 {
+        self.0.fetch_add(1, Ordering::SeqCst).wrapping_add(1)
+    }
 }
 
-fn tick(references: &mut References) -> u64 {
-    references.clock = references.clock.wrapping_add(1);
-    references.clock
+/// Starts a read: its tick of the one clock.
+pub(crate) fn begin(board: &mut Github) -> u64 {
+    board.references.clock.tick()
 }
 
 /// What a landed read decided about access.

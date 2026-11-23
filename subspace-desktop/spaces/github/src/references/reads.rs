@@ -15,13 +15,20 @@ use super::{announce, cache_key, details};
 use crate::Github;
 use crate::navigation::requested_pr;
 
-/// When a read started: the [`super::References`] generation, refresh
-/// count and its tick of the one read clock ([`super::access`]).
+/// When a read was queued: the [`super::References`] generation and
+/// refresh count. Each of its requests takes its own tick of the one read
+/// clock as it starts ([`super::access`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Epoch {
     generation: u64,
     refreshes: u64,
+}
+
+/// One key's answer, with the tick its request started at.
+struct Answer {
+    key: String,
     started: u64,
+    state: ResolutionState,
 }
 
 /// Starts one background read of the `keys` not already being read, and
@@ -34,7 +41,6 @@ pub(super) fn read(
     let (Some(client), Some(login)) = (board.client.clone(), board.account.clone()) else {
         return ResolutionState::SignedOut;
     };
-    let started = super::access::begin(board);
     let references = &mut board.references;
     // A signed-out account reads nothing, whatever answers the keys.
     if references.signed_out.contains(&login.to_lowercase()) {
@@ -47,16 +53,16 @@ pub(super) fn read(
     let epoch = Epoch {
         generation: references.generation,
         refreshes: references.refreshes,
-        started,
     };
     if !fresh.is_empty() {
-        spawn_read(client, login, fresh, epoch, cx);
+        let clock = references.clock.clone();
+        spawn_read((client, clock), login, fresh, epoch, cx);
     }
     ResolutionState::Pending
 }
 
 fn spawn_read(
-    client: Arc<Client>,
+    (client, clock): (Arc<Client>, super::access::Clock),
     login: String,
     keys: Vec<String>,
     epoch: Epoch,
@@ -65,7 +71,7 @@ fn spawn_read(
     cx.spawn(async move |this, cx| {
         let account = login.clone();
         let answers = cx
-            .background_spawn(async move { read_all(&client, &account, keys) })
+            .background_spawn(async move { read_all(&client, &clock, &account, keys) })
             .await;
         _ = this.update(cx, |board, cx| land(board, &login, answers, epoch, cx));
     })
@@ -73,9 +79,17 @@ fn spawn_read(
 }
 
 /// Reads each key in turn, so one request never fans out into many calls.
-fn read_all(client: &Client, login: &str, keys: Vec<String>) -> Vec<(String, ResolutionState)> {
+/// Each request takes its tick as it starts, so a read of another path
+/// that started while an earlier key was being read is older than it.
+fn read_all(
+    client: &Client,
+    clock: &super::access::Clock,
+    login: &str,
+    keys: Vec<String>,
+) -> Vec<Answer> {
     keys.into_iter()
         .map(|key| {
+            let started = clock.tick();
             let read = client
                 .item(login, &key)
                 .and_then(|detail| requested_pr((detail, ()), &key));
@@ -85,7 +99,11 @@ fn read_all(client: &Client, login: &str, keys: Vec<String>) -> Vec<(String, Res
                 }
                 Err(error) => refused(&error),
             };
-            (key, state)
+            Answer {
+                key,
+                started,
+                state,
+            }
         })
         .collect()
 }
@@ -93,7 +111,7 @@ fn read_all(client: &Client, login: &str, keys: Vec<String>) -> Vec<(String, Res
 fn land(
     board: &mut Github,
     login: &str,
-    answers: Vec<(String, ResolutionState)>,
+    answers: Vec<Answer>,
     epoch: Epoch,
     cx: &mut Context<Github>,
 ) {
@@ -103,10 +121,15 @@ fn land(
     }
     // A read that started before the last refresh is older than the list.
     let older = references.refreshes != epoch.refreshes;
-    for (key, state) in answers {
+    for Answer {
+        key,
+        started,
+        state,
+    } in answers
+    {
         let key = cache_key(login, &key);
         references.reading.remove(&key);
-        if !current(references, &key, &state, epoch.started) {
+        if !current(references, &key, &state, started) {
             continue;
         }
         if older {
@@ -114,7 +137,7 @@ fn land(
         } else {
             references.stale.remove(&key);
         }
-        references.read_at.insert(key.clone(), epoch.started);
+        references.read_at.insert(key.clone(), started);
         references.answers.insert(key, state);
     }
     announce(cx);

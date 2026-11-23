@@ -25,10 +25,10 @@
 //! its counts, on the newer list's item, and only while its combined
 //! checks state and last update are the list's (the list does not carry
 //! the head commit; a force-push updates the pull request). Every read,
-//! whichever path makes it, takes a tick of one clock when it starts
-//! ([`access`]); a read is newer than the list only when it started after
-//! the latest section listing the pull request started, however the two
-//! land. The list query is not widened: every list would pay for counts no
+//! whichever path makes it, takes a tick of one clock when it starts (a
+//! reference read as each of its requests starts; [`access`]); a read is
+//! newer than the list only when it started after the latest section
+//! listing the pull request started, however the two land. The list query is not widened: every list would pay for counts no
 //! tile shows.
 //!
 //! A pull request the account holds neither opened nor listed answers from
@@ -90,8 +90,9 @@ pub(crate) struct References {
     refreshes: u64,
     /// Ticks as each read starts, whichever path makes it: a list section,
     /// this Space's own detail read or a reference read
-    /// ([`access::begin`]). Every access decision compares these ticks.
-    clock: u64,
+    /// ([`access::begin`]), and each request of a reference read as it
+    /// starts. Every access decision compares these ticks.
+    clock: access::Clock,
     /// For each pull request a section lists, the tick of the latest
     /// section that listed it.
     listed_at: HashMap<(String, String), u64>,
@@ -134,6 +135,14 @@ pub(crate) fn account_chosen(board: &mut Github, changed: bool, cx: &mut Context
     if changed {
         forget(board, cx);
     }
+}
+
+/// Ticks the board's read clock from any thread, as a read starting
+/// while a reference read's request is in flight would.
+#[cfg(test)]
+pub(crate) fn clock(board: &Github) -> impl Fn() -> u64 + Send + Sync + use<> {
+    let clock = board.references.clock.clone();
+    move || clock.tick()
 }
 
 /// Taken when a list or detail read starts, for [`landed`].

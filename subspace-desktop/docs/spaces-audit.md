@@ -143,8 +143,9 @@ section, or the favourites' sections) marks those reads stale once, when
 its first section lands, so each is read again at most once per refresh,
 when next asked, however many sections land or pull requests are opened.
 Every read, whichever path makes it (a list section, the board's own
-detail read or a reference read), takes a tick of one clock when it
-starts, and results are weighed by that tick, not by when they land. For
+detail read or each request of a reference read, which reads its keys in
+turn), takes a tick of one clock when it starts, and results are weighed
+by that tick, not by when they land. For
 each pull request the board keeps only the latest start tick of a read
 that landed refused and of one that landed with a success; it is refused
 exactly when the first is larger, both only rise, and nothing (a refresh,
