@@ -107,19 +107,23 @@ pub(crate) fn submit(
     true
 }
 
-/// Where a decision recorded here comes from, for its context.
+/// Where a decision recorded here comes from, for its context: the
+/// channel's and network's names, which other people chose, as a code
+/// span.
 pub(crate) fn context(conversation: &Conversation, cx: &gpui_kit::App) -> String {
     let state = &conversation.hub.read(cx).state;
     let network = state.network(&conversation.buffer.network).map_or_else(
         || conversation.buffer.network.0.clone(),
         |known| known.name.clone(),
     );
-    match &conversation.buffer.target {
-        Target::Channel(name) | Target::Query(name) => {
-            format!("Recorded in Channels from {name} on {network}.")
-        }
-        Target::Server => format!("Recorded in Channels on {network}."),
-    }
+    let place = match &conversation.buffer.target {
+        Target::Channel(name) | Target::Query(name) => format!("{name} on {network}"),
+        Target::Server => network,
+    };
+    format!(
+        "Recorded in Channels from {}.",
+        super::quote::code_span(&place)
+    )
 }
 
 /// Starts `job` in the background with the current account's client; the

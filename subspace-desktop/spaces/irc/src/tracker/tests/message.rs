@@ -25,7 +25,7 @@ fn a_message_becomes_an_issue_quoted_as_text() {
         draft.description.starts_with("````text\n"),
         "a fence longer than any in the text"
     );
-    assert!(draft.description.contains("\n````\n\nFrom IRC message fixture-msg-1 by mira in #aurora-lyra on Acme IRC, 2026-11-13 09:13 UTC."));
+    assert!(draft.description.contains("\n````\n\nFrom `IRC message fixture-msg-1 by mira in #aurora-lyra on Acme IRC, 2026-11-13 09:13 UTC`."));
     assert!(draft.summary.chars().count() <= write::SUMMARY_CHARS);
     assert!(message::issue_draft(&message, "NAV", "   ").is_err());
     assert!(message::issue_draft(&message, "NAV", &"x".repeat(201)).is_err());
@@ -77,4 +77,38 @@ fn the_dialog_chooses_the_message_s_only_issue_or_project() {
             .as_deref(),
         Some("NAV")
     );
+}
+
+#[test]
+fn hostile_names_and_ids_stay_inside_a_code_span() {
+    let hostile = Quoted {
+        author: "[mira](https://evil.example)".into(),
+        time: at(13),
+        text: "Decode on a pool".into(),
+        msgid: Some("`x` [id](https://evil.example)".into()),
+        place: "#@[Ada](member:00000000-0000-0000-0000-000000000001) on Acme IRC".into(),
+    };
+    let draft = message::issue_draft(&hostile, "NAV", "Decode").unwrap();
+    let reference = draft
+        .description
+        .rsplit_once("\n\nFrom ")
+        .map(|(_, line)| line)
+        .unwrap();
+    assert!(
+        reference.starts_with("``IRC message ") && reference.ends_with(" UTC``."),
+        "one code span longer than the ID's backticks: {reference}"
+    );
+    assert_eq!(
+        reference.matches("``").count(),
+        2,
+        "nothing closes it early"
+    );
+    let decision = message::decision_draft(&hostile, "NAV-2", "Decode", String::new()).unwrap();
+    let (evidence, _) = decision.message.unwrap();
+    assert!(evidence.starts_with("``IRC message ") && evidence.ends_with(" UTC``"));
+    assert_eq!(
+        message::code_span("#[docs](https://evil.example) on Acme IRC"),
+        "`#[docs](https://evil.example) on Acme IRC`"
+    );
+    assert_eq!(message::code_span("`edge`"), "`` `edge` ``", "padded");
 }

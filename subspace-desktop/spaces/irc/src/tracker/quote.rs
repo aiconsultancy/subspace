@@ -56,15 +56,30 @@ impl Quoted {
 
 /// The issue description for `quoted`: its words in a fenced block, so
 /// nothing in them is read as Markdown, a link or a mention, then who said
-/// it, where and when.
+/// it, where and when, as a code span for the same reason: a nick, a
+/// channel's name and a message ID are other people's text too.
 pub(crate) fn description(quoted: &Quoted) -> String {
     let longest = longest_run(&quoted.text, '`');
     let fence = "`".repeat(longest.max(2) + 1);
     format!(
         "{fence}text\n{}\n{fence}\n\nFrom {}.",
         quoted.text.trim_end(),
-        quoted.reference()
+        code_span(&quoted.reference())
     )
+}
+
+/// `text` as one Markdown code span, so nothing in it is a link, a
+/// mention or formatting: on one line, between backtick runs longer than
+/// any in it, padded where it starts or ends with a backtick.
+pub(crate) fn code_span(text: &str) -> String {
+    let line = text.replace(['\n', '\r'], " ");
+    let ticks = "`".repeat(longest_run(&line, '`') + 1);
+    let pad = if line.starts_with('`') || line.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{ticks}{pad}{line}{pad}{ticks}")
 }
 
 fn longest_run(text: &str, mark: char) -> usize {
@@ -106,7 +121,7 @@ pub(crate) fn decision_draft(
         title,
         text: quoted.text.trim().to_owned(),
         context,
-        message: Some((quoted.reference(), excerpt)),
+        message: Some((code_span(&quoted.reference()), excerpt)),
     })
 }
 
