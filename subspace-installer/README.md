@@ -451,7 +451,9 @@ records, through its MCP server, without WorkOS, Entra or a token.
 - **Skills.** Each officer also receives the generic `subspace-tracker` skill
   in `~/.config/opencode/skills/`, the same file as
   `agent-skills/opencode/subspace-tracker/SKILL.md`, which the host installer
-  now copies to the VM with the rest of the payload. It covers both ways in
+  now copies to the VM with the rest of the payload. With `api.agentUrl` set, the
+  installer and the configuration check both stop, naming that file, when the
+  payload lacks it. It covers both ways in
   and the API's rules for issues, trackers, decisions and the rest.
 
 The agent listener trusts its network as development sign-in does, minus

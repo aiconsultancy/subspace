@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 from agent_files import collect_cloud, private_directory, private_file, provision_cloud, write_private
 import fleet_records
 from network import rules
-from roles import default_permissions, provision_role, role_documents
+from roles import API_SKILL_MISSING, api_skill_path, default_permissions, provision_role, role_documents
 import sessions
 import standard_channels
 from workspaces import crew_worktree, prepare_workspaces, prune_worktrees
@@ -350,6 +350,8 @@ def api_config(value):
         require(urlsplit(agent_url).hostname in {"localhost", LOOPBACK, "::1"},
                 "api.agentUrl must be the agent listener on this VM's loopback.")
         cfg["agentMcpUrl"] = f"{agent_url.rstrip('/')}/mcp"
+        # Officers then get the Subspace API skill: refuse the configuration now, naming the file, if it is missing.
+        require(api_skill_path() is not None, API_SKILL_MISSING)
     if "fleetApiUrl" in value:
         # Where a desktop reaches Stargate's Fleet API, when not through the SSH tunnel's loopback end.
         try:

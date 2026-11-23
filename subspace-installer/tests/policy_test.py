@@ -3,6 +3,7 @@
 import json
 import re
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 import unittest
@@ -335,6 +336,32 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertNotIn("subspace-tracker", roles.role_documents(cfg, person, None, Path("/home"))["skills"])
         self.assertEqual(runtime.harness_permissions(cfg, person), person["harness"]["permissions"])
         self.assertIsNone(runtime.subspace_mcp_url(cfg))
+
+    def test_a_missing_api_skill_is_named_before_anything_is_rendered(self):
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        with patch.object(roles, "API_SKILL_SOURCES", (Path("/nonexistent/SKILL.md"),)):
+            with self.assertRaises(Invalid) as raised:
+                validate(config, api_secrets())
+        self.assertEqual(str(raised.exception), roles.API_SKILL_MISSING)
+        self.assertIn("agent-skills/opencode/subspace-tracker/SKILL.md", roles.API_SKILL_MISSING)
+        # The installer script stops with the same words before it changes anything.
+        with tempfile.TemporaryDirectory() as directory:
+            copy = Path(directory) / "subspace-installer"
+            copy.mkdir()
+            script = copy / "install.sh"
+            script.write_text((Path(__file__).resolve().parents[1] / "install.sh").read_text())
+            fleet = Path(directory) / "fleet.json"
+            fleet.write_text(json.dumps(config))
+            result = subprocess.run(["bash", str(script), "--config", str(fleet), "--dry-run"],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stderr.strip(), f"subspace-fleet: {roles.API_SKILL_MISSING}")
+            # Without the agent listener, the missing skill is not needed.
+            fleet.write_text(json.dumps({**config, "api": {"url": "http://127.0.0.1:3000"}}))
+            result = subprocess.run(["bash", str(script), "--config", str(fleet), "--dry-run"],
+                                    capture_output=True, text=True)
+            self.assertNotIn("subspace-tracker", result.stderr)
 
     def test_the_agent_listener_must_be_on_loopback(self):
         for agent_url in ("https://api.example.com", "http://192.0.2.10:3001", "http://127.0.0.1:3001/api"):

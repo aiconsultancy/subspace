@@ -17,12 +17,21 @@ API_SKILL_SOURCES = (
 SKILLS = ("fleet-rear-admiral", "fleet-captain", "fleet-crew", API_SKILL)
 
 
+API_SKILL_MISSING = ("The Subspace API skill agent-skills/opencode/subspace-tracker/SKILL.md is missing, and "
+                     "api.agentUrl needs it. Copy agent-skills/ beside subspace-installer/, or remove api.agentUrl.")
+
+
+def api_skill_path():
+    """Where the Subspace API skill is, or None when the installer has no copy."""
+    return next((path for path in API_SKILL_SOURCES if path.is_file()), None)
+
+
 def api_skill():
     """The Subspace API skill's text, the same file a person's local OpenCode installs."""
-    for path in API_SKILL_SOURCES:
-        if path.is_file():
-            return path.read_text()
-    raise ValueError("The Subspace API skill is missing from the fleet installer.")
+    path = api_skill_path()
+    if path is None:
+        raise ValueError(API_SKILL_MISSING)
+    return path.read_text()
 
 
 def default_permissions(role, references):
