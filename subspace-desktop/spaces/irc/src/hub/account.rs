@@ -1,7 +1,7 @@
 //! The settings the runtime follows: the saved networks, then the networks
 //! the signed-in account brings (see [`crate::managed`]).
 
-use gpui_kit::{App, Context};
+use gpui_kit::Context;
 
 use super::{Hub, Settings};
 
@@ -25,22 +25,8 @@ impl Hub {
         self.follow(self.effective(), cx);
     }
 
-    /// The account's networks for Settings, from the latest catalogue.
-    pub(crate) fn account_networks(&self, cx: &App) -> crate::managed::AccountNetworks {
-        self.managed
-            .shown(self.initiatives.catalog.read(cx).memberships())
-    }
-
-    /// Sets the account as a check would, for tests: `client` stands for
-    /// the API the account's networks ask for logins.
-    #[cfg(test)]
-    pub(crate) fn sign_in_for_test(
-        &mut self,
-        account: crate::managed::Account,
-        client: Option<std::sync::Arc<subspace_api_client::Client>>,
-        cx: &mut Context<Self>,
-    ) {
-        self.managed.settle_for_test(account, client);
-        self.reconcile(cx);
+    /// The account's networks for Settings.
+    pub(crate) fn account_networks(&self) -> crate::managed::AccountNetworks {
+        self.managed.shown()
     }
 }

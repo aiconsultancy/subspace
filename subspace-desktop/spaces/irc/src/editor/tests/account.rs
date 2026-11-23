@@ -14,7 +14,7 @@ use crate::managed::{AccountNetworks, Server};
 /// Signed in as ada, with the aurora fleet on `host`.
 fn account(host: &str) -> AccountNetworks {
     AccountNetworks {
-        username: Some("ada".into()),
+        account: Some("ada".into()),
         servers: vec![Server {
             endpoint: Endpoint {
                 host: host.into(),

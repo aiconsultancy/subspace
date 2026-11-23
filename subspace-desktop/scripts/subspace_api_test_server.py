@@ -1414,12 +1414,28 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
     def irc_credential(self):
-        """A fictional short-lived IRC sign-in, as an API with the feature issues one; 404 without it."""
+        """A fictional short-lived IRC sign-in for one server, as an API with the feature issues one.
+
+        The body names the server, `{"host": ..., "port": ...}`. Only a server one of the person's
+        fleets uses is vouched for; any other, and every server without --irc-credential, is 404.
+        """
         if not self.server.irc_credential:
             raise Problem(404, 'Route not found.')
+        payload = self.read_json()
+        payload = payload if isinstance(payload, dict) else {}
+        host, port = payload.get('host'), payload.get('port')
+        if not isinstance(host, str) or not host or type(port) is not int or not 0 < port < 65536:
+            raise Problem(400, 'Name the IRC server with a host and a port.')
+        if (host.lower(), port) not in self.fleet_servers():
+            raise Problem(404, 'No IRC sign-in for that server.')
         expires = datetime.now(timezone.utc) + timedelta(minutes=10)
         return 200, dict(account=IRC_ACCOUNT, password='sirc1.' + secrets.token_urlsafe(24),
                          expiresAt=expires.isoformat(timespec='seconds').replace('+00:00', 'Z'))
+
+    def fleet_servers(self):
+        """The IRC servers the fixture person's fleets use, as (host, port)."""
+        initiatives = [fleet_initiative(self.server.fleet_api_url)] if self.server.fixture.fleet else []
+        return {(item['fleet']['ircHost'].lower(), item['fleet']['ircPort']) for item in initiatives}
 
     def route(self, method):
         url = urlsplit(self.path)

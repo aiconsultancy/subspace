@@ -93,11 +93,11 @@ impl IrcSettings {
         let hub = crate::hub::entity(cx);
         let account = hub
             .as_ref()
-            .map(|hub| hub.read(cx).account_networks(cx))
+            .map(|hub| hub.read(cx).account_networks())
             .unwrap_or_default();
         subscriptions.extend(hub.map(|hub| {
             cx.observe(&hub, |editor, hub, cx| {
-                let account = hub.read(cx).account_networks(cx);
+                let account = hub.read(cx).account_networks();
                 editor.set_account(account, cx);
             })
         }));

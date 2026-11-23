@@ -457,25 +457,41 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(FIXTURE.FLEET_INITIATIVE['fleet']['fleetApiUrl'], 'http://127.0.0.1:18484')
 
     def test_irc_credentials_are_issued_only_when_asked_for(self):
-        status, value, _ = self.request('/me/irc-credential', body={}, method='POST')
+        fleet = {'host': 'irc.example.test', 'port': 6697}
+        status, value, _ = self.request('/me/irc-credential', body=fleet, method='POST')
         self.assertEqual(status, 404, value)
-        issuing = FIXTURE.FixtureServer(0, 'fixture-access', irc_credential=True)
+        issuing = FIXTURE.FixtureServer(0, 'fixture-access', fleet=True, irc_credential=True)
         worker = threading.Thread(target=issuing.serve_forever, daemon=True)
         worker.start()
+
+        def post(body, jwt='fixture-access'):
+            headers = {'Content-Type': 'application/json'}
+            if jwt:
+                headers['Authorization'] = f'Bearer {jwt}'
+            request = Request(issuing.origin + '/api/v1/me/irc-credential', data=json.dumps(body).encode(),
+                              method='POST', headers=headers)
+            try:
+                response = urlopen(request, timeout=3)
+            except HTTPError as error:
+                response = error
+            with response:
+                return response.status, json.load(response)
+
         try:
-            request = Request(issuing.origin + '/api/v1/me/irc-credential', data=b'{}', method='POST',
-                              headers={'Authorization': 'Bearer fixture-access', 'Content-Type': 'application/json'})
-            with urlopen(request, timeout=3) as response:
-                credential = json.load(response)
+            status, credential = post(fleet)
+            self.assertEqual(status, 200, credential)
             self.assertEqual(set(credential), {'account', 'password', 'expiresAt'})
             self.assertEqual(credential['account'], 'ada')
             self.assertTrue(credential['password'].startswith('sirc1.'))
             expires = datetime.fromisoformat(credential['expiresAt'].replace('Z', '+00:00'))
             self.assertGreater(expires, datetime.now(expires.tzinfo))
-            unauthorised = Request(issuing.origin + '/api/v1/me/irc-credential', data=b'{}', method='POST')
-            with self.assertRaises(HTTPError) as refused:
-                urlopen(unauthorised, timeout=3)
-            self.assertEqual(refused.exception.code, 401)
+            self.assertEqual(post({'host': 'IRC.example.test', 'port': 6697})[0], 200, 'host ignores case')
+            self.assertEqual(post({'host': 'irc.example.org', 'port': 6697})[0], 404, 'not a fleet server')
+            self.assertEqual(post({'host': 'irc.example.test', 'port': 6667})[0], 404, 'another port')
+            for bad in ({}, {'host': 'irc.example.test'}, {'host': '', 'port': 6697},
+                        {'host': 'irc.example.test', 'port': 0}, {'host': 'irc.example.test', 'port': '6697'}):
+                self.assertEqual(post(bad)[0], 400, bad)
+            self.assertEqual(post(fleet, jwt=None)[0], 401)
         finally:
             issuing.shutdown()
             issuing.server_close()

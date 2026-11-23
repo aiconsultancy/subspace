@@ -107,7 +107,7 @@ done
 grep -Eq '^github [1-5][0-9][0-9]$' "$fixture/open/servers.txt" || fail "the GitHub fixture did not answer"
 grep -Eq '^subspace-api 200$' "$fixture/open/servers.txt" || fail "the Subspace API fixture did not answer"
 grep -Eq '^decisions 403$' "$fixture/open/servers.txt" || fail "the Decisions fixture scenario was not applied"
-grep -Eq '^irc-credential 200$' "$fixture/open/servers.txt" || fail "the IRC credential fixture was not on"
+grep -Eq '^irc-credential 400$' "$fixture/open/servers.txt" || fail "the IRC credential fixture was not on"
 grep -Eq '^oauth 200$' "$fixture/open/servers.txt" || fail "the sign-in fixture did not answer"
 grep -Eq '^fleet-api 200$' "$fixture/open/servers.txt" || fail "the Fleet API fixture did not answer"
 jq -e '.webBoards["fleet-console"] | (.settings.endpoint | test("^http://127\\.0\\.0\\.1:[0-9]+$")) and .secrets.token == "fixture-fleet"' \

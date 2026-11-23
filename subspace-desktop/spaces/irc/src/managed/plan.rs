@@ -5,7 +5,6 @@
 use subspace_api_client::model::MemberInitiative;
 use subspace_client_irc::{CredentialSource, NetworkConfig, NetworkId, Sasl};
 
-use super::SignedIn;
 use super::device::sasl_username;
 use crate::editor::ids;
 use crate::initiatives::Endpoint;
@@ -29,9 +28,11 @@ impl Server {
     }
 }
 
-/// The distinct IRC servers of `initiatives`' fleets, in the API's order.
-/// Only a server a sign-in can be sent to safely counts: over TLS, or on
-/// this computer. A plaintext server elsewhere is left to a saved network.
+/// The distinct IRC servers of `initiatives`' fleets, in the API's order,
+/// each with a valid host and port. Only a server a sign-in can be sent to
+/// safely counts: over TLS, or named as this computer, which the IRC client
+/// checks again against the address it reaches before it signs in. A
+/// plaintext server elsewhere is left to a saved network.
 pub(crate) fn servers(initiatives: &[MemberInitiative]) -> Vec<Server> {
     let mut servers: Vec<Server> = Vec::new();
     for initiative in initiatives {
@@ -67,7 +68,7 @@ pub(crate) fn servers(initiatives: &[MemberInitiative]) -> Vec<Server> {
     servers
 }
 
-fn same_endpoint(one: &Endpoint, other: &Endpoint) -> bool {
+pub(crate) fn same_endpoint(one: &Endpoint, other: &Endpoint) -> bool {
     one.host.eq_ignore_ascii_case(&other.host) && one.port == other.port && one.tls == other.tls
 }
 
@@ -87,43 +88,43 @@ pub(crate) fn saved_on<'a>(
         .find(|network| same_server(&network.host, network.port, server))
 }
 
-/// The account's networks: one for each of `servers` that no `saved`
-/// network connects to, signed in as `person` with logins from `source`.
+/// One server the API vouches for: the account name its login was issued
+/// for, and the source of that server's logins.
+pub(crate) struct Vouched<'a> {
+    pub server: &'a Server,
+    pub account: &'a str,
+    pub source: CredentialSource,
+}
+
+/// The account's networks: one for each `vouched` server that no `saved`
+/// network connects to, signing in from `device` with that server's own
+/// source.
 pub(crate) fn networks(
-    servers: &[Server],
+    vouched: Vec<Vouched<'_>>,
     saved: &[NetworkConfig],
-    person: &SignedIn,
-    login: (&CredentialSource, &str),
+    device: &str,
 ) -> Vec<NetworkConfig> {
     let mut taken: Vec<String> = saved.iter().map(|network| network.id.0.clone()).collect();
-    servers
-        .iter()
-        .filter(|server| saved_on(saved, server).is_none())
-        .map(|server| {
-            let id = network_id(person, &server.endpoint, &taken);
+    vouched
+        .into_iter()
+        .filter(|vouched| saved_on(saved, vouched.server).is_none())
+        .map(|vouched| {
+            let id = network_id(vouched.account, &vouched.server.endpoint, &taken);
             taken.push(id.clone());
-            network(server, NetworkId(id), person, login)
+            network(&vouched, NetworkId(id), device)
         })
         .collect()
 }
 
-/// A stable id from the account and the server, so the network keeps its
-/// stored messages across runs, apart from other accounts' and from the
-/// saved networks' ids.
-fn network_id(person: &SignedIn, endpoint: &Endpoint, taken: &[String]) -> String {
-    let base = ids::slug(&format!(
-        "{} {} {}",
-        person.account, endpoint.host, endpoint.port
-    ));
+/// A stable id from the account and the server, apart from the saved
+/// networks' ids.
+fn network_id(account: &str, endpoint: &Endpoint, taken: &[String]) -> String {
+    let base = ids::slug(&format!("{account} {} {}", endpoint.host, endpoint.port));
     ids::unique_id(&base, taken)
 }
 
-fn network(
-    server: &Server,
-    id: NetworkId,
-    person: &SignedIn,
-    (source, device): (&CredentialSource, &str),
-) -> NetworkConfig {
+fn network(vouched: &Vouched<'_>, id: NetworkId, device: &str) -> NetworkConfig {
+    let server = vouched.server;
     NetworkConfig {
         id,
         name: server.name(),
@@ -131,17 +132,17 @@ fn network(
         port: server.endpoint.port,
         tls: server.endpoint.tls,
         accept_invalid_certs: false,
-        nickname: person.account.clone(),
+        nickname: vouched.account.to_owned(),
         alt_nicks: Vec::new(),
         username: String::new(),
         realname: String::new(),
         password: String::new(),
         sasl: Some(Sasl {
-            username: sasl_username(&person.account, device),
+            username: sasl_username(vouched.account, device),
             password: String::new(),
             password_file: None,
             external: false,
-            credential: Some(source.clone()),
+            credential: Some(vouched.source.clone()),
         }),
         channels: Vec::new(),
         auto_connect: true,
@@ -158,15 +159,19 @@ mod tests {
     use subspace_api_client::model::MemberInitiative;
     use subspace_client_irc::{CredentialSource, NetworkConfig};
 
-    use super::{networks, saved_on, servers};
+    use super::{Server, Vouched, networks, saved_on, servers};
     use crate::fixtures::config;
-    use crate::managed::SignedIn;
 
-    fn ada() -> SignedIn {
-        SignedIn {
-            username: "ada".into(),
-            account: "ada".into(),
-        }
+    /// Each of `servers`, vouched for as `ada`.
+    fn vouched(servers: &[Server]) -> Vec<Vouched<'_>> {
+        servers
+            .iter()
+            .map(|server| Vouched {
+                server,
+                account: "ada",
+                source: source(),
+            })
+            .collect()
     }
 
     fn source() -> CredentialSource {
@@ -242,10 +247,9 @@ mod tests {
             fleet("aurora", "Aurora", "irc.example.com", 6697, true),
         )]);
         let made = networks(
-            &servers(&initiatives),
+            vouched(&servers(&initiatives)),
             &[config()],
-            &ada(),
-            (&source(), "0123456789abcdef"),
+            "0123456789abcdef",
         );
         assert_eq!(made.len(), 1);
         let network = &made[0];
@@ -286,7 +290,7 @@ mod tests {
         manual.host = "IRC.example.com ".trim().into();
         manual.port = 6697;
         manual.tls = false;
-        let made = networks(&found, &[manual.clone()], &ada(), (&source(), "d"));
+        let made = networks(vouched(&found), &[manual.clone()], "d");
         assert_eq!(made.len(), 1, "no second connection to the same server");
         assert_eq!(made[0].host, "irc.example.org");
         assert_eq!(
@@ -303,7 +307,7 @@ mod tests {
         )]);
         let mut clash = config();
         clash.id = subspace_client_irc::NetworkId("ada-irc-example-com-6697".into());
-        let made = networks(&servers(&initiatives), &[clash], &ada(), (&source(), "d"));
+        let made = networks(vouched(&servers(&initiatives)), &[clash], "d");
         assert_eq!(made[0].id.0, "ada-irc-example-com-6697-2");
     }
 }

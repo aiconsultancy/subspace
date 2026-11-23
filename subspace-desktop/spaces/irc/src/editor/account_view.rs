@@ -48,7 +48,7 @@ impl Account {
     pub fn server(&self, form: &NetworkForm, cx: &App) -> Option<&Server> {
         let text = form.text(cx);
         let port = parse_port(&text.port)?;
-        self.networks.username.as_ref()?;
+        self.networks.account.as_ref()?;
         self.networks
             .servers
             .iter()
@@ -62,7 +62,7 @@ pub(super) fn section(
     tokens: &Tokens,
     cx: &mut Context<IrcSettings>,
 ) -> Option<AnyElement> {
-    let username = editor.account.networks.username.as_deref()?;
+    let username = editor.account.networks.account.as_deref()?;
     Some(
         v_flex()
             .id("irc-account-networks")
@@ -98,7 +98,7 @@ fn server_row(
     tokens: &Tokens,
     cx: &mut Context<IrcSettings>,
 ) -> AnyElement {
-    let username = editor.account.networks.username.clone().unwrap_or_default();
+    let username = editor.account.networks.account.clone().unwrap_or_default();
     let manual = editor
         .networks
         .iter()

@@ -1,13 +1,17 @@
 //! Networks the signed-in account brings: one for each IRC server its
-//! fleets use, signed in with a short-lived login the Subspace API issues
-//! at every connect, so nobody types IRC settings. They are derived state:
-//! rebuilt when the account, its fleets or the saved networks change, never
-//! written to `irc/config.json`, and gone on sign-out. A saved network on
-//! the same server is kept instead, and Settings offers to switch.
+//! fleets use that the Subspace API vouches for, each signed in with a
+//! short-lived login issued for that server alone, so nobody types IRC
+//! settings. They are derived state: rebuilt when the account, its fleets
+//! or the saved networks change, never written to `irc/config.json`, and
+//! gone on sign-out. A saved network on the same server is kept instead,
+//! and Settings offers to switch.
 
 mod account;
 mod device;
+mod env;
+mod login;
 mod plan;
+mod servers;
 mod source;
 #[cfg(test)]
 mod tests;
@@ -16,33 +20,43 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui_kit::{App, AppContext as _, Context};
-use subspace_api_client::Client;
 use subspace_api_client::initiatives::Catalog;
+use subspace_api_client::model::MemberInitiative;
 use subspace_client_irc::NetworkConfig;
 
-pub(crate) use account::{Account, SignedIn};
+pub(crate) use account::Account;
 pub(crate) use plan::{Server, same_server};
 
 use crate::hub::Hub;
+use crate::initiatives::Endpoint;
+use env::Env;
+use source::Binding;
 
 /// The account's side of the hub: who is signed in, this install's
-/// device, and the networks last derived.
+/// device, the account's servers and the networks last derived.
 pub(crate) struct Managed {
+    env: Arc<dyn Env>,
     account: Account,
-    /// The client the account was checked with, bound to that account.
-    client: Option<Arc<Client>>,
+    /// The verified account the networks sign in as, while signed in.
+    binding: Option<Arc<Binding>>,
+    /// The account generation the last check began in, once one ran.
+    checked: Option<Option<u64>>,
     device: String,
     schedule: account::Schedule,
+    servers: servers::Servers,
+    /// Changes when the account is forgotten, so late answers are dropped.
+    epoch: u64,
     networks: Vec<NetworkConfig>,
 }
 
 /// What Settings shows of the account's networks.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct AccountNetworks {
-    /// The signed-in username, while the account brings networks.
-    pub username: Option<String>,
-    /// Every server of the account's fleets a login can go to, including
-    /// those a saved network connects to instead.
+    /// The account name the API issued logins for, while the account
+    /// brings networks.
+    pub account: Option<String>,
+    /// Every server the API vouches for, including those a saved network
+    /// connects to instead.
     pub servers: Vec<Server>,
 }
 
@@ -57,10 +71,14 @@ impl Default for Managed {
 impl Managed {
     pub(crate) fn new(device: String) -> Self {
         Self {
+            env: Arc::new(env::Native),
             account: Account::Unknown,
-            client: None,
+            binding: None,
+            checked: None,
             device,
             schedule: account::Schedule::default(),
+            servers: servers::Servers::default(),
+            epoch: 0,
             networks: Vec::new(),
         }
     }
@@ -70,55 +88,42 @@ impl Managed {
         &self.networks
     }
 
-    /// Derives the account's networks again among `saved` ones, for the
-    /// fleets in `initiatives`.
-    pub(crate) fn rederive(
-        &mut self,
-        saved: &[NetworkConfig],
-        initiatives: &[subspace_api_client::model::MemberInitiative],
-    ) {
-        self.networks = self.derive(saved, initiatives);
+    /// Follows the fleets in `initiatives` and derives the account's
+    /// networks again among `saved` ones.
+    pub(crate) fn rederive(&mut self, saved: &[NetworkConfig], initiatives: &[MemberInitiative]) {
+        let Some(binding) = self.binding.clone() else {
+            self.servers.clear();
+            self.networks.clear();
+            return;
+        };
+        self.servers.follow(plan::servers(initiatives));
+        let vouched = self
+            .servers
+            .vouched()
+            .map(|(entry, account)| plan::Vouched {
+                server: &entry.server,
+                account,
+                source: source::source(&binding, &entry.login, &self.device),
+            })
+            .collect();
+        self.networks = plan::networks(vouched, saved, &self.device);
     }
 
-    /// What Settings shows for the fleets in `initiatives`.
-    pub(crate) fn shown(
-        &self,
-        initiatives: &[subspace_api_client::model::MemberInitiative],
-    ) -> AccountNetworks {
-        let Account::SignedIn(person) = &self.account else {
-            return AccountNetworks::default();
-        };
-        let servers = plan::servers(initiatives);
+    /// What Settings shows.
+    pub(crate) fn shown(&self) -> AccountNetworks {
+        let servers: Vec<Server> = self
+            .servers
+            .vouched()
+            .map(|(entry, _)| entry.server.clone())
+            .collect();
         AccountNetworks {
-            username: (!servers.is_empty()).then(|| person.username.clone()),
+            account: self
+                .servers
+                .vouched()
+                .map(|(_, account)| account.to_owned())
+                .next(),
             servers,
         }
-    }
-
-    /// Sets the account as a check would, for tests: `client` stands for
-    /// the API the account's networks ask for logins.
-    #[cfg(test)]
-    pub(crate) fn settle_for_test(&mut self, account: Account, client: Option<Arc<Client>>) {
-        self.client = client;
-        self.account = account;
-        self.schedule.settle();
-    }
-
-    fn derive(
-        &self,
-        saved: &[NetworkConfig],
-        initiatives: &[subspace_api_client::model::MemberInitiative],
-    ) -> Vec<NetworkConfig> {
-        let (Account::SignedIn(person), Some(client)) = (&self.account, &self.client) else {
-            return Vec::new();
-        };
-        let login = source::source(Arc::clone(client), &person.account, &self.device);
-        plan::networks(
-            &plan::servers(initiatives),
-            saved,
-            person,
-            (&login, &self.device),
-        )
     }
 
     /// Whether the signed-in account is no longer the one checked, looked
@@ -126,38 +131,63 @@ impl Managed {
     fn account_changed(&mut self, now: Instant) -> bool {
         self.schedule.look(now)
             && self
-                .client
-                .as_ref()
-                .is_some_and(|client| client.account_changed())
+                .checked
+                .is_some_and(|generation| generation != self.env.generation())
     }
 
-    /// Forgets the account after it changed, so the next tick checks again.
+    /// Forgets the account after it changed, so the next tick checks again
+    /// and nothing obtained for it is offered any more.
     fn forget(&mut self) {
         self.account = Account::Unknown;
-        self.client = None;
+        self.binding = None;
+        self.checked = None;
+        self.servers.clear();
+        self.epoch = self.epoch.wrapping_add(1);
         self.schedule.restart();
     }
 
     /// Takes a finished check: the account it showed, or a later retry.
+    /// True when the account changed.
     fn finish(&mut self, checked: account::Checked, now: Instant) -> bool {
-        if account::stale(&checked) {
+        if checked.generation != self.env.generation() {
             // Another account signed in or out meanwhile: check again.
             self.schedule.running = false;
             return false;
         }
+        self.checked = Some(checked.generation);
         match account::outcome(checked.result) {
-            Some(account) => {
+            account::Outcome::Settled(account) => {
                 self.schedule.settle();
-                self.client = checked.client;
+                self.binding = match (&account, checked.client) {
+                    (Account::SignedIn(person), Some(client)) => Some(Arc::new(Binding {
+                        env: Arc::clone(&self.env),
+                        client,
+                        generation: checked.generation,
+                        user_id: person.user_id.clone(),
+                    })),
+                    _ => None,
+                };
                 let changed = self.account != account;
                 self.account = account;
                 changed
             }
-            None => {
-                self.schedule.failed(now);
+            account::Outcome::Retry { cap } => {
+                self.schedule.failed(now, cap);
                 false
             }
         }
+    }
+
+    /// Compares the signed-in account again at the next tick, for tests.
+    #[cfg(test)]
+    pub(crate) fn look_again_for_test(&mut self) {
+        self.schedule.look_again();
+    }
+
+    /// Uses `env` in place of the app's account and API, for tests.
+    #[cfg(test)]
+    pub(crate) fn use_env_for_test(&mut self, env: Arc<dyn Env>) {
+        self.env = env;
     }
 }
 
@@ -167,7 +197,7 @@ pub(crate) fn device(cx: &mut App) -> String {
 }
 
 /// On the hub's timer: forget the account once another signs in or out,
-/// and check it when due.
+/// check it when due, and ask about each server when its probe is due.
 pub(crate) fn tick(hub: &mut Hub, cx: &mut Context<Hub>) {
     let now = Instant::now();
     if hub.managed.account_changed(now) {
@@ -177,13 +207,17 @@ pub(crate) fn tick(hub: &mut Hub, cx: &mut Context<Hub>) {
     if hub.managed.schedule.due(now) {
         begin(hub, cx);
     }
+    probe(hub, now, cx);
 }
 
 /// Checks the account on a background task.
 fn begin(hub: &mut Hub, cx: &mut Context<Hub>) {
     hub.managed.schedule.running = true;
+    let env = Arc::clone(&hub.managed.env);
     cx.spawn(async move |hub, cx| {
-        let checked = cx.background_spawn(async move { account::check() }).await;
+        let checked = cx
+            .background_spawn(async move { account::check(env.as_ref()) })
+            .await;
         let _ = hub.update(cx, |hub, cx| finish(hub, checked, cx));
     })
     .detach();
@@ -202,4 +236,37 @@ fn finish(hub: &mut Hub, checked: account::Checked, cx: &mut Context<Hub>) {
     }
     hub.reconcile(cx);
     cx.notify();
+}
+
+/// Asks, on background tasks, for the login of each server whose probe is
+/// due: whether the API vouches for it, and the login its connection uses.
+fn probe(hub: &mut Hub, now: Instant, cx: &mut Context<Hub>) {
+    let Some(binding) = hub.managed.binding.clone() else {
+        return;
+    };
+    let epoch = hub.managed.epoch;
+    for (endpoint, login) in hub.managed.servers.due(now) {
+        let client = Arc::clone(&binding.client);
+        cx.spawn(async move |hub, cx| {
+            let answer = cx
+                .background_spawn(async move { login.login(&client).map(|login| login.account) })
+                .await;
+            let _ = hub.update(cx, |hub, cx| answered(hub, (epoch, &endpoint), answer, cx));
+        })
+        .detach();
+    }
+}
+
+/// Takes a probe's answer for `endpoint`, unless the account changed since.
+fn answered(
+    hub: &mut Hub,
+    (epoch, endpoint): (u64, &Endpoint),
+    answer: Result<String, login::Unavailable>,
+    cx: &mut Context<Hub>,
+) {
+    let current = hub.managed.epoch == epoch;
+    if current && hub.managed.servers.answer(endpoint, answer, Instant::now()) {
+        hub.reconcile(cx);
+        cx.notify();
+    }
 }

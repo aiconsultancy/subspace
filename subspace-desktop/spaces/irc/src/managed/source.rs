@@ -1,7 +1,7 @@
-//! The credential source of the account's networks: at each connect and
-//! reconnect, the IRC runtime asks the Subspace API for a short-lived
-//! login on one of its blocking threads. The password goes straight into
-//! the session's memory; nothing here keeps, shows or logs it.
+//! The credential source of one account network: at each connect and
+//! reconnect, the IRC runtime asks for that server's login on one of its
+//! blocking threads. The login is the one issued for that server alone,
+//! kept until shortly before it expires; nothing here shows or logs it.
 
 use std::sync::Arc;
 
@@ -9,86 +9,106 @@ use subspace_api_client::{Client, Error};
 use subspace_client_irc::{CredentialSource, IssuedLogin, IssuedPassword};
 
 use super::device::sasl_username;
+use super::env::Env;
+use super::login::{ServerLogin, Unavailable};
 
-/// The source for `account` through `client`, which stays bound to the
-/// account it was made for: after a sign-out or a switch it is refused.
-pub(crate) fn source(client: Arc<Client>, account: &str, device: &str) -> CredentialSource {
-    let key = format!("{} {account}", client.api_origin());
-    let device = device.to_owned();
-    CredentialSource::new(key, move || issue(&client, &device))
+/// The account a check verified, with the client it used and the account
+/// generation it began in. A source refuses once that generation is over.
+pub(crate) struct Binding {
+    pub env: Arc<dyn Env>,
+    pub client: Arc<Client>,
+    pub generation: Option<u64>,
+    /// The API's stable ID of the verified person.
+    pub user_id: String,
 }
 
-fn issue(client: &Client, device: &str) -> Result<IssuedLogin, String> {
-    let credential = client.irc_credential().map_err(reason)?;
+impl Binding {
+    /// Whether the account it was made for is still the one signed in.
+    pub fn current(&self) -> bool {
+        self.env.generation() == self.generation
+    }
+}
+
+/// The source of the network on the server `login` belongs to.
+pub(crate) fn source(
+    binding: &Arc<Binding>,
+    login: &Arc<ServerLogin>,
+    device: &str,
+) -> CredentialSource {
+    let key = format!(
+        "{} {} {}",
+        binding.client.api_origin(),
+        binding.user_id,
+        login.server()
+    );
+    let (binding, issuing, device) = (Arc::clone(binding), Arc::clone(login), device.to_owned());
+    let refused = Arc::clone(login);
+    CredentialSource::new(key, move || issue(&binding, &issuing, &device))
+        .on_refused(move || refused.forget())
+}
+
+fn issue(binding: &Binding, login: &ServerLogin, device: &str) -> Result<IssuedLogin, String> {
+    if !binding.current() {
+        return Err(reason(Unavailable::Api(Error::SignInNeeded)));
+    }
+    let login = login.login(&binding.client).map_err(reason)?;
     Ok(IssuedLogin {
-        username: sasl_username(&credential.account, device),
-        nickname: credential.account,
-        password: IssuedPassword::new(credential.password.expose()),
+        username: sasl_username(&login.account, device),
+        nickname: login.account,
+        password: IssuedPassword::new(login.password.expose()),
     })
 }
 
 /// Why no login was issued, shown with the retry: never a server's words.
-pub(crate) fn reason(error: Error) -> String {
+pub(crate) fn reason(unavailable: Unavailable) -> String {
     let service = subspace_api_client::service_name();
-    match error {
-        Error::Network => format!("{service} could not be reached for an IRC sign-in"),
-        Error::SignInNeeded | Error::Forbidden => {
+    match unavailable {
+        Unavailable::Api(Error::Network) => {
+            format!("{service} could not be reached for an IRC sign-in")
+        }
+        Unavailable::Api(Error::SignInNeeded | Error::Forbidden) => {
             "Sign in under Settings › Account to connect".into()
         }
-        Error::NotFound => format!("{service} does not issue IRC sign-ins"),
-        _ => format!("{service} could not issue an IRC sign-in"),
+        Unavailable::Api(Error::NotFound) => {
+            format!("{service} does not issue sign-ins for this IRC server")
+        }
+        Unavailable::Api(_) => format!("{service} could not issue an IRC sign-in"),
+        Unavailable::Expired => format!("{service} issued an IRC sign-in that had expired"),
+        Unavailable::Waiting => format!("Waiting before asking {service} for an IRC sign-in"),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use subspace_api_client::Error;
 
-    use subspace_api_client::{Client, Error};
-    use subspace_framework::client_test_support::Mock;
-
-    use super::{reason, source};
-
-    #[test]
-    fn each_connect_asks_the_api_and_signs_in_from_this_device() {
-        let mock = Mock::new(|_| {
-            (
-                200,
-                r#"{"account":"ada","password":"sirc1.xxxxxxxx","expiresAt":"2026-11-23T21:10:00Z"}"#
-                    .into(),
-            )
-        });
-        let client = Client::loopback(&format!("{}/api", mock.base_url()), None).unwrap();
-        let login = source(Arc::new(client), "ada", "0123456789abcdef");
-        let source = login.clone();
-        let issued =
-            std::thread::spawn(move || subspace_client_irc::test_support::fetch(&source).unwrap())
-                .join()
-                .unwrap();
-        assert_eq!(issued.nickname, "ada");
-        assert_eq!(issued.username, "ada@0123456789abcdef");
-        assert_eq!(issued.password.expose(), "sirc1.xxxxxxxx");
-        assert_eq!(mock.requests()[0].path, "/api/v1/me/irc-credential");
-        assert!(login.key().ends_with(" ada"));
-    }
+    use super::{Unavailable, reason};
 
     #[test]
     fn a_refusal_reads_as_what_to_do_and_names_no_secret() {
         assert_eq!(
-            reason(Error::Network),
+            reason(Unavailable::Api(Error::Network)),
             "Subspace API could not be reached for an IRC sign-in"
         );
         assert_eq!(
-            reason(Error::SignInNeeded),
+            reason(Unavailable::Api(Error::SignInNeeded)),
             "Sign in under Settings › Account to connect"
         );
         assert_eq!(
-            reason(Error::NotFound),
-            "Subspace API does not issue IRC sign-ins"
+            reason(Unavailable::Api(Error::NotFound)),
+            "Subspace API does not issue sign-ins for this IRC server"
         );
         assert_eq!(
-            reason(Error::UnexpectedStatus(500)),
+            reason(Unavailable::Api(Error::UnexpectedStatus(500))),
             "Subspace API could not issue an IRC sign-in"
+        );
+        assert_eq!(
+            reason(Unavailable::Expired),
+            "Subspace API issued an IRC sign-in that had expired"
+        );
+        assert_eq!(
+            reason(Unavailable::Waiting),
+            "Waiting before asking Subspace API for an IRC sign-in"
         );
     }
 }

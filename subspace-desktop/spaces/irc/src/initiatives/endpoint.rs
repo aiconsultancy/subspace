@@ -10,6 +10,9 @@ pub(crate) const ENDPOINT_ENV: &str = "SUBSPACE_IRC_ENDPOINT";
 /// The local development server: Ergo's plain listener on loopback.
 const DEFAULT_ENDPOINT: &str = "irc://127.0.0.1:6667";
 const PLAIN_PORT: u16 = 6667;
+/// The longest DNS label and name, in bytes.
+const LABEL_MAX: usize = 63;
+const NAME_MAX: usize = 253;
 const TLS_PORT: u16 = 6697;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,10 +37,9 @@ impl Endpoint {
             }
             _ => (rest, if tls { TLS_PORT } else { PLAIN_PORT }),
         };
-        let host = host.trim_start_matches('[').trim_end_matches(']');
-        (!host.is_empty() && !host.contains(['/', '@', ' '])).then(|| Self {
-            host: host.to_owned(),
-            port,
+        Some(Self {
+            host: canonical_host(host)?,
+            port: valid_port(port)?,
             tls,
         })
     }
@@ -55,11 +57,13 @@ impl Endpoint {
             .map_or_else(|| Some(default.clone()), Self::from_fleet)
     }
 
+    /// The initiative's fleet server, when the API names a valid one: a
+    /// host that is a DNS name or an IP literal, and a port from 1 to 65535.
     pub(crate) fn from_fleet(initiative: &MemberInitiative) -> Option<Self> {
         let fleet = initiative.fleet.as_ref()?;
         Some(Self {
-            host: fleet.irc_host.clone().filter(|host| !host.is_empty())?,
-            port: fleet.irc_port?,
+            host: canonical_host(fleet.irc_host.as_deref()?)?,
+            port: valid_port(fleet.irc_port?)?,
             tls: fleet.irc_tls.unwrap_or(false),
         })
     }
@@ -103,6 +107,50 @@ fn resolve(value: Option<&str>) -> Endpoint {
             port: PLAIN_PORT,
             tls: false,
         })
+}
+
+/// `host` as one spelling: a DNS name in lower case without a final dot,
+/// or an IP literal as Rust writes it (IPv6 without brackets). `None` for
+/// anything else, such as whitespace, control characters, `/`, `@` or a
+/// port suffix.
+pub(crate) fn canonical_host(host: &str) -> Option<String> {
+    let bracketed = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'));
+    if let Some(inner) = bracketed {
+        return inner
+            .parse::<std::net::Ipv6Addr>()
+            .ok()
+            .map(|ip| ip.to_string());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return Some(ip.to_string());
+    }
+    let name = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+    dns_name(&name).then_some(name)
+}
+
+/// Letters, digits and inner hyphens in labels of 1 to 63 bytes, at most
+/// 253 bytes in all, and not all digits and dots, which would be a
+/// malformed IPv4 address.
+fn dns_name(name: &str) -> bool {
+    let label = |label: &str| {
+        (1..=LABEL_MAX).contains(&label.len())
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+    };
+    (1..=NAME_MAX).contains(&name.len())
+        && name.split('.').all(label)
+        && !name
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'.')
+}
+
+fn valid_port(port: u16) -> Option<u16> {
+    (port != 0).then_some(port)
 }
 
 fn loopback(host: &str) -> bool {
@@ -178,6 +226,39 @@ mod tests {
         );
         let no_server = initiative(r#"{"id":"f","slug":"blue","name":"Blue"}"#);
         assert_eq!(Endpoint::for_initiative(Some(&no_server), &default), None);
+    }
+
+    #[test]
+    fn a_fleet_server_is_used_only_with_a_valid_host_and_port() {
+        let fleet = |host: &str, port: u16| {
+            Endpoint::from_fleet(&initiative(&format!(
+                r#"{{"id":"f","ircHost":{},"ircPort":{port},"ircTls":true}}"#,
+                serde_json::json!(host)
+            )))
+            .map(|endpoint| endpoint.host)
+        };
+        assert_eq!(
+            fleet("IRC.Example.com.", 6697).as_deref(),
+            Some("irc.example.com")
+        );
+        assert_eq!(fleet("[0:0::1]", 6697).as_deref(), Some("::1"));
+        assert_eq!(fleet("2001:DB8::1", 6697).as_deref(), Some("2001:db8::1"));
+        assert_eq!(fleet("192.0.2.7", 6697).as_deref(), Some("192.0.2.7"));
+        for bad in [
+            "",
+            " irc.example.com",
+            "irc.example.com:6697",
+            "irc.example.com/x",
+            "ada@irc.example.com",
+            "irc\u{7}.example.com",
+            "-irc.example.com",
+            "irc..example.com",
+            "999.1.1.1",
+            "[irc.example.com]",
+        ] {
+            assert_eq!(fleet(bad, 6697), None, "{bad:?}");
+        }
+        assert_eq!(fleet("irc.example.com", 0), None, "port 0");
     }
 
     #[test]

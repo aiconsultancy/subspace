@@ -1,99 +1,101 @@
-//! Who is signed in, as far as IRC goes: whether the Subspace API knows a
-//! username for them and issues IRC sign-ins. Checked once per account,
-//! and again with backoff after a check that could not reach the API.
+//! Who is signed in, as far as IRC goes: the Subspace API's verified user
+//! and the username it reports, which is also their IRC account name.
+//! Checked once per account; a check that cannot reach the API, or that
+//! the API refuses, is tried again with backoff, and only an API that has
+//! no username for the person, or no `/me`, settles that no account
+//! network can exist.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use subspace_api_client::{Client, Error};
 
-/// The first wait before checking again after the API could not be
-/// reached; each further failure doubles it, up to the maximum.
+use super::env::Env;
+
+/// The first wait before checking again; each further failure doubles it,
+/// up to the cap.
 const RETRY_FIRST: Duration = Duration::from_secs(5);
+/// The cap while the API cannot be reached or answers oddly.
 const RETRY_MAX: Duration = Duration::from_secs(300);
-const RETRY_MAX_DOUBLINGS: u32 = 6;
+/// The cap while the API refuses the account, as when nobody is signed in.
+const REFUSED_MAX: Duration = Duration::from_secs(30 * 60);
+const RETRY_MAX_DOUBLINGS: u32 = 9;
 /// How often the signed-in account is compared with the one checked.
 const LOOK_EVERY: Duration = Duration::from_secs(1);
 
-/// What the API says of the signed-in person and IRC.
+/// What the API says of the signed-in person.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Account {
     /// Not checked yet, or the account just changed.
     #[default]
     Unknown,
-    /// Signed in, with a username, and the API issues IRC sign-ins.
-    SignedIn(SignedIn),
-    /// Signed out, or the API has no username for them or issues no IRC
-    /// sign-ins: no network comes from the account.
+    /// Signed in, with a username.
+    SignedIn(Person),
+    /// The API has no username for them: no network comes from the
+    /// account.
     Without,
 }
 
-/// A person the API issues IRC sign-ins for.
+/// The signed-in person, as the API verified them.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SignedIn {
-    /// The username `GET /me` reports, shown before connecting.
+pub(crate) struct Person {
+    /// The API's stable user ID.
+    pub user_id: String,
+    /// The username `GET /me` reports, shown before a server confirms it.
     pub username: String,
-    /// The IRC account name the credential route answered, which is the
-    /// nick. The one issued at each connect is the one used.
-    pub account: String,
 }
 
 /// What one check found, with the client it used, which stays bound to
-/// the account it was made for.
+/// the account it was made for, and the account generation it began in.
 pub(crate) struct Checked {
     pub client: Option<Arc<Client>>,
-    pub result: Result<Option<SignedIn>, Error>,
+    pub generation: Option<u64>,
+    pub result: Result<Option<Person>, Error>,
 }
 
-/// Asks the API who is signed in and whether it issues IRC sign-ins. The
-/// credential asked for here is dropped at once. Blocking.
-pub(crate) fn check() -> Checked {
-    match Client::new() {
-        Ok(client) => {
-            let client = Arc::new(client);
-            Checked {
-                result: signed_in(&client),
-                client: Some(client),
-            }
-        }
-        Err(error) => Checked {
-            client: None,
-            result: Err(error),
-        },
-    }
+/// What to do with a check's answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    Settled(Account),
+    /// Check again after a growing wait, up to `cap`.
+    Retry {
+        cap: Duration,
+    },
 }
 
-fn signed_in(client: &Client) -> Result<Option<SignedIn>, Error> {
-    let Some(username) = client.me()?.username.filter(|name| !name.is_empty()) else {
-        return Ok(None);
+/// Asks the API who is signed in. Blocking.
+pub(crate) fn check(env: &dyn Env) -> Checked {
+    let generation = env.generation();
+    let client = env.client().map(Arc::new);
+    let result = match &client {
+        Ok(client) => person(client),
+        Err(error) => Err(*error),
     };
-    match client.irc_credential() {
-        Ok(credential) => Ok(Some(SignedIn {
-            username,
-            account: credential.account,
-        })),
-        Err(Error::NotFound) => Ok(None),
-        Err(error) => Err(error),
+    Checked {
+        client: client.ok(),
+        generation,
+        result,
     }
 }
 
-/// Whether the account changed while `checked` ran, so its answer is for
-/// an account no longer signed in.
-pub(crate) fn stale(checked: &Checked) -> bool {
-    checked
-        .client
-        .as_ref()
-        .is_some_and(|client| client.account_changed())
+fn person(client: &Client) -> Result<Option<Person>, Error> {
+    let me = client.me()?;
+    Ok(me
+        .username
+        .filter(|name| !name.is_empty())
+        .map(|username| Person {
+            user_id: me.user_id,
+            username,
+        }))
 }
 
-/// The account a check's `result` shows, or `None` when the API could not
-/// be reached or answered oddly, so it is checked again later.
-pub(crate) fn outcome(result: Result<Option<SignedIn>, Error>) -> Option<Account> {
+/// What a check's `result` means.
+pub(crate) fn outcome(result: Result<Option<Person>, Error>) -> Outcome {
     match result {
-        Ok(Some(signed_in)) => Some(Account::SignedIn(signed_in)),
-        Ok(None) => Some(Account::Without),
-        Err(Error::Network | Error::UnexpectedStatus(_) | Error::InvalidResponse) => None,
-        Err(_) => Some(Account::Without),
+        Ok(Some(person)) => Outcome::Settled(Account::SignedIn(person)),
+        Ok(None) | Err(Error::NotFound) => Outcome::Settled(Account::Without),
+        Err(Error::SignInNeeded | Error::Forbidden) => Outcome::Retry { cap: REFUSED_MAX },
+        Err(_) => Outcome::Retry { cap: RETRY_MAX },
     }
 }
 
@@ -127,6 +129,12 @@ impl Schedule {
         due
     }
 
+    /// Compares the account again at the next look, for tests.
+    #[cfg(test)]
+    pub fn look_again(&mut self) {
+        self.looked_at = None;
+    }
+
     pub fn settle(&mut self) {
         self.running = false;
         self.settled = true;
@@ -134,15 +142,16 @@ impl Schedule {
         self.failures = 0;
     }
 
-    /// A check failed at `now`: try again after a growing wait.
-    pub fn failed(&mut self, now: Instant) {
+    /// A check failed at `now`: try again after a growing wait up to `cap`.
+    pub fn failed(&mut self, now: Instant, cap: Duration) {
         let doublings = self.failures.min(RETRY_MAX_DOUBLINGS);
         self.failures = self.failures.saturating_add(1);
         self.running = false;
-        self.retry_at = Some(now + RETRY_FIRST.saturating_mul(1 << doublings).min(RETRY_MAX));
+        self.retry_at = Some(now + RETRY_FIRST.saturating_mul(1 << doublings).min(cap));
     }
 
-    /// The account changed: check again now.
+    /// The account changed: check again now. A check still running is let
+    /// finish; its answer is discarded.
     pub fn restart(&mut self) {
         *self = Self {
             running: self.running,
@@ -158,53 +167,63 @@ mod tests {
 
     use subspace_api_client::Error;
 
-    use super::{Account, Schedule, SignedIn, outcome};
+    use super::{Account, Outcome, Person, REFUSED_MAX, RETRY_MAX, Schedule, outcome};
 
-    fn ada() -> SignedIn {
-        SignedIn {
+    fn ada() -> Person {
+        Person {
+            user_id: "user-ada".into(),
             username: "ada".into(),
-            account: "ada".into(),
         }
     }
 
     #[test]
-    fn a_check_settles_the_account_unless_the_api_was_unreachable() {
-        assert_eq!(outcome(Ok(Some(ada()))), Some(Account::SignedIn(ada())));
+    fn only_no_username_or_no_me_settles_that_there_is_no_account_network() {
         assert_eq!(
-            outcome(Ok(None)),
-            Some(Account::Without),
-            "no username or route"
+            outcome(Ok(Some(ada()))),
+            Outcome::Settled(Account::SignedIn(ada()))
         );
-        for refused in [Error::SignInNeeded, Error::Forbidden, Error::NotFound] {
-            assert_eq!(outcome(Err(refused)), Some(Account::Without), "{refused:?}");
+        assert_eq!(outcome(Ok(None)), Outcome::Settled(Account::Without));
+        assert_eq!(
+            outcome(Err(Error::NotFound)),
+            Outcome::Settled(Account::Without)
+        );
+        for refused in [Error::SignInNeeded, Error::Forbidden] {
+            assert_eq!(
+                outcome(Err(refused)),
+                Outcome::Retry { cap: REFUSED_MAX },
+                "{refused:?} is checked again"
+            );
         }
         for failed in [
             Error::Network,
             Error::UnexpectedStatus(502),
             Error::InvalidResponse,
         ] {
-            assert_eq!(outcome(Err(failed)), None, "{failed:?} is checked again");
+            assert_eq!(outcome(Err(failed)), Outcome::Retry { cap: RETRY_MAX });
         }
     }
 
     #[test]
-    fn failed_checks_back_off_and_an_account_change_checks_at_once() {
+    fn failed_checks_back_off_to_their_cap_and_an_account_change_checks_at_once() {
         let now = Instant::now();
         let mut schedule = Schedule::default();
         assert!(schedule.due(now));
         schedule.running = true;
         assert!(!schedule.due(now), "one check at a time");
-        schedule.failed(now);
+        schedule.failed(now, RETRY_MAX);
         assert!(!schedule.due(now + Duration::from_secs(4)));
         assert!(schedule.due(now + Duration::from_secs(5)));
-        schedule.failed(now);
-        assert!(!schedule.due(now + Duration::from_secs(9)));
-        for _ in 0..10 {
-            schedule.failed(now);
+        for _ in 0..12 {
+            schedule.failed(now, RETRY_MAX);
         }
-        assert!(schedule.due(now + Duration::from_secs(300)), "capped");
+        assert!(schedule.due(now + RETRY_MAX), "capped");
+        for _ in 0..12 {
+            schedule.failed(now, REFUSED_MAX);
+        }
+        assert!(!schedule.due(now + RETRY_MAX), "a refusal waits longer");
+        assert!(schedule.due(now + REFUSED_MAX));
         schedule.settle();
-        assert!(!schedule.due(now + Duration::from_secs(900)), "settled");
+        assert!(!schedule.due(now + REFUSED_MAX * 2), "settled");
         schedule.restart();
         assert!(schedule.due(now));
     }

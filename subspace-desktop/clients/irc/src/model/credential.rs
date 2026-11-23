@@ -85,7 +85,6 @@ impl CredentialSource {
 
     /// Calls `refused` when a server did not accept a login this source
     /// issued, so the source can stop offering it.
-    // qual:api - owners pass it; this crate only calls it.
     pub fn on_refused(mut self, refused: impl Fn() + Send + Sync + 'static) -> Self {
         self.refused = Some(Arc::new(refused));
         self

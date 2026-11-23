@@ -1,9 +1,10 @@
-//! A short-lived IRC sign-in for the caller: `POST /v1/me/irc-credential`,
-//! attempted once. The API answers the account name the IRC server knows
-//! the caller by and an opaque password it accepts for a few minutes, which
-//! the server checks with the API. The password is a [`Secret`]: it is
-//! never formatted, stored or logged, and an API without the feature
-//! answers 404.
+//! A short-lived IRC sign-in for the caller on one server:
+//! `POST /v1/me/irc-credential` with that server's host and port, attempted
+//! once. The API answers the account name the server knows the caller by
+//! and an opaque password valid for that server alone for a few minutes,
+//! which the server checks with the API. The password is a [`Secret`]: it
+//! is never formatted, stored or logged. An API without the feature, or one
+//! that does not vouch for the server, answers 404.
 use serde::Deserialize;
 use subspace_framework::core::Secret;
 
@@ -47,17 +48,21 @@ struct Wire {
 
 // qual:allow(coupling, oi) reason: "The HTTP boundary composes the endpoint, single-attempt transport and safe response checks."
 impl Client {
-    /// Asks the API for an IRC sign-in, once. Blocking: call it on a
-    /// background task. [`Error::NotFound`] means this API does not issue
-    /// them, and NETT does not yet.
-    pub fn irc_credential(&self) -> Result<IrcCredential, Error> {
+    /// Asks the API, once, for an IRC sign-in valid only on the server at
+    /// `host` and `port`. Blocking: call it on a background task.
+    /// [`Error::NotFound`] means this API does not vouch for that server or
+    /// does not issue sign-ins at all; NETT does not yet.
+    pub fn irc_credential(&self, host: &str, port: u16) -> Result<IrcCredential, Error> {
         if self.backend != Backend::Subspace {
             return Err(Error::NotFound);
         }
+        if host.is_empty() || port == 0 {
+            return Err(Error::InvalidRequest);
+        }
         let url = self.endpoint(&["me", "irc-credential"], &[])?;
-        let response =
-            transport::post_json(self, &url, &serde_json::json!({}), transport::READ_TIMEOUT)
-                .map_err(|_| Error::Network)?;
+        let body = serde_json::json!({ "host": host, "port": port });
+        let response = transport::post_json(self, &url, &body, transport::READ_TIMEOUT)
+            .map_err(|_| Error::Network)?;
         let wire: Wire = transport::read_json(transport::check_response(response)?)?;
         checked(wire).ok_or(Error::InvalidResponse)
     }
