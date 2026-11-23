@@ -1,3 +1,6 @@
+-- Lock the organisations table before users, in the order the API takes them (an organisation's
+-- row, then its users), so a sign-in during a rolling upgrade waits rather than deadlocks.
+LOCK TABLE "organisations" IN SHARE ROW EXCLUSIVE MODE;--> statement-breakpoint
 ALTER TABLE "users" ADD COLUMN "username" text;--> statement-breakpoint
 -- An agent's username is its IRC nick, so people and agents share one namespace. People are
 -- backfilled by `bun run db:migrate`, which applies the allocation rule and the operator's

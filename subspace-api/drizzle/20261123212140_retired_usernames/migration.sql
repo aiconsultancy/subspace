@@ -1,3 +1,6 @@
+-- Lock the organisations table before users, in the order the API takes them (an organisation's
+-- row, then its users), so a sign-in during a rolling upgrade waits rather than deadlocks.
+LOCK TABLE "organisations" IN SHARE ROW EXCLUSIVE MODE;--> statement-breakpoint
 CREATE TABLE "retired_usernames" (
 	"organisation_id" uuid,
 	"name" text,
