@@ -1264,8 +1264,9 @@ class StreamCase(FixtureCase):
         for value in ([org] if orgs is None else orgs):
             connection.putheader('x-org-id', value)
         connection.endheaders()
+        sock = connection.sock  # The response takes it over from the connection.
         response = connection.getresponse()
-        response.opened = time.monotonic()
+        response.stream = dict(org=org, keys=sorted(keys), ends_before=len(self.server.stream_ends), sock=sock)
         self.addCleanup(connection.close)
         return response
 
@@ -1297,13 +1298,27 @@ class StreamCase(FixtureCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(self.records(response, lambda found: found), [('ready', None)])
 
-    def ends_quickly(self, response):
-        """Reads to the end of a stream the server closed before its lifetime
-        ran out, and returns the rest. The lifetime is the bound, rather than
-        a few seconds, so a busy machine cannot fail a stream that did close
-        early; the classes that use this give their streams 20 seconds or more."""
-        rest = response.read()
-        self.assertLess(time.monotonic() - response.opened, self.server.stream_seconds)
+    def ends_because(self, response, reason, backstop=30):
+        """Reads to the end of a stream the server closes and returns the
+        rest, checking the fixture recorded `reason` as why it ended. The
+        reason, not the time taken, tells an early close from the stream's
+        lifetime; the backstop only stops a stream that never ends from
+        hanging the run, as keep-alives would defeat the socket timeout."""
+        stream = response.stream
+        pool = ThreadPoolExecutor(max_workers=1)
+        reading = pool.submit(response.read)
+        try:
+            rest = reading.result(timeout=backstop)
+        except FutureTimeout:
+            # Unblock the read, which a closed response alone does not.
+            stream['sock'].shutdown(socket.SHUT_RDWR)
+            self.fail(f'the stream did not end within {backstop} s')
+        finally:
+            pool.shutdown(wait=False)
+        with self.server.lock:
+            ends = [end['reason'] for end in self.server.stream_ends[stream['ends_before']:]
+                    if end['org'] == stream['org'] and end['keys'] == stream['keys']]
+        self.assertIn(reason, ends)
         return rest
 
 
@@ -1341,7 +1356,7 @@ class UpdateStreamTests(StreamCase):
         self.assertIn((':', 'keepalive'), found)
         # The stream closes by itself after its lifetime: reading to the end
         # returns, where a stream left open would keep sending keep-alives.
-        self.assertNotIn(b'issueChanged', response.read())
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'lifetime'))
 
     def test_streams_need_one_valid_organisation_header_and_known_teams(self):
         self.refused(400, orgs=[])
@@ -1400,7 +1415,7 @@ class StreamCloseTests(StreamCase):
         with subscriber.ready:  # Queue a hint, then lose authority before the stream can send it.
             subscriber.push(dict(projectKey='OPS', issueId=NETT.uid('x'), identifier='OPS-1', version=9))
             subscriber.close('lost authority')
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response))
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'lost authority'))
         deadline = time.monotonic() + 2
         while self.server.subscribers and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -1412,10 +1427,10 @@ class StreamCloseTests(StreamCase):
         self.ready(second)
         status, value, _ = self.call('POST', '/__fixture/updates/close', dict(org=WORKS), token=None)
         self.assertEqual((status, value), (200, dict(closed=1)))
-        self.ends_quickly(works)
+        self.ends_because(works, 'closed by the fixture')
         status, value, _ = self.call('POST', '/__fixture/updates/close', {}, token=None)
         self.assertEqual((status, value), (200, dict(closed=1)))
-        self.ends_quickly(second)
+        self.ends_because(second, 'closed by the fixture')
 
     def test_a_queue_overflow_closes_the_stream(self):
         response = self.open_stream()
@@ -1425,14 +1440,14 @@ class StreamCloseTests(StreamCase):
             for number in range(NETT.STREAM_QUEUE + 1):
                 subscriber.push(dict(projectKey='OPS', issueId=str(number), identifier=f'OPS-{number + 1}', version=1))
             self.assertEqual(subscriber.closed, 'overflow')
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response))
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'overflow'))
 
     def test_an_archived_team_closes_its_streams_and_later_requests_get_404(self):
         response = self.open_stream(keys=('OPS', 'WEB'))
         self.ready(response)
         status, value, _ = self.call('POST', '/__fixture/teams/archive', dict(org=WORKS, key='OPS'), token=None)
         self.assertEqual((status, value['key'], value['closed']), (200, 'OPS', 1))
-        self.ends_quickly(response)
+        self.ends_because(response, 'team archived')
         self.refused(404, keys=('OPS',))
         self.ready(self.open_stream(keys=('WEB',)))
         self.assertIsNotNone(self.get('/issue-teams/OPS')['archivedAt'])
@@ -1445,7 +1460,7 @@ class StreamCloseTests(StreamCase):
         self.assertEqual(status, 200, tokens)
         response = self.open_stream(token=tokens['access_token'])
         self.ready(response)
-        self.ends_quickly(response)  # At the token's expiry, long before the lifetime.
+        self.ends_because(response, 'token expired')
         self.assertEqual(self.call('GET', '/api/v1/me', token=tokens['access_token'])[0], 401)
         self.refused(401, token=tokens['access_token'])
         status, rotated, _ = self.call('POST', '/user_management/authenticate', token=None,
@@ -2122,7 +2137,7 @@ class StreamReleaseTests(StreamCase):
 
         with patch.object(socket.socket, 'sendall', stall_batch):
             hook(self, 'touch', dict(org=WORKS, issue='OPS-1'))
-            self.assertEqual(self.ends_quickly(response), b'')
+            self.assertEqual(self.ends_because(response, 'write timed out'), b'')
         self.assertEqual(timeouts, [NETT.STREAM_WRITE_SECONDS])
         self.ready(self.open_stream())
 
@@ -2166,7 +2181,7 @@ class StreamAuthorityTests(StreamCase):
         with subscriber.ready:  # Queue a hint, then lose membership before the stream flushes it.
             subscriber.push(dict(projectKey='OPS', issueId=NETT.uid('x'), identifier='OPS-1', version=9))
             hook(self, 'members/revoke', dict(org=WORKS, user='grace', closeStreams=False))
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response))
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'lost authority'))
         self.refused(403, token=GRACE_TOKEN)
 
     def test_revocation_waits_for_delivery_already_authorised(self):
@@ -2201,7 +2216,7 @@ class StreamAuthorityTests(StreamCase):
             finally:
                 resume.set()
             self.assertEqual(request.result(timeout=2)['closed'], 1)
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response))
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'lost authority'))
 
     def test_an_admitted_person_keeps_receiving_while_a_denied_one_is_closed(self):
         ada, grace = self.open_stream(), self.open_stream(token=GRACE_TOKEN)
@@ -2211,13 +2226,13 @@ class StreamAuthorityTests(StreamCase):
         self.call('POST', '/__fixture/touch', dict(org=WORKS, issue='OPS-1'), token=None)
         found = self.records(ada, lambda found: any(name == 'issueChanged' for name, _ in found))
         self.assertEqual([data['identifier'] for name, data in found if name == 'issueChanged'], ['OPS-1'])
-        self.assertNotIn(b'issueChanged', self.ends_quickly(grace))
+        self.assertNotIn(b'issueChanged', self.ends_because(grace, 'lost authority'))
 
     def test_a_revoked_token_closes_its_stream_and_cannot_reopen_it(self):
         response = self.open_stream(token=GRACE_TOKEN)
         self.ready(response)
         self.assertEqual(hook(self, 'tokens/revoke', dict(token=GRACE_TOKEN))['closed'], 1)
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response))
+        self.assertNotIn(b'issueChanged', self.ends_because(response, 'lost authority'))
         self.refused(401, token=GRACE_TOKEN)
 
 

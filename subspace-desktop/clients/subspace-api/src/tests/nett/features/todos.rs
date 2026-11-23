@@ -31,10 +31,12 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
     let hub = Hub::from_client(own_client(&mock, "nett-fixture-todo-late"), "NETT");
     open_todos(&hub);
     let (put, item) = todo_save_target(&mock, &hub);
-    mock.config(&json!({"slowBody": {"path": put, "seconds": 2.0, "times": 1}}));
-    // Save A is stored, but its answer is slow; the issue is opened again
-    // and save B starts on the same item before A's answer lands. B's own
-    // answer is slower still, so it is pending whenever A's lands.
+    // Both saves' answers are held until the test lets each go: A is
+    // stored but answered only once B is on its way, and B stays unanswered
+    // while A's answer is handled.
+    mock.config(
+        &json!({"slowBody": {"path": put, "seconds": 10.0, "times": 2, "waitForRelease": true}}),
+    );
     hub.set_todo_done(&item.id, true).unwrap();
     wait_for("A sent", &|| mock.count("PUT", &item.id) == 1);
     hub.close_issue();
@@ -47,21 +49,31 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
                 .any(|row| row.id == item.id && row.completed)
         })
     });
-    mock.config(&json!({"slowBody": {"path": put, "seconds": 6.0, "times": 1}}));
     hub.set_todo_done(&item.id, false).unwrap();
+    wait_for("B held", &|| {
+        saves(&mock, &item.id)
+            .get(1)
+            .is_some_and(|b| b["slowBodyHeadersStatus"] == 200)
+    });
+    mock.post_hook("slowBody/release", &json!({}));
     // A's late answer reads the lists again: once it has, B must still be
-    // pending, not re-enabled by A's answer. Look for a list read after the
-    // mock answered A, since on a busy machine A can land before this
-    // point, and a count taken here would miss its read.
+    // pending, not re-enabled by A's answer.
     wait_for("A's answer, reconciled", &|| {
         read_after_answer(&mock, &item.id)
     });
+    let saves = saves(&mock, &item.id);
+    assert!(
+        saves[1]["seq"].as_u64() < saves[0]["answerSeq"].as_u64(),
+        "B was sent before A was answered"
+    );
+    assert!(saves[1]["answerSeq"].is_null(), "B is still unanswered");
     assert!(
         hub.snapshot()
             .issue()
             .is_some_and(|issue| issue.todo_saving(&item.id)),
         "B is still pending after A's answer"
     );
+    mock.post_hook("slowBody/release", &json!({}));
     wait_for("B saved", &|| {
         hub.snapshot().issue().is_some_and(|issue| {
             !issue.todo_saving(&item.id)
@@ -74,19 +86,27 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
     hub.stop();
 }
 
-/// Whether the mock logged a read of the lists after it answered the first
-/// save of `item`.
+/// The logged saves of `item`, oldest first.
+fn saves(mock: &NettMock, item: &str) -> Vec<serde_json::Value> {
+    mock.requests()
+        .into_iter()
+        .filter(|r| r["method"] == "PUT" && r["path"].as_str().is_some_and(|p| p.ends_with(item)))
+        .collect()
+}
+
+/// Whether the mock logged a read of the lists after the first save of
+/// `item` was answered. The mock numbers an answer just before its last
+/// bytes go, so a read the answer caused always comes after it.
 fn read_after_answer(mock: &NettMock, item: &str) -> bool {
     let log = mock.requests();
-    let answered = log
-        .iter()
-        .find(|r| r["method"] == "PUT" && r["path"].as_str().is_some_and(|p| p.ends_with(item)))
-        .and_then(|r| r["answeredAt"].as_f64());
+    let answered = saves(mock, item)
+        .first()
+        .and_then(|a| a["answerSeq"].as_u64());
     answered.is_some_and(|answered| {
         log.iter().any(|r| {
             r["method"] == "GET"
                 && r["path"].as_str().is_some_and(|p| p.ends_with("/items"))
-                && r["at"].as_f64().is_some_and(|at| at >= answered)
+                && r["seq"].as_u64().is_some_and(|seq| seq > answered)
         })
     })
 }
