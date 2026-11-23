@@ -37,9 +37,10 @@ over. On a busy machine the catch-up lands later and races the test:
 - an extra detail read lands inside a test's counting window.
 
 The tests now wait for the hub to say the catch-up is over instead of a
-fixed time. In test builds the session counts each stream that turns live and
-each catch-up its `ready` begins, and `Hub::caught_up_after_ready` holds once
-the latest `ready`'s catch-up has been taken, its reads of the open issue and
+fixed time. In test builds each `ready` gets an id, counting from 1, and the
+session records the id of its `ready` once that `ready`'s catch-up has been
+taken. `Hub::caught_up_after_ready` holds once the latest `ready`'s catch-up
+has been taken, its reads of the open issue and
 the list head are neither out nor owed, and nothing they queued is waiting or
 being read. Both `tests::live` and `tests::nett::live` wait on it. A request
 path cannot tell the catch-up apart: the hub polls the open issue every
@@ -78,7 +79,8 @@ sized for an idle machine:
 - The late to-do answer test counted list reads after reopening the issue
   and waited for one more, from save A's two-second slow answer. On a busy
   machine A had already landed and been read by then. The test now holds
-  both answers in the mock and lets each go in turn (see Review findings).
+  both answers in the mock and lets each go in turn (see Review findings and
+  Follow-up review findings).
 - In the NETT fixture's own tests, the slow-body test checks the headers the
   fixture recorded as sent and keeps only lower bounds; stream-ending checks
   assert why the fixture ended the stream (see Review findings); and the
@@ -120,7 +122,8 @@ Their medium and low findings, and what came of each:
   `answerSeq`, and checks from the log that B was sent before A was
   answered and is still unanswered. Releasing both at once failed it ("B is
   still unanswered"), and so did letting A's answer clear any pending save
-  in the hub ("B is still pending after A's answer").
+  in the hub ("B is still pending after A's answer"). The follow-up below
+  makes the test wait until A is held before it sends B.
 - **The capture check could take minutes.** It now has a 20-second deadline
   with each probe capped at the time left.
 - **One README rather than four files.** The change records README allows
@@ -137,6 +140,56 @@ instead of 10.
 With the catch-up wait made to return as soon as the stream was live, the
 live modules failed again in parallel runs (17 of 32 `tests::live` and 3 of
 32 `tests::nett::live` runs), so the wait is what keeps them reliable.
+
+## Follow-up review findings
+
+The reviews left four medium and low findings open at merge, fixed in a
+follow-up:
+
+- **The catch-up counts could go out of step for good.** The hook compared
+  two running totals, the streams that turned live and the catch-ups taken.
+  A stream dropped after `ready` and before its catch-up, by a scope change
+  or by closing within the 300 ms coalescing window, left the first total
+  one ahead, and every later wait ran to its limit. Each `ready` now has an
+  id, and the hook compares the latest `ready` with the latest one caught
+  up, so the next `ready` replaces an abandoned catch-up.
+  `a_stream_dropped_before_its_catch_up_leaves_nothing_owed` closes a
+  stream straight after `ready` and waits for the next stream's catch-up;
+  with the totals it timed out ("hub state did not reach expected
+  outcome").
+- **A held body stayed in the release queue after its limit.** The next
+  `slowBody/release` then let that stale entry go and the body still held
+  kept waiting. A hold now leaves the queue however its wait ends. With
+  `waitForRelease` the limit can be up to 120 seconds (10 without it), and
+  the late to-do test holds its answers for 120, longer than its own
+  30-second waits, so only a release lets one go. The fixture test
+  `test_a_held_body_whose_limit_ran_out_leaves_the_release_queue` failed
+  before the change ("(200, 1) != (200, 0)").
+- **The late to-do test could send B before A was held.** A commits before
+  it joins the release queue, so B could join first and take A's release.
+  The test now waits for A's `slowBodyHeadersStatus`, which the fixture
+  logs after the hold has joined the queue, before it sends B.
+- **A stream-end check could read another stream's record.** Records were
+  matched by organisation and teams, which two streams can share, and why a
+  stream ended was decided after delivery had stopped, so a close that came
+  after the lifetime could take the credit. Each record now carries an id
+  and the client's port, and the check wants exactly one record for its
+  stream. The cause is decided under the delivery lock: past the deadline,
+  a close or a revoke hook counts only if it came before the deadline. The
+  fixture keeps the latest 1,024 records rather than every one.
+
+The same pushes saw two tests outside this work fail once each under load:
+`subspace-client-fleet`'s
+`settings::tests::a_pasted_token_is_saved_replaced_and_cleared_from_settings`
+and `subspace-space-lab-board`'s
+`project_runtime::proxy::tests::project_runtime_proxy_has_eight_active_slots_and_stop_cancels_idle_tunnels`.
+Their failure output was not kept, and the code does not show which wait
+failed, so they are left as they are. The settings test's store work and
+outcomes run on GPUI's test executor; its only real-time part is the
+fleet's feed thread, whose link the test accepts in any state. The proxy
+test has three wall-clock limits: a 2-second read timeout on each client,
+a 100 ms connect to the fixture per attempt in the proxy, and a 2-second
+bound on stopping the proxy.
 
 ## Evidence
 
