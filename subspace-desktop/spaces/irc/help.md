@@ -715,6 +715,35 @@ reactions, which Subspace can't see, so only ✋ and 🛑 are marked.
 
 The inspector's **Thread** tab shows the same pills, read-only.
 
+### Act on the tracker
+
+In a channel, while the Issues Space is signed in to Subspace API, the
+message input takes three tracker commands. They change the tracker as you,
+directly; nothing is posted to the channel.
+
+- `/assign NAV-2` assigns an issue to the ship's captain in a ship's
+  channel; `/assign NAV-2 to aurora-orion` names another fleet agent, and
+  `/assign NAV-2 to me` assigns it to you.
+- `/ready NAV-2` flags an issue **Ready for agents**, and `/ready NAV-2 off`
+  clears the flag. Only an open, unassigned issue that is not a tracker can
+  be flagged.
+- `/decision NAV-2 Decode tiles on a worker pool.` records a decision on an
+  issue's project, linked to the issue.
+
+Type `/` to see them. The list then offers the issues this conversation has
+shown, and whom to assign. Once the command is complete, its first row says
+what `Return` will do; press `Return` to do it. A short note above the
+message input says what changed, or why the tracker refused; a refused
+command stays in the message input. The issue's tile and **In play here**
+show the change once the Issues Space has read it again.
+
+Hover a message, or focus it with the keyboard, to see its toolbar:
+**Add reaction**, **Reply in thread** (in a ship's channel or Starbase),
+**Make issue…** and **Record decision…**. The last two open a dialog where
+you can edit the title and choose the project or the issue; only its button
+changes the tracker. A new issue quotes the message with who wrote it,
+where and when.
+
 ### Move through messages with the keyboard
 
 In the message input, `Shift+Tab` moves to the newest message. `↑` and `↓`
@@ -868,6 +897,10 @@ the message input is ordinary text input.
 | `Enter` on a link or reference | Open it |
 | `Enter` on a message with replies or a request | Open its thread in the inspector |
 | `r` on a message | Add or take back a reaction |
+| `t` on a message | Reply in its thread |
+| `i` on a message | Make an issue from it |
+| `d` on a message | Record a decision from it |
+| `Esc` in a **Make issue** or **Record decision** dialog | Cancel |
 | `Esc` on a message | Back to the message input |
 
 ### Shared keys

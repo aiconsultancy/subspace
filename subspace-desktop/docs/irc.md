@@ -672,6 +672,66 @@ growing moves nothing else; tiles keep their fixed box.
 
 See the [change record](changes/channels-reactions/README.md).
 
+### Tracker commands and the message toolbar
+
+Channels acts on the tracker from a channel (`tracker.rs`). Every write goes
+directly to the Subspace API as the signed-in person, through the desktop's
+API client (`subspace_api_client::Client`), never as a chat message for an
+agent to act on; nothing posts a line to the channel and nothing sends a
+private message.
+
+- **Where.** In a channel, while the Issues Space answers `issues@1` with a
+  tracker scope and the tracker service is Subspace API. Elsewhere the
+  commands are not offered, and a typed one is kept with the reason; it is
+  never sent to IRC as an unknown command.
+- **Commands** (`tracker/parse.rs`, `plan.rs`, `check.rs`):
+  `/assign <issue> [to <agent> | to me]` (in a ship's channel the default is
+  the ship's captain), `/ready <issue> [off]` (the API's `readyForAgents`)
+  and `/decision <issue> <decision>` (`POST /v1/decisions` on the issue's
+  project, linked to it). The issue must be in the scope's projects and not
+  known to be missing; an assignee is a fleet agent the roster knows by API
+  nick, or the person; `/ready` refuses an assigned, closed or tracker issue,
+  as the API does. A refusal keeps the draft and shows in the composer.
+- **Completion** (`tracker/suggest.rs`): the commands among the composer's,
+  then the issues the conversation has shown (its tile owners, newest
+  first), the tracker's project keys, whom to assign and `off`. Once the
+  draft is a whole command that can run, the first row says what Return will
+  do (`Return assigns NAV-2 · … to aurora-lyra`) and choosing it runs it.
+- **Writing** (`tracker/write.rs`, `flow.rs`): on a background task, read
+  `/v1/me` and the issue, repeat the checks on what the tracker returns,
+  then write once at the issue's version. The result, or the API's refusal
+  in plain words, shows in the conversation's notice area above the
+  composer, the one reactions use; a landed write empties the composer, a
+  refused one keeps it. The write never retries and never puts a token or a
+  server body in the notice.
+- **Fresh tiles.** After a write Channels sends `issues@1/refresh` for the
+  issue; the Issues Space reads it again, keeping the old card until the new
+  one lands, and its `changed` brings the new state to the tiles and **In
+  play here**.
+- **Message toolbar** (`transcript/actions.rs`): over the message under the
+  pointer or with the keyboard's focus, at its top right on the content
+  surface, a compact group of icon buttons with tooltips and accessible
+  names: **Add reaction** (the reactions piece's menu, stop group
+  included), **Reply in thread** (opens the thread and starts reply mode,
+  where the inspector has a Thread tab and the server carries reply tags),
+  **Make issue…** and **Record decision…**. Each shows only when it can
+  work; the keys `r`, `t`, `i` and `d` on a focused message do the same.
+  The toolbar is drawn over the row, so it changes no height and moves
+  nothing; it has a full hairline border and no accent edge.
+- **Make issue** and **Record decision** (`tracker/message.rs`, `quote.rs`)
+  open a dialog first: the quoted message, an editable title (its first
+  line), and the project (the message's only issue's project, else the
+  newest issue in play's) or the issue (the message's only issue). Only
+  **Create issue** or **Record decision** writes. The issue's description
+  quotes the message in a fenced block, so nothing in it becomes a link or
+  a mention, then who said it, where and when, and its message ID; a
+  decision carries the same reference as IRC evidence (`ircMessage`).
+
+What the API does not support is left out: assigning someone other than a
+fleet agent or the person (the API knows no IRC nick for a person), and the
+tracker commands with a NETT tracker. See the
+[change record](changes/channels-tracker-commands/README.md).
+
 ### Loaded reply counts
 
 A root message with loaded replies shows their count and the latest reply's

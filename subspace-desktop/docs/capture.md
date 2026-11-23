@@ -161,6 +161,11 @@ Thread tab; `--reactions` has people react to some lines and, with
 `--thread`, sela react with ✋ to the running request; restart the server
 and the fixture before each capture.
 
+The Subspace API fixture also takes Channels' tracker writes: `readyForAgents`
+by the API's rule, the aurora fleet's captains as assignees by the user IDs
+the fleet record gives them, and `POST /decisions` as the signed-in fixture
+person ([Channels tracker commands](changes/channels-tracker-commands/README.md)).
+
 Run `python3 scripts/fleet_api_test_server.py --port 18484` to serve the same
 fleet for an installed copy of the app, and `--snapshot` to print it as one
 JSON document. Like Stargate, the fixture answers only the app's own web
