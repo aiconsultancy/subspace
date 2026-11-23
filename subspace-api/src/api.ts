@@ -663,6 +663,10 @@ export function routes(
   );
 }
 
+/** The agent listener's handlers: every group's, without the administrator endpoints or tools. */
+export const agentHandlerLayers = () =>
+  withoutAdminEndpoints(handlerLayers(adminOnlyTools), agentApi.groups);
+
 /**
  * The agent listener's routes: the same handlers and rules as the main listener, with the agent
  * named in a header instead of a bearer token, no sign-in route, no administrator route or MCP
@@ -678,7 +682,7 @@ export function agentRoutes(
   const auth = agentAuth.pipe(Layer.provide(directory));
   return Layer.mergeAll(
     HttpApiBuilder.layer(agentApi).pipe(
-      Layer.provide(withoutAdminEndpoints(handlerLayers(adminOnlyTools), agentApi.groups)),
+      Layer.provide(agentHandlerLayers()),
       Layer.provide(Layer.merge(auth, validationErrors)),
       HttpRouter.provideRequest(shared.resources),
     ),

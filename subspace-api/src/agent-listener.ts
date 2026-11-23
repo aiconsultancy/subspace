@@ -172,14 +172,15 @@ export function adminRoutes(groups: Groups) {
 }
 
 type GroupService = {
-  readonly routes: readonly unknown[];
+  readonly routes: readonly { readonly method: string; readonly path: string }[];
   readonly handlers: ReadonlyMap<string, unknown>;
 };
 
 /**
  * The handler layers without the administrator endpoints, so the agent listener's router never
- * registers them: they answer 404 however the path is spelt. HttpApiBuilder.group builds one
- * route per handler, in the handlers' order, and HttpApiBuilder.layer registers those routes.
+ * registers them: they answer 404 however the path is spelt. Each administrator endpoint is
+ * matched to its route by method and path and to its handler by name; if either is not found
+ * exactly once, building the listener fails rather than keeping the route.
  */
 export function withoutAdminEndpoints<A, E, R>(
   layer: Layer.Layer<A, E, R>,
@@ -192,20 +193,25 @@ export function withoutAdminEndpoints<A, E, R>(
         const key = groups[group]?.key;
         const service = key ? (services.get(key) as GroupService | undefined) : undefined;
         if (!key || !service) throw new Error(`The handlers for group ${group} are missing.`);
-        const omitted = new Set<string>(names);
-        const entries = [...service.handlers.entries()];
-        if (entries.length !== service.routes.length)
-          throw new Error(`The routes of group ${group} do not match its handlers.`);
-        const kept = entries.flatMap(([name, handler], index) =>
-          omitted.has(name) ? [] : [{ name, handler, route: service.routes[index] }],
+        const omitted = names.map((name) => ({ name, endpoint: groups[group]!.endpoints[name]! }));
+        const isOmitted = (route: { method: string; path: string }) =>
+          omitted.some(
+            ({ endpoint }) => endpoint.method === route.method && endpoint.path === route.path,
+          );
+        for (const { name, endpoint } of omitted) {
+          const matches = service.routes.filter(
+            (route) => route.method === endpoint.method && route.path === endpoint.path,
+          ).length;
+          if (matches !== 1 || !service.handlers.has(name))
+            throw new Error(`The admin-only endpoint ${group}.${name} has no single route.`);
+        }
+        const routes = service.routes.filter((route) => !isOmitted(route));
+        const handlers = new Map(
+          [...service.handlers].filter(([name]) => !(names as readonly string[]).includes(name)),
         );
-        if (kept.length !== entries.length - omitted.size)
-          throw new Error(`An admin-only endpoint of group ${group} has no handler.`);
-        services.set(key, {
-          ...service,
-          routes: kept.map(({ route }) => route),
-          handlers: new Map(kept.map(({ name, handler }) => [name, handler])),
-        });
+        if (routes.length !== handlers.size)
+          throw new Error(`The routes of group ${group} do not match its handlers.`);
+        services.set(key, { ...service, routes, handlers });
       }
       return Context.makeUnsafe(services) as Context.Context<A>;
     }),

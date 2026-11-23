@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { Effect, Exit, Layer, Scope } from "effect";
 import { AgentDirectory, adminRoutes } from "../src/agent-listener";
-import { agentApi, server, type Resources } from "../src/api";
+import { agentApi, agentHandlerLayers, server, type Resources } from "../src/api";
+import { BearerAuth, validationErrors } from "../src/middleware";
 import { config } from "../src/config";
 import { Database } from "../src/db";
 import { GithubIntegration } from "../src/github";
@@ -180,4 +181,34 @@ describe("the API process with both listeners", () => {
       expect([route.method, path, response.status]).toEqual([route.method, path, 401]);
     }
   });
+});
+
+test("the agent listener's route table is every agent route and no administrator route", async () => {
+  const auth = Layer.succeed(BearerAuth, BearerAuth.of({ bearer: (next) => next as never }));
+  const context = await Effect.runPromise(
+    Effect.scoped(
+      Layer.build(
+        agentHandlerLayers().pipe(Layer.provide(Layer.merge(auth, validationErrors))) as never,
+      ),
+    ),
+  );
+  const services = (context as unknown as { mapUnsafe: Map<string, unknown> }).mapUnsafe;
+  const table = Object.values(agentApi.groups).flatMap((group) =>
+    (services.get(group.key) as { routes: { method: string; path: string }[] }).routes.map(
+      (route) => `${route.method} ${route.path}`,
+    ),
+  );
+  const admin = adminRoutes(agentApi.groups as never).map((r) => `${r.method} ${r.path}`);
+  const expected = Object.values(agentApi.groups)
+    .flatMap((group) =>
+      Object.values(group.endpoints as Record<string, { method: string; path: string }>).map(
+        (endpoint) => `${endpoint.method} ${endpoint.path}`,
+      ),
+    )
+    .filter((route) => !admin.includes(route));
+  expect(table.toSorted()).toEqual(expected.toSorted());
+  for (const route of admin) expect(table).not.toContain(route);
+  expect(admin).toContain("POST /api/v1/fleets");
+  expect(table).toContain("GET /api/v1/fleets");
+  expect(table).toContain("POST /mcp");
 });
