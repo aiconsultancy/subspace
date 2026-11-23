@@ -96,6 +96,18 @@ Claude Opus 5.5, round 2 (not clear, one high, one medium, three lows):
 - Low, a missing skill failed the render generically: both the installer
   and the configuration check now name it (9195af3).
 
+Claude Opus 5.5, round 3 (clear, one medium and three lows):
+
+- Medium, port 3001 open to every local user: the lockdown now admits only
+  root, the operator and the officers' users, and the audit fails otherwise
+  (ae3e20b).
+- Low, the lookup's limit had no order: active records come first (f97f40e);
+  agent names and nicks are each unique, so at most two records match.
+- Low, the installer's grant could override an operator's rule for the API
+  tools: it is added only when no operator rule names them (827833c).
+- Low, setup turned the listener back on: it is offered once, and an
+  operator's off stays off (cb4d389).
+
 ## Not verified
 
 - Nothing ran on a fleet VM: the listener in the API container, the
