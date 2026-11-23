@@ -51,6 +51,25 @@ pub struct Extensions {
     pub code: Option<String>,
 }
 
+/// How GitHub's GraphQL `NOT_FOUND` messages start ("Could not resolve to a
+/// Repository with the name …"), which [`graphql_failure`] keeps as a 400.
+const GRAPHQL_NOT_FOUND: &str = "Could not resolve to a";
+
+/// Whether `error` says GitHub found nothing this account can read: a 404,
+/// or the 400 [`graphql_failure`] makes from a GraphQL `NOT_FOUND`, which
+/// GitHub also answers for a repository the account cannot see. Any other
+/// 400, such as a query GitHub rejects, is not.
+// qual:api
+pub fn is_not_found(error: &Error) -> bool {
+    match error {
+        Error::Status { status, .. } if *status == http_status::NOT_FOUND => true,
+        Error::Status { status, message } if *status == http_status::BAD_REQUEST => {
+            message.starts_with(GRAPHQL_NOT_FOUND)
+        }
+        _ => false,
+    }
+}
+
 /// Maps GraphQL `errors` to one error.
 pub fn graphql_failure(account: &str, errors: &[GraphQlError]) -> Error {
     let message = |error: &GraphQlError| error.message.clone().unwrap_or_default();
@@ -321,7 +340,7 @@ mod tests {
     use super::mapping::reset_hint;
     use super::{
         Api, Failure, GraphQlError, GraphQlResponse, graphql_data, graphql_failure, http_failure,
-        is_access_refusal, rejected,
+        is_access_refusal, is_not_found, rejected,
     };
 
     fn code(error: &Error) -> u16 {
@@ -455,6 +474,19 @@ mod tests {
                 "{value}"
             );
         }
+    }
+
+    #[test]
+    fn only_a_graphql_not_found_400_is_not_found() {
+        let missing = json!([{"type": "NOT_FOUND",
+            "message": "Could not resolve to a Repository with the name 'octo-org/api'."}]);
+        assert!(is_not_found(&graphql_failure("ann", &errors(missing))));
+        let invalid = json!([{"message": "Field 'x' doesn't exist on type 'PullRequest'",
+            "extensions": {"code": "undefinedField"}}]);
+        let invalid = graphql_failure("ann", &errors(invalid));
+        assert_eq!(code(&invalid), 400);
+        assert!(!is_not_found(&invalid), "a rejected query is not");
+        assert!(is_not_found(&super::not_found()));
     }
 
     #[test]

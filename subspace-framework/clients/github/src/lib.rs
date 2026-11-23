@@ -24,7 +24,7 @@ pub mod scope;
 mod transport;
 pub mod validate;
 mod work;
-pub use transport::is_access_refusal;
+pub use transport::{is_access_refusal, is_not_found};
 pub use work::PinnedWork;
 
 use std::sync::Arc;
