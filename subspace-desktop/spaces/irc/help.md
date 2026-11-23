@@ -230,9 +230,9 @@ shows as a person.
 All communication with a fleet's agents happens in channels, where everyone
 can see it: private messages are for people only. Choosing an agent in the
 member list or a reference to it, `/msg`, `/query` or `/notice` to it (alone
-or in a comma-separated list), a PRIVMSG or NOTICE to it through `/raw` or
-`/quote`, or a message or attachment in an older private conversation with
-it opens, uploads and sends nothing; instead a short notice above the
+or in a comma-separated list), a PRIVMSG, NOTICE or TAGMSG to it through
+`/raw` or `/quote`, or a message or attachment in an older private
+conversation with it opens, uploads and sends nothing; instead a short notice above the
 message box names the agent's channel (its ship's channel, or the Starbase
 for the rear admiral). **Go to** shows that channel when your initiative
 records it or it is already in your list. If nothing of the agent's network

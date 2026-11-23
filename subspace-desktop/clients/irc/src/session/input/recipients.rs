@@ -4,11 +4,12 @@ use super::{Input, parse_input};
 use crate::model::Target;
 use crate::proto::parse;
 
-/// The nicks composer `text` in `target` would send a private PRIVMSG or
-/// NOTICE to, from the same parse the session sends it with. Text and `/me`
-/// in a private conversation go to its other side; `/msg`, `/notice` and
-/// `/query` to their target; `/raw`, `/quote` and an unknown command to the
-/// target of the PRIVMSG or NOTICE line they carry. A comma-separated target
+/// The nicks composer `text` in `target` would send a private PRIVMSG,
+/// NOTICE or TAGMSG to, from the same parse the session sends it with.
+/// Text and `/me` in a private conversation go to its other side; `/msg`,
+/// `/notice` and `/query` to their target; `/raw`, `/quote` and an unknown
+/// command to the target of the PRIVMSG, NOTICE or TAGMSG line they carry,
+/// tagged or not, as a TAGMSG can carry a reaction. A comma-separated target
 /// list names each of its nicks. Channels are never named, and input that
 /// does not parse names no one, as it sends nothing.
 pub fn private_recipients(text: &str, target: &Target) -> Vec<String> {
@@ -25,11 +26,11 @@ fn recipients(input: &Input, target: &Target) -> Vec<String> {
     }
 }
 
-/// The nicks a raw PRIVMSG or NOTICE line addresses.
+/// The nicks a raw PRIVMSG, NOTICE or TAGMSG line addresses.
 fn raw_recipients(line: &str) -> Vec<String> {
     parse(line)
         .ok()
-        .filter(|message| matches!(message.command.as_str(), "PRIVMSG" | "NOTICE"))
+        .filter(|message| matches!(message.command.as_str(), "PRIVMSG" | "NOTICE" | "TAGMSG"))
         .and_then(|message| message.params.first().map(|first| nicks(first)))
         .unwrap_or_default()
 }
@@ -91,6 +92,27 @@ mod tests {
         assert_eq!(
             private_recipients("/raw WHOIS lyra", &room()),
             Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_raw_tagmsg_names_its_nicks_as_a_message_does() {
+        assert_eq!(
+            private_recipients(
+                "/raw @+draft/react=\u{270B};+draft/reply=m1 TAGMSG lyra",
+                &room()
+            ),
+            ["lyra"],
+            "a tagged reaction sent privately by hand"
+        );
+        assert_eq!(
+            private_recipients("/quote TAGMSG #ops,mira", &room()),
+            ["mira"]
+        );
+        assert_eq!(
+            private_recipients("/tagmsg lyra", &room()),
+            ["lyra"],
+            "an unknown command is sent raw"
         );
     }
 

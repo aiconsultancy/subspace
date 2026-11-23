@@ -265,8 +265,9 @@ or the user's channel list holds it, **Go to** that channel; a standard name
 standing in is only named, as joining it would create it. The composer
 checks what a draft would send, through the IRC client's
 `private_recipients`, the same parse the session sends it with: every nick
-of a `/msg`, `/notice` or `/query` target list, the PRIVMSG or NOTICE that
-`/raw`, `/quote` or an unknown command carries, and text, `/me` or
+of a `/msg`, `/notice` or `/query` target list, the PRIVMSG, NOTICE or
+TAGMSG (which can carry a reaction) that `/raw`, `/quote` or an unknown
+command carries, and text, `/me` or
 attachments in an older private conversation; a channel target is never
 refused. The member list, a nick reference and a notification for a closed
 conversation check the nick, and `irc_write` refuses a message to an
