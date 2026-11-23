@@ -247,6 +247,14 @@ class SetupInputsTests(unittest.TestCase):
         api_env.write_text("NODE_ENV=production\n")
         up()
         self.assertNotIn("AGENT_PORT", api_env.read_text())
+        # Switching development sign-in off turns the listener off, even after a run that turned it on.
+        self.assertTrue(up())
+        api_env.write_text(api_env.read_text() + "AUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\n")
+        api_env.write_text(api_env.read_text().replace("AUTH_PROVIDERS=dev\n", "").replace(
+            "ENABLE_DEV_AUTH=true\n", "").replace("NODE_ENV=production\n", ""))
+        self.assertFalse(up())
+        self.assertNotIn("AGENT_PORT", api_env.read_text())
+        self.assertNotIn("AGENT_ORGANISATION", api_env.read_text())
 
     def test_further_fleet_registration_carries_its_records_and_is_checked(self):
         argv = ["--name", "Fleet Two", "--rear-admiral", "Nova", "--captains", "Lyra, Vega",

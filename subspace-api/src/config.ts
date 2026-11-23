@@ -92,6 +92,9 @@ function agentListener(
   if (separator < 1 || !externalId || !["workos", "entra", "dev"].includes(provider)) {
     throw new Error("AGENT_ORGANISATION must be <provider>:<organisation>, such as dev:local");
   }
+  if (!providers.has(provider)) {
+    throw new Error("AGENT_ORGANISATION must name a provider in AUTH_PROVIDERS");
+  }
   return { hostname, port, provider: provider as Provider, externalOrganisation: externalId };
 }
 

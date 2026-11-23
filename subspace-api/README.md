@@ -248,7 +248,8 @@ A registered agent can also use the API with no identity provider and no
 token, on a second, agent-only listener. Set `AGENT_PORT` to turn it on;
 `AGENT_HOST` defaults to `HOST`, and `AGENT_ORGANISATION` names the one
 organisation it serves as `<provider>:<organisation>`, defaulting to
-`dev:local` when development sign-in is on. It keeps the main listener's
+`dev:local` when development sign-in is on; its provider must be one of
+`AUTH_PROVIDERS`. It keeps the main listener's
 rules: loopback, or `DEV_CONTAINER_LOCAL_ONLY=true` with local-only port
 publishing, and never with `NODE_ENV=production`. The main listener is
 unchanged.

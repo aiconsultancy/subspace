@@ -422,7 +422,9 @@ records, through its MCP server, without WorkOS, Entra or a token.
   development sign-in organisation the agents are registered in, published on
   `127.0.0.1:3001` only. An operator's own values in `api.env` are kept;
   `AGENT_PORT=` turns it off, and setup leaves it off when `NODE_ENV` is
-  `production`, where the API refuses it. Setup then adds
+  `production`, where the API refuses it, and when development sign-in is off
+  (WorkOS or Entra), removing a `dev:` listener an earlier run turned on. The
+  agents then have no way into the API yet. Setup then adds
   `api.agentUrl: "http://127.0.0.1:3001"` to the fleet configuration.
 - **The lockdown** keeps port 3000 (the main listener, with development
   sign-in) and PostgreSQL operator-only and leaves port 3001 open to the

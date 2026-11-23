@@ -75,6 +75,10 @@ other for now.
 - Whether Stargate's curated crew permissions let crew call `subspace_*`
   tools; they allow only listed actions.
 - A further fleet installed with `--api-target` gets no agent listener.
+- With development sign-in off (WorkOS or Entra), setup turns the agent
+  listener off and the fleet's agents have no way into the API. The API can
+  serve the listener for a WorkOS or Entra organisation, but setup does not
+  configure that.
 - Agent resolution is organisation-wide: on an API shared by several fleets,
   a request on the listener can name another fleet's agent and so act within
   that fleet's limits. An optional per-listener fleet scope (for example

@@ -699,8 +699,15 @@ def api_up(answers, secret_store):
     # registered in. An operator can change or clear these, and the API refuses the listener in production.
     agent = {"AGENT_PORT": AGENT_API_PORT, "AGENT_ORGANISATION": f"dev:{answers['organisation']}"}
     merged = {**environment, **DEV_AUTH, **agent, **kept}
+    providers = [value.strip() for value in merged.get("AUTH_PROVIDERS", "").split(",")]
+    dev_sign_in = merged.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
+    if not dev_sign_in and merged.get("AGENT_ORGANISATION", "").startswith("dev:"):
+        # The listener answers for development sign-in's organisation and trusts the network as it does:
+        # an operator who turns development sign-in off turns it off too.
+        merged.pop("AGENT_PORT", None)
+        merged.pop("AGENT_ORGANISATION", None)
     if merged.get("NODE_ENV") == "production":
-        merged.pop("AGENT_PORT")
+        merged.pop("AGENT_PORT", None)
     write_private(INPUTS / "api.env", "".join(f"{key}={value}\n" for key, value in merged.items()))
     # PostgreSQL is not published at all; the API is published on loopback only.
     write_private(INPUTS / "api.override.yaml", "\n".join([

@@ -218,6 +218,26 @@ describe("the agent listener's configuration", () => {
     expect(() => config({ ...env, AGENT_PORT: "3001", AGENT_ORGANISATION: "local" })).toThrow(
       "AGENT_ORGANISATION",
     );
+    // The listener answers only for an organisation of an enabled sign-in provider.
+    expect(() =>
+      config({ ...env, AGENT_PORT: "3001", AGENT_ORGANISATION: "workos:org_example" }),
+    ).toThrow("AUTH_PROVIDERS");
+    expect(() =>
+      config({
+        DATABASE_URL: databaseUrl,
+        WORKOS_CLIENT_ID: "client_example",
+        AGENT_PORT: "3001",
+        AGENT_ORGANISATION: "dev:local",
+      }),
+    ).toThrow("AUTH_PROVIDERS");
+    expect(
+      config({
+        DATABASE_URL: databaseUrl,
+        WORKOS_CLIENT_ID: "client_example",
+        AGENT_PORT: "3001",
+        AGENT_ORGANISATION: "workos:org_example",
+      }).agent,
+    ).toMatchObject({ provider: "workos", externalOrganisation: "org_example" });
   });
 });
 
