@@ -80,6 +80,9 @@ pub(super) fn resolve(shared: &Shared, job: Job) {
     let Task::Reference(read) = job.task else {
         return;
     };
+    if !still_wanted(shared, job.generation, &read) {
+        return;
+    }
     let result = shared.client.issue(read.identifier());
     let mut state = lock(&shared.state);
     if !state.current(job.generation) || !state.references.is_pending(&read) {
@@ -102,4 +105,15 @@ pub(super) fn resolve(shared: &Shared, job: Job) {
     };
     state.references.finish(read, outcome, Instant::now());
     state.changed();
+}
+
+/// Whether `read` is still the read wanted in the current generation: a
+/// job superseded while it queued makes no request.
+fn still_wanted(
+    shared: &Shared,
+    generation: super::ScopeGeneration,
+    read: &crate::resolution_cache::ResolutionRead,
+) -> bool {
+    let state = lock(&shared.state);
+    state.current(generation) && state.references.is_pending(read)
 }
