@@ -35,6 +35,7 @@ function person(id: string, fields: Partial<Member>): Member {
     email: null,
     displayName: "Example",
     role: "member",
+    tokenRole: null,
     active: true,
     agentRank: null,
     agentFleet: null,

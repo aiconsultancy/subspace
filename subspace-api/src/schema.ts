@@ -98,6 +98,11 @@ export const users = pgTable(
     role: text({ enum: ["admin", "member"] })
       .default("member")
       .notNull(),
+    /**
+     * The role the person's last Entra token gave them through ENTRA_ADMIN_ROLE, or null. While
+     * that setting is configured it decides the effective role; `role` stays as provisioned.
+     */
+    tokenRole: text("token_role", { enum: ["admin", "member"] }),
     active: boolean().default(true).notNull(),
     agentRank: text("agent_rank", { enum: ["rearAdmiral", "captain", "crew"] }),
     agentFleet: text("agent_fleet"),
@@ -122,6 +127,10 @@ export const users = pgTable(
     unique().on(table.organisationId, table.subject),
     unique().on(table.organisationId, table.id),
     check("users_role", sql`${table.role} in ('admin', 'member')`),
+    check(
+      "users_token_role",
+      sql`${table.tokenRole} is null or (${table.tokenRole} in ('admin', 'member') and ${table.agentRank} is null)`,
+    ),
     check(
       "agent_members",
       sql`${table.agentRank} is null or (

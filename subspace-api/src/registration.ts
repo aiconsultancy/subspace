@@ -1,4 +1,4 @@
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import { recordAudit } from "./audit";
 import { type PrincipalIdentity, type SignInClaims, type VerifiedIdentity } from "./auth";
@@ -63,7 +63,7 @@ export function profileFromClaims(claims: Omit<SignInClaims, "roles">) {
 export const registerMember = (
   identity: PrincipalIdentity,
   claims: SignInClaims,
-  role: Member["role"],
+  tokenRole: Member["tokenRole"],
   reserved: ReadonlySet<string>,
 ) =>
   Effect.gen(function* () {
@@ -103,7 +103,8 @@ export const registerMember = (
             organisationId: org!.id,
             subject: identity.subject,
             ...profile,
-            role,
+            role: "member",
+            tokenRole,
             username,
           })
           .onConflictDoNothing({ target: [users.organisationId, users.subject] })
@@ -115,7 +116,12 @@ export const registerMember = (
           entityType: "Member",
           entityId: created.id,
           summary: "Registered on first sign-in.",
-          changes: { provider: identity.provider, role, username },
+          changes: {
+            provider: identity.provider,
+            role: "member",
+            ...(tokenRole ? { tokenRole } : {}),
+            username,
+          },
         });
         return created;
       }),
@@ -123,29 +129,36 @@ export const registerMember = (
   });
 
 /**
- * Sets a person's role from their identity provider, writing and auditing only when it changes.
- * Agent records are never changed, so never made administrators.
+ * Records the role a person's Entra token gives them, writing and auditing only when it changes.
+ * The provisioned role in `role` is left as it is. Agent records are never changed, and the
+ * database refuses them a token role, so they are never administrators.
  */
-export const applyRole = (member: Member, role: Member["role"]) =>
+export const applyTokenRole = (member: Member, tokenRole: "admin" | "member") =>
   Effect.gen(function* () {
     const db = yield* Database;
     return yield* db.transaction((tx) =>
       Effect.gen(function* () {
         const [updated] = yield* tx
           .update(users)
-          .set({ role, updatedAt: sql`now()` })
-          .where(and(eq(users.id, member.id), isNull(users.agentRank), ne(users.role, role)))
+          .set({ tokenRole, updatedAt: sql`now()` })
+          .where(
+            and(
+              eq(users.id, member.id),
+              isNull(users.agentRank),
+              sql`${users.tokenRole} is distinct from ${tokenRole}`,
+            ),
+          )
           .returning();
-        // Another request applied the same change first.
-        if (!updated) return { ...member, role };
+        // Another request recorded the same change first.
+        if (!updated) return { ...member, tokenRole };
         yield* recordAudit(tx, updated, {
           action: "memberRoleChanged",
           entityType: "Member",
           entityId: updated.id,
           summary: "Applied the identity provider's administrator role.",
-          changes: { from: member.role, to: role },
+          changes: { from: member.tokenRole, to: tokenRole, source: "entraAppRole" },
         });
-        return { ...member, role: updated.role, updatedAt: updated.updatedAt };
+        return { ...member, tokenRole, updatedAt: updated.updatedAt };
       }),
     );
   });
@@ -193,21 +206,28 @@ export const ensureUsername = (member: Member, reserved: ReadonlySet<string>) =>
 /**
  * The member a verified sign-in acts as. An unknown person is registered when their provider
  * allows it; a known one, active or not, is returned as found, so registration never reactivates
- * anyone. With an Entra admin role configured, an active person's role follows their token. An
- * active person without a username is given one.
+ * anyone. An active person without a username is given one.
+ *
+ * The returned `role` is the effective role. With ENTRA_ADMIN_ROLE configured, an Entra person's
+ * is the one their token gives, which is recorded in `tokenRole`; otherwise it is the provisioned
+ * `role`, so removing the setting withdraws every grant it made. Agents are never administrators.
  */
 export const signedInMember = (identity: VerifiedIdentity, policy: SignInPolicy) =>
   Effect.gen(function* () {
     const claims = identity.claims ?? { roles: [] };
     const adminRole = identity.provider === "entra" ? policy.entraAdminRole : null;
-    const role = adminRole === null ? null : claims.roles.includes(adminRole) ? "admin" : "member";
+    const tokenRole =
+      adminRole === null ? null : claims.roles.includes(adminRole) ? "admin" : "member";
     let member =
       (yield* findMember(identity)) ??
       (policy.autoRegister.has(identity.provider)
-        ? yield* registerMember(identity, claims, role ?? "member", policy.reservedUsernames)
+        ? yield* registerMember(identity, claims, tokenRole, policy.reservedUsernames)
         : undefined);
     if (!member?.active || member.agentRank) return member;
-    if (role !== null && member.role !== role) member = yield* applyRole(member, role);
+    if (tokenRole !== null && member.tokenRole !== tokenRole)
+      member = yield* applyTokenRole(member, tokenRole);
     if (member.username === null) member = yield* ensureUsername(member, policy.reservedUsernames);
-    return member;
+    if (tokenRole === null) return member;
+    const effective: Member = { ...member, role: tokenRole };
+    return effective;
   });

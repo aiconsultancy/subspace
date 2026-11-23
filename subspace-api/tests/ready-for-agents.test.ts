@@ -158,6 +158,7 @@ const human: Member = {
   email: "lead@example.com",
   displayName: "Example Lead",
   role: "member",
+  tokenRole: null,
   active: true,
   agentRank: null,
   agentFleet: null,

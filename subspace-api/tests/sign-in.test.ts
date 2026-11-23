@@ -358,13 +358,14 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
     };
     expect(await isAdmin(withRole)).toBe(true);
     const [registered] = await userBySubject(oid);
-    expect(registered.role).toBe("admin");
+    // The provisioned role is untouched; the token's role is kept apart.
+    expect(registered).toMatchObject({ role: "member", token_role: "admin" });
     const changes = () =>
       count("audit_logs", "action = 'memberRoleChanged' AND entity_id = $1", [registered.id]);
     expect(await changes()).toBe(0);
 
     expect(await isAdmin(without)).toBe(false);
-    expect((await userBySubject(oid))[0].role).toBe("member");
+    expect((await userBySubject(oid))[0]).toMatchObject({ role: "member", token_role: "member" });
     expect(await changes()).toBe(1);
     // An unchanged role writes nothing.
     const updatedAt = (await userBySubject(oid))[0].updated_at;
@@ -383,6 +384,43 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
     };
     expect((await admins.call("/api/v1/fleets", without, "POST", fleet)).status).toBe(403);
     expect((await admins.call("/api/v1/fleets", withRole, "POST", fleet)).status).toBe(201);
+  });
+
+  test("removing ENTRA_ADMIN_ROLE withdraws the grants it made", async () => {
+    const oid = crypto.randomUUID();
+    const token = await tenant.sign(oid, { name: "Ysolde Kitto", roles: [adminRole] });
+    expect((await (await admins.call("/api/v1/me", token)).json()).isAdmin).toBe(true);
+    expect((await userBySubject(oid))[0]).toMatchObject({ role: "member", token_role: "admin" });
+    // The same token on a server without the setting: the provisioned role applies.
+    expect((await (await api.call("/api/v1/me", token)).json()).isAdmin).toBe(false);
+    const fleet = {
+      name: "Withdrawn fleet",
+      slug: `withdrawn-${oid.slice(0, 8)}`,
+      ircHost: "irc.example.com",
+      ircPort: 6697,
+      ircTls: true,
+    };
+    expect((await api.call("/api/v1/fleets", token, "POST", fleet)).status).toBe(403);
+  });
+
+  test("a person whose token role was never recorded gets it on their next request", async () => {
+    // As an older instance leaves them: no token role, and here a provisioned administrator.
+    const oid = crypto.randomUUID();
+    expect((await api.call("/api/v1/me", await tenant.sign(oid))).status).toBe(200);
+    await database.client.query(
+      "UPDATE users SET role = 'admin', token_role = NULL WHERE subject = $1",
+      [oid],
+    );
+    const without = await tenant.sign(oid, { roles: [] });
+    // With the setting, the token decides, and the provisioned role stays as it is.
+    expect((await (await admins.call("/api/v1/me", without)).json()).isAdmin).toBe(false);
+    expect((await userBySubject(oid))[0]).toMatchObject({ role: "admin", token_role: "member" });
+    await database.client.query("UPDATE users SET token_role = NULL WHERE subject = $1", [oid]);
+    const holder = await tenant.sign(oid, { roles: [adminRole] });
+    expect((await (await admins.call("/api/v1/me", holder)).json()).isAdmin).toBe(true);
+    expect((await userBySubject(oid))[0]).toMatchObject({ role: "admin", token_role: "admin" });
+    // Without the setting, the provisioned administrator is one again.
+    expect((await (await api.call("/api/v1/me", without)).json()).isAdmin).toBe(true);
   });
 
   test("a token without roles is a member when the admin role is set", async () => {
@@ -423,7 +461,11 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ kind: "agent", isAdmin: false });
-    expect((await userBySubject(oid))[0].role).toBe("member");
+    expect((await userBySubject(oid))[0]).toMatchObject({ role: "member", token_role: null });
+    // The database refuses an agent a token role, however it is written.
+    await expect(
+      database.client.query("UPDATE users SET token_role = 'admin' WHERE subject = $1", [oid]),
+    ).rejects.toThrow("users_token_role");
   });
 
   test("the e-mail falls back to preferred_username at registration", async () => {

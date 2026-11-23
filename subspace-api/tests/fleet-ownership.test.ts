@@ -332,6 +332,7 @@ describe("the refusal on the issue routes", () => {
     email: "admiral@example.com",
     displayName: "Example-admiral",
     role: "member",
+    tokenRole: null,
     active: true,
     agentRank: "rearAdmiral",
     agentFleet: "alpha",

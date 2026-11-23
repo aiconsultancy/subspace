@@ -22,6 +22,7 @@ function member(id: string, displayName: string, fields: Partial<Member> = {}): 
     email: `${id}@example.com`,
     displayName,
     role: "member",
+    tokenRole: null,
     active: true,
     agentRank: null,
     agentFleet: null,

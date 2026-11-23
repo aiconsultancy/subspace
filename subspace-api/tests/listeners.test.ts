@@ -29,6 +29,7 @@ const captain: Member = {
   email: null,
   displayName: "Orion",
   role: "member",
+  tokenRole: null,
   active: true,
   agentRank: "captain",
   agentFleet: "alpha",

@@ -98,12 +98,13 @@ create one member, and every one of them succeeds.
 
 `ENTRA_ADMIN_ROLE` names an app role defined on the API's app registration. When it
 is set, an Entra token whose `roles` claim holds that value makes its holder an
-administrator, and a token without it makes them a member. The API checks this on
-every request, writes the role only when it changes and audits each change as
-`memberRoleChanged`. The app role is then the only source of the administrator
-role: it overrides `--role` from the membership command at the person's next
-request. When `ENTRA_ADMIN_ROLE` is unset, roles change only through the
-membership command. An agent record is never an administrator.
+administrator, and a token without it makes them a member, on every request. The
+API records the token's role apart from the provisioned role that the membership
+command's `--role` sets, writes it only when it changes and audits each change as
+`memberRoleChanged`. While the setting is configured, the token's role is the
+effective one for Entra members; when it is removed, the provisioned role applies
+again, so the grants it made end with it. An agent record is never an
+administrator, and the database refuses an agent a token role.
 
 ### The membership command
 
