@@ -66,9 +66,12 @@ struct Reads {
     /// Each fleet a Retry asked about too soon, with its generation then:
     /// it is read once its interval ends, unless it changed meanwhile.
     deferred: BTreeMap<String, u64>,
-    /// The last store operation queued ([`queue`]): the next one runs
-    /// after it.
-    tail: Option<Task<()>>,
+    /// The fleets with a re-read queued and not landed: never two at once.
+    rereading: std::collections::BTreeSet<String>,
+    /// Each fleet's last store operation queued ([`queue`]): the fleet's
+    /// next one runs after it. One queue per fleet, so a keychain call
+    /// that waits on one fleet never holds up another.
+    tails: BTreeMap<String, Task<()>>,
     /// Each fleet's token generation: a save, a clear or the fleet's
     /// removal starts a new one, and a read or save that began in an older
     /// one is dropped when it lands, so a cleared or replaced token never
@@ -274,7 +277,15 @@ impl FleetApi {
     fn read_due(&mut self, now: Instant, cx: &mut Context<Self>) {
         directory::due_rereads(&self.tokens, &mut self.reads.last, now, REREAD_INTERVAL)
             .into_iter()
-            .for_each(|fleet| self.load_token(fleet, cx));
+            .for_each(|fleet| self.reread(fleet, cx));
+    }
+
+    /// Queues a re-read of `fleet`'s token unless one is queued and not
+    /// landed, so one click never reads the keychain twice in a row.
+    fn reread(&mut self, fleet: String, cx: &mut Context<Self>) {
+        if self.reads.rereading.insert(fleet.clone()) {
+            self.load_token(fleet, cx);
+        }
     }
 
     /// A Retry asked within `fleet`'s interval: reads it once at `at`, when
@@ -300,9 +311,15 @@ impl FleetApi {
     fn deferred_due(&mut self, fleet: &str, at: Instant, cx: &mut Context<Self>) {
         let asked = self.reads.deferred.remove(fleet);
         let unchanged = asked == Some(self.generation_of(fleet));
-        if unchanged && self.tokens.get(fleet) == Some(&TokenLoad::Unavailable) {
+        // A Retry may have read it since: the deadline is checked again.
+        let due = self
+            .reads
+            .last
+            .get(fleet)
+            .is_none_or(|last| at.saturating_duration_since(*last) >= REREAD_INTERVAL);
+        if unchanged && due && self.tokens.get(fleet) == Some(&TokenLoad::Unavailable) {
             self.reads.last.insert(fleet.to_owned(), at);
-            self.load_token(fleet.to_owned(), cx);
+            self.reread(fleet.to_owned(), cx);
         }
     }
 

@@ -20,12 +20,13 @@ use crate::{FleetAddress, FleetRecord, FleetState, TokenStore};
 struct Held {
     locked: bool,
     fail_saves: bool,
+    fail_deletes: bool,
     saved: HashMap<String, String>,
     reads: HashMap<String, usize>,
 }
 
-/// A keychain that can be locked, refuse saves, and count reads per
-/// account. Deleting always works.
+/// A keychain that can be locked, refuse saves or deletes, and count
+/// reads per account.
 #[derive(Clone, Default)]
 struct Shelf(Arc<Mutex<Held>>);
 
@@ -68,7 +69,11 @@ impl Vault for Shelf {
     }
 
     fn delete(&self, account: &str) -> Result<(), VaultError> {
-        self.0.lock().unwrap().saved.remove(account);
+        let mut held = self.0.lock().unwrap();
+        if held.fail_deletes {
+            return Err(VaultError);
+        }
+        held.saved.remove(account);
         Ok(())
     }
 }
@@ -242,5 +247,70 @@ fn a_retry_reads_each_fleet_it_covered_once_its_own_interval_ends(cx: &mut TestA
         reads(&shelf),
         [before[0] + 1, before[1] + 1, cygnus],
         "once each"
+    );
+}
+
+#[gpui_kit::test]
+fn a_waiting_retry_never_reads_again_right_after_a_manual_one(cx: &mut TestAppContext) {
+    let shelf = Shelf::default();
+    shelf.with(|held| held.locked = true);
+    let service = service(store(&shelf), aurora(HOME), cx);
+    let start = Instant::now();
+    service.update(cx, |service, _| {
+        service.reads.last.insert("aurora".into(), start);
+    });
+    let before = shelf.reads("aurora");
+    let retry = |at: Instant, cx: &mut TestAppContext| {
+        service.update(cx, |service, cx| service.reload_unreadable_at(at, cx));
+        cx.run_until_parked();
+    };
+    retry(start + Duration::from_secs(3), cx);
+    assert_eq!(shelf.reads("aurora"), before, "too soon: it waits");
+    retry(start + Duration::from_secs(5), cx);
+    assert_eq!(
+        shelf.reads("aurora"),
+        before + 1,
+        "the manual Retry at second 5"
+    );
+    cx.executor().advance_clock(Duration::from_secs(2));
+    cx.run_until_parked();
+    assert_eq!(
+        shelf.reads("aurora"),
+        before + 1,
+        "the waiting one does not read again"
+    );
+}
+
+#[gpui_kit::test]
+fn a_failed_clear_keeps_the_token_out_of_use_until_cleared_again_or_replaced(
+    cx: &mut TestAppContext,
+) {
+    let shelf = Shelf::default();
+    let service = unlocked(&shelf, cx);
+    cx.run_until_parked();
+    shelf.with(|held| held.fail_deletes = true);
+    let cleared = service.update(cx, |service, cx| service.clear_token("aurora", cx));
+    cx.run_until_parked();
+    assert!(cx.foreground_executor().block_test(cleared).is_err());
+    assert_eq!(state(&service, cx), FleetState::ClearFailed);
+    assert_eq!(token(&service, cx), None, "never used again");
+    let shared = service.read_with(cx, |service, _| service.shared_fleets());
+    assert!(
+        shared.iter().all(|fleet| fleet.token.is_none()),
+        "nor shared"
+    );
+    service.update(cx, |service, cx| service.reload_unreadable(cx));
+    cx.run_until_parked();
+    assert_eq!(token(&service, cx), None, "a Retry does not bring it back");
+    shelf.with(|held| held.fail_deletes = false);
+    let saved = service.update(cx, |service, cx| {
+        service.save_token("aurora", Secret::new("newer"), cx)
+    });
+    cx.run_until_parked();
+    assert!(cx.foreground_executor().block_test(saved).is_ok());
+    assert_eq!(
+        token(&service, cx).as_deref(),
+        Some("newer"),
+        "saving resolves it"
     );
 }

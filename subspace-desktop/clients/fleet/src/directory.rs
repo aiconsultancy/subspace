@@ -63,6 +63,9 @@ pub(crate) enum TokenLoad {
     Saved(SavedToken),
     /// The secret store could not be read.
     Unavailable,
+    /// The person cleared the token but the keychain refused the delete:
+    /// it is not used until cleared again or replaced.
+    ClearFailed,
 }
 
 impl TokenLoad {
@@ -92,6 +95,9 @@ pub enum FleetState {
     AddressChanged { saved_for: Option<String> },
     /// The secret store could not be read.
     StoreUnavailable,
+    /// The person cleared the token but the keychain would not delete it:
+    /// it is not used, followed or shared until cleared again or replaced.
+    ClearFailed,
     /// A token is saved for the recorded address; nothing follows the
     /// fleet now.
     Ready,
@@ -111,6 +117,7 @@ impl FleetState {
             Self::NoToken => "No token",
             Self::AddressChanged { .. } => "Address changed",
             Self::StoreUnavailable => "Keychain locked",
+            Self::ClearFailed => "Token not removed",
             Self::Ready => "Token saved",
             Self::Followed(link) => link.label(),
         }
@@ -137,6 +144,9 @@ impl FleetState {
             Self::StoreUnavailable => {
                 Some("Subspace could not read its secret store. Unlock your system keychain.")
             }
+            Self::ClearFailed => Some(
+                "Subspace could not remove this fleet's token from your keychain, so it is not being used. Clear it again, or save a new token. Until then your keychain may still hold it the next time Subspace starts.",
+            ),
             Self::Followed(link) => link.help(),
             Self::Checking | Self::Ready => None,
         }
@@ -163,6 +173,7 @@ pub(crate) fn ready_client(
         TokenLoad::Loading => return Err(FleetState::Checking),
         TokenLoad::Missing => return Err(FleetState::NoToken),
         TokenLoad::Unavailable => return Err(FleetState::StoreUnavailable),
+        TokenLoad::ClearFailed => return Err(FleetState::ClearFailed),
         TokenLoad::Saved(saved) => saved,
     };
     match saved.for_address(&address) {
