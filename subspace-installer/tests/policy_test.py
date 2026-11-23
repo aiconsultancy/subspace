@@ -1098,7 +1098,7 @@ class OfficerSlackTests(unittest.TestCase):
         self.tokens()
         extra = runtime.extra_snapshot(cfg, self.directory, {}, False)
         self.assertEqual(extra["slack"], {"orion": {"slack-app-token": "xapp-1-fixture-orion",
-                                                    "slack-bot-token": "xoxb-1-fixture-orion"}})
+                                                    "slack-bot-token": "xoxb-1-fixture-orion", "appId": "AFIXTURE1"}})
         # An upgrade without a secrets directory keeps the installed tokens.
         self.assertEqual(runtime.extra_snapshot(cfg, None, extra, False)["slack"], extra["slack"])
         # Two officers cannot share a bot.
@@ -1114,6 +1114,38 @@ class OfficerSlackTests(unittest.TestCase):
         self.assertEqual(runtime.extra_snapshot(cfg, self.directory, extra, True)["slack"], {})
         self.assertEqual(runtime.officer_slack_bot(cfg["members"][1], {"backend": {}}, extra["slack"]["orion"]),
                          (None, {}))
+
+    def test_a_new_slack_app_needs_both_of_its_tokens(self):
+        self.tokens()
+        installed = runtime.extra_snapshot(validate(self.config, self.secrets), self.directory, {}, False)
+        # The officer moves to another Slack app and supplies only the new app-level token.
+        self.config["captains"][0]["slack"] = slack_settings("AFIXTURE9")
+        cfg = validate(self.config, self.secrets)
+        fresh = Path(self.root.name) / "new.secrets"
+        (fresh / "orion").mkdir(parents=True, mode=0o700)
+        fresh.chmod(0o700)
+        (fresh / "orion/slack-app-token").write_text("xapp-1-fixture-new\n")
+        (fresh / "orion/slack-app-token").chmod(0o600)
+        with self.assertRaisesRegex(Invalid, "slack-bot-token .*Slack app changed to AFIXTURE9, so both"):
+            runtime.extra_snapshot(cfg, fresh, installed, False)
+        # Without any secrets directory the old app's tokens are not reused either.
+        with self.assertRaisesRegex(Invalid, "Supply slack-app-token .*Slack app changed to AFIXTURE9"):
+            runtime.extra_snapshot(cfg, None, installed, False)
+        (fresh / "orion/slack-bot-token").write_text("xoxb-1-fixture-new\n")
+        (fresh / "orion/slack-bot-token").chmod(0o600)
+        replaced = runtime.extra_snapshot(cfg, fresh, installed, False)["slack"]["orion"]
+        self.assertEqual(replaced, {"slack-app-token": "xapp-1-fixture-new", "slack-bot-token": "xoxb-1-fixture-new",
+                                    "appId": "AFIXTURE9"})
+        # The render never pairs a bot with tokens recorded for another app.
+        registration = {"backend": {"directory": "/w"}}
+        with self.assertRaisesRegex(Invalid, "for Slack app AFIXTURE9"):
+            runtime.officer_slack_bot(cfg["members"][1], registration, installed["slack"]["orion"])
+        self.assertEqual(runtime.officer_slack_bot(cfg["members"][1], registration, replaced)[1]["SLACK_BOT_TOKEN_ORION"],
+                         "xoxb-1-fixture-new")
+        # Tokens installed before the app was recorded are kept for the configured app on an upgrade.
+        legacy = {"slack": {"orion": {name: value for name, value in installed["slack"]["orion"].items()
+                                      if name != "appId"}}}
+        self.assertEqual(runtime.extra_snapshot(cfg, None, legacy, False)["slack"]["orion"]["appId"], "AFIXTURE9")
 
     def test_the_bot_uses_the_irc_registrations_backend_and_pinned_session(self):
         self.config["captains"][0]["slack"] = slack_settings(mentionOnly=False)

@@ -340,6 +340,12 @@ def slack_members(cfg):
             if "slack" in person or person["role"] == "rear_admiral" and cfg["integrations"]["slack"]]
 
 
+def slack_app_id(cfg, agent_id):
+    """The Slack app whose tokens an officer's secrets directory holds: its own bot's, else stakeholders.slack's."""
+    person = next(person for person in cfg["members"] if person["id"] == agent_id)
+    return (person.get("slack") or cfg["integrations"]["slack"])["appId"]
+
+
 def slack_owner(cfg, agent_id):
     return "the rear admiral's" if agent_id == cfg["members"][0]["id"] else f"captain {agent_id}'s"
 
@@ -354,8 +360,9 @@ def officer_slack_bot(person, registration, tokens):
     slack = person.get("slack")
     if not slack:
         return None, {}
-    require(tokens and SLACK_TOKEN_FILES.keys() <= tokens.keys(),
-            f"Supply slack-app-token and slack-bot-token in {person['id']}'s secrets directory.")
+    require(tokens and SLACK_TOKEN_FILES.keys() <= tokens.keys() and tokens.get("appId", slack["appId"]) == slack["appId"],
+            f"Supply slack-app-token and slack-bot-token for Slack app {slack['appId']} in {person['id']}'s secrets "
+            "directory.")
     app_env, bot_env = slack_env(person["id"])
     bot = {
         "id": slack_bot_id(person["id"]), "displayName": person["name"], "backend": dict(registration["backend"]),
@@ -1070,11 +1077,20 @@ def extra_snapshot(cfg, directory, previous, prune):
     # only those of officers whose Slack bot is configured, from the secrets directory.
     slack_tokens = {} if prune else {agent: entries.copy() for agent, entries in previous.get("slack", {}).items()}
     for agent in slack_members(cfg):
+        app = slack_app_id(cfg, agent)
         slack = slack_tokens.setdefault(agent, {})
+        replaced = slack.get("appId", app) != app
+        if replaced:
+            # The tokens belong to a Slack app: none kept for the officer's previous app may pair with the new one.
+            slack = slack_tokens[agent] = {}
         for name, prefix in SLACK_TOKEN_FILES.items():
             if (agent, name) in files:
                 slack[name] = pattern(files[agent, name].decode("ascii").strip(), fr"{prefix}-[a-zA-Z0-9-]{{8,512}}", name)
-            require(name in slack, f"Supply {name} in {slack_owner(cfg, agent)} secrets directory.")
+            require(name in slack, f"Supply {name} in {slack_owner(cfg, agent)} secrets directory"
+                    + (f": its Slack app changed to {app}, so both of the new app's tokens are needed." if replaced
+                       else "."))
+        # Installed copies from before this record are taken to be the configured app's.
+        slack["appId"] = app
     for name in SLACK_TOKEN_FILES:
         configured = [slack_tokens[agent][name] for agent in slack_members(cfg)]
         require(len(set(configured)) == len(configured), f"Each Slack bot needs its own {name}: two officers share one.")

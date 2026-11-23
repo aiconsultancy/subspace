@@ -1123,6 +1123,8 @@ through its private runtime settings, as `SLACK_APP_TOKEN_<ID>` and
 `SLACK_BOT_TOKEN_<ID>`, where `<ID>` is the member ID in capitals with
 hyphens as underscores, such as `SLACK_BOT_TOKEN_ORION`. Stargate's
 configuration names only the variables. Two officers cannot share a token.
+The installed copies record their app: after changing an officer's `appId`,
+supply both of the new app's tokens, or the run stops.
 
 **One session on Slack and IRC.** The installer adds the bot to the gateway
 that serves the officer's IRC registration, with the same backend: engine,
