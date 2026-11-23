@@ -1288,6 +1288,25 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
     return unit, backend, {auth_var: header}, database_dir
 
 
+def claude_backend(cfg, person, workspace, documents):
+    """A Claude Agent SDK officer's Stargate backend, with the Subspace API's MCP server when it has the agent
+    listener."""
+    harness = person["harness"]
+    backend = {
+        "type": "claude", "directory": str(workspace), "model": harness["model"], "allowedTools": harness["allowedTools"],
+        "systemPrompt": documents["claudePrompt"],
+        "provider": {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}/v1", "apiKeyEnv": "CLIPROXYAPI_API_KEY"},
+    }
+    if mcp_url := subspace_mcp_url(cfg):
+        # Stargate's Claude backend takes header values only from a helper command, and permits every
+        # tool of a configured server itself (mcp__subspace); allowedTools holds built-in tools only.
+        backend["mcpServers"] = {SUBSPACE_MCP: {
+            "type": "http", "url": mcp_url,
+            "headersHelper": f"{APP}/lib/runtime.py agent-header {person['account']}",
+        }}
+    return backend
+
+
 def irc_agent(cfg, person, backend):
     agent_id = person["id"]
     password_var = "IRC_" + agent_id.upper().replace("-", "_")
@@ -1714,17 +1733,7 @@ def render(cfg, extra, prune=False):
             units.append(unit)
             engines.append(unit)
         else:
-            backend = {
-                "type": "claude", "directory": str(workspace), "model": harness["model"], "allowedTools": harness["allowedTools"],
-                "systemPrompt": documents[agent_id]["claudePrompt"],
-                "provider": {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}/v1", "apiKeyEnv": "CLIPROXYAPI_API_KEY"},
-            }
-            if mcp_url := subspace_mcp_url(cfg):
-                # Stargate's Claude backend takes header values only from a helper command.
-                backend["mcpServers"] = {SUBSPACE_MCP: {
-                    "type": "http", "url": mcp_url,
-                    "headersHelper": f"{APP}/lib/runtime.py agent-header {person['account']}",
-                }}
+            backend = claude_backend(cfg, person, workspace, documents[agent_id])
             headers = {"CLIPROXYAPI_API_KEY": cfg["proxy"]["key"]}
         registrations[agent_id], password = irc_agent(cfg, person, backend)
         environments[agent_id] = {**headers, **password}

@@ -134,12 +134,16 @@ def role_documents(cfg, person, references, home):
     procedure = skills[f"fleet-{role}"].partition("\n---\n")
     if not procedure[1]:
         raise ValueError("Fleet skill templates need Markdown front matter.")
+    claude_prompt = f"{instructions}\n{procedure[2]}"
+    if API_SKILL in skills:
+        # Stargate's Claude backend loads no skill files, so a Claude officer gets the API skill in its prompt.
+        claude_prompt += "\n" + skills[API_SKILL].partition("\n---\n")[2]
     return {
         "role": role,
         "instructions": instructions,
         "skills": skills,
         "crew": crew,
-        "claudePrompt": f"{instructions}\n{procedure[2]}",
+        "claudePrompt": claude_prompt,
     }
 
 

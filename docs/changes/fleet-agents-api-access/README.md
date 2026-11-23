@@ -38,7 +38,8 @@ reached it, with an eight-hour rear admiral token.
   if port 3001 answers the sign-in route or shares an operator port. Each
   OpenCode officer's engine gets the MCP server `subspace` with its IRC
   account in the header and a `subspace_*` permission grant; Claude Agent SDK
-  officers get it through Stargate's `mcpServers` and a header helper. Crew
+  officers get it through Stargate's `mcpServers` and a header helper, which
+  permits its tools, and the skill's text in their system prompt. Crew
   share their captain's server. Officers receive the `subspace-tracker` skill.
 - **Skills.** The three `subspace-tracker` skills were rewritten from the
   API's tool catalogue and rules and share one body. An API test checks that

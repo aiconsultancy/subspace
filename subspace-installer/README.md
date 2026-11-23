@@ -441,7 +441,11 @@ records, through its MCP server, without WorkOS, Entra or a token.
 - **Claude Agent SDK officers** get the same server through Stargate's
   `backend.mcpServers`, with a `headersHelper` that runs
   `/opt/subspace-fleet/lib/runtime.py agent-header <account>`, since that
-  backend takes header values only from a helper.
+  backend takes header values only from a helper. Stargate permits every tool
+  of a configured server itself (`mcp__subspace`), and `allowedTools` holds
+  built-in tools only, so it is left as configured. That backend loads no
+  skill files, so the `subspace-tracker` skill's text is appended to the
+  officer's system prompt instead.
 - **Skills.** Each officer also receives the generic `subspace-tracker` skill
   in `~/.config/opencode/skills/`, the same file as
   `agent-skills/opencode/subspace-tracker/SKILL.md`, which the host installer

@@ -293,6 +293,40 @@ class FleetPolicyTests(unittest.TestCase):
             self.assertIn(runtime.SUBSPACE_MCP_GRANT, backend["permissions"])
             self.assertEqual(backend["permissions"].count(runtime.SUBSPACE_MCP_GRANT), 1)
 
+    def test_claude_officers_get_the_api_server_and_skill_in_their_prompt(self):
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        cfg = validate(config, api_secrets())
+        person = cfg["members"][1]
+        documents = roles.role_documents(cfg, person, None, Path("/home"))
+        skill = documents["skills"]["subspace-tracker"].partition("\n---\n")[2]
+        self.assertTrue(skill.strip() and documents["claudePrompt"].endswith(skill))
+        self.assertNotIn("name: subspace-tracker", documents["claudePrompt"])
+        without = dict(config, api={"url": "http://127.0.0.1:3000"})
+        plain = roles.role_documents(validate(without, api_secrets()), person, None, Path("/home"))
+        self.assertNotIn("subspace_whoami", plain["claudePrompt"])
+
+    def test_claude_officer_backend_names_the_server_and_only_built_in_tools(self):
+        # Stargate permits a configured server's tools itself (mcp__<server>) and its allowedTools accepts
+        # only built-in tool names, so the installer adds the server and leaves allowedTools alone.
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        cfg = validate(config, api_secrets())
+        person = dict(cfg["members"][1], harness={
+            "type": "claude-sdk", "family": "claude", "model": "example-model", "permissions": None,
+            "allowedTools": ["Read"]})
+        documents = {"claudePrompt": "Example prompt"}
+        backend = runtime.claude_backend(cfg, person, Path("/workspace"), documents)
+        self.assertEqual(backend["mcpServers"], {"subspace": {
+            "type": "http", "url": "http://127.0.0.1:3001/mcp",
+            "headersHelper": f"/opt/subspace-fleet/lib/runtime.py agent-header {person['account']}",
+        }})
+        self.assertEqual(backend["allowedTools"], ["Read"])
+        self.assertEqual(backend["systemPrompt"], "Example prompt")
+        self.assertNotIn("mcpServers", runtime.claude_backend(
+            validate(dict(config, api={"url": "http://127.0.0.1:3000"}), api_secrets()), person,
+            Path("/workspace"), documents))
+
     def test_without_the_agent_listener_officers_get_no_api_server_or_skill(self):
         config = example_config()
         config["api"] = {"url": "http://127.0.0.1:3000"}
