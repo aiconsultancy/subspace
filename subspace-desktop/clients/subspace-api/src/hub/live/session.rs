@@ -17,9 +17,9 @@ pub(super) struct Session {
     issue: Due,
     list: Due,
     live_since: Option<Instant>,
-    /// The catch-up after `ready` has not been taken yet.
+    /// The id of this stream's `ready` while its catch-up is not taken.
     #[cfg(test)]
-    ready_owed: bool,
+    ready_owed: Option<u64>,
 }
 
 impl Session {
@@ -30,7 +30,7 @@ impl Session {
             list: Due::new(LIST_SPACING),
             live_since: None,
             #[cfg(test)]
-            ready_owed: false,
+            ready_owed: None,
         }
     }
 
@@ -89,8 +89,8 @@ impl Session {
     fn note_ready(&mut self, state: &mut crate::hub::State) {
         #[cfg(test)]
         {
-            state.live_reads.readies += 1;
-            self.ready_owed = true;
+            state.live_reads.latest_ready += 1;
+            self.ready_owed = Some(state.live_reads.latest_ready);
         }
         let now = Instant::now();
         self.live_since = Some(now);
@@ -126,9 +126,11 @@ impl Session {
             hints::reread_list(shared, &mut state);
         }
         #[cfg(test)]
-        if self.ready_owed && !self.issue.waiting() && !self.list.waiting() {
-            self.ready_owed = false;
-            state.live_reads.ready_catch_ups += 1;
+        if !self.issue.waiting()
+            && !self.list.waiting()
+            && let Some(ready) = self.ready_owed.take()
+        {
+            state.live_reads.caught_up_ready = ready;
         }
     }
 }

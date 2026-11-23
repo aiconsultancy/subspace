@@ -136,8 +136,8 @@ impl Hub {
     pub(crate) fn caught_up_after_ready(&self) -> bool {
         let state = lock(&self.0.state);
         let reads = &state.live_reads;
-        reads.readies > 0
-            && reads.ready_catch_ups == reads.readies
+        reads.latest_ready > 0
+            && reads.caught_up_ready == reads.latest_ready
             && !reads.issue.pending()
             && !reads.list.pending()
             && self.0.queue.idle()
