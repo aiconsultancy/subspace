@@ -62,9 +62,10 @@ local IRC fixture. `CAPTURE_FLEET_API=1` starts the Stargate Fleet API fixture
 (see [Fleet fixture](#fleet-fixture)) and points the built-in Fleet Console at
 it. `CAPTURE_FLEET=1` adds the fleet's issues to the Subspace API fixture.
 `CAPTURE_IRC_CREDENTIAL=1` has that fixture issue fictional IRC sign-ins
-(`POST /api/v1/me/irc-credential` answers 404 without it), so Channels keeps
-a network for each IRC server the fixture's fleets use, such as the aurora
-fleet's with `CAPTURE_FLEET=1`. `CAPTURE_NO_UPDATES_STREAM=1` starts the Subspace API fixture
+for the servers its fleets use, such as the aurora fleet's with
+`CAPTURE_FLEET=1` (`POST /api/v1/me/irc-credential` with the server's `host`
+and `port`; 404 for any other server, and for all without it), so Channels
+keeps a network for each of them. `CAPTURE_NO_UPDATES_STREAM=1` starts the Subspace API fixture
 without its live updates stream. `CAPTURE_CHANGE_AFTER=<seconds>` retitles
 SUB-1 that long after the first detail read to simulate a change made
 elsewhere. `CAPTURE_ITEM_DELAY=<seconds>` holds each GitHub

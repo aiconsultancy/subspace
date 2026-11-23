@@ -3,8 +3,8 @@
 Back to the [change records](../README.md).
 
 After a person signs in, Channels connects to each of their fleets' IRC
-servers with a short-lived login Subspace API issues at every connect, so
-nobody types IRC settings. The networks are derived from the account and its
+servers that Subspace API vouches for, each with a short-lived login issued
+for that server alone, so nobody types IRC settings. The networks are derived from the account and its
 fleets, run beside the saved networks, are never written to
 `irc/config.json` and go on sign-out. A saved network on the same server is
 kept, with an offer to switch it. **Settings > Channels** shows them

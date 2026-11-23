@@ -62,11 +62,12 @@ toolbar button to show or hide this guide.
 
 ## Before you start
 
-- Signed in to Subspace, you need no IRC settings when Subspace API issues
-  IRC sign-ins: Channels connects to each of your fleets' IRC servers with
-  your account, and lists them read-only under **From your account** in
-  **Settings > Channels**. They go when you sign out. Otherwise, or for
-  other servers, add networks yourself.
+- Signed in to Subspace, you need no IRC settings for your fleets' IRC
+  servers that Subspace API issues sign-ins for: Channels connects to each
+  with your account, using a sign-in issued for that server alone, and
+  lists them read-only under **From your account** in **Settings >
+  Channels**. They go when you sign out. For other servers, add networks
+  yourself.
 - Add at least one network under **Settings > Channels**. While no network is
   configured, the board offers **Add network…**, which opens that page.
 - To let a coding agent set up networks instead, choose **Copy agent prompt**
@@ -959,8 +960,8 @@ Open **Settings** and choose **Channels** in the sidebar.
 | Setting | Default | Notes |
 | --- | --- | --- |
 | **Enabled** | Off in release builds, on in debug builds | Turning the board off disconnects every network. |
-| **Networks** | None | The networks to connect to. **Add network** adds one; **Edit…** and **Remove…** change one. |
-| **From your account** | — | Shown while you are signed in and Subspace API issues IRC sign-ins: one network for each of your fleets' IRC servers, read-only. They sign in as your Subspace username, follow your account and go when you sign out. |
+| **Networks** (**Saved networks** while networks from your account show) | None | The networks to connect to. **Add network** adds one; **Edit…** and **Remove…** change one. |
+| **From your account** | — | Shown while you are signed in: one network for each of your fleets' IRC servers that Subspace API issues sign-ins for, read-only. They sign in as the account name it issues, follow your account and go when you sign out. |
 | **Highlight words** | None | Words, separated by commas, that mark a message as mentioning you on every network, besides your nick. |
 | **History** | — | Says that messages are kept on this computer and that **Search** turns this off (**Cache Channels**) or deletes them (**Clear cache…**). |
 
@@ -984,7 +985,7 @@ When one of your networks connects to the same server as a network from
 your account, it stays connected and no second connection is made; its
 **Use account sign-in…** asks **Switch "name" to your account?** and, on
 Save, removes it and its saved passwords, so your account's network
-connects instead.
+connects instead. Signing in to another account withdraws the question.
 
 Password fields are masked. A saved password shows **Password saved** and its
 input stays read-only; **Clear saved password** lets you type a new one or

@@ -20,5 +20,13 @@ Back to the [record](README.md).
 - [x] Docs: `docs/irc.md`, the Channels help guide, `docs/settings.md`,
       `docs/capture.md`.
 - [x] Evidence from the capture build in Twilight Two, before and after.
+- [x] Review round one (pull request 83): bind each credential to its
+      server, plan only from the account's own memberships, reserve account
+      network ids and scope their history, keep the issued password out of
+      the configuration and require its SASL, keep logins until shortly
+      before they expire with spacing and backoff, validate endpoints and
+      check the peer before a plaintext login, retry refused checks and
+      unread memberships, tighten the Settings switch, and test the timer
+      path; screenshots recaptured.
 - [ ] End-to-end sign-in against a real API with the credential route and an
       Ergo server with the auth hook, once both exist.

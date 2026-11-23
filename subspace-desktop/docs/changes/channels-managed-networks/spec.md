@@ -1,96 +1,137 @@
 # Spec: networks from the signed-in account
 
-Back to the [record](README.md). The behaviour is described for maintainers
-in [Networks from your account](../../irc.md#networks-from-your-account).
+Back to the [record](README.md). The behaviour and its trust model are
+described for maintainers in
+[Networks from your account](../../irc.md#networks-from-your-account).
 
 ## The contract consumed
 
 - `GET /api/v1/me` may carry `username` (a string). An API that predates it
   sends none, which brings no network.
 - `POST /api/v1/me/irc-credential`, with the same bearer as every other
-  call, answers `{ "account", "password", "expiresAt" }`. The password is
-  opaque, valid for about ten minutes and reusable until then. An API
-  without the feature answers 404.
+  call, takes `{ "host": string, "port": integer }`, the IRC server the login
+  is for, and answers `{ "account", "password", "expiresAt" }` for a server
+  the API vouches for. The password is opaque, valid on that host alone for
+  about ten minutes and reusable until then. A server the API does not vouch
+  for, or an API without the feature, answers 404.
 - Fleets carry `ircHost`, `ircPort` and `ircTls`; initiatives carry their
   fleet.
 
 ## API client (`clients/subspace-api`)
 
 - `model::Me::username: Option<String>`.
-- `Client::irc_credential()` posts `{}` once to `v1/me/irc-credential`,
-  never retried. The answer is an `IrcCredential` whose password is a
-  `Secret`, so formatting it prints `***`. An account that is not one IRC
+- `Client::irc_credential(host, port)` posts `{host, port}` once to
+  `v1/me/irc-credential`, never retried; an empty host or port 0 is refused
+  before anything is sent. The answer is an `IrcCredential` whose password is
+  a `Secret`, so formatting it prints `***`. An account that is not one IRC
   name (ASCII letters, digits and nick punctuation, starting with a letter,
   at most 64 bytes, no `@`), a password that is empty, longer than 400 bytes
   or not printable ASCII, or an expiry that is not RFC 3339 is refused as
   `InvalidResponse`. 404 is `NotFound`; 401 is `SignInNeeded`; a transport
   failure is `Network`. A NETT client answers `NotFound` without asking.
+- `Catalog::verified_for()` names the account generation and verified user
+  the memberships were read for, while the latest read succeeded for the
+  current scope. `signed_in_generation()` is the current account generation.
 
 ## IRC client (`clients/irc`)
 
 - `Sasl::credential: Option<CredentialSource>`, `#[serde(skip)]`: never read
-  from or written to a settings file.
-- `CredentialSource` wraps a blocking `Fn() -> Result<IssuedLogin, String>`
-  and a key; two sources are equal when their keys are, so an owner can
-  rebuild one without the runtime restarting the network.
-- At every connect, after the TCP and TLS handshake where a password file is
-  read, the network task resolves the login: the inline password, else the
-  password file, else the source, asked on a blocking thread. Disconnect and
-  shutdown abandon the wait, as they abandon a connect. The issued login
-  sets the nick and the SASL username and password of the session only.
+  from or written to a settings file. `CredentialSource` wraps a blocking
+  `Fn() -> Result<IssuedLogin, String>` and a key (sources with equal keys
+  are equal, so rebuilding one restarts nothing), and `on_refused` tells the
+  owner when a server did not accept its login.
+- `IssuedLogin { nickname, username, password: IssuedPassword }`.
+  `IssuedPassword` never formats (`***`), has no `Serialize` and never enters
+  the network's configuration.
+- At every connect, after the TCP and TLS handshake, the network task
+  resolves the login: the inline password, else the password file, else the
+  source, asked on a blocking thread. Disconnect and shutdown abandon the
+  wait, as they abandon a connect. A certificate the client cannot verify
+  ends the connect before the source is asked.
+- Without TLS, a network with a credential source is refused (`Failed`)
+  unless the connected peer is a loopback address, before the source is
+  asked.
+- The issued login sets the session's nick and SASL username; its password
+  goes to the session apart from the configuration, is sent in the one
+  PLAIN exchange and dropped. SASL outcomes for such a session are fixed
+  words with the numeric (`The server did not accept the sign-in (904)`).
+- Such a session must sign in: at 001 without a 903, it sends `QUIT` and
+  joins nothing, the network retries as a lost connection with its backoff,
+  and the source's `on_refused` runs.
 - A source error is retried as a lost connection (`Reconnecting` with the
-  error as its reason, with the usual backoff); a password file error stays
-  final (`Failed`).
-- PLAIN sends the username as both identities, so `account@device` passes
-  Ergo's check that they match before it takes the device off.
+  error as its reason); a password file error stays final (`Failed`).
 
 ## Channels (`spaces/irc`)
 
+- **Environment** (`managed/env.rs`): the client and the account
+  generation come from `Env`, the app's (`Client::new`,
+  `signed_in_generation`) or a test's.
 - **Account check** (`managed/account.rs`): on the hub's timer, when no
-  check has settled for the current account, a background task builds a
-  `Client`, reads `/me` and, with a username, asks for one credential and
-  drops it. `SignedIn { username, account }` when both work; `Without` for
-  no username, 404, a refusal or a sign-out; a network failure, an
-  unexpected status or an invalid answer is checked again after 5 s,
-  doubling up to 5 min. The account is compared with the checked client's
-  at most once a second; a change forgets the account and its networks and
-  checks again. An answer that arrives after the account changed is
-  discarded.
-- **Servers** (`managed/plan.rs`): the fleets of the catalogue's
-  memberships, each server once by host (ASCII case ignored), port and TLS,
-  named after its fleets. Only TLS or loopback servers count.
-- **Networks**: one per server that no saved network serves (same host,
-  ignoring case and surrounding space, and the same port, whatever the TLS
-  settings). Id `slug(account host port)`, made unique against saved ids;
-  name the fleets' names; host, port and TLS from the fleet; certificate
-  checks on; nick the account; no channels; connect on start; SASL username
-  `account@device`, empty password, the credential source.
-- **Credential source** (`managed/source.rs`): keyed by API origin and
-  account, bound to the client of the check, so after a sign-out or switch
-  it is refused. Its errors read `Subspace API could not be reached for an
-  IRC sign-in`, `Sign in under Settings › Account to connect`, `Subspace API
-  does not issue IRC sign-ins` or `Subspace API could not issue an IRC
-  sign-in`.
+  check has settled for the current account, a background task reads `/me`.
+  `SignedIn { id, username }` with a username; `Without` for no username or
+  404; 401 and 403 are checked again after 5 s doubling to 30 min, other
+  failures to 5 min. The account generation is compared at most once a
+  second; a change forgets the account, its servers, logins and networks
+  and checks again. An answer begun in another generation is dropped.
+- **Memberships**: nothing is planned until `Catalog::verified_for()` names
+  the checked generation and user. While signed in and they are not, the
+  catalogue is read again at once, then after 5 s doubling to 5 min.
+- **Servers** (`managed/plan.rs`, `initiatives/endpoint.rs`): the fleets'
+  servers with a valid host (DNS name or IP literal, IPv6 normalised, no
+  whitespace, control characters, `/`, `@` or port) and port (1 to 65535),
+  each once by host (ASCII case ignored), port and TLS, named after their
+  fleets. Only TLS servers, or plaintext ones named as loopback, count.
+- **Probes** (`managed/servers.rs`): each server's login is asked for once
+  with its host and port. `Vouched(account)` on success; `Refused` on 404,
+  for that server only; anything else is asked again after 5 s doubling (to
+  30 min for 401 and 403, else 5 min). A server the catalogue drops goes
+  with its login; a late answer for it changes nothing.
+- **Logins** (`managed/login.rs`): per server, the issued login is kept
+  until a minute before `expiresAt`; one that arrives expired is refused;
+  the API is asked no sooner than 10 s after the last request, or after a
+  wait from 5 s doubling to 5 min after a failure, one request at a time.
+  The probe's login is the first connect's.
+- **Credential source** (`managed/source.rs`): one per network, keyed by API
+  origin, user and server, offering only its server's login, refusing once
+  its account generation is over, and dropping its login when the server
+  refused it. Errors read `Subspace API could not be reached for an IRC
+  sign-in`, `Sign in under Settings › Account to connect`, `Subspace API does
+  not issue sign-ins for this IRC server`, `Subspace API could not issue an
+  IRC sign-in`, `Subspace API issued an IRC sign-in that had expired` or
+  `Waiting before asking Subspace API for an IRC sign-in`.
+- **Networks**: one per vouched server that no saved network serves (same
+  host, ignoring case and surrounding space, and the same port, whatever the
+  TLS settings). Id `@account.<person>.<server>`, 16 hexadecimal digits each
+  of SHA-256 of the API's user ID and of `host|port|tls`; name the fleets'
+  names; host, port and TLS from the fleet; certificate checks on; nick the
+  issued account; no channels; connect on start; SASL username
+  `account@device`, empty password, the server's credential source.
+- **Saved ids**: a saved network whose id starts with `@` is skipped when
+  the settings load, with the reason, and Settings names the problem and
+  refuses Save until it is removed.
+- **History**: stored buffers of account networks not running at restore
+  are kept aside and restored, with anchors, once their network runs; when a
+  person signs in, stored buffers of other people's account networks
+  (kept aside, or of networks that stopped this session) are deleted.
 - **Device** (`managed/device.rs`): `irc.device` in the state file, 16
   lower-case hexadecimal digits from a v4 UUID, made when missing or not of
   that form.
-- **Hub** (`hub/account.rs`): `saved` holds the file's settings; the
-  effective settings are the saved ones then the account's networks.
-  `apply` (a Settings save) stores the saved settings and reconciles;
-  catalogue changes and a settled check reconcile too; `follow` applies the
-  effective settings as `apply` did before, so unchanged networks keep their
-  connection. After a check signs in and the memberships are not known, the
-  catalogue is read.
-- **Settings** (`editor/account_view.rs`): a **From your account** section
-  while the account brings networks (a username and at least one server):
-  an introduction naming the username, then per server its name and
-  `host:port · TLS · username`, and `Not connected: your network "name"
-  connects to this server instead.` when a draft network serves it. A draft
-  network on one of those servers says `Your Subspace account can sign in to
-  this server for you.` and gains **Use account sign-in…**, which asks
-  **Switch "name" to your account?** with **Cancel** and **Switch**; Switch
-  removes it from the draft, and Save writes the rest. The editor reads the
-  hub when it opens and follows it.
+- **Hub** (`hub/account.rs`): the effective settings are the saved ones,
+  then the account's networks; `apply` stores the saved settings and
+  reconciles, and `follow` applies the effective ones, so unchanged networks
+  keep their connection.
+- **Settings** (`editor/account_view.rs`): while the account brings
+  networks, **From your account** introduces them with the issued account
+  name and the service name (`service_name()`), then lists each vouched
+  server, `host:port · TLS · account`, and `Not connected: your network
+  "name" connects to this server instead.` when a draft network serves it;
+  the saved list is then headed **Saved networks**, empty **No saved
+  networks yet.** A draft network on one of those servers says `Your Subspace
+  API account can sign in to this server for you.` and gains **Use account
+  sign-in…**, which asks **Switch "name" to your account?** with **Cancel**
+  and **Switch**. A change of the account's networks withdraws the question;
+  Switch is disabled on a locked page and checks again that the network
+  still serves an account server before it removes it from the draft.
 
 ## Left out
 
@@ -100,3 +141,6 @@ in [Networks from your account](../../irc.md#networks-from-your-account).
   would change the shared picker for Issues too.
 - NETT does not issue IRC credentials yet.
 - A plaintext fleet server off this computer gets no network.
+- Fixed SASL wording applies to sessions with an issued login; a saved
+  network keeps the server's words, as the IRC client's clean-room
+  acceptance tests require.
