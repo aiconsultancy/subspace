@@ -4,7 +4,7 @@
 mod account_view;
 mod draft;
 mod form;
-pub(crate) mod ids;
+mod ids;
 mod network_view;
 pub(crate) mod validate;
 mod view;
@@ -256,7 +256,11 @@ impl IrcSettings {
     /// The problems of network `key`.
     pub(crate) fn problems(&self, key: u64, cx: &App) -> Vec<Problem> {
         self.network(key).map_or_else(Vec::new, |network| {
-            validate::problems(&network.text(cx), &network.secrets(cx))
+            let reserved = validate::reserved_id(network.saved_id.as_deref());
+            reserved
+                .into_iter()
+                .chain(validate::problems(&network.text(cx), &network.secrets(cx)))
+                .collect()
         })
     }
 
@@ -289,7 +293,7 @@ impl IrcSettings {
             .map(|(network, id)| {
                 let text = network.text(cx);
                 let secrets = network.secrets(cx);
-                if let Some(problem) = validate::problems(&text, &secrets).first() {
+                if let Some(problem) = self.problems(network.key, cx).first() {
                     return Err(format!("{}: {}", network.title(cx), problem.message));
                 }
                 let object = draft::to_json(&network.raw, &id, &text, &secrets);

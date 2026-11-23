@@ -25,7 +25,7 @@ use subspace_api_client::model::MemberInitiative;
 use subspace_client_irc::NetworkConfig;
 
 pub(crate) use account::Account;
-pub(crate) use plan::{Server, same_server};
+pub(crate) use plan::{Server, digest, owner, reserved, same_server};
 
 use crate::hub::Hub;
 use crate::initiatives::Endpoint;
@@ -117,7 +117,7 @@ impl Managed {
                 source: source::source(&binding, &entry.login, &self.device),
             })
             .collect();
-        self.networks = plan::networks(vouched, saved, &self.device);
+        self.networks = plan::networks(vouched, saved, (&binding.person_id, &self.device));
     }
 
     /// What Settings shows.
@@ -174,7 +174,7 @@ impl Managed {
                         env: Arc::clone(&self.env),
                         client,
                         generation: checked.generation,
-                        user_id: person.user_id.clone(),
+                        person_id: person.id.clone(),
                     })),
                     _ => None,
                 };
@@ -262,6 +262,10 @@ fn finish(hub: &mut Hub, checked: account::Checked, cx: &mut Context<Hub>) {
     let now = Instant::now();
     if !hub.managed.finish(checked, now) {
         return;
+    }
+    if let Account::SignedIn(person) = &hub.managed.account {
+        let person_id = person.id.clone();
+        hub.keep_history_of(&person_id);
     }
     reread(hub, now, cx);
     hub.reconcile(cx);

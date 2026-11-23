@@ -19,7 +19,7 @@ pub(crate) struct Binding {
     pub client: Arc<Client>,
     pub generation: Option<u64>,
     /// The API's stable ID of the verified person.
-    pub user_id: String,
+    pub person_id: String,
 }
 
 impl Binding {
@@ -31,7 +31,7 @@ impl Binding {
     /// Whether memberships read for `owner`, an account generation and
     /// verified user, belong to this account.
     pub fn owns(&self, owner: Option<(Option<u64>, &str)>) -> bool {
-        owner == Some((self.generation, self.user_id.as_str()))
+        owner == Some((self.generation, self.person_id.as_str()))
     }
 }
 
@@ -44,7 +44,7 @@ pub(crate) fn source(
     let key = format!(
         "{} {} {}",
         binding.client.api_origin(),
-        binding.user_id,
+        binding.person_id,
         login.server()
     );
     let (binding, issuing, device) = (Arc::clone(binding), Arc::clone(login), device.to_owned());

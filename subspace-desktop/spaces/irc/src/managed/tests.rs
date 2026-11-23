@@ -4,6 +4,7 @@
 //! signing in only with its own server's login, and gone on sign-out.
 //! Fictional accounts and servers only.
 
+mod history;
 mod lifecycle;
 mod support;
 

@@ -26,6 +26,12 @@ pub(crate) struct Recall {
     pub waiting: Option<Vec<NetworkConfig>>,
     /// Buffers waiting for the lines around a message.
     pub around: Vec<BufferKey>,
+    /// Stored buffers of account networks that are not running: restored
+    /// when their network runs, and deleted once another person signs in.
+    pub parked: Vec<Restored>,
+    /// Buffers of account networks that stopped running this session,
+    /// deleted from the store once another person signs in.
+    pub retired: Vec<BufferKey>,
 }
 
 impl Recall {
@@ -35,6 +41,8 @@ impl Recall {
             persist: None,
             waiting: Some(networks),
             around: Vec::new(),
+            parked: Vec::new(),
+            retired: Vec::new(),
         }
     }
 
@@ -255,6 +263,11 @@ impl Hub {
     /// buffer's newest line.
     fn resume(&mut self, restored: Vec<Restored>) {
         for buffer in restored {
+            let network = &buffer.buffer.network;
+            if self.state.network(network).is_none() && crate::managed::reserved(&network.0) {
+                self.recall.parked.push(buffer);
+                continue;
+            }
             self.state
                 .restore_buffer(&buffer.buffer, buffer.lines, &buffer.ended);
         }

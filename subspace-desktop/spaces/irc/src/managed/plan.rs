@@ -5,9 +5,17 @@
 use subspace_api_client::model::MemberInitiative;
 use subspace_client_irc::{CredentialSource, NetworkConfig, NetworkId, Sasl};
 
+use sha2::{Digest as _, Sha256};
+
 use super::device::sasl_username;
-use crate::editor::ids;
 use crate::initiatives::Endpoint;
+
+/// The start of every account network's id. A saved network's id never
+/// starts with `@`: Settings derives letters, digits and hyphens, and the
+/// settings file is refused one that does.
+const ACCOUNT_PREFIX: &str = "@account.";
+/// Hexadecimal digits kept of each digest in an id.
+const DIGEST_DIGITS: usize = 16;
 
 /// One IRC server the account's fleets use.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -97,30 +105,52 @@ pub(crate) struct Vouched<'a> {
 }
 
 /// The account's networks: one for each `vouched` server that no `saved`
-/// network connects to, signing in from `device` with that server's own
-/// source.
+/// network connects to, for the person with the API's `user_id`, signing
+/// in from `device` with that server's own source.
 pub(crate) fn networks(
     vouched: Vec<Vouched<'_>>,
     saved: &[NetworkConfig],
-    device: &str,
+    (person, device): (&str, &str),
 ) -> Vec<NetworkConfig> {
-    let mut taken: Vec<String> = saved.iter().map(|network| network.id.0.clone()).collect();
     vouched
         .into_iter()
         .filter(|vouched| saved_on(saved, vouched.server).is_none())
         .map(|vouched| {
-            let id = network_id(vouched.account, &vouched.server.endpoint, &taken);
-            taken.push(id.clone());
-            network(&vouched, NetworkId(id), device)
+            let id = network_id(person, &vouched.server.endpoint);
+            network(&vouched, id, device)
         })
         .collect()
 }
 
-/// A stable id from the account and the server, apart from the saved
-/// networks' ids.
-fn network_id(account: &str, endpoint: &Endpoint, taken: &[String]) -> String {
-    let base = ids::slug(&format!("{account} {} {}", endpoint.host, endpoint.port));
-    ids::unique_id(&base, taken)
+/// The account network's id: `@account.<user>.<server>`, from digests of
+/// the API's stable user ID and the canonical endpoint, so it is the same
+/// on every run, differs for every other person and server, and is in a
+/// namespace no saved network can take.
+pub(crate) fn network_id(person: &str, endpoint: &Endpoint) -> NetworkId {
+    let server = format!("{}|{}|{}", endpoint.host, endpoint.port, endpoint.tls);
+    NetworkId(format!(
+        "{ACCOUNT_PREFIX}{}.{}",
+        digest(person),
+        digest(&server)
+    ))
+}
+
+/// The person part of account network ids, from the API's user ID.
+pub(crate) fn digest(text: &str) -> String {
+    let mut digest = hex::encode(Sha256::digest(text.as_bytes()));
+    digest.truncate(DIGEST_DIGITS);
+    digest
+}
+
+/// Whether `id` is in the account networks' namespace.
+pub(crate) fn reserved(id: &str) -> bool {
+    id.starts_with('@')
+}
+
+/// The user part of an account network's id, when it is one.
+pub(crate) fn owner(id: &NetworkId) -> Option<&str> {
+    let rest = id.0.strip_prefix(ACCOUNT_PREFIX)?;
+    rest.split_once('.').map(|(user, _)| user)
 }
 
 fn network(vouched: &Vouched<'_>, id: NetworkId, device: &str) -> NetworkConfig {
@@ -159,7 +189,9 @@ mod tests {
     use subspace_api_client::model::MemberInitiative;
     use subspace_client_irc::{CredentialSource, NetworkConfig};
 
-    use super::{Server, Vouched, networks, saved_on, servers};
+    use super::{
+        Server, Vouched, digest, network_id, networks, owner, reserved, saved_on, servers,
+    };
     use crate::fixtures::config;
 
     /// Each of `servers`, vouched for as `ada`.
@@ -249,11 +281,15 @@ mod tests {
         let made = networks(
             vouched(&servers(&initiatives)),
             &[config()],
-            "0123456789abcdef",
+            ("user-ada", "0123456789abcdef"),
         );
         assert_eq!(made.len(), 1);
         let network = &made[0];
-        assert_eq!(network.id.0, "ada-irc-example-com-6697");
+        assert_eq!(
+            network.id,
+            network_id("user-ada", &servers(&initiatives)[0].endpoint)
+        );
+        assert!(network.id.0.starts_with("@account."));
         assert_eq!(network.name, "Aurora");
         assert_eq!(
             (network.host.as_str(), network.port, network.tls),
@@ -290,7 +326,7 @@ mod tests {
         manual.host = "IRC.example.com ".trim().into();
         manual.port = 6697;
         manual.tls = false;
-        let made = networks(vouched(&found), &[manual.clone()], "d");
+        let made = networks(vouched(&found), &[manual.clone()], ("user-ada", "d"));
         assert_eq!(made.len(), 1, "no second connection to the same server");
         assert_eq!(made[0].host, "irc.example.org");
         assert_eq!(
@@ -300,14 +336,32 @@ mod tests {
     }
 
     #[test]
-    fn a_managed_id_never_takes_a_saved_one() {
-        let initiatives = catalogue(vec![initiative(
-            "one",
-            fleet("aurora", "Aurora", "irc.example.com", 6697, true),
-        )]);
-        let mut clash = config();
-        clash.id = subspace_client_irc::NetworkId("ada-irc-example-com-6697".into());
-        let made = networks(vouched(&servers(&initiatives)), &[clash], "d");
-        assert_eq!(made[0].id.0, "ada-irc-example-com-6697-2");
+    fn an_account_network_s_id_is_its_person_s_and_server_s_alone() {
+        let endpoint = |host: &str, tls: bool| crate::initiatives::Endpoint {
+            host: host.into(),
+            port: 6697,
+            tls,
+        };
+        let ada = network_id("user-ada", &endpoint("irc.example.com", true));
+        assert_eq!(
+            ada,
+            network_id("user-ada", &endpoint("irc.example.com", true))
+        );
+        assert_ne!(
+            ada,
+            network_id("user-bob", &endpoint("irc.example.com", true))
+        );
+        assert_ne!(
+            ada,
+            network_id("user-ada", &endpoint("irc.example.org", true))
+        );
+        assert_ne!(
+            ada,
+            network_id("user-ada", &endpoint("irc.example.com", false))
+        );
+        assert!(reserved(&ada.0));
+        assert_eq!(owner(&ada), Some(digest("user-ada").as_str()));
+        assert!(!reserved("ada-irc-example-com-6697"));
+        assert_eq!(owner(&subspace_client_irc::NetworkId("local".into())), None);
     }
 }

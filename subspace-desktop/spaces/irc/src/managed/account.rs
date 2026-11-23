@@ -40,7 +40,7 @@ pub(crate) enum Account {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Person {
     /// The API's stable user ID.
-    pub user_id: String,
+    pub id: String,
     /// The username `GET /me` reports, shown before a server confirms it.
     pub username: String,
 }
@@ -84,7 +84,7 @@ fn person(client: &Client) -> Result<Option<Person>, Error> {
         .username
         .filter(|name| !name.is_empty())
         .map(|username| Person {
-            user_id: me.user_id,
+            id: me.user_id,
             username,
         }))
 }
@@ -204,7 +204,7 @@ mod tests {
 
     fn ada() -> Person {
         Person {
-            user_id: "user-ada".into(),
+            id: "user-ada".into(),
             username: "ada".into(),
         }
     }

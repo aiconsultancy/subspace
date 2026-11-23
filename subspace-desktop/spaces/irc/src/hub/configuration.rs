@@ -59,6 +59,7 @@ impl Hub {
         if settings == self.applied {
             return;
         }
+        self.retire(&settings);
         for channel in running::added_channels(&self.applied.networks, &settings.networks) {
             self.state.removed.forget(&channel);
         }
@@ -74,6 +75,7 @@ impl Hub {
             self.captain_notifications.pause();
         }
         self.applied = settings;
+        self.restore_parked();
         self.initiatives.forget_rosters();
         self.save_removed(cx);
         save_directories(self, cx);

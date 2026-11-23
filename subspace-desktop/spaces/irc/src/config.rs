@@ -32,6 +32,10 @@ impl Default for Settings {
 }
 
 pub(crate) const CAPTAIN_NOTIFICATIONS: &str = "captainNotifications";
+/// Why a saved network with an id in the account networks' namespace is
+/// not used.
+pub(crate) const RESERVED: &str =
+    "ids starting with @ are kept for networks from your account; remove this network";
 
 pub(crate) fn captain_notifications(settings: &Map<String, Value>) -> bool {
     settings
@@ -62,6 +66,10 @@ pub(crate) fn parse(settings: Option<&Map<String, Value>>) -> Settings {
         .enumerate()
         .filter_map(
             |(index, value)| match serde_json::from_value::<NetworkConfig>(value.clone()) {
+                Ok(network) if crate::managed::reserved(&network.id.0) => {
+                    errors.push(format!("networks[{index}]: {RESERVED}"));
+                    None
+                }
                 Ok(network) => Some(network),
                 Err(error) => {
                     errors.push(format!("networks[{index}]: {error}"));
@@ -123,6 +131,23 @@ mod tests {
         );
         let error = settings.error.unwrap_or_default();
         assert!(error.starts_with("networks[1]:"), "{error}");
+    }
+
+    #[test]
+    fn a_saved_network_cannot_take_an_account_network_s_id() {
+        let value = json!({"networks": [
+            {"id": "@account.0123456789abcdef.0123456789abcdef", "host": "irc.example.com",
+             "nickname": "ada"},
+            {"id": "local", "host": "127.0.0.1", "nickname": "subspace"}
+        ]});
+        let settings = parse(value.as_object());
+        assert_eq!(settings.networks.len(), 1);
+        assert_eq!(settings.networks[0].id.0, "local");
+        let error = settings.error.unwrap_or_default();
+        assert!(
+            error.starts_with("networks[0]: ids starting with @"),
+            "{error}"
+        );
     }
 
     #[test]

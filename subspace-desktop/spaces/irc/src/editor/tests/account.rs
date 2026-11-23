@@ -123,3 +123,25 @@ fn the_switch_names_the_network_and_why_one_is_not_connected() {
         "Not connected: your network “Example Network” connects to this server instead."
     );
 }
+
+#[gpui_kit::test]
+fn a_saved_network_cannot_keep_an_account_network_s_id(cx: &mut TestAppContext) {
+    let saved = serde_json::json!({"networks": [
+        {"id": "@account.0123456789abcdef.0123456789abcdef", "name": "Taken",
+         "host": "irc.example.com", "nickname": "ada"}
+    ]})
+    .as_object()
+    .cloned()
+    .unwrap_or_default();
+    let (editor, cx) = mount(cx, saved);
+    cx.update(|_, cx| {
+        let editor = editor.read(cx);
+        let problems = editor.problems(0, cx);
+        assert_eq!(problems[0].message, crate::config::RESERVED);
+        let refused = editor.values(cx).unwrap_err();
+        assert!(
+            refused.starts_with("Taken: ids starting with @"),
+            "{refused}"
+        );
+    });
+}
