@@ -221,3 +221,36 @@ fn clipboard_attachments_obey_the_owners_encoded_byte_limit(cx: &mut TestAppCont
     assert!(received.borrow()[0].sources.is_empty());
     assert!(received.borrow()[0].notice.is_some());
 }
+
+#[gpui_kit::test]
+fn an_open_list_says_whether_tab_or_enter_completed(cx: &mut TestAppContext) {
+    use crate::chat_input::CompletionKey;
+    cx.update(gpui_kit::init);
+    cx.update(crate::bind_keys);
+    let (input, cx) = cx.add_window_view(ChatInput::message);
+    let keys = Rc::new(RefCell::new(Vec::new()));
+    let recorded = keys.clone();
+    let _subscription = cx.update(|_, cx| {
+        cx.subscribe(&input, move |input, event, cx| {
+            if let ChatInputEvent::Complete = event {
+                recorded.borrow_mut().push(input.read(cx).completion_key());
+            }
+        })
+    });
+    cx.update(|window, cx| {
+        input.update(cx, |input, cx| {
+            input.focus(window, cx);
+            input.set_completing(true, cx);
+        });
+        window.render_frame(cx);
+        window.press("tab", cx);
+    });
+    cx.run_until_parked();
+    // Each key is its own dispatch, so the owner reads its own key.
+    cx.update(|window, cx| window.press("enter", cx));
+    cx.run_until_parked();
+    assert_eq!(
+        &*keys.borrow(),
+        &[Some(CompletionKey::Tab), Some(CompletionKey::Enter)]
+    );
+}

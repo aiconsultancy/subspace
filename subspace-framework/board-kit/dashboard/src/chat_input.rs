@@ -39,6 +39,7 @@ actions!(
         ChatNext,
         ChatPrevious,
         ChatComplete,
+        ChatCompleteWithEnter,
         ChatCancel,
         ChatNewTab,
         ChatCloseTab,
@@ -99,7 +100,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("tab", ChatComplete, slash),
         // Ahead of the text area's own Enter, which would also type a line
         // break where the platform delivers one as text.
-        KeyBinding::new("enter", ChatComplete, slash),
+        KeyBinding::new("enter", ChatCompleteWithEnter, slash),
         KeyBinding::new("enter", ChatBlockedSubmit, blocked_submit),
         KeyBinding::new("escape", ChatCancel, slash),
         KeyBinding::new("escape", ChatRenameCancel, rename),
@@ -149,6 +150,15 @@ pub enum ChatInputEvent {
     PasteAttachments(AttachmentPaste),
 }
 
+/// The key behind the latest [`ChatInputEvent::Complete`], for an owner
+/// whose list has a row only Enter may choose, such as one that runs the
+/// draft ([`ChatInput::completion_key`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionKey {
+    Tab,
+    Enter,
+}
+
 /// The text Enter sends, if it sends anything. Empty text sends nothing. A
 /// running turn is no longer a reason to hold the text back: the message
 /// steers that turn.
@@ -177,6 +187,8 @@ pub struct ChatInput {
     /// Enter with an empty draft still submits, for an owner that sends
     /// something else with the text, such as attachments. Off by default.
     submit_empty: bool,
+    /// The key behind the latest Complete.
+    completion_key: Option<CompletionKey>,
     _subscription: Subscription,
 }
 
@@ -208,6 +220,7 @@ impl ChatInput {
             limits: None,
             row_limits: (MIN_ROWS, MAX_ROWS),
             submit_empty: false,
+            completion_key: None,
             _subscription: subscription,
         }
     }
@@ -296,6 +309,20 @@ impl ChatInput {
         self.state.update(cx, |state, cx| state.focus(window, cx));
     }
 
+    /// The key, Tab or Enter, behind the latest [`ChatInputEvent::Complete`]
+    /// this input emitted; `None` before any. An owner reads it while
+    /// handling that event.
+    // qual:api
+    pub fn completion_key(&self) -> Option<CompletionKey> {
+        self.completion_key
+    }
+
+    /// Emits [`ChatInputEvent::Complete`] for `key`.
+    fn complete(&mut self, key: CompletionKey, cx: &mut Context<Self>) {
+        self.completion_key = Some(key);
+        cx.emit(ChatInputEvent::Complete);
+    }
+
     /// While a completion list is open, Enter emits
     /// [`ChatInputEvent::Complete`] rather than sending.
     pub fn set_completing(&mut self, completing: bool, cx: &mut Context<Self>) {
@@ -363,7 +390,7 @@ impl ChatInput {
             return;
         }
         if self.completing {
-            cx.emit(ChatInputEvent::Complete);
+            self.complete(CompletionKey::Enter, cx);
             return;
         }
         match submission(&self.text(cx)) {
@@ -424,7 +451,12 @@ impl Render for ChatInput {
             .on_action(|_: &ChatBlockedSubmit, _, _| {})
             .on_action(cx.listener(|_, _: &ChatNext, _, cx| cx.emit(ChatInputEvent::Next)))
             .on_action(cx.listener(|_, _: &ChatPrevious, _, cx| cx.emit(ChatInputEvent::Previous)))
-            .on_action(cx.listener(|_, _: &ChatComplete, _, cx| cx.emit(ChatInputEvent::Complete)))
+            .on_action(cx.listener(|this, _: &ChatComplete, _, cx| {
+                this.complete(CompletionKey::Tab, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ChatCompleteWithEnter, _, cx| {
+                this.complete(CompletionKey::Enter, cx);
+            }))
             .on_action(cx.listener(|_, _: &ChatCancel, _, cx| cx.emit(ChatInputEvent::Cancel)))
             .text_size(tokens.row_font)
             .on_drag_move::<resize::InputResize>(cx.listener(resize::drag))
