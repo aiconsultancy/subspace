@@ -53,6 +53,9 @@ pub(crate) struct Draft {
     list: Entity<CompletionList>,
     /// What the list offers now; `None` while it is closed.
     offer: Option<suggest::Offer>,
+    /// The API client of the account and organisation signed in when the
+    /// list showed a tracker command's run row: the row runs only with it.
+    run_client: Option<std::sync::Arc<subspace_api_client::Client>>,
     /// Why a private message to a fleet agent was not sent or opened.
     pub agent_notice: Option<AgentNotice>,
     /// The thread the draft replies in, in reply mode.
@@ -89,6 +92,7 @@ impl Draft {
             saving: false,
             list,
             offer: None,
+            run_client: None,
             agent_notice: None,
             reply: None,
             _subscription: subscription,

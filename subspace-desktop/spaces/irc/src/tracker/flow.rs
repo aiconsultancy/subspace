@@ -36,6 +36,8 @@ pub(crate) struct State {
     /// A typed command whose write the tracker never confirmed: it may
     /// have landed, so the same draft is not sent again.
     pub unconfirmed: Option<String>,
+    /// The client a run row was confirmed under, which its write uses.
+    pub confirmed: Option<Arc<Client>>,
     /// The issues asked for again after a write, which tests read back.
     #[cfg(test)]
     pub refreshed: Vec<String>,
@@ -148,7 +150,11 @@ pub(crate) fn start(
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
-    let client = conversation.hub.update(cx, |hub, _| hub.tracker.client());
+    // A run row's write goes with the client it was confirmed under.
+    let client = match conversation.tracker.confirmed.take() {
+        Some(confirmed) => Some(confirmed),
+        None => conversation.hub.update(cx, |hub, _| hub.tracker.client()),
+    };
     start_with(conversation, (job, origin), client, window, cx);
 }
 

@@ -126,3 +126,33 @@ fn a_command_waits_with_its_draft_while_another_write_runs(cx: &mut TestAppConte
     );
     assert!(mock.requests().is_empty());
 }
+
+#[gpui_kit::test]
+fn a_run_row_runs_only_with_the_client_it_was_shown_under(cx: &mut TestAppContext) {
+    let mock = signed_in();
+    let other = signed_in();
+    let (conversation, hub, cx) = open(cx, true, Some(&mock));
+    let input = composer(&conversation, cx);
+    cx.simulate_input("/ready NAV-9");
+    assert_eq!(
+        labels(&conversation, cx).first().map(String::as_str),
+        Some("/ready")
+    );
+    // Another sign-in replaces Channels' client before Return.
+    hub.update(cx, |hub, _| {
+        let url = format!("{}/api", other.base_url());
+        let client = subspace_api_client::Client::loopback(&url, None)
+            .unwrap()
+            .without_live();
+        hub.tracker.test_connect(client);
+    });
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(text(&input, cx), "/ready NAV-9", "the draft stays");
+    assert_eq!(
+        input.read_with(cx, |input, _| input.error().map(str::to_owned)),
+        Some(crate::compose::RUN_CHANGED.to_owned())
+    );
+    assert!(mock.requests().is_empty() && other.requests().is_empty());
+    hub.read_with(cx, |hub, _| assert!(said(hub).is_empty()));
+}

@@ -55,8 +55,15 @@ fn show(conversation: &mut Conversation, offer: Option<Offer>, cx: &mut Context<
             .collect()
     });
     let open = !items.is_empty();
+    let runs = offer
+        .as_ref()
+        .is_some_and(|offer| offer.choices.iter().any(|choice| choice.run));
+    let run_client = runs
+        .then(|| conversation.hub.update(cx, |hub, _| hub.tracker.client()))
+        .flatten();
     let draft = &mut conversation.draft;
     draft.offer = offer;
+    draft.run_client = run_client;
     draft.list.update(cx, |list, cx| list.show(items, cx));
     draft
         .entity
@@ -128,15 +135,29 @@ fn run(
     let same = now
         .as_ref()
         .is_some_and(|offer| offer.choices.iter().any(|c| c.run && c.shows == shown));
+    let client = bound_client(conversation, cx);
     let input = conversation.draft.entity.clone();
-    if same {
+    if same && client.is_some() {
         show(conversation, None, cx);
         let text = input.read(cx).text(cx);
+        conversation.tracker.confirmed = client;
         super::send::submit(conversation, text, window, cx);
+        conversation.tracker.confirmed = None;
     } else {
         show(conversation, now, cx);
         input.update(cx, |input, cx| input.set_error(RUN_CHANGED.to_owned(), cx));
     }
+}
+
+/// The client the run row was shown under, while it is still the one
+/// signed in: the same account and organisation lease.
+fn bound_client(
+    conversation: &mut Conversation,
+    cx: &mut Context<Conversation>,
+) -> Option<std::sync::Arc<subspace_api_client::Client>> {
+    let shown = conversation.draft.run_client.clone()?;
+    let now = conversation.hub.update(cx, |hub, _| hub.tracker.client())?;
+    (std::sync::Arc::ptr_eq(&shown, &now) && !shown.account_changed()).then_some(shown)
 }
 
 /// Why a run row wrote nothing.
