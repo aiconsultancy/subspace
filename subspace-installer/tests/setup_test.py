@@ -4,6 +4,8 @@ Run with Python 3.10 or later: python3 -B subspace-installer/tests/setup_test.py
 """
 
 import argparse
+import re
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -216,6 +218,66 @@ class SetupInputsTests(unittest.TestCase):
         self.assertIn("ENABLE_DEV_AUTH=false\n", written)
         self.assertIn("WORKOS_CLIENT_ID=client_example\n", written)
         self.assertIn("POSTGRES_PASSWORD=", written)
+
+    def test_the_api_runs_an_agent_listener_for_the_sign_in_organisation(self):
+        answers, _, _ = answers_for(["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion"])
+        store = fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None)
+        payload = Path(self.directory.name) / "payload"
+        (payload / "subspace-api").mkdir(parents=True)
+        (payload / "subspace-api" / "compose.yaml").write_text("services: {}\n")
+        api_env = fleet_setup.INPUTS / "api.env"
+
+        def up():
+            with patch.object(fleet_setup, "PAYLOAD", payload), \
+                    patch.object(fleet_setup, "API_DIR", Path(self.directory.name) / "api"), \
+                    patch.object(fleet_setup, "compose"):
+                return fleet_setup.api_up(answers, store)
+
+        def env():
+            return dict(line.partition("=")[::2] for line in api_env.read_text().splitlines()
+                        if not line.startswith("#"))
+
+        def published():
+            return '"127.0.0.1:3001:3001"' in (fleet_setup.INPUTS / "api.override.yaml").read_text()
+
+        # The first run offers the listener and publishes it on loopback.
+        self.assertTrue(up())
+        self.assertEqual(env()["AGENT_PORT"], "3001")
+        self.assertEqual(env()["AGENT_ORGANISATION"], f"dev:{answers['organisation']}")
+        self.assertIn(fleet_setup.AGENT_OFFERED, api_env.read_text())
+        self.assertTrue(fleet_setup.agent_listener_enabled() and published())
+        override = (fleet_setup.INPUTS / "api.override.yaml").read_text()
+        self.assertIn('"127.0.0.1:3000:3000"', override)
+        self.assertNotIn("0.0.0.0", override)
+        up()
+        self.assertEqual(env()["AGENT_PORT"], "3001")
+        # A stale organisation in the installer's own form (dev:<organisation>) follows the fleet's.
+        api_env.write_text(api_env.read_text().replace(
+            f"AGENT_ORGANISATION=dev:{answers['organisation']}", "AGENT_ORGANISATION=dev:old-organisation"))
+        up()
+        self.assertEqual(env()["AGENT_ORGANISATION"], f"dev:{answers['organisation']}")
+        # Turned off by the operator, with AGENT_PORT= or by deleting it, it stays off on every later run.
+        for off in ("AGENT_PORT=\n", ""):
+            api_env.write_text(api_env.read_text().replace(f"AGENT_PORT={env()['AGENT_PORT']}\n", off))
+            for _ in range(2):
+                up()
+                self.assertEqual(env()["AGENT_PORT"], "")
+                self.assertFalse(fleet_setup.agent_listener_enabled() or published())
+        # The operator turns it back on by setting the port.
+        api_env.write_text(api_env.read_text().replace("AGENT_PORT=\n", "AGENT_PORT=3001\n"))
+        up()
+        self.assertTrue(fleet_setup.agent_listener_enabled() and published())
+        # Production never gets one.
+        api_env.write_text(api_env.read_text() + "NODE_ENV=production\n")
+        api_env.write_text(api_env.read_text().replace("NODE_ENV=development\n", ""))
+        up()
+        self.assertFalse(fleet_setup.agent_listener_enabled() or published())
+        # Switching development sign-in off turns it off; a fresh api.env with WorkOS never offers it.
+        api_env.write_text("AUTH_PROVIDERS=workos\nENABLE_DEV_AUTH=false\nWORKOS_CLIENT_ID=client_example\n")
+        self.assertFalse(up())
+        self.assertEqual(env()["AGENT_PORT"], "")
+        self.assertNotIn("AGENT_ORGANISATION", env())
+        self.assertFalse(published())
 
     def test_further_fleet_registration_carries_its_records_and_is_checked(self):
         argv = ["--name", "Fleet Two", "--rear-admiral", "Nova", "--captains", "Lyra, Vega",
@@ -493,6 +555,50 @@ class AgentDispatchSetupTests(unittest.TestCase):
         with patch.object(fleet_setup.pwd, "getpwnam", side_effect=KeyError), \
                 patch.object(fleet_setup, "metadata_users", return_value=[]):
             self.assertNotIn("--port-user", fleet_setup.isolation_args(answers))
+
+    def test_only_the_officers_may_reach_the_agent_listener(self):
+        answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": []}
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {
+            "rearAdmiral": {"id": "atlas"}, "captains": [{"id": "orion"}, {"id": "vega"}]})
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "metadata_users", return_value=[]):
+            args = fleet_setup.isolation_args(answers)
+        protected = [args[i + 1] for i, arg in enumerate(args) if arg == "--operator-only-port"]
+        self.assertEqual(protected, [str(fleet_setup.API_PORT), "5432", str(fleet_setup.AGENT_API_PORT)])
+        exceptions = [args[i + 1] for i, arg in enumerate(args) if arg == "--port-user"]
+        self.assertEqual(exceptions, ["3000:ss-fleet-gateway", "3001:ss-atlas", "3001:ss-orion", "3001:ss-vega"])
+        # Officers not yet created get no exception; setup isolates again after the installer has run.
+        with patch.object(fleet_setup.pwd, "getpwnam", side_effect=KeyError), \
+                patch.object(fleet_setup, "metadata_users", return_value=[]):
+            args = fleet_setup.isolation_args(answers)
+        self.assertIn(str(fleet_setup.AGENT_API_PORT), args)
+        self.assertNotIn("--port-user", args)
+
+    def test_lockdown_admits_only_the_named_users_to_each_protected_port(self):
+        script = Path(fleet_setup.HERE) / "lockdown.sh"
+        source = script.read_text()
+        functions = re.findall(r"^(?:unique_list|isolation_wanted)\(\).*$", source, re.M)
+        render = re.search(r"^render_isolation\(\) \{.*?^\}$", source, re.M | re.S).group(0)
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "isolation.nft"
+            program = "\n".join([
+                *functions, render,
+                "protected=(3000 5432 3001) uids=(0 1000) port_uids=(3000:900 3001:901 3001:902)",
+                "metadata_uids=() protect_metadata=false", f"render_isolation {out}",
+            ])
+            subprocess.run(["bash", "-c", program], check=True)
+            rules = [line.strip() for line in out.read_text().splitlines()]
+        accepts = [rule for rule in rules if rule.endswith("accept") and "dport" in rule]
+        self.assertEqual(accepts, [
+            'oifname "lo" tcp dport 3000 meta skuid 900 accept',
+            'oifname "lo" tcp dport 3001 meta skuid 901 accept',
+            'oifname "lo" tcp dport 3001 meta skuid 902 accept',
+        ])
+        reject = 'oifname "lo" tcp dport { 3000,5432,3001 } meta skuid != { 0,1000 } reject with tcp reset'
+        self.assertIn(reject, rules)
+        # The exceptions come before the reject, so they win; container addresses get no exceptions.
+        self.assertLess(rules.index(accepts[-1]), rules.index(reject))
+        self.assertIn('oifname { "docker0", "br-*" } tcp dport { 3000,5432,3001 } meta skuid != { 0,1000 } '
+                      'reject with tcp reset', rules)
 
 
 class IrcServerTests(unittest.TestCase):

@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 from agent_files import collect_cloud, private_directory, private_file, provision_cloud, write_private
 import fleet_records
 from network import rules
-from roles import default_permissions, provision_role, role_documents
+from roles import API_SKILL_MISSING, api_skill_path, default_permissions, provision_role, role_documents
 import sessions
 import standard_channels
 from workspaces import crew_worktree, prepare_workspaces, prune_worktrees
@@ -336,7 +336,7 @@ def history_config(value):
 
 
 def api_config(value):
-    value = fields(value, "api", "url initiatives vmHost fleetApiUrl", ["url"])
+    value = fields(value, "api", "url initiatives vmHost fleetApiUrl agentUrl", ["url"])
     base = url(value["url"], "API base URL", True, ("", "/", "/api", "/api/")).rstrip("/")
     initiatives = value.get("initiatives", [])
     require(isinstance(initiatives, list), "API initiatives must be an array.")
@@ -344,6 +344,14 @@ def api_config(value):
     cfg = {"url": base if base.endswith("/api") else f"{base}/api", "initiatives": list(dict.fromkeys(ids))}
     if "vmHost" in value:
         cfg["vmHost"] = host(value["vmHost"])
+    if "agentUrl" in value:
+        # The API's agent-only listener, on this VM's loopback: agents name themselves there and need no token.
+        agent_url = url(value["agentUrl"], "API agent listener URL", True, ("", "/"))
+        require(urlsplit(agent_url).hostname in {"localhost", LOOPBACK, "::1"},
+                "api.agentUrl must be the agent listener on this VM's loopback.")
+        cfg["agentMcpUrl"] = f"{agent_url.rstrip('/')}/mcp"
+        # Officers then get the Subspace API skill: refuse the configuration now, naming the file, if it is missing.
+        require(api_skill_path() is not None, API_SKILL_MISSING)
     if "fleetApiUrl" in value:
         # Where a desktop reaches Stargate's Fleet API, when not through the SSH tunnel's loopback end.
         try:
@@ -1047,10 +1055,34 @@ def model_provider(cfg, family, models):
             "models": {model: {"name": model} for model in models}}
 
 
+# The Subspace API's MCP server, as the officer's harness names it, and the grant for its tools.
+SUBSPACE_MCP = "subspace"
+AGENT_HEADER = "X-Subspace-Agent"
+SUBSPACE_MCP_GRANT = {"action": f"{SUBSPACE_MCP}_*", "resource": "*", "effect": "allow"}
+
+
+def subspace_mcp_url(cfg):
+    """The agent listener's MCP endpoint, when this fleet runs the API with one."""
+    return (cfg.get("api") or {}).get("agentMcpUrl")
+
+
+def harness_permissions(cfg, person):
+    """The officer's harness policy, plus the Subspace API's MCP tools when the agent listener is configured.
+
+    An operator rule that already names a subspace_ action (an allow, ask or deny) stands alone: the installer
+    adds its grant only when the policy says nothing about these tools.
+    """
+    permissions = person["harness"]["permissions"]
+    if subspace_mcp_url(cfg) and not any(
+            str(rule.get("action", "")).startswith(f"{SUBSPACE_MCP}_") for rule in permissions):
+        return [*permissions, SUBSPACE_MCP_GRANT]
+    return permissions
+
+
 def captain_permissions(cfg, person):
     """The captain root's stored grants: its harness policy plus the crew tools when it hosts crew, and the
     dispatch answer tool when agent dispatch is on."""
-    permissions = person["harness"]["permissions"]
+    permissions = harness_permissions(cfg, person)
     if not person["crew"]:
         return permissions
     return [*permissions, *CREW_GRANTS, *([DISPATCH_GRANT] if cfg["agentDispatch"] else [])]
@@ -1199,10 +1231,17 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         models = catalogue.setdefault(worker["family"], [])
         if worker["model"] not in models:
             models.append(worker["model"])
+    permissions = harness_permissions(cfg, person)
     engine = {
-        "model": model_ref(harness["family"], harness["model"]), "permissions": harness["permissions"],
+        "model": model_ref(harness["family"], harness["model"]), "permissions": permissions,
         "providers": {PROVIDERS[family]: model_provider(cfg, family, models) for family, models in catalogue.items()},
     }
+    if mcp_url := subspace_mcp_url(cfg):
+        # The Subspace API's agent listener: the officer, and the crew sessions on this server, act as the
+        # officer's own agent record, named by its IRC account. The listener needs no token.
+        engine["mcp"] = {"servers": {SUBSPACE_MCP: {
+            "type": "remote", "url": mcp_url, "headers": {AGENT_HEADER: person["account"]},
+        }}}
     password = hmac.new(seed, agent_id.encode(), hashlib.sha256).hexdigest()
     header = "Basic " + base64.b64encode(f"opencode:{password}".encode()).decode()
     environment = {
@@ -1215,7 +1254,7 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
     }
     auth_var = "ENGINE_" + agent_id.upper().replace("-", "_")
     backend = {"type": "opencode", "url": f"http://{LOOPBACK}:{engine_port}", "directory": str(workspace),
-               "permissions": harness["permissions"], "headersEnv": {"authorization": auth_var}}
+               "permissions": permissions, "headersEnv": {"authorization": auth_var}}
     if person["crew"]:
         # Crew sessions run on this server, as this captain's Linux user, each with its own native agent.
         environment["OPENCODE_AUTHORIZATION"] = header
@@ -1254,6 +1293,25 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         user_paths=[home, database_dir], post_start=f"{APP}/lib/runtime.py share-database {settings}",
     )
     return unit, backend, {auth_var: header}, database_dir
+
+
+def claude_backend(cfg, person, workspace, documents):
+    """A Claude Agent SDK officer's Stargate backend, with the Subspace API's MCP server when it has the agent
+    listener."""
+    harness = person["harness"]
+    backend = {
+        "type": "claude", "directory": str(workspace), "model": harness["model"], "allowedTools": harness["allowedTools"],
+        "systemPrompt": documents["claudePrompt"],
+        "provider": {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}/v1", "apiKeyEnv": "CLIPROXYAPI_API_KEY"},
+    }
+    if mcp_url := subspace_mcp_url(cfg):
+        # Stargate's Claude backend takes header values only from a helper command, and permits every
+        # tool of a configured server itself (mcp__subspace); allowedTools holds built-in tools only.
+        backend["mcpServers"] = {SUBSPACE_MCP: {
+            "type": "http", "url": mcp_url,
+            "headersHelper": f"{APP}/lib/runtime.py agent-header {person['account']}",
+        }}
+    return backend
 
 
 def irc_agent(cfg, person, backend):
@@ -1682,11 +1740,7 @@ def render(cfg, extra, prune=False):
             units.append(unit)
             engines.append(unit)
         else:
-            backend = {
-                "type": "claude", "directory": str(workspace), "model": harness["model"], "allowedTools": harness["allowedTools"],
-                "systemPrompt": documents[agent_id]["claudePrompt"],
-                "provider": {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}/v1", "apiKeyEnv": "CLIPROXYAPI_API_KEY"},
-            }
+            backend = claude_backend(cfg, person, workspace, documents[agent_id])
             headers = {"CLIPROXYAPI_API_KEY": cfg["proxy"]["key"]}
         registrations[agent_id], password = irc_agent(cfg, person, backend)
         environments[agent_id] = {**headers, **password}
@@ -1811,7 +1865,7 @@ def commission(prune, existing=False):
                 "directory": settings["directory"], "title": f"{cfg['slug']}/{person['id']}",
                 "crew": [worker["id"] for worker in person["crew"]],
                 "model": {"providerID": PROVIDERS[harness["family"]], "id": harness["model"]},
-                "permissions": person["harness"]["permissions"] if rear else captain_permissions(cfg, person),
+                "permissions": harness_permissions(cfg, person) if rear else captain_permissions(cfg, person),
             }
             if existing:
                 _, new = sessions.ensure(client, store, expected, wait=lambda c, i: sessions.wait_until_ready(c, i, 2),
@@ -2010,6 +2064,10 @@ def main(args):
         provision_cloud(json.load(sys.stdin), tail == ["true"])
     elif verb == "role":
         provision_role(json.load(sys.stdin))
+    elif verb == "agent-header":
+        # Stargate's Claude backend runs this as the officer for its Subspace MCP server's headers.
+        require(len(tail) == 1 and re.fullmatch(r"[a-z][a-z0-9-]{0,23}", tail[0]), "Name one agent account.")
+        print(json.dumps({AGENT_HEADER: tail[0]}))
     elif verb == "prune-app-keys":
         cfg = validate(read_json(ETC / "fleet.json"), read_json(ETC / "secrets.json", private=True))
         for person in cfg["members"]:

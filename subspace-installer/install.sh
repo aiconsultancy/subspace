@@ -62,6 +62,13 @@ else
     [[ -z $app_secrets || -d $app_secrets ]] || die 'The secrets directory does not exist.'
     [[ $prune_secrets == false || -n $app_secrets ]] || die '--prune-secrets requires a secrets directory.'
 fi
+# Officers with the API's agent listener get the generic Subspace API skill (lib/roles.py), which the
+# payload carries beside the installer. Say which file is missing rather than failing the render later.
+api_skill=$here/../agent-skills/opencode/subspace-tracker/SKILL.md
+if [[ $action != uninstall && ! -f $api_skill ]] &&
+    python3 -c 'import json, sys; sys.exit(0 if (json.load(open(sys.argv[1])).get("api") or {}).get("agentUrl") else 1)' "$config" 2>/dev/null; then
+    die 'The Subspace API skill agent-skills/opencode/subspace-tracker/SKILL.md is missing, and api.agentUrl needs it. Copy agent-skills/ beside subspace-installer/, or remove api.agentUrl.'
+fi
 if ! "$dry_run"; then
     (( EUID == 0 )) || die 'Run the installer as root.'
 fi
@@ -316,6 +323,11 @@ for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.p
 done
 install -d -m 0755 "$app/lib/git-hooks"
 install_file "$here/lib/git-hooks/pre-push" "$app/lib/git-hooks/pre-push" 0755
+# The generic Subspace API skill that officers with the API's agent listener receive (lib/roles.py).
+if [[ -f $api_skill ]]; then
+    install -d -m 0755 "$app/lib/agent-skills/subspace-tracker"
+    install_file "$api_skill" "$app/lib/agent-skills/subspace-tracker/SKILL.md" 0644
+fi
 for role in rear-admiral captain crew; do
     install -d -m 0755 "$app/lib/roles/$role"
     for template in "$here/lib/roles/$role/"*.md; do

@@ -101,16 +101,18 @@ flowchart LR
 - **The Subspace API** (with PostgreSQL) holds issues, initiatives and fleets.
   The desktop app uses it, and so can your local coding agents through its MCP
   server ([Use your local agents](#use-your-local-agents-with-the-fleet)).
-  The fleet's own agents cannot reach it: its development sign-in is for you
-  only.
+  The fleet's own agents reach it only through its agent listener, a second
+  port where each acts as its own agent record and never as an administrator;
+  the API's main port and its development sign-in are for you only
+  ([Who can reach the API](#who-can-reach-the-api)).
 - **The desktop app** runs on your computer and reaches all of this through a
   private connection.
 
 Everything on the VM listens on `127.0.0.1` only. The installer adds a
 firewall that drops all inbound traffic except SSH, hardens SSH to key-only
 logins for your user, and keeps the agents' Linux users away from operator
-services and from the cloud's metadata service, so they cannot use the VM's
-cloud identity.
+services, including the API's main port, and from the cloud's metadata
+service, so they cannot use the VM's cloud identity.
 
 ## Decide with the user
 
@@ -489,7 +491,11 @@ agent records and an initiative for it. That uses the first fleet's development 
 installer checks before changing anything; once that API uses WorkOS or Entra,
 register further fleets through its fleet, ship, agent and initiative
 endpoints as an administrator instead, with the records described in the
-[installer README](subspace-installer/README.md#subspace-api-registration). Further fleets need the shared IRC server,
+[installer README](subspace-installer/README.md#subspace-api-registration). A further fleet's own agents get no agent listener today, so they have no
+Subspace MCP server: the listener binds the first fleet VM's loopback, and the
+installer does not yet carry it across the private network (for example with
+an SSH forward from each further fleet VM to the first VM's port 3001, run
+as an operator-owned service). Further fleets need the shared IRC server,
 because IRC on their own VM is unreachable from the first fleet's API.
 `--api-target` works only with a shared server the installer manages
 (`--irc-server`); with one in a container, register further fleets as
@@ -860,8 +866,9 @@ subnets in the user's virtual network. Run it only when the user asks.
    - writes the fleet's settings to `/root/fleet/` and generates every
      password and key on the VM;
    - before any service starts, keeps the agents' Linux users away from the
-     API, PostgreSQL and the cloud metadata service (agent isolation, which
-     never blocks your own login and is never rolled back);
+     API's main port, PostgreSQL and the cloud metadata service (agent
+     isolation, which never blocks your own login and is never rolled back),
+     and lets only the officers' users reach the API's agent listener;
    - runs the [fleet installer](subspace-installer/README.md): the latest
      Stargate (its newest `vX.Y.Z` release, looked up on every run and pinned
      in `fleet.json`; pass `--stargate-ref <SHA>` to stay on one commit),
@@ -1011,11 +1018,34 @@ readable by anyone but root. It warns when the VM has a public address: then
 check from outside that nothing answers, for example `nc -vz <public-ip> 22`
 should time out unless you chose public SSH.
 
+### Who can reach the API
+
 Development sign-in, which the desktop uses by default, trusts anyone who can
-reach the API. The lockdown keeps the agents' users away from it, and the
-tunnel keeps everyone else away. For a team, switch the API and desktop to
+reach the API's main port (3000) to act as anyone, administrator included.
+The lockdown keeps the agents' users away from that port, and the tunnel
+keeps everyone else away. For a team, switch the API and desktop to
 WorkOS or Entra (see the [API guide](subspace-api/README.md#external-sign-in))
 before sharing access.
+
+The fleet's agents reach the API on its **agent listener** instead: port 3001
+on the VM's loopback, which the tunnel does not forward. There, a request
+names a registered agent in an `X-Subspace-Agent` header and needs no token.
+The API resolves only an active agent record of the fleet's organisation and
+acts as that agent, which is never an administrator; the listener serves no
+sign-in route and no administrator route or tool. It refuses any request from a
+browser page (one with an `Origin` header) and any request addressed to a host
+other than `127.0.0.1`, `localhost` or `[::1]`. The lockdown lets only root,
+your operator login and the officers' own Linux users (the rear admiral's and
+each captain's; crew run as their captain) reach port 3001, not the fleet's
+other service users or containers. Any of those can act as any registered
+agent of that organisation, so one agent can act as another.
+`./install.sh audit` checks that port 3001 is limited that way and serves no
+sign-in route, and that the main port stays closed to the agents. To turn
+the listener off, set `AGENT_PORT=` in `/root/fleet/api.env` and run setup
+again; later runs keep it off, and the agents then have no Subspace MCP
+server. Switching the API to WorkOS or
+Entra (development sign-in off) turns the agent listener off too, and the
+fleet's agents then have no way into the API yet.
 
 ## Day to day
 

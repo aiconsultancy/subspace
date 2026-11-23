@@ -3,6 +3,7 @@
 import json
 import re
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 import unittest
@@ -24,6 +25,11 @@ import workspaces
 
 def example_config():
     return json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+
+
+def api_secrets():
+    """The example's officer secrets plus the fixture API token that an API configuration needs."""
+    return {**officer_secrets(), "apiToken": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJhZG1pbiJ9.admin"}
 
 
 def officer_secrets(*extra):
@@ -254,6 +260,139 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(environment["OPENCODE_AUTHORIZATION"], next(iter(headers.values())))
         self.assertIn("fleet-crew", documents["skills"])
         self.assertIn("stargate_crew", documents["instructions"])
+
+    def test_officers_reach_the_api_agent_listener_as_themselves(self):
+        config = example_config()
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        cfg = validate(config, api_secrets())
+        self.assertEqual(cfg["api"]["agentMcpUrl"], "http://127.0.0.1:3001/mcp")
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        saved = {}
+
+        def save(name, settings, _user):
+            saved[name] = settings
+            return Path(f"/etc/subspace-fleet/{name}.json")
+
+        for person in cfg["members"]:
+            documents = roles.role_documents(cfg, person, Path("/references/atlas"), home)
+            # The same generic skill a person's local OpenCode installs from agent-skills/.
+            self.assertEqual(documents["skills"]["subspace-tracker"], (
+                Path(__file__).resolve().parents[2] / "agent-skills/opencode/subspace-tracker/SKILL.md").read_text())
+            with patch.object(runtime, "directory"), patch.object(runtime, "save_settings", side_effect=save), \
+                    patch.object(runtime, "serve_unit", return_value="subspace-fleet-engine.service"):
+                _, backend, _, _ = runtime.render_engine(
+                    cfg, person, home, home / "workspace/project", 4097, b"seed", documents, "ses_fixture")
+            engine = saved[f"opencode-{person['id']}"]
+            # The officer, and crew sessions on its server, act as the officer's agent record, with no token.
+            self.assertEqual(engine["mcp"], {"servers": {"subspace": {
+                "type": "remote", "url": "http://127.0.0.1:3001/mcp",
+                "headers": {"X-Subspace-Agent": person["account"]},
+            }}})
+            self.assertNotIn("Authorization", json.dumps(engine["mcp"]))
+            self.assertIn(runtime.SUBSPACE_MCP_GRANT, engine["permissions"])
+            self.assertIn(runtime.SUBSPACE_MCP_GRANT, backend["permissions"])
+            self.assertEqual(backend["permissions"].count(runtime.SUBSPACE_MCP_GRANT), 1)
+
+    def test_claude_officers_get_the_api_server_and_skill_in_their_prompt(self):
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        cfg = validate(config, api_secrets())
+        person = cfg["members"][1]
+        documents = roles.role_documents(cfg, person, None, Path("/home"))
+        skill = documents["skills"]["subspace-tracker"].partition("\n---\n")[2]
+        self.assertTrue(skill.strip() and documents["claudePrompt"].endswith(skill))
+        self.assertNotIn("name: subspace-tracker", documents["claudePrompt"])
+        without = dict(config, api={"url": "http://127.0.0.1:3000"})
+        plain = roles.role_documents(validate(without, api_secrets()), person, None, Path("/home"))
+        self.assertNotIn("subspace_whoami", plain["claudePrompt"])
+
+    def test_claude_officer_backend_names_the_server_and_only_built_in_tools(self):
+        # Stargate permits a configured server's tools itself (mcp__<server>) and its allowedTools accepts
+        # only built-in tool names, so the installer adds the server and leaves allowedTools alone.
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        cfg = validate(config, api_secrets())
+        person = dict(cfg["members"][1], harness={
+            "type": "claude-sdk", "family": "claude", "model": "example-model", "permissions": None,
+            "allowedTools": ["Read"]})
+        documents = {"claudePrompt": "Example prompt"}
+        backend = runtime.claude_backend(cfg, person, Path("/workspace"), documents)
+        self.assertEqual(backend["mcpServers"], {"subspace": {
+            "type": "http", "url": "http://127.0.0.1:3001/mcp",
+            "headersHelper": f"/opt/subspace-fleet/lib/runtime.py agent-header {person['account']}",
+        }})
+        self.assertEqual(backend["allowedTools"], ["Read"])
+        self.assertEqual(backend["systemPrompt"], "Example prompt")
+        self.assertNotIn("mcpServers", runtime.claude_backend(
+            validate(dict(config, api={"url": "http://127.0.0.1:3000"}), api_secrets()), person,
+            Path("/workspace"), documents))
+
+    def test_an_operator_rule_for_the_api_tools_stands(self):
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        cfg = validate(config, api_secrets())
+        person = cfg["members"][0]
+        base = person["harness"]["permissions"]
+        self.assertEqual(runtime.harness_permissions(cfg, person)[-1], runtime.SUBSPACE_MCP_GRANT)
+        for effect in ("deny", "ask"):
+            for action in ("subspace_*", "subspace_create_issue"):
+                rule = {"action": action, "resource": "*", "effect": effect}
+                operator = dict(person, harness=dict(person["harness"], permissions=[*base, rule]))
+                granted = runtime.harness_permissions(cfg, operator)
+                self.assertEqual(granted, [*base, rule])
+                self.assertNotIn(runtime.SUBSPACE_MCP_GRANT, granted)
+
+    def test_without_the_agent_listener_officers_get_no_api_server_or_skill(self):
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000"}
+        cfg = validate(config, api_secrets())
+        person = cfg["members"][1]
+        self.assertNotIn("subspace-tracker", roles.role_documents(cfg, person, None, Path("/home"))["skills"])
+        self.assertEqual(runtime.harness_permissions(cfg, person), person["harness"]["permissions"])
+        self.assertIsNone(runtime.subspace_mcp_url(cfg))
+
+    def test_a_missing_api_skill_is_named_before_anything_is_rendered(self):
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        with patch.object(roles, "API_SKILL_SOURCES", (Path("/nonexistent/SKILL.md"),)):
+            with self.assertRaises(Invalid) as raised:
+                validate(config, api_secrets())
+        self.assertEqual(str(raised.exception), roles.API_SKILL_MISSING)
+        self.assertIn("agent-skills/opencode/subspace-tracker/SKILL.md", roles.API_SKILL_MISSING)
+        # The installer script stops with the same words before it changes anything.
+        with tempfile.TemporaryDirectory() as directory:
+            copy = Path(directory) / "subspace-installer"
+            copy.mkdir()
+            script = copy / "install.sh"
+            script.write_text((Path(__file__).resolve().parents[1] / "install.sh").read_text())
+            fleet = Path(directory) / "fleet.json"
+            fleet.write_text(json.dumps(config))
+            result = subprocess.run(["bash", str(script), "--config", str(fleet), "--dry-run"],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.stderr.strip(), f"subspace-fleet: {roles.API_SKILL_MISSING}")
+            # Without the agent listener, the missing skill is not needed.
+            fleet.write_text(json.dumps({**config, "api": {"url": "http://127.0.0.1:3000"}}))
+            result = subprocess.run(["bash", str(script), "--config", str(fleet), "--dry-run"],
+                                    capture_output=True, text=True)
+            self.assertNotIn("subspace-tracker", result.stderr)
+
+    def test_the_agent_listener_must_be_on_loopback(self):
+        for agent_url in ("https://api.example.com", "http://192.0.2.10:3001", "http://127.0.0.1:3001/api"):
+            config = example_config()
+            config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": agent_url}
+            with self.assertRaises(Invalid):
+                validate(config, api_secrets())
+
+    def test_claude_officers_take_the_agent_header_from_a_helper(self):
+        output = subprocess.run(
+            [sys.executable, str(Path(runtime.__file__)), "agent-header", "example-orion"],
+            capture_output=True, text=True, check=True).stdout
+        self.assertEqual(json.loads(output), {"X-Subspace-Agent": "example-orion"})
+        refused = subprocess.run(
+            [sys.executable, str(Path(runtime.__file__)), "agent-header", "Example Orion"], capture_output=True)
+        self.assertNotEqual(refused.returncode, 0)
 
     def test_crew_worktrees_are_added_to_the_captain_checkout(self):
         captain = {"id": "orion", "role": "captain", "crew": [

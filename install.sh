@@ -420,11 +420,11 @@ send_payload() {
         cd "$root"
         if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
             git ls-files -z --cached --others --exclude-standard -- \
-                subspace-installer subspace-api subspace-irc scripts/local-stack |
+                subspace-installer subspace-api subspace-irc scripts/local-stack agent-skills |
                 COPYFILE_DISABLE=1 tar ${tar_opts[@]+"${tar_opts[@]}"} --null -T - -czf -
         else
             COPYFILE_DISABLE=1 tar ${tar_opts[@]+"${tar_opts[@]}"} --exclude node_modules --exclude .data --exclude .env \
-                -czf - subspace-installer subspace-api subspace-irc scripts/local-stack
+                -czf - subspace-installer subspace-api subspace-irc scripts/local-stack agent-skills
         fi
     ) | vm sudo -n sh -c "'rm -rf $payload_dir.new && mkdir -p $payload_dir.new && \
 tar --warning=no-unknown-keyword --no-same-owner -xzf - -C $payload_dir.new && \

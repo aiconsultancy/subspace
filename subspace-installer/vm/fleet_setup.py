@@ -58,6 +58,11 @@ FLEET_APP = Path("/opt/subspace-fleet")
 FLEET_ETC = Path("/etc/subspace-fleet")
 API_PROJECT = "subspace-api"
 API_PORT = 3000
+# The API's agent-only listener: a fleet agent names itself in a header there and needs no token. It serves no
+# sign-in or administrator route, so unlike API_PORT the agents' Linux users may reach it.
+AGENT_API_PORT = 3001
+# The line in api.env that records setup has offered the agent listener, so an operator's "off" is kept.
+AGENT_OFFERED = "# subspace-setup has offered the agent listener (AGENT_PORT=3001); AGENT_PORT= keeps it off."
 STARGATE_API_PORT = 8484
 STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 LOOPBACK = "127.0.0.1"
@@ -686,14 +691,36 @@ def api_up(answers, secret_store):
     }
     previous = INPUTS / "api.env"
     kept = {}
+    offered = False
     if previous.exists():
         # Keep what the operator set, such as WorkOS or Entra and turning development sign-in off.
         for line in previous.read_text().splitlines():
+            offered = offered or line == AGENT_OFFERED
             key, _, value = line.partition("=")
             if key and not key.startswith("#") and key not in environment:
                 kept[key] = value
-    merged = {**environment, **DEV_AUTH, **kept}
-    write_private(INPUTS / "api.env", "".join(f"{key}={value}\n" for key, value in merged.items()))
+    # The agent listener answers for the development sign-in organisation, which the fleet's agents are
+    # registered in. Setup offers it once: after that, an operator who sets AGENT_PORT= or deletes it keeps
+    # it off, and setup never turns it back on. The API refuses the listener in production.
+    agent = {} if offered else {"AGENT_PORT": AGENT_API_PORT, "AGENT_ORGANISATION": f"dev:{answers['organisation']}"}
+    merged = {**environment, **DEV_AUTH, **agent, **kept}
+    if offered and "AGENT_PORT" not in kept:
+        merged["AGENT_PORT"] = ""
+    if re.fullmatch(r"dev:[a-z0-9][a-z0-9-]{0,62}", merged.get("AGENT_ORGANISATION", "")):
+        # The installer's own form follows the fleet's development sign-in organisation.
+        merged["AGENT_ORGANISATION"] = f"dev:{answers['organisation']}"
+    providers = [value.strip() for value in merged.get("AUTH_PROVIDERS", "").split(",")]
+    dev_sign_in = merged.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
+    if not dev_sign_in and merged.get("AGENT_ORGANISATION", "").startswith("dev:"):
+        # The listener answers for development sign-in's organisation and trusts the network as it does:
+        # an operator who turns development sign-in off turns it off too.
+        merged["AGENT_PORT"] = ""
+        merged.pop("AGENT_ORGANISATION", None)
+    if merged.get("NODE_ENV") == "production":
+        merged["AGENT_PORT"] = ""
+    listener = str(merged.get("AGENT_PORT", "")) == str(AGENT_API_PORT)
+    write_private(INPUTS / "api.env", AGENT_OFFERED + "\n" + "".join(
+        f"{key}={value}\n" for key, value in merged.items()))
     # PostgreSQL is not published at all; the API is published on loopback only.
     write_private(INPUTS / "api.override.yaml", "\n".join([
         "services:",
@@ -704,6 +731,7 @@ def api_up(answers, secret_store):
         "    restart: unless-stopped",
         "    ports: !override",
         f'      - "{LOOPBACK}:{API_PORT}:3000"',
+        *([f'      - "{LOOPBACK}:{AGENT_API_PORT}:{AGENT_API_PORT}"'] if listener else []),
         "",
     ]))
     say("building and starting the Subspace API and PostgreSQL (loopback only)")
@@ -719,6 +747,12 @@ def dev_auth_enabled():
         environment[key] = value
     providers = [value.strip() for value in environment.get("AUTH_PROVIDERS", "").split(",")]
     return environment.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
+
+
+def agent_listener_enabled():
+    """Whether api.env turns the API's agent listener on, on the port the fleet's agents are given."""
+    environment = dict(line.partition("=")[::2] for line in (INPUTS / "api.env").read_text().splitlines())
+    return environment.get("AGENT_PORT") == str(AGENT_API_PORT)
 
 
 def api_down():
@@ -1087,6 +1121,9 @@ def setup(args):
             answers.update(initiativeId=initiative)
             save_answers(answers)
             api_block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": [initiative]}
+            if agent_listener_enabled():
+                # Officers get the API's MCP server at the agent listener, as their own agent records.
+                api_block["agentUrl"] = f"http://{LOOPBACK}:{AGENT_API_PORT}"
             # Register the fleet, its channels, ships and officers now: agent dispatch signs in as the rear
             # admiral's agent record. The installer's 'fleetctl register' sends the same records again.
             records = register_own(token, *inputs(irc_ref, api_block, bool(stargate_api), token, history))
@@ -1106,8 +1143,9 @@ def setup(args):
     installer(config_path)
     if not answers["api"]:
         api_down()
-    if answers["agentDispatch"]:
-        # The installer has created Stargate's gateway user: let it, and only it, reach the API's port.
+    if answers["agentDispatch"] or answers["api"]:
+        # The installer has created the officers' users and Stargate's gateway user: let the gateway, and only it,
+        # reach the API's port, and the officers, and only they, reach the agent listener.
         run(HERE / "lockdown.sh", "isolate", *isolation_args(answers))
     if stargate_api is None:
         source = installed_stargate_source()
@@ -1177,11 +1215,33 @@ def isolation_args(answers):
         except KeyError:
             gateway = False  # Not yet created: setup isolates again once the installer has run.
         if gateway:
-            # Agent dispatch: Stargate's gateway polls the API as the rear admiral. Agents never reach it.
+            # Agent dispatch: Stargate's gateway polls the API as the rear admiral. Agents never reach this port.
             args += ["--port-user", f"{API_PORT}:{GATEWAY_USER}"]
+        # The agent listener: only the operator and the officers' own users (crew run as their captain's),
+        # never the fleet's other service users or containers.
+        args += ["--operator-only-port", str(AGENT_API_PORT)]
+        for user in officer_users():
+            args += ["--port-user", f"{AGENT_API_PORT}:{user}"]
     for user in metadata_users(answers):
         args += ["--metadata-user", user]
     return args
+
+
+def officer_users():
+    """The rear admiral's and captains' Linux users that exist, from the fleet's inputs."""
+    config = read_json(INPUTS / "fleet.json", {})
+    people = [config.get("rearAdmiral") or {}, *(config.get("captains") or [])]
+    users = []
+    for person in people:
+        agent_id = person.get("id") if isinstance(person, dict) else None
+        if not (isinstance(agent_id, str) and NAME_ID.fullmatch(agent_id)):
+            continue
+        try:
+            pwd.getpwnam(f"ss-{agent_id}")
+        except KeyError:
+            continue  # Not yet created: setup isolates again once the installer has run.
+        users.append(f"ss-{agent_id}")
+    return users
 
 
 def metadata_users(answers):

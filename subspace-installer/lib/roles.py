@@ -7,7 +7,31 @@ from agent_files import agent_directory, write_private
 
 
 ROLES = Path(__file__).parent / "roles"
-SKILLS = ("fleet-rear-admiral", "fleet-captain", "fleet-crew")
+# The generic Subspace API skill from agent-skills/, which the fleet installer copies beside the role
+# templates; from a source checkout, the repository's own copy.
+API_SKILL = "subspace-tracker"
+API_SKILL_SOURCES = (
+    Path(__file__).parent / "agent-skills" / API_SKILL / "SKILL.md",
+    Path(__file__).resolve().parents[2] / "agent-skills" / "opencode" / API_SKILL / "SKILL.md",
+)
+SKILLS = ("fleet-rear-admiral", "fleet-captain", "fleet-crew", API_SKILL)
+
+
+API_SKILL_MISSING = ("The Subspace API skill agent-skills/opencode/subspace-tracker/SKILL.md is missing, and "
+                     "api.agentUrl needs it. Copy agent-skills/ beside subspace-installer/, or remove api.agentUrl.")
+
+
+def api_skill_path():
+    """Where the Subspace API skill is, or None when the installer has no copy."""
+    return next((path for path in API_SKILL_SOURCES if path.is_file()), None)
+
+
+def api_skill():
+    """The Subspace API skill's text, the same file a person's local OpenCode installs."""
+    path = api_skill_path()
+    if path is None:
+        raise ValueError(API_SKILL_MISSING)
+    return path.read_text()
 
 
 def default_permissions(role, references):
@@ -113,15 +137,22 @@ def role_documents(cfg, person, references, home):
                 **values, "agent": worker["name"], "id": worker["id"], "captain": person["name"],
                 "model": worker["model"], "family": worker["family"].title(), "worktrees": worktrees,
             })
+    if (cfg.get("api") or {}).get("agentMcpUrl"):
+        # The officer reaches the API through its MCP server at the agent listener; its crew share the skill.
+        skills[API_SKILL] = api_skill()
     procedure = skills[f"fleet-{role}"].partition("\n---\n")
     if not procedure[1]:
         raise ValueError("Fleet skill templates need Markdown front matter.")
+    claude_prompt = f"{instructions}\n{procedure[2]}"
+    if API_SKILL in skills:
+        # Stargate's Claude backend loads no skill files, so a Claude officer gets the API skill in its prompt.
+        claude_prompt += "\n" + skills[API_SKILL].partition("\n---\n")[2]
     return {
         "role": role,
         "instructions": instructions,
         "skills": skills,
         "crew": crew,
-        "claudePrompt": f"{instructions}\n{procedure[2]}",
+        "claudePrompt": claude_prompt,
     }
 
 

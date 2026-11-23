@@ -91,6 +91,26 @@ function ancestors(row: Row, rows: ReadonlyMap<string, Joined>) {
   return result;
 }
 
+/** The fleet an initiative belongs to: its own, or else its nearest ancestor's. */
+function effectiveFleet(row: Row, rows: ReadonlyMap<string, Joined>) {
+  return row.fleetId ?? ancestors(row, rows).findLast((parent) => parent.fleetId)?.fleetId ?? null;
+}
+
+/**
+ * A registered agent counts as a member of every initiative that belongs to its fleet, so the
+ * fleet's agents find their fleet's work without an explicit membership. Issue, comment and other
+ * work access is organisation-wide for every active member; membership decides only this list.
+ */
+export function fleetAgentOf(
+  member: Pick<Member, "agentRank" | "agentFleetId">,
+  row: Row,
+  rows: ReadonlyMap<string, Joined>,
+) {
+  return Boolean(
+    member.agentRank && member.agentFleetId && effectiveFleet(row, rows) === member.agentFleetId,
+  );
+}
+
 function inArchivedBranch(row: Row, rows: ReadonlyMap<string, Joined>) {
   return row.archived || ancestors(row, rows).some((parent) => parent.archived);
 }
@@ -202,7 +222,9 @@ export const memberInitiatives = (member: Member) =>
           const rows = yield* loadRows(tx, member.organisationId);
           const items = [...rows.values()]
             .filter(
-              ({ initiative }) => ids.has(initiative.id) && !inArchivedBranch(initiative, rows),
+              ({ initiative }) =>
+                (ids.has(initiative.id) || fleetAgentOf(member, initiative, rows)) &&
+                !inArchivedBranch(initiative, rows),
             )
             .map(membership);
           return { items };

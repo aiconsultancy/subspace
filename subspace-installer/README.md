@@ -412,6 +412,70 @@ fleet. Without one, the API keeps the address it has. Setup gives the fleet's
 initiative no channels of its own: the standard channels belong to the fleet
 and its ships.
 
+## The API's agent listener
+
+The fleet's rear admiral and captains use the Subspace API as their own agent
+records, through its MCP server, without WorkOS, Entra or a token.
+
+- **`subspace-setup`** offers the API's agent listener once:
+  `AGENT_PORT=3001` and `AGENT_ORGANISATION=dev:<organisation>` in
+  `/root/fleet/api.env`, the development sign-in organisation the agents are
+  registered in, with a comment line recording the offer. It publishes
+  `127.0.0.1:3001` only while the listener is on, and keeps
+  `AGENT_ORGANISATION` in step with the organisation while it has the
+  installer's `dev:<organisation>` form. An operator turns the listener off
+  for good by setting `AGENT_PORT=` (or deleting it), and back on with
+  `AGENT_PORT=3001`. Setup also turns it off when `NODE_ENV` is `production`,
+  where the API refuses it, and when development sign-in is off (WorkOS or
+  Entra); the agents then have no way into the API yet. While it is on, setup adds
+  `api.agentUrl: "http://127.0.0.1:3001"` to the fleet configuration.
+- **The lockdown** keeps port 3000 (the main listener, with development
+  sign-in) and PostgreSQL operator-only, and admits to port 3001 only root,
+  the operator and the officers' Linux users (`--port-user 3001:ss-<id>` for
+  the rear admiral and each captain; crew run as their captain). The fleet's
+  other service users and containers cannot reach it. The audit fails if the
+  agent port is open to every local user, is 3000 or 5432, or answers the
+  development sign-in route; it still fails if port 3000 is open to the
+  agents.
+- **OpenCode officers.** With `api.agentUrl` set, each officer's engine
+  configuration (`/etc/subspace-fleet/opencode-<id>.json`) gets a remote MCP
+  server `subspace` at `<agentUrl>/mcp` with the header
+  `X-Subspace-Agent: <the officer's IRC account>`, which the API resolves to
+  the officer's agent record by IRC nick. The engine's permissions, and the
+  stored grants of a pinned root, gain `{"action": "subspace_*", "resource":
+  "*", "effect": "allow"}`. Crew sessions run on their captain's server, so
+  they share its MCP server and act as the captain, naming themselves with
+  `relayedCrew` on each write.
+- **Claude Agent SDK officers** get the same server through Stargate's
+  `backend.mcpServers`, with a `headersHelper` that runs
+  `/opt/subspace-fleet/lib/runtime.py agent-header <account>`, since that
+  backend takes header values only from a helper. Stargate permits every tool
+  of a configured server itself (`mcp__subspace`), and `allowedTools` holds
+  built-in tools only, so it is left as configured. That backend loads no
+  skill files, so the `subspace-tracker` skill's text is appended to the
+  officer's system prompt instead.
+- **Skills.** Each officer also receives the generic `subspace-tracker` skill
+  in `~/.config/opencode/skills/`, the same file as
+  `agent-skills/opencode/subspace-tracker/SKILL.md`, which the host installer
+  now copies to the VM with the rest of the payload. With `api.agentUrl` set, the
+  installer and the configuration check both stop, naming that file, when the
+  payload lacks it. It covers both ways in
+  and the API's rules for issues, trackers, decisions and the rest.
+
+The agent listener trusts its network as development sign-in does, minus
+administrator access: anyone who can reach port 3001 on the VM, which the
+lockdown limits to root, the operator and the officers' users, can act as any
+registered agent of the organisation, so agents can act as each other. It
+serves no sign-in route and no administrator route or MCP tool, it never
+resolves a person, and it refuses browser requests (an `Origin` header) and
+any host other than loopback. A further fleet installed with `--api-target` gets no
+agent listener (INSTALL.md, "One fleet or several").
+
+What is not verified yet: the OpenCode release the fleet pins has not been
+checked for the `mcp.servers.<name>.headers` field, and Stargate's curated
+crew permissions allow only listed MCP prefixes, so crew may not be able to
+call `subspace_*` tools until Stargate allows them.
+
 ## Agent dispatch
 
 Stargate's dispatcher runs in the rear admiral's gateway and hands out
@@ -465,7 +529,8 @@ development sign-in, registers the agents first and mints the rear admiral's
 token for its account subject (by default `<account>@agents.example.com`) on
 each run; a development token lasts eight hours. The gateway's
 Linux user must be able to reach the API: `subspace-setup` lets it, and no
-agent, through to the API's port.
+agent, through to the API's main port. Agents reach the API only on its agent
+listener ([The API's agent listener](#the-apis-agent-listener)).
 
 **Answers.** A captain accepts or declines an offer only with Stargate's
 `fleet_answer_offer` tool, which needs a pinned OpenCode root. So with
@@ -734,7 +799,7 @@ their crew's assignments through `stargate_crew`.
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
 | `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. |
-| `api` | Optional `url` (origin or ending in `/api`), `vmHost`, `fleetApiUrl` (where a desktop reaches the Fleet API, when not through the SSH tunnel; needs `stargate.api`; see [Subspace API registration](#subspace-api-registration)) and `initiatives` (array of UUIDs). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
+| `api` | Optional `url` (origin or ending in `/api`), `vmHost`, `fleetApiUrl` (where a desktop reaches the Fleet API, when not through the SSH tunnel; needs `stargate.api`; see [Subspace API registration](#subspace-api-registration)) `initiatives` (array of UUIDs) and `agentUrl` (the API's agent listener on this VM's loopback, such as `http://127.0.0.1:3001`; see [The API's agent listener](#the-apis-agent-listener)). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
 | `agentDispatch` | Optional [agent dispatch](#agent-dispatch): `enabled` (default `false`), `pollIntervalSeconds` (120), `answerTimeoutSeconds` (300) and `retryLadderSeconds` (`[3600, 10800, 21600, 43200]`). On, it needs `api`, a captain with crew, an OpenCode rear admiral and `rearAdmiralApiToken`. |
 
 The mode-0600 secrets JSON has `proxyKey` (a random proxy client key),
