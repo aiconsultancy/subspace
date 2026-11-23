@@ -62,9 +62,53 @@ container network. The default server provider outside Compose is WorkOS.
 ## External sign-in
 
 Send the provider's **access token** in `Authorization: Bearer <token>`. The API
-verifies the token and resolves an active local membership. To grant access
-before the user's first request, provision their verified organisation and
-subject from a trusted IdP administrator:
+verifies the token and resolves an active local membership for its verified
+provider, organisation and subject.
+
+### First sign-in
+
+A person who signs in with a configured identity provider is a member from their
+first request: nobody runs a command first. When the token is valid and no record
+exists for its subject, the API registers the person if their provider is listed
+in `AUTO_REGISTER`. In one transaction it creates the organisation's record if it
+is missing and an active member with no initiative memberships, and it audits the
+registration as `memberRegistered`. Concurrent first requests from one person
+create one member, and every one of them succeeds.
+
+- `AUTO_REGISTER` is a comma-separated list of providers. It defaults to `entra`
+  when Entra is configured, because the tenant, audience and client are already
+  pinned. An empty value or `none` turns registration off, and an unknown person
+  then receives 403. `workos` is refused at start-up until WorkOS registration
+  gains an organisation allow-list. Development sign-in registers its own members,
+  as before, and is not listed.
+- The token's claims fill in the profile, never the identity. The display name is
+  `name`, else the given and family names, else the e-mail. The e-mail is `email`,
+  else `preferred_username`, when it has the form of an address. Entra puts `name`
+  and `preferred_username` in v2 access tokens when the client asks for the
+  `profile` scope. Add `email`, `given_name` and `family_name` as optional claims on
+  the **access token** in the API's app registration, so that usernames come from
+  the given and family names.
+- Registration admits whoever the tenant lets obtain an access token for the API,
+  guests included. To limit it to chosen people or groups, turn on _Assignment
+  required_ for the enterprise applications in Entra and assign them.
+- A token for another tenant, audience or client is refused with 401 and creates
+  nothing. A deactivated person stays refused with 403: registration never
+  reactivates anyone, and only the membership command below does.
+
+`ENTRA_ADMIN_ROLE` names an app role defined on the API's app registration. When it
+is set, an Entra token whose `roles` claim holds that value makes its holder an
+administrator, and a token without it makes them a member. The API checks this on
+every request, writes the role only when it changes and audits each change as
+`memberRoleChanged`. The app role is then the only source of the administrator
+role: it overrides `--role` from the membership command at the person's next
+request. When `ENTRA_ADMIN_ROLE` is unset, roles change only through the
+membership command. An agent record is never an administrator.
+
+### The membership command
+
+To grant access before a person's first request, to provision a member when
+registration is off, or to revoke access, run the membership command with the
+verified organisation and subject from a trusted IdP administrator:
 
 ```sh
 bun run auth:member workos org_example user_example --name "Example Operator" --role admin
@@ -108,6 +152,8 @@ links.
 | `WORKOS_AUDIENCE`                                                     | Optional exact audience for AuthKit deployments that set an audience claim.                                     |
 | `WORKOS_API_KEY`                                                      | Optional profile lookup credential for the membership CLI.                                                      |
 | `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_AUDIENCE`, `ENTRA_SCOPE` | Entra tenant, authorised client, API audience and delegated scope (default `API.Access`).                       |
+| `AUTO_REGISTER`                                                       | Providers that register a person at [first sign-in](#first-sign-in). Empty or `none` is off.                    |
+| `ENTRA_ADMIN_ROLE`                                                    | Optional Entra app role whose holders are administrators, checked on every request.                             |
 | `AGENT_PORT`, `AGENT_HOST`, `AGENT_ORGANISATION`                      | Optional [agent listener](#the-agent-listener): port (off when unset), address and `<provider>:<organisation>`. |
 | `DEV_KEY_PATH`                                                        | Private development signing key file, defaulting to `.data/dev-signing-key`.                                    |
 | `DEV_CHANNELS`, `DEV_IRC_HOST`, `DEV_IRC_PORT`                        | Channel text and IRC endpoint for newly created dev organisations.                                              |

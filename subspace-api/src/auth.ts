@@ -22,7 +22,24 @@ export type PrincipalIdentity = {
   subject: string;
 };
 
-type VerifiedIdentity = PrincipalIdentity & { expiresAt: number };
+/**
+ * Profile and role claims from a verified token. They fill in a new person's profile and decide
+ * the administrator role; they never identify anyone, which only the provider, organisation and
+ * subject do.
+ */
+export interface SignInClaims {
+  readonly name?: string;
+  readonly email?: string;
+  readonly preferredUsername?: string;
+  readonly givenName?: string;
+  readonly familyName?: string;
+  readonly roles: readonly string[];
+}
+
+export type VerifiedIdentity = PrincipalIdentity & {
+  expiresAt: number;
+  claims?: SignInClaims;
+};
 type Verifier = (token: string) => Promise<VerifiedIdentity>;
 
 export async function readDevKey(path: string) {
@@ -70,12 +87,39 @@ function claim(payload: JWTPayload, key: string) {
   return value;
 }
 
+/** An optional profile claim: a non-empty string of at most 256 characters, or nothing. */
+function profileClaim(payload: JWTPayload, key: string) {
+  const value = payload[key];
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text && text.length <= 256 ? text : undefined;
+}
+
+function signInClaims(payload: JWTPayload): SignInClaims {
+  const roles = Array.isArray(payload.roles)
+    ? payload.roles
+        .filter((role): role is string => typeof role === "string" && role.length <= 256)
+        .slice(0, 256)
+    : [];
+  return {
+    name: profileClaim(payload, "name"),
+    email: profileClaim(payload, "email"),
+    preferredUsername: profileClaim(payload, "preferred_username"),
+    givenName: profileClaim(payload, "given_name"),
+    familyName: profileClaim(payload, "family_name"),
+    roles,
+  };
+}
+
+/** The fetch that reaches identity providers' discovery documents and keys. */
+export type RemoteFetch = NonNullable<
+  NonNullable<Parameters<typeof createRemoteJWKSet>[1]>[typeof customFetch]
+>;
+
 export function jwtVerifiers(
   options: Config,
   devKey: Uint8Array | null,
-  fetchRemote: NonNullable<
-    NonNullable<Parameters<typeof createRemoteJWKSet>[1]>[typeof customFetch]
-  > = fetch,
+  fetchRemote: RemoteFetch = fetch,
 ) {
   const verifiers = new Map<string, Verifier>();
 
@@ -151,6 +195,7 @@ export function jwtVerifiers(
         expiresAt: payload.exp!,
         subject: claim(payload, "oid").toLowerCase(),
         externalOrganisation: tenantId,
+        claims: signInClaims(payload),
       };
     });
   }

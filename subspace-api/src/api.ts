@@ -12,7 +12,7 @@ import {
 } from "effect/http-api";
 import { agentGroup, agentHandlers } from "./agents";
 import { auditGroup, auditHandlers } from "./audit";
-import { devTokenLifetime, jwtVerifiers, mintDevToken } from "./auth";
+import { devTokenLifetime, jwtVerifiers, mintDevToken, type RemoteFetch } from "./auth";
 import { commentGroup, commentHandlers } from "./comment-mutations";
 import { type Config } from "./config";
 import { documentGroup, documentHandlers } from "./documents";
@@ -46,7 +46,8 @@ import {
 } from "./github";
 import { createGitHubClient } from "./github-app";
 import { GithubPollState, githubPollState, pollGitHub } from "./github-poll";
-import { AgentRank, CurrentMember, findMember, localMember, publicProfile } from "./identity";
+import { AgentRank, CurrentMember, localMember, publicProfile } from "./identity";
+import { signedInMember, type SignInPolicy } from "./registration";
 import {
   ChannelChanges,
   ChannelConfiguration,
@@ -73,6 +74,7 @@ import { Email, Name, NullableString, PageQuery, pageOf, Slug, Uuid } from "./va
 
 import {
   BearerAuth,
+  databaseFailure,
   handleDb,
   validationErrors,
   ValidationErrors,
@@ -585,9 +587,14 @@ export function routes(
   devKey: Uint8Array | null,
   store: (typeof Storage)["Service"],
   shared: Resources = resourceLayers(options, store),
+  fetchRemote?: RemoteFetch,
 ) {
   const { dbLayer, github, resources } = shared;
-  const verify = jwtVerifiers(options, devKey);
+  const verify = jwtVerifiers(options, devKey, fetchRemote);
+  const signIn: SignInPolicy = {
+    autoRegister: options.autoRegister,
+    entraAdminRole: options.entra?.adminRole ?? null,
+  };
   const auth = Layer.effect(
     BearerAuth,
     Effect.gen(function* () {
@@ -604,8 +611,11 @@ export function routes(
               return yield* Effect.fail(
                 problem(401, "The bearer access token is invalid or expired."),
               );
-            const member = yield* findMember(identity).pipe(
+            const member = yield* signedInMember(identity, signIn).pipe(
               Effect.provideService(Database, db),
+              Effect.tapError((error) =>
+                Effect.logError("The membership could not be resolved", databaseFailure(error)),
+              ),
               Effect.mapError(() => problem(500, "The membership could not be resolved.")),
             );
             if (member?.agentRank && !member.active)
@@ -691,11 +701,15 @@ export function agentRoutes(
   );
 }
 
-/** What a test may replace in `server`: the shared resources and the agent directory. */
+/**
+ * What a test may replace in `server`: the shared resources, the agent directory and the fetch
+ * that reaches identity providers' discovery documents and keys.
+ */
 export interface ServerOverrides {
   readonly store?: (typeof Storage)["Service"];
   readonly shared?: Resources;
   readonly directory?: Layer.Layer<AgentDirectory, unknown>;
+  readonly fetchRemote?: RemoteFetch;
 }
 
 export function server(
@@ -705,7 +719,7 @@ export function server(
 ) {
   const store = overrides.store ?? storage(process.env);
   const shared = overrides.shared ?? resourceLayers(options, store);
-  const main = HttpRouter.serve(routes(options, devKey, store, shared), {
+  const main = HttpRouter.serve(routes(options, devKey, store, shared, overrides.fetchRemote), {
     disableLogger: true,
   }).pipe(
     Layer.provide(

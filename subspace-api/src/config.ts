@@ -56,6 +56,48 @@ function integerSetting(
   return value;
 }
 
+/**
+ * The providers whose first valid token registers an unknown person as a member. Entra is on by
+ * default when it is configured, because its tenant, audience and client are already pinned.
+ * WorkOS needs an organisation allow-list first, and development sign-in registers its own
+ * members, so neither is accepted. An empty value or `none` turns registration off.
+ */
+export function autoRegister(
+  env: NodeJS.ProcessEnv,
+  providers: ReadonlySet<string>,
+): ReadonlySet<Provider> {
+  const raw = env.AUTO_REGISTER;
+  if (raw === undefined) return new Set<Provider>(providers.has("entra") ? ["entra"] : []);
+  const names = raw
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (names.length === 0 || (names.length === 1 && names[0] === "none")) return new Set();
+  for (const name of names) {
+    if (name === "workos") {
+      throw new Error(
+        "AUTO_REGISTER does not accept workos yet: WorkOS registration needs an organisation allow-list",
+      );
+    }
+    if (name !== "entra") throw new Error("AUTO_REGISTER must be entra, none or empty");
+    if (!providers.has(name)) {
+      throw new Error("AUTO_REGISTER must name a provider in AUTH_PROVIDERS");
+    }
+  }
+  return new Set(names as Provider[]);
+}
+
+/** The Entra app role that makes a person an administrator, checked on every request. */
+function entraAdminRole(env: NodeJS.ProcessEnv, providers: ReadonlySet<string>) {
+  const value = env.ENTRA_ADMIN_ROLE?.trim();
+  if (!value) return null;
+  if (!providers.has("entra")) throw new Error("ENTRA_ADMIN_ROLE needs entra in AUTH_PROVIDERS");
+  if (value.length > 256 || /\s/u.test(value)) {
+    throw new Error("ENTRA_ADMIN_ROLE must be one app role value without whitespace");
+  }
+  return value;
+}
+
 const loopback = ["127.0.0.1", "::1", "localhost"];
 
 /**
@@ -115,6 +157,7 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
     );
   }
   const agent = agentListener(env, providers, hostname, port);
+  const adminRole = entraAdminRole(env, providers);
   const ircPort = Number(env.DEV_IRC_PORT ?? "6667");
   if (!Number.isInteger(ircPort) || ircPort < 1 || ircPort > 65535) {
     throw new Error("DEV_IRC_PORT must be a valid TCP port");
@@ -131,6 +174,7 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
     hostname,
     port,
     agent,
+    autoRegister: autoRegister(env, providers),
     dev: providers.has("dev")
       ? {
           keyPath: env.DEV_KEY_PATH ?? ".data/dev-signing-key",
@@ -153,6 +197,7 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
           clientId: requiredUuid(env, "ENTRA_CLIENT_ID"),
           audience: requiredUuid(env, "ENTRA_AUDIENCE"),
           scope: env.ENTRA_SCOPE ?? "API.Access",
+          adminRole,
         }
       : null,
   };

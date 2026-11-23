@@ -51,6 +51,9 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       S3_SESSION_TOKEN: ${S3_SESSION_TOKEN:-}
       ENTRA_SCOPE: ${ENTRA_SCOPE:-API.Access}
+      ENTRA_ADMIN_ROLE: ${ENTRA_ADMIN_ROLE:-}
+      # Passed through only when set: an empty AUTO_REGISTER turns registration off.
+      AUTO_REGISTER:
       AGENT_PORT: ${AGENT_PORT:-}
       AGENT_HOST: ${AGENT_HOST:-}
       AGENT_ORGANISATION: ${AGENT_ORGANISATION:-}
