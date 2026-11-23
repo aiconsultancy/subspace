@@ -86,10 +86,15 @@ pub(crate) const COMMAND: &str =
 /// Why a draft with attachments in reply mode was kept.
 pub(crate) const ATTACHMENTS: &str =
     "Attachments can't go in a thread reply yet. Cancel the reply to send them.";
+/// What the move button says: whose thread the draft would go to.
+pub(crate) fn move_words(offered: &ReplyTo) -> String {
+    format!("Move to {}'s thread", offered.author)
+}
+
 /// Why a reply whose thread is no longer loaded was kept.
 pub(crate) const GONE: &str = "The thread is no longer loaded, so this reply was not sent. Choose Write to the channel to send it as an ordinary message.";
 /// The same, once the person chose to reply in another thread.
-pub(crate) const GONE_OFFERED: &str = "The thread is no longer loaded, so this reply was not sent. Choose Move to the thread to reply there with it, or Write to the channel to send it as an ordinary message.";
+pub(crate) const GONE_OFFERED: &str = "The thread is no longer loaded, so this reply was not sent. Choose Move to move it to the thread now open, or Write to the channel to send it as an ordinary message.";
 /// Why reply mode is refused outside a channel.
 pub(crate) const CHANNEL_ONLY: &str = "Thread replies are sent in a channel.";
 
@@ -227,6 +232,16 @@ pub(crate) fn escape(
 /// Marks the reply to `root`, whose thread is no longer held, as gone: it
 /// keeps the draft in reply mode and sends nothing until the person
 /// chooses to write to the channel instead.
+/// Drops the thread offered to a gone draft, as when another thread is
+/// chosen: the offer stood for the thread then in front.
+pub(crate) fn withdraw_offer(conversation: &mut Conversation, cx: &mut Context<Conversation>) {
+    if let Some(reply) = conversation.draft.reply.as_mut()
+        && reply.offered.take().is_some()
+    {
+        cx.notify();
+    }
+}
+
 /// A thread offered to a gone draft that goes too is no longer offered.
 pub(crate) fn forget(conversation: &mut Conversation, root: &str, cx: &mut Context<Conversation>) {
     let Some(reply) = conversation.draft.reply.as_mut() else {
@@ -341,19 +356,19 @@ fn gone_row(offered: Option<&ReplyTo>, cx: &mut Context<Conversation>) -> impl I
         )
 }
 
-/// **Move to the thread**: the draft goes to the thread the person chose
-/// after its own had gone, named in the button's accessible label.
+/// **Move to \<author\>'s thread**: the draft goes to the thread the
+/// person chose after its own had gone, named on the button.
 fn move_button(offered: &ReplyTo, cx: &mut Context<Conversation>) -> impl IntoElement {
     subspace_framework::dashboard::action::action_button(
         "irc-reply-mode-move",
         Intent::Neutral,
         Some(IconName::Reply),
-        "Move to the thread",
+        move_words(offered),
     )
-    .aria_label(SharedString::from(format!(
-        "Move to the thread of {}",
-        offered.author
-    )))
+    .accessibility_label(format!(
+        "Move the reply to the thread of {}: {}",
+        offered.author, offered.excerpt
+    ))
     .on_click(cx.listener(|this, _, window, cx| move_offered(this, window, cx)))
 }
 

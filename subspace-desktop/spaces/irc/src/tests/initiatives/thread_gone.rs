@@ -155,3 +155,27 @@ fn a_thread_offered_to_a_gone_draft_that_goes_too_is_withdrawn(cx: &mut TestAppC
         assert_eq!(reply.offered, None, "nothing to move to");
     });
 }
+
+#[gpui_kit::test]
+fn choosing_another_thread_withdraws_the_offer_to_move(cx: &mut TestAppContext) {
+    let (board, _hub, cx) = finished(cx, &[MESSAGE_TAGS]);
+    let conversation = gone_draft(&board, cx);
+    reply_in(&board, "r1", cx);
+    cx.update(|window, _| {
+        assert_eq!(
+            window.find("irc-reply-mode-move").label(),
+            Some("Move the reply to the thread of aurora-lyra: Reply r1."),
+            "the button names the thread"
+        );
+    });
+    let room = crate::fixtures::channel("#aurora-lyra");
+    board.update_in(cx, |board, window, cx| {
+        crate::thread::open(board, &room, "r2".to_owned(), window, cx);
+    });
+    settle(cx);
+    conversation.read_with(cx, |conversation, _| {
+        let reply = conversation.draft.reply.as_ref().unwrap();
+        assert_eq!((reply.root.as_str(), reply.gone), ("ask1", true));
+        assert_eq!(reply.offered, None, "the offer stood for r1, now left");
+    });
+}
