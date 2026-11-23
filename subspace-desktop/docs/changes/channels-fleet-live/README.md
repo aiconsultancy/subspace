@@ -20,12 +20,15 @@ Desktop only: no Framework, API or Stargate change.
 
 Checked against Stargate's `main` at commit
 `edfb0c05cceb4d5b00e4e0159d9b6378261f6964` (`src/dashboard/api/v1/types.ts`).
-The client's models (`clients/fleet/src/model.rs`) agree with it; `main`
-adds fields the client ignores, as its models are additive: a captain's
-`requests` (per-request progress), a context's `observed` and
-`pullRequestKnown`, a task's `kind`, a feature's `defaultEnabled` and the
-gateway's `bunVersion`. Nothing is retyped or removed, so no client change
-was needed; none of those fields is shown yet. A captain's `activity` is
+The client's models (`clients/fleet/src/model.rs`) agree with it. The
+Fleet API also serves fields the client does not read, as its models are
+additive: a captain's `requests` (per-request progress), a context's
+`observed` and `pullRequestKnown`, a task's `kind`, a feature's
+`defaultEnabled` and the gateway's `bunVersion`. These are present in
+Stargate v0.43.0 (`src/api/v1/types.ts`) as well as on `main`, and the
+Fleet API the client uses is the same in both, so nothing the client
+uses needs a Stargate newer than v0.43.0; none of those fields is shown
+yet. A captain's `activity` is
 `running`, `queued` or `idle`; its `queue` counts jobs `queued`, `running`,
 `responding`, `done` and `failed`; a ship's `crew` counts people, busy
 members (any context with a current task) and members with queued work.

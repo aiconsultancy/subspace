@@ -37,7 +37,9 @@ use chrono::{DateTime, Utc};
 use crate::model::{Anchor, BufferKey, Command, Event, NetworkConfig, NetworkId, Target, Update};
 use crate::proto::Message;
 
-pub use input::{COMMANDS, CommandHelp, FirstArgument, private_recipients, private_tag_recipients};
+pub use input::{
+    COMMANDS, CommandHelp, FirstArgument, private_recipients, private_tag_recipients, raw_reactions,
+};
 pub use isupport::Casemapping;
 pub use lines::{KEPT_CLIENT_TAGS, PROGRESS_TAG};
 pub use metadata::status_text;

@@ -4,7 +4,7 @@ mod catalogue;
 mod recipients;
 
 pub use catalogue::{COMMANDS, CommandHelp, FirstArgument};
-pub use recipients::{private_recipients, private_tag_recipients};
+pub use recipients::{private_recipients, private_tag_recipients, raw_reactions};
 
 /// What composer input asks for. Targets left `None` mean the buffer's own.
 #[derive(Debug, Clone, PartialEq, Eq)]

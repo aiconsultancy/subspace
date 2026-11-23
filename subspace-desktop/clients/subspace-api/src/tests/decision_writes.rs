@@ -57,9 +57,16 @@ fn invalid_decisions_are_refused_before_anything_is_sent() {
     for bad in ["", "   ", "nul\0"] {
         assert_eq!(
             NewDecision::new("project-1", &[], &text(bad, None)),
-            Err(DecisionWriteError::Invalid)
+            Err(DecisionWriteError::Text),
+            "the decision's own words, not the title"
         );
     }
+    // 25,001 emoji are 50,002 UTF-16 units, over the API's limit.
+    let wide = "\u{1F680}".repeat(25_001);
+    assert_eq!(
+        NewDecision::new("project-1", &[], &text(&wide, None)),
+        Err(DecisionWriteError::Text)
+    );
     let long = "x".repeat(201);
     let titled = DecisionText {
         title: &long,

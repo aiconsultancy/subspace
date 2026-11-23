@@ -713,8 +713,9 @@ Reactions in a private conversation with a person are ordinary. Until
 Subspace has read your initiatives for your account and organisation, and
 so knows who the fleet agents are, private conversations take no
 reactions: just after it starts, if the latest read failed, or if you are
-not signed in to Subspace API. A reaction typed by hand as a private
-`TAGMSG` through `/raw` is held to the same rule.
+not signed in to Subspace API. A reaction typed by hand as a `TAGMSG`
+through `/raw` is held to the same rules as the reaction controls: a stop
+reaction goes only from **Stop** and the agent's name in **Add reaction**.
 
 Reactions need a server that supports them (IRCv3 `message-tags`). Without
 that, or while the network is disconnected, the pills stay but you can't
@@ -758,7 +759,8 @@ Type `/` to see them. The list then offers the issues this conversation has
 shown, and whom to assign. Once the command is complete, its first row says
 what `Return` will do; press `Return`, or click the row, to do it. If what
 it would do has changed since the row appeared, nothing is written and the
-new row shows for you to confirm with `Return` again. `Tab` only completes
+new row shows for you to confirm with `Return` again; the same happens if
+you have signed in to another account or organisation meanwhile. `Tab` only completes
 a word and never runs a command. One tracker change runs at a time; a
 command sent meanwhile stays in the message input with a note. While you write a thread
 reply, a command is kept with a note instead: cancel the reply to run it.

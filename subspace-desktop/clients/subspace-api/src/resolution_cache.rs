@@ -64,10 +64,14 @@ pub enum ResolutionLookup<'a, C> {
 }
 
 /// Only `Unavailable` (404 after the pack check) is negatively cached.
+/// `Denied` (a read refused for sign-in or permission) drops any card held,
+/// as the person may no longer see it; `Error` (a transient failure) keeps
+/// it.
 pub enum ResolutionOutcome<C> {
     Available(C),
     Unavailable,
     Error,
+    Denied,
 }
 
 /// Up to 500 resolved entries in LRU order, plus deduplicated pending reads.
@@ -98,7 +102,7 @@ impl<C> Entry<C> {
         let (card, lifetime) = match outcome {
             ResolutionOutcome::Available(card) => (Some(card), AVAILABLE_LIFETIME),
             ResolutionOutcome::Unavailable => (None, UNAVAILABLE_LIFETIME),
-            ResolutionOutcome::Error => return None,
+            ResolutionOutcome::Error | ResolutionOutcome::Denied => return None,
         };
         Some(Self {
             identifier,
@@ -245,7 +249,16 @@ impl<C> ResolutionCache<C> {
 
     fn store(&mut self, identifier: String, outcome: ResolutionOutcome<C>, now: Instant) {
         self.expire(now);
+        self.forget_if_denied(&identifier, &outcome);
         self.insert(Entry::from_outcome(identifier, outcome, now));
+    }
+
+    /// Drops `identifier`'s card when its read was refused for sign-in or
+    /// permission.
+    fn forget_if_denied(&mut self, identifier: &str, outcome: &ResolutionOutcome<C>) {
+        if matches!(outcome, ResolutionOutcome::Denied) {
+            self.entries.retain(|held| held.identifier != identifier);
+        }
     }
 
     fn insert(&mut self, entry: Option<Entry<C>>) {

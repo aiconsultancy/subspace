@@ -13,8 +13,9 @@ use crate::events::{FleetEvent, Frames};
 use crate::{Error, FleetClient};
 
 const MEDIA_TYPE: &str = "text/event-stream";
-/// Stargate sends a heartbeat every fifteen seconds and closes a stream
-/// idle for sixty.
+/// How long a read may wait for anything before the stream counts as
+/// gone. Stargate sends a heartbeat every fifteen seconds, so a stream
+/// silent for longer than this has stalled.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(40);
 
 /// Why a stream ended or could not start.

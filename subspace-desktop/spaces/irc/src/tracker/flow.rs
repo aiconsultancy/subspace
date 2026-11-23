@@ -36,6 +36,11 @@ pub(crate) struct State {
     /// A typed command whose write the tracker never confirmed: it may
     /// have landed, so the same draft is not sent again.
     pub unconfirmed: Option<String>,
+    /// The command being written from the composer, in its one canonical
+    /// form, captured when it was dispatched.
+    pub dispatched: Option<String>,
+    /// The client a run row was confirmed under, which its write uses.
+    pub confirmed: Option<Arc<Client>>,
     /// The issues asked for again after a write, which tests read back.
     #[cfg(test)]
     pub refreshed: Vec<String>,
@@ -90,7 +95,10 @@ pub(crate) fn submit(
     let Some(typed) = typed(text) else {
         return false;
     };
-    if conversation.tracker.unconfirmed.as_deref() == Some(text) {
+    // One form for every way a draft arrives: Return trims, a run row
+    // and a click do not.
+    let command = text.trim().to_owned();
+    if conversation.tracker.unconfirmed.as_deref() == Some(command.as_str()) {
         conversation.draft.entity.update(cx, |input, cx| {
             input.set_error(UNCONFIRMED_AGAIN.to_owned(), cx)
         });
@@ -110,6 +118,9 @@ pub(crate) fn submit(
     match planned {
         Ok(plan) => {
             let job = Job::from_plan(plan, context(conversation, cx));
+            if !conversation.tracker.busy {
+                conversation.tracker.dispatched = Some(command);
+            }
             start(conversation, job, Origin::Composer, window, cx);
         }
         Err(reason) => conversation
@@ -148,7 +159,11 @@ pub(crate) fn start(
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
-    let client = conversation.hub.update(cx, |hub, _| hub.tracker.client());
+    // A run row's write goes with the client it was confirmed under.
+    let client = match conversation.tracker.confirmed.take() {
+        Some(confirmed) => Some(confirmed),
+        None => conversation.hub.update(cx, |hub, _| hub.tracker.client()),
+    };
     start_with(conversation, (job, origin), client, window, cx);
 }
 
@@ -267,8 +282,8 @@ fn composer_finished(
     cx: &mut Context<Conversation>,
 ) {
     let input = conversation.draft.entity.clone();
-    let text = input.read(cx).text(cx);
-    conversation.tracker.unconfirmed = (outcome == Outcome::Unconfirmed).then_some(text);
+    let dispatched = conversation.tracker.dispatched.take();
+    conversation.tracker.unconfirmed = dispatched.filter(|_| outcome == Outcome::Unconfirmed);
     input.update(cx, |input, cx| {
         input.set_busy(false, cx);
         if outcome == Outcome::Landed {

@@ -130,7 +130,9 @@ pub(crate) fn decision_draft(
         title,
         text: description(quoted),
         context,
-        message: Some((code_span(&quoted.reference()), excerpt)),
+        // The evidence reference is shown as plain text wherever it is
+        // read, so it goes plain; only Markdown bodies take the code span.
+        message: Some((quoted.reference(), excerpt)),
     })
 }
 

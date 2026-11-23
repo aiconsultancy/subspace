@@ -29,3 +29,14 @@ fn a_refresh_keeps_the_old_card_until_its_own_answer_replaces_it() {
         "a failed refresh keeps what was shown"
     );
 }
+
+#[test]
+fn a_refresh_refused_for_sign_in_or_permission_drops_the_card() {
+    let now = Instant::now();
+    let mut cache = cache();
+    let read = start(&mut cache, "SUB-1", now);
+    assert!(cache.finish(read, ResolutionOutcome::Available("before"), now));
+    let denied = cache.refresh("SUB-1", now);
+    assert!(cache.finish(denied, ResolutionOutcome::Denied, now));
+    assert_eq!(cache.peek("SUB-1", now), None, "no longer shown");
+}

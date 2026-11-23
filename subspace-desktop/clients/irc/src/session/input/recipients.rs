@@ -3,6 +3,7 @@
 use super::{Input, parse_input};
 use crate::model::Target;
 use crate::proto::parse;
+use crate::reactions::REACT_TAG;
 
 /// The nicks composer `text` in `target` would send a private PRIVMSG,
 /// NOTICE or TAGMSG to, from the same parse the session sends it with.
@@ -40,6 +41,32 @@ pub fn private_tag_recipients(text: &str) -> Vec<String> {
         Ok(Input::Raw(line)) => raw_to(&line, &["TAGMSG"]),
         _ => Vec::new(),
     }
+}
+
+/// The reactions composer `text` would add by hand: for a TAGMSG that
+/// `/raw`, `/quote` or an unknown command carries with a `+draft/react`
+/// tag, each of its targets with the reaction, read with the client's own
+/// tag rules. A client that gates the reactions it sends applies the same
+/// gate to these.
+pub fn raw_reactions(text: &str) -> Vec<(String, String)> {
+    let Ok(Input::Raw(line)) = parse_input(text) else {
+        return Vec::new();
+    };
+    let Some(message) = parse(&line)
+        .ok()
+        .filter(|message| message.command == "TAGMSG")
+    else {
+        return Vec::new();
+    };
+    let (Some(reaction), Some(targets)) = (message.tag(REACT_TAG), message.params.first()) else {
+        return Vec::new();
+    };
+    targets
+        .split(',')
+        .map(str::trim)
+        .filter(|target| !target.is_empty())
+        .map(|target| (target.to_owned(), reaction.to_owned()))
+        .collect()
 }
 
 /// The nicks a raw line whose command is one of `commands` addresses.
@@ -109,6 +136,25 @@ mod tests {
             private_recipients("/raw WHOIS lyra", &room()),
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn a_raw_tagmsg_s_reaction_is_read_with_the_tag_rules() {
+        use super::raw_reactions;
+        assert_eq!(
+            raw_reactions("/raw @+draft/react=\u{270B};+draft/reply=m1 TAGMSG #ops,lyra"),
+            [
+                ("#ops".to_owned(), "\u{270B}".to_owned()),
+                ("lyra".to_owned(), "\u{270B}".to_owned())
+            ]
+        );
+        assert_eq!(
+            raw_reactions("/quote @+draft/react=a\\sb TAGMSG #ops"),
+            [("#ops".to_owned(), "a b".to_owned())],
+            "escaped as the client reads tags"
+        );
+        assert!(raw_reactions("/raw @+draft/unreact=\u{270B} TAGMSG #ops").is_empty());
+        assert!(raw_reactions("/raw PRIVMSG #ops :hi").is_empty());
     }
 
     #[test]

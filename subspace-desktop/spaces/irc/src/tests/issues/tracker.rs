@@ -36,6 +36,21 @@ fn open<'a>(
     tracker: bool,
     mock: Option<&Mock>,
 ) -> (Entity<Conversation>, Entity<Hub>, &'a mut VisualTestContext) {
+    let (_board, conversation, hub, cx) = open_board(cx, tracker, mock);
+    (conversation, hub, cx)
+}
+
+/// [`open`], with the board.
+fn open_board<'a>(
+    cx: &'a mut TestAppContext,
+    tracker: bool,
+    mock: Option<&Mock>,
+) -> (
+    Entity<crate::Irc>,
+    Entity<Conversation>,
+    Entity<Hub>,
+    &'a mut VisualTestContext,
+) {
     let (board, hub, cx) = mount(cx, settings());
     cx.update(|_, cx| {
         subspace_framework::dashboard::chat_input::bind_keys(cx);
@@ -71,7 +86,8 @@ fn open<'a>(
         }
         cx.notify();
     });
-    (reveal(&board, &room, cx), hub, cx)
+    let conversation = reveal(&board, &room, cx);
+    (board, conversation, hub, cx)
 }
 
 use crate::tests::completion::submit;

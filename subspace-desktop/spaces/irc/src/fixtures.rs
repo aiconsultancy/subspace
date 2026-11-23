@@ -64,3 +64,25 @@ pub(crate) fn member(nick: &str, prefixes: &str) -> Member {
         account: None,
     }
 }
+
+/// Subspace API's NAV-2 as the tracker returns it, flagged `ready` and
+/// assigned to `assignee` (Wren) when given.
+pub(crate) fn tracker_issue(ready: bool, assignee: Option<&str>) -> serde_json::Value {
+    let mut value: serde_json::Value = serde_json::from_str(r#"{"id":"issue-2","identifier":"NAV-2","projectId":"project-nav","projectKey":"NAV",
+        "type":"issue","title":"Course correction preview","summary":"Preview the course.",
+        "state":{"id":"state-1","name":"Todo","type":"unstarted"},
+        "assignee":null,
+        "labels":[],"priority":2,"estimate":null,"dueDate":null,"milestoneId":null,
+        "parentId":null,"blocked":false,"archivedAt":null,"createdAt":"2026-11-01T12:00:00Z",
+        "updatedAt":"2026-11-01T12:00:00Z","version":4,"progress":null,"commentCount":0,
+        "todoCounts":{"total":0,"done":0},"lastActivityAt":"2026-11-16T12:00:00Z","lastActivity":null,
+        "cycle":null,"relayedCrew":null,"provenance":null,"readyForAgents":false,
+        "description":null,"todos":[],"createdBy":null,"startedAt":null,"completedAt":null,
+        "canceledAt":null,"archivedBy":null,"parent":null,"duplicateOf":null,
+        "children":{"items":[],"nextCursor":null},"relations":{"items":[],"nextCursor":null},"mentions":[]}"#).unwrap();
+    value["readyForAgents"] = serde_json::json!(ready);
+    if let Some(id) = assignee {
+        value["assignee"] = serde_json::json!({"userId":id,"displayName":"Wren","isFormerMember":false,"kind":"agent","agent":null});
+    }
+    value
+}

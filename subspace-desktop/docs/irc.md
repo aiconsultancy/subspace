@@ -695,7 +695,8 @@ growing moves nothing else; tiles keep their fixed box.
   while the first read runs, not after the latest read failed or was
   refused (also after earlier ones succeeded), and not without a Subspace
   API sign-in. A private `TAGMSG` typed through `/raw` meets the same gate
-  (`private_tag_recipients`). A new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only from the
+  (`private_tag_recipients`), and a reaction it carries meets the whole
+  sending rule (`raw_reactions`), so a stop typed by hand is refused. A new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only from the
   labelled `Stop <ship>` item in a channel; asked for any other
   way it is explained and not sent, whether or not the app recognises the
   message as an agent's, since Stargate stops a queued turn before any
@@ -754,9 +755,11 @@ private message.
   do (`Return assigns NAV-2 · … to aurora-lyra`); Return or a click on it
   runs it (`ChatInput::completion_key`), while Tab only completes and on
   that row takes the first row that inserts. The row carries what it
-  showed (its words, plan and tracker); at acceptance the draft's row is
-  built again and runs only if it says the same, otherwise nothing is
-  written and the new row shows for a fresh Return. One write runs at a
+  showed (its words, plan and tracker) and the API client signed in when
+  it showed (its account and organisation lease), which the write then
+  uses; at acceptance the draft's row is built again and runs only if it
+  says the same under the same client, otherwise nothing is written and
+  the new row shows for a fresh Return. One write runs at a
   time; a command sent meanwhile is kept with a note. Completion gathers the
   tracker's facts only for a draft that starts with `/`. In reply mode a
   command is refused like any `/command` and kept with a note.

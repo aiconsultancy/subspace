@@ -147,6 +147,24 @@ pub(crate) fn close(
     }
 }
 
+/// Whether a conversation of `board` has a tracker dialog open, which the
+/// shell treats as the Space's dialog.
+pub(crate) fn any_open(board: &crate::Irc, cx: &App) -> bool {
+    board
+        .dock
+        .open
+        .values()
+        .any(|open| open.entity.read(cx).tracker.dialog.is_some())
+}
+
+/// Closes every conversation's tracker dialog, as the shell's dismiss asks.
+pub(crate) fn close_all(board: &crate::Irc, window: &mut Window, cx: &mut App) {
+    for open in board.dock.open.values() {
+        open.entity
+            .update(cx, |conversation, cx| close(conversation, window, cx));
+    }
+}
+
 /// After the write: a landed one closes the dialog, a refused one keeps it
 /// with its text so the person can try again.
 pub(crate) fn finished(

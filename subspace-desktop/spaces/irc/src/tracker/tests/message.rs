@@ -111,7 +111,10 @@ fn hostile_names_and_ids_stay_inside_a_code_span() {
     );
     let decision = message::decision_draft(&hostile, "NAV-2", "Decode", String::new()).unwrap();
     let (evidence, _) = decision.message.unwrap();
-    assert!(evidence.starts_with("``IRC message ") && evidence.ends_with(" UTC``"));
+    assert!(
+        evidence.starts_with("IRC message `x` [id](https://evil.example) by"),
+        "plain text, as the Issues decision panel and Decisions show it: {evidence}"
+    );
     assert_eq!(
         message::code_span("#[docs](https://evil.example) on Acme IRC"),
         "`#[docs](https://evil.example) on Acme IRC`"
