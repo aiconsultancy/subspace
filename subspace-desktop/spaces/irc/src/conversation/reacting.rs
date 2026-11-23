@@ -88,7 +88,14 @@ pub(super) fn refresh(this: &mut Conversation, cx: &App) -> Before {
         .map(|held| hub.reactions.shown(&this.buffer, held))
         .unwrap_or_default();
     let stops = held
-        .map(|held| stop::stops(&this.buffer, held, &this.statuses.shown))
+        .map(|held| {
+            stop::stops(&stop::Sources {
+                buffer: &this.buffer,
+                held,
+                statuses: &this.statuses.shown,
+                roster: &this.roster,
+            })
+        })
         .unwrap_or_default();
     let supported = can_react(this, cx);
     let reacting = &mut this.reacting;

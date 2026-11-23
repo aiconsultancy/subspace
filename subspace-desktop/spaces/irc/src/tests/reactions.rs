@@ -44,10 +44,32 @@ pub(super) fn receive(hub: &Entity<Hub>, updates: Vec<Update>, cx: &mut VisualTe
     cx.update(|window, cx| window.render_frame(cx));
 }
 
+/// One initiative whose fleet has the captain `astra`, so the roster knows
+/// her as an agent.
+fn astra_fleet() -> Vec<subspace_api_client::model::MemberInitiative> {
+    serde_json::from_value(serde_json::json!([{
+        "id": "initiative-astra", "name": "Astra", "channels": "#subspace",
+        "fleetId": "astra-fleet",
+        "fleet": {"id": "astra-fleet", "slug": "astra-fleet", "name": "Astra fleet",
+                  "ircHost": "irc.example.test", "ircPort": 6697, "ircTls": true,
+                  "rearAdmiralName": "admiral", "captainNames": ["astra"],
+                  "agents": [{"userId": "u-astra", "name": "astra", "rank": "captain",
+                              "shipId": "s-astra", "ship": "Astra", "ircNick": "astra",
+                              "available": true}],
+                  "ships": [{"id": "s-astra", "name": "Astra", "channel": null}]}
+    }]))
+    .unwrap()
+}
+
 /// `#subspace` with alice's message `m1`, our request `r1` to astra with
 /// her progress, and support on.
 pub(super) fn open(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestContext) {
     let (board, hub, cx) = mount(cx, settings());
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(astra_fleet()), cx)
+        })
+    });
     let mut astra = member("astra", "");
     astra.account = Some("astra".into());
     let mut events = channel_events();

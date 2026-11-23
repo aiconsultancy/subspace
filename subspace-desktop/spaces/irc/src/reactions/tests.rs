@@ -5,9 +5,11 @@ use subspace_client_irc::test_support;
 use subspace_client_irc::{BufferKey, Event, ReactionError, Target, Update};
 
 use super::choices::choices;
-use super::stop::{AgentMessage, agent_message, stops};
+use super::stop::{AgentMessage, Sources, Stops, stops};
 use super::{Reactions, refusal_text};
 use crate::fixtures::{channel, message, network_id};
+use crate::fleet::Roster;
+use crate::fleet::tests::{agent as roster_agent, fleet};
 use crate::state::IrcState;
 use crate::thread_status::statuses;
 use crate::thread_status::tests::{joined, live, progress, request, room, said, ship};
@@ -131,14 +133,44 @@ fn nick_changes_seen_as_events_follow_reactions() {
     assert_eq!(summary[0].reactors[0].nick, "caz");
 }
 
+/// A roster whose fleet has the agent `astra`.
+fn astra() -> Roster {
+    let aurora = fleet(
+        "aurora",
+        vec![roster_agent(
+            "astra",
+            "captain",
+            Some("astra"),
+            Some("Astra"),
+        )],
+    );
+    Roster::new([&aurora])
+}
+
+/// The stops `buffer` shows with `roster`, its status lines current
+/// unless `stale`.
+fn found(state: &IrcState, buffer: &BufferKey, roster: &Roster, stale: bool) -> Stops {
+    let held = state.buffer(&room()).expect("held");
+    let connected = (!stale).then_some(&(0..0));
+    stops(&Sources {
+        buffer,
+        held,
+        statuses: &statuses(held, connected),
+        roster,
+    })
+}
+
 fn agent(state: &IrcState, buffer: &BufferKey, id: &str) -> Option<AgentMessage> {
-    let held = state.buffer(buffer).expect("held");
-    let entry = held
-        .entries
-        .iter()
-        .find(|entry| entry.line.id.as_deref() == Some(id))
-        .expect("entry");
-    agent_message(buffer, held, &statuses(held, Some(&(0..0))), entry)
+    let seq = state
+        .buffer(&room())
+        .and_then(|held| {
+            held.entries
+                .iter()
+                .find(|entry| entry.line.id.as_deref() == Some(id))
+        })
+        .expect("entry")
+        .seq;
+    found(state, buffer, &astra(), false).remove(&seq)
 }
 
 #[test]
@@ -174,9 +206,7 @@ fn the_stop_group_needs_a_running_request_to_a_verified_agent() {
 fn a_stale_status_offers_no_stop() {
     let mut state = ops();
     live(&mut state, [progress(&room(), "r1", "tool", 3)]);
-    let held = state.buffer(&room()).expect("held");
-    let stale = statuses(held, None);
-    let found = stops(&room(), held, &stale);
+    let found = found(&state, &room(), &astra(), true);
     assert!(
         found.values().all(|agent| !agent.running),
         "not connected: stale"
@@ -189,13 +219,21 @@ fn private_conversations_never_offer_a_stop() {
         network: network_id(),
         target: Target::Query("astra".into()),
     };
-    let state = ops();
-    let held = state.buffer(&room()).expect("held");
-    let entry = held.entries.back().expect("entry");
-    assert_eq!(
-        agent_message(&query, held, &statuses(held, None), entry),
-        None
+    let mut state = ops();
+    live(&mut state, [progress(&room(), "r1", "tool", 3)]);
+    assert_eq!(agent(&state, &query, "r1"), None);
+}
+
+#[test]
+fn a_nick_not_on_the_roster_is_never_offered_a_stop() {
+    let mut state = ops();
+    live(&mut state, [progress(&room(), "r1", "tool", 3)]);
+    let nobody = Roster::default();
+    assert!(
+        found(&state, &room(), &nobody, false).is_empty(),
+        "a person posting an agent-style marker gets no Stop group"
     );
+    assert!(!found(&state, &room(), &astra(), false).is_empty());
 }
 
 #[test]
