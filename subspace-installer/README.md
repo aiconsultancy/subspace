@@ -476,6 +476,178 @@ checked for the `mcp.servers.<name>.headers` field, and Stargate's curated
 crew permissions allow only listed MCP prefixes, so crew may not be able to
 call `subspace_*` tools until Stargate allows them.
 
+## An existing PostgreSQL
+
+`subspace-setup` normally runs the Subspace API on the fleet VM with a
+PostgreSQL container of its own. To keep the tracker on a PostgreSQL server
+that already exists, such as a managed one, put its URL in a file only root
+can read and give setup the file:
+
+```sh
+sudo install -m 600 /dev/null /root/fleet/database-url
+sudoedit /root/fleet/database-url
+# postgresql://subspace:password@db.example.com:5432/subspace?sslmode=verify-full
+sudo subspace-setup --database-url-file /root/fleet/database-url --dry-run
+sudo subspace-setup --database-url-file /root/fleet/database-url --migrate
+```
+
+From your machine, `./install.sh --remote USER@HOST --database-url-file FILE`
+(or `install.ps1` with the same options) takes a local file that is private to
+you (`chmod 600`), copies it over SSH to `/root/fleet/database-url` as root's
+and passes it on. `--database-ca-file FILE` and `--migrate` work the same way.
+
+- **No database on the VM.** The Compose project's `postgres` service moves
+  to a profile nothing starts, so there is no PostgreSQL container, no
+  database volume and no lockdown rule for port 5432. The API and its agent
+  listener are published on loopback as before (`127.0.0.1:3000`, and
+  `127.0.0.1:3001` with the lockdown rule that admits only root, the operator
+  and the officers; see [The API's agent listener](#the-apis-agent-listener)).
+- **The URL stays private.** The file must be a regular file owned by root
+  with mode `0600`, holding one `postgresql://` URL on one line that names the
+  server's host and the database; percent-encode special characters in the
+  user name and password (a single quote is refused). Setup reads it on every
+  run and writes it only to the root-only `/root/fleet/api.env`, single-quoted,
+  from which Compose sets the API container's `DATABASE_URL`. It never appears
+  in a command line, the Compose files under `/opt/subspace/api`,
+  `answers.json`, the summary or setup's output: `--dry-run` and every error
+  name the file, not what it holds. As with any container's environment, root
+  and members of the `docker` group can read it with `docker inspect`.
+- **IRC history.** Local Ergo keeps its history in its own SQLite file on the
+  VM. Setup creates no `ergo` role or database on the existing server.
+- **No demo data.** `--demo` and `subspace-setup demo` are refused: demo data
+  never goes into a database the installer did not create.
+- `--database-url-file` runs the API on this VM, so it cannot be combined with
+  `--no-api` or, on the host, `--api-target`.
+
+### Migrations
+
+The API's image migrates its database every time it starts. Against an
+existing PostgreSQL the API container starts without migrating
+(`bun src/main.ts`), and setup takes migrations as a separate step on every
+run, in one-off API containers that publish no port:
+
+1. `bun scripts/migrate.ts --check` reads Drizzle's migration history,
+   `drizzle.__drizzle_migrations`, and changes nothing.
+2. If the database lacks any of the API's migrations, an empty database
+   included, setup stops before the API starts, unless this run has
+   `--migrate`. Then it applies them in one transaction, under the API's
+   migration lock, and starts the API only if they succeed. A failed
+   migration is rolled back. After the transaction commits, the API's
+   migration step also gives every person without a username one, in short
+   transactions of their own; it fills in only missing usernames, and a rerun
+   finishes an interrupted one.
+
+`--migrate` applies to that run only. An upgrade whose API brings new
+migrations stops at the check until you back the database up and run setup
+again with `--migrate`.
+
+**Privileges.** The role in the URL needs, to migrate: `CREATE` on the
+database, because Drizzle creates its own `drizzle` schema for the history
+table; `CREATE` on the `public` schema, which PostgreSQL 15 and later no
+longer grant to everyone; and ownership of the API's tables, to alter them.
+The database's owner has all three. To run without migrating it needs
+`CONNECT`, `USAGE` on the `public` and `drizzle` schemas, `SELECT`, `INSERT`,
+`UPDATE` and `DELETE` on the API's tables, `USAGE` and `SELECT` on their
+sequences, and `SELECT` on `drizzle.__drizzle_migrations`. To keep the
+running role that narrow, put the owner's URL in the file for a `--migrate`
+run, then the narrow role's URL for the others, and have the owner grant the
+narrow role access to new tables with `ALTER DEFAULT PRIVILEGES`.
+
+### TLS and reaching the server
+
+Setup passes the URL through unchanged. The API's PostgreSQL driver
+(`@effect/sql-pg`) reads its `sslmode`:
+
+| `sslmode` | Connection |
+| --- | --- |
+| `verify-full`, `verify-ca`, `require` | TLS, checking the certificate chain and the host name for all three (stricter than libpq's `require`). |
+| `prefer`, `allow` | TLS, checked, when the server offers it, else unencrypted. |
+| `disable`, or none | Unencrypted. |
+
+Setup warns unless the URL asks for TLS. The driver ignores `sslrootcert`,
+`sslcert` and `sslkey`, so client certificates are not supported. When the
+server's certificate comes from a CA the VM does not trust, pass
+`--database-ca-file /absolute/path/ca.pem`: setup copies it to
+`/opt/subspace/database-ca.pem` (mode `0644`: a CA certificate is public),
+mounts it read-only into the API container at
+`/etc/subspace/database-ca.pem` and adds it to the CAs the API trusts with
+`NODE_EXTRA_CA_CERTS`. A changed certificate recreates the API container;
+`--database-ca-file ''` removes it.
+
+The VM must reach the server: allow the VM's address in the server's
+firewall, and its outbound route to the server's port. The lockdown does not
+limit outbound connections, from the API or from anyone else on the VM.
+
+### An existing organisation
+
+Setup still acts through the API's development sign-in, which reaches only
+development organisations (`dev:<organisation>`), never WorkOS or Entra ones.
+In an existing database it signs in only as someone already there: it mints
+tokens with `DEV_TOKEN_EXISTING_ONLY=true`, so `auth:dev` refuses an
+`--organisation` or `--admin-email` that is not already in the database
+instead of creating it, and setup then stops unless the admin is an
+administrator of that organisation, before it writes anything. The one
+exception is a database with no organisation at all, a new tracker: the first
+sign-in creates the organisation, the admin as its administrator, its
+default `local` fleet and its `Local workspace` initiative, as on the API's
+own PostgreSQL.
+
+As that administrator, setup then creates or updates, as
+[Subspace API registration](#subspace-api-registration) describes:
+
+- **the fleet** with this fleet's slug, its IRC endpoint, standard channels,
+  `vmHost` and Fleet API address. A fleet the organisation already has under
+  that slug is taken over and brought in step, so give a new fleet a slug of
+  its own;
+- **one ship per captain**, and **an agent record** for the rear admiral and
+  for each captain. A captain dropped from the roster has its record
+  deactivated. The rear admiral's name and every IRC nick must be unused in
+  the organisation; registration stops otherwise, possibly after creating
+  the fleet's record, and a run with a new name completes it;
+- **the fleet's initiative**, found by the ID setup saved or by the fleet's
+  name among initiatives that belong to no fleet or to this one, else created
+  with the admin as owner and member, and assigned to the fleet.
+
+It leaves everything else alone: it creates no organisation or person and
+changes no one's role, and it does not touch other fleets, ships, agents,
+initiatives, issues or any other record. With agent dispatch on, the rear
+admiral's token is minted for its existing agent record. Only a `--migrate`
+run changes more: the schema, and the usernames of people who had none.
+
+The API on the VM keeps development sign-in on, on port 3000, which only root
+and the operator can reach. Its sign-in route can still create development
+organisations and people in the database for anyone who reaches it. If the
+database's people sign in with WorkOS or Entra, configure that in
+`/root/fleet/api.env` and set `ENABLE_DEV_AUTH=false`; setup then leaves the
+registration to you, as it does on its own PostgreSQL.
+
+### Upgrade, switching and uninstall
+
+- **Upgrades keep the setting.** Setup saves the file's path in
+  `answers.json` and reads the file on every run, so later runs of setup or
+  of the host installer need no option. To change the URL, edit the file (or
+  pass the host option again) and run setup; Compose recreates the API with
+  the new value.
+- **No switching.** Setup refuses `--database-url-file` on a VM whose API has
+  already run with its own PostgreSQL: the tracker stays in that container's
+  `subspace-api_subspace_postgres` volume, and setup does not move it. Restore
+  a dump of it on the server and set up a fresh VM. Nor is there a way back to
+  a PostgreSQL on the VM.
+- **Nothing drops the database.** `--no-api` stops the API's containers and
+  keeps the setting for when the API returns. The fleet installer's
+  `uninstall` never runs Compose or connects to a database, and neither
+  setup nor the fleet installer drops, truncates or deletes anything in an
+  existing database. Deleting the VM leaves the database as it is; revoke the
+  VM's role or change its password when you retire it.
+
+What is verified: the start-up, the migration check and `--migrate`, a
+failed migration's rollback, a runtime role with only the privileges above,
+sign-in and registration in an empty and in an existing organisation, the
+refusals for an unknown organisation or person, and TLS with
+`sslmode=verify-full` and a private CA (refused without `--database-ca-file`),
+all in Docker against a throwaway PostgreSQL 17. It has not run on a fleet VM
+or against a managed PostgreSQL service.
+
 ## Agent dispatch
 
 Stargate's dispatcher runs in the rear admiral's gateway and hands out

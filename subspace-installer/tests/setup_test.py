@@ -601,6 +601,246 @@ class AgentDispatchSetupTests(unittest.TestCase):
                       'reject with tcp reset', rules)
 
 
+class ExternalDatabaseTests(unittest.TestCase):
+    """The API on the fleet VM against an existing PostgreSQL (--database-url-file)."""
+
+    PASSWORD = "s3cret$word%23x"
+    URL = f"postgresql://tracker:{PASSWORD}@tracker-db.example.org:5432/tracker?sslmode=verify-full"
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        fleet_setup.INPUTS = self.root / "inputs"
+        fleet_setup.INPUTS.mkdir(mode=0o700)
+        self.owner = patch.object(fleet_setup, "SECRET_OWNER", fleet_setup.os.getuid())
+        self.owner.start()
+        self.url_file = self.private("database-url", self.URL + "\n")
+        self.payload = self.root / "payload"
+        (self.payload / "subspace-api").mkdir(parents=True)
+        (self.payload / "subspace-api" / "compose.yaml").write_text("services: {}\n")
+
+    def tearDown(self):
+        self.owner.stop()
+        self.directory.cleanup()
+
+    def private(self, name, text, mode=0o600):
+        path = fleet_setup.INPUTS / name
+        path.write_text(text)
+        path.chmod(mode)
+        return str(path)
+
+    def answers(self, *extra, saved=None):
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+                                       "--rear-admiral", "Atlas", "--captains", "Orion", *extra])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            answers = fleet_setup.gather(args, saved or {})
+            fleet_setup.check_answers(answers)
+        return answers, args
+
+    def up(self, answers, migrate=False, statuses=(0,)):
+        """api_up with Compose stubbed: the migration check answers with statuses, other commands succeed."""
+        calls, results = [], list(statuses)
+
+        def compose(*args, **_kwargs):
+            calls.append(args)
+            return results.pop(0) if "--check" in args and results else 0
+        store = fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None)
+        with patch.object(fleet_setup, "PAYLOAD", self.payload), \
+                patch.object(fleet_setup, "API_DIR", self.root / "opt" / "api"), \
+                patch.object(fleet_setup, "compose", side_effect=compose):
+            fleet_setup.api_up(answers, store, migrate)
+        return calls
+
+    def test_the_url_file_is_root_only_and_holds_one_server_url(self):
+        self.assertEqual(fleet_setup.database_url(self.url_file), self.URL)
+        refusals = {
+            "world-readable": self.private("loose", self.URL, 0o644),
+            "loopback": self.private("loopback", self.URL.replace("tracker-db.example.org", "127.0.0.1")),
+            "no database": self.private("nodb", self.URL.replace("/tracker?", "/?")),
+            "a quote": self.private("quote", self.URL.replace("s3cret", "it's")),
+            "two lines": self.private("lines", self.URL + "\n" + self.URL),
+            "another scheme": self.private("scheme", self.URL.replace("postgresql:", "mysql:")),
+            "an unknown sslmode": self.private("mode", self.URL.replace("verify-full", "strict")),
+            "relative": "database-url",
+            "missing": str(fleet_setup.INPUTS / "absent"),
+        }
+        link = fleet_setup.INPUTS / "link"
+        link.symlink_to(self.url_file)
+        refusals["a link"] = str(link)
+        for reason, path in refusals.items():
+            with self.subTest(reason), self.assertRaises(fleet_setup.SetupError) as refused:
+                fleet_setup.database_url(path)
+            self.assertNotIn(self.PASSWORD, str(refused.exception))
+            self.assertNotIn("tracker-db.example.org", str(refused.exception))
+        with patch.object(fleet_setup, "SECRET_OWNER", fleet_setup.os.getuid() + 1), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "owned by root"):
+            fleet_setup.database_url(self.url_file)
+
+    def test_the_setting_combines_only_with_this_vm_s_api_and_is_kept(self):
+        answers, args = self.answers("--database-url-file", self.url_file)
+        # The path is kept, never the URL; demo data is off without asking.
+        self.assertEqual(answers["databaseUrlFile"], self.url_file)
+        self.assertFalse(answers["demo"])
+        self.assertFalse(args.migrate)
+        fleet_setup.save_answers(answers)
+        self.assertNotIn(self.PASSWORD, (fleet_setup.INPUTS / "answers.json").read_text())
+        later, _ = self.answers(saved=answers)
+        self.assertEqual(later["databaseUrlFile"], self.url_file)
+        for extra, message in [
+            (["--database-url-file", self.url_file, "--no-api"], "--no-api"),
+            (["--migrate"], "--migrate is for an existing PostgreSQL"),
+            (["--no-api", "--migrate"], "--migrate is for an existing PostgreSQL"),
+            (["--database-url-file", self.url_file, "--demo"], "Demo data is fictional"),
+            (["--database-ca-file", self.url_file], "pass --database-url-file too"),
+        ]:
+            with self.subTest(extra), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                self.answers(*extra)
+
+    def test_the_api_uses_the_existing_server_without_a_postgresql_container(self):
+        answers, _ = self.answers("--database-url-file", self.url_file)
+        calls = self.up(answers)
+        api_env = fleet_setup.INPUTS / "api.env"
+        self.assertEqual(api_env.stat().st_mode & 0o777, 0o600)
+        environment = api_env.read_text()
+        # Single-quoted, so Compose does not expand the $ in the password.
+        self.assertIn(f"DATABASE_URL='{self.URL}'\n", environment)
+        self.assertNotIn("POSTGRES_PASSWORD", environment)
+        self.assertNotIn("postgres", fleet_setup.read_json(fleet_setup.INPUTS / "generated-secrets.json", {}))
+        override = (fleet_setup.INPUTS / "api.override.yaml").read_text()
+        self.assertIn('  postgres:\n    profiles: ["subspace-local-database"]\n', override)
+        self.assertIn("    depends_on: !reset {}\n", override)
+        self.assertIn('    command: ["bun", "src/main.ts"]\n', override)
+        # The API and its agent listener are published on loopback exactly as with the API's own PostgreSQL.
+        self.assertIn('      - "127.0.0.1:3000:3000"\n      - "127.0.0.1:3001:3001"\n', override)
+        self.assertNotIn("5432", override)
+        self.assertNotIn(self.PASSWORD, override)
+        self.assertEqual(calls, [
+            ("build", "api"),
+            ("run", "--rm", "--no-deps", "-T", "api", "bun", "scripts/migrate.ts", "--check"),
+            ("up", "--detach", "--wait", "--wait-timeout", "300", "--build"),
+        ])
+        self.assertFalse(any(self.PASSWORD in str(arg) for call in calls for arg in call))
+
+    def test_migrations_are_checked_and_applied_only_when_asked(self):
+        answers, _ = self.answers("--database-url-file", self.url_file)
+        migrate = ("run", "--rm", "--no-deps", "-T", "api", "bun", "scripts/migrate.ts")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "run setup again with --migrate") as refused:
+            self.up(answers, statuses=[fleet_setup.MIGRATIONS_PENDING])
+        self.assertNotIn(self.PASSWORD, str(refused.exception))
+        self.assertIn(migrate, self.up(answers, migrate=True, statuses=[fleet_setup.MIGRATIONS_PENDING]))
+        self.assertNotIn(migrate, self.up(answers, migrate=True, statuses=[0]))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "Could not read the existing PostgreSQL"):
+            self.up(answers, statuses=[1])
+
+    def test_a_ca_certificate_is_trusted_through_a_read_only_mount(self):
+        ca = self.private("ca.pem", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n", 0o644)
+        answers, _ = self.answers("--database-url-file", self.url_file, "--database-ca-file", ca)
+        self.up(answers)
+        copy = self.root / "opt" / "database-ca.pem"
+        self.assertEqual(copy.read_text(), Path(ca).read_text())
+        self.assertEqual(copy.stat().st_mode & 0o777, 0o644)
+        override = (fleet_setup.INPUTS / "api.override.yaml").read_text()
+        self.assertIn(f'      - "{copy}:/etc/subspace/database-ca.pem:ro"\n', override)
+        self.assertIn("      NODE_EXTRA_CA_CERTS: /etc/subspace/database-ca.pem\n", override)
+        digest = fleet_setup.hashlib.sha256(Path(ca).read_bytes()).hexdigest()
+        self.assertIn(f"      SUBSPACE_DATABASE_CA_SHA256: {digest}\n", override)
+        # A private key is never taken for a CA certificate, and '' removes the setting.
+        key = self.private("key.pem", "-----BEGIN CERTIFICATE-----\n-----BEGIN " + "PRIVATE KEY-----\n")
+        with self.assertRaisesRegex(fleet_setup.SetupError, "no private key"):
+            self.answers("--database-url-file", self.url_file, "--database-ca-file", key)
+        cleared, _ = self.answers("--database-ca-file", "", saved=answers)
+        self.assertNotIn("databaseCaFile", cleared)
+
+    def test_sign_in_in_an_existing_database_adds_no_organisation_or_person(self):
+        answers, _ = self.answers("--database-url-file", self.url_file)
+        with patch.object(fleet_setup, "compose", return_value="header.payload.signature") as compose:
+            fleet_setup.api_token(answers)
+        self.assertEqual(compose.call_args.args[:4], ("exec", "-T", "-e", "DEV_TOKEN_EXISTING_ONLY=true"))
+        with patch.object(fleet_setup, "compose", side_effect=fleet_setup.SetupError("exit 4")), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "adds no organisation or person"):
+            fleet_setup.api_token(answers)
+        local, _ = self.answers()
+        with patch.object(fleet_setup, "compose", return_value="header.payload.signature") as compose:
+            fleet_setup.api_token(local)
+        self.assertNotIn("DEV_TOKEN_EXISTING_ONLY=true", compose.call_args.args)
+        # A member who is not an administrator is stopped before setup writes anything.
+        with patch.object(fleet_setup, "api_call", return_value={"isAdmin": False}) as call, \
+                self.assertRaisesRegex(fleet_setup.SetupError, "not an administrator"):
+            fleet_setup.existing_administrator(answers, "token")
+        call.assert_called_once_with("token", "GET", "/me")
+        with patch.object(fleet_setup, "api_call", return_value={"isAdmin": True}):
+            fleet_setup.existing_administrator(answers, "token")
+
+    def test_the_lockdown_keeps_the_api_ports_and_drops_the_postgresql_one(self):
+        answers, _ = self.answers("--database-url-file", self.url_file)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", {"rearAdmiral": {"id": "atlas"}})
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "metadata_users", return_value=[]):
+            args = fleet_setup.isolation_args(answers)
+        protected = [args[i + 1] for i, arg in enumerate(args) if arg == "--operator-only-port"]
+        self.assertEqual(protected, [str(fleet_setup.API_PORT), str(fleet_setup.AGENT_API_PORT)])
+        self.assertIn(f"{fleet_setup.AGENT_API_PORT}:ss-atlas", args)
+
+    def test_the_plan_says_what_happens_without_the_url(self):
+        answers, _ = self.answers("--database-url-file", self.url_file)
+        plan = "\n".join(fleet_setup.external_plan(answers, migrate=False))
+        self.assertIn(self.url_file, plan)
+        self.assertIn("sslmode=verify-full", plan)
+        self.assertIn("applies them only with --migrate", plan)
+        self.assertNotIn(self.PASSWORD, plan)
+        self.assertNotIn("tracker-db.example.org", plan)
+        self.assertNotIn("WARNING", plan)
+        plain = self.private("plain", self.URL.replace("?sslmode=verify-full", ""))
+        answers, _ = self.answers("--database-url-file", plain)
+        self.assertIn("WARNING: the connection can be unencrypted",
+                      "\n".join(fleet_setup.external_plan(answers, migrate=True)))
+
+    def test_the_dry_run_validates_and_never_prints_the_url(self):
+        argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40,
+                "--database-url-file", self.url_file, "--dry-run"]
+        output = []
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "installer") as installer, \
+                patch.object(fleet_setup, "say", side_effect=output.append):
+            fleet_setup.setup(fleet_setup.parse_args(argv))
+        installer.assert_called_once()
+        self.assertTrue(any("this VM runs no PostgreSQL container" in line for line in output))
+        written = "".join(path.read_text() for path in fleet_setup.INPUTS.iterdir() if path.name != "database-url")
+        self.assertNotIn(self.PASSWORD, "\n".join(output) + written)
+        Path(self.url_file).chmod(0o640)
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "installer") as installer, \
+                self.assertRaisesRegex(fleet_setup.SetupError, "chmod 600"):
+            fleet_setup.setup(fleet_setup.parse_args(argv))
+        installer.assert_not_called()
+
+    def test_setup_does_not_move_the_api_s_own_postgresql(self):
+        local, _ = self.answers()
+        fleet_setup.save_answers(local)
+        (fleet_setup.INPUTS / "api.env").write_text("POSTGRES_PASSWORD=example\n")
+        argv = ["--non-interactive", "--operator", "operator", "--inputs", str(fleet_setup.INPUTS),
+                "--database-url-file", self.url_file, "--dry-run"]
+        with patch.object(fleet_setup.pwd, "getpwnam"), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "does not move"):
+            fleet_setup.setup(fleet_setup.parse_args(argv))
+        self.assertNotIn("databaseUrlFile", fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+
+    def test_stopping_or_uninstalling_never_touches_the_database(self):
+        # Stopping the API (--no-api) removes its containers, never a volume; nothing setup runs drops anything.
+        (fleet_setup.INPUTS / "api.env").write_text(f"DATABASE_URL='{self.URL}'\n")
+        with patch.object(fleet_setup.shutil, "which", return_value="/usr/bin/docker"), \
+                patch.object(fleet_setup, "run", return_value="container"), \
+                patch.object(fleet_setup, "compose") as compose:
+            fleet_setup.api_down()
+        compose.assert_called_once_with("down")
+        source = Path(fleet_setup.__file__).read_text()
+        self.assertNotRegex(source, r'(?i)\b(drop|truncate) +(table|schema|database|owned|role)\b|delete +from'
+                            r'|"down"[^)\n]*"(-v|--volumes)"|volume", *"rm')
+        # The fleet installer's uninstall stops fleet units and removes its programs; it never runs Docker
+        # Compose, psql or anything with the API's database.
+        installer = (Path(fleet_setup.HERE).parent / "install.sh").read_text()
+        uninstall = re.search(r"^uninstall\(\) \{.*?^\}$", installer, re.M | re.S).group(0)
+        self.assertNotRegex(uninstall, r"(?i)docker|compose|psql|postgres|database|/root/fleet")
+
+
 class IrcServerTests(unittest.TestCase):
     def test_private_addresses_only(self):
         import irc_server
