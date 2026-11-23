@@ -15,7 +15,7 @@ use crate::thread::MESSAGE_TAGS;
 
 /// The ship's conversation in reply mode on `ask1`, whose root then goes,
 /// as under the line cap.
-fn gone_reply(board: &Entity<Irc>, cx: &mut VisualTestContext) -> Entity<Conversation> {
+pub(super) fn gone_reply(board: &Entity<Irc>, cx: &mut VisualTestContext) -> Entity<Conversation> {
     cx.update(|window, cx| window.click("irc-status:ask1", cx));
     settle(cx);
     cx.update(|window, cx| window.click("irc-thread-reply", cx));

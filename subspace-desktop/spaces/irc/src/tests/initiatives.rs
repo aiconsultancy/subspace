@@ -10,6 +10,7 @@ mod review;
 mod scope;
 mod thread;
 mod thread_gone;
+mod thread_reactions;
 mod views;
 
 use gpui_kit::test::TestWindowExt as _;
