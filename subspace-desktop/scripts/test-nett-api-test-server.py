@@ -1266,7 +1266,9 @@ class StreamCase(FixtureCase):
         connection.endheaders()
         sock = connection.sock  # The response takes it over from the connection.
         response = connection.getresponse()
-        response.stream = dict(org=org, keys=sorted(keys), ends_before=len(self.server.stream_ends), sock=sock)
+        with self.server.lock:
+            ends_before = self.server.stream_ends_total
+        response.stream = dict(ends_before=ends_before, client=sock.getsockname()[1], sock=sock)
         self.addCleanup(connection.close)
         return response
 
@@ -1300,9 +1302,9 @@ class StreamCase(FixtureCase):
 
     def ends_because(self, response, reason, backstop=30):
         """Reads to the end of a stream the server closes and returns the
-        rest, checking the fixture recorded `reason` as why it ended. The
-        reason, not the time taken, tells an early close from the stream's
-        lifetime; the backstop only stops a stream that never ends from
+        rest, checking the fixture recorded `reason` as why this stream, by
+        its client port, ended. The reason, not the time taken, tells an
+        early close from the stream's lifetime; the backstop only stops a stream that never ends from
         hanging the run, as keep-alives would defeat the socket timeout."""
         stream = response.stream
         pool = ThreadPoolExecutor(max_workers=1)
@@ -1316,9 +1318,9 @@ class StreamCase(FixtureCase):
         finally:
             pool.shutdown(wait=False)
         with self.server.lock:
-            ends = [end['reason'] for end in self.server.stream_ends[stream['ends_before']:]
-                    if end['org'] == stream['org'] and end['keys'] == stream['keys']]
-        self.assertIn(reason, ends)
+            ends = [end['reason'] for end in self.server.stream_ends
+                    if end['id'] > stream['ends_before'] and end['client'] == stream['client']]
+        self.assertEqual(ends, [reason])
         return rest
 
 
@@ -1357,6 +1359,42 @@ class UpdateStreamTests(StreamCase):
         # The stream closes by itself after its lifetime: reading to the end
         # returns, where a stream left open would keep sending keep-alives.
         self.assertNotIn(b'issueChanged', self.ends_because(response, 'lifetime'))
+
+    def test_each_stream_has_its_own_end_record(self):
+        # Two streams follow the same organisation and teams: Grace's ends
+        # when she loses authority, Ada's only at its lifetime.
+        hook(self, 'tokens', dict(token=GRACE_TOKEN, user='grace'))
+        ada, grace = self.open_stream(), self.open_stream(token=GRACE_TOKEN)
+        self.ready(ada)
+        self.ready(grace)
+        hook(self, 'members/revoke', dict(org=WORKS, user='grace'))
+        self.ends_because(grace, 'lost authority')
+        self.ends_because(ada, 'lifetime')
+
+    def test_a_close_after_the_lifetime_is_not_why_a_stream_ended(self):
+        subscriber = NETT.Subscriber(WORKS, {'OPS'}, 'ada')
+        deadline = time.monotonic()
+        subscriber.close('closed by the fixture')
+        self.assertEqual(NETT.why_stopped(subscriber, deadline + 1, deadline, 'lifetime', True), 'lifetime')
+        self.assertEqual(NETT.why_stopped(subscriber, deadline + 1, deadline + 2, 'lifetime', True),
+                         'closed by the fixture')
+        revoked = NETT.Subscriber(WORKS, {'OPS'}, 'grace')
+        revoked.revoked_at = deadline + 0.5
+        self.assertEqual(NETT.why_stopped(revoked, deadline + 1, deadline, 'lifetime', False), 'lifetime')
+        revoked.revoked_at = deadline - 0.5
+        self.assertEqual(NETT.why_stopped(revoked, deadline + 1, deadline, 'lifetime', False),
+                         'lost authority')
+        self.assertEqual(NETT.why_stopped(revoked, deadline - 1, deadline, 'lifetime', True), None)
+
+    def test_only_the_latest_stream_ends_are_kept(self):
+        with patch.object(NETT, 'MAX_STREAM_ENDS', 2):
+            server = NETT.FixtureServer(port=0, **self.options)
+        self.addCleanup(server.server_close)
+        for _ in range(3):
+            with server.lock:
+                server.stream_ends_total += 1
+                server.stream_ends.append(dict(id=server.stream_ends_total))
+        self.assertEqual([end['id'] for end in server.stream_ends], [2, 3])
 
     def test_streams_need_one_valid_organisation_header_and_known_teams(self):
         self.refused(400, orgs=[])

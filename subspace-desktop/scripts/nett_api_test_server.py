@@ -110,6 +110,8 @@ STREAM_WRITE_SECONDS = 1
 KEEPALIVE_SECONDS = 15
 MAX_STREAMS_PER_USER = 16
 MAX_STREAMS = 256
+# Why the most recent update streams ended, kept for tests to check.
+MAX_STREAM_ENDS = 1024
 STREAM_QUEUE = 64
 MAX_STREAM_PROJECTS = 64
 CHAT_UPLOAD_DAYS = 30
@@ -311,6 +313,11 @@ class Subscriber:
         self.ready = threading.Condition()
         self.delivery = threading.Lock()
         self.closed = None
+        # When the stream was closed, and when a hook revoked its authority
+        # (monotonic seconds), so a close or revocation that came after the
+        # stream's lifetime is not taken as why it ended.
+        self.closed_at = None
+        self.revoked_at = None
         self.abort = False
 
     def push(self, event):
@@ -318,14 +325,15 @@ class Subscriber:
             if self.closed:
                 return
             if len(self.queue) >= STREAM_QUEUE:
-                self.closed = 'overflow'
+                self.closed, self.closed_at = 'overflow', time.monotonic()
             else:
                 self.queue.append(event)
             self.ready.notify()
 
     def close(self, reason, abort=False):
         with self.ready:
-            self.closed = self.closed or reason
+            if self.closed is None:
+                self.closed, self.closed_at = reason, time.monotonic()
             self.abort = self.abort or abort
             self.ready.notify()
 
@@ -369,6 +377,23 @@ class Stream:
 
     def __init__(self, subscriber):
         self.subscriber = subscriber
+
+
+def why_stopped(subscriber, now, deadline, timed_out, authorised):
+    """Why a stream stops delivering at `now`, or None while it may go on.
+    `authorised` is whether its authority held when checked just before.
+    Past its deadline, a close or a revoke hook counts only if it came before
+    the deadline: one that came later did not end the stream, its lifetime
+    did. Authority lost other than through a revoke hook has no recorded
+    time, so past the deadline the lifetime is taken as the cause."""
+    if subscriber.closed and (now < deadline or subscriber.closed_at < deadline):
+        return subscriber.closed
+    if now >= deadline:
+        revoked = subscriber.revoked_at is not None and subscriber.revoked_at < deadline
+        return 'lost authority' if revoked and not authorised else timed_out
+    if subscriber.expires is not None and time.time() >= subscriber.expires:
+        return 'token expired'
+    return None if authorised else 'lost authority'
 
 
 def closed_body(payload, supported, declared, schema):
@@ -1547,6 +1572,9 @@ def close_streams(ctx, payload, matches):
     if not isinstance(payload.get('closeStreams', True), bool):
         raise Problem(400, 'closeStreams must be a boolean.')
     closing = [s for s in ctx.server.subscribers if matches(s)]
+    revoked = time.monotonic()
+    for subscriber in closing:
+        subscriber.revoked_at = subscriber.revoked_at or revoked
     # A write already in flight must finish before the hook acknowledges
     # revocation, whether or not the hook also wakes the stream.
     ctx.handler.revoked_streams = closing
@@ -3208,10 +3236,13 @@ class FixtureServer(ThreadingHTTPServer):
         # bytes go, on one sequence: a request the client sends after reading
         # an answer always has a higher seq than that answer's answerSeq.
         self.sequence = itertools.count(1)
-        # Why each update stream ended, in order: close hook, lost authority,
-        # team archived, overflow, token expired, lifetime, write timed out or
-        # client gone.
-        self.stream_ends = []
+        # Why the latest update streams ended, in order: close hook, lost
+        # authority, team archived, overflow, token expired, lifetime, write
+        # timed out or client gone. Each record has an id counting from 1
+        # (stream_ends_total is the latest) and the client's port, which
+        # tells two streams with the same organisation and teams apart.
+        self.stream_ends = collections.deque(maxlen=MAX_STREAM_ENDS)
+        self.stream_ends_total = 0
         self.subscribers = []
         self.served = set(served)
         self.org_served = {}
@@ -3596,10 +3627,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
             self.send_header('Cache-Control', 'private, no-store, no-transform')
             self.end_headers()
-            if not self.flush_stream(subscriber, b'event: ready\ndata: null\n\n', deadline):
-                ended = self.why_unflushed(subscriber, timed_out)
-                return
-            while (remaining := deadline - time.monotonic()) > 0:
+            stopped = self.flush_stream(subscriber, b'event: ready\ndata: null\n\n', deadline, timed_out)
+            while not stopped and (remaining := deadline - time.monotonic()) > 0:
                 with subscriber.ready:
                     if not subscriber.queue and not subscriber.closed:
                         subscriber.ready.wait(min(remaining, self.server.keepalive_seconds))
@@ -3609,46 +3638,39 @@ class Handler(BaseHTTPRequestHandler):
                 if events:
                     encoded = [json.dumps(event, separators=(',', ':')).encode() for event in events]
                     frame = b''.join(b'event: issueChanged\ndata: ' + data + b'\n\n' for data in encoded)
-                if not self.flush_stream(subscriber, frame, deadline):
-                    ended = self.why_unflushed(subscriber, timed_out)
-                    if subscriber.abort:
-                        # Reset the connection rather than end the response.
-                        self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER,
-                                                   struct.pack('ii', 1, 0))
-                        self.connection.close()
-                    break
+                stopped = self.flush_stream(subscriber, frame, deadline, timed_out)
+            ended = stopped or timed_out
+            if subscriber.abort and stopped == subscriber.closed:
+                # Reset the connection rather than end the response.
+                self.connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+                self.connection.close()
         except TimeoutError:
             ended = 'write timed out'
         except OSError:
             ended = 'client gone'
         finally:
             with self.server.lock:
-                self.server.stream_ends.append(dict(org=subscriber.org_id, user=subscriber.user_id,
+                self.server.stream_ends_total += 1
+                self.server.stream_ends.append(dict(id=self.server.stream_ends_total, client=self.client_address[1],
+                                                    org=subscriber.org_id, user=subscriber.user_id,
                                                     keys=sorted(subscriber.keys), reason=ended))
                 if subscriber in self.server.subscribers:
                     self.server.subscribers.remove(subscriber)
 
-    def why_unflushed(self, subscriber, timed_out):
-        """Why flush_stream refused a batch."""
-        if subscriber.closed:
-            return subscriber.closed
-        if subscriber.expires is not None and time.time() >= subscriber.expires:
-            return 'token expired'
-        if not self.server.authorised(subscriber):
-            return 'lost authority'
-        return timed_out
-
-    def flush_stream(self, subscriber, frame, deadline):
-        """Deliver one batch under the same lock revocation waits for."""
+    def flush_stream(self, subscriber, frame, deadline, timed_out):
+        """Delivers one batch under the same lock revocation waits for: None
+        once sent, or why the stream ends, decided here where delivery stops."""
         with subscriber.delivery:
-            if not self.server.authorised(subscriber) or subscriber.closed:
-                return False
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            self.connection.settimeout(min(remaining, STREAM_WRITE_SECONDS))
+            # Authority first: a close that comes while it is checked still
+            # stops this batch.
+            authorised = self.server.authorised(subscriber)
+            now = time.monotonic()
+            ended = why_stopped(subscriber, now, deadline, timed_out, authorised)
+            if ended:
+                return ended
+            self.connection.settimeout(min(deadline - now, STREAM_WRITE_SECONDS))
             self.connection.sendall(frame)
-            return True
+            return None
 
     def respond(self, status, value):
         if isinstance(value, Stream):
