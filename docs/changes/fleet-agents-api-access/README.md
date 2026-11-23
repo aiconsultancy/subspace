@@ -64,6 +64,37 @@ other for now.
   `sessions_test.py` and `medical_test.py`; `bash -n` and `shellcheck` on the
   changed scripts.
 
+## Reviews
+
+Claude Opus 5.5, round 1 (clear, one medium and three lows):
+
+- Medium, no Origin or Host check on the tokenless listener: fixed in
+  dc78c4c (403 for any Origin and any non-loopback Host).
+- Low, administrator routes filtered by raw path: fixed in b61ad3b (the
+  routes are not registered on the agent listener).
+- Low, Claude officers could not use the server or skill: Stargate permits a
+  configured server's tools itself, and the skill now goes in their system
+  prompt (e0885a6).
+- Low, organisation-wide agent naming: left as documented, with the way to
+  close it under "Not verified" (806a5cf).
+
+Claude Opus 5.5, round 2 (not clear, one high, one medium, three lows):
+
+- High, the two listeners might share one router: a test that builds the
+  real `server()` composition with both listeners on ephemeral loopback
+  ports showed, before any change, that they do not; `HttpRouter.serve`
+  builds each app with a forked MemoMap. The test now guards both ports
+  (1938a26).
+- Medium, setup kept the listener on after development sign-in was turned
+  off: fixed in b6dc85c, and the API refuses an `AGENT_ORGANISATION` whose
+  provider is not enabled.
+- Low, administrator routes removed by position: now matched by method,
+  path and name, with a full route-table test (dd84518).
+- Low, a deactivated record hid the active agent: the one active match now
+  resolves (4722a73).
+- Low, a missing skill failed the render generically: both the installer
+  and the configuration check now name it (9195af3).
+
 ## Not verified
 
 - Nothing ran on a fleet VM: the listener in the API container, the
