@@ -1,7 +1,8 @@
 //! Reading pull requests the PRs Space does not hold well enough to
 //! answer: one background read per request of the keys not already being
-//! read, each key in turn, dropped if the account changed meanwhile and
-//! landing stale if a list refresh came while it ran.
+//! read, each key in turn and each landing as its request completes,
+//! dropped if the account changed meanwhile and landing stale if a list
+//! refresh came while it ran.
 
 use std::sync::Arc;
 
@@ -69,69 +70,64 @@ fn spawn_read(
     cx: &mut Context<Github>,
 ) {
     cx.spawn(async move |this, cx| {
-        let account = login.clone();
-        let answers = cx
-            .background_spawn(async move { read_all(&client, &clock, &account, keys) })
-            .await;
-        _ = this.update(cx, |board, cx| land(board, &login, answers, epoch, cx));
+        for key in keys {
+            let (client, clock, account) = (client.clone(), clock.clone(), login.clone());
+            let answer = cx
+                .background_spawn(async move { read_one(&client, &clock, &account, key) })
+                .await;
+            let landed = this.update(cx, |board, cx| land(board, &login, answer, epoch, cx));
+            if !matches!(landed, Ok(true)) {
+                break;
+            }
+        }
     })
     .detach();
 }
 
-/// Reads each key in turn, so one request never fans out into many calls.
-/// Each request takes its tick as it starts, so a read of another path
-/// that started while an earlier key was being read is older than it.
-fn read_all(
-    client: &Client,
-    clock: &super::access::Clock,
-    login: &str,
-    keys: Vec<String>,
-) -> Vec<Answer> {
-    keys.into_iter()
-        .map(|key| {
-            let started = clock.tick();
-            let read = client
-                .item(login, &key)
-                .and_then(|detail| requested_pr((detail, ()), &key));
-            let state = match read {
-                Ok((detail, ())) => {
-                    ResolutionState::Available(details(&detail.item, &detail.check_runs))
-                }
-                Err(error) => refused(&error),
-            };
-            Answer {
-                key,
-                started,
-                state,
-            }
-        })
-        .collect()
-}
-
-fn land(
-    board: &mut Github,
-    login: &str,
-    answers: Vec<Answer>,
-    epoch: Epoch,
-    cx: &mut Context<Github>,
-) {
-    let references = &mut board.references;
-    if references.generation != epoch.generation {
-        return;
-    }
-    // A read that started before the last refresh is older than the list.
-    let older = references.refreshes != epoch.refreshes;
-    for Answer {
+/// Reads one key. The keys of a read are read in turn, so one request
+/// never fans out into many calls, and each lands as it completes. Each
+/// request takes its tick as it starts, so a read of another path that
+/// started while an earlier key was being read is older than it.
+fn read_one(client: &Client, clock: &super::access::Clock, login: &str, key: String) -> Answer {
+    let started = clock.tick();
+    let read = client
+        .item(login, &key)
+        .and_then(|detail| requested_pr((detail, ()), &key));
+    let state = match read {
+        Ok((detail, ())) => ResolutionState::Available(details(&detail.item, &detail.check_runs)),
+        Err(error) => refused(&error),
+    };
+    Answer {
         key,
         started,
         state,
-    } in answers
-    {
-        let key = cache_key(login, &key);
-        references.reading.remove(&key);
-        if !current(references, &key, &state, started) {
-            continue;
-        }
+    }
+}
+
+/// Lands one key's answer and announces it, so a refusal answers as soon
+/// as its own request completes. False when a forget came since the read
+/// was queued: the rest of its keys are not read.
+fn land(
+    board: &mut Github,
+    login: &str,
+    answer: Answer,
+    epoch: Epoch,
+    cx: &mut Context<Github>,
+) -> bool {
+    let references = &mut board.references;
+    if references.generation != epoch.generation {
+        return false;
+    }
+    // A read that started before the last refresh is older than the list.
+    let older = references.refreshes != epoch.refreshes;
+    let Answer {
+        key,
+        started,
+        state,
+    } = answer;
+    let key = cache_key(login, &key);
+    references.reading.remove(&key);
+    if current(references, &key, &state, started) {
         if older {
             references.stale.insert(key.clone());
         } else {
@@ -141,6 +137,7 @@ fn land(
         references.answers.insert(key, state);
     }
     announce(cx);
+    true
 }
 
 /// Whether `state`, read for `key` from a read that started at `started`,

@@ -15,7 +15,7 @@ use subspace_framework::dashboard::contracts;
 use super::super::loading::response;
 use super::super::{KEY, seed};
 use super::checks::{land_section_at, listed_only};
-use super::{ASKER, Meanwhile, ask, null_repository, response_with_checks, routed};
+use super::{ASKER, Meanwhile, ask, heard, null_repository, response_with_checks, routed};
 use crate::Github;
 
 /// Another pull request in the seeded repository, which no list holds.
@@ -137,6 +137,17 @@ fn an_opened_pull_request_s_refusal_is_read_again_on_the_next_refresh(cx: &mut T
     assert!(available(cx), "the newer read lifts it");
 }
 
+/// Asks for two pull requests in one request: one reference read of
+/// both, each in turn.
+fn ask_both(keys: [&str; 2], cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        let keys = ResolvePullRequests::new(keys);
+        let answers =
+            contracts::request(ASKER, &keys, cx).unwrap_or_else(|error| panic!("{error}"));
+        assert_eq!(answers.len(), 2);
+    });
+}
+
 /// A reference read of another pull request, then of [`KEY`], in one
 /// batch: the first is served, the second refused with a 403.
 fn other_then_refused() -> Mock {
@@ -154,12 +165,7 @@ fn a_batch_s_later_request_is_newer_than_a_read_started_while_it_waited(cx: &mut
     board.update(cx, listed_only);
     // One reference read of two pull requests is queued; KEY is listed, so
     // it answers from the list meanwhile.
-    cx.update(|_, cx| {
-        let keys = ResolvePullRequests::new([OTHER, KEY]);
-        let answers =
-            contracts::request(ASKER, &keys, cx).unwrap_or_else(|error| panic!("{error}"));
-        assert_eq!(answers.len(), 2);
-    });
+    ask_both([OTHER, KEY], cx);
     // While the batch waits on its first key, this Space's own detail read
     // of KEY starts and succeeds; access is lost after it.
     let detail = tick(&board, cx);
@@ -239,4 +245,28 @@ fn a_detail_read_takes_its_tick_when_its_request_starts_not_when_queued(cx: &mut
         matches!(ask(KEY, cx), ResolutionState::Unavailable),
         "the refusal started after the other read, so it answers"
     );
+}
+
+/// [`KEY`] refused, then another pull request served.
+fn refused_then_other() -> Mock {
+    let served = Arc::new(AtomicUsize::new(0));
+    Mock::new(move |_| match served.fetch_add(1, Ordering::SeqCst) {
+        0 => (403, r#"{"message":"Resource not accessible"}"#.to_owned()),
+        _ => (200, response("PullRequest", 7)),
+    })
+}
+
+#[gpui_kit::test]
+fn each_request_of_a_batch_lands_and_is_announced_as_it_completes(cx: &mut TestAppContext) {
+    let mock = refused_then_other();
+    let (board, listener, cx) = routed(cx, Some(&mock));
+    board.update(cx, listed_only);
+    ask_both([KEY, OTHER], cx);
+    assert_eq!(
+        heard(&listener, cx),
+        2,
+        "KEY's refusal is announced before OTHER is read, not with it"
+    );
+    assert_eq!(mock.requests().len(), 2);
+    assert!(matches!(ask(KEY, cx), ResolutionState::Unavailable));
 }
