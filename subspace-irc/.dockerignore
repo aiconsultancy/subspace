@@ -4,3 +4,4 @@
 !seed-channels.py
 !ircd.yaml.tmpl
 !subspace.motd
+!subspace-auth.sh

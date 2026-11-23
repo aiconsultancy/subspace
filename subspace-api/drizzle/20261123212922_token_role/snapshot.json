@@ -1,0 +1,77 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "b98a428d-3917-4706-8ab7-de245f04c027",
+  "prevIds": [
+    "b3a48221-6dbf-4617-9666-41c6b445d964"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "users",
+        "token_role"
+      ],
+      "writes": [
+        "s|col|public.users.token_role",
+        "n|col|public.users.token_role",
+        "e|col|public.users.token_role"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_check",
+      "statementTarget": [
+        "table",
+        "public",
+        "users"
+      ],
+      "writes": [
+        "s|ck|public.users.users_token_role",
+        "n|ck|public.users.users_token_role",
+        "e|ck|public.users.users_token_role",
+        "n|con|public.users.users_token_role"
+      ],
+      "reads": [
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.users.token_role",
+        "n|col|public.users.agent_rank"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "users",
+        "name": "token_role",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "users",
+        "name": "users_token_role",
+        "value": "\"token_role\" is null or (\"token_role\" in ('admin', 'member') and \"agent_rank\" is null)",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

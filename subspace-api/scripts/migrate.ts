@@ -1,8 +1,11 @@
 import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/effect-postgres/migrator";
 import { Effect } from "effect";
+import { reservedUsernames } from "../src/config";
 import { Database, databaseLayer, databaseUrl } from "../src/db";
+import { backfillUsernames } from "../src/usernames";
 
+const reserved = reservedUsernames(process.env);
 const migration = Effect.gen(function* () {
   const db = yield* Database;
   yield* db.transaction((tx) =>
@@ -12,6 +15,10 @@ const migration = Effect.gen(function* () {
       yield* migrate(tx, { migrationsFolder: new URL("../drizzle", import.meta.url).pathname });
     }),
   );
+  // After the schema change has committed, so no lock on the users table is held meanwhile.
+  // People need the operator's reserved names, which only the runtime configuration holds, so
+  // the backfill runs here rather than in a SQL migration, in short transactions of its own.
+  yield* backfillUsernames(db, reserved);
 });
 
 try {

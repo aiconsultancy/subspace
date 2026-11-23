@@ -700,6 +700,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
 dependencies = [
  "hybrid-array",
+ "zeroize",
 ]
 
 [[package]]
@@ -1510,6 +1511,7 @@ dependencies = [
  "const-oid",
  "crypto-common 0.2.2",
  "ctutils",
+ "zeroize",
 ]
 
 [[package]]
@@ -7287,6 +7289,7 @@ dependencies = [
  "dirs 7.0.0",
  "hex",
  "keyring",
+ "keyring-core",
  "libc",
  "rand 0.10.3",
  "regex",
@@ -7294,6 +7297,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "subspace-product",
  "tempfile",
  "thiserror 2.0.21",
@@ -7301,6 +7305,7 @@ dependencies = [
  "ureq",
  "url",
  "windows-sys 0.61.2",
+ "zeroize",
 ]
 
 [[package]]

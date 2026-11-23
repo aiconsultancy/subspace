@@ -9,6 +9,7 @@ RUN apk add --no-cache curl jq openssl python3 \
     && chmod 0700 /ircd /run/subspace-irc
 
 COPY --chmod=0755 entrypoint.sh /ircd-bin/subspace-entrypoint.sh
+COPY --chmod=0755 subspace-auth.sh /ircd-bin/subspace-auth
 COPY ircd.yaml.tmpl seed-channels.py subspace.motd /ircd-bin/
 
 USER 10001:10001

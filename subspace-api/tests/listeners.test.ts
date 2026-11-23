@@ -29,6 +29,7 @@ const captain: Member = {
   email: null,
   displayName: "Orion",
   role: "member",
+  tokenRole: null,
   active: true,
   agentRank: "captain",
   agentFleet: "alpha",
@@ -37,6 +38,7 @@ const captain: Member = {
   agentShip: null,
   agentModel: "example-model",
   agentIrcNick: "orion",
+  username: "orion",
   registeredById: "00000000-0000-4000-8000-0000000000ff",
   deactivatedById: null,
   deactivatedAt: null,
@@ -69,6 +71,7 @@ const directory = Layer.succeed(
   }),
 );
 
+const ircHookToken = "an-example-hook-token-of-at-least-32-bytes";
 const mainPort = freePort();
 const agentPort = freePort();
 const options = config({
@@ -78,6 +81,10 @@ const options = config({
   NODE_ENV: "development",
   PORT: String(mainPort),
   AGENT_PORT: String(agentPort),
+  IRC_CREDENTIAL_SECRET: "an example credential secret of at least 32 bytes",
+  IRC_AUTH_HOOK_TOKEN: ircHookToken,
+  IRC_AUTH_ORGANISATION: "dev:local",
+  IRC_AUTH_SERVERS: "irc.example.com:6697",
 });
 let scope: Scope.Closeable;
 
@@ -134,6 +141,48 @@ describe("the API process with both listeners", () => {
         expect([route.method, path, response.status]).toEqual([route.method, path, 404]);
       }
     }
+  });
+
+  test("the agent port serves neither IRC credentials nor the IRC auth hook", async () => {
+    const choices: Record<string, string>[] = [
+      {},
+      agent,
+      { Authorization: `Bearer ${ircHookToken}` },
+    ];
+    for (const headers of choices) {
+      for (const path of ["/api/v1/me/irc-credential", "/api/v1/irc/authenticate"])
+        expect([path, (await call(agentPort, path, "POST", headers, {})).status]).toEqual([
+          path,
+          404,
+        ]);
+    }
+  });
+
+  test("the main port serves both IRC routes, the hook only with its token", async () => {
+    // Routed, then refused for want of a signed-in user.
+    expect(
+      (
+        await call(
+          mainPort,
+          "/api/v1/me/irc-credential",
+          "POST",
+          {},
+          {
+            host: "irc.example.com",
+            port: 6697,
+          },
+        )
+      ).status,
+    ).toBe(401);
+    const hook = (headers: Record<string, string>) =>
+      call(mainPort, "/api/v1/irc/authenticate", "POST", headers, { accountName: "orion" });
+    expect((await hook({})).status).toBe(401);
+    expect((await hook({ Authorization: "Bearer wrong-token" })).status).toBe(401);
+    // The agent header grants nothing here either.
+    expect((await hook(agent)).status).toBe(401);
+    const accepted = await hook({ Authorization: `Bearer ${ircHookToken}` });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toEqual({ success: false });
   });
 
   test("the agent port refuses a request without an agent and serves one with it", async () => {

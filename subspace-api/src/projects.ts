@@ -113,6 +113,8 @@ export const ProjectState = Schema.Struct({
 export const Person = Schema.Struct({
   userId: Uuid,
   displayName: Name,
+  /** The person's handle and IRC account name; an agent's IRC nick, or null without one. */
+  username: NullableString,
   isFormerMember: Schema.Boolean,
   kind: Schema.Literals(["human", "agent"]),
   agent: Schema.NullOr(
@@ -128,6 +130,7 @@ export const Person = Schema.Struct({
 export const UserChoice = Schema.Struct({
   id: Uuid,
   displayName: Name,
+  username: NullableString,
   kind: Schema.Literals(["human", "agent"]),
   email: NullableString,
 }).annotate({ identifier: "UserChoice" });
@@ -179,6 +182,7 @@ export function person(row: Member | null | undefined) {
     ? {
         userId: row.id,
         displayName: row.displayName,
+        username: row.username,
         isFormerMember: !row.active,
         kind: memberKind(row),
         agent: row.agentRank
@@ -367,6 +371,7 @@ export const listUsers = (member: Member, query: { cursor?: string; limit?: numb
       .select({
         id: users.id,
         displayName: users.displayName,
+        username: users.username,
         email: users.email,
         agentRank: users.agentRank,
       })

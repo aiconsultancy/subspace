@@ -1,9 +1,10 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Context, Effect, Schema } from "effect";
 import { type PrincipalIdentity } from "./auth";
 import { type Config } from "./config";
 import { Database } from "./db";
 import { fleets, initiativeMemberships, initiatives, organisations, ships, users } from "./schema";
+import { allocateUsername, lockUsernames, type NameSource } from "./usernames";
 
 export const AgentRank = Schema.Literals(["rearAdmiral", "captain", "crew"]);
 export const memberKind = (member: { agentRank: string | null }) =>
@@ -47,11 +48,16 @@ interface Profile {
   displayName: string;
 }
 
+/**
+ * Saves a person's membership from the membership command. A new person, or one saved before
+ * usernames existed, is allocated a username; an existing username never changes.
+ */
 export const provisionMember = (
   identity: PrincipalIdentity,
   profile: Profile,
   role: Member["role"],
   active = true,
+  reserved: ReadonlySet<string> = new Set(),
 ) =>
   Effect.gen(function* () {
     const db = yield* Database;
@@ -69,28 +75,55 @@ export const provisionMember = (
               eq(organisations.provider, identity.provider),
               eq(organisations.externalId, identity.externalOrganisation),
             ),
-          ))[0]!;
-        const [member] = yield* tx
-          .insert(users)
-          .values({ organisationId: org.id, subject: identity.subject, ...profile, role, active })
-          .onConflictDoUpdate({
-            target: [users.organisationId, users.subject],
-            set: active ? { ...profile, role, active } : { active },
-            setWhere: isNull(users.agentRank),
-          })
-          .returning();
-        if (!member)
+          )
+          .for("no key update"))[0]!;
+        const [existing] = yield* tx
+          .select()
+          .from(users)
+          .where(and(eq(users.organisationId, org.id), eq(users.subject, identity.subject)));
+        if (existing?.agentRank)
           return yield* Effect.fail(new Error("This subject is registered as an agent."));
-        return member;
+        const username =
+          existing?.username ??
+          (yield* allocateUsername(
+            tx,
+            org.id,
+            { name: profile.displayName, email: profile.email },
+            reserved,
+          ));
+        const [member] = existing
+          ? yield* tx
+              .update(users)
+              .set(active ? { ...profile, role, active, username } : { active, username })
+              .where(eq(users.id, existing.id))
+              .returning()
+          : yield* tx
+              .insert(users)
+              .values({
+                organisationId: org.id,
+                subject: identity.subject,
+                ...profile,
+                role,
+                active,
+                username,
+              })
+              .returning();
+        return member!;
       }),
     );
   });
 
+/**
+ * The development sign-in member for an e-mail and organisation, created on first sign-in. A new
+ * member's username comes from `usernameFrom`, by default the display name and the e-mail.
+ */
 export const localMember = (
   email: string,
   displayName: string,
   externalId: string,
   dev: NonNullable<Config["dev"]>,
+  reserved: ReadonlySet<string> = new Set(),
+  usernameFrom: NameSource = { name: displayName, email },
 ) =>
   Effect.gen(function* () {
     const db = yield* Database;
@@ -109,23 +142,23 @@ export const localMember = (
             .where(
               and(eq(organisations.provider, "dev"), eq(organisations.externalId, externalId)),
             ))[0]!;
-        const [newMember] = yield* tx
-          .insert(users)
-          .values({
-            organisationId: org.id,
-            subject: email,
-            email,
-            displayName,
-            role: newOrg ? "admin" : "member",
-          })
-          .onConflictDoNothing()
-          .returning();
+        yield* lockUsernames(tx, org.id);
         const member =
-          newMember ??
           (yield* tx
             .select()
             .from(users)
-            .where(and(eq(users.organisationId, org.id), eq(users.subject, email))))[0]!;
+            .where(and(eq(users.organisationId, org.id), eq(users.subject, email))))[0] ??
+          (yield* tx
+            .insert(users)
+            .values({
+              organisationId: org.id,
+              subject: email,
+              email,
+              displayName,
+              role: newOrg ? "admin" : "member",
+              username: yield* allocateUsername(tx, org.id, usernameFrom, reserved),
+            })
+            .returning())[0]!;
 
         if (newOrg) {
           const [fleet] = yield* tx
@@ -167,6 +200,7 @@ export const publicProfile = (member: Member) => ({
   kind: memberKind(member),
   displayName: member.displayName,
   email: member.email,
+  username: member.username,
   agentName: member.agentRank ? member.displayName : null,
   agentRank: member.agentRank,
   fleet: member.agentFleet,

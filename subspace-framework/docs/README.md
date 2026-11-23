@@ -87,3 +87,6 @@ If you want to build a Space or know what the Framework offers one, read
 - [Workspace shell review findings](changes/workspace-shell-review-findings/README.md):
   the shared kit and host app fixes for the open review findings of the
   workspace shell, with a test for each.
+- [Long secrets in Windows Credential Manager](changes/windows-credential-limit/README.md):
+  how `Keychain` splits a secret over one Windows credential across several,
+  and keeps short and earlier secrets as one.

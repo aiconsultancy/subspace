@@ -98,6 +98,11 @@ export const users = pgTable(
     role: text({ enum: ["admin", "member"] })
       .default("member")
       .notNull(),
+    /**
+     * The role the person's last Entra token gave them through ENTRA_ADMIN_ROLE, or null. While
+     * that setting is configured it decides the effective role; `role` stays as provisioned.
+     */
+    tokenRole: text("token_role", { enum: ["admin", "member"] }),
     active: boolean().default(true).notNull(),
     agentRank: text("agent_rank", { enum: ["rearAdmiral", "captain", "crew"] }),
     agentFleet: text("agent_fleet"),
@@ -106,6 +111,11 @@ export const users = pgTable(
     agentShipId: uuid("agent_ship_id"),
     agentModel: text("agent_model"),
     agentIrcNick: text("agent_irc_nick"),
+    /**
+     * The person's handle, which is also their IRC account name. An agent's is its IRC nick, kept
+     * in step by a trigger, so people and agents share one namespace per organisation.
+     */
+    username: text(),
     registeredById: uuid("registered_by_id"),
     deactivatedById: uuid("deactivated_by_id"),
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
@@ -117,6 +127,10 @@ export const users = pgTable(
     unique().on(table.organisationId, table.subject),
     unique().on(table.organisationId, table.id),
     check("users_role", sql`${table.role} in ('admin', 'member')`),
+    check(
+      "users_token_role",
+      sql`${table.tokenRole} is null or (${table.tokenRole} in ('admin', 'member') and ${table.agentRank} is null)`,
+    ),
     check(
       "agent_members",
       sql`${table.agentRank} is null or (
@@ -140,9 +154,13 @@ export const users = pgTable(
     uniqueIndex("user_agent_name")
       .on(table.organisationId, sql`lower(${table.displayName})`)
       .where(sql`${table.agentRank} is not null`),
+    // Names compare in ASCII lower case whatever the database locale, as Ergo's ascii mapping does.
     uniqueIndex("user_agent_irc_nick")
-      .on(table.organisationId, sql`lower(${table.agentIrcNick})`)
+      .on(table.organisationId, sql`lower(${table.agentIrcNick} COLLATE "C")`)
       .where(sql`${table.agentIrcNick} is not null`),
+    uniqueIndex("users_username")
+      .on(table.organisationId, sql`lower(${table.username} COLLATE "C")`)
+      .where(sql`${table.username} is not null`),
     foreignKey({
       columns: [table.organisationId, table.registeredById],
       foreignColumns: [table.organisationId, table.id],
@@ -151,6 +169,28 @@ export const users = pgTable(
       columns: [table.organisationId, table.deactivatedById],
       foreignColumns: [table.organisationId, table.id],
     }),
+  ],
+);
+
+/**
+ * Usernames that were issued and then changed or cleared, in canonical form. Their IRC accounts
+ * may still exist, so they are never allocated to anyone else. A trigger on `users` records them.
+ */
+export const retiredUsernames = pgTable(
+  "retired_usernames",
+  {
+    organisationId: organisationId(),
+    name: text().notNull(),
+    userId: uuid("user_id").notNull(),
+    retiredAt: timestamp("retired_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organisationId, table.name] }),
+    foreignKey({
+      columns: [table.organisationId, table.userId],
+      foreignColumns: [users.organisationId, users.id],
+    }),
+    check("retired_usernames_canonical", sql`${table.name} = lower(${table.name} COLLATE "C")`),
   ],
 );
 
@@ -925,7 +965,7 @@ export const auditLogs = pgTable(
     actorId: uuid("actor_id"),
     actorDisplayName: text("actor_display_name"),
     actorRank: text("actor_rank", { enum: ["rearAdmiral", "captain", "crew"] }),
-    source: text({ enum: ["rest", "mcp", "github"] }).notNull(),
+    source: text({ enum: ["rest", "mcp", "github", "cli"] }).notNull(),
     entityType: text("entity_type").notNull(),
     entityId: text("entity_id"),
     projectId: uuid("project_id"),
