@@ -9,6 +9,7 @@ use crate::tests::{FleetFixture, TOKEN};
 use crate::{FleetRecord, FleetState, Link, TokenStore};
 
 mod keychain;
+mod ordering;
 
 const HOME: &str = "https://fleet.example.com";
 

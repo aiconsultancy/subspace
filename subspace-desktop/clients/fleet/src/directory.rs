@@ -253,21 +253,21 @@ pub(crate) fn removed(old: &[FleetRecord], new: &[FleetRecord]) -> Vec<String> {
         .collect()
 }
 
-/// When the soonest fleet whose token the store could not read, and that
-/// was read again within `interval` of `now`, may be read again: a Retry
-/// asked too soon waits for it. `None` when no such fleet waits.
-pub(crate) fn next_reread(
+/// Each fleet whose token the store could not read and that was read
+/// again within `interval` of `now`, with when it may be read again: a
+/// Retry asked too soon waits for each.
+pub(crate) fn waiting(
     tokens: &BTreeMap<String, TokenLoad>,
     last: &BTreeMap<String, Instant>,
     now: Instant,
     interval: Duration,
-) -> Option<Instant> {
+) -> Vec<(String, Instant)> {
     tokens
         .iter()
         .filter(|(_, token)| **token == TokenLoad::Unavailable)
-        .filter_map(|(fleet, _)| last.get(fleet).map(|at| *at + interval))
-        .filter(|due| *due > now)
-        .min()
+        .filter_map(|(fleet, _)| last.get(fleet).map(|at| (fleet.clone(), *at + interval)))
+        .filter(|(_, due)| *due > now)
+        .collect()
 }
 
 /// The fleets whose token the store could not read and that may be read
