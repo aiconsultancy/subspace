@@ -76,6 +76,13 @@ built in this way still starts off, so turn it on with `CAPTURE_CONFIG`, for
 example `CAPTURE_FEATURES=space-lab
 CAPTURE_CONFIG='{"boards":{"space-lab":true}}'` on macOS ARM64.
 
+The build runs in your environment, so `SUBSPACE_BUILD_CONFIG` selects its
+build configuration. A build with no API backend (`{"api_backend":
+"none"}`) refuses to start with the Subspace API fixture's variables, so
+capture it with `CAPTURE_NO_API=1`, which leaves them out of the app's
+environment. Add `CAPTURE_FLEET_API=1` to show Fleet Console, which such a
+build shows only once its own address and token are saved.
+
 The step syntax is listed in [AGENTS.md](../AGENTS.md#ui-change-evidence).
 Capture uses the same steps and fixture data on both platforms. Window
 decorations and text rasterisation can differ between operating systems.

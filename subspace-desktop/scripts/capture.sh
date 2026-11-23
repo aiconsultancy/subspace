@@ -23,6 +23,9 @@
 #   CAPTURE_ITEM_DELAY=<secs>  hold each GitHub issue or pull request detail read
 #   CAPTURE_IRC_CONFIG=<file>  IRC board config; use scripts/irc-test-server.sh
 #   CAPTURE_NO_GH=1            no gh accounts, as for a user without the GitHub CLI
+#   CAPTURE_NO_API=1           no Subspace API variables for the app, for a build with no API
+#                              backend (SUBSPACE_BUILD_CONFIG naming {"api_backend": "none"}),
+#                              which refuses to start with them
 #   CAPTURE_NO_UPDATES_STREAM=1   the Subspace API fixture has no live updates stream
 #   CAPTURE_DECISION_SCENARIO=<normal|missing|forbidden|unavailable>  Decisions fixture
 #   CAPTURE_CHANGE_AFTER=<s>   the fixture retitles SUB-1 after <s> seconds, as a change elsewhere
@@ -229,10 +232,12 @@ app_env=(
     "XDG_STATE_HOME=$home/.local/state" "XDG_CACHE_HOME=$home/.cache"
     "GH_CONFIG_DIR=$fixture/gh" GH_TOKEN= GITHUB_TOKEN=
     "PATH=$fixture/bin:/usr/bin:/bin:/usr/sbin:/sbin" SUBSPACE_GUI_LOGIN_PATH=0
-    "SUBSPACE_GITHUB_API_URL=$github" "SUBSPACE_GITHUB_OAUTH_URL=$github" "SUBSPACE_API_URL=$subspace_api/api"
-    "SUBSPACE_API_ACCESS_JWT_FILE=$fixture/access-jwt" SUBSPACE_IDENTITY_PROVIDER=
+    "SUBSPACE_GITHUB_API_URL=$github" "SUBSPACE_GITHUB_OAUTH_URL=$github" SUBSPACE_IDENTITY_PROVIDER=
     "SUBSPACE_CAPTURE_DIR=$out" "SUBSPACE_CAPTURE_STEPS=$steps"
 )
+if [ -z "${CAPTURE_NO_API:-}" ]; then
+    app_env+=("SUBSPACE_API_URL=$subspace_api/api" "SUBSPACE_API_ACCESS_JWT_FILE=$fixture/access-jwt")
+fi
 if [ -n "${CAPTURE_MOVE_UNCONFIRMED:-}" ]; then app_env+=(SUBSPACE_CAPTURE_MOVE_UNCONFIRMED=1); fi
 if [ -n "${CAPTURE_UPLOAD_SCENARIO:-}" ]; then
     app_env+=("SUBSPACE_CAPTURE_UPLOAD_SCENARIO=$CAPTURE_UPLOAD_SCENARIO")
