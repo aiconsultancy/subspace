@@ -269,7 +269,7 @@ development sign-in, the signed GitHub webhook, `/openapi.json` and the
 administrator routes: creating and editing fleets, creating initiatives,
 their channel configuration and fleet assignment, registering, editing,
 deactivating and reactivating agents, and the GitHub integration status.
-Those answer 404 before any handler runs, and `tools/list` omits
+The listener's router never registers those, so they answer 404 however the path is spelt, and `tools/list` omits
 `subspace_create_fleet` and `subspace_update_fleet`. A registered agent also
 counts as a member of every initiative that belongs to its fleet, so
 `/me/initiatives` and `subspace_list_initiatives` list its fleet's work on

@@ -7,7 +7,7 @@ import {
   adminOnlyTools,
   AgentDirectory,
   chooseAgent,
-  refusedRoutes,
+  adminRoutes,
 } from "../src/agent-listener";
 import { agentApi, agentRoutes, documentedApi } from "../src/api";
 import { config } from "../src/config";
@@ -146,8 +146,14 @@ const app = agentRoutes(listener, { dbLayer, resources } as never, directory).pi
 const { handler, dispose } = HttpRouter.toWebHandler(app, { disableLogger: true });
 afterAll(() => dispose());
 
-function send(path: string, agent?: string, method = "GET", body?: unknown) {
-  const headers = new Headers();
+function send(
+  path: string,
+  agent?: string,
+  method = "GET",
+  body?: unknown,
+  extra: Record<string, string> = {},
+) {
+  const headers = new Headers({ Host: "127.0.0.1:3001", ...extra });
   if (agent !== undefined) headers.set("X-Subspace-Agent", agent);
   if (body !== undefined) headers.set("Content-Type", "application/json");
   return handler(
@@ -274,7 +280,7 @@ describe("requests on the agent listener", () => {
   test("ignore a bearer token", async () => {
     const response = await handler(
       new Request("http://127.0.0.1:3001/api/v1/me", {
-        headers: { Authorization: "Bearer example" },
+        headers: { Authorization: "Bearer example", Host: "127.0.0.1:3001" },
       }),
     );
     await refused(response, 401, "X-Subspace-Agent");
@@ -291,7 +297,7 @@ describe("requests on the agent listener", () => {
   });
 
   test("cannot reach an administrator route, with or without an agent", async () => {
-    const routes = refusedRoutes(agentApi.groups as never);
+    const routes = adminRoutes(agentApi.groups as never);
     expect(routes.length).toBe(Object.values(adminOnlyEndpoints).flat().length);
     for (const route of routes) {
       const path = route.path.replace(/:[A-Za-z]+/gu, "00000000-0000-4000-8000-000000000099");
@@ -302,7 +308,20 @@ describe("requests on the agent listener", () => {
           route.method,
           route.method === "GET" ? undefined : {},
         );
-        await refused(response, 404, "administrator routes");
+        expect(response.status).toBe(404);
+      }
+      // However the path is spelt, the router has no such route on this listener.
+      const encoded = path
+        .replace("/api/v1/", "/api/v1/%")
+        .replace(/%(.)/u, (_, letter: string) => `%${letter.charCodeAt(0).toString(16)}`);
+      for (const spelling of [`/${path}`, path.replace("/api/v1/", "/api//v1//"), encoded]) {
+        const response = await send(
+          spelling,
+          "Orion",
+          route.method,
+          route.method === "GET" ? undefined : {},
+        );
+        expect([spelling, response.status]).toEqual([spelling, 404]);
       }
     }
     // The same paths with other methods are member routes and still served.

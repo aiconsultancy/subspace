@@ -1,6 +1,6 @@
 import { and, eq, isNotNull, or, sql } from "drizzle-orm";
-import { Context, Effect, Layer, type Types } from "effect";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
+import { Context, Effect, Layer } from "effect";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { type Config } from "./config";
 import { Database } from "./db";
 import { CurrentMember, type Member } from "./identity";
@@ -155,53 +155,59 @@ export const agentAuth = Layer.effect(
 );
 
 type Endpoint = { readonly method: string; readonly path: string };
-type Groups = Record<string, { readonly endpoints: Record<string, Endpoint> }>;
+type Groups = Record<
+  string,
+  { readonly key: string; readonly endpoints: Record<string, Endpoint> }
+>;
 
-function routePattern(path: string) {
-  const source = path
-    .split("/")
-    .map((segment) =>
-      segment.startsWith(":") ? "[^/]+" : segment.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"),
-    )
-    .join("/");
-  return new RegExp(`^${source}/?$`, "u");
-}
-
-/** The method and path pattern of every route the agent listener does not serve. */
-export function refusedRoutes(groups: Groups) {
-  const routes: { method: string; pattern: RegExp; path: string }[] = [];
-  for (const [group, names] of Object.entries(adminOnlyEndpoints)) {
-    for (const name of names) {
+/** The method and declared path of every administrator route, which the agent listener lacks. */
+export function adminRoutes(groups: Groups) {
+  return Object.entries(adminOnlyEndpoints).flatMap(([group, names]) =>
+    names.map((name) => {
       const endpoint = groups[group]?.endpoints[name];
       if (!endpoint) throw new Error(`The admin-only endpoint ${group}.${name} does not exist.`);
-      routes.push({
-        method: endpoint.method,
-        pattern: routePattern(endpoint.path),
-        path: endpoint.path,
-      });
-    }
-  }
-  return routes;
+      return { method: endpoint.method, path: endpoint.path };
+    }),
+  );
 }
 
+type GroupService = {
+  readonly routes: readonly unknown[];
+  readonly handlers: ReadonlyMap<string, unknown>;
+};
+
 /**
- * Answers 404 for the administrator routes on the agent listener before any handler runs, with
- * the API's usual problem document.
+ * The handler layers without the administrator endpoints, so the agent listener's router never
+ * registers them: they answer 404 however the path is spelt. HttpApiBuilder.group builds one
+ * route per handler, in the handlers' order, and HttpApiBuilder.layer registers those routes.
  */
-export function agentRouteFilter(groups: Groups) {
-  const refused = refusedRoutes(groups);
-  return HttpRouter.middleware<Types.unhandled, HttpServerRequest.HttpServerRequest, true>(
-    (next) =>
-      Effect.gen(function* () {
-        const request = yield* HttpServerRequest.HttpServerRequest;
-        const path = request.url.split("?", 1)[0]!;
-        if (refused.some((route) => route.method === request.method && route.pattern.test(path)))
-          return HttpServerResponse.jsonUnsafe(
-            problem(404, "The agent listener does not serve administrator routes."),
-            { status: 404, contentType: "application/problem+json" },
-          );
-        return yield* next;
-      }),
-    { global: true },
+export function withoutAdminEndpoints<A, E, R>(
+  layer: Layer.Layer<A, E, R>,
+  groups: Groups,
+): Layer.Layer<A, E, R> {
+  return Layer.effectContext(
+    Effect.map(Layer.build(layer), (context) => {
+      const services = new Map(context.mapUnsafe);
+      for (const [group, names] of Object.entries(adminOnlyEndpoints)) {
+        const key = groups[group]?.key;
+        const service = key ? (services.get(key) as GroupService | undefined) : undefined;
+        if (!key || !service) throw new Error(`The handlers for group ${group} are missing.`);
+        const omitted = new Set<string>(names);
+        const entries = [...service.handlers.entries()];
+        if (entries.length !== service.routes.length)
+          throw new Error(`The routes of group ${group} do not match its handlers.`);
+        const kept = entries.flatMap(([name, handler], index) =>
+          omitted.has(name) ? [] : [{ name, handler, route: service.routes[index] }],
+        );
+        if (kept.length !== entries.length - omitted.size)
+          throw new Error(`An admin-only endpoint of group ${group} has no handler.`);
+        services.set(key, {
+          ...service,
+          routes: kept.map(({ route }) => route),
+          handlers: new Map(kept.map(({ name, handler }) => [name, handler])),
+        });
+      }
+      return Context.makeUnsafe(services) as Context.Context<A>;
+    }),
   );
 }

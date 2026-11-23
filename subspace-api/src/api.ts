@@ -88,7 +88,7 @@ import {
   agentAuth,
   agentDirectory,
   AgentDirectory,
-  agentRouteFilter,
+  withoutAdminEndpoints,
   type AgentListener,
 } from "./agent-listener";
 import { notificationsGroup, notificationHandlers } from "./notifications";
@@ -677,11 +677,10 @@ export function agentRoutes(
   const auth = agentAuth.pipe(Layer.provide(directory));
   return Layer.mergeAll(
     HttpApiBuilder.layer(agentApi).pipe(
-      Layer.provide(handlerLayers(adminOnlyTools)),
+      Layer.provide(withoutAdminEndpoints(handlerLayers(adminOnlyTools), agentApi.groups)),
       Layer.provide(Layer.merge(auth, validationErrors)),
       HttpRouter.provideRequest(shared.resources),
     ),
-    agentRouteFilter(agentApi.groups),
     sharedProblems(`Identify the agent with the X-Subspace-Agent header on this listener.`),
   );
 }
