@@ -78,7 +78,7 @@ fn tile_out_of_view(
         let found = [(seq, vec![TileRef::PullRequest(IN_PLAY.into())])];
         hub.tiles.read(room, u64::MAX, (&[seq], &found));
     });
-    board.update(cx, |board, cx| view::sync(board, cx));
+    board.update(cx, view::sync);
     settle(cx);
 }
 

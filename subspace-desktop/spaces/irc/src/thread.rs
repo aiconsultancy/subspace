@@ -30,7 +30,7 @@ use subspace_client_irc::{BufferKey, ConnectionStatus, Target};
 pub(crate) use chosen::Threads;
 #[cfg(test)]
 use model::build;
-pub(crate) use model::{MAX_REPLIES, MAX_STEPS, Step, StepKind, Thread, Timeline};
+pub(crate) use model::{MAX_REPLIES, Step, StepKind, Thread, Timeline};
 
 use crate::Irc;
 use crate::fleet::{ChannelKind, Roster};

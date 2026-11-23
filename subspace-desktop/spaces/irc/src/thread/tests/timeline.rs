@@ -280,10 +280,10 @@ fn a_long_timeline_keeps_only_its_latest_steps() {
     }
     live(&mut state, lines);
     let timeline = thread(&state, "first").unwrap().timeline.unwrap();
-    assert_eq!(timeline.steps.len(), crate::thread::MAX_STEPS);
+    assert_eq!(timeline.steps.len(), super::super::model::MAX_STEPS);
     assert_eq!(
         timeline.earlier_steps,
-        121 - crate::thread::MAX_STEPS,
+        121 - super::super::model::MAX_STEPS,
         "every step left out is counted"
     );
     let last = timeline.steps.last().unwrap();

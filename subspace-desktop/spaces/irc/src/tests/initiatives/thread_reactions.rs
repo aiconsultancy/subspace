@@ -10,7 +10,7 @@ use subspace_framework::dashboard::ChatInputEvent;
 
 use super::super::remove::settle;
 use super::thread::finished;
-use super::thread_gone::gone_reply;
+use super::thread_gone::gone_draft;
 use crate::fixtures::{at, channel, network_id};
 use crate::hub::Hub;
 use crate::thread::MESSAGE_TAGS;
@@ -123,19 +123,14 @@ fn the_thread_tab_shows_the_root_s_and_the_replies_pills_read_only(cx: &mut Test
 #[gpui_kit::test]
 fn reacting_never_lifts_a_gone_reply_s_guard_or_sends_it(cx: &mut TestAppContext) {
     let (board, hub, cx) = reacted(cx);
-    let conversation = gone_reply(&board, cx);
-    let input = conversation.read_with(cx, |conversation, _| conversation.composer().clone());
-    cx.update(|window, cx| {
-        input.update(cx, |input, cx| {
-            input.set_text("Ready for review.", window, cx)
-        });
-    });
+    let conversation = gone_draft(&board, cx);
     let before = hub.read_with(cx, |hub, _| hub.sent().len());
     let r1 = seq(&hub, "r1", cx);
     cx.update(|window, cx| {
         window.click(SharedString::from(format!("irc-line:{r1}:reaction:0")), cx)
     });
     settle(cx);
+    let input = conversation.read_with(cx, |conversation, _| conversation.composer().clone());
     input.update(cx, |_, cx| {
         cx.emit(ChatInputEvent::Submit("Ready for review.".into()))
     });
@@ -169,8 +164,10 @@ fn r_opens_the_reaction_menu_from_reply_mode_and_keeps_the_reply(cx: &mut TestAp
     cx.update(|window, cx| window.click("irc-thread-reply", cx));
     settle(cx);
     let conversation = super::thread::front(&board, cx);
-    let input = conversation.read_with(cx, |conversation, _| conversation.composer().clone());
-    cx.update(|window, cx| input.update(cx, |input, cx| input.focus(window, cx)));
+    conversation.update_in(cx, |view, window, cx| {
+        view.composer()
+            .update(cx, |input, cx| input.focus(window, cx));
+    });
     cx.simulate_keystrokes("shift-tab");
     cx.update(|window, cx| window.render_frame(cx));
     cx.simulate_keystrokes("r");

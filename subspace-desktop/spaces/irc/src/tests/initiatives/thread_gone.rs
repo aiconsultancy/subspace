@@ -28,6 +28,17 @@ pub(super) fn gone_reply(board: &Entity<Irc>, cx: &mut VisualTestContext) -> Ent
     conversation
 }
 
+/// [`gone_reply`] with text written for its gone thread.
+pub(super) fn gone_draft(board: &Entity<Irc>, cx: &mut VisualTestContext) -> Entity<Conversation> {
+    let conversation = gone_reply(board, cx);
+    conversation.update_in(cx, |view, window, cx| {
+        view.composer().update(cx, |input, cx| {
+            input.set_text("Ready for review.", window, cx)
+        });
+    });
+    conversation
+}
+
 /// `/part` as the draft, sent: says whether anything was sent, and that
 /// the reply is still gone.
 fn send_part(
@@ -107,13 +118,7 @@ fn reply_root(conversation: &Entity<Conversation>, cx: &mut VisualTestContext) -
 #[gpui_kit::test]
 fn reply_in_another_thread_keeps_a_gone_draft_guarded_until_moved(cx: &mut TestAppContext) {
     let (board, hub, cx) = finished(cx, &[MESSAGE_TAGS]);
-    let conversation = gone_reply(&board, cx);
-    let input = conversation.read_with(cx, |conversation, _| conversation.composer().clone());
-    cx.update(|window, cx| {
-        input.update(cx, |input, cx| {
-            input.set_text("Ready for review.", window, cx)
-        });
-    });
+    let conversation = gone_draft(&board, cx);
     reply_in(&board, "r1", cx);
     assert_eq!(
         reply_root(&conversation, cx).as_deref(),
@@ -140,13 +145,7 @@ fn an_emptied_gone_draft_lets_another_thread_s_reply_start(cx: &mut TestAppConte
 #[gpui_kit::test]
 fn a_thread_offered_to_a_gone_draft_that_goes_too_is_withdrawn(cx: &mut TestAppContext) {
     let (board, _hub, cx) = finished(cx, &[MESSAGE_TAGS]);
-    let conversation = gone_reply(&board, cx);
-    let input = conversation.read_with(cx, |conversation, _| conversation.composer().clone());
-    cx.update(|window, cx| {
-        input.update(cx, |input, cx| {
-            input.set_text("Ready for review.", window, cx)
-        });
-    });
+    let conversation = gone_draft(&board, cx);
     reply_in(&board, "r1", cx);
     conversation.update(cx, |view, cx| crate::compose::reply::forget(view, "r1", cx));
     settle(cx);

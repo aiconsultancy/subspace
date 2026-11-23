@@ -1,7 +1,7 @@
 //! A request's status timeline in the Thread tab: a plain list, one row
 //! per step with its words, when it began and how long it took. Only the
-//! latest [`crate::thread::MAX_STEPS`] are drawn, after a line that counts
-//! the earlier ones.
+//! latest steps the timeline keeps are drawn, after a line that counts the
+//! earlier ones.
 
 use chrono::Local;
 use gpui_kit::component::{h_flex, v_flex};
