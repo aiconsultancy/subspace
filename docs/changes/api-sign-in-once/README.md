@@ -21,8 +21,9 @@ API README's [IRC sign-in](../../../subspace-api/README.md#irc-sign-in) section.
   `memberRegistered`. It is opt-in: `AUTO_REGISTER=entra` turns it on, and
   empty, unset or `none` is off. `workos` is refused at start-up until WorkOS
   gains an organisation allow-list, and development sign-in keeps registering its
-  own members. A guest of the tenant (`idp` present and not the tenant's issuer,
-  or `acct` of 1) is not registered unless `ENTRA_REGISTER_GUESTS=true`. Profile
+  own members. A guest of the tenant is not registered unless
+  `ENTRA_REGISTER_GUESTS=true`: the optional `acct` claim decides when present
+  (1 is a guest), and otherwise an `idp` that is not the tenant's issuer. Profile
   claims fill in the profile only, and the e-mail comes only from `email`. A
   deactivated person stays refused; registration never reactivates anyone.
 - **Administrators.** `ENTRA_ADMIN_ROLE` names an app role. While it is set, an
@@ -39,8 +40,11 @@ API README's [IRC sign-in](../../../subspace-api/README.md#irc-sign-in) section.
   number), skipping Ergo's service names, `guest` and `guest-` names,
   `RESERVED_USERNAMES` and `RESERVED_USERNAMES_FILE`. A name that has been issued
   and then changed or cleared is recorded in `retired_usernames` by a trigger and
-  never given to anyone else. `bun run auth:username` sets a person's username
-  explicitly, audited, so the owner of an existing IRC account can be given it.
+  never given to anyone else, unless an administrator releases it or hands it on
+  with the username command, the only path the database allows. `bun run
+  auth:username` sets a member's username or an agent's nick explicitly, audited,
+  so the owner of an existing IRC account can be given it and an agent registered
+  again can get its old nick back.
   `GET /me`, `Person` and `GET /users` report `username`.
 - **IRC credentials and Ergo's hook** (`subspace-api/src/irc.ts`).
   `POST /api/v1/me/irc-credential` takes `{ "host", "port" }` and issues a
@@ -67,7 +71,8 @@ API README's [IRC sign-in](../../../subspace-api/README.md#irc-sign-in) section.
   triggers keep agents' usernames in step and record and refuse retired names at
   the database, including writes from an older instance.
 - **A retired name may return to the record that held it**, so an agent's
-  mistaken rename can be undone, but to no other record.
+  mistaken rename can be undone, but to no other record except through the
+  username command's `--retired` or `--release`.
 - **The credential does not carry its host.** The hook checks the signature
   against each listed host instead, which keeps the credential at 81 characters,
   under the 200 the contract allows for any host name.
@@ -91,6 +96,23 @@ secret store.
 Before turning the hook on for an IRC server that already has accounts, follow
 the README's numbered cut-over: list them, reserve them all, give the ones people
 own to their owners with the username command, then turn the hook on.
+
+## Known limits
+
+Recorded by the owner's decision for this internal system, rather than fixed:
+
+- A database whose locale already let two names that differ only by a Turkish
+  dotted and dotless i coexist will fail the new ASCII unique index, and needs
+  reconciling by hand first.
+- IPv6 literals in `IRC_AUTH_SERVERS` and in credential requests are compared as
+  text, not normalised, and IPv4-mapped forms are not accepted in requests.
+- Removing a port from `IRC_AUTH_SERVERS` while keeping the host leaves
+  credentials already issued for that host usable until they expire, within ten
+  minutes.
+- A name claimed by direct SQL at the same moment as a rename can slip past the
+  retirement trigger.
+- Two requests carrying different token roles for one user at the same instant
+  can record the wrong previous role in the audit row.
 
 ## Verification
 
@@ -126,3 +148,18 @@ clear with three P1. Every finding was fixed in a new commit:
 - Missing tests for expired and untrusted tokens, oversized hook bodies and
   guests: added.
 - Historical figures' names in fixtures (Sol P3): invented names.
+
+Round 2, on head `a8d7131`: Claude Opus 5.5 clear with two P2; GPT-6.2 Sol not
+clear. Fixed in new commits:
+
+- `RESERVED_USERNAMES_FILE` not passed through Compose (both): passed through,
+  with the override mount documented. Every other new setting was already
+  passed through, and the root stack includes the same service.
+- A retired name could never be given back (Opus P2): the username command acts
+  on agents and can release or hand on a retired name; a trigger refuses any
+  other path.
+- `acct` not deciding guest status (Sol P1): it decides when present.
+- Lock order in the username migrations (Sol P1): organisations before users.
+- Name comparisons outside the canonical form, built-in names in the username
+  command, and a historical name in a comment (Opus P3): fixed.
+- Everything else is under Known limits.
