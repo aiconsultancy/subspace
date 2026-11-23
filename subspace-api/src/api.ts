@@ -82,7 +82,15 @@ import { planningGroup, planningHandlers } from "./planning";
 import { Project } from "./projects";
 import { issueGroup, issuesHandlers, projectGroup, projectsHandlers } from "./issues-http";
 
-import { mcpGroup, mcpHandlers } from "./mcp";
+import { mcpGroup, mcpHandlersWithout } from "./mcp";
+import {
+  adminOnlyTools,
+  agentAuth,
+  agentDirectory,
+  AgentDirectory,
+  agentRouteFilter,
+  type AgentListener,
+} from "./agent-listener";
 import { notificationsGroup, notificationHandlers } from "./notifications";
 import { mediaGroup, mediaHandlers } from "./media-http";
 import { purgeUploads } from "./media";
@@ -279,6 +287,27 @@ const devGroup = HttpApiGroup.make("development")
   .prefix(prefix)
   .middleware(ValidationErrors);
 
+const groups = [
+  healthGroup,
+  identityGroup,
+  fleetGroup,
+  initiativeGroup,
+  stakeholderGroup,
+  projectGroup,
+  workflowGroup,
+  planningGroup,
+  cycleGroup,
+  viewGroup,
+  issueGroup,
+  commentGroup,
+  updatesGroup,
+  mediaGroup,
+  decisionGroup,
+  documentGroup,
+  reviewGroup,
+  githubGroup,
+] as const;
+
 const api = HttpApi.make("subspace")
   .add(
     healthGroup,
@@ -308,6 +337,19 @@ const api = HttpApi.make("subspace")
   )
   .annotateMerge(OpenApi.annotations({ title: "Subspace API", version: "1.0.0" }));
 export const documentedApi = api.add(devGroup);
+
+/**
+ * The agent listener's API: every group except development sign-in and the signed GitHub
+ * webhook. Its administrator routes are refused by `agentRouteFilter` before any handler runs.
+ */
+export const agentApi = HttpApi.make("subspace").add(
+  ...groups,
+  todoGroup,
+  mcpGroup,
+  agentGroup,
+  auditGroup,
+  notificationsGroup,
+);
 
 const healthLive = HttpApiBuilder.group(api, "health", (handlers) =>
   handlers.handle("health", () =>
@@ -444,57 +486,50 @@ function devLive(dev: NonNullable<Config["dev"]>, key: Uint8Array) {
 }
 
 // These resources share one problem document across API providers. Keep provider-specific detail.
-const sharedProblems = HttpRouter.middleware<
-  Types.unhandled,
-  HttpServerRequest.HttpServerRequest,
-  true
->(
-  (next) =>
-    Effect.gen(function* () {
-      const request = yield* HttpServerRequest.HttpServerRequest;
-      const response = yield* next;
-      const path = request.url.split("?", 1)[0]!;
-      if (!/^\/api\/v1\/(?:agents|fleets|ships|decisions)(?:\/|$)/u.test(path)) return response;
-      const input = request.headers["x-correlation-id"];
-      const correlationId =
-        input && /^[a-zA-Z0-9._-]{1,128}$/u.test(input) ? input : crypto.randomUUID();
-      const withCorrelation = HttpServerResponse.setHeader(
-        response,
-        "X-Correlation-Id",
-        correlationId,
-      );
-      const body = response.body;
-      if (body._tag !== "Uint8Array" || !body.contentType.startsWith("application/problem+json"))
-        return withCorrelation;
-      const { title, status, detail, currentVersion, errors } = JSON.parse(
-        body.text ?? new TextDecoder().decode(body.body),
-      );
-      return HttpServerResponse.jsonUnsafe(
-        {
-          type: `https://httpstatuses.com/${status}`,
-          title,
-          status,
-          detail: status === 401 ? "A valid Subspace access token is required." : detail,
-          instance: path,
+const sharedProblems = (unauthorised: string) =>
+  HttpRouter.middleware<Types.unhandled, HttpServerRequest.HttpServerRequest, true>(
+    (next) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const response = yield* next;
+        const path = request.url.split("?", 1)[0]!;
+        if (!/^\/api\/v1\/(?:agents|fleets|ships|decisions)(?:\/|$)/u.test(path)) return response;
+        const input = request.headers["x-correlation-id"];
+        const correlationId =
+          input && /^[a-zA-Z0-9._-]{1,128}$/u.test(input) ? input : crypto.randomUUID();
+        const withCorrelation = HttpServerResponse.setHeader(
+          response,
+          "X-Correlation-Id",
           correlationId,
-          errors: errors ?? {},
-          ...(currentVersion == null ? {} : { currentVersion }),
-        },
-        {
-          status: response.status,
-          headers: withCorrelation.headers,
-          contentType: "application/problem+json",
-        },
-      );
-    }),
-  { global: true },
-);
+        );
+        const body = response.body;
+        if (body._tag !== "Uint8Array" || !body.contentType.startsWith("application/problem+json"))
+          return withCorrelation;
+        const { title, status, detail, currentVersion, errors } = JSON.parse(
+          body.text ?? new TextDecoder().decode(body.body),
+        );
+        return HttpServerResponse.jsonUnsafe(
+          {
+            type: `https://httpstatuses.com/${status}`,
+            title,
+            status,
+            detail: status === 401 ? unauthorised : detail,
+            instance: path,
+            correlationId,
+            errors: errors ?? {},
+            ...(currentVersion == null ? {} : { currentVersion }),
+          },
+          {
+            status: response.status,
+            headers: withCorrelation.headers,
+            contentType: "application/problem+json",
+          },
+        );
+      }),
+    { global: true },
+  );
 
-export function routes(
-  options: Config,
-  devKey: Uint8Array | null,
-  store: (typeof Storage)["Service"],
-) {
+function resourceLayers(options: Config, store: (typeof Storage)["Service"]) {
   const dbLayer = databaseLayer(options.databaseUrl, options.databasePoolSize);
   const github = options.github.app ? createGitHubClient(options.github.app) : null;
   const resources = Layer.mergeAll(
@@ -509,6 +544,48 @@ export function routes(
     }),
     Layer.succeed(GithubPollState, githubPollState(options.github)),
   );
+  return { dbLayer, github, resources };
+}
+
+type Resources = ReturnType<typeof resourceLayers>;
+
+/** The handlers of every group but development sign-in, built afresh for each listener. */
+function handlerLayers(hiddenTools: ReadonlySet<string>) {
+  return Layer.mergeAll(
+    healthLive,
+    identityLive,
+    fleetLive,
+    initiativeLive,
+    HttpApiBuilder.group(api, "stakeholders", stakeholderHandlers),
+    HttpApiBuilder.group(api, "projects", projectsHandlers),
+    HttpApiBuilder.group(api, "workflow", workflowHandlers),
+    HttpApiBuilder.group(api, "planning", planningHandlers),
+    HttpApiBuilder.group(api, "cycles", cycleHandlers),
+    HttpApiBuilder.group(api, "views", viewHandlers),
+    HttpApiBuilder.group(api, "issues", issuesHandlers),
+    HttpApiBuilder.group(api, "comments", commentHandlers),
+    HttpApiBuilder.group(api, "updates", updatesHandlers),
+    HttpApiBuilder.group(api, "media", mediaHandlers),
+    HttpApiBuilder.group(api, "decisions", decisionHandlers),
+    HttpApiBuilder.group(api, "documents", documentHandlers),
+    HttpApiBuilder.group(api, "reviews", reviewHandlers),
+    HttpApiBuilder.group(api, "github", githubHandlers),
+    HttpApiBuilder.group(api, "githubWebhook", githubEventHandlers),
+    HttpApiBuilder.group(api, "todos", todoHandlers),
+    HttpApiBuilder.group(api, "mcp", mcpHandlersWithout(hiddenTools)),
+    HttpApiBuilder.group(api, "agents", agentHandlers),
+    HttpApiBuilder.group(api, "audit", auditHandlers),
+    HttpApiBuilder.group(api, "notifications", notificationHandlers),
+  );
+}
+
+export function routes(
+  options: Config,
+  devKey: Uint8Array | null,
+  store: (typeof Storage)["Service"],
+  shared: Resources = resourceLayers(options, store),
+) {
+  const { dbLayer, github, resources } = shared;
   const verify = jwtVerifiers(options, devKey);
   const auth = Layer.effect(
     BearerAuth,
@@ -553,32 +630,7 @@ export function routes(
     }),
   ).pipe(Layer.provide(dbLayer));
 
-  const common = Layer.mergeAll(
-    healthLive,
-    identityLive,
-    fleetLive,
-    initiativeLive,
-    HttpApiBuilder.group(api, "stakeholders", stakeholderHandlers),
-    HttpApiBuilder.group(api, "projects", projectsHandlers),
-    HttpApiBuilder.group(api, "workflow", workflowHandlers),
-    HttpApiBuilder.group(api, "planning", planningHandlers),
-    HttpApiBuilder.group(api, "cycles", cycleHandlers),
-    HttpApiBuilder.group(api, "views", viewHandlers),
-    HttpApiBuilder.group(api, "issues", issuesHandlers),
-    HttpApiBuilder.group(api, "comments", commentHandlers),
-    HttpApiBuilder.group(api, "updates", updatesHandlers),
-    HttpApiBuilder.group(api, "media", mediaHandlers),
-    HttpApiBuilder.group(api, "decisions", decisionHandlers),
-    HttpApiBuilder.group(api, "documents", documentHandlers),
-    HttpApiBuilder.group(api, "reviews", reviewHandlers),
-    HttpApiBuilder.group(api, "github", githubHandlers),
-    HttpApiBuilder.group(api, "githubWebhook", githubEventHandlers),
-    HttpApiBuilder.group(api, "todos", todoHandlers),
-    HttpApiBuilder.group(api, "mcp", mcpHandlers),
-    HttpApiBuilder.group(api, "agents", agentHandlers),
-    HttpApiBuilder.group(api, "audit", auditHandlers),
-    HttpApiBuilder.group(api, "notifications", notificationHandlers),
-  );
+  const common = handlerLayers(new Set());
   const services = Layer.merge(auth, validationErrors);
 
   const endpoints = (
@@ -602,11 +654,42 @@ export function routes(
   const polling = Layer.effectDiscard(pollGitHub(options.github, github)).pipe(
     Layer.provide(resources),
   );
-  return Layer.mergeAll(endpoints, cleanup, polling, sharedProblems);
+  return Layer.mergeAll(
+    endpoints,
+    cleanup,
+    polling,
+    sharedProblems("A valid Subspace access token is required."),
+  );
+}
+
+/**
+ * The agent listener's routes: the same handlers and rules as the main listener, with the agent
+ * named in a header instead of a bearer token, no sign-in route, no administrator route or MCP
+ * tool, and no background work of its own.
+ */
+export function agentRoutes(
+  listener: AgentListener,
+  shared: Pick<Resources, "dbLayer" | "resources">,
+  directory: Layer.Layer<AgentDirectory, unknown> = agentDirectory(listener).pipe(
+    Layer.provide(shared.dbLayer),
+  ),
+) {
+  const auth = agentAuth.pipe(Layer.provide(directory));
+  return Layer.mergeAll(
+    HttpApiBuilder.layer(agentApi).pipe(
+      Layer.provide(handlerLayers(adminOnlyTools)),
+      Layer.provide(Layer.merge(auth, validationErrors)),
+      HttpRouter.provideRequest(shared.resources),
+    ),
+    agentRouteFilter(agentApi.groups),
+    sharedProblems(`Identify the agent with the X-Subspace-Agent header on this listener.`),
+  );
 }
 
 export function server(options: Config, devKey: Uint8Array | null) {
-  return HttpRouter.serve(routes(options, devKey, storage(process.env)), {
+  const store = storage(process.env);
+  const shared = resourceLayers(options, store);
+  const main = HttpRouter.serve(routes(options, devKey, store, shared), {
     disableLogger: true,
   }).pipe(
     Layer.provide(
@@ -617,4 +700,19 @@ export function server(options: Config, devKey: Uint8Array | null) {
       }),
     ),
   );
+  if (!options.agent) return main.pipe(Layer.provide(shared.resources));
+  const agent = HttpRouter.serve(agentRoutes(options.agent, shared), {
+    disableLogger: true,
+  }).pipe(
+    Layer.provide(
+      BunHttpServer.layer({
+        hostname: options.agent.hostname,
+        port: options.agent.port,
+        maxRequestBodySize: 34_000_000,
+      }),
+    ),
+  );
+  // Build the database pool, update hub and storage once, before either listener, so both
+  // listeners share them rather than each building its own.
+  return Layer.merge(main, agent).pipe(Layer.provide(shared.resources));
 }

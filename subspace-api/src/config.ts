@@ -56,6 +56,45 @@ function integerSetting(
   return value;
 }
 
+const loopback = ["127.0.0.1", "::1", "localhost"];
+
+/**
+ * The optional agent-only listener. A request on it names its registered agent in a header and
+ * needs no token, so it trusts its network as development sign-in does: loopback, or local-only
+ * container port publishing, and never in production.
+ */
+function agentListener(
+  env: NodeJS.ProcessEnv,
+  providers: ReadonlySet<string>,
+  mainHostname: string,
+  mainPort: number,
+) {
+  const raw = env.AGENT_PORT?.trim();
+  if (!raw) return null;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("AGENT_PORT must be a valid TCP port");
+  }
+  if (port === mainPort) throw new Error("AGENT_PORT must differ from PORT");
+  if (env.NODE_ENV === "production") {
+    throw new Error("The agent listener is only available outside production");
+  }
+  const hostname = env.AGENT_HOST?.trim() || mainHostname;
+  if (!loopback.includes(hostname) && env.DEV_CONTAINER_LOCAL_ONLY !== "true") {
+    throw new Error(
+      "The agent listener needs a loopback address or local-only container port publishing",
+    );
+  }
+  const organisation = env.AGENT_ORGANISATION?.trim() || (providers.has("dev") ? "dev:local" : "");
+  const separator = organisation.indexOf(":");
+  const provider = organisation.slice(0, separator);
+  const externalId = organisation.slice(separator + 1);
+  if (separator < 1 || !externalId || !["workos", "entra", "dev"].includes(provider)) {
+    throw new Error("AGENT_ORGANISATION must be <provider>:<organisation>, such as dev:local");
+  }
+  return { hostname, port, provider: provider as Provider, externalOrganisation: externalId };
+}
+
 export function config(env: NodeJS.ProcessEnv = process.env) {
   const providers = authProviders(env);
   const port = Number(env.PORT ?? "3000");
@@ -65,13 +104,14 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
   const hostname = env.HOST ?? "127.0.0.1";
   if (
     providers.has("dev") &&
-    !["127.0.0.1", "::1", "localhost"].includes(hostname) &&
+    !loopback.includes(hostname) &&
     env.DEV_CONTAINER_LOCAL_ONLY !== "true"
   ) {
     throw new Error(
       "Dev sign-in needs a loopback listener or local-only container port publishing",
     );
   }
+  const agent = agentListener(env, providers, hostname, port);
   const ircPort = Number(env.DEV_IRC_PORT ?? "6667");
   if (!Number.isInteger(ircPort) || ircPort < 1 || ircPort > 65535) {
     throw new Error("DEV_IRC_PORT must be a valid TCP port");
@@ -87,6 +127,7 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
     github: githubConfig(env),
     hostname,
     port,
+    agent,
     dev: providers.has("dev")
       ? {
           keyPath: env.DEV_KEY_PATH ?? ".data/dev-signing-key",

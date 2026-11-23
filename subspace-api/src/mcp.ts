@@ -47,7 +47,7 @@ function admitted(
   return Effect.void;
 }
 
-function receive(request: HttpServerRequest.HttpServerRequest) {
+function receive(request: HttpServerRequest.HttpServerRequest, hidden: ReadonlySet<string>) {
   return Effect.gen(function* () {
     yield* admitted(request);
     if (
@@ -87,19 +87,23 @@ function receive(request: HttpServerRequest.HttpServerRequest) {
     }
     if (method === "ping") return jsonResponse(id, {});
     if (method === "tools/list") {
-      const tools = Object.entries(mcpTools).map(
-        ([name, { description, inputSchema, annotations }]) => ({
+      const tools = Object.entries(mcpTools)
+        .filter(([name]) => !hidden.has(name))
+        .map(([name, { description, inputSchema, annotations }]) => ({
           name,
           description,
           inputSchema,
           annotations,
-        }),
-      );
+        }));
       return jsonResponse(id, { tools });
     }
     if (method !== "tools/call") return rpcError(id, -32601, "Method not found.");
     const input = call(params);
-    if (Result.isFailure(input) || !Object.hasOwn(mcpTools, input.success.name)) {
+    if (
+      Result.isFailure(input) ||
+      !Object.hasOwn(mcpTools, input.success.name) ||
+      hidden.has(input.success.name)
+    ) {
       return rpcError(id, -32602, "Unknown tool or invalid arguments.");
     }
     const member = yield* CurrentMember;
@@ -128,11 +132,12 @@ export const mcpGroup = HttpApiGroup.make("mcp")
   )
   .middleware(BearerAuth);
 
-export const mcpHandlers = (
+const mcpHandlerSet = (
   handlers: import("effect/http-api/HttpApiBuilder").Handlers.FromGroup<typeof mcpGroup>,
+  hidden: ReadonlySet<string>,
 ) =>
   handlers
-    .handleRaw("receive", ({ request }) => receive(request))
+    .handleRaw("receive", ({ request }) => receive(request, hidden))
     .handleRaw("listen", ({ request }) =>
       Effect.as(
         admitted(request),
@@ -142,3 +147,11 @@ export const mcpHandlers = (
         }),
       ),
     );
+
+/** The MCP handlers, without the tools named in `hidden`, which are neither listed nor callable. */
+export const mcpHandlersWithout =
+  (hidden: ReadonlySet<string>) =>
+  (handlers: import("effect/http-api/HttpApiBuilder").Handlers.FromGroup<typeof mcpGroup>) =>
+    mcpHandlerSet(handlers, hidden);
+
+export const mcpHandlers = mcpHandlersWithout(new Set());
