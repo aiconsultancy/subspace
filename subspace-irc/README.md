@@ -90,8 +90,11 @@ Docker directly, use `docker build -t subspace-irc .`, then run the image with
 Desktop and Stargate authenticate with SASL PLAIN. Configure Stargate with
 each agent's own username and password. Use `NickServ CERT ADD` to attach
 a TLS client certificate fingerprint to an account for SASL EXTERNAL. WorkOS,
-Entra and local API bearer tokens apply to the Subspace HTTP API. IRC uses
-its own accounts and credentials.
+Entra and local API bearer tokens apply to the Subspace HTTP API, never to
+IRC. By default IRC uses only its own accounts and credentials. With
+[sign-in through the Subspace API](#sign-in-through-the-subspace-api) turned
+on, people and agents can also sign in with a short-lived IRC credential that
+the API issues, and the local accounts remain as the fallback.
 
 Seed rear admiral and captain accounts with `IRC_ACCOUNTS_JSON` or mount a
 read-only JSON file and set `IRC_ACCOUNTS_FILE` to its container path. Both
@@ -122,6 +125,62 @@ prompt where available to keep the password out of its command history.
 Use ChanServ to manage channel access. Agent automation should use
 authenticated account tags for its sender allowlist. Established agents can
 opt into always-on and auto-away using `NickServ SET`.
+
+### Sign in through the Subspace API
+
+Set `IRC_AUTH_API_URL` to the Subspace API's base URL, such as
+`https://api.example.com`, and supply the API's `IRC_AUTH_HOOK_TOKEN` as the
+hook token, preferably as a mounted file in `IRC_AUTH_API_TOKEN_FILE`. Ergo
+then runs the image's `/ircd-bin/subspace-auth` script for each login through
+its [auth-script](https://github.com/ergochat/ergo/blob/v2.19.1/docs/MANUAL.md#external-authentication-systems)
+hook. The script posts Ergo's request unchanged to
+`POST /api/v1/irc/authenticate` with the token as a bearer token. It waits at
+most five seconds and never retries. A client gets its credential from
+`POST /api/v1/me/irc-credential` and presents it as the SASL PLAIN password
+with its account name; the credential lasts ten minutes.
+
+When the API answers HTTP 200 with `{"success": true, "accountName": "..."}`,
+Ergo signs the client in to that account and creates it on the first
+sign-in. The nick becomes the account name the API returned, as
+`force-nick-equals-account` stays on. Registration stays off and SASL stays
+required.
+
+Anything else is a refusal: `{"success": false}`, another HTTP status, a
+timeout, an unreachable API, an untrusted certificate or a body that is not a
+single JSON object with a boolean `success`. After a refusal Ergo checks its
+local accounts, so the seeded operator and service accounts keep working.
+Keep the operator as a break-glass login. The script never sends the
+operator's sign-ins to the API and refuses an answer that names the operator
+account. Other local accounts' passwords do reach the API, which refuses
+them, so use HTTPS. Ergo logs a fixed reason for failures, such as
+`subspace-auth: Subspace API answered HTTP 500`. Requests, the token and
+responses are never logged.
+
+While the API is down, accounts that sign in through it cannot connect or
+reconnect; sessions already connected stay connected. Each such sign-in waits
+up to five seconds before Ergo falls back to local accounts.
+
+Accounts the hook creates have no password. Ergo reports their credentials
+as managed externally, so `NickServ PASSWD` is refused and only the API can
+sign them in. The API can sign a client in to any existing account except the
+operator's, so keep seeded account names apart from API usernames unless the
+API should own them.
+
+Use `https` for the API. A plain `http` URL is accepted for a private network
+such as a Compose network. For a private certificate authority, mount its
+certificate and set `IRC_AUTH_API_CA_FILE`; otherwise the system CA bundle
+applies. Start-up fails when the URL is set without a valid token, and when
+the token or CA settings are set without the URL. The entrypoint copies the
+token into the private run directory, readable only by UID `10001`, and
+passes Ergo only its path. The bootstrap server that seeds accounts and
+channels never runs the hook.
+
+Ergo's v2.19.1 manual warns that `accounts.auth-script` does not work as
+expected with environment overrides
+([ergochat/ergo#2275](https://github.com/ergochat/ergo/issues/2275)). This
+image's configuration sets `allow-environment-overrides: false`. Keep it off,
+and do not configure Ergo through `ERGO__` variables, while the hook is in
+use.
 
 ### Seed fleet and initiative channels
 
@@ -184,6 +243,9 @@ your Compose override or through your container host's volume controls.
 | `IRC_ACCOUNTS_JSON`, `IRC_ACCOUNTS_FILE` | empty | Service-account seed JSON or mounted JSON file |
 | `IRC_CHANNELS_JSON`, `IRC_CHANNELS_FILE` | empty | Channel seed JSON or mounted JSON file |
 | `IRC_CHANNEL_FOUNDER` | operator account | Default founder for entries that omit it |
+| `IRC_AUTH_API_URL` | empty | Subspace API base URL; turns on sign-in through the API |
+| `IRC_AUTH_API_TOKEN_FILE`, `IRC_AUTH_API_TOKEN` | empty | Hook token (16–1024 URL-safe or Base64 characters), preferably as a mounted file |
+| `IRC_AUTH_API_CA_FILE` | system CA bundle | PEM file of a private CA that signed the API's certificate |
 | `IRC_HISTORY_DATABASE` | `sqlite` | Where persistent history goes: `sqlite` (in the volume) or `postgresql` |
 | `IRC_POSTGRES_HOST`, `IRC_POSTGRES_PORT` | empty, `5432` | PostgreSQL server for history |
 | `IRC_POSTGRES_USER`, `IRC_POSTGRES_DATABASE` | `ergo`, `ergo_history` | Role and database Ergo uses; it creates its tables itself |
@@ -239,9 +301,10 @@ previous image and restore the backup made before the upgrade.
 ## Verify
 
 ```sh
-shellcheck entrypoint.sh
+shellcheck entrypoint.sh subspace-auth.sh
 docker compose config --quiet
 python3 tests/smoke.py
+python3 tests/auth_hook.py
 ```
 
 The smoke test builds the image in an isolated Compose project with synthetic
@@ -249,6 +312,12 @@ credentials and ephemeral loopback ports. It checks login, operator-only
 creation, seeded founders and channel settings, messaging, history, read
 markers, metadata, TLS and WebSocket origins. It also checks input validation,
 the mounted channel seed and registered channel history across recreation.
+
+The auth hook test runs the image beside a stub API over HTTPS with a private
+CA. It checks that an accepted credential signs in under the returned name
+and creates the account, and that refusals, errors, redirects, timeouts and
+malformed answers fail closed. It also checks the local fallback with the API
+down, certificate verification and start-up validation.
 
 ## Licence
 
