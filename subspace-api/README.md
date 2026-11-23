@@ -90,29 +90,30 @@ links.
 
 ### Configuration
 
-| Variable                                                              | Meaning                                                                                     |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `GITHUB_WEBHOOK_SECRET`                                               | Optional signature secret for pull request and deployment status webhooks.                  |
-| `GITHUB_ORGANISATION_ID`                                              | Internal organisation UUID. Required for GitHub App or webhook credentials.                 |
-| `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`                         | Optional GitHub App used to reconcile mapped pull requests.                                 |
-| `GITHUB_APP_PRIVATE_KEY_FILE`, `GITHUB_APP_PRIVATE_KEY`               | Private RSA PEM mounted as a file or supplied in the environment. Configure one key source. |
-| `GITHUB_POLL_INTERVAL_SECONDS`                                        | Poll interval, defaulting to 120 seconds.                                                   |
-| `DATABASE_POOL_SIZE`                                                  | PostgreSQL connections per API process. Defaults to 10, with one reserved for updates.      |
-| `SSE_MAX_STREAMS_PER_USER`, `SSE_MAX_STREAMS`                         | Concurrent update streams per user and per process. Default to 16 and 256.                  |
-| `DATABASE_URL`                                                        | PostgreSQL connection URL. Required outside Compose.                                        |
-| `HOST`, `PORT`                                                        | Server listener, defaulting to `127.0.0.1:3000` outside the container.                      |
-| `API_PORT`, `POSTGRES_PORT`, `POSTGRES_PASSWORD`                      | Compose host ports and local PostgreSQL password.                                           |
-| `AUTH_PROVIDERS`                                                      | Comma-separated `workos`, `entra` or `dev`.                                                 |
-| `ENABLE_DEV_AUTH`                                                     | Explicit development sign-in opt-in. Local Compose sets this to `true`.                     |
-| `WORKOS_CLIENT_ID`, `WORKOS_ISSUER`, `WORKOS_JWKS_URL`                | AuthKit client, issuer (default `https://api.workos.com/`) and optional JWKS override.      |
-| `WORKOS_AUDIENCE`                                                     | Optional exact audience for AuthKit deployments that set an audience claim.                 |
-| `WORKOS_API_KEY`                                                      | Optional profile lookup credential for the membership CLI.                                  |
-| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_AUDIENCE`, `ENTRA_SCOPE` | Entra tenant, authorised client, API audience and delegated scope (default `API.Access`).   |
-| `DEV_KEY_PATH`                                                        | Private development signing key file, defaulting to `.data/dev-signing-key`.                |
-| `DEV_CHANNELS`, `DEV_IRC_HOST`, `DEV_IRC_PORT`                        | Channel text and IRC endpoint for newly created dev organisations.                          |
-| `STORAGE_DRIVER`, `STORAGE_PATH`                                      | Defaults to `local` and `.data/blobs`. Use `s3` for a private S3-compatible bucket.         |
-| `S3_BUCKET`, `S3_ENDPOINT`, `S3_REGION`                               | S3 bucket, optional custom endpoint and region.                                             |
-| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_SESSION_TOKEN`        | Credentials and optional session token supplied to Bun's S3 client.                         |
+| Variable                                                              | Meaning                                                                                                         |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `GITHUB_WEBHOOK_SECRET`                                               | Optional signature secret for pull request and deployment status webhooks.                                      |
+| `GITHUB_ORGANISATION_ID`                                              | Internal organisation UUID. Required for GitHub App or webhook credentials.                                     |
+| `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`                         | Optional GitHub App used to reconcile mapped pull requests.                                                     |
+| `GITHUB_APP_PRIVATE_KEY_FILE`, `GITHUB_APP_PRIVATE_KEY`               | Private RSA PEM mounted as a file or supplied in the environment. Configure one key source.                     |
+| `GITHUB_POLL_INTERVAL_SECONDS`                                        | Poll interval, defaulting to 120 seconds.                                                                       |
+| `DATABASE_POOL_SIZE`                                                  | PostgreSQL connections per API process. Defaults to 10, with one reserved for updates.                          |
+| `SSE_MAX_STREAMS_PER_USER`, `SSE_MAX_STREAMS`                         | Concurrent update streams per user and per process. Default to 16 and 256.                                      |
+| `DATABASE_URL`                                                        | PostgreSQL connection URL. Required outside Compose.                                                            |
+| `HOST`, `PORT`                                                        | Server listener, defaulting to `127.0.0.1:3000` outside the container.                                          |
+| `API_PORT`, `POSTGRES_PORT`, `POSTGRES_PASSWORD`                      | Compose host ports and local PostgreSQL password.                                                               |
+| `AUTH_PROVIDERS`                                                      | Comma-separated `workos`, `entra` or `dev`.                                                                     |
+| `ENABLE_DEV_AUTH`                                                     | Explicit development sign-in opt-in. Local Compose sets this to `true`.                                         |
+| `WORKOS_CLIENT_ID`, `WORKOS_ISSUER`, `WORKOS_JWKS_URL`                | AuthKit client, issuer (default `https://api.workos.com/`) and optional JWKS override.                          |
+| `WORKOS_AUDIENCE`                                                     | Optional exact audience for AuthKit deployments that set an audience claim.                                     |
+| `WORKOS_API_KEY`                                                      | Optional profile lookup credential for the membership CLI.                                                      |
+| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_AUDIENCE`, `ENTRA_SCOPE` | Entra tenant, authorised client, API audience and delegated scope (default `API.Access`).                       |
+| `AGENT_PORT`, `AGENT_HOST`, `AGENT_ORGANISATION`                      | Optional [agent listener](#the-agent-listener): port (off when unset), address and `<provider>:<organisation>`. |
+| `DEV_KEY_PATH`                                                        | Private development signing key file, defaulting to `.data/dev-signing-key`.                                    |
+| `DEV_CHANNELS`, `DEV_IRC_HOST`, `DEV_IRC_PORT`                        | Channel text and IRC endpoint for newly created dev organisations.                                              |
+| `STORAGE_DRIVER`, `STORAGE_PATH`                                      | Defaults to `local` and `.data/blobs`. Use `s3` for a private S3-compatible bucket.                             |
+| `S3_BUCKET`, `S3_ENDPOINT`, `S3_REGION`                               | S3 bucket, optional custom endpoint and region.                                                                 |
+| `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_SESSION_TOKEN`        | Credentials and optional session token supplied to Bun's S3 client.                                             |
 
 The image defaults to `NODE_ENV=production`, which forbids development sign-in.
 Local Compose defaults to `NODE_ENV=development`. Production deployments use TLS
@@ -240,6 +241,44 @@ provider account to use the API. A bearer for a deactivated identity is refused
 on subsequent requests. Humans can read organisation audit events. Agents can
 read project audit events. Captains and rear admirals can attach crew name and
 model to issue and comment writes. The authenticated agent remains the actor.
+
+### The agent listener
+
+A registered agent can also use the API with no identity provider and no
+token, on a second, agent-only listener. Set `AGENT_PORT` to turn it on;
+`AGENT_HOST` defaults to `HOST`, and `AGENT_ORGANISATION` names the one
+organisation it serves as `<provider>:<organisation>`, defaulting to
+`dev:local` when development sign-in is on. It keeps the main listener's
+rules: loopback, or `DEV_CONTAINER_LOCAL_ONLY=true` with local-only port
+publishing, and never with `NODE_ENV=production`. The main listener is
+unchanged.
+
+On it, each request names its agent in `X-Subspace-Agent: <agent name or IRC
+nick>`, matched without regard to case. The API resolves that to an active,
+registered agent record of the configured organisation and acts as it:
+`kind: "agent"`, its rank, fleet and ship, with every rule that applies to
+agents, including the fleet limits on assignments, Ready for agents and moves.
+It never resolves a person, so it never grants the administrator role, which
+the database already forbids an agent record. A missing header, an unknown
+or ambiguous name, or a person's name or subject receives 401; a deactivated
+agent receives 403; any bearer token is ignored. Captains and rear admirals
+relay crew work with `relayedCrew` as on the main listener.
+
+The listener serves the same routes and MCP endpoint (`/mcp`) except
+development sign-in, the signed GitHub webhook, `/openapi.json` and the
+administrator routes: creating and editing fleets, creating initiatives,
+their channel configuration and fleet assignment, registering, editing,
+deactivating and reactivating agents, and the GitHub integration status.
+Those answer 404 before any handler runs, and `tools/list` omits
+`subspace_create_fleet` and `subspace_update_fleet`. A registered agent also
+counts as a member of every initiative that belongs to its fleet, so
+`/me/initiatives` and `subspace_list_initiatives` list its fleet's work on
+either listener; other reads and writes need no initiative membership.
+
+This trusts the listener's network as development sign-in does, minus
+administrator access: anyone who can reach the agent port can act as any
+registered agent of that organisation, and agents can act as each other.
+Expose it only to the agents' own users, as the fleet installer does.
 
 Issue creators, assignees and commenters follow issues automatically unless
 they explicitly unsubscribe. A member can change their subscription under
@@ -418,7 +457,9 @@ The repository's pre-push hook runs type checking, lint and `bun test` on API
 code changes. Install the API dependencies before pushing code.
 
 The HTTP tests require a clean loopback Compose stack and create synthetic
-organisations. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`.
+organisations. The agent listener's HTTP tests also need `AGENT_PORT` published by
+that stack, with `TEST_AGENT_API_URL` set to it and `TEST_AGENT_ORGANISATION`
+to the development organisation slug its `AGENT_ORGANISATION` names. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`.
 The fleet ownership race test holds a row lock in the API's own database while
 an agent writes, so when both variables are set, `TEST_DATABASE_URL` must name
 the database that `TEST_API_URL` serves, as in the example above. For signed pull request and deployment tests, sign in first as
