@@ -157,34 +157,43 @@ fn nett_issues_no_irc_credentials_yet_and_is_not_asked() {
     assert!(mock.requests().is_empty());
 }
 
+/// How long the fixture login lasts when the answer carries `date`.
+fn lasts(date: Option<&'static str>) -> std::time::Duration {
+    let mock = Mock::with_headers(move |_| {
+        let headers = date.map(|date| ("Date".into(), date.into()));
+        (200, headers.into_iter().collect(), ISSUED.into())
+    });
+    client(&mock)
+        .irc_credential("irc.example.test", 6697)
+        .unwrap()
+        .valid_for
+}
+
 #[test]
-fn a_login_lasts_from_the_api_s_own_time_not_the_local_clock() {
-    // The API's clock says 21:00:00 and the login expires at 21:10:00; the
-    // local clock may say anything.
-    let mock = Mock::with_headers(|_| {
-        (
-            200,
-            vec![("Date".into(), "Mon, 23 Nov 2026 21:00:00 GMT".into())],
-            ISSUED.into(),
-        )
-    });
-    let credential = client(&mock)
-        .irc_credential("irc.example.test", 6697)
-        .unwrap();
-    assert_eq!(credential.valid_for, std::time::Duration::from_secs(600));
-    let expired = Mock::with_headers(|_| {
-        (
-            200,
-            vec![("Date".into(), "Mon, 23 Nov 2026 21:20:00 GMT".into())],
-            ISSUED.into(),
-        )
-    });
-    let credential = client(&expired)
-        .irc_credential("irc.example.test", 6697)
-        .unwrap();
+fn a_login_lasts_from_the_api_s_own_time_never_longer_than_ten_minutes() {
+    // The login expires at 21:10:00 by the API's clock; the local clock may
+    // say anything.
+    let minutes = |minutes: u64| std::time::Duration::from_secs(minutes * 60);
+    assert_eq!(lasts(Some("Mon, 23 Nov 2026 21:00:00 GMT")), minutes(10));
     assert_eq!(
-        credential.valid_for,
+        lasts(Some("Mon, 23 Nov 2026 21:08:00 GMT")),
+        minutes(2),
+        "a Date that runs ahead shortens it"
+    );
+    assert_eq!(
+        lasts(Some("Mon, 23 Nov 2026 20:00:00 GMT")),
+        minutes(10),
+        "a Date that runs behind cannot lengthen it"
+    );
+    assert_eq!(
+        lasts(Some("Mon, 23 Nov 2026 21:20:00 GMT")),
         std::time::Duration::ZERO,
         "already expired"
+    );
+    assert_eq!(lasts(None), minutes(2), "no Date: a short lifetime");
+    assert_eq!(
+        lasts(Some("yesterday")),
+        minutes(2),
+        "nor an unreadable one"
     );
 }

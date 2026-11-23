@@ -2,8 +2,9 @@
 //! kept in memory until shortly before it expires, and never asked for
 //! again sooner than a minimum interval, or a growing wait after a failure.
 //! A login is only ever offered to the server it was issued for. Its
-//! lifetime runs from when it was received, by the API's clock, so a fast
-//! or slow local clock changes nothing.
+//! lifetime, by the API's clock and never more than ten minutes, runs from
+//! when it was asked for on the monotonic clock, so neither a fast or slow
+//! local clock nor a slow answer lets it be used past its expiry.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -166,7 +167,7 @@ impl Held {
         self.asking = false;
         let unavailable = match answer {
             Ok(credential) if !credential.valid_for.is_zero() => {
-                return Ok(self.keep(credential, received));
+                return Ok(self.keep(credential, asked));
             }
             Ok(_) => Unavailable::Expired,
             Err(error) => Unavailable::Api(error),
@@ -175,13 +176,14 @@ impl Held {
         self.login(received).ok_or(unavailable)
     }
 
-    fn keep(&mut self, credential: IrcCredential, received: Instant) -> Login {
+    /// Keeps `credential`, lasting from `asked`, when its request was sent.
+    fn keep(&mut self, credential: IrcCredential, asked: Instant) -> Login {
         self.failures = 0;
         self.retry_at = None;
         let login = Login {
             account: credential.account,
             password: credential.password,
-            valid_until: received + credential.valid_for,
+            valid_until: asked + credential.valid_for,
         };
         self.kept = Some(login.clone());
         login
@@ -219,11 +221,13 @@ mod tests {
     }
 
     #[test]
-    fn a_login_is_kept_until_a_minute_before_it_lapses_whatever_the_local_clock() {
+    fn a_login_is_kept_until_a_minute_before_it_lapses_from_when_it_was_asked_for() {
         let now = Instant::now();
         let mut held = Held::default();
         asked(&mut held, now);
-        let login = held.take(credential(Duration::from_secs(600)), now, now);
+        // The answer took half a minute; the login lasts from the request.
+        let received = now + Duration::from_secs(30);
+        let login = held.take(credential(Duration::from_secs(600)), now, received);
         assert_eq!(login.map(|login| login.account), Ok("ada".into()));
         assert_eq!(held.step(now + Duration::from_secs(300)), Step::Keep);
         assert_eq!(

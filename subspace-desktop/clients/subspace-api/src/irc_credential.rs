@@ -16,8 +16,12 @@ const ACCOUNT_LIMIT: usize = 64;
 /// characters; the limit leaves room without carrying anything large into
 /// an IRC line.
 const PASSWORD_LIMIT: usize = 400;
-/// The longest a login is taken to last, whatever the API says.
-const MAX_LIFETIME: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+/// The longest a login is taken to last, whatever the API says: the
+/// lifetime the API gives every login.
+const MAX_LIFETIME: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+/// How long a login is taken to last when the answer has no usable `Date`,
+/// rather than trusting this computer's clock against `expiresAt`.
+const UNDATED_LIFETIME: std::time::Duration = std::time::Duration::from_secs(2 * 60);
 
 /// An IRC sign-in the API issued for the signed-in person.
 pub struct IrcCredential {
@@ -28,10 +32,11 @@ pub struct IrcCredential {
     pub password: Secret,
     /// When the password stops being accepted, by the API's clock.
     pub expires_at: chrono::DateTime<chrono::Utc>,
-    /// How long it lasts from when it was received: `expiresAt` less the
-    /// API's own time when it answered (its `Date` header), so a local clock
-    /// that runs fast or slow does not shorten it. Zero when it had already
-    /// expired.
+    /// How long it may be used, counted from when the request was sent on
+    /// this computer's monotonic clock: `expiresAt` less the API's own time
+    /// when it answered (its `Date` header), at most ten minutes, so neither
+    /// clock lets it be used past its real expiry. Two minutes when the
+    /// answer has no usable `Date`; zero when it had already expired.
     pub valid_for: std::time::Duration,
 }
 
@@ -74,18 +79,19 @@ impl Client {
         let response = transport::check_response(response)?;
         let answered = server_time(transport::header(&response, "date"));
         let wire: Wire = transport::read_json(response)?;
-        checked(wire, answered.unwrap_or_else(chrono::Utc::now)).ok_or(Error::InvalidResponse)
+        checked(wire, answered).ok_or(Error::InvalidResponse)
     }
 }
 
 /// The credential, when every field is one an IRC line can carry, lasting
-/// from `answered`, the API's time when it answered.
-fn checked(wire: Wire, answered: chrono::DateTime<chrono::Utc>) -> Option<IrcCredential> {
+/// from `answered`, the API's time when it answered, if it said.
+fn checked(wire: Wire, answered: Option<chrono::DateTime<chrono::Utc>>) -> Option<IrcCredential> {
     let carryable = valid_account(&wire.account) && valid_password(wire.password.expose());
     let expires_at = expiry(&wire.expires_at).filter(|_| carryable)?;
-    let valid_for = (expires_at - answered)
-        .to_std()
-        .unwrap_or_default()
+    let valid_for = answered
+        .map_or(UNDATED_LIFETIME, |answered| {
+            (expires_at - answered).to_std().unwrap_or_default()
+        })
         .min(MAX_LIFETIME);
     Some(IrcCredential {
         account: wire.account,
