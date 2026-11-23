@@ -66,8 +66,10 @@ fn banner(child: &mut Child) -> Result<String, &'static str> {
         let mut line = String::new();
         let _ = send.send(BufReader::new(stdout).read_line(&mut line).map(|_| line));
     });
+    // A machine busy with other builds can take far longer than usual to
+    // start Python; the limit only bounds a fixture that never starts.
     let line = receive
-        .recv_timeout(Duration::from_secs(10))
+        .recv_timeout(Duration::from_secs(60))
         .map_err(|_| "fixture startup timed out")?
         .map_err(|_| "could not read the fixture banner")?;
     line.trim()

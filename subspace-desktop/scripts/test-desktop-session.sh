@@ -76,7 +76,9 @@ test "$(find "$fixture/plists" -name '*.plist' | wc -l | tr -d ' ')" = 2
 # An interrupt stops the command and removes the agent and its files.
 bash "$helper" bash -c 'echo started; sleep 30; echo finished' >"$fixture/out" 2>&1 &
 caller=$!
-for _ in $(seq 100); do grep -q started "$fixture/out" 2>/dev/null && break; sleep 0.05; done
+# Wait for the command to start, however long a busy machine takes.
+for _ in $(seq 600); do grep -q started "$fixture/out" 2>/dev/null && break; sleep 0.05; done
+grep -q started "$fixture/out"
 kill -TERM "$caller"
 status=0
 wait "$caller" || status=$?

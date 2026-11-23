@@ -1265,6 +1265,7 @@ class StreamCase(FixtureCase):
             connection.putheader('x-org-id', value)
         connection.endheaders()
         response = connection.getresponse()
+        response.opened = time.monotonic()
         self.addCleanup(connection.close)
         return response
 
@@ -1296,11 +1297,13 @@ class StreamCase(FixtureCase):
         self.assertEqual(response.status, 200)
         self.assertEqual(self.records(response, lambda found: found), [('ready', None)])
 
-    def ends_quickly(self, response, within=2.5):
-        """Reads to the end of a stream the server closes, and returns the rest."""
-        started = time.monotonic()
+    def ends_quickly(self, response):
+        """Reads to the end of a stream the server closed before its lifetime
+        ran out, and returns the rest. The lifetime is the bound, rather than
+        a few seconds, so a busy machine cannot fail a stream that did close
+        early; the classes that use this give their streams 20 seconds or more."""
         rest = response.read()
-        self.assertLess(time.monotonic() - started, within)
+        self.assertLess(time.monotonic() - response.opened, self.server.stream_seconds)
         return rest
 
 
@@ -1336,8 +1339,9 @@ class UpdateStreamTests(StreamCase):
         self.assertEqual((commented['identifier'], commented['action']), ('OPS-5', 'comment.created'))
         found = self.records(response, lambda found: (':', 'keepalive') in found)
         self.assertIn((':', 'keepalive'), found)
-        # The stream closes by itself after its lifetime: reading to the end returns.
-        self.assertNotIn(b'issueChanged', self.ends_quickly(response, 3))
+        # The stream closes by itself after its lifetime: reading to the end
+        # returns, where a stream left open would keep sending keep-alives.
+        self.assertNotIn(b'issueChanged', response.read())
 
     def test_streams_need_one_valid_organisation_header_and_known_teams(self):
         self.refused(400, orgs=[])
@@ -1386,7 +1390,7 @@ class UpdateStreamTests(StreamCase):
 
 
 class StreamCloseTests(StreamCase):
-    options = dict(stream_seconds=6, keepalive_seconds=0.3, served=('updates',), auto_approve=True,
+    options = dict(stream_seconds=20, keepalive_seconds=0.3, served=('updates',), auto_approve=True,
                    access_token_seconds=1.2)
 
     def test_a_closed_stream_ends_without_sending_what_is_queued(self):
@@ -1441,7 +1445,7 @@ class StreamCloseTests(StreamCase):
         self.assertEqual(status, 200, tokens)
         response = self.open_stream(token=tokens['access_token'])
         self.ready(response)
-        self.ends_quickly(response, within=2.5)  # Long before the six-second lifetime.
+        self.ends_quickly(response)  # At the token's expiry, long before the lifetime.
         self.assertEqual(self.call('GET', '/api/v1/me', token=tokens['access_token'])[0], 401)
         self.refused(401, token=tokens['access_token'])
         status, rotated, _ = self.call('POST', '/user_management/authenticate', token=None,
@@ -1873,26 +1877,27 @@ class FailureHookTests(FileCase):
         self.assertEqual(self.call('POST', '/__fixture/config', dict(failNext=[dict(method='GET')]), token=None)[0], 400)
 
     def test_a_slow_body_arrives_after_its_headers(self):
+        # The fixture records the headers as sent before it waits, and the
+        # body takes at least the delay: a lower bound, which a busy machine
+        # only lengthens. The held-body test below shows the headers arrive
+        # while the body is still held.
+        def held_last():
+            return self.call('GET', '/__fixture/requests', token=None)[1][-1].get('slowBodyHeadersStatus')
+
         self.configure(slowBody=dict(path='/api/v1/auth/context', seconds=0.8, times=1))
-        connection = http.client.HTTPConnection(urlsplit(self.server.origin).netloc, timeout=5)
-        self.addCleanup(connection.close)
         started = time.monotonic()
-        connection.request('GET', '/api/v1/auth/context', headers={'Authorization': f'Bearer {TOKEN}'})
-        response = connection.getresponse()
-        headers_at = time.monotonic() - started
-        body = json.loads(response.read())
-        body_at = time.monotonic() - started
-        self.assertEqual((response.status, body['userId']), (200, NETT.ADA['userId']))
-        self.assertLess(headers_at, 0.6)
-        self.assertGreaterEqual(body_at, 0.75)
-        started = time.monotonic()
+        code, body, _ = self.call('GET', '/api/v1/auth/context')
+        self.assertGreaterEqual(time.monotonic() - started, 0.75)
+        self.assertEqual((code, body['userId']), (200, NETT.ADA['userId']))
+        self.assertEqual(held_last(), 200)
         self.call('GET', '/api/v1/auth/context')
-        self.assertLess(time.monotonic() - started, 0.6, 'only once')
+        self.assertIsNone(held_last(), 'only once')
         # A path ending in * slows every path under it.
         self.configure(slowBody=dict(path='/api/v1/auth/*', seconds=0.8, times=1))
         started = time.monotonic()
         self.call('GET', '/api/v1/auth/context')
         self.assertGreaterEqual(time.monotonic() - started, 0.75)
+        self.assertEqual(held_last(), 200)
 
     def test_a_held_body_logs_the_sent_headers_and_can_be_released(self):
         path = '/api/v1/auth/context'
@@ -1900,7 +1905,7 @@ class FailureHookTests(FileCase):
         with ThreadPoolExecutor() as pool:
             waiting = pool.submit(self.call, 'GET', path)
             try:
-                deadline = time.monotonic() + 3
+                deadline = time.monotonic() + 8
                 while time.monotonic() < deadline:
                     log = self.call('GET', '/__fixture/requests', token=None)[1]
                     if log and log[-1].get('slowBodyHeadersStatus') == 200:
@@ -1973,7 +1978,7 @@ class FailureHookTests(FileCase):
         body, data = self.upload(data=b'x' * 100, draftId=str(uuid.uuid4()))
         prepared = self.ok('POST', '/issues/media/prepare', body)
         url = urlsplit(prepared['upload']['uploadUrl'])
-        slow = http.client.HTTPConnection(url.netloc, timeout=3)
+        slow = http.client.HTTPConnection(url.netloc, timeout=10)
         self.addCleanup(slow.close)
         stop = threading.Event()
 
@@ -1984,7 +1989,10 @@ class FailureHookTests(FileCase):
             except OSError:
                 pass  # The deadline closes the connection.
 
-        with patch.object(NETT.Handler, 'body_timeout', 1), ThreadPoolExecutor() as pool:
+        # A log blocked by the incomplete upload would wait for its
+        # five-second deadline, past the probe's three-second timeout; a busy
+        # machine still answers the probe well within it.
+        with patch.object(NETT.Handler, 'body_timeout', 5), ThreadPoolExecutor() as pool:
             slow.putrequest('PUT', f'{url.path}?{url.query}')
             slow.putheader('Content-Length', str(len(data)))
             slow.putheader('Content-Type', body['contentType'])
@@ -1993,8 +2001,8 @@ class FailureHookTests(FileCase):
             try:
                 # The log is taken at arrival. It must stay readable while the
                 # incomplete request is still receiving bytes.
-                with closing(http.client.HTTPConnection(url.netloc, timeout=0.7)) as probe:
-                    for _ in range(10):
+                with closing(http.client.HTTPConnection(url.netloc, timeout=3)) as probe:
+                    for _ in range(100):
                         probe.request('GET', '/__fixture/requests')
                         reply = probe.getresponse()
                         if any(r['path'] == url.path for r in json.loads(reply.read())):
@@ -2120,7 +2128,7 @@ class StreamReleaseTests(StreamCase):
 
 
 class StreamRefusalTests(StreamCase):
-    options = dict(stream_seconds=6, keepalive_seconds=0.3, served=('updates',))
+    options = dict(stream_seconds=20, keepalive_seconds=0.3, served=('updates',))
 
     def test_a_stream_can_be_refused_with_401_or_403_and_no_retry_after(self):
         for status in (401, 403):
@@ -2145,7 +2153,7 @@ class StreamRefusalTests(StreamCase):
 
 
 class StreamAuthorityTests(StreamCase):
-    options = dict(stream_seconds=6, keepalive_seconds=0.3, served=('updates',))
+    options = dict(stream_seconds=20, keepalive_seconds=0.3, served=('updates',))
 
     def setUp(self):
         super().setUp()

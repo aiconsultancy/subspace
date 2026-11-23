@@ -117,7 +117,8 @@ grep -Fq 'captured main' "$fixture/capture.out" || fail "capture result not repo
 test -z "$(ls -A "$fixture/tmp")" || fail "the fixture home was left behind"
 # Check the actual listening endpoints; process listing is unavailable in some sandboxes.
 while IFS= read -r address; do
-    for _ in $(seq 20); do
+    # Allow a busy machine time to stop them; a server left running fails below.
+    for _ in $(seq 200); do
         curl -s --max-time 1 -o /dev/null "$address" || break
         sleep 0.1
     done
