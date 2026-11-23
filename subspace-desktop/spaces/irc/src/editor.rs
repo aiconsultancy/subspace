@@ -93,11 +93,11 @@ impl IrcSettings {
         let hub = crate::hub::entity(cx);
         let account = hub
             .as_ref()
-            .map(|hub| hub.read(cx).account_networks())
+            .map(|hub| hub.read(cx).account_networks(cx))
             .unwrap_or_default();
         subscriptions.extend(hub.map(|hub| {
             cx.observe(&hub, |editor, hub, cx| {
-                let account = hub.read(cx).account_networks();
+                let account = hub.read(cx).account_networks(cx);
                 editor.set_account(account, cx);
             })
         }));
@@ -330,6 +330,9 @@ impl BoardSettingsEditor for IrcSettings {
     }
 
     fn values(&self, cx: &App) -> Result<Map<String, Value>, String> {
+        if let Some(refused) = self.account.refused_switch() {
+            return Err(refused);
+        }
         let networks = self.network_values(cx)?;
         let highlights = draft::split_list(&self.highlights.read(cx).value());
         Ok(Map::from_iter([

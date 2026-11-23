@@ -9,6 +9,7 @@
 mod account;
 mod device;
 mod env;
+mod ids;
 mod login;
 mod plan;
 mod servers;
@@ -16,16 +17,18 @@ mod source;
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
 use gpui_kit::{App, AppContext as _, Context};
 use subspace_api_client::initiatives::Catalog;
 use subspace_api_client::model::MemberInitiative;
 use subspace_client_irc::NetworkConfig;
+use subspace_framework::dashboard::full_text::Document;
 
 pub(crate) use account::Account;
-pub(crate) use plan::{Server, digest, owner, reserved, same_server};
+pub(crate) use ids::reserved;
+pub(crate) use plan::{Server, same_server};
 
 use crate::hub::Hub;
 use crate::initiatives::Endpoint;
@@ -49,6 +52,9 @@ pub(crate) struct Managed {
     /// When to read the memberships again while they are not known for
     /// the signed-in account.
     catalogue: account::Retry,
+    /// The person whose account networks' stored lines search shows: the
+    /// verified account's, `None` while nobody is verified.
+    searchable: Arc<RwLock<Option<String>>>,
     networks: Vec<NetworkConfig>,
 }
 
@@ -61,6 +67,11 @@ pub(crate) struct AccountNetworks {
     /// Every server the API vouches for, including those a saved network
     /// connects to instead.
     pub servers: Vec<Server>,
+    /// The verified person's API user ID, while one is signed in.
+    pub person: Option<String>,
+    /// Whether the memberships were read for that person, so the servers
+    /// are theirs.
+    pub confirmed: bool,
 }
 
 impl Default for Managed {
@@ -83,7 +94,31 @@ impl Managed {
             servers: servers::Servers::default(),
             epoch: 0,
             catalogue: account::Retry::default(),
+            searchable: Arc::default(),
             networks: Vec::new(),
+        }
+    }
+
+    /// The rule search asks of each stored line: hidden when it belongs
+    /// to an account network of anyone but the verified person.
+    pub(crate) fn search_rule(&self) -> impl Fn(&Document) -> bool + Send + Sync + 'static {
+        let current = Arc::clone(&self.searchable);
+        move |document| {
+            current
+                .read()
+                .map(|person| ids::hidden(document, person.as_deref()))
+                .unwrap_or(true)
+        }
+    }
+
+    /// Tells search whose account networks it shows now.
+    fn publish_searchable(&self) {
+        let person = self
+            .binding
+            .as_ref()
+            .map(|binding| ids::digest(&binding.person_id));
+        if let Ok(mut searchable) = self.searchable.write() {
+            *searchable = person;
         }
     }
 
@@ -121,19 +156,22 @@ impl Managed {
     }
 
     /// What Settings shows.
-    pub(crate) fn shown(&self) -> AccountNetworks {
-        let servers: Vec<Server> = self
-            .servers
-            .vouched()
-            .map(|(entry, _)| entry.server.clone())
-            .collect();
+    /// What Settings shows, while the memberships read for `owner` are the
+    /// verified person's.
+    pub(crate) fn shown(&self, owner: Option<(Option<u64>, &str)>) -> AccountNetworks {
+        let confirmed = self
+            .binding
+            .as_ref()
+            .is_some_and(|binding| binding.owns(owner));
+        let vouched = || self.servers.vouched().filter(|_| confirmed);
         AccountNetworks {
-            account: self
-                .servers
-                .vouched()
-                .map(|(_, account)| account.to_owned())
-                .next(),
-            servers,
+            account: vouched().map(|(_, account)| account.to_owned()).next(),
+            servers: vouched().map(|(entry, _)| entry.server.clone()).collect(),
+            person: self
+                .binding
+                .as_ref()
+                .map(|binding| binding.person_id.clone()),
+            confirmed,
         }
     }
 
@@ -155,6 +193,7 @@ impl Managed {
         self.servers.clear();
         self.epoch = self.epoch.wrapping_add(1);
         self.schedule.restart();
+        self.publish_searchable();
     }
 
     /// Takes a finished check: the account it showed, or a later retry.
@@ -180,6 +219,7 @@ impl Managed {
                 };
                 let changed = self.account != account;
                 self.account = account;
+                self.publish_searchable();
                 changed
             }
             account::Outcome::Retry { cap } => {
@@ -262,10 +302,6 @@ fn finish(hub: &mut Hub, checked: account::Checked, cx: &mut Context<Hub>) {
     let now = Instant::now();
     if !hub.managed.finish(checked, now) {
         return;
-    }
-    if let Account::SignedIn(person) = &hub.managed.account {
-        let person_id = person.id.clone();
-        hub.keep_history_of(&person_id);
     }
     reread(hub, now, cx);
     hub.reconcile(cx);

@@ -147,10 +147,10 @@ fn a_saved_network_on_the_fleet_s_server_is_kept_and_no_second_one_connects(
     connect(&hub, &api, cx);
     member_of(&hub, (Some(1), "user-ada"), fleets("127.0.0.1", None), cx);
     settle(&hub, cx);
-    hub.read_with(cx, |hub, _| {
+    hub.read_with(cx, |hub, cx| {
         assert_eq!(hosts(&hub.effective().networks), ["127.0.0.1"]);
         assert_eq!(
-            hub.account_networks().servers.len(),
+            hub.account_networks(cx).servers.len(),
             1,
             "Settings still offers the switch"
         );
@@ -172,7 +172,7 @@ fn an_api_without_usernames_brings_no_network(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn settings_see_the_vouched_servers_only_while_signed_in(cx: &mut TestAppContext) {
     let (_board, hub, cx) = mount(cx, settings());
-    let shown = |cx: &mut VisualTestContext| hub.read_with(cx, |hub, _| hub.account_networks());
+    let shown = |cx: &mut VisualTestContext| hub.read_with(cx, |hub, cx| hub.account_networks(cx));
     assert_eq!(shown(cx), crate::managed::AccountNetworks::default());
     let api = Api::new(&["127.0.0.1"]);
     let env = connect(&hub, &api, cx);

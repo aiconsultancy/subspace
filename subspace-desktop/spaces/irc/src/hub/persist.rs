@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use gpui_kit::{AppContext as _, Context};
-use subspace_client_irc::{BufferKey, Command, Event, Line, NetworkConfig};
+use subspace_client_irc::{BufferKey, Command, Event, Line, NetworkConfig, NetworkId};
 use subspace_framework::core::log::{Level, Logger};
 
 use super::Hub;
@@ -26,12 +26,6 @@ pub(crate) struct Recall {
     pub waiting: Option<Vec<NetworkConfig>>,
     /// Buffers waiting for the lines around a message.
     pub around: Vec<BufferKey>,
-    /// Stored buffers of account networks that are not running: restored
-    /// when their network runs, and deleted once another person signs in.
-    pub parked: Vec<Restored>,
-    /// Buffers of account networks that stopped running this session,
-    /// deleted from the store once another person signs in.
-    pub retired: Vec<BufferKey>,
 }
 
 impl Recall {
@@ -41,8 +35,6 @@ impl Recall {
             persist: None,
             waiting: Some(networks),
             around: Vec::new(),
-            parked: Vec::new(),
-            retired: Vec::new(),
         }
     }
 
@@ -258,16 +250,59 @@ impl Hub {
         .detach();
     }
 
+    /// Reads the stored buffers again for `started`, account networks that
+    /// began to run after the restore at start, such as after signing back
+    /// in, and restores theirs with catch-up anchors. A buffer whose network
+    /// stopped meanwhile is left in the store.
+    pub(super) fn recall_started(&mut self, started: Vec<NetworkId>, cx: &mut Context<Self>) {
+        let link = self
+            .recall
+            .persist
+            .as_ref()
+            .map(|persist| persist.link.clone());
+        let Some(link) = link.filter(|_| !started.is_empty() && self.recall.waiting.is_none())
+        else {
+            return;
+        };
+        cx.spawn(async move |hub, cx| {
+            let restored = cx.background_spawn(async move { link.restore() }).await;
+            _ = hub.update(cx, |hub, cx| {
+                hub.restore_started(restored.ok().flatten().unwrap_or_default(), &started);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Restores those of `restored` whose network is among `started` and
+    /// still runs, and tells the runtime where each one's history resumes.
+    fn restore_started(&mut self, restored: Vec<Restored>, started: &[NetworkId]) {
+        let running: Vec<NetworkId> = started
+            .iter()
+            .filter(|network| self.state.network(network).is_some())
+            .cloned()
+            .collect();
+        for buffer in restored
+            .into_iter()
+            .filter(|buffer| running.contains(&buffer.buffer.network))
+        {
+            self.state
+                .restore_buffer(&buffer.buffer, buffer.lines, &buffer.ended);
+        }
+        self.recall.keep_endings(&mut self.state);
+        for network in running {
+            let anchors = self.state.anchors(&network);
+            if !anchors.is_empty() {
+                self.send(Command::Anchors { network, anchors });
+            }
+        }
+    }
+
     /// Applies the restored buffers and their request endings, configures
     /// the runtime with the networks it waited for, and tells it each
     /// buffer's newest line.
     fn resume(&mut self, restored: Vec<Restored>) {
         for buffer in restored {
-            let network = &buffer.buffer.network;
-            if self.state.network(network).is_none() && crate::managed::reserved(&network.0) {
-                self.recall.parked.push(buffer);
-                continue;
-            }
             self.state
                 .restore_buffer(&buffer.buffer, buffer.lines, &buffer.ended);
         }

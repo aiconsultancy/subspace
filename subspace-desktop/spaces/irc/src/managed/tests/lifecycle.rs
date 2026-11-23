@@ -50,8 +50,8 @@ fn a_check_or_probe_answered_after_an_account_change_is_dropped(cx: &mut TestApp
     *env.generation.lock().unwrap() = Some(2);
     cx.run_until_parked();
     assert_eq!(configured(&hub, cx).len(), 1, "the late check is dropped");
-    hub.read_with(cx, |hub, _| {
-        assert!(hub.account_networks().account.is_none())
+    hub.read_with(cx, |hub, cx| {
+        assert!(hub.account_networks(cx).account.is_none())
     });
     // Signed in at generation 2, a probe starts, then the account changes.
     member_of(&hub, (Some(2), "user-ada"), fleets("127.0.0.1", None), cx);

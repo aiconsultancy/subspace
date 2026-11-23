@@ -19,12 +19,23 @@ use crate::managed::{AccountNetworks, Server, same_server};
 
 const SWITCH_NOTE: &str = "Save removes this network and its saved passwords from irc/config.json. Channels then connects to the server with your account.";
 
-/// The account's networks as the page shows them, and the saved network
-/// whose switch to them waits for confirmation.
+/// The account's networks as the page shows them, the saved network whose
+/// switch to them waits for confirmation, and the saved networks switched,
+/// which Save checks again.
 #[derive(Default)]
 pub(crate) struct Account {
     pub networks: AccountNetworks,
     pub switching: Option<u64>,
+    pub switched: Vec<Switched>,
+}
+
+/// A saved network removed from the draft for the account's network on
+/// its server, by the person signed in then.
+pub(crate) struct Switched {
+    pub title: String,
+    pub host: String,
+    pub port: u16,
+    pub person: Option<String>,
 }
 
 impl Account {
@@ -32,6 +43,38 @@ impl Account {
         Self {
             networks,
             switching: None,
+            switched: Vec::new(),
+        }
+    }
+
+    /// Why Save must not drop a switched saved network, if it must not:
+    /// the person who switched it is no longer signed in, their fleets
+    /// cannot be confirmed now, or their account no longer has a network
+    /// for that server.
+    pub fn refused_switch(&self) -> Option<String> {
+        self.switched.iter().find_map(|switched| {
+            let why = self.lost(switched)?;
+            Some(format!(
+                "“{}” was not switched to your account because {why}, so it is kept. Cancel keeps your settings as they were.",
+                switched.title
+            ))
+        })
+    }
+
+    fn lost(&self, switched: &Switched) -> Option<&'static str> {
+        let now = &self.networks;
+        let served = now
+            .servers
+            .iter()
+            .any(|server| same_server(&switched.host, switched.port, server));
+        match now.person.as_ref() {
+            None => Some("you are signed out"),
+            Some(person) if Some(person) != switched.person.as_ref() => {
+                Some("another account is signed in")
+            }
+            Some(_) if !now.confirmed => Some("your fleets could not be confirmed just now"),
+            Some(_) if !served => Some("your account no longer has a network for that server"),
+            Some(_) => None,
         }
     }
 
@@ -120,15 +163,25 @@ pub(super) fn saved_words(apart: bool) -> (&'static str, &'static str) {
 /// connects to one of the account's servers; otherwise withdraws the
 /// confirmation.
 pub(super) fn switch(editor: &mut IrcSettings, key: u64, cx: &mut Context<IrcSettings>) {
-    let still = editor.enabled
-        && editor.account.switching == Some(key)
-        && editor
-            .network(key)
-            .is_some_and(|network| editor.account.server(network, cx).is_some());
-    if still {
-        editor.remove(key, cx);
-    } else {
-        editor.ask_switch(None, cx);
+    let switched = editor
+        .network(key)
+        .filter(|network| editor.account.server(network, cx).is_some())
+        .and_then(|network| {
+            let text = network.text(cx);
+            Some(Switched {
+                title: network.title(cx),
+                port: parse_port(&text.port)?,
+                host: text.host,
+                person: editor.account.networks.person.clone(),
+            })
+        })
+        .filter(|_| editor.enabled && editor.account.switching == Some(key));
+    match switched {
+        Some(switched) => {
+            editor.account.switched.push(switched);
+            editor.remove(key, cx);
+        }
+        None => editor.ask_switch(None, cx),
     }
 }
 

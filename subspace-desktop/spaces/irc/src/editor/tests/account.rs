@@ -17,12 +17,14 @@ fn account(host: &str) -> AccountNetworks {
         account: Some("ada".into()),
         servers: vec![Server {
             endpoint: Endpoint {
-                host: host.into(),
+                host: crate::initiatives::comparable_host(host),
                 port: 6697,
                 tls: true,
             },
             fleets: vec!["Aurora".into()],
         }],
+        person: Some("user-ada".into()),
+        confirmed: true,
     }
 }
 
@@ -98,9 +100,7 @@ fn a_saved_network_on_the_account_s_server_offers_to_switch(cx: &mut TestAppCont
     cx.update(|window, _| {
         assert!(window.try_find(("irc-switch-confirmation", 0u64)).is_none());
     });
-    cx.update(|window, cx| window.click(("irc-switch-network", 0u64), cx));
-    cx.update(|window, cx| window.render_frame(cx));
-    cx.update(|window, cx| window.click(("irc-switch-confirm", 0u64), cx));
+    confirm_switch(cx);
     cx.update(|_, cx| {
         let editor = editor.read(cx);
         assert_eq!(editor.networks.len(), 1);
@@ -127,8 +127,8 @@ fn the_switch_names_the_network_and_why_one_is_not_connected() {
 #[gpui_kit::test]
 fn a_saved_network_cannot_keep_an_account_network_s_id(cx: &mut TestAppContext) {
     let saved = serde_json::json!({"networks": [
-        {"id": "@account.0123456789abcdef.0123456789abcdef", "name": "Taken",
-         "host": "irc.example.com", "nickname": "ada"}
+        {"id": "@account.x.y", "name": "Taken", "host": "irc.example.com", "nickname": "ada"},
+        {"id": "@work", "name": "Work", "host": "irc.example.org", "nickname": "ada"}
     ]})
     .as_object()
     .cloned()
@@ -140,9 +140,10 @@ fn a_saved_network_cannot_keep_an_account_network_s_id(cx: &mut TestAppContext) 
         assert_eq!(problems[0].message, crate::config::RESERVED);
         let refused = editor.values(cx).unwrap_err();
         assert!(
-            refused.starts_with("Taken: ids starting with @"),
+            refused.starts_with("Taken: this id starts with @account."),
             "{refused}"
         );
+        assert!(editor.problems(1, cx).is_empty(), "@work is an ordinary id");
     });
 }
 
@@ -199,4 +200,84 @@ fn the_saved_list_is_named_apart_from_the_account_s() {
         account_view::offer_note(),
         "Your Subspace API account can sign in to this server for you."
     );
+}
+
+#[gpui_kit::test]
+fn a_saved_id_starting_with_at_loads_and_saves_as_before(cx: &mut TestAppContext) {
+    let saved = serde_json::json!({"networks": [
+        {"id": "@work", "name": "Work", "host": "irc.example.org", "nickname": "ada"}
+    ]})
+    .as_object()
+    .cloned()
+    .unwrap_or_default();
+    let (editor, cx) = mount(cx, saved);
+    cx.update(|_, cx| {
+        let values = editor.read(cx).values(cx).unwrap();
+        assert_eq!(values["networks"][0]["id"], "@work");
+    });
+}
+
+/// Switches the saved Example Network to the account's network on its
+/// server.
+fn switch_example(editor: &Entity<IrcSettings>, cx: &mut VisualTestContext) {
+    show(editor, account("irc.example.net"), cx);
+    confirm_switch(cx);
+    cx.update(|_, cx| assert_eq!(editor.read(cx).networks.len(), 1));
+}
+
+/// Chooses Use account sign-in… on the first network, then Switch.
+fn confirm_switch(cx: &mut VisualTestContext) {
+    cx.update(|window, cx| window.click(("irc-switch-network", 0u64), cx));
+    cx.update(|window, cx| window.render_frame(cx));
+    cx.update(|window, cx| window.click(("irc-switch-confirm", 0u64), cx));
+}
+
+#[gpui_kit::test]
+fn save_keeps_a_switched_network_once_its_account_is_signed_out(cx: &mut TestAppContext) {
+    let (editor, cx) = mount(cx, saved());
+    switch_example(&editor, cx);
+    show(&editor, AccountNetworks::default(), cx);
+    cx.update(|_, cx| {
+        let refused = editor.read(cx).values(cx).unwrap_err();
+        assert!(
+            refused.starts_with(
+                "“Example Network” was not switched to your account because you are signed out"
+            ),
+            "{refused}"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn save_keeps_a_switched_network_while_its_fleets_cannot_be_confirmed(cx: &mut TestAppContext) {
+    let (editor, cx) = mount(cx, saved());
+    switch_example(&editor, cx);
+    let unconfirmed = AccountNetworks {
+        account: None,
+        servers: Vec::new(),
+        person: Some("user-ada".into()),
+        confirmed: false,
+    };
+    show(&editor, unconfirmed, cx);
+    cx.update(|_, cx| {
+        let refused = editor.read(cx).values(cx).unwrap_err();
+        assert!(refused.contains("could not be confirmed"), "{refused}");
+    });
+    let other = AccountNetworks {
+        person: Some("user-bob".into()),
+        ..account("irc.example.net")
+    };
+    show(&editor, other, cx);
+    cx.update(|_, cx| {
+        let refused = editor.read(cx).values(cx).unwrap_err();
+        assert!(
+            refused.contains("another account is signed in"),
+            "{refused}"
+        );
+    });
+    show(&editor, account("irc.example.net"), cx);
+    cx.update(|_, cx| {
+        let values = editor.read(cx).values(cx).unwrap();
+        assert_eq!(values["networks"].as_array().map(Vec::len), Some(1));
+    });
 }

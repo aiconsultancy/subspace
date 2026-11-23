@@ -116,6 +116,12 @@ pub(crate) fn start(cx: &mut App) {
     let hub = cx.new(|cx| {
         let mut hub = Hub::new(&settings, removed, Outbox::Runtime(runtime), initiatives);
         hub.managed = crate::managed::Managed::new(crate::managed::device(cx));
+        if let Some(link) = &link {
+            // Other people's account networks stay stored but out of search.
+            let _ = link
+                .service
+                .set_hidden(crate::ID, hub.managed.search_rule());
+        }
         hub.state.directories = cached_directories(&settings);
         hub.tools = Some(agent_tools::open());
         hub.uploads.session.connect();
@@ -208,6 +214,7 @@ pub(crate) fn install_with_store_for_test(
     let initiatives = InitiativeIrc::new(Catalog::shared(cx), true);
     let hub = cx.new(|cx| {
         let mut hub = Hub::new(settings, removed, Outbox::Recorded(Vec::new()), initiatives);
+        let _ = service.set_hidden(crate::ID, hub.managed.search_rule());
         hub.recall.persist = Some(persist::Persist::new(store::Link::new(service)));
         hub._settings = Some(follow_settings(cx));
         hub.follow_initiatives(cx);

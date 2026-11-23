@@ -59,7 +59,13 @@ impl Hub {
         if settings == self.applied {
             return;
         }
-        self.retire(&settings);
+        let started: Vec<NetworkId> = settings
+            .networks
+            .iter()
+            .filter(|network| crate::managed::reserved(&network.id.0))
+            .filter(|network| !self.applied.networks.iter().any(|old| old.id == network.id))
+            .map(|network| network.id.clone())
+            .collect();
         for channel in running::added_channels(&self.applied.networks, &settings.networks) {
             self.state.removed.forget(&channel);
         }
@@ -75,7 +81,7 @@ impl Hub {
             self.captain_notifications.pause();
         }
         self.applied = settings;
-        self.restore_parked();
+        self.recall_started(started, cx);
         self.initiatives.forget_rosters();
         self.save_removed(cx);
         save_directories(self, cx);

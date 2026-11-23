@@ -37,9 +37,10 @@ impl Endpoint {
             }
             _ => (rest, if tls { TLS_PORT } else { PLAIN_PORT }),
         };
-        Some(Self {
-            host: canonical_host(host)?,
-            port: valid_port(port)?,
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        (!host.is_empty() && !host.contains(['/', '@', ' '])).then(|| Self {
+            host: comparable_host(host),
+            port,
             tls,
         })
     }
@@ -57,13 +58,13 @@ impl Endpoint {
             .map_or_else(|| Some(default.clone()), Self::from_fleet)
     }
 
-    /// The initiative's fleet server, when the API names a valid one: a
-    /// host that is a DNS name or an IP literal, and a port from 1 to 65535.
+    /// The initiative's fleet server, as the API names it, with its host in
+    /// the form every comparison uses.
     pub(crate) fn from_fleet(initiative: &MemberInitiative) -> Option<Self> {
         let fleet = initiative.fleet.as_ref()?;
         Some(Self {
-            host: canonical_host(fleet.irc_host.as_deref()?)?,
-            port: valid_port(fleet.irc_port?)?,
+            host: comparable_host(fleet.irc_host.as_deref().filter(|host| !host.is_empty())?),
+            port: fleet.irc_port?,
             tls: fleet.irc_tls.unwrap_or(false),
         })
     }
@@ -76,10 +77,17 @@ impl Endpoint {
     /// A configured network on this server. Certificate checks may only be
     /// relaxed for a loopback server, such as a local self-signed one.
     pub(crate) fn matches(&self, network: &NetworkConfig) -> bool {
-        network.host.eq_ignore_ascii_case(&self.host)
+        comparable_host(&network.host) == self.host
             && network.port == self.port
             && network.tls == self.tls
             && (!network.accept_invalid_certs || loopback(&network.host))
+    }
+
+    /// Whether a login may be sent to it: a host that is a DNS name or an
+    /// IP literal (no whitespace, control characters, `/`, `@` or port) and
+    /// a port from 1 to 65535. Only where a login is about to go.
+    pub(crate) fn sendable(&self) -> bool {
+        self.port != 0 && (self.host.parse::<std::net::IpAddr>().is_ok() || dns_name(&self.host))
     }
 
     /// Whether the server is on this computer.
@@ -109,25 +117,15 @@ fn resolve(value: Option<&str>) -> Endpoint {
         })
 }
 
-/// `host` as one spelling: a DNS name in lower case without a final dot,
-/// or an IP literal as Rust writes it (IPv6 without brackets). `None` for
-/// anything else, such as whitespace, control characters, `/`, `@` or a
-/// port suffix.
-pub(crate) fn canonical_host(host: &str) -> Option<String> {
-    let bracketed = host
-        .strip_prefix('[')
-        .and_then(|rest| rest.strip_suffix(']'));
-    if let Some(inner) = bracketed {
-        return inner
-            .parse::<std::net::Ipv6Addr>()
-            .ok()
-            .map(|ip| ip.to_string());
-    }
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        return Some(ip.to_string());
-    }
-    let name = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
-    dns_name(&name).then_some(name)
+/// `host` in the one form every host comparison uses, on both sides: ASCII
+/// lower case, without a final dot or IPv6 brackets, and an IP literal as
+/// Rust writes it. Total: any host has one, so everything that matched
+/// ignoring ASCII case still matches.
+pub(crate) fn comparable_host(host: &str) -> String {
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let host = host.strip_suffix('.').unwrap_or(host).to_ascii_lowercase();
+    host.parse::<std::net::IpAddr>()
+        .map_or(host, |ip| ip.to_string())
 }
 
 /// Letters, digits and inner hyphens in labels of 1 to 63 bytes, at most
@@ -147,10 +145,6 @@ fn dns_name(name: &str) -> bool {
         && !name
             .bytes()
             .all(|byte| byte.is_ascii_digit() || byte == b'.')
-}
-
-fn valid_port(port: u16) -> Option<u16> {
-    (port != 0).then_some(port)
 }
 
 fn loopback(host: &str) -> bool {
@@ -229,23 +223,44 @@ mod tests {
     }
 
     #[test]
-    fn a_fleet_server_is_used_only_with_a_valid_host_and_port() {
+    fn hosts_compare_in_one_form_and_only_logins_need_a_valid_one() {
         let fleet = |host: &str, port: u16| {
             Endpoint::from_fleet(&initiative(&format!(
                 r#"{{"id":"f","ircHost":{},"ircPort":{port},"ircTls":true}}"#,
                 serde_json::json!(host)
             )))
-            .map(|endpoint| endpoint.host)
         };
-        assert_eq!(
-            fleet("IRC.Example.com.", 6697).as_deref(),
-            Some("irc.example.com")
+        let saved = |host: &str| {
+            let mut network = config();
+            network.host = host.into();
+            network.port = 6697;
+            network.tls = true;
+            network
+        };
+        // What matched before still matches, now also across a final dot.
+        let named = fleet("IRC.Example.com", 6697).unwrap();
+        assert!(named.matches(&saved("irc.example.com")));
+        assert!(named.matches(&saved("irc.example.com.")));
+        assert!(
+            fleet("irc.example.com.", 6697)
+                .unwrap()
+                .matches(&saved("IRC.example.com"))
         );
-        assert_eq!(fleet("[0:0::1]", 6697).as_deref(), Some("::1"));
-        assert_eq!(fleet("2001:DB8::1", 6697).as_deref(), Some("2001:db8::1"));
-        assert_eq!(fleet("192.0.2.7", 6697).as_deref(), Some("192.0.2.7"));
-        for bad in [
-            "",
+        let underscored = fleet("irc_1.example.com", 6697).unwrap();
+        assert!(
+            underscored.matches(&saved("IRC_1.example.com")),
+            "still matches"
+        );
+        assert!(!underscored.sendable(), "but gets no login");
+        assert!(fleet("[0:0::1]", 6697).unwrap().matches(&saved("::1")));
+        assert_eq!(
+            Endpoint::parse("ircs://irc_1.example.com:6697").map(|endpoint| endpoint.host),
+            Some("irc_1.example.com".into()),
+            "the endpoint variable is as lenient as before"
+        );
+        assert!(named.sendable());
+        assert!(fleet("2001:DB8::1", 6697).unwrap().sendable());
+        for unsendable in [
             " irc.example.com",
             "irc.example.com:6697",
             "irc.example.com/x",
@@ -254,11 +269,13 @@ mod tests {
             "-irc.example.com",
             "irc..example.com",
             "999.1.1.1",
-            "[irc.example.com]",
         ] {
-            assert_eq!(fleet(bad, 6697), None, "{bad:?}");
+            assert!(
+                fleet(unsendable, 6697).is_none_or(|endpoint| !endpoint.sendable()),
+                "{unsendable:?}"
+            );
         }
-        assert_eq!(fleet("irc.example.com", 0), None, "port 0");
+        assert!(!fleet("irc.example.com", 0).unwrap().sendable(), "port 0");
     }
 
     #[test]

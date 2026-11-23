@@ -17,7 +17,7 @@ mod channels;
 mod endpoint;
 mod picker;
 pub(crate) use channels::{channel_names, focus_channel, initiative_channels};
-pub(crate) use endpoint::Endpoint;
+pub(crate) use endpoint::{Endpoint, comparable_host};
 pub(crate) use picker::{Picker, button, command, dismiss_stale_picker, hint};
 
 pub(crate) struct InitiativeIrc {
