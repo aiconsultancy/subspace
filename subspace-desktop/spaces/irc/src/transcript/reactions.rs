@@ -18,8 +18,9 @@
 //! Thread tab shows the same pills read-only.
 //!
 //! Every name and value comes from the network: values are bounded by the
-//! client, names are cleaned and cut ([`crate::thread_status::agent_name`]),
-//! and both are rendered as plain text.
+//! client and cleaned for display ([`shown_value`]), names are cleaned and
+//! cut ([`crate::thread_status::agent_name`]), and both are rendered as
+//! plain text. What is sent back is always the exact value held.
 
 use gpui_kit::component::h_flex;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
@@ -42,7 +43,7 @@ use crate::conversation::{Conversation, reacting};
 use crate::reactions::choices::{Choice, Choices, choices};
 use crate::reactions::stop::AgentMessage;
 use crate::state::Entry;
-use crate::thread_status::agent_name;
+use crate::thread_status::{agent_name, invisible};
 
 /// Pills shown before the rest go behind `+N`.
 pub(crate) const SHOWN_PILLS: usize = 10;
@@ -70,6 +71,19 @@ pub(crate) fn pill_action(summary: &ReactionSummary, can_react: bool) -> PillAct
         true if is_agent_stop_reaction(&summary.reaction) && !mine => PillAction::Explain,
         true => PillAction::Toggle { add: !mine },
     }
+}
+
+/// A reaction's value as it is shown: without spaces, control characters
+/// or the zero-width, joining-control and direction characters that would
+/// let it hide text or read as other words (`🛑 from you`, or text turned
+/// round by U+202E). The zero-width joiner stays, as emoji sequences need
+/// it.
+pub(crate) fn shown_value(reaction: &str) -> String {
+    reaction
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_control())
+        .filter(|c| *c == '\u{200d}' || !invisible(*c))
+        .collect()
 }
 
 /// `alice, bob and you`, at most [`NAMED`] names, then how many others.
@@ -101,7 +115,7 @@ pub(crate) fn who(summary: &ReactionSummary) -> String {
 /// A pill's tooltip and accessible name: who reacted, and on an agent
 /// message what a stop reaction asked, never that the agent stopped.
 pub(crate) fn describe(summary: &ReactionSummary, agent: Option<&AgentMessage>) -> String {
-    let base = format!("{} from {}", summary.reaction, who(summary));
+    let base = format!("{} from {}", shown_value(&summary.reaction), who(summary));
     match agent.filter(|_| is_agent_stop_reaction(&summary.reaction)) {
         Some(agent) => format!(
             "{base}. It asked {} to stop; the status line shows whether it did.",
@@ -198,7 +212,7 @@ fn pill(
     let Some(msgid) = msgid.filter(|_| action != PillAction::None) else {
         return text_pill(id, summary, &words);
     };
-    let label = format!("{} {}", summary.reaction, summary.count());
+    let label = format!("{} {}", shown_value(&summary.reaction), summary.count());
     let button = action_button(SharedString::from(id), Intent::Neutral, None, label)
         .latched(summary.mine())
         .tooltip(words.clone())
@@ -223,7 +237,7 @@ fn pill(
 /// A read-only pill with its description as tooltip and name; ours in
 /// the accent's text.
 fn text_pill(id: String, summary: &ReactionSummary, words: &str) -> AnyElement {
-    let label = format!("{} {}", summary.reaction, summary.count());
+    let label = format!("{} {}", shown_value(&summary.reaction), summary.count());
     let pill =
         Pill::new(SharedString::from(format!("{id}:pill")), label).aria_label(words.to_owned());
     let pill = if summary.mine() {
@@ -281,7 +295,7 @@ fn overflow(
     let (conversation, msgid) = (conversation.clone(), msgid.map(str::to_owned));
     anchored::dropdown_menu(button, move |menu, _, _| {
         entries.iter().fold(menu, |menu, choice| {
-            let item = PopupMenuItem::new(choice.reaction.clone()).checked(choice.mine);
+            let item = PopupMenuItem::new(shown_value(&choice.reaction)).checked(choice.mine);
             match &msgid {
                 Some(msgid) => menu.item(on_choose(item, choice, msgid, None, &conversation)),
                 None => menu.item(item.disabled(true)),

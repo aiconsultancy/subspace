@@ -136,7 +136,7 @@ pub(crate) fn agent_name(nick: &str) -> String {
 
 /// Zero-width, joining, direction and other format characters, which would
 /// let a nick hide text or read as another.
-fn invisible(c: char) -> bool {
+pub(crate) fn invisible(c: char) -> bool {
     matches!(
         c,
         '\u{ad}'

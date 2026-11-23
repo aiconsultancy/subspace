@@ -286,3 +286,18 @@ fn a_ticked_choice_takes_back_our_exact_values() {
     let thumbs = choices(&summaries, None).common[0].clone();
     assert_eq!(thumbs.sends(), [("\u{1F44D}".to_owned(), true)]);
 }
+
+#[test]
+fn reaction_values_are_cleaned_for_display() {
+    use crate::transcript::reactions::shown_value;
+    assert_eq!(shown_value("\u{1F6D1} from you"), "\u{1F6D1}fromyou");
+    assert_eq!(shown_value("\u{202E}uoy morf\u{200B}"), "uoymorf");
+    assert_eq!(shown_value("a\u{0007}b\u{2066}c"), "abc");
+    let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+    assert_eq!(
+        shown_value(family),
+        family,
+        "emoji sequences keep their joiner"
+    );
+    assert_eq!(shown_value("\u{2764}\u{FE0F}"), "\u{2764}\u{FE0F}");
+}

@@ -35,3 +35,26 @@ fn taking_back_a_heart_removes_the_one_we_made(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui_kit::test]
+fn a_pill_shows_its_value_cleaned_and_takes_back_the_exact_one(cx: &mut TestAppContext) {
+    let (_board, hub, cx) = open(cx);
+    let odd = "\u{1F44D} from\u{202E} you";
+    receive(&hub, vec![reaction("m1", odd, "subspace")], cx);
+    let m1 = seq(&hub, "m1", cx);
+    let pill = format!("irc-line:{m1}:reaction:0");
+    cx.update(|window, _| {
+        assert_eq!(
+            super::label(window, &pill).as_deref(),
+            Some("\u{1F44D}fromyou from you")
+        );
+    });
+    cx.update(|window, cx| window.click(SharedString::from(pill), cx));
+    cx.run_until_parked();
+    hub.read_with(cx, |hub, _| {
+        assert!(matches!(
+            hub.sent().last(),
+            Some(Command::Unreact { reaction, .. }) if reaction == odd
+        ));
+    });
+}
