@@ -368,6 +368,10 @@ mod tests {
             429,
             "a 403 with Retry-After is a rate limit"
         );
+        for api in [Api::Rest, Api::GraphQl] {
+            let refused = http_failure("ann", api, failure(403, Some("4999"), "Not allowed"));
+            assert_eq!(code(&refused), 403, "a plain 403 stays an access refusal");
+        }
         assert_eq!(reset_hint(None), "; try again in a few minutes");
         assert_eq!(reset_hint(Some("0")), "; try again in a few minutes");
         assert_eq!(reset_hint(Some("3600")), "; it resets at 01:00 UTC");
@@ -403,7 +407,8 @@ mod tests {
         );
         assert_eq!(
             code(&http_failure("ann", Api::Rest, failure(403, None, "nope"))),
-            502
+            403,
+            "lost access stays a refusal, not a transient failure"
         );
     }
 
