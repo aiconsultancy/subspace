@@ -789,6 +789,8 @@ class ExternalDatabaseTests(unittest.TestCase):
         self.assertIn("sslmode=verify-full", plan)
         self.assertIn("applies them only with --migrate", plan)
         self.assertNotIn(self.PASSWORD, plan)
+        # The installer's dry run that follows talks of IRC sign-in: this line says it means the API's.
+        self.assertIn("\nAPI sign-in: setup acts as", plan)
         self.assertNotIn("tracker-db.example.org", plan)
         self.assertNotIn("WARNING", plan)
         plain = self.private("plain", self.URL.replace("?sslmode=verify-full", ""))

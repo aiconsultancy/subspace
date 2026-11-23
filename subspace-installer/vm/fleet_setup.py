@@ -796,7 +796,7 @@ def external_plan(answers, migrate):
         "migrations: " + ("applied before the API starts (--migrate)" if migrate else
                           "checked before the API starts; setup stops if any are missing, and applies them only "
                           "with --migrate"),
-        f"sign-in: setup acts as {answers['adminEmail']}, who must already be an administrator of the development "
+        f"API sign-in: setup acts as {answers['adminEmail']}, who must already be an administrator of the development "
         f"organisation {answers['organisation']} there; it adds no organisation or person unless the database "
         "has none yet",
     ]
