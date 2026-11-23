@@ -13,6 +13,8 @@ mod split;
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
 
+use zeroize::Zeroizing;
+
 use crate::Secret;
 use crate::vault::lock;
 use split::Limits;
@@ -71,25 +73,30 @@ fn serialise() -> Option<MutexGuard<'static, ()>> {
 /// bytes that are not text, as only [`Store::set_bytes`] writes them.
 enum Item {
     Text(String),
-    Bytes(Vec<u8>),
+    Bytes(Zeroizing<Vec<u8>>),
 }
 
-/// One stored item per account name.
+/// One stored item per account name, under one service.
 trait Store {
+    fn service(&self) -> &str;
     fn get(&self, account: &str) -> Result<Option<Item>, KeychainError>;
     fn set_text(&self, account: &str, value: &str) -> Result<(), KeychainError>;
     fn set_bytes(&self, account: &str, value: &[u8]) -> Result<(), KeychainError>;
     /// Deletes the account's item; a missing one is not an error.
     fn delete(&self, account: &str) -> Result<(), KeychainError>;
-    /// Every account name that starts with `prefix`, compared as the store
-    /// compares names.
-    fn list(&self, prefix: &str) -> Result<Vec<String>, KeychainError>;
+    /// The target names, `<account>.<service>` as the store holds them, of
+    /// every item whose target name matches the regular expression `pattern`.
+    fn find(&self, pattern: &str) -> Result<Vec<String>, KeychainError>;
 }
 
 /// The system credential store, under one service name.
 struct System<'a>(&'a str);
 
 impl Store for System<'_> {
+    fn service(&self) -> &str {
+        self.0
+    }
+
     fn get(&self, account: &str) -> Result<Option<Item>, KeychainError> {
         item(entry(self.0, account)?.get_password())
     }
@@ -111,18 +118,18 @@ impl Store for System<'_> {
     }
 
     /// Windows Credential Manager only, the one store whose secrets are
-    /// split: its search matches a pattern against `<account>.<service>`.
-    fn list(&self, prefix: &str) -> Result<Vec<String>, KeychainError> {
+    /// split: its search matches `pattern` against every target name. A found
+    /// credential whose name cannot be read is left out.
+    fn find(&self, pattern: &str) -> Result<Vec<String>, KeychainError> {
         keyring::v1::Entry::store_status()
             .as_ref()
             .map_err(|_| KeychainError)?;
-        let pattern = target_pattern(prefix, self.0);
-        let found = keyring_core::Entry::search(&HashMap::from([("pattern", pattern.as_str())]))
+        let found = keyring_core::Entry::search(&HashMap::from([("pattern", pattern)]))
             .map_err(|_| KeychainError)?;
-        found
+        Ok(found
             .iter()
-            .map(|entry| account_of(entry.get_attributes(), self.0))
-            .collect()
+            .filter_map(|entry| target_of(entry.get_attributes()))
+            .collect())
     }
 }
 
@@ -134,7 +141,7 @@ fn entry(service: &str, account: &str) -> Result<keyring::v1::Entry, KeychainErr
 fn item(result: keyring::v1::Result<String>) -> Result<Option<Item>, KeychainError> {
     match result {
         Ok(text) => Ok(Some(Item::Text(text))),
-        Err(keyring::v1::Error::BadEncoding(bytes)) => Ok(Some(Item::Bytes(bytes))),
+        Err(keyring::v1::Error::BadEncoding(bytes)) => Ok(Some(Item::Bytes(Zeroizing::new(bytes)))),
         Err(keyring::v1::Error::NoEntry) => Ok(None),
         Err(_) => Err(KeychainError),
     }
@@ -148,28 +155,9 @@ fn optional<T>(result: keyring::v1::Result<T>) -> Result<Option<T>, KeychainErro
     }
 }
 
-/// Matches the target names `<account>.<service>` of accounts that start
-/// with `prefix`, ignoring case as Windows does.
-fn target_pattern(prefix: &str, service: &str) -> String {
-    format!(
-        "(?i)^{}.*\\.{}$",
-        regex::escape(prefix),
-        regex::escape(service)
-    )
-}
-
-/// The account of a credential found by [`target_pattern`]: its target name
-/// without `.<service>`.
-fn account_of(
-    attributes: keyring::v1::Result<HashMap<String, String>>,
-    service: &str,
-) -> Result<String, KeychainError> {
-    let attributes = attributes.map_err(|_| KeychainError)?;
-    let target = attributes.get("target_name").ok_or(KeychainError)?;
-    let end = target.len().checked_sub(service.len() + 1);
-    end.and_then(|end| target.get(..end))
-        .map(str::to_owned)
-        .ok_or(KeychainError)
+/// A found credential's target name, unless it cannot be read.
+fn target_of(attributes: keyring::v1::Result<HashMap<String, String>>) -> Option<String> {
+    attributes.ok()?.remove("target_name")
 }
 
 #[cfg(test)]

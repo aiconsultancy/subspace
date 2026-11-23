@@ -1,8 +1,7 @@
 //! Items written by earlier builds, and what earlier builds read.
 
-use super::memory::{
-    ACCOUNT, ITEM_UNITS, Memory, Value, WINDOWS, assert_no_orphans, namespace_of, old_build_load,
-};
+use super::expect::{namespace_of, old_build_load};
+use super::memory::{ACCOUNT, ITEM_UNITS, Memory, Value, WINDOWS};
 use crate::keychain::KeychainError;
 use crate::keychain::split::{delete, load, save};
 
@@ -12,7 +11,8 @@ fn lookalikes() -> Vec<String> {
     let digest = "0".repeat(64);
     vec![
         r#"{"access_token":"fixture-access","refresh_token":"fixture-refresh"}"#.to_owned(),
-        format!("subspace-keychain/chunks/v2/{generation}/002/0000000010/{digest}"),
+        format!("subspace-keychain/chunks/v2/{generation}/002/000000010/{digest}"),
+        format!("\u{ff}\u{df}subspace-keychain/chunks/v2/{generation}/002/000000010/{digest}"),
         format!("subspace-keychain/chunks/v1/{generation}/2/10"),
         "subspace-keychain/plain/fixture".to_owned(),
         "subspace-keychain/".to_owned(),
@@ -58,8 +58,11 @@ fn what_an_earlier_build_writes_over_a_split_secret_wins() {
         load(&store, WINDOWS, ACCOUNT),
         Ok(Some("fixture-token".to_owned()))
     );
+    // A save never searches, so the chunks it replaced stay until a sign-out.
     save(&store, WINDOWS, ACCOUNT, "fixture-next").unwrap();
-    assert_no_orphans(&store, ACCOUNT);
+    assert_eq!(store.names().len(), 5);
+    delete(&store, WINDOWS, ACCOUNT).unwrap();
+    assert!(store.names().is_empty());
 
     // It signs out, deleting the manifest but not the chunks.
     save(&store, WINDOWS, ACCOUNT, &"b".repeat(3_000)).unwrap();

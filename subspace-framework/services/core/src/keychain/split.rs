@@ -6,22 +6,26 @@
 //! in the account's item, a manifest in bytes that no text write can produce
 //! (the `format` module has the layout).
 //!
-//! A save writes the new chunks, then the account's item, then sweeps every
-//! chunk of the account that the item does not name; a save that fails
-//! before the account's item is written deletes its own chunks. A delete
-//! deletes the account's item, then sweeps. A load fails, rather than return
-//! anything else, unless the chunks make a secret with the manifest's length
-//! and digest.
+//! A save reads the account's item, writes the new chunks, writes the
+//! account's item, the commit, and then deletes the chunks of the one
+//! generation it read. It never searches the store, so of two saves at once
+//! the one that commits last stays readable and the other's chunks are left
+//! over. A delete deletes the account's item, the commit, and then sweeps,
+//! best effort, every chunk of the account under this service. A load fails,
+//! rather than return anything else, unless the chunks are exactly the
+//! pieces a save makes of a secret with the manifest's length and digest.
 
 mod format;
+mod read;
 
 use zeroize::Zeroizing;
 
 use super::{Item, KeychainError, Store};
 use format::{
-    Manifest, chunk_header, chunk_name, concat, digest, fits, generation, manifest, namespace,
-    piece, pieces, read_manifest, verify,
+    chunk_header, chunk_name, chunk_of, chunk_pattern, digest, fits, generation, manifest,
+    namespace, pieces, read_manifest, room,
 };
+use read::decode;
 
 /// Windows Credential Manager holds at most 2,560 bytes in one credential
 /// (`CRED_MAX_CREDENTIAL_BLOB_SIZE`) and the keyring crate stores a password
@@ -32,8 +36,11 @@ const WINDOWS_ITEM_UNITS: usize = 1_280;
 const WINDOWS_PIECE_UNITS: usize = 960;
 /// `CRED_MAX_USERNAME_LENGTH`, which keyring applies to the account in bytes.
 const WINDOWS_ACCOUNT_BYTES: usize = 513;
+/// `CRED_MAX_GENERIC_TARGET_NAME_LENGTH`, which keyring applies to
+/// `<account>.<service>` in bytes.
+const WINDOWS_TARGET_BYTES: usize = 32_767;
 
-/// What one stored item holds, in UTF-16 code units, and the longest account.
+/// What one stored item holds, in UTF-16 code units, and the longest names.
 #[derive(Clone, Copy)]
 pub(super) struct Limits {
     /// The longest secret kept as one item, which every earlier build reads.
@@ -42,6 +49,8 @@ pub(super) struct Limits {
     piece: usize,
     /// The longest account name, in bytes.
     account: usize,
+    /// The longest target name, `<account>.<service>`, in bytes.
+    target: usize,
 }
 
 impl Limits {
@@ -49,6 +58,7 @@ impl Limits {
         item: WINDOWS_ITEM_UNITS,
         piece: WINDOWS_PIECE_UNITS,
         account: WINDOWS_ACCOUNT_BYTES,
+        target: WINDOWS_TARGET_BYTES,
     };
 }
 
@@ -104,82 +114,62 @@ fn load_split(
     limits: Limits,
     account: &str,
 ) -> Result<Option<String>, KeychainError> {
-    let namespace = namespace(account, limits.account)?;
+    let namespace = namespace(store.service(), account, limits.account)?;
     let item = store.get(account)?;
-    item.map(|item| decode(store, &namespace, item)).transpose()
+    item.map(|item| decode(store, &namespace, limits, item))
+        .transpose()
 }
 
-/// The sweep after the account's item is written is best effort: the secret
-/// is saved, and the next save or delete sweeps again.
+/// Reading the previous item is best effort: one that cannot be read is
+/// replaced, as earlier builds did, and its chunks are left over.
 fn save_split(
     store: &impl Store,
     limits: Limits,
     account: &str,
     secret: &str,
 ) -> Result<(), KeychainError> {
-    let namespace = namespace(account, limits.account)?;
-    let plan = plan(&namespace, secret, limits)?;
-    write(store, account, secret, &plan).inspect_err(|_| forget(store, &plan))?;
-    let _ = sweep(store, account, &namespace);
+    let namespace = namespace(store.service(), account, limits.account)?;
+    let previous = chunk_names(&namespace, store.get(account).ok().flatten());
+    let plan = plan(store.service(), &namespace, secret, limits)?;
+    write(store, account, secret, &plan)
+        .inspect_err(|_| abandon(store, account, &namespace, &plan))?;
+    forget(store, &previous);
     Ok(())
 }
 
-/// Deletes the account's item, the commit, before the chunks, so a delete
-/// that stops part way leaves no secret.
+/// Once the account's item is gone the secret is gone, so nothing after
+/// that commit can fail the delete.
 fn delete_split(store: &impl Store, limits: Limits, account: &str) -> Result<(), KeychainError> {
-    let namespace = namespace(account, limits.account)?;
+    let namespace = namespace(store.service(), account, limits.account)?;
     store.delete(account)?;
-    sweep(store, account, &namespace)
+    sweep(store, account, &namespace);
+    Ok(())
 }
 
-fn decode(store: &impl Store, namespace: &str, item: Item) -> Result<String, KeychainError> {
-    match item {
-        Item::Text(secret) => Ok(secret),
-        Item::Bytes(bytes) => join(store, namespace, read_manifest(&bytes)),
-    }
-}
-
-fn join(
-    store: &impl Store,
+fn plan(
+    service: &str,
     namespace: &str,
-    manifest: Option<Manifest>,
-) -> Result<String, KeychainError> {
-    let manifest = manifest.ok_or(KeychainError)?;
-    let pieces = (0..manifest.count)
-        .map(|index| read_chunk(store, namespace, &manifest, index))
-        .collect::<Result<Vec<_>, _>>()?;
-    let secret = concat(&pieces);
-    let digest = digest(&manifest.generation, &secret);
-    verify(&manifest, secret, &digest)
-}
-
-fn read_chunk(
-    store: &impl Store,
-    namespace: &str,
-    manifest: &Manifest,
-    index: usize,
-) -> Result<Zeroizing<String>, KeychainError> {
-    let item = store.get(&chunk_name(namespace, &manifest.generation, index))?;
-    piece(item, &chunk_header(&manifest.generation, index))
-}
-
-fn plan(namespace: &str, secret: &str, limits: Limits) -> Result<Plan, KeychainError> {
+    secret: &str,
+    limits: Limits,
+) -> Result<Plan, KeychainError> {
     match fits(secret, limits.item) {
         true => Ok(Plan {
             chunks: Vec::new(),
             manifest: None,
         }),
-        false => split(namespace, secret, limits.piece, &generation()),
+        false => split(service, namespace, secret, limits, &generation()),
     }
 }
 
 fn split(
+    service: &str,
     namespace: &str,
     secret: &str,
-    units: usize,
+    limits: Limits,
     generation: &str,
 ) -> Result<Plan, KeychainError> {
-    let pieces = pieces(secret, units)?;
+    room(service, limits.target)?;
+    let pieces = pieces(secret, limits.piece)?;
     let chunks = pieces.iter().enumerate().map(|(index, piece)| {
         let value = Zeroizing::new(chunk_header(generation, index) + piece);
         (chunk_name(namespace, generation, index), value)
@@ -206,21 +196,46 @@ fn write(
     }
 }
 
-/// Deletes a failed save's chunks, ignoring failures: nothing names them.
-fn forget(store: &impl Store, plan: &Plan) {
-    plan.chunks.iter().for_each(|(name, _)| {
-        let _ = store.delete(name);
-    });
+/// Deletes a failed save's chunks, unless the account's item names them: a
+/// commit that reported a failure may still have landed.
+fn abandon(store: &impl Store, account: &str, namespace: &str, plan: &Plan) {
+    let live = chunk_names(namespace, store.get(account).ok().flatten());
+    let written: Vec<String> = plan.chunks.iter().map(|(name, _)| name.clone()).collect();
+    forget(store, &unnamed(&written, &live));
 }
 
-/// Deletes every chunk of the account that its item does not name now.
-fn sweep(store: &impl Store, account: &str, namespace: &str) -> Result<(), KeychainError> {
-    let live = chunk_names(namespace, store.get(account)?);
-    let found = store.list(namespace)?;
-    found
+/// Deletes, best effort, every chunk of the account under this service that
+/// its item does not name now.
+fn sweep(store: &impl Store, account: &str, namespace: &str) {
+    let live = chunk_names(namespace, store.get(account).ok().flatten());
+    let pattern = chunk_pattern(namespace, store.service());
+    let found = store.find(&pattern).unwrap_or_default();
+    forget(store, &obsolete(&found, namespace, store.service(), &live));
+}
+
+/// The account's chunks under `service` among the `found` target names,
+/// apart from the `live` ones.
+fn obsolete(found: &[String], namespace: &str, service: &str, live: &[String]) -> Vec<String> {
+    let chunks: Vec<String> = found
         .iter()
-        .filter(|name| !live.iter().any(|live| live.eq_ignore_ascii_case(name)))
-        .try_for_each(|name| store.delete(name))
+        .filter_map(|target| chunk_of(target, namespace, service))
+        .collect();
+    unnamed(&chunks, live)
+}
+
+fn unnamed(names: &[String], live: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| !live.contains(name))
+        .cloned()
+        .collect()
+}
+
+/// Deletes the named items, ignoring failures: nothing reads them.
+fn forget(store: &impl Store, names: &[String]) {
+    names.iter().for_each(|name| {
+        let _ = store.delete(name);
+    });
 }
 
 /// The chunks the account's item names, if it is a manifest.
@@ -235,7 +250,7 @@ fn chunk_names(namespace: &str, item: Option<Item>) -> Vec<String> {
     })
 }
 
-fn manifest_bytes(item: Item) -> Option<Vec<u8>> {
+fn manifest_bytes(item: Item) -> Option<Zeroizing<Vec<u8>>> {
     match item {
         Item::Bytes(bytes) => Some(bytes),
         Item::Text(secret) => {

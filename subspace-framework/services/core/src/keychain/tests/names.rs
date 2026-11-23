@@ -1,7 +1,8 @@
-//! Account names: refused when they could alias a derived name, bounded
-//! when they are long.
+//! Account and service names: refused when they could alias a derived name,
+//! bounded when they are long.
 
-use super::memory::{ACCOUNT_BYTES, Memory, Value, WINDOWS, assert_no_orphans, namespace_of};
+use super::expect::{assert_no_orphans, namespace_in, namespace_of};
+use super::memory::{ACCOUNT, ACCOUNT_BYTES, Memory, TARGET_BYTES, Value, WINDOWS};
 use crate::keychain::KeychainError;
 use crate::keychain::split::{delete, load, save};
 
@@ -49,13 +50,9 @@ fn derived_names_stay_short_for_the_longest_account() {
     let store = Memory::windows();
     save(&store, WINDOWS, &account, &"b".repeat(3_000)).unwrap();
     assert_eq!(load(&store, WINDOWS, &account), Ok(Some("b".repeat(3_000))));
-    assert!(
-        store
-            .names()
-            .iter()
-            .filter(|name| **name != account)
-            .all(|name| name.len() <= 87)
-    );
+    let names = store.names();
+    let mut chunks = names.iter().filter(|name| **name != account);
+    assert!(chunks.all(|name| name.len() <= 87));
 }
 
 #[test]
@@ -67,13 +64,32 @@ fn a_longer_account_fails_before_any_step() {
         Err(KeychainError)
     );
     assert_eq!(store.steps(), 0);
-    assert!(store.names().is_empty());
+    assert!(store.targets().is_empty());
 }
 
 #[test]
-fn accounts_that_differ_only_in_case_share_one_namespace() {
-    // Windows compares credential names without case, so these accounts are
-    // one credential, and their chunks must be one set too.
+fn a_service_too_long_for_chunk_names_fails_before_any_write() {
+    // `session.` and the service fit; a derived name and the service do not.
+    let store = Memory::windows().under(&"s".repeat(TARGET_BYTES - ACCOUNT.len() - 1));
+    assert_eq!(
+        save(&store, WINDOWS, ACCOUNT, &"b".repeat(3_000)),
+        Err(KeychainError)
+    );
+    assert!(store.targets().is_empty());
+    save(&store, WINDOWS, ACCOUNT, "fixture-short").unwrap();
+    assert_eq!(
+        load(&store, WINDOWS, ACCOUNT),
+        Ok(Some("fixture-short".to_owned()))
+    );
+}
+
+#[test]
+fn only_ascii_case_is_folded_into_the_namespace() {
+    // Windows compares names without case, so ASCII case variants are one
+    // credential and share their chunks. Variants in the case of another
+    // letter do not, and are not supported for split secrets.
+    assert_eq!(namespace_of("Session"), namespace_of("session"));
+    assert_ne!(namespace_of("Ésession"), namespace_of("ésession"));
     let store = Memory::holding("Session", Value::Text("old".to_owned()));
     save(&store, WINDOWS, "Session", &"a".repeat(3_000)).unwrap();
     let namespace = namespace_of("session");
@@ -81,4 +97,14 @@ fn accounts_that_differ_only_in_case_share_one_namespace() {
     let mut chunks = names.iter().filter(|name| *name != "Session");
     assert!(chunks.all(|name| name.starts_with(&namespace)));
     assert_eq!(names.len(), 5);
+}
+
+#[test]
+fn each_service_has_its_own_namespace() {
+    assert_ne!(
+        namespace_in("app.example", ACCOUNT),
+        namespace_in("x.app.example", ACCOUNT)
+    );
+    // The length prefix keeps the service and the account apart.
+    assert_ne!(namespace_in("ab", "c"), namespace_in("a", "bc"));
 }

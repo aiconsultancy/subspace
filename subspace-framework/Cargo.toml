@@ -233,8 +233,8 @@ tokio = { version = "1", features = ["full"] }
 unicode-normalization = "0.1"
 ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "platform-verifier"] }
 url = "2"
-zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
 zeroize = "1"
+zip = { version = "9.5.1", default-features = false, features = ["deflate"] }
 windows-sys = "0.61"
 
 [workspace.lints.clippy]

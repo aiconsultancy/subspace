@@ -2,12 +2,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use sha2::{Digest as _, Sha256};
-
+use super::expect::{assert_no_orphans, assert_split_round_trip, digest_of, fields, namespace_of};
 use super::memory::{
     ACCOUNT, ACCOUNT_BYTES, BLOB_BYTES, HEADER_UNITS, ITEM_UNITS, MANIFEST_PREFIX, MAX_CHUNKS,
-    Memory, PIECE_UNITS, Value, WINDOWS, assert_no_orphans, assert_split_round_trip, fields,
-    namespace_of,
+    Memory, PIECE_UNITS, TARGET_BYTES, Value, WINDOWS, classify,
 };
 use crate::keychain::split::{delete, load, save};
 use crate::keychain::{KeychainError, Store};
@@ -67,6 +65,11 @@ fn the_test_store_refuses_exactly_what_windows_refuses() {
         store.set_text(&"c".repeat(ACCOUNT_BYTES + 1), "x"),
         Err(KeychainError)
     );
+    // `c.` and the service make the target name.
+    let longest = store.under(&"s".repeat(TARGET_BYTES - 2));
+    assert_eq!(longest.set_text("c", "x"), Ok(()));
+    let longer = store.under(&"s".repeat(TARGET_BYTES - 1));
+    assert_eq!(longer.set_text("c", "x"), Err(KeychainError));
 }
 
 #[test]
@@ -106,6 +109,10 @@ fn a_split_secret_is_a_manifest_in_bytes_and_numbered_chunks() {
     assert_eq!(manifest.len(), 141);
     assert!(manifest.starts_with(MANIFEST_PREFIX));
     assert!(String::from_utf8(manifest.clone()).is_err());
+    // Not UTF-16 either, at any length.
+    for end in 1..=manifest.len() {
+        assert!(matches!(classify(&manifest[..end]), Value::Bytes(_)));
+    }
     let fields = fields(&items[ACCOUNT]).unwrap();
     let generation = &fields.generation;
     assert_eq!(generation.len(), 32);
@@ -115,11 +122,7 @@ fn a_split_secret_is_a_manifest_in_bytes_and_numbered_chunks() {
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
     );
     assert_eq!((fields.count, fields.length), (3, 2_000));
-    let expected = Sha256::new()
-        .chain_update(generation)
-        .chain_update(&secret)
-        .finalize();
-    assert_eq!(fields.digest, hex::encode(expected));
+    assert_eq!(fields.digest, digest_of(generation, &secret));
     let namespace = namespace_of(ACCOUNT);
     let pieces: Vec<String> = (0..3)
         .map(
