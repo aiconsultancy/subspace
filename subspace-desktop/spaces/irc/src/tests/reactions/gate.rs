@@ -134,7 +134,36 @@ fn a_stop_s_acknowledgement_survives_another_reaction_sent_before_its_echo(
     );
     assert_eq!(
         notice(cx),
-        crate::conversation::reacting::stop_sent(HAND, "astra"),
+        crate::reactions::stop::stop_sent(HAND, "astra"),
         "the stop's notice once its own echo arrives"
+    );
+}
+
+#[gpui_kit::test]
+fn a_stop_item_left_open_is_checked_again_when_chosen(cx: &mut TestAppContext) {
+    let (board, hub, cx) = open(cx);
+    let conversation = board.read_with(cx, |board, _| board.dock.open[&room()].entity.clone());
+    let before = sent(&hub, cx);
+    // A stale item naming astra, chosen on a message that is not hers.
+    conversation.update(cx, |view, cx| {
+        let stop = Some("astra".to_owned());
+        crate::conversation::reacting::toggle(view, ("m1".into(), HAND.into()), true, stop, cx);
+    });
+    assert_eq!(sent(&hub, cx), before, "m1 is no agent's message");
+    // The roster loses astra while her request's menu is open.
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(Vec::new()), cx)
+        })
+    });
+    cx.run_until_parked();
+    conversation.update(cx, |view, cx| {
+        let stop = Some("astra".to_owned());
+        crate::conversation::reacting::toggle(view, ("r1".into(), HAND.into()), true, stop, cx);
+    });
+    assert_eq!(sent(&hub, cx), before, "astra is no longer a roster agent");
+    assert!(
+        notice(cx).contains("only from Add reaction"),
+        "explained, not sent"
     );
 }
