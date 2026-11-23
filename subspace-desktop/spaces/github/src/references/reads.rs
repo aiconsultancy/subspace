@@ -15,12 +15,12 @@ use crate::Github;
 use crate::navigation::requested_pr;
 
 /// When a read started: the [`super::References`] generation, refresh
-/// count and section landings.
+/// count and its tick of the one read clock ([`super::access`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Epoch {
     generation: u64,
     refreshes: u64,
-    landings: u64,
+    started: u64,
 }
 
 /// Starts one background read of the `keys` not already being read, and
@@ -33,6 +33,7 @@ pub(super) fn read(
     let (Some(client), Some(login)) = (board.client.clone(), board.account.clone()) else {
         return ResolutionState::SignedOut;
     };
+    let started = super::access::begin(board);
     let references = &mut board.references;
     // A signed-out account reads nothing, whatever answers the keys.
     if references.signed_out.contains(&login.to_lowercase()) {
@@ -45,7 +46,7 @@ pub(super) fn read(
     let epoch = Epoch {
         generation: references.generation,
         refreshes: references.refreshes,
-        landings: references.landings,
+        started,
     };
     if !fresh.is_empty() {
         spawn_read(client, login, fresh, epoch, cx);
@@ -104,15 +105,34 @@ fn land(
     for (key, state) in answers {
         let key = cache_key(login, &key);
         references.reading.remove(&key);
+        if !current(references, &key, &state, epoch.started) {
+            continue;
+        }
         if older {
             references.stale.insert(key.clone());
         } else {
             references.stale.remove(&key);
         }
-        references.read_at.insert(key.clone(), epoch.landings);
+        references.read_at.insert(key.clone(), epoch.started);
         references.answers.insert(key, state);
     }
     announce(cx);
+}
+
+/// Whether `state`, read for `key` from a read that started at `started`,
+/// still stands: a success after any refusal, a refusal after any success
+/// ([`super::access`]). Other answers always do.
+fn current(
+    references: &mut super::References,
+    key: &(String, String),
+    state: &ResolutionState,
+    started: u64,
+) -> bool {
+    match state {
+        ResolutionState::Available(_) => super::access::confirm(references, key, started),
+        ResolutionState::Unavailable => super::access::refuse(references, key, started),
+        _ => true,
+    }
 }
 
 /// What a failed read tells the asker, without saying whether a pull

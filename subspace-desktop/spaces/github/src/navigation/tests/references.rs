@@ -21,6 +21,7 @@ use super::loading::{client, response};
 use super::{KEY, mount, seed};
 use crate::Github;
 
+mod access;
 mod checks;
 mod newer;
 mod privacy;

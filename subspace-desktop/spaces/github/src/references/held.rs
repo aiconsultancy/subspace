@@ -5,7 +5,7 @@
 use subspace_framework::client_github::model::{GhCheck, GhItem};
 use subspace_framework::contracts::github::{PullRequestDetails, ResolutionState};
 
-use super::{References, cache_key, details, refusal};
+use super::{References, cache_key, details};
 use crate::Github;
 
 /// What answers `key` without a read, if anything does: a refusal newer
@@ -22,22 +22,20 @@ pub(super) fn known(board: &Github, key: &str) -> Option<ResolutionState> {
     let cached = cache_key(login, key);
     let read = board.references.answers.get(&cached);
     let newer = newer_than_list(&board.references, &cached);
-    match (loaded(board, key), read) {
-        (Some(Loaded::Listed(_)), Some(read)) if refusal(read) && newer => Some(read.clone()),
-        (Some(Loaded::Opened(..)), Some(read)) if refusal(read) => Some(read.clone()),
-        (Some(Loaded::Opened(item, runs)), _) => {
-            Some(ResolutionState::Available(details(item, runs)))
-        }
-        (Some(Loaded::Listed(item)), _) => {
-            Some(ResolutionState::Available(listed(item, read, newer)))
-        }
-        (None, read) => read.cloned(),
+    if board.references.refused_at.contains_key(&cached) {
+        return Some(ResolutionState::Unavailable);
+    }
+    match loaded(board, key) {
+        Some(Loaded::Opened(item, runs)) => Some(ResolutionState::Available(details(item, runs))),
+        Some(Loaded::Listed(item)) => Some(ResolutionState::Available(listed(item, read, newer))),
+        None => read.cloned(),
     }
 }
 
 /// Whether the answer for `cached` comes from a read that started after
-/// the last section listing the pull request landed. A later section of
-/// the same refresh is newer than a read that started before it.
+/// the latest section listing the pull request started, by the one read
+/// clock: a section requested later is newer, one requested earlier is
+/// not, however the two land.
 fn newer_than_list(references: &References, cached: &(String, String)) -> bool {
     let listed = references
         .listed_at
@@ -47,7 +45,7 @@ fn newer_than_list(references: &References, cached: &(String, String)) -> bool {
     references
         .read_at
         .get(cached)
-        .is_some_and(|read| *read >= listed)
+        .is_some_and(|read| *read > listed)
 }
 
 /// A listed pull request's answer. A read newer than the section that
@@ -86,7 +84,7 @@ pub(super) fn wants_read(board: &Github, key: &str) -> bool {
     let stale = references.stale.contains(&cached);
     match loaded(board, key) {
         Some(Loaded::Listed(_)) => !references.answers.contains_key(&cached) || stale,
-        Some(Loaded::Opened(..)) => false,
+        Some(Loaded::Opened(..)) => stale && references.refused_at.contains_key(&cached),
         None => stale,
     }
 }

@@ -80,7 +80,8 @@ fn an_opened_pull_request_refused_since_answers_with_the_refusal_until_read_agai
             status: 404,
             message: "Not Found".into(),
         };
-        crate::references::detail_refused(board, &login, KEY, &denied, cx);
+        let tick = crate::references::begin(board);
+        crate::references::detail_refused(board, (&login, KEY), &denied, tick, cx);
     });
     assert!(
         matches!(ask(KEY, cx), ResolutionState::Unavailable),
@@ -88,7 +89,8 @@ fn an_opened_pull_request_refused_since_answers_with_the_refusal_until_read_agai
     );
     board.update(cx, |board, _| {
         let login = board.account.clone().unwrap_or_default();
-        crate::references::detail_landed(board, &login, KEY, KEY);
+        let tick = crate::references::begin(board);
+        crate::references::detail_landed(board, &login, (KEY, KEY), tick);
     });
     assert!(matches!(ask(KEY, cx), ResolutionState::Available(_)));
 }

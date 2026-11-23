@@ -62,7 +62,8 @@ pub(super) fn land_section(board: &Entity<Github>, cx: &mut VisualTestContext) {
         let login = board.account.clone().unwrap_or_default();
         let since = crate::references::since(board);
         let section = board.section;
-        crate::references::section_landed(board, &login, section, since, cx);
+        let tick = crate::references::begin(board);
+        crate::references::section_landed(board, &login, (section, tick), since, cx);
     });
 }
 
