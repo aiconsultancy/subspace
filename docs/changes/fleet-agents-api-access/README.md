@@ -75,3 +75,7 @@ other for now.
 - Whether Stargate's curated crew permissions let crew call `subspace_*`
   tools; they allow only listed actions.
 - A further fleet installed with `--api-target` gets no agent listener.
+- Agent resolution is organisation-wide: on an API shared by several fleets,
+  a request on the listener can name another fleet's agent and so act within
+  that fleet's limits. An optional per-listener fleet scope (for example
+  `AGENT_FLEET`, filtering the lookup on the agent's fleet) would close it.
