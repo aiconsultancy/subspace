@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { drizzle } from "drizzle-orm/node-postgres";
 import { BunHttpServer } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 import { HttpRouter } from "effect/http";
 import {
   adminOnlyEndpoints,
+  agentLookup,
   adminOnlyTools,
   AgentDirectory,
   chooseAgent,
@@ -272,6 +274,28 @@ describe("resolving the agent a header names", () => {
       ),
     ).toMatchObject({ failure: { status: 403 } });
   });
+});
+
+test("the agent lookup puts active records first, before its limit", () => {
+  const db = drizzle.mock();
+  const { sql: text, params } = agentLookup(db as never, listener, "Orion").toSQL();
+  expect(text).toMatch(/order by "users"\."active" desc, "users"\."id" asc limit \$\d+$/u);
+  expect(params).toContain("orion");
+});
+
+test("one active agent resolves however many deactivated records share its name or nick", async () => {
+  const retiredCopies = [1, 2, 3, 4, 5].map((n) => ({
+    ...captain,
+    id: `00000000-0000-4000-8000-00000000010${n}`,
+    active: false,
+  }));
+  for (const order of [
+    [...retiredCopies, captain],
+    [captain, ...retiredCopies],
+  ])
+    expect(await Effect.runPromise(Effect.result(chooseAgent(order, "Orion")))).toMatchObject({
+      success: captain,
+    });
 });
 
 describe("requests on the agent listener", () => {

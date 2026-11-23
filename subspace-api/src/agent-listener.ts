@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer, type Types } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { type Config } from "./config";
@@ -81,29 +81,43 @@ export function chooseAgent(
   );
 }
 
-/** The agent records in the listener's organisation whose name or IRC nick matches, ignoring case. */
+/**
+ * The query for the agent records in the listener's organisation whose name or IRC nick matches,
+ * ignoring case, active records first. Agent names and IRC nicks are each unique in an
+ * organisation, so at most two records match; the order means no deactivated record can ever
+ * take the place of the active one under the limit.
+ */
+export const agentLookup = (
+  db: Pick<(typeof Database)["Service"], "select">,
+  listener: AgentListener,
+  reference: string,
+) => {
+  const lower = reference.toLowerCase();
+  return db
+    .select({ member: users, fleet: fleets.slug, ship: ships.name })
+    .from(users)
+    .innerJoin(organisations, eq(users.organisationId, organisations.id))
+    .leftJoin(fleets, eq(fleets.id, users.agentFleetId))
+    .leftJoin(ships, eq(ships.id, users.agentShipId))
+    .where(
+      and(
+        eq(organisations.provider, listener.provider),
+        eq(organisations.externalId, listener.externalOrganisation),
+        isNotNull(users.agentRank),
+        or(
+          sql`lower(${users.displayName}) = ${lower}`,
+          sql`lower(${users.agentIrcNick}) = ${lower}`,
+        ),
+      ),
+    )
+    .orderBy(desc(users.active), asc(users.id))
+    .limit(3);
+};
+
+/** The agent records a header value names, active ones first. */
 export const findAgents = (listener: AgentListener, reference: string) =>
   Effect.gen(function* () {
-    const db = yield* Database;
-    const lower = reference.toLowerCase();
-    const rows = yield* db
-      .select({ member: users, fleet: fleets.slug, ship: ships.name })
-      .from(users)
-      .innerJoin(organisations, eq(users.organisationId, organisations.id))
-      .leftJoin(fleets, eq(fleets.id, users.agentFleetId))
-      .leftJoin(ships, eq(ships.id, users.agentShipId))
-      .where(
-        and(
-          eq(organisations.provider, listener.provider),
-          eq(organisations.externalId, listener.externalOrganisation),
-          isNotNull(users.agentRank),
-          or(
-            sql`lower(${users.displayName}) = ${lower}`,
-            sql`lower(${users.agentIrcNick}) = ${lower}`,
-          ),
-        ),
-      )
-      .limit(3);
+    const rows = yield* agentLookup(yield* Database, listener, reference);
     return rows.map((row): Member => ({
       ...row.member,
       agentFleet: row.fleet ?? row.member.agentFleet,
