@@ -22,7 +22,10 @@ mod mapping;
 pub(crate) use graphql::post_bound_graphql;
 pub use graphql::post_graphql;
 
-pub use mapping::{Failure, account_label, http_failure, not_found, rejected, status, unexpected};
+pub use mapping::{
+    Failure, account_label, http_failure, is_access_refusal, not_found, rejected, status,
+    unexpected,
+};
 
 use mapping::{is_rate_limit, is_sso};
 
@@ -318,7 +321,7 @@ mod tests {
     use super::mapping::reset_hint;
     use super::{
         Api, Failure, GraphQlError, GraphQlResponse, graphql_data, graphql_failure, http_failure,
-        rejected,
+        is_access_refusal, rejected,
     };
 
     fn code(error: &Error) -> u16 {
@@ -410,6 +413,22 @@ mod tests {
             403,
             "lost access stays a refusal, not a transient failure"
         );
+        let plain = http_failure("ann", Api::Rest, failure(403, None, "nope"));
+        assert!(
+            is_access_refusal(&plain),
+            "a plain 403 is one item's refusal"
+        );
+        let sso = http_failure(
+            "ann",
+            Api::Rest,
+            failure(
+                403,
+                None,
+                "Resource protected by organization SAML enforcement.",
+            ),
+        );
+        assert_eq!(code(&sso), 403);
+        assert!(!is_access_refusal(&sso), "an SSO requirement is not");
     }
 
     fn errors(value: serde_json::Value) -> Vec<GraphQlError> {
