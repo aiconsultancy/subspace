@@ -139,16 +139,25 @@ pub(crate) fn named_issues(entry: &Entry, mentions: &crate::markup::Mentions) ->
     markup::issues(&entry.line.text, mentions, rendered.as_ref())
 }
 
-/// The message whose toolbar shows (keyboard-focused or under the pointer)
-/// measures itself into the reaction menu's anchor, so `r` and the
-/// toolbar's React open the menu at the message. Other rows are untouched.
+/// The keyboard-focused message measures itself into the reaction menu's
+/// first anchor, for `r`, and the hovered one into the second, for its
+/// toolbar's React, so each opens the menu at its own message. Other rows
+/// are untouched.
 fn measure_focused<E: gpui_kit::base::ElementExt>(
     row: E,
     entry: &Entry,
     context: &RowContext,
 ) -> E {
-    let focused = crate::transcript::actions::shown(entry.seq, context);
-    match context.react_anchor.clone().filter(|_| focused) {
+    let focused = context.focus.is_some_and(|at| at.seq == entry.seq);
+    let hovered = context.hovered == Some(entry.seq);
+    let anchor = context.react_anchor.clone().and_then(|(keys, pointer)| {
+        if focused {
+            Some(keys)
+        } else {
+            hovered.then_some(pointer)
+        }
+    });
+    match anchor {
         Some(anchor) => row.on_prepaint(move |bounds, _, cx| {
             anchor.update(cx, |anchor, cx| anchor.set_bounds(bounds, cx));
         }),

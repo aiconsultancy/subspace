@@ -354,7 +354,7 @@ impl Conversation {
             reactions: Rc::clone(&self.reacting.shown),
             stops: Rc::clone(&self.reacting.stops),
             can_react: self.reacting.supported,
-            react_anchor: Some(self.reacting.anchor.clone()),
+            react_anchor: Some(self.reacting.anchors()),
             hovered: self.keyboard.hovered,
             actions: crate::transcript::actions::Availability::of(self, cx),
         }
@@ -530,7 +530,8 @@ impl Render for Conversation {
             .flex_1()
             .min_h_0()
             .child(self.render_transcript(cx))
-            .child(self.reacting.anchor.clone());
+            .child(self.reacting.anchor.clone())
+            .child(self.reacting.hover_anchor.clone());
         let notice = reacting::notice(self, cx);
         let dialog = crate::tracker::message::render(self, cx);
         let content = v_flex()

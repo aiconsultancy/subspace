@@ -55,7 +55,13 @@ pub(crate) fn open_choices_for(
         .map(|agent| agent.ship.clone());
     let offered = choices(&summaries, ship.as_deref());
     let me = this.me.clone();
-    this.reacting.anchor.update(cx, |anchor, cx| {
+    let keyboard = this.keyboard.at.is_some_and(|at| at.seq == seq);
+    let anchor = if keyboard {
+        &this.reacting.anchor
+    } else {
+        &this.reacting.hover_anchor
+    };
+    anchor.clone().update(cx, |anchor, cx| {
         anchor.show_menu_with(window, cx, move |menu, _, _| {
             pills::menu_items(menu, &offered, &msgid, &me)
         });

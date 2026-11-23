@@ -35,6 +35,8 @@ pub(super) use notice::notice;
 pub(crate) struct Reacting {
     /// Where the keyboard's reaction menu opens: the focused message.
     pub anchor: Entity<Anchor>,
+    /// Where the hovered message's toolbar opens it.
+    pub hover_anchor: Entity<Anchor>,
     pub shown: Rc<Shown>,
     pub stops: Rc<Stops>,
     /// The network can react now.
@@ -80,6 +82,7 @@ impl Reacting {
     pub fn new(seen_refusal: u64, cx: &mut App) -> Self {
         Self {
             anchor: cx.new(Anchor::new),
+            hover_anchor: cx.new(Anchor::new),
             shown: Rc::default(),
             stops: Rc::default(),
             supported: false,
@@ -88,6 +91,17 @@ impl Reacting {
             seen_refusal,
             notice: None,
         }
+    }
+}
+
+/// The reaction menu's two anchors: the keyboard-focused message's, then
+/// the hovered message's.
+pub(crate) type Anchors = (Entity<Anchor>, Entity<Anchor>);
+
+impl Reacting {
+    /// Both anchors, for the rows to measure into.
+    pub(crate) fn anchors(&self) -> Anchors {
+        (self.anchor.clone(), self.hover_anchor.clone())
     }
 }
 

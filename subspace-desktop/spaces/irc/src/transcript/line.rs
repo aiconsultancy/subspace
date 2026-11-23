@@ -80,9 +80,10 @@ pub(crate) struct RowContext {
     pub stops: Rc<crate::reactions::stop::Stops>,
     /// The network can react now, so pills toggle and Add reaction shows.
     pub can_react: bool,
-    /// Where the keyboard's reaction menu opens: the focused message
-    /// measures itself into it.
-    pub react_anchor: Option<gpui_kit::Entity<subspace_framework::dashboard::anchored::Anchor>>,
+    /// Where the reaction menu opens: the keyboard-focused message measures
+    /// itself into the first anchor, for `r`; the hovered message into the
+    /// second, for its toolbar's React.
+    pub react_anchor: Option<crate::conversation::reacting::Anchors>,
     /// The message under the pointer, whose toolbar shows.
     pub hovered: Option<i64>,
     /// What the message toolbar's actions can do in this conversation.
