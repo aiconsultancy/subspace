@@ -230,6 +230,12 @@ def workspace_channels(cfg, person):
             lines.append(f"- `{other['channel']}`: {other['name']}'s ship channel.")
     lines.append(f"- `{irc['starbaseChannel']}`: Starbase, where the admirals talk to the rear admiral. You are not "
                  "in it.")
+    if person.get("slack"):
+        # The role instructions (~/.config/opencode/AGENTS.md), which OpenCode loads beside this file, explain the
+        # Slack source line; this list only says that Slack is another way in.
+        lines.append("- Slack: people can also reach you through your own Slack bot, in the Slack conversations the "
+                     "fleet configuration allows. The Slack section of your role instructions explains those "
+                     "requests; reply as usual and your answer goes back to Slack.")
     return "\n".join(lines)
 
 

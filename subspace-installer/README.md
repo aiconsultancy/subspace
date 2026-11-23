@@ -299,8 +299,13 @@ beside its checkouts and never inside one:
   repository with its ID, `description`, remote, tracker (see
   [Crew and repositories](#crew-and-repositories)), where its own
   instructions are and, for a captain with crew, where its crew's worktrees
-  are; lists the fleet's [channels](#channels); and says that work in a
-  repository follows that repository's own `AGENTS.md`, rules and tracker.
+  are; lists the fleet's [channels](#channels) and, for a captain with its
+  own [Slack bot](#slack-for-officers), that Slack is another way in; and
+  says that work in a repository follows that repository's own `AGENTS.md`,
+  rules and tracker. The role instructions, with the Slack section that
+  explains Slack requests, stay in `~/.config/opencode/AGENTS.md`, which
+  OpenCode loads as well, so the workspace file adds to them and replaces
+  nothing.
 - `CLAUDE.md`, which imports it (`@AGENTS.md`) for Claude Code. OpenCode
   reads a `CLAUDE.md` only where a directory has no `AGENTS.md`, so it
   ignores this one. Stargate's Claude backend loads neither file by default,

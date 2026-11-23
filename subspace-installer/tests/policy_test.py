@@ -1168,6 +1168,28 @@ class OfficerSlackTests(unittest.TestCase):
         self.assertNotIn("s=slack", rear)
         self.assertNotIn("$", captain)
 
+    def test_a_workspace_rooted_captain_keeps_its_slack_guidance_beside_the_workspace_instructions(self):
+        # The workspace AGENTS.md is the project file OpenCode loads in the workspace; the role instructions with
+        # the Slack section are its global file. Both are written as the captain, and neither replaces the other.
+        cfg = validate(self.config, self.secrets)
+        captain = cfg["members"][1]
+        with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", {"HOME": temp}):
+            home = Path(temp)
+            (home / "workspace" / "project").mkdir(parents=True)
+            roles.provision_role(roles.role_documents(cfg, captain, Path("/references/atlas"), home))
+            roles.provision_workspace(roles.workspace_documents(cfg, captain, home / "workspace", home))
+            role = (home / ".config/opencode/AGENTS.md").read_text()
+            workspace = (home / "workspace/AGENTS.md").read_text()
+        self.assertIn("s=slack;c=<channel>;t=<thread>;m=<message>;u=<user>", role)
+        self.assertNotIn("s=slack", workspace)
+        self.assertIn("- Slack: people can also reach you through your own Slack bot", workspace)
+        self.assertIn("Your sessions start here", workspace)
+        # Without a bot, neither file mentions Slack.
+        del self.config["captains"][0]["slack"]
+        captain = validate(self.config, self.secrets)["members"][1]
+        documents = roles.workspace_documents(cfg, captain, Path("/w"), Path("/"))["AGENTS.md"]
+        self.assertNotIn("Slack", documents)
+
     def test_dry_run_lists_the_bots_and_refuses_a_half_configured_officer(self):
         self.config["rearAdmiral"]["slack"] = slack_settings("AFIXTURE2")
         self.config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra",
