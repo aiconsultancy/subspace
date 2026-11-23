@@ -44,8 +44,9 @@ It serves:
   sending anything queued once either is gone). A route whose feature is
   not served answers a neutral 404;
 - unauthenticated test hooks under /__fixture/: touch, requests,
-  requests/clear, updates, updates/close, capabilities, config (completion
-  checks, stream refusals, failNext, slowBody, dropPutResponse, dropNext,
+  requests/clear, updates, updates/close, capabilities, slowBody/release,
+  config (completion checks, stream refusals, failNext, slowBody,
+  dropPutResponse, dropNext,
   mediaReadyAtOnce, dropMoveReply, slowMoveCommit), moves/age,
   tokens,
   tokens/revoke, members/revoke, members/restore, projects/hide,
