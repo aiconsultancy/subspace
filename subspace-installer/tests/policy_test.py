@@ -1147,6 +1147,16 @@ class OfficerSlackTests(unittest.TestCase):
         self.assertNotIn("bots", settings)
         self.assertEqual(settings["quotaWatch"]["report"], {"bot": "fleet-slack-atlas", "channel": "CFIXTURE1"})
 
+    def test_officers_with_a_bot_are_told_how_slack_requests_arrive(self):
+        cfg = validate(self.config, self.secrets)
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        rear, captain = (roles.role_documents(cfg, person, Path("/references/atlas"), home)["instructions"]
+                         for person in cfg["members"])
+        self.assertIn("s=slack;c=<channel>;t=<thread>;m=<message>;u=<user>", captain)
+        self.assertIn("goal of that Slack thread", captain)
+        self.assertNotIn("s=slack", rear)
+        self.assertNotIn("$", captain)
+
     def test_dry_run_lists_the_bots_and_refuses_a_half_configured_officer(self):
         self.config["rearAdmiral"]["slack"] = slack_settings("AFIXTURE2")
         self.config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra",

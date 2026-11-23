@@ -1024,7 +1024,9 @@ so a request on either reaches that session. Each transport keeps its own
 queue and answers only the requests it received: a Slack request is answered
 in Slack, an IRC request on IRC. A turn that arrives while the other
 transport's turn runs waits for it, within its time limit, and crew results
-return to the transport that asked.
+return to the transport that asked. The officer's `AGENTS.md` gains a Slack
+section explaining the source line (`s=slack;c=…;t=…;m=…;u=…`) that Stargate
+puts at the start of each pinned Slack request.
 
 - **A captain with crew** has its pinned root already
   ([Captain sessions](#captain-sessions)). Its bot, like its IRC
