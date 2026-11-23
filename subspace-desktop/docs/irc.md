@@ -734,8 +734,10 @@ It shows one thread at a time: a request, or any message with replies.
   of the status line's stage (**Accepted**, **Working**, **Waiting for an
   answer**, **Writing the reply**, then **Done**, **Failed** or **Ended**),
   each with its server time and how long it lasted, the ending with the
-  request's whole time (`in 42 m`) and a running step with `since 17:50`;
-  then **Replies · N**, grouped by author by the transcript's rule, the
+  request's whole time (`in 42 m`) and a running step with `since 17:50`,
+  the latest 24 kept by the model and drawn, the rest counted (`N earlier
+  steps are not shown.`), so an agent that waits and works again many
+  times never builds a row per change on each render; then **Replies · N**, grouped by author by the transcript's rule, the
   latest 40 drawn and the rest counted (`N earlier replies are in the
   channel.`), or `No replies yet.`
 - **Membership and trust.** A reply is a message whose `+draft/reply`

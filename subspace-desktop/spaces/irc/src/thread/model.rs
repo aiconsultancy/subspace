@@ -29,12 +29,20 @@ pub(crate) struct Thread {
 /// no more, however long the thread.
 pub(crate) const MAX_REPLIES: usize = 40;
 
+/// The most steps a timeline keeps to draw: the latest. An agent that
+/// waits and works again many times reports a step for each change, so a
+/// rebuild copies no more and the tab draws a bounded list.
+pub(crate) const MAX_STEPS: usize = 24;
+
 /// A request's steps, from the progress notices its status line folds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Timeline {
     /// The agent the request asks, as its status line names it.
     pub agent: String,
+    /// The latest steps, at most [`MAX_STEPS`], oldest first.
     pub steps: Vec<Step>,
+    /// How many earlier steps were left out of `steps`.
+    pub earlier_steps: usize,
     /// The request ended, but no notice before its ending is held, such as
     /// after a restart that restored only part of the conversation.
     pub earlier_missing: bool,
@@ -163,9 +171,11 @@ fn timeline(held: &Buffer, root_entry: &Entry, root: &str) -> Option<Timeline> {
     if let Some(ending) = ending {
         settle(&mut steps, ending, root_entry.line.time);
     }
+    let earlier_steps = keep_latest(&mut steps);
     Some(Timeline {
         agent,
         steps,
+        earlier_steps,
         earlier_missing,
     })
 }
@@ -228,6 +238,13 @@ fn steps(observed: &[Observed], since: DateTime<Utc>) -> Vec<Step> {
         }
     }
     steps
+}
+
+/// Keeps the latest [`MAX_STEPS`] of `steps`; how many went.
+fn keep_latest(steps: &mut Vec<Step>) -> usize {
+    let earlier = steps.len().saturating_sub(MAX_STEPS);
+    steps.drain(..earlier);
+    earlier
 }
 
 /// Ends `steps` with the request's kept `ending` when no held notice did,
