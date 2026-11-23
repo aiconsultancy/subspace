@@ -943,8 +943,10 @@ agent.
 
 ## Stakeholder messaging
 
-Only the rear admiral connects to Slack or Teams. Either transport can
-be configured independently. Captains coordinate over IRC, and crew only
+Stakeholder messaging connects only the rear admiral to Slack or Teams, with
+sessions of their own; to give an officer its own Slack bot on the session
+its IRC uses, see [Slack for officers](#slack-for-officers). Either transport
+can be configured independently. Captains coordinate over IRC, and crew only
 through their captain.
 Step-by-step guides: [Slack](../docs/slack.md) and [Teams](../docs/teams.md).
 
@@ -960,6 +962,97 @@ Step-by-step guides: [Slack](../docs/slack.md) and [Teams](../docs/teams.md).
   `/api/messages` callback to `/var/lib/subspace-fleet/teams/bot.sock`.
   Set `socketGroup` to an existing Linux group for the trusted reverse
   proxy. Follow [Stargate's Teams guide](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/teams.md).
+
+## Slack for officers
+
+The rear admiral and any OpenCode captain can have a Slack bot of their own,
+so people reach that officer in Slack as well as on IRC, in the same session.
+
+**Create one Slack app per officer**, named after it. Follow steps 1 to 3 of
+the [Slack guide](../docs/slack.md) for each app, with the officer's member
+ID in place of the rear admiral's, or
+[Stargate's Slack setup](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/setup.md)
+and its [scope list](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/slack-scopes.md).
+Stargate uses Socket Mode, so the VM needs no inbound port and Slack needs no
+signing secret. You need the app's **App ID** (`A…`), an app-level token
+(`xapp-…`) with `connections:write` and, once the app is installed, its bot
+token (`xoxb-…`). Invite each bot to the channels where it should answer.
+
+**Configure** the officer's entry in `fleet.json` (fictional IDs shown):
+
+```json
+{
+  "id": "orion",
+  "name": "Orion",
+  "account": "example-orion",
+  "slack": {
+    "appId": "A0EXAMPLE01",
+    "users": ["U0EXAMPLE01"],
+    "channels": ["C0EXAMPLE01"]
+  }
+}
+```
+
+- `appId` is the officer's own app. Every bot needs a distinct app, distinct
+  from `stakeholders.slack` too.
+- `users` and `channels` say who may address the bot and where: explicit
+  member IDs (`U…` or `W…`) and conversation IDs (`C…`, `G…`, or `D…` for a
+  direct message). Both are required and must not be empty, and `*` is
+  refused, so nobody can address a bot unless you list them.
+- `mentionOnly` defaults to `true`: the bot starts a turn only when it is
+  mentioned. Set `false` to answer every message from a listed user in a
+  listed channel.
+
+**Secrets.** Put the tokens in the officer's secrets directory, never in
+`fleet.json`: `<secrets-dir>/<member-id>/slack-app-token` (`xapp-…`) and
+`slack-bot-token` (`xoxb-…`), owner-only files (mode `0600`) in a directory
+without group or other write access, as for the rear admiral's stakeholder
+bot. The installer keeps root-only copies in
+`/etc/subspace-fleet/extra-secrets.json` and gives them to the gateway only
+through its private runtime settings, as `SLACK_APP_TOKEN_<ID>` and
+`SLACK_BOT_TOKEN_<ID>`, where `<ID>` is the member ID in capitals with
+hyphens as underscores, such as `SLACK_BOT_TOKEN_ORION`. Stargate's
+configuration names only the variables. Two officers cannot share a token.
+
+**One session on Slack and IRC.** The installer adds the bot to the gateway
+that serves the officer's IRC registration, with the same backend: engine,
+agent, directory, permissions and pinned root (`backend.sessionID`). The
+pinned Stargate, v0.43.0, lets one Slack bot and one IRC registration pin the
+same OpenCode root
+([Stargate's notes](https://github.com/aiconsultancy/stargate/blob/fcf6ac75d9c780878c06c8b49fb160e4a27832ff/docs/irc.md#one-captain-on-slack-and-irc)),
+so a request on either reaches that session. Each transport keeps its own
+queue and answers only the requests it received: a Slack request is answered
+in Slack, an IRC request on IRC. A turn that arrives while the other
+transport's turn runs waits for it, within its time limit, and crew results
+return to the transport that asked.
+
+- **A captain with crew** has its pinned root already
+  ([Captain sessions](#captain-sessions)). Its bot, like its IRC
+  registration, joins the gateway once the pin is rendered.
+- **The rear admiral** gets a pinned root when it has its own bot, as it does
+  for [agent dispatch](#agent-dispatch). Its first repository is then fixed,
+  as for a captain. Remove its bot, with dispatch off, and its IRC goes back
+  to a session per conversation.
+- **A captain without crew** has no pinned root, and the installer does not
+  pin one for Slack, because a pin fixes its crew roster. Its bot answers,
+  but Slack threads and IRC conversations keep separate sessions. Give it
+  crew to share one.
+- **`claude-sdk` officers** cannot have a bot: Stargate's Claude backend has
+  no root to share, and their gateway runs as the officer, whose model could
+  read the tokens.
+- **The rear admiral's own bot replaces `stakeholders.slack`**, which keeps
+  sessions of its own and reads the same token files; set one or the other.
+  [Quota notices](#crew-quota) post through whichever it has. Teams keeps
+  its own sessions.
+
+`--dry-run` validates the settings and both tokens, lists each bot with its
+app, allowlists, session and variable names, and refuses an officer whose
+settings or tokens are incomplete. Upgrades keep the settings, and
+`subspace-setup` keeps them as it keeps other fields added to a member by
+hand. Without a secrets directory, an upgrade keeps the installed tokens.
+Remove `slack` from an officer to remove its bot and its variables from the
+gateway. Its tokens stay in the root-only copy until `--prune-secrets`;
+revoke them in Slack, or delete the app.
 
 ## Medical ship
 
@@ -1066,6 +1159,7 @@ their crew's assignments through `stargate_crew`.
 | `slug`, `name` | Stable fleet ID and display label. Keep the slug fixed on a VM. Use up to 35 lowercase ASCII letters, digits and hyphens, starting with a letter or digit. |
 | `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew` and `crewNames`. IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
+| Member `slack` | Optional: the officer's own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its secrets directory. See [Slack for officers](#slack-for-officers). |
 | `harness` | Default `{"type":"opencode","model":"gpt-5.4"}` with the [role's starter permissions](#instructions-permissions-and-toolchains). Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out. See [crew and repositories](#crew-and-repositories). |

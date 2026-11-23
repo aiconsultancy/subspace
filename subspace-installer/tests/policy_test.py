@@ -1003,6 +1003,187 @@ class AgentDispatchTests(unittest.TestCase):
         self.assertIn(captain["account"], rear_entry["fleetPolicy"]["agentAccounts"])
 
 
+def slack_settings(app="AFIXTURE1", **extra):
+    return {"appId": app, "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"], **extra}
+
+
+class OfficerSlackTests(unittest.TestCase):
+    """An officer's own Slack bot, on the root session its IRC registration uses."""
+
+    def setUp(self):
+        self.config = example_config()
+        self.config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        self.config["captains"][0]["slack"] = slack_settings()
+        self.secrets = officer_secrets()
+        self.root = tempfile.TemporaryDirectory()
+        self.addCleanup(self.root.cleanup)
+        self.directory = Path(self.root.name) / "fleet.secrets"
+        self.directory.mkdir(mode=0o700)
+
+    def token(self, agent_id, name, value, mode=0o600):
+        folder = self.directory / agent_id
+        folder.mkdir(mode=0o700, exist_ok=True)
+        (folder / name).write_text(value + "\n")
+        (folder / name).chmod(mode)
+
+    def tokens(self, agent_id="orion", suffix="orion"):
+        self.token(agent_id, "slack-app-token", f"xapp-1-fixture-{suffix}")
+        self.token(agent_id, "slack-bot-token", f"xoxb-1-fixture-{suffix}")
+
+    def test_settings_name_explicit_slack_users_and_channels(self):
+        captain = validate(self.config, self.secrets)["members"][1]
+        self.assertEqual(captain["slack"], slack_settings())
+        refusals = (
+            ({"appId": "AFIXTURE1", "users": ["UFIXTURE1"]}, "missing a required field"),
+            (slack_settings(users=["*"]), r"users entry: use explicit Slack member IDs .*not \*"),
+            (slack_settings(channels=["*"]), r"channels entry: use explicit Slack conversation IDs"),
+            (slack_settings(users=[]), "nobody may address the bot by default"),
+            (slack_settings(channels="CFIXTURE1"), "nobody may address the bot by default"),
+            (slack_settings(users=["UFIXTURE1", "UFIXTURE1"]), "lists an ID twice"),
+            (slack_settings(app="fixture"), "expected a Slack app ID"),
+            (slack_settings(mentionOnly="yes"), "mentionOnly must be true or false"),
+            # Tokens belong in the secrets directory, never in fleet.json.
+            (slack_settings(botToken="xoxb-1-fixture"), "unknown field"),
+        )
+        for settings, message in refusals:
+            self.config["captains"][0]["slack"] = settings
+            with self.subTest(settings=settings), self.assertRaisesRegex(Invalid, message):
+                validate(self.config, self.secrets)
+
+    def test_what_cannot_share_a_session_or_an_app_is_refused(self):
+        claude = json.loads(json.dumps(self.config))
+        claude["captains"][0]["harness"] = {"type": "claude-sdk", "family": "claude"}
+        claude["captains"][0]["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
+        with self.assertRaisesRegex(Invalid, "Captain orion uses claude-sdk and cannot have its own Slack bot"):
+            validate(claude, self.secrets)
+        twice = json.loads(json.dumps(self.config))
+        twice["rearAdmiral"]["slack"] = slack_settings()
+        with self.assertRaisesRegex(Invalid, "own Slack app: an appId appears twice"):
+            validate(twice, self.secrets)
+        stakeholder = json.loads(json.dumps(self.config))
+        stakeholder["rearAdmiral"]["slack"] = slack_settings("AFIXTURE2")
+        stakeholder["stakeholders"] = {"slack": slack_settings("AFIXTURE3")}
+        with self.assertRaisesRegex(Invalid, "Give the rear admiral one Slack bot"):
+            validate(stakeholder, self.secrets)
+        stakeholder["stakeholders"]["slack"]["appId"] = "AFIXTURE1"
+        del stakeholder["rearAdmiral"]["slack"]
+        with self.assertRaisesRegex(Invalid, "an appId appears twice"):
+            validate(stakeholder, self.secrets)
+
+    def test_tokens_come_from_each_officers_secrets_directory(self):
+        cfg = validate(self.config, self.secrets)
+        with self.assertRaisesRegex(Invalid, "Supply slack-app-token in captain orion's secrets directory"):
+            runtime.extra_snapshot(cfg, self.directory, {}, False)
+        self.token("orion", "slack-bot-token", "xoxb-1-fixture-orion")
+        # Half of the pair is refused as well.
+        with self.assertRaisesRegex(Invalid, "Supply slack-app-token in captain orion's secrets directory"):
+            runtime.extra_snapshot(cfg, self.directory, {}, False)
+        self.token("orion", "slack-app-token", "xapp-1-fixture-orion", 0o644)
+        with self.assertRaisesRegex(ValueError, "owner-only"):
+            runtime.extra_snapshot(cfg, self.directory, {}, False)
+        self.token("orion", "slack-app-token", "xoxb-1-fixture-orion")
+        with self.assertRaisesRegex(Invalid, "Invalid slack-app-token"):
+            runtime.extra_snapshot(cfg, self.directory, {}, False)
+        self.tokens()
+        extra = runtime.extra_snapshot(cfg, self.directory, {}, False)
+        self.assertEqual(extra["slack"], {"orion": {"slack-app-token": "xapp-1-fixture-orion",
+                                                    "slack-bot-token": "xoxb-1-fixture-orion"}})
+        # An upgrade without a secrets directory keeps the installed tokens.
+        self.assertEqual(runtime.extra_snapshot(cfg, None, extra, False)["slack"], extra["slack"])
+        # Two officers cannot share a bot.
+        self.config["rearAdmiral"]["slack"] = slack_settings("AFIXTURE2")
+        self.token("atlas", "slack-app-token", "xapp-1-fixture-atlas")
+        self.token("atlas", "slack-bot-token", "xoxb-1-fixture-orion")
+        with self.assertRaisesRegex(Invalid, "own slack-bot-token"):
+            runtime.extra_snapshot(validate(self.config, self.secrets), self.directory, {}, False)
+        # Removing an officer's Slack keeps its tokens until they are pruned, and renders no bot.
+        del self.config["rearAdmiral"]["slack"], self.config["captains"][0]["slack"]
+        cfg = validate(self.config, self.secrets)
+        self.assertEqual(runtime.extra_snapshot(cfg, None, extra, False)["slack"], extra["slack"])
+        self.assertEqual(runtime.extra_snapshot(cfg, self.directory, extra, True)["slack"], {})
+        self.assertEqual(runtime.officer_slack_bot(cfg["members"][1], {"backend": {}}, extra["slack"]["orion"]),
+                         (None, {}))
+
+    def test_the_bot_uses_the_irc_registrations_backend_and_pinned_session(self):
+        self.config["captains"][0]["slack"] = slack_settings(mentionOnly=False)
+        captain = validate(self.config, self.secrets)["members"][1]
+        backend = {"type": "opencode", "url": "http://127.0.0.1:4097", "directory": "/workspace/project",
+                   "agent": "build", "sessionID": "ses_fixture", "permissions": [], "enforcePermissions": True,
+                   "headersEnv": {"authorization": "ENGINE_ORION"}}
+        registration, _ = runtime.irc_agent(validate(self.config, self.secrets), captain, backend)
+        tokens = {"slack-app-token": "xapp-1-fixture-orion", "slack-bot-token": "xoxb-1-fixture-orion"}
+        bot, environment = runtime.officer_slack_bot(captain, registration, tokens)
+        self.assertEqual(bot, {
+            "id": "fleet-slack-orion", "displayName": "Orion", "backend": backend,
+            "slack": {"appId": "AFIXTURE1", "appTokenEnv": "SLACK_APP_TOKEN_ORION",
+                      "botTokenEnv": "SLACK_BOT_TOKEN_ORION"},
+            "access": {"users": ["UFIXTURE1"], "channels": ["CFIXTURE1"], "mentionOnly": False},
+        })
+        # The configuration names the variables only; the tokens go in the gateway's private environment.
+        self.assertNotIn("fixture-orion", json.dumps(bot))
+        self.assertEqual(environment, {"SLACK_APP_TOKEN_ORION": "xapp-1-fixture-orion",
+                                       "SLACK_BOT_TOKEN_ORION": "xoxb-1-fixture-orion"})
+        self.config["captains"][0]["slack"] = slack_settings()
+        captain = validate(self.config, self.secrets)["members"][1]
+        self.assertTrue(runtime.officer_slack_bot(captain, registration, tokens)[0]["access"]["mentionOnly"])
+        with self.assertRaisesRegex(Invalid, "Supply slack-app-token and slack-bot-token"):
+            runtime.officer_slack_bot(captain, registration, None)
+
+    def test_the_rear_admirals_own_bot_pins_its_root_and_reports_quota(self):
+        cfg = validate(self.config, self.secrets)
+        self.assertFalse(runtime.rear_root(cfg))
+        self.config["rearAdmiral"]["slack"] = slack_settings("AFIXTURE2")
+        with self.assertRaisesRegex(Invalid, "Usage notices require rear-admiral Slack"):
+            validate({**self.config, "rearAdmiral": example_config()["rearAdmiral"],
+                      "usage": {"reportChannel": "CFIXTURE1"}}, self.secrets)
+        self.config["usage"] = {"reportChannel": "CFIXTURE1"}
+        cfg = validate(self.config, self.secrets)
+        self.assertTrue(runtime.rear_root(cfg))
+        tokens = {"slack-app-token": "xapp-1-fixture-atlas", "slack-bot-token": "xoxb-1-fixture-atlas",
+                  "proxy-management-key": "fixture-proxy-management-key"}
+        with patch.object(runtime.subprocess, "run"):
+            settings, _ = runtime.stakeholder_settings(cfg, tokens, {}, "ss-fleet-gateway",
+                                                       Path("/var/lib/subspace-fleet/gateway/data"), {})
+        self.assertNotIn("bots", settings)
+        self.assertEqual(settings["quotaWatch"]["report"], {"bot": "fleet-slack-atlas", "channel": "CFIXTURE1"})
+
+    def test_dry_run_lists_the_bots_and_refuses_a_half_configured_officer(self):
+        self.config["rearAdmiral"]["slack"] = slack_settings("AFIXTURE2")
+        self.config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra",
+                                        "crew": {"claude": {"count": 0}, "codex": {"count": 0}},
+                                        "slack": slack_settings("AFIXTURE3", mentionOnly=False)})
+        config_path = Path(self.root.name) / "fleet.json"
+        config_path.write_text(json.dumps(self.config))
+        secrets_path = Path(self.root.name) / "fleet.secrets.json"
+        secrets_path.write_text(json.dumps(officer_secrets("example-lyra")))
+        secrets_path.chmod(0o600)
+
+        def plan():
+            output = io.StringIO()
+            with patch.object(runtime, "ETC", Path(self.root.name) / "etc"), \
+                    patch.object(runtime, "STATE", Path(self.root.name) / "state"), \
+                    patch.object(runtime, "SESSIONS", Path(self.root.name) / "etc/sessions"), \
+                    patch.object(sys, "stdout", output), patch.object(sys, "stderr", io.StringIO()):
+                runtime.main(["plan", str(config_path), str(secrets_path), str(self.directory), "false"])
+            return output.getvalue()
+
+        self.tokens()
+        self.tokens("atlas", "atlas")
+        self.token("lyra", "slack-bot-token", "xoxb-1-fixture-lyra")
+        with self.assertRaisesRegex(Invalid, "Supply slack-app-token in captain lyra's secrets directory"):
+            plan()
+        self.token("lyra", "slack-app-token", "xapp-1-fixture-lyra")
+        lines = [line for line in plan().splitlines() if line.startswith("Slack:")]
+        self.assertEqual(len(lines), 3)
+        self.assertIn("Rear admiral atlas answers as Slack app AFIXTURE2 (fleet-slack-atlas), to users UFIXTURE1 in "
+                      "CFIXTURE1, when mentioned; it shares its pinned root session with its IRC registration.", lines[0])
+        self.assertIn("Captain orion answers as Slack app AFIXTURE1", lines[1])
+        self.assertIn("shares its pinned root session", lines[1])
+        self.assertIn("in CFIXTURE1; it has no pinned root without crew", lines[2])
+        self.assertIn("as SLACK_APP_TOKEN_LYRA and SLACK_BOT_TOKEN_LYRA", lines[2])
+        self.assertNotIn("xoxb-", "\n".join(lines))
+
+
 class FleetRecordsTests(unittest.TestCase):
     """The fleet's standard channels, ships and officers in the Subspace API (fleetctl register)."""
 

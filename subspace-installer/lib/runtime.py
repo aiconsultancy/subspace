@@ -220,7 +220,7 @@ def source(value, label, repo, ref=None):
 def member(value):
     require(not isinstance(value, dict) or "crewGitHubApps" not in value,
             "Remove crewGitHubApps: crew run as their captain and commit and push with the captain's githubApp.")
-    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames serviceTokenClientId sessionRoot", ["id", "name", "account"])
+    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames serviceTokenClientId sessionRoot slack", ["id", "name", "account"])
     pattern(value["id"], r"[a-z][a-z0-9-]{0,19}", "member ID")
     require(not value["id"].startswith("fleet-"), "Member IDs cannot start with fleet-.")
     require(value["id"] != SENTRY_TOKEN[0], "The medical member ID is reserved for integration credentials.")
@@ -246,6 +246,8 @@ def member(value):
     if "sessionRoot" in value:
         # Where a captain's sessions start: its workspace (the default) or its first repository's checkout.
         pattern(value["sessionRoot"], "|".join(ROOT_MODES), f"sessionRoot for {value['id']} (workspace or repository)")
+    if "slack" in value:
+        officer_slack(value["slack"], value["id"])
     return value
 
 
@@ -259,6 +261,123 @@ def github_app(value):
     if "contents" in app:
         pattern(app["contents"], r"read|write", "GitHub App Contents access")
     return app
+
+
+# Slack Socket Mode tokens, as files in an officer's secrets directory and the prefix each must have. They never
+# go in fleet.json; the gateway reads them from its private environment, under the names slack_env() gives.
+SLACK_TOKEN_FILES = {"slack-app-token": "xapp", "slack-bot-token": "xoxb"}
+
+
+def officer_slack(value, agent_id):
+    """An officer's own Slack bot: its app, and explicit lists of who may address it and where."""
+    label = f"Member {agent_id}'s slack"
+    slack = fields(value, label, "appId users channels mentionOnly", ["appId", "users", "channels"])
+    pattern(slack["appId"], r"A[A-Z0-9]+", f"{label}.appId: expected a Slack app ID (A...)")
+    for key, expression, kind in (("users", r"[UW][A-Z0-9]+", "member IDs (U... or W...)"),
+                                  ("channels", r"[CGD][A-Z0-9]+", "conversation IDs (C..., G... or D...)")):
+        entries = slack[key]
+        # Nobody may address the bot by default: Stargate's * is refused, as for stakeholders.slack.
+        require(isinstance(entries, list) and entries,
+                f"{label}.{key} must list explicit Slack {kind}; nobody may address the bot by default.")
+        for entry in entries:
+            pattern(entry, expression, f"{label}.{key} entry: use explicit Slack {kind}, not *")
+        require(len(set(entries)) == len(entries), f"{label}.{key} lists an ID twice.")
+    if "mentionOnly" in slack:
+        require(type(slack["mentionOnly"]) is bool, f"{label}.mentionOnly must be true or false.")
+    return slack
+
+
+def slack_env(agent_id):
+    """The gateway environment variables that hold an officer's Slack app-level and bot tokens."""
+    suffix = agent_id.upper().replace("-", "_")
+    return f"SLACK_APP_TOKEN_{suffix}", f"SLACK_BOT_TOKEN_{suffix}"
+
+
+def slack_bot_id(agent_id):
+    """The officer's Stargate bot ID. Member IDs never start with fleet-, so it cannot meet an IRC registration's."""
+    return f"fleet-slack-{agent_id}"
+
+
+def officer_title(person):
+    return f"{'Rear admiral' if person['role'] == 'rear_admiral' else 'Captain'} {person['id']}"
+
+
+def check_officer_slack(agents, stakeholder):
+    """Officers' own Slack bots: each a distinct Slack app, on an OpenCode officer.
+
+    The rear admiral's own bot replaces stakeholders.slack, which reads the same token files.
+    """
+    apps = [stakeholder["appId"]] if stakeholder else []
+    for person in agents:
+        if "slack" not in person:
+            continue
+        require(person["harness"]["type"] == "opencode",
+                f"{officer_title(person)} uses claude-sdk and cannot have its own Slack bot: Stargate's Claude "
+                "backend has no root session for Slack and IRC to share, and its gateway runs as the officer, whose "
+                "model could read the Slack tokens. Remove its slack, or use the opencode harness.")
+        require(not (person["role"] == "rear_admiral" and stakeholder),
+                "Give the rear admiral one Slack bot: rearAdmiral.slack shares its root session with IRC, and "
+                "stakeholders.slack keeps sessions of its own. Both read the same token files; remove one.")
+        apps.append(person["slack"]["appId"])
+    require(len(set(apps)) == len(apps), "Each Slack bot needs its own Slack app: an appId appears twice.")
+
+
+def slack_members(cfg):
+    """The officers whose secrets directories hold Slack tokens: each with its own bot, and the rear admiral for
+    stakeholders.slack."""
+    return [person["id"] for person in cfg["members"]
+            if "slack" in person or person["role"] == "rear_admiral" and cfg["integrations"]["slack"]]
+
+
+def slack_owner(cfg, agent_id):
+    return "the rear admiral's" if agent_id == cfg["members"][0]["id"] else f"captain {agent_id}'s"
+
+
+def officer_slack_bot(person, registration, tokens):
+    """The officer's Stargate Slack bot and the environment it reads, or (None, {}) without one.
+
+    The bot takes the backend of the officer's IRC registration, its pinned sessionID included: Stargate lets one
+    Slack bot and one IRC registration pin the same OpenCode root, so a request on either reaches that session.
+    Each still delivers only the replies to its own requests.
+    """
+    slack = person.get("slack")
+    if not slack:
+        return None, {}
+    require(tokens and SLACK_TOKEN_FILES.keys() <= tokens.keys(),
+            f"Supply slack-app-token and slack-bot-token in {person['id']}'s secrets directory.")
+    app_env, bot_env = slack_env(person["id"])
+    bot = {
+        "id": slack_bot_id(person["id"]), "displayName": person["name"], "backend": dict(registration["backend"]),
+        "slack": {"appId": slack["appId"], "appTokenEnv": app_env, "botTokenEnv": bot_env},
+        "access": {"users": slack["users"], "channels": slack["channels"],
+                   "mentionOnly": slack.get("mentionOnly", True)},
+    }
+    return bot, {app_env: tokens["slack-app-token"], bot_env: tokens["slack-bot-token"]}
+
+
+def slack_plan(cfg):
+    """What --dry-run says about officers' own Slack bots, one line each."""
+    lines = []
+    for person in cfg["members"]:
+        if not (slack := person.get("slack")):
+            continue
+        app_env, bot_env = slack_env(person["id"])
+        if person["role"] == "rear_admiral" or person["crew"]:
+            session = "shares its pinned root session with its IRC registration"
+        else:
+            session = ("has no pinned root without crew, so Slack threads and IRC conversations keep separate "
+                       "sessions")
+        lines.append(
+            f"Slack: {officer_title(person)} answers as Slack app {slack['appId']} ({slack_bot_id(person['id'])}), "
+            f"to users {', '.join(slack['users'])} in {', '.join(slack['channels'])}"
+            f"{', when mentioned' if slack.get('mentionOnly', True) else ''}; it {session}. Its tokens come from "
+            f"{person['id']}/slack-app-token and slack-bot-token in the secrets directory, as {app_env} and {bot_env}.")
+    return lines
+
+
+def rear_root(cfg):
+    """Whether the rear admiral has a pinned root: agent dispatch needs one, and its own Slack bot shares it."""
+    return bool(cfg["agentDispatch"] or "slack" in cfg["members"][0])
 
 
 def listener(value, label, default_port, allow_bind=False):
@@ -584,7 +703,7 @@ def integrations_config(cfg):
     for family, settings in families.items():
         fields(settings, f"{family} quota provider", "")
     if "reportChannel" in usage:
-        require(slack is not None, "Usage notices require rear-admiral Slack.")
+        require(slack is not None or "slack" in cfg["rearAdmiral"], "Usage notices require rear-admiral Slack.")
         pattern(usage["reportChannel"], r"[CG][A-Z0-9]+", "Slack quota report channel")
     return {"slack": slack, "teams": teams,
             "usage": {**usage, "providers": sorted(families or FAMILIES)}}
@@ -792,11 +911,13 @@ def validate(config, credentials, check_files=True):
             fleet_records.check(slug, fleet_records.roster({"members": agents, "irc": irc}))
         except fleet_records.Refused as error:
             raise Invalid(str(error)) from None
+    integrations = integrations_config(cfg)
+    check_officer_slack(agents, integrations["slack"])
     return {
         "slug": slug, "name": string(cfg["name"], "fleet name"), "members": agents, "irc": irc, "medical": medical,
         "repositories": repositories,
         "repositoryNotes": repository_notes(cfg.get("repositories", [])),
-        "integrations": integrations_config(cfg), "operators": operators, "protectedBranches": protected,
+        "integrations": integrations, "operators": operators, "protectedBranches": protected,
         "toolchains": toolchain_config(cfg.get("toolchains", {})),
         "maintenance": maintenance_config(cfg.get("maintenance", {})),
         "stargate": {**source({key: stargate[key] for key in ("repo", "ref") if key in stargate},
@@ -877,8 +998,7 @@ def app_keys(people, directory, saved_people=()):
 
 def extra_sources(cfg, directory, partial=False):
     integrations = cfg["integrations"]
-    rear = cfg["members"][0]["id"]
-    slack = integrations["slack"]
+    slack = slack_members(cfg)
     quota = "reportChannel" in integrations["usage"]
     with private_directory(directory) as root:
         if root is None:
@@ -887,14 +1007,14 @@ def extra_sources(cfg, directory, partial=False):
         cloud = collect_cloud(root, [person["id"] for person in cfg["members"]])
         files = {(agent, "cloud", name): contents
                  for agent, entries in cloud.items() for name, contents in entries.items()}
-        if slack:
-            with private_directory(rear, root) as agent_dir:
-                require(partial or agent_dir is not None, "Supply Slack credentials in the rear admiral's secrets directory.")
+        for agent in slack:
+            with private_directory(agent, root) as agent_dir:
+                require(partial or agent_dir is not None, f"Supply Slack credentials in {slack_owner(cfg, agent)} secrets directory.")
                 if agent_dir is not None:
-                    for name in ("slack-app-token", "slack-bot-token"):
+                    for name in SLACK_TOKEN_FILES:
                         contents = private_file(name, optional=partial, dir_fd=agent_dir)
                         if contents is not None:
-                            files[rear, name] = contents
+                            files[agent, name] = contents
         if quota:
             contents = private_file("proxy-management-key", optional=partial, dir_fd=root)
             if contents is not None:
@@ -912,18 +1032,19 @@ def extra_sources(cfg, directory, partial=False):
 
 def extra_snapshot(cfg, directory, previous, prune):
     files = extra_sources(cfg, directory, partial=not prune) if directory else {}
-    rear = cfg["members"][0]["id"]
     tokens = {} if prune else previous.get("tokens", {}).copy()
-    slack_tokens = previous.get("slack", {}).copy()
-    slack = {} if prune else slack_tokens.get(rear, {}).copy()
-    for name, prefix in (("slack-app-token", "xapp"), ("slack-bot-token", "xoxb")):
-        if (rear, name) in files:
-            slack[name] = pattern(files[rear, name].decode("ascii").strip(), fr"{prefix}-[a-zA-Z0-9-]{{8,512}}", name)
-        require(not cfg["integrations"]["slack"] or name in slack, f"Supply {name} in the rear admiral's secrets directory.")
-    if slack:
-        slack_tokens[rear] = slack
-    else:
-        slack_tokens.pop(rear, None)
+    # Slack tokens by officer. An upgrade keeps tokens it is not given, as for other credentials; pruning keeps
+    # only those of officers whose Slack bot is configured, from the secrets directory.
+    slack_tokens = {} if prune else {agent: entries.copy() for agent, entries in previous.get("slack", {}).items()}
+    for agent in slack_members(cfg):
+        slack = slack_tokens.setdefault(agent, {})
+        for name, prefix in SLACK_TOKEN_FILES.items():
+            if (agent, name) in files:
+                slack[name] = pattern(files[agent, name].decode("ascii").strip(), fr"{prefix}-[a-zA-Z0-9-]{{8,512}}", name)
+            require(name in slack, f"Supply {name} in {slack_owner(cfg, agent)} secrets directory.")
+    for name in SLACK_TOKEN_FILES:
+        configured = [slack_tokens[agent][name] for agent in slack_members(cfg)]
+        require(len(set(configured)) == len(configured), f"Each Slack bot needs its own {name}: two officers share one.")
     if ("proxy-management-key",) in files:
         tokens["proxy-management-key"] = pattern(files["proxy-management-key",].decode("ascii").strip(), r"[a-zA-Z0-9_=-]{20,256}", "proxy management key")
     if "reportChannel" in cfg["integrations"]["usage"]:
@@ -1292,7 +1413,7 @@ def rear_pin(cfg):
 
     Captains name it in their fleetControl target, which is how they recognise their rear admiral's offers.
     """
-    if not cfg["agentDispatch"]:
+    if not rear_root(cfg):
         return None
     return pinned_session(cfg["members"][0], rear_workspace(cfg))
 
@@ -1770,7 +1891,9 @@ def stakeholder_settings(cfg, tokens, backend, user, data, environment):
         settings["quotaWatch"] = {
             "proxy": {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}", "managementKeyFile": str(data.parent / "quota-management-key")},
             "stateFile": str(data / "quota.json"), "providers": usage["providers"],
-            "report": {"bot": "fleet-stakeholder-slack", "channel": usage["reportChannel"]},
+            # The rear admiral posts as its stakeholder bot, or as its own Slack bot when it has that instead.
+            "report": {"bot": "fleet-stakeholder-slack" if slack else slack_bot_id(cfg["members"][0]["id"]),
+                       "channel": usage["reportChannel"]},
         }
     return settings, writable
 
@@ -1918,6 +2041,11 @@ def render(cfg, extra, prune=False):
             opts["writable"].append(fleet_socket(agent_id).parent)
         opts["irc"].append(entry)
         opts["environment"].update(environments[agent_id])
+        # The officer's own Slack bot joins the gateway that serves its IRC registration, on the same backend.
+        bot, slack_environment = officer_slack_bot(person, registrations[agent_id], extra.get("slack", {}).get(agent_id))
+        if bot:
+            opts.setdefault("bots", []).append(bot)
+            opts["environment"].update(slack_environment)
         if person["crew"]:
             opts["ready"].append(ready_marker(agent_id))
 
@@ -1947,6 +2075,9 @@ def render(cfg, extra, prune=False):
                     "allowedNetworks": ["127.0.0.0/8", "::1/128"], "fleetName": cfg["name"],
                     "corsOrigins": cfg["stargate"]["api"]["corsOrigins"],
                 }
+        if options.get("bots"):
+            # Officers' own Slack bots, before the rear admiral's stakeholder bot when it has one.
+            settings["bots"] = [*options["bots"], *settings.get("bots", [])]
         name = "stargate" if is_primary else f"stargate-{group}"
         config_path = save_settings(name, settings, user)
         runtime_path = save_settings(group, {
@@ -1991,7 +2122,7 @@ def commission(prune, existing=False):
     for person in cfg["members"]:
         # Captains with crew, and the rear admiral while agent dispatch is on (captains name its root).
         rear = person["role"] == "rear_admiral"
-        if not (person["crew"] or rear and cfg["agentDispatch"]):
+        if not (person["crew"] or rear and rear_root(cfg)):
             continue
         store = sessions.SessionRecord(SESSIONS, person["id"])
         try:
@@ -2193,6 +2324,8 @@ def main(args):
                 print("No repositories are configured, so captains have no crew: crew work in Git worktrees of "
                       "their captain's checkouts.")
             for line in session_root_lines(cfg):
+                print(line)
+            for line in slack_plan(cfg):
                 print(line)
     elif verb == "commission":
         commission(tail[0] == "true", existing="existing" in tail[1:])

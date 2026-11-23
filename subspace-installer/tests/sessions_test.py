@@ -678,6 +678,69 @@ class InstalledFleet(unittest.TestCase):
         self.render(config, secrets)
         self.assertEqual(self.events, [])
 
+    def test_officers_slack_bots_reach_the_same_root_as_their_irc(self):
+        config, secrets = crew_fleet("orion")
+        for person, app in ((config["rearAdmiral"], "AFIXTURE1"), (config["captains"][0], "AFIXTURE2")):
+            person["slack"] = {"appId": app, "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"]}
+        extra = {"tokens": {}, "cloud": {}, "slack": {
+            agent: {"slack-app-token": f"xapp-1-fixture-{agent}", "slack-bot-token": f"xoxb-1-fixture-{agent}"}
+            for agent in ("atlas", "orion")}}
+        for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
+            (self.etc / name).write_text(json.dumps(value))
+            (self.etc / name).chmod(0o600)
+        servers = {4096: FakeOpenCode(), 4097: FakeOpenCode()}
+        for port, member, directory in ((4096, "atlas", "references/atlas/project"),
+                                        (4097, "orion", "agents/orion/workspace/project")):
+            (self.etc / f"engine-{member}.json").write_text(json.dumps({
+                "port": port, "directory": str(self.state / directory),
+                "environment": {"OPENCODE_PASSWORD": "fixture-password"}}))
+        self.start(patch.object(runtime.sessions, "OpenCode",
+                                side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])]))
+
+        def bots():
+            stargate = json.loads((self.etc / "stargate.json").read_text())
+            return ({entry["id"]: entry["backend"] for entry in stargate["irc"]},
+                    {bot["id"]: bot for bot in stargate.get("bots", [])})
+
+        runtime.render(runtime.validate(config, secrets), extra)
+        irc, slack = bots()
+        # Before commissioning, the captain with crew is served on neither transport.
+        self.assertEqual((list(irc), list(slack)), (["atlas"], ["fleet-slack-atlas"]))
+        self.assertEqual(slack["fleet-slack-atlas"]["backend"], irc["atlas"])
+
+        # Without agent dispatch, the rear admiral's own Slack bot is reason enough to pin its root.
+        runtime.commission(False)
+        rear_session = json.loads((self.etc / "sessions/atlas.json").read_text())["sessionID"]
+        captain_session = json.loads(self.store.confirmed.read_text())["sessionID"]
+        irc, slack = bots()
+        self.assertEqual(list(slack), ["fleet-slack-atlas", "fleet-slack-orion"])
+        for agent, session_id in (("atlas", rear_session), ("orion", captain_session)):
+            bot = slack[f"fleet-slack-{agent}"]
+            self.assertEqual(bot["backend"]["sessionID"], session_id)
+            self.assertEqual(bot["backend"], irc[agent])
+            self.assertEqual(bot["slack"]["appTokenEnv"], f"SLACK_APP_TOKEN_{agent.upper()}")
+            self.assertTrue(bot["access"]["mentionOnly"])
+        self.assertEqual(slack["fleet-slack-orion"]["backend"]["agent"], "build")
+        self.assertNotIn("xoxb-", (self.etc / "stargate.json").read_text())
+        environment = json.loads((self.etc / "gateway.json").read_text())["environment"]
+        self.assertEqual(environment["SLACK_BOT_TOKEN_ORION"], "xoxb-1-fixture-orion")
+        self.assertEqual(environment["SLACK_APP_TOKEN_ATLAS"], "xapp-1-fixture-atlas")
+
+        # Removing the captain's Slack settings removes its bot and its tokens from the gateway; IRC keeps its root.
+        del config["captains"][0]["slack"]
+        runtime.render(runtime.validate(config, secrets), extra)
+        irc, slack = bots()
+        self.assertEqual(list(slack), ["fleet-slack-atlas"])
+        self.assertEqual(irc["orion"]["sessionID"], captain_session)
+        environment = json.loads((self.etc / "gateway.json").read_text())["environment"]
+        self.assertFalse({"SLACK_APP_TOKEN_ORION", "SLACK_BOT_TOKEN_ORION"} & environment.keys())
+        del config["rearAdmiral"]["slack"]
+        runtime.render(runtime.validate(config, secrets), extra)
+        irc, slack = bots()
+        self.assertEqual(slack, {})
+        # Like turning agent dispatch off, the rear admiral's IRC goes back to a session per conversation.
+        self.assertNotIn("sessionID", irc["atlas"])
+
 
 if __name__ == "__main__":
     unittest.main()
