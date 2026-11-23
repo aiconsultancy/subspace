@@ -598,6 +598,9 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         config["irc"] = {
             "mode": "remote", "host": answers["ircHost"], "port": answers["ircPort"], "tls": True,
             "allowedAccounts": [answers["admin"]],
+            # The shared server (irc_server.py) seeds each officer's account with the password in this fleet's
+            # bundle, so these fleets keep signing in with passwords (installer README, "IRC sign-in").
+            "auth": "password",
         }
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]

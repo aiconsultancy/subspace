@@ -88,6 +88,8 @@ class SetupInputsTests(unittest.TestCase):
         cfg = validate(config, secrets, check_files=False)
         self.assertEqual(cfg["irc"]["mode"], "remote")
         self.assertEqual((cfg["irc"]["host"], cfg["irc"]["port"], cfg["irc"]["tls"]), ("irc.example.ts.net", 6697, True))
+        # The shared server seeds officers' accounts with passwords, so setup keeps password sign-in explicitly.
+        self.assertEqual(cfg["irc"]["auth"], "password")
         self.assertNotIn("admiral", secrets["ircPasswords"])
         members = fleet_setup.roster(answers, "atlas", ["orion"])
         bundle = fleet_setup.irc_bundle(answers, members, store)

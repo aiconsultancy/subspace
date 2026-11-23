@@ -318,6 +318,7 @@ def secrets_for(*accounts):
 def crew_fleet(*captains):
     config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
     config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+    config["irc"]["auth"] = "password"
     config["captains"] = [{"id": name, "name": name.title(), "account": f"example-{name}"} for name in captains]
     secrets = secrets_for("example-atlas", *(f"example-{name}" for name in captains))
     return config, secrets

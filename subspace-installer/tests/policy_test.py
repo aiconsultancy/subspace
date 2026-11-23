@@ -1,9 +1,16 @@
 """Offline checks for network, GitHub and workspace policy."""
 
+import contextlib
+import hashlib
 import io
 import json
+import os
+import pwd
 import re
+import ssl
+import stat
 import subprocess
+import tarfile
 import tempfile
 import sys
 from pathlib import Path
@@ -25,7 +32,10 @@ import workspaces
 
 
 def example_config():
-    return json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+    config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+    # These tests sign officers in with passwords; IrcCertificateTests covers the default, certificates.
+    config["irc"]["auth"] = "password"
+    return config
 
 
 def api_secrets():
@@ -482,6 +492,7 @@ class FleetPolicyTests(unittest.TestCase):
     def test_stargate_fleet_api_is_an_operator_listener(self):
         example = Path(__file__).resolve().parents[1] / "fleet.example.json"
         config = json.loads(example.read_text())
+        config["irc"]["auth"] = "password"
         config["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
         secrets = {"proxyKey": "fixture-model-proxy-key", "ircPasswords": {
             account: "fixture-password" for account in ("example-atlas", "example-orion")
@@ -1371,6 +1382,195 @@ class FleetRecordsTests(unittest.TestCase):
             config.pop("api")
             secrets.pop("apiToken")
             validate(config, secrets)
+
+
+class IrcCertificateTests(unittest.TestCase):
+    """Officers sign in to a remote IRC server with a certificate each (SASL EXTERNAL) unless told otherwise."""
+
+    SECRETS = {"proxyKey": "fixture-model-proxy-key"}
+
+    def setUp(self):
+        self.config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.work = Path(temporary.name)
+
+    def bundle(self, account="example-atlas"):
+        return runtime.new_irc_bundle(account)
+
+    def supply(self, agent_id, contents, mode=0o600):
+        directory = self.work / "fleet.secrets" / agent_id
+        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+        (self.work / "fleet.secrets").chmod(0o700)
+        path = directory / runtime.IRC_CLIENT_PEM
+        path.write_text(contents)
+        path.chmod(mode)
+        return path
+
+    @staticmethod
+    def split(bundle):
+        """A generated bundle's certificate and its private key."""
+        start = runtime.IRC_PEM_KEY.search(bundle).start()
+        return bundle[:start], bundle[start:]
+
+    def fingerprint(self, bundle):
+        """Independently of the installer: SHA-256 over the first certificate's DER, as Ergo computes certfp."""
+        first = bundle[:bundle.index("-----END CERTIFICATE-----") + len("-----END CERTIFICATE-----")]
+        return hashlib.sha256(ssl.PEM_cert_to_DER_cert(first)).hexdigest()
+
+    def test_a_remote_server_defaults_to_certificates_and_keeps_no_officer_password(self):
+        cfg = validate(self.config, self.SECRETS)
+        self.assertEqual(cfg["irc"]["auth"], "certificate")
+        self.assertEqual(cfg["passwords"], {})
+        officer_passwords = {"ircPasswords": {"example-orion": "fixture-password"}}
+        with self.assertRaisesRegex(Invalid, "no IRC password for the rear admiral or a captain.*irc.auth to password"):
+            validate(self.config, {**self.SECRETS, **officer_passwords})
+        # Account names fold: a password under another spelling of an officer's account is still refused.
+        with self.assertRaisesRegex(Invalid, "Remove their entries from ircPasswords"):
+            validate(self.config, {**self.SECRETS, "ircPasswords": {"Example-Orion": "fixture-password"}})
+
+    def test_passwords_remain_an_explicit_choice(self):
+        self.config["irc"]["auth"] = "password"
+        with self.assertRaisesRegex(Invalid, "Supply an IRC password"):
+            validate(self.config, self.SECRETS)
+        cfg = validate(self.config, officer_secrets())
+        registration, environment = runtime.irc_agent(cfg, cfg["members"][1], {"directory": "/w"})
+        self.assertEqual(registration["passwordEnv"], "IRC_ORION")
+        self.assertNotIn("clientPemFile", registration)
+        self.assertEqual(environment, {"IRC_ORION": "fixture-password"})
+        self.assertEqual(runtime.irc_sign_in(cfg), ["Officers sign in to IRC with passwords (SASL PLAIN, irc.auth password)."])
+        with self.assertRaisesRegex(Invalid, r"irc.auth \(certificate or password\)"):
+            validate(dict(self.config, irc={**self.config["irc"], "auth": "external"}), officer_secrets())
+
+    def test_the_managed_ergo_keeps_passwords(self):
+        self.config["irc"] = {"mode": "local", "allowedAccounts": ["operator"],
+                              "compose": {"operator": "ircop", "ref": "0" * 40}}
+        secrets = {**officer_secrets(), "ircOperatorPassword": "fixture-operator-password"}
+        self.assertEqual(validate(self.config, secrets)["irc"]["auth"], "password")
+        self.config["irc"]["auth"] = "certificate"
+        with self.assertRaisesRegex(Invalid, "needs a remote IRC server.*only over TLS"):
+            validate(self.config, secrets)
+
+    def test_the_gateway_registration_names_the_bundle_and_no_password(self):
+        cfg = validate(self.config, self.SECRETS)
+        for person in cfg["members"]:
+            registration, environment = runtime.irc_agent(cfg, person, {"directory": "/w"})
+            self.assertEqual(registration["clientPemFile"], f"/etc/subspace-fleet/irc-certs/{person['id']}.pem")
+            self.assertNotIn("passwordEnv", registration)
+            self.assertEqual(environment, {})
+            entry = runtime.irc_officer(cfg, person, registration)
+            self.assertTrue(entry["server"]["tls"])
+            runtime.check_sign_in(entry, entry["server"])
+        # Stargate's rule: exactly one of the two, and a certificate only over TLS.
+        both = {**registration, "passwordEnv": "IRC_ORION"}
+        neither = {key: value for key, value in registration.items() if key != "clientPemFile"}
+        for broken in (both, neither):
+            with self.assertRaisesRegex(Invalid, "exactly one of a password and a client certificate"):
+                runtime.check_sign_in(broken, {"tls": True})
+        with self.assertRaisesRegex(Invalid, "needs TLS"):
+            runtime.check_sign_in(registration, {"tls": False})
+
+    def test_bundles_are_kept_and_owned_only_by_the_gateway_that_serves_the_officer(self):
+        # Orion runs on the Claude Agent SDK, so its own Linux user runs its gateway.
+        self.config["captains"][0].update(harness={"type": "claude-sdk", "family": "claude"},
+                                          crew={"claude": {"count": 0}, "codex": {"count": 0}})
+        cfg = validate(self.config, self.SECRETS)
+        owners = []
+        me = pwd.getpwuid(os.getuid())
+
+        def lookup(name):
+            owners.append(name)
+            return me
+
+        certs = self.work / "irc-certs"
+        with patch.object(runtime, "IRC_CERTS", certs), patch.object(runtime, "STATE", self.work), \
+                patch.object(runtime, "directory", lambda path, mode, *_: path.mkdir(mode=mode, exist_ok=True)), \
+                patch.object(runtime.pwd, "getpwnam", lookup):
+            runtime.irc_certificates(cfg)
+            self.assertEqual(owners, [runtime.GATEWAY, "ss-orion"])
+            first = {path.name: path.read_text() for path in certs.iterdir()}
+            self.assertEqual(set(first), {"atlas.pem", "orion.pem"})
+            for name, bundle in first.items():
+                info = (certs / name).stat()
+                self.assertEqual((stat.S_IMODE(info.st_mode), info.st_uid), (0o600, os.getuid()))
+                self.assertEqual(len(runtime.IRC_PEM_CERTIFICATE.findall(bundle)), 1)
+                self.assertIsNotNone(runtime.IRC_PEM_KEY.search(bundle))
+                self.assertNotIn("ENCRYPTED", bundle)
+            # An upgrade keeps each officer's certificate, so its bound fingerprint stays valid.
+            (self.work / "pending").unlink()
+            runtime.irc_certificates(cfg)
+            self.assertEqual({path.name: path.read_text() for path in certs.iterdir()}, first)
+            self.assertFalse((self.work / "pending").exists())
+            # A bundle that is not a certificate and its key stops the render rather than reaching Stargate.
+            (certs / "atlas.pem").write_text(self.split(first["orion.pem"])[0])
+            with self.assertRaisesRegex(Invalid, "certificate and its unencrypted private key"):
+                runtime.irc_certificates(cfg)
+
+    def test_an_operator_can_bring_existing_bundles(self):
+        cfg = validate(self.config, self.SECRETS)
+        supplied = self.bundle("example-orion")
+        self.supply("orion", supplied)
+        self.assertEqual(runtime.irc_bundles(cfg, self.work / "fleet.secrets"), {"orion": supplied})
+        # Passwords need no bundle, so none is read.
+        self.assertEqual(runtime.irc_bundles(validate(example_config(), officer_secrets()), self.work / "fleet.secrets"), {})
+        # Only owner-only files, and only a certificate with its own key, as Stargate requires.
+        self.supply("orion", supplied, 0o640)
+        with self.assertRaisesRegex(Invalid, "owner-only"):
+            runtime.irc_bundles(cfg, self.work / "fleet.secrets")
+        other = self.bundle("example-atlas")
+        certificate, _ = self.split(supplied)
+        _, key = self.split(other)
+        self.supply("orion", certificate + key)
+        with self.assertRaisesRegex(Invalid, "does not match an unencrypted private key"):
+            runtime.irc_bundles(cfg, self.work / "fleet.secrets")
+        self.supply("orion", certificate)
+        with self.assertRaisesRegex(Invalid, "certificate and its unencrypted private key"):
+            runtime.irc_bundles(cfg, self.work / "fleet.secrets")
+
+    def test_dry_run_prints_fingerprints_for_binding_and_never_key_material(self):
+        supplied = self.bundle("example-orion")
+        self.supply("orion", supplied)
+        config, secrets = self.work / "fleet.json", self.work / "fleet.secrets.json"
+        config.write_text(json.dumps(self.config))
+        secrets.write_text(json.dumps(self.SECRETS))
+        secrets.chmod(0o600)
+        output = io.StringIO()
+        with patch.object(runtime, "IRC_CERTS", self.work / "installed"), contextlib.redirect_stdout(output):
+            runtime.main(["plan", str(config), str(secrets), str(self.work / "fleet.secrets"), "false"])
+        text = output.getvalue()
+        fingerprint = self.fingerprint(supplied)
+        self.assertRegex(fingerprint, r"\A[0-9a-f]{64}\Z")
+        self.assertIn(f"/msg NickServ CERT ADD example-orion {fingerprint} (supplied)", text)
+        self.assertIn("example-atlas: a new certificate is generated on install", text)
+        self.assertIn("bound to its account on irc.example.com", text)
+        self.assertNotIn("PRIVATE KEY", text)
+        key_body = self.split(supplied)[1].splitlines()[1]
+        self.assertNotIn(key_body, text)
+        # The install summary reads the installed bundles and prints the same form.
+        cfg = validate(self.config, self.SECRETS)
+        installed = self.work / "installed"
+        installed.mkdir()
+        for agent_id, bundle in (("atlas", self.bundle()), ("orion", supplied)):
+            (installed / f"{agent_id}.pem").write_text(bundle)
+        with patch.object(runtime, "IRC_CERTS", installed):
+            lines = runtime.irc_sign_in(cfg)
+        self.assertEqual(lines[1:], [
+            f"  /msg NickServ CERT ADD example-atlas {self.fingerprint((installed / 'atlas.pem').read_text())}",
+            f"  /msg NickServ CERT ADD example-orion {fingerprint}",
+        ])
+
+    def test_dispatch_carries_supplied_bundles_to_the_vm(self):
+        import dispatch
+        supplied = self.bundle("example-orion")
+        self.supply("orion", supplied)
+        (self.work / "fleet.json").write_text(json.dumps(self.config))
+        (self.work / "fleet.secrets.json").write_text(json.dumps(self.SECRETS))
+        (self.work / "fleet.secrets.json").chmod(0o600)
+        payload = dispatch.bundle({"config": "fleet.json", "secrets": "fleet.secrets.json"}, self.work)
+        with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
+            member = archive.getmember(f"fleet.secrets/orion/{runtime.IRC_CLIENT_PEM}")
+            self.assertEqual(member.mode, 0o600)
+            self.assertEqual(archive.extractfile(member).read().decode(), supplied)
 
 
 if __name__ == "__main__":

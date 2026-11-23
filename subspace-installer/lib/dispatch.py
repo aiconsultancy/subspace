@@ -13,6 +13,7 @@ import tarfile
 import tempfile
 
 from runtime import Invalid, app_keys, extra_sources, fields, pattern, read_json, require, validate
+from runtime import IRC_CLIENT_PEM, irc_bundles
 
 
 PACKAGE = Path(__file__).resolve().parents[1]
@@ -71,6 +72,9 @@ def bundle(row, base):
             add(archive, f"fleet.secrets/{agent_id}/github-app.pem", key.encode())
         for parts, contents in extra_sources(cfg, keys_dir).items():
             add(archive, "fleet.secrets/" + "/".join(parts), contents)
+        # Officers' IRC certificate bundles, when an operator supplies them rather than letting the VM generate them.
+        for agent_id, bundle in irc_bundles(cfg, keys_dir).items():
+            add(archive, f"fleet.secrets/{agent_id}/{IRC_CLIENT_PEM}", bundle.encode())
     return buffer.getvalue()
 
 

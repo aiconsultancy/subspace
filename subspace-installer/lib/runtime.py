@@ -14,6 +14,7 @@ import pwd
 import re
 import secrets
 import socket
+import ssl
 import stat
 import subprocess
 import sys
@@ -43,6 +44,16 @@ REPOS = "ss-fleet-repos"
 MEDICAL = "ss-fleet-medical"
 SENTRY_TOKEN = ("medical", "sentry-auth-token")
 MEDICAL_IRC_PASSWORD = ("medical", "irc-password")
+# IRC sign-in with certificates (SASL EXTERNAL, irc.auth "certificate"): one owner-only PEM bundle per officer,
+# a certificate and its private key, owned by the gateway user that serves the officer. Stargate reads it
+# as clientPemFile. An operator may supply one as <secrets-dir>/<officer-id>/irc-client.pem.
+IRC_CERTS = ETC / "irc-certs"
+IRC_CLIENT_PEM = "irc-client.pem"
+# Stargate's own limits for clientPemFile (src/irc/client-pem.ts): at most 64 KiB, a certificate whose first
+# one matches an unencrypted private key in one of these PEM forms.
+IRC_PEM_BYTES = 64 * 1024
+IRC_PEM_CERTIFICATE = re.compile(r"-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----")
+IRC_PEM_KEY = re.compile(r"-----BEGIN (PRIVATE KEY|EC PRIVATE KEY|RSA PRIVATE KEY)-----[\s\S]*?-----END \1-----")
 # Stargate's agent dispatch defaults (docs/agent-dispatch.md), each overridable under agentDispatch.
 DISPATCH_DEFAULTS = {"pollIntervalSeconds": 120, "answerTimeoutSeconds": 300,
                      "retryLadderSeconds": [3600, 10800, 21600, 43200]}
@@ -386,10 +397,11 @@ def listener(value, label, default_port, allow_bind=False):
 
 
 def irc_config(value, slug, check_files):
-    value = fields(value, "irc", "mode host port tls caFile allowedAccounts commandChannel starbaseChannel advertise compose", ["mode", "allowedAccounts"])
+    value = fields(value, "irc", "mode host port tls caFile allowedAccounts commandChannel starbaseChannel advertise compose auth", ["mode", "allowedAccounts"])
     mode = pattern(value["mode"], r"local|remote", "IRC mode")
     tls = boolean(value.get("tls", mode == "remote"))
     require(mode == "local" or tls, "Remote IRC requires TLS.")
+    auth = irc_auth(value, mode, tls)
     server_host = host(value.get("host", LOOPBACK if mode == "local" else None))
     server_port = port(value.get("port", 6697 if tls else 6667))
     if mode == "local":
@@ -403,6 +415,7 @@ def irc_config(value, slug, check_files):
         "mode": mode, "host": server_host, "port": server_port, "tls": tls, "allowedAccounts": allowed,
         "starbaseChannel": standard_channels.starbase(slug), "commandChannel": standard_channels.command(slug),
     }
+    irc["auth"] = auth
     for key, label in (("starbaseChannel", "irc.starbaseChannel"), ("commandChannel", "irc.commandChannel")):
         if key in value:
             require(value[key] == irc[key], not_standard(slug, label, value[key], irc[key]))
@@ -439,6 +452,19 @@ def irc_config(value, slug, check_files):
         if "websocketUrl" in advertised:
             irc["advertise"]["websocketUrl"] = url(advertised["websocketUrl"], "IRC WebSocket URL", True, websocket=True)
     return irc
+
+
+def irc_auth(value, mode, tls):
+    """How officers sign in to IRC: certificates (SASL EXTERNAL) by default on a remote server, else passwords."""
+    auth = pattern(value.get("auth", "certificate" if mode == "remote" else "password"), r"certificate|password",
+                   "irc.auth (certificate or password)")
+    if auth == "certificate":
+        # Stargate takes exactly one of passwordEnv and clientPemFile per account, and clientPemFile needs TLS.
+        require(mode == "remote", "irc.auth certificate needs a remote IRC server for now. The fleet reaches the "
+                "Ergo this installer manages over plain loopback IRC, and Stargate presents a client certificate "
+                "only over TLS. Leave irc.auth out, or set it to password (README, 'IRC sign-in').")
+        require(tls, "IRC certificates (SASL EXTERNAL) need TLS: set irc.tls to true, or irc.auth to password.")
+    return auth
 
 
 def history_config(value):
@@ -855,9 +881,9 @@ def validate(config, credentials, check_files=True):
             "githubPolicy.protectedBranches must be an array of branch patterns.")
     protected = [pattern(branch, r"[a-zA-Z0-9*?._/-]{1,120}", "GitHub protected branch pattern") for branch in protected]
 
-    private = fields(credentials, "secrets", "proxyKey ircPasswords ircOperatorPassword ircHistoryPassword apiToken rearAdmiralApiToken", ["proxyKey", "ircPasswords"])
+    private = fields(credentials, "secrets", "proxyKey ircPasswords ircOperatorPassword ircHistoryPassword apiToken rearAdmiralApiToken", ["proxyKey"])
     proxy_key = pattern(private["proxyKey"], r"[a-zA-Z0-9_=-]{20,256}", "proxy client key")
-    passwords = private["ircPasswords"]
+    passwords = private.get("ircPasswords", {})
     require(isinstance(passwords, dict), "ircPasswords must be an object.")
     medical = medical_config(cfg.get("medical", {}), irc, agents)
     required = {person["account"] for person in agents}
@@ -872,7 +898,14 @@ def validate(config, credentials, check_files=True):
             pattern(account, ERGO_ACCOUNT, "local Ergo account")
     else:
         require(operator_password is None, "An IRC operator password requires local mode.")
-    require(required <= passwords.keys(), "Supply an IRC password for the rear admiral and every captain.")
+    if irc["auth"] == "certificate":
+        # With certificates no IRC password exists for an officer, so none is accepted or stored.
+        require(not {name.lower() for name in passwords} & accounts,
+                "Officers sign in to IRC with certificates (irc.auth certificate, the default with a remote server), "
+                "so the secrets file keeps no IRC password for the rear admiral or a captain. Remove their entries "
+                "from ircPasswords, or set irc.auth to password to keep signing in with passwords.")
+    else:
+        require(required <= passwords.keys(), "Supply an IRC password for the rear admiral and every captain.")
     require(passwords.keys() <= permitted, "ircPasswords names an account that is not the rear admiral's or a captain's. "
             "Crew have no IRC accounts. Local mode also accepts passwords for allowlisted humans.")
     for password in passwords.values():
@@ -1562,11 +1595,177 @@ def claude_backend(cfg, person, workspace, documents):
 
 def irc_agent(cfg, person, backend):
     agent_id = person["id"]
+    if cfg["irc"]["auth"] == "certificate":
+        # SASL EXTERNAL: the gateway reads the officer's certificate and key; no password variable exists.
+        return {
+            "id": agent_id, "displayName": person["name"], "account": person["account"],
+            "clientPemFile": str(irc_client_pem(agent_id)), "backend": backend,
+        }, {}
     password_var = "IRC_" + agent_id.upper().replace("-", "_")
     return {
         "id": agent_id, "displayName": person["name"], "account": person["account"],
         "passwordEnv": password_var, "backend": backend,
     }, {password_var: cfg["passwords"][person["account"]]}
+
+
+def check_sign_in(registration, server):
+    """The pinned Stargate's rule per IRC account: exactly one of passwordEnv (SASL PLAIN) and clientPemFile
+    (SASL EXTERNAL), and a client certificate only over TLS."""
+    require(("passwordEnv" in registration) != ("clientPemFile" in registration),
+            f"IRC account {registration['account']} needs exactly one of a password and a client certificate.")
+    require("clientPemFile" not in registration or server["tls"],
+            f"IRC account {registration['account']} signs in with a client certificate, which needs TLS.")
+
+
+def irc_client_pem(agent_id):
+    return IRC_CERTS / f"{agent_id}.pem"
+
+
+def irc_gateway_user(person):
+    """The Linux user whose gateway serves an officer: its own for a Claude SDK officer, else the shared one."""
+    return GATEWAY if person["harness"]["type"] == "opencode" else f"ss-{person['id']}"
+
+
+def irc_fingerprint(bundle, label):
+    """Check a client bundle as Stargate does and return the SHA-256 fingerprint of its first certificate, the
+    lower-case hex form that Ergo's NickServ CERT ADD takes."""
+    certificates = IRC_PEM_CERTIFICATE.findall(bundle)
+    require(len(bundle.encode()) <= IRC_PEM_BYTES and certificates and IRC_PEM_KEY.search(bundle),
+            f"{label} must hold a PEM certificate and its unencrypted private key, at most 64 KiB.")
+    with tempfile.TemporaryDirectory() as work:
+        path = Path(work) / "bundle.pem"
+        path.write_text(bundle)
+        path.chmod(0o600)
+        try:
+            # OpenSSL takes the first certificate as the leaf and checks that the key matches it, as Stargate does.
+            ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_cert_chain(path, password=lambda: b"")
+            leaf = ssl.PEM_cert_to_DER_cert(certificates[0])
+        except (ssl.SSLError, ValueError):
+            raise Invalid(f"{label}: the first certificate does not match an unencrypted private key.") from None
+    return hashlib.sha256(leaf).hexdigest()
+
+
+def read_irc_bundle(path):
+    """An installed bundle's text, or None when there is none. Reads only a regular file, never a link."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise Invalid(f"Cannot read the IRC certificate bundle at {path}.") from None
+    with os.fdopen(fd, "rb") as stream:
+        require(stat.S_ISREG(os.fstat(fd).st_mode), f"Expected a regular file at {path}.")
+        contents = stream.read(IRC_PEM_BYTES + 1)
+    try:
+        return contents.decode("ascii")
+    except UnicodeError:
+        raise Invalid(f"Expected a PEM certificate bundle at {path}.") from None
+
+
+def irc_bundles(cfg, directory):
+    """Bundles an operator supplies as <secrets-dir>/<officer-id>/irc-client.pem, checked, by officer ID."""
+    found = {}
+    if cfg["irc"]["auth"] != "certificate" or directory is None:
+        return found
+    try:
+        with private_directory(directory) as root:
+            for person in cfg["members"] if root is not None else ():
+                with private_directory(person["id"], root) as agent:
+                    if agent is not None:
+                        found[person["id"]] = private_file(IRC_CLIENT_PEM, optional=True, dir_fd=agent)
+    except ValueError as error:
+        if isinstance(error, Invalid):
+            raise
+        raise Invalid(f"Cannot read an IRC certificate bundle in {directory}: {error} Supply owner-only regular "
+                      f"{IRC_CLIENT_PEM} files (chmod 600) in private directories.") from None
+    bundles = {}
+    for agent_id, contents in found.items():
+        if contents is None:
+            continue
+        label = str(Path(directory) / agent_id / IRC_CLIENT_PEM)
+        try:
+            bundles[agent_id] = contents.decode("ascii")
+        except UnicodeError:
+            raise Invalid(f"Expected a PEM certificate bundle at {label}.") from None
+        irc_fingerprint(bundles[agent_id], label)
+    return bundles
+
+
+def new_irc_bundle(account):
+    """A new P-256 key and self-signed certificate for an officer's IRC account, as one PEM bundle."""
+    with tempfile.TemporaryDirectory() as work:
+        key, certificate = Path(work) / "key.pem", Path(work) / "certificate.pem"
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+             "-sha256", "-days", "3650", "-subj", f"/CN={account}", "-keyout", key, "-out", certificate],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return certificate.read_text() + key.read_text()
+
+
+def own_file(path, content, user):
+    """Write a file owned by user with mode 0600: Stargate takes a client PEM only from its own, owner-only file."""
+    account = pwd.getpwnam(user)
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        info = None
+    if (info and stat.S_ISREG(info.st_mode) and (info.st_uid, info.st_gid) == (account.pw_uid, account.pw_gid)
+            and stat.S_IMODE(info.st_mode) == 0o600 and read_irc_bundle(path) == content):
+        return
+    (STATE / "pending").touch()
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False, encoding="ascii") as stream:
+        temp = Path(stream.name)
+        try:
+            os.fchmod(stream.fileno(), 0o600)
+            os.fchown(stream.fileno(), account.pw_uid, account.pw_gid)
+            stream.write(content)
+            stream.close()
+            os.replace(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
+
+
+def irc_certificates(cfg):
+    """Give each officer's gateway user its IRC certificate bundle: the installed or supplied one, else a new one.
+
+    The installer keeps it across upgrades; install.sh puts a supplied bundle in place before rendering.
+    """
+    directory(IRC_CERTS, 0o711)
+    for person in cfg["members"]:
+        path = irc_client_pem(person["id"])
+        bundle = read_irc_bundle(path)
+        if bundle is None:
+            bundle = new_irc_bundle(person["account"])
+        irc_fingerprint(bundle, str(path))
+        own_file(path, bundle, irc_gateway_user(person))
+
+
+def irc_sign_in(cfg, bundles=None, installed=True):
+    """What the operator needs to know about the officers' IRC sign-in, and each certificate's fingerprint.
+
+    Never prints key material: only the SHA-256 fingerprints of the certificates.
+    """
+    irc = cfg["irc"]
+    if irc["auth"] != "certificate":
+        return ["Officers sign in to IRC with passwords (SASL PLAIN, irc.auth password)."]
+    lines = ["Officers sign in to IRC with certificates (SASL EXTERNAL, irc.auth certificate). An officer can sign "
+             f"in only once its fingerprint is bound to its account on {irc['host']}. Bind each one as an IRC "
+             "operator with NickServ's accreg capability, as below, or signed in as the account itself, without "
+             "the account name:"]
+    for person in cfg["members"]:
+        bundle = (bundles or {}).get(person["id"])
+        source = "supplied"
+        if bundle is None and os.access(irc_client_pem(person["id"]), os.R_OK):
+            bundle, source = read_irc_bundle(irc_client_pem(person["id"])), "installed"
+        if bundle is None:
+            lines.append(f"  {person['account']}: a new certificate is generated on install; the install summary "
+                         "prints its fingerprint.")
+            continue
+        fingerprint = irc_fingerprint(bundle, f"The IRC certificate of {person['id']}")
+        note = "" if installed else f" ({source})"
+        lines.append(f"  /msg NickServ CERT ADD {person['account']} {fingerprint}{note}")
+    return lines
 
 
 def irc_officer(cfg, person, registration):
@@ -2014,6 +2213,8 @@ def render(cfg, extra, prune=False):
         after.append(local_unit)
         medical_after.append(local_unit)
     units.extend(medical_units(cfg, extra.get("medical", {}), medical_after))
+    if cfg["irc"]["auth"] == "certificate":
+        irc_certificates(cfg)
     groups = {}
     rear = cfg["members"][0]
     default_group = "gateway" if rear["harness"]["type"] == "opencode" else "gateway-opencode"
@@ -2030,6 +2231,7 @@ def render(cfg, extra, prune=False):
         opts = groups.setdefault(group, {"user": user, "home": home, "irc": [], "environment": {}, "ready": [],
                                          "writable": []})
         entry = irc_officer(cfg, person, registrations[agent_id])
+        check_sign_in(entry, entry["server"])
         if control := fleet_control(cfg, person, pins.get(agent_id), rear_session, gateway_home):
             # This captain answers dispatch offers with Stargate's fleet plugin. The socket directory belongs to the
             # gateway and admits only this captain's engine group; the evidence ledger is the gateway's alone.
@@ -2290,6 +2492,9 @@ def main(args):
             }}
         keys = app_keys(cfg["members"], directory, saved_people)
         extra = extra_snapshot(cfg, directory, previous, prune)
+        bundles = irc_bundles(cfg, directory)
+        for person in cfg["members"]:
+            check_sign_in(irc_agent(cfg, person, {})[0], cfg["irc"])
         if verb == "prepare":
             stage = Path(tail[2])
             (stage / "fleet.json").write_text(json_text(config))
@@ -2303,6 +2508,14 @@ def main(args):
             if cfg["irc"]["mode"] == "local":
                 sources.extend(cfg["irc"]["compose"][key] for key in ("repo", "ref"))
             (stage / "sources").write_text("\n".join(sources) + "\n")
+            # Supplied IRC certificate bundles: install.sh puts them in IRC_CERTS, where render gives each to its gateway.
+            for member_id, bundle in bundles.items():
+                (stage / "irc-certs").mkdir(mode=0o700, exist_ok=True)
+                (stage / "irc-certs" / f"{member_id}.pem").write_text(bundle)
+                installed = read_irc_bundle(irc_client_pem(member_id)) if os.access(IRC_CERTS, os.X_OK) else None
+                if installed and installed != bundle:
+                    print(f"Replacing {member_id}'s IRC certificate {irc_fingerprint(installed, member_id)} with the "
+                          f"supplied {irc_fingerprint(bundle, member_id)}. Bind the new fingerprint on the IRC server.")
         else:
             count = sum(len(person["crew"]) for person in cfg["members"])
             print(f"Fleet {cfg['slug']} has {len(cfg['members']) - 1} captains, {count} crew and one rear admiral. "
@@ -2327,6 +2540,7 @@ def main(args):
                 print(line)
             for line in slack_plan(cfg):
                 print(line)
+            print("\n".join(irc_sign_in(cfg, bundles, installed=False)))
     elif verb == "commission":
         commission(tail[0] == "true", existing="existing" in tail[1:])
     elif verb == "engine":
@@ -2362,6 +2576,11 @@ def main(args):
         gateway_key()
     elif verb == "irc":
         compose(tail)
+    elif verb == "irc-fingerprints":
+        # The install summary: each officer's certificate fingerprint for the IRC operator to bind.
+        cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True))
+        if cfg["irc"]["auth"] == "certificate":
+            print("\n".join(irc_sign_in(cfg)))
     else:
         raise Invalid("Unknown runtime action.")
 

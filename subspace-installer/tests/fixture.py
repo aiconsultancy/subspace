@@ -394,6 +394,8 @@ class Sentry(BaseHTTPRequestHandler):
 def write(example):
     cfg = json.loads(Path(example).read_text())
     cfg["irc"].update(host="127.0.0.1", caFile=str(WORK / "irc.pem"))
+    # The fixture IRC server takes SASL PLAIN only; policy_test.py covers certificates (SASL EXTERNAL).
+    cfg["irc"]["auth"] = "password"
     cfg["operatorUsers"] = ["fixture-operator"]
     (WORK / "irc.pem").chmod(0o644)
     cfg["api"] = {"url": "http://127.0.0.1:3000/api", "initiatives": [INITIATIVE], "agentUrl": "http://127.0.0.1:3001"}

@@ -52,8 +52,10 @@ sudo systemctl status subspace-fleet-gateway.service
 ```
 
 For remote IRC, register a SASL account for the rear admiral and each
-captain, such as `example-atlas` and `example-orion`, and supply their
-passwords in `ircPasswords`. Crew have no IRC accounts. Add trusted human
+captain, such as `example-atlas` and `example-orion`. They sign in with a
+certificate each, whose fingerprints the installer prints for you to bind to
+the accounts ([IRC sign-in](#irc-sign-in)); with `"auth": "password"` under
+`irc`, supply their passwords in `ircPasswords` instead. Crew have no IRC accounts. Add trusted human
 SASL accounts to `irc.allowedAccounts`. Ask the IRC operator to register the
 fleet's [standard channels](#channels) (`--dry-run` lists them) and any
 initiative channels, and grant access to the appropriate accounts. For local IRC,
@@ -450,6 +452,98 @@ use that same TLS endpoint in remote mode. They can trust a private CA with
 `irc.caFile`. For several fleets, we recommend a shared server of its own
 rather than one fleet's Ergo:
 [Run the shared IRC server in a container](../INSTALL.md#run-the-shared-irc-server-in-a-container).
+
+### IRC sign-in
+
+`irc.auth` sets how the rear admiral and the captains sign in to IRC:
+`certificate` (SASL EXTERNAL), the default with a remote server, or
+`password` (SASL PLAIN), the default and for now the only choice with the
+[Ergo the installer manages](#local-irc-and-tls). Crew have no IRC accounts,
+and the [medical ship](#medical-ship) keeps its own password either way.
+
+**With certificates, no IRC password exists for an officer.** The installer
+gives each officer a P-256 key and a self-signed certificate, generated on
+the VM at the first install, and keeps them across upgrades in one PEM
+bundle, `/etc/subspace-fleet/irc-certs/<officer-id>.pem`. The bundle is
+owned by the Linux user whose gateway serves the officer
+(`ss-fleet-gateway`, or the officer's own user for a Claude Agent SDK
+officer), with mode `0600`, and the gateway's Stargate registration names it
+as `clientPemFile`. The installer refuses officer entries in `ircPasswords`
+and passes no password to the gateway.
+
+The pinned Stargate takes exactly one of `passwordEnv` and `clientPemFile`
+per account, presents a client certificate only over TLS, and reads only an
+owner-only regular file of its own user, at most 64 KiB, whose first
+certificate matches an unencrypted private key (`PRIVATE KEY`,
+`EC PRIVATE KEY` or `RSA PRIVATE KEY`). `--dry-run` and every render check
+the same, so a bundle Stargate would refuse stops the installer instead.
+
+**Bind the fingerprints on the IRC server.** An officer can sign in only
+once its certificate's fingerprint is bound to its account. `--dry-run` and
+the install summary print one line per officer, with the SHA-256 fingerprint
+in the lower-case hex form Ergo's NickServ takes, and never key material:
+
+```text
+/msg NickServ CERT ADD example-orion 4b1d…0c9e
+```
+
+Send each line as an IRC operator whose operator class has Ergo's `accreg`
+capability, or signed in as the account itself, leaving out the account name.
+On another server, bind the same fingerprint as its services expect. A dry
+run writes nothing, so a certificate the VM has yet to generate shows its
+fingerprint only in the install summary. Print them again at any time with
+`sudo /opt/subspace-fleet/lib/runtime.py irc-fingerprints`.
+
+**Bring existing certificates.** A fleet whose IRC server already has
+certificates bound can supply them: put each officer's certificate and its
+unencrypted key, certificate first, in
+`<secrets-dir>/<officer-id>/irc-client.pem` with mode `0600`, as for
+[GitHub App keys](#github-apps-per-fleet-member). Dispatch carries them in its
+private bundle. The installer checks each one and installs it in place of the
+officer's current bundle, printing the old and new fingerprints when it
+replaces one. Later runs keep it, with or without the secrets directory.
+`--dry-run` with the secrets directory prints a supplied bundle's
+fingerprint, so you can bind it first. To replace a certificate, supply a new
+bundle, or delete the officer's bundle under `/etc/subspace-fleet/irc-certs/`
+and run the installer again to generate one; then bind the new fingerprint
+and remove the old one with `NickServ CERT DEL`.
+
+**Keep passwords.** For a server that cannot do SASL EXTERNAL, set
+`"auth": "password"` under `irc` and supply each officer's password in
+`ircPasswords`. A remote fleet installed before certificates became the
+default has those passwords: the installer refuses it until you either set
+`"auth": "password"`, or move to certificates. To move without a gap,
+generate each officer's bundle yourself, for example
+
+```sh
+umask 077
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+  -days 3650 -sha256 -subj "/CN=example-orion" -keyout key.pem -out irc-client.pem
+cat key.pem >> irc-client.pem && rm key.pem
+```
+
+supply it, bind the fingerprints `--dry-run` prints, then remove the
+officers' `ircPasswords` entries and upgrade.
+
+**The Ergo the installer manages keeps passwords for now**, in local mode
+and on `subspace-setup`'s shared server alike: `subspace-setup` writes
+`"auth": "password"` for a shared server. Three things are missing:
+
+- Fleet members reach local Ergo over plain loopback IRC, and Stargate
+  presents a client certificate only over TLS. The gateways would need the
+  local TLS listener and a CA file for it, but Ergo generates that
+  certificate in its own volume when it starts, so the installer would have
+  to generate or pin it itself.
+- The image seeds every account with a password (`IRC_ACCOUNTS_FILE`).
+  Officers would instead need certificate-only accounts, registered with
+  `NickServ SAREGISTER <account>` and no passphrase, and their fingerprints
+  bound with `NickServ CERT ADD <account> <fingerprint>` as the operator at
+  seed time. `seed-channels.py` already signs in as the operator, so it could
+  do this from a fingerprint file the installer mounts, without changing the
+  entrypoint.
+- For a shared server, each fleet's bundle would carry its officers'
+  fingerprints instead of passwords, and `subspace-setup irc-server add`
+  would seed them the same way.
 
 ## Subspace API registration
 
@@ -1165,7 +1259,7 @@ their crew's assignments through `stargate_crew`.
 | `harness` | Default `{"type":"opencode","model":"gpt-5.4"}` with the [role's starter permissions](#instructions-permissions-and-toolchains). Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out. See [crew and repositories](#crew-and-repositories). |
-| `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. |
+| `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<slug>-<id>` for a captain. Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
@@ -1181,14 +1275,15 @@ their crew's assignments through `stargate_crew`.
 | `agentDispatch` | Optional [agent dispatch](#agent-dispatch): `enabled` (default `false`), `pollIntervalSeconds` (120), `answerTimeoutSeconds` (300) and `retryLadderSeconds` (`[3600, 10800, 21600, 43200]`). On, it needs `api`, a captain with crew, an OpenCode rear admiral and `rearAdmiralApiToken`. |
 
 The mode-0600 secrets JSON has `proxyKey` (a random proxy client key),
-`ircPasswords` (map by SASL account: the rear admiral, each captain and, in
-local mode, any allowlisted human; crew have none), `ircOperatorPassword`
+`ircPasswords` (map by SASL account: with `irc.auth` `password`, the rear
+admiral and each captain; in local mode, also any allowlisted human; crew have
+none; officers have none with [certificates](#irc-sign-in)), `ircOperatorPassword`
 for local IRC, `ircHistoryPassword` for PostgreSQL IRC history, and optional
 `apiToken` (bearer JWT) and `rearAdmiralApiToken` (the rear admiral agent's
 bearer JWT, only with [agent dispatch](#agent-dispatch) on).
 A named `fleet.json` looks for `fleet.secrets.json` beside it unless
 `--secrets` is supplied. Installed copies live in `/etc/subspace-fleet/`. The
-gateway receives IRC passwords and its OpenCode authentication headers, plus
+gateway receives IRC passwords or certificate bundles and its OpenCode authentication headers, plus
 any explicitly enabled integration credentials. Each OpenCode engine has an
 independent loopback port and server password.
 
