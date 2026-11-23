@@ -119,21 +119,21 @@ export type RemoteFetch = NonNullable<
 >;
 
 /**
- * Whether an Entra token names a guest. Microsoft documents `idp` as the identity provider that
- * authenticated the subject, the same as the issuer unless the account is not in the issuer's
- * tenant, such as a guest, and `acct` (an optional claim) as 0 for a member and 1 for a guest.
- * So a token is a guest's when `idp` is present and is not this tenant's issuer, in its v2 or
- * v1 form, or when `acct` is 1.
+ * Whether an Entra token names a guest. Microsoft documents `acct`, an optional claim, as 0 for a
+ * member of the tenant and 1 for a guest, so when it is present it decides; any other value is
+ * treated as a guest. Without it, `idp` is the fallback: Microsoft documents it as the same as the
+ * issuer unless the account is not in the issuer's tenant, such as a guest, so a token is a
+ * guest's when `idp` is present and is not this tenant's issuer, in its v2 or v1 form. A guest
+ * whose account lives in this tenant cannot be told apart without `acct`.
  */
 function entraGuest(payload: JWTPayload, tenantId: string) {
+  if (payload.acct !== undefined) return !(payload.acct === 0 || payload.acct === "0");
   const issuers = [
     `https://login.microsoftonline.com/${tenantId}/v2.0`,
     `https://sts.windows.net/${tenantId}/`,
   ];
   const idp = payload.idp;
-  if (idp !== undefined && !(typeof idp === "string" && issuers.includes(idp.toLowerCase())))
-    return true;
-  return payload.acct === 1 || payload.acct === "1";
+  return idp !== undefined && !(typeof idp === "string" && issuers.includes(idp.toLowerCase()));
 }
 
 export function jwtVerifiers(

@@ -90,12 +90,14 @@ create one member, and every one of them succeeds.
   the **access token** in the API's app registration, so that usernames come from
   the given and family names.
 - Registration refuses a guest of the tenant unless `ENTRA_REGISTER_GUESTS=true`.
-  A token is a guest's when its `idp` claim is present and is not the tenant's own
-  issuer, or its `acct` claim is 1. Microsoft documents `idp` as the same as the
-  issuer unless the account is not in the issuer's tenant, as for guests, and
-  `acct` as an optional claim that is 0 for a member and 1 for a guest; add `acct`
-  to the access token as well if you rely on it. A guest whom the membership command
-  has added signs in as usual.
+  Microsoft documents the optional `acct` claim as 0 for a member and 1 for a
+  guest; when the token carries it, it decides. Without it, the API falls back to
+  `idp`, which Microsoft documents as the same as the issuer unless the account is
+  not in the issuer's tenant: a token whose `idp` is present and is not the
+  tenant's own issuer is a guest's. Excluding guests reliably therefore needs
+  `acct` as an optional claim on the access token, because a guest whose home
+  tenant is this tenant cannot be told apart from a member without it. A guest
+  whom the membership command has added signs in as usual.
 - Registration admits every member of the tenant who can obtain an access token for
   the API. To limit it to chosen people or groups, turn on _Assignment required_
   for the enterprise applications in Entra and assign them.

@@ -522,10 +522,15 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
   });
 
   test("a guest of the tenant is not registered unless ENTRA_REGISTER_GUESTS allows it", async () => {
+    const external = "https://sts.windows.net/00000000-0000-4000-8000-0000000000aa/";
     const guests = [
-      { idp: "https://sts.windows.net/00000000-0000-4000-8000-0000000000aa/" },
+      { idp: external },
       { idp: "live.com" },
       { acct: 1 },
+      // When acct is present it decides, whatever idp says.
+      { acct: 1, idp: `https://login.microsoftonline.com/${tenant.tenant}/v2.0` },
+      { acct: "1" },
+      { acct: 2 },
     ];
     const users = await count("users");
     for (const claims of guests) {
@@ -541,6 +546,9 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
       { idp: `https://login.microsoftonline.com/${tenant.tenant}/v2.0` },
       { idp: `https://sts.windows.net/${tenant.tenant}/` },
       { acct: 0 },
+      // An external member: acct 0 decides over an external idp.
+      { acct: 0, idp: external },
+      { acct: "0", idp: "live.com" },
     ]) {
       const response = await api.call(
         "/api/v1/me",
