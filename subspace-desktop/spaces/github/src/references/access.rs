@@ -19,7 +19,8 @@
 //! out) decides nothing. The model test (`access/model.rs`) checks this on
 //! every interleaving of six reads.
 //!
-//! An access refusal is a 400, 403 or 404 that is not a rate limit. A
+//! An access refusal is a 403 that is not a rate limit, a 404, or the 400
+//! a GraphQL `NOT_FOUND` becomes ([`super::reads::refused`]). A
 //! refusal is read again on the next refresh, also for a pull request the
 //! account opened ([`super::held::wants_read`]), so one that was about
 //! something passing does not stick.

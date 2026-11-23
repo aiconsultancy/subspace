@@ -35,8 +35,9 @@
 //! its read until the next refresh, then is read again once, so one that
 //! left the lists, as when the account lost access to its repository, is
 //! not answered from memory for good: GitHub's refusal replaces it. An
-//! access refusal (400, 403 or 404; a rate limit is a failure, which the
-//! GitHub client reports as 429), from a reference read or this Space's
+//! access refusal (a 403, a 404 or a GraphQL `NOT_FOUND`; a rate limit is
+//! a failure, which the GitHub client reports as 429, and so is any other
+//! 400), from a reference read or this Space's
 //! own detail read, answers ahead of a pull request the account opened or
 //! listed, until a read that started after it succeeds; a list section or
 //! read that started before it never brings the summary back. It is read

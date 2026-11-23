@@ -157,14 +157,16 @@ fn current(
 }
 
 /// What a failed read tells the asker, without saying whether a pull
-/// request it cannot read exists.
+/// request it cannot read exists. A refusal is a 403 (a rate limit is a
+/// 429), a 404 or the 400 GitHub's GraphQL `NOT_FOUND` becomes; any other
+/// 400, such as a query GitHub rejects, is a failure.
 pub(super) fn refused(error: &Error) -> ResolutionState {
     match error {
         Error::Credential(_) | Error::Status { status: 401, .. } => ResolutionState::SignedOut,
-        Error::Status {
-            status: 400 | 403 | 404,
-            ..
-        } => ResolutionState::Unavailable,
+        Error::Status { status: 403, .. } => ResolutionState::Unavailable,
+        error if subspace_framework::client_github::is_not_found(error) => {
+            ResolutionState::Unavailable
+        }
         _ => ResolutionState::Failed,
     }
 }

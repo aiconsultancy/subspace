@@ -156,9 +156,10 @@ the pull request started; an older read lends only its counts to the
 list's item, and only while the list's combined state and last update
 match the read's. A read of a pull request the board neither opened nor
 lists is checked again once per refresh too, so one the account can no
-longer read stops answering. An access refusal (400, 403 or 404; the
-GitHub client keeps a plain 403 as 403, and reports a rate limit, including
-a 403 with `Retry-After`, as 429, which is a failure) answers ahead of a pull request the account
+longer read stops answering. An access refusal (a 403, a 404, or the 400
+a GraphQL `NOT_FOUND` becomes; the GitHub client keeps a plain 403 as 403,
+and reports a rate limit, including a 403 with `Retry-After`, as 429, which
+is a failure, as is any other 400) answers ahead of a pull request the account
 opened or listed until a read that started after it succeeds: a section
 or read that started before it never brings the summary back, and a
 refusal from a read older than a later success is dropped. A refusal is

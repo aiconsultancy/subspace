@@ -23,6 +23,7 @@ use crate::Github;
 
 mod access;
 mod checks;
+mod codes;
 mod forget;
 mod meanwhile;
 mod newer;
