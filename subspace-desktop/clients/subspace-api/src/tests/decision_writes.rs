@@ -69,6 +69,16 @@ fn invalid_decisions_are_refused_before_anything_is_sent() {
         NewDecision::new("project-1", &[], &titled),
         Err(DecisionWriteError::Invalid)
     );
+    // 101 emoji are 101 characters but 202 UTF-16 units, as the API counts.
+    let emoji = "\u{1F680}".repeat(101);
+    let wide = DecisionText {
+        title: &emoji,
+        ..text("fine", None)
+    };
+    assert_eq!(
+        NewDecision::new("project-1", &[], &wide),
+        Err(DecisionWriteError::Invalid)
+    );
     let dated = DecisionText {
         decided_on: "22/11/2026",
         ..text("fine", None)

@@ -138,3 +138,29 @@ fn a_long_message_is_written_whole_and_protected_past_what_a_preview_would_show(
         assert!(body.contains("\n````\n\nFrom `IRC message "));
     }
 }
+
+#[test]
+fn a_summary_fits_the_api_in_utf_16_units_without_control_characters() {
+    let text = format!(
+        "{}\u{0007} tail{}",
+        "\u{1F680}".repeat(200),
+        "x".repeat(100)
+    );
+    let draft = message::issue_draft(&quoted(&text), "NAV", "Rockets").unwrap();
+    assert!(draft.summary.encode_utf16().count() <= write::SUMMARY_CHARS);
+    assert!(subspace_api_client::issue_writes::valid_summary(
+        &draft.summary
+    ));
+    assert!(!draft.summary.chars().any(char::is_control));
+    let wide_title = "\u{1F680}".repeat(101);
+    assert!(
+        message::issue_draft(&quoted("ok"), "NAV", &wide_title).is_err(),
+        "a title over 200 UTF-16 units"
+    );
+    assert!(
+        write::title_of(&"\u{1F680}".repeat(150))
+            .encode_utf16()
+            .count()
+            <= write::TITLE_CHARS
+    );
+}

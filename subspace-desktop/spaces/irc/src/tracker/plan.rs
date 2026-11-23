@@ -246,13 +246,29 @@ fn decision(issue: &str, rest: &str) -> Result<String, String> {
     Ok(rest.to_owned())
 }
 
-/// `text` on one line, cut to `limit` characters with an ellipsis.
+/// `text` on one line, without control characters, cut to `limit` UTF-16
+/// units (as the API counts) with an ellipsis.
 pub(crate) fn clip(text: &str, limit: usize) -> String {
-    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if line.chars().count() <= limit {
+    let line = text
+        .replace(
+            |c: char| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'),
+            " ",
+        )
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if line.encode_utf16().count() <= limit {
         return line;
     }
-    let mut cut: String = line.chars().take(limit.saturating_sub(1)).collect();
+    let mut cut = String::new();
+    let mut units = 0;
+    for character in line.chars() {
+        units += character.len_utf16();
+        if units > limit.saturating_sub(1) {
+            break;
+        }
+        cut.push(character);
+    }
     cut.push('…');
     cut
 }

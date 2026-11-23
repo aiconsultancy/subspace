@@ -94,12 +94,15 @@ impl NewDecision {
     }
 }
 
+/// Limits count UTF-16 units, as the API does.
 fn invalid_line(text: &str) -> bool {
-    text.is_empty() || text.contains(['\r', '\n', '\0']) || text.chars().count() > TITLE_LIMIT
+    text.is_empty()
+        || text.contains(['\r', '\n', '\0'])
+        || text.encode_utf16().count() > TITLE_LIMIT
 }
 
 fn invalid_text(text: &str, limit: usize) -> bool {
-    text.trim().is_empty() || text.contains('\0') || text.chars().count() > limit
+    text.trim().is_empty() || text.contains('\0') || text.encode_utf16().count() > limit
 }
 
 fn invalid_evidence(message: &IrcEvidence<'_>) -> bool {

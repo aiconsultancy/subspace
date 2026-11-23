@@ -3,6 +3,8 @@
 
 use chrono::{DateTime, Utc};
 
+use subspace_api_client::issue_writes::valid_summary;
+
 use super::plan::clip;
 use super::write::{DecisionDraft, IssueDraft, SUMMARY_CHARS, TITLE_CHARS};
 use crate::state::Entry;
@@ -96,10 +98,14 @@ pub(crate) fn issue_draft(
     title: &str,
 ) -> Result<IssueDraft, String> {
     let title = checked_title(title)?;
+    let summary = clip(&quoted.text, SUMMARY_CHARS);
+    if !valid_summary(&summary) {
+        return Err("This message can't make an issue's summary.".to_owned());
+    }
     Ok(IssueDraft {
         project: project.to_owned(),
         title,
-        summary: clip(&quoted.text, SUMMARY_CHARS),
+        summary,
         description: description(quoted),
     })
 }
@@ -130,7 +136,8 @@ pub(crate) fn decision_draft(
 
 fn checked_title(title: &str) -> Result<String, String> {
     let title = title.trim();
-    if title.is_empty() || title.chars().count() > TITLE_CHARS {
+    let units = title.encode_utf16().count();
+    if units == 0 || units > TITLE_CHARS || title.chars().any(char::is_control) {
         return Err(format!("Enter a title of 1 to {TITLE_CHARS} characters."));
     }
     Ok(title.split_whitespace().collect::<Vec<_>>().join(" "))
