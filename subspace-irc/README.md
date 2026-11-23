@@ -164,8 +164,8 @@ the API issues agent certificates.
 When the API answers HTTP 200 with `{"success": true, "accountName": "..."}`,
 Ergo signs the client in to that account and creates it on the first
 sign-in. The script never hands the API's body to Ergo: it checks that the
-answer is one JSON object with a boolean `success` and no keys that differ
-only in case, then writes a fresh answer. The account name must start with a
+answer is one JSON object with a boolean `success` and no repeated keys,
+whether identical or differing only in case, then writes a fresh answer. The account name must start with a
 letter and contain only letters, digits, `_` and `-`, up to 32 characters,
 and must not be an Ergo service name or `Guest-*`. Other fields, including
 any `error` text from the API, are dropped. The nick becomes the account
@@ -187,10 +187,18 @@ Some accounts always sign in locally. The entrypoint lists every seeded
 account, every channel founder, the operator and any names in
 `IRC_AUTH_LOCAL_ACCOUNTS` or `IRC_AUTH_LOCAL_ACCOUNTS_FILE`, separated by
 commas, spaces or new lines. Add accounts that an operator created by hand
-and that must stay local. The script compares names with Ergo's ASCII case
-folding and ignores a `@device` suffix. It never calls the API for a login
-to a listed account, whatever the password looks like, and refuses any API
-answer that names one.
+and that must stay local, by their bare account name: start-up refuses a
+name with a `@device` suffix. The script compares names with Ergo's ASCII
+case folding and ignores the device suffix of a login. It never calls the API
+for a login to a listed account, whatever the password looks like, and
+refuses any API answer that names one. The list always holds the operator, so
+a missing, empty or unreadable list is an error: the script then forwards
+nothing and Ergo checks only its local accounts.
+
+The list is rebuilt from the current settings at each start. An account
+seeded on an earlier start and later removed from the seed still exists with
+its password, but is no longer on the list. To keep it local, add it to
+`IRC_AUTH_LOCAL_ACCOUNTS` or reserve its name on the API side.
 
 To hand an existing hand-made account to its owner, give the owner that
 username in the API and leave the name off the local-only list. Their next
@@ -201,12 +209,19 @@ nobody owns yet on the API side, so the API never gives them to someone else.
 
 While the API is down, accounts that sign in through it cannot connect or
 reconnect; sessions already connected stay connected. Each such sign-in waits
-at most two seconds to connect and four seconds in all. Ergo runs the script
-for every login, local ones included, and holds one of its 256 script slots
-for each run. A local login normally takes a slot for a few milliseconds, but
-it waits for a free slot when all of them are held by API-bound logins. That
-takes more than 256 concurrent API-bound logins against a slow API, and lasts
-at most four seconds per wave.
+at most two seconds to connect and four seconds in all.
+
+Ergo runs the script for every login, local ones included, and holds one of
+its 256 script slots for each run, waiting without limit for a free one. The
+script therefore admits at most `IRC_AUTH_API_CONCURRENCY` API-bound logins at
+once (default 128, at most 192), each holding a lock file under
+`/run/subspace-irc/auth-slots`. When all are busy, it refuses further
+API-bound logins at once, without waiting, and Ergo logs
+`subspace-auth: API concurrency limit reached`. Local-only and other local
+logins never take a lock and finish in milliseconds, so they always find a
+free Ergo slot, however slow the API or however many connections send
+prefixed passwords. Under that load some API sign-ins are refused and must be
+retried.
 
 #### Transport and settings
 
@@ -299,6 +314,7 @@ your Compose override or through your container host's volume controls.
 | `IRC_AUTH_PASSPHRASE_PREFIX` | `sirc1.` | Prefix of API-issued IRC credentials; only these passwords reach the API |
 | `IRC_AUTH_CERT_LOGINS` | `false` | Pass certificate logins without a password to the API |
 | `IRC_AUTH_LOCAL_ACCOUNTS`, `IRC_AUTH_LOCAL_ACCOUNTS_FILE` | empty | Extra accounts that only sign in locally, beside the seeded ones |
+| `IRC_AUTH_API_CONCURRENCY` | `128` | Most API-bound logins in flight at once, from 1 to 192; others are refused at once |
 | `IRC_HISTORY_DATABASE` | `sqlite` | Where persistent history goes: `sqlite` (in the volume) or `postgresql` |
 | `IRC_POSTGRES_HOST`, `IRC_POSTGRES_PORT` | empty, `5432` | PostgreSQL server for history |
 | `IRC_POSTGRES_USER`, `IRC_POSTGRES_DATABASE` | `ergo`, `ergo_history` | Role and database Ergo uses; it creates its tables itself |
@@ -369,13 +385,15 @@ the mounted channel seed and registered channel history across recreation.
 The auth hook test runs the image beside a stub API over HTTPS with a private
 CA. It checks that an accepted credential signs in under the returned name
 and creates the account, and that Ergo receives a fresh answer. Refusals,
-errors, redirects, timeouts, truncated, oversized, ambiguous and malformed
+errors, redirects, timeouts, truncated, oversized, repeated-key and malformed
 answers, and answers naming local-only accounts all fail closed. It checks
 from the stub's request log that local and local-only logins never reach the
 API, while prefixed credentials, a custom prefix and enabled certificate
-logins do. It also checks that the operator signs in promptly while 100
-API-bound logins hang, the local fallback with the API down, certificate
-verification and start-up validation.
+logins do. A missing, empty or malformed local-only list forwards nothing.
+With 300 concurrent API-bound logins against a hanging API, more than Ergo's
+script slots, every one is refused and the operator still signs in promptly.
+It also checks the local fallback with the API down, certificate verification
+and start-up validation.
 
 ## Licence
 
