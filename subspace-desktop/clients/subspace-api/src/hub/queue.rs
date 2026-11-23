@@ -23,10 +23,10 @@ impl<T> PriorityQueue<T> {
         self.tiers[priority as usize].push_back(value);
     }
     #[cfg(test)]
-    #[cfg(test)]
     pub(super) fn is_empty(&self) -> bool {
         self.tiers.iter().all(VecDeque::is_empty)
     }
+    #[cfg(test)]
     pub(super) fn pop(&mut self) -> Option<T> {
         self.pop_for(true)
     }
