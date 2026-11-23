@@ -236,7 +236,7 @@ fn next_link(response: &ureq::http::Response<ureq::Body>) -> Option<String> {
 }
 
 pub(super) fn scope_error(error: Error, scope: &str) -> Error {
-    if matches!(&error, Error::Status { status: http_status::BAD_GATEWAY, message } if message.contains("HTTP 403"))
+    if matches!(&error, Error::Status { status: http_status::FORBIDDEN, message } if message.contains("HTTP 403"))
     {
         return transport::status(
             http_status::FORBIDDEN,

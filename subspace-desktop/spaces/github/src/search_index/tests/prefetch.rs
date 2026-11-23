@@ -51,3 +51,28 @@ fn prefetch_reuses_only_recent_unchanged_pr_content_with_an_indexed_diff() {
     hit.document = mapping::document(&detail, 100, "Node-A", "ann").unwrap();
     assert!(!prefetch_cache::fresh(&hit, &detail.item, "ann", 100));
 }
+
+#[test]
+fn one_item_github_refuses_never_stops_the_whole_prefetch() {
+    use subspace_framework::core::http::Error;
+    use subspace_framework::dashboard::prefetch::Failure;
+    let status = |status: u16, message: &str| Error::Status {
+        status,
+        message: message.into(),
+    };
+    assert_eq!(
+        super::super::item_failure(&status(403, "GitHub refused access (HTTP 403).")),
+        Failure::Transient,
+        "a plain 403 is that one item's refusal"
+    );
+    for stops in [
+        status(401, "GitHub rejected the token."),
+        status(403, "Resource protected by organization SAML enforcement."),
+    ] {
+        assert_eq!(super::super::item_failure(&stops), Failure::Authentication);
+    }
+    assert_eq!(
+        super::super::item_failure(&status(429, "rate limit")),
+        Failure::RateLimit
+    );
+}

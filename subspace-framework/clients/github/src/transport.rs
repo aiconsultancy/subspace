@@ -22,7 +22,10 @@ mod mapping;
 pub(crate) use graphql::post_bound_graphql;
 pub use graphql::post_graphql;
 
-pub use mapping::{Failure, account_label, http_failure, not_found, rejected, status, unexpected};
+pub use mapping::{
+    Failure, account_label, http_failure, is_access_refusal, not_found, rejected, status,
+    unexpected,
+};
 
 use mapping::{is_rate_limit, is_sso};
 
@@ -46,6 +49,25 @@ pub struct GraphQlError {
 pub struct Extensions {
     #[serde(default)]
     pub code: Option<String>,
+}
+
+/// How GitHub's GraphQL `NOT_FOUND` messages start ("Could not resolve to a
+/// Repository with the name …"), which [`graphql_failure`] keeps as a 400.
+const GRAPHQL_NOT_FOUND: &str = "Could not resolve to a";
+
+/// Whether `error` says GitHub found nothing this account can read: a 404,
+/// or the 400 [`graphql_failure`] makes from a GraphQL `NOT_FOUND`, which
+/// GitHub also answers for a repository the account cannot see. Any other
+/// 400, such as a query GitHub rejects, is not.
+// qual:api
+pub fn is_not_found(error: &Error) -> bool {
+    match error {
+        Error::Status { status, .. } if *status == http_status::NOT_FOUND => true,
+        Error::Status { status, message } if *status == http_status::BAD_REQUEST => {
+            message.starts_with(GRAPHQL_NOT_FOUND)
+        }
+        _ => false,
+    }
 }
 
 /// Maps GraphQL `errors` to one error.
@@ -152,6 +174,7 @@ fn check(
             status: code,
             remaining: header(&response, "x-ratelimit-remaining"),
             reset: header(&response, "x-ratelimit-reset"),
+            retry_after: header(&response, "retry-after"),
             message: &message,
         },
     ))
@@ -276,6 +299,7 @@ pub(crate) fn post_rest_json_request(
                 status: code,
                 remaining: None,
                 reset: None,
+                retry_after: None,
                 message: &message,
             },
         ));
@@ -316,7 +340,7 @@ mod tests {
     use super::mapping::reset_hint;
     use super::{
         Api, Failure, GraphQlError, GraphQlResponse, graphql_data, graphql_failure, http_failure,
-        rejected,
+        is_access_refusal, is_not_found, rejected,
     };
 
     fn code(error: &Error) -> u16 {
@@ -335,6 +359,7 @@ mod tests {
             status,
             remaining,
             reset: Some("1790000000"),
+            retry_after: None,
             message,
         }
     }
@@ -355,6 +380,20 @@ mod tests {
             failure(429, None, "API rate limit exceeded"),
         );
         assert_eq!(code(&by_message), 429);
+        let secondary = Failure {
+            retry_after: Some("60"),
+            ..failure(403, None, "You have been blocked for a while.")
+        };
+        let secondary = http_failure("ann", Api::Rest, secondary);
+        assert_eq!(
+            code(&secondary),
+            429,
+            "a 403 with Retry-After is a rate limit"
+        );
+        for api in [Api::Rest, Api::GraphQl] {
+            let refused = http_failure("ann", api, failure(403, Some("4999"), "Not allowed"));
+            assert_eq!(code(&refused), 403, "a plain 403 stays an access refusal");
+        }
         assert_eq!(reset_hint(None), "; try again in a few minutes");
         assert_eq!(reset_hint(Some("0")), "; try again in a few minutes");
         assert_eq!(reset_hint(Some("3600")), "; it resets at 01:00 UTC");
@@ -390,8 +429,25 @@ mod tests {
         );
         assert_eq!(
             code(&http_failure("ann", Api::Rest, failure(403, None, "nope"))),
-            502
+            403,
+            "lost access stays a refusal, not a transient failure"
         );
+        let plain = http_failure("ann", Api::Rest, failure(403, None, "nope"));
+        assert!(
+            is_access_refusal(&plain),
+            "a plain 403 is one item's refusal"
+        );
+        let sso = http_failure(
+            "ann",
+            Api::Rest,
+            failure(
+                403,
+                None,
+                "Resource protected by organization SAML enforcement.",
+            ),
+        );
+        assert_eq!(code(&sso), 403);
+        assert!(!is_access_refusal(&sso), "an SSO requirement is not");
     }
 
     fn errors(value: serde_json::Value) -> Vec<GraphQlError> {
@@ -418,6 +474,19 @@ mod tests {
                 "{value}"
             );
         }
+    }
+
+    #[test]
+    fn only_a_graphql_not_found_400_is_not_found() {
+        let missing = json!([{"type": "NOT_FOUND",
+            "message": "Could not resolve to a Repository with the name 'octo-org/api'."}]);
+        assert!(is_not_found(&graphql_failure("ann", &errors(missing))));
+        let invalid = json!([{"message": "Field 'x' doesn't exist on type 'PullRequest'",
+            "extensions": {"code": "undefinedField"}}]);
+        let invalid = graphql_failure("ann", &errors(invalid));
+        assert_eq!(code(&invalid), 400);
+        assert!(!is_not_found(&invalid), "a rejected query is not");
+        assert!(is_not_found(&super::not_found()));
     }
 
     #[test]
