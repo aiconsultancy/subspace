@@ -142,11 +142,27 @@ unknown key gets); later answers carry the counts. A list refresh (every
 section, or the favourites' sections) marks those reads stale once, when
 its first section lands, so each is read again at most once per refresh,
 when next asked, however many sections land or pull requests are opened.
-Until then a stale read lends only its counts to the list's item, and only
-while the list's combined state and last update match the read's. A read
-of a pull request the board neither opened nor lists is checked again once
-per refresh too, so one the account can no longer read stops answering. A
-signed-out account starts no read.
+Every read, whichever path makes it (a list section, the board's own
+detail read or a reference read), takes a tick of one clock when it
+starts, and results are weighed by that tick, not by when they land. For
+each pull request the board keeps only the latest start tick of a read
+that landed refused and of one that landed with a success; it is refused
+exactly when the first is larger, both only rise, and nothing (a refresh,
+a sign-in or sign-out, an account switch, a reload) clears them. A model
+test checks this on every interleaving of six reads. A
+read answers whole only when it started after the latest section listing
+the pull request started; an older read lends only its counts to the
+list's item, and only while the list's combined state and last update
+match the read's. A read of a pull request the board neither opened nor
+lists is checked again once per refresh too, so one the account can no
+longer read stops answering. An access refusal (400, 403 or 404; the
+GitHub client keeps a plain 403 as 403, and reports a rate limit, including
+a 403 with `Retry-After`, as 429, which is a failure) answers ahead of a pull request the account
+opened or listed until a read that started after it succeeds: a section
+or read that started before it never brings the summary back, and a
+refusal from a read older than a later success is dropped. A refusal is
+read again on the next refresh, also for a pull request the board opened.
+A signed-out account starts no read.
 
 ```rust
 // In the requester's contracts():

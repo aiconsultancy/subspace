@@ -10,16 +10,18 @@ use subspace_framework::client_github::Client;
 use subspace_framework::contracts::github::ResolutionState;
 use subspace_framework::core::http::Error;
 
+use super::access::Decision::{Refusal, Success};
 use super::{announce, cache_key, details};
 use crate::Github;
 use crate::navigation::requested_pr;
 
-/// When a read started: the [`super::References`] generation and refresh
-/// count.
+/// When a read started: the [`super::References`] generation, refresh
+/// count and its tick of the one read clock ([`super::access`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Epoch {
     generation: u64,
     refreshes: u64,
+    started: u64,
 }
 
 /// Starts one background read of the `keys` not already being read, and
@@ -32,6 +34,7 @@ pub(super) fn read(
     let (Some(client), Some(login)) = (board.client.clone(), board.account.clone()) else {
         return ResolutionState::SignedOut;
     };
+    let started = super::access::begin(board);
     let references = &mut board.references;
     // A signed-out account reads nothing, whatever answers the keys.
     if references.signed_out.contains(&login.to_lowercase()) {
@@ -44,6 +47,7 @@ pub(super) fn read(
     let epoch = Epoch {
         generation: references.generation,
         refreshes: references.refreshes,
+        started,
     };
     if !fresh.is_empty() {
         spawn_read(client, login, fresh, epoch, cx);
@@ -102,19 +106,39 @@ fn land(
     for (key, state) in answers {
         let key = cache_key(login, &key);
         references.reading.remove(&key);
+        if !current(references, &key, &state, epoch.started) {
+            continue;
+        }
         if older {
             references.stale.insert(key.clone());
         } else {
             references.stale.remove(&key);
         }
+        references.read_at.insert(key.clone(), epoch.started);
         references.answers.insert(key, state);
     }
     announce(cx);
 }
 
+/// Whether `state`, read for `key` from a read that started at `started`,
+/// still stands: a success after any refusal, a refusal after any success
+/// ([`super::access`]). Other answers always do.
+fn current(
+    references: &mut super::References,
+    key: &(String, String),
+    state: &ResolutionState,
+    started: u64,
+) -> bool {
+    match state {
+        ResolutionState::Available(_) => super::access::decide(references, key, started, Success),
+        ResolutionState::Unavailable => super::access::decide(references, key, started, Refusal),
+        _ => true,
+    }
+}
+
 /// What a failed read tells the asker, without saying whether a pull
 /// request it cannot read exists.
-fn refused(error: &Error) -> ResolutionState {
+pub(super) fn refused(error: &Error) -> ResolutionState {
     match error {
         Error::Credential(_) | Error::Status { status: 401, .. } => ResolutionState::SignedOut,
         Error::Status {
