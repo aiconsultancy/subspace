@@ -51,15 +51,16 @@ fn answered_after(mock: &NettMock, suffix: &str, since: f64) -> bool {
 /// acts in that window races those reads, and a slow machine widens it: a
 /// landing issue read starts the attachment list again, and a list read
 /// takes a slow answer meant for the test's own. Waits until the mock has
-/// answered the list read after the stream opened, and the hub's live reads
-/// of the issue and the list are neither out nor owed.
+/// answered the list read after the stream opened, the hub's live reads of
+/// the issue and the list are neither out nor owed, and the reads their
+/// landing queued are back too.
 fn wait_for_ready_catch_up(mock: &NettMock, hub: &Hub) {
     let opened = arrivals(mock, "GET", STREAM)
         .last()
         .copied()
         .unwrap_or_default();
     wait("the catch-up after ready", Duration::from_secs(10), &|| {
-        answered_after(mock, "/issues/groups", opened) && hub.live_reads_settled()
+        answered_after(mock, "/issues/groups", opened) && hub.live_reads_settled() && hub.idle()
     });
 }
 
