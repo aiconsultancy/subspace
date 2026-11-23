@@ -136,13 +136,16 @@ impl InitiativeIrc {
         if let Some(held) = self.rosters.borrow().get(network) {
             return Rc::clone(held);
         }
-        let memberships = self.catalog.read(cx).memberships();
-        let roster = Rc::new(Roster::for_initiatives(&initiatives_on(
-            memberships,
-            networks,
-            network,
-            self.loopback_fixture,
-        )));
+        let catalog = self.catalog.read(cx);
+        let roster = Rc::new(
+            Roster::for_initiatives(&initiatives_on(
+                catalog.memberships(),
+                networks,
+                network,
+                self.loopback_fixture,
+            ))
+            .with_loading(catalog.checking()),
+        );
         self.rosters
             .borrow_mut()
             .insert(network.clone(), Rc::clone(&roster));

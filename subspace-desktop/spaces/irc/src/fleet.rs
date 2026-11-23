@@ -71,6 +71,9 @@ pub(crate) struct Roster {
     /// case-folded channel, counted before nicks two roles claim are
     /// dropped, so a clash cannot hide that a fleet has two.
     admirals: HashMap<String, usize>,
+    /// The initiatives are still being read for the first time, so no one
+    /// is known not to be an agent yet.
+    loading: bool,
 }
 
 /// The roster of a network that serves no fleet.
@@ -97,7 +100,22 @@ impl Roster {
             channels,
             fleets: Vec::new(),
             admirals,
+            loading: false,
         }
+    }
+
+    /// This roster, marked as read before the initiatives first loaded
+    /// when `loading` and it knows no agent yet.
+    pub(crate) fn with_loading(mut self, loading: bool) -> Self {
+        self.loading = loading && self.agents.is_empty();
+        self
+    }
+
+    /// Whether `nick` may still turn out to be an agent: the initiatives
+    /// had not loaded yet when this roster was read, so a nick it does not
+    /// know is not known to be a person.
+    pub(crate) fn not_known_yet(&self, nick: &str) -> bool {
+        self.loading && self.agent(nick).is_none()
     }
 
     /// The roles of the fleets of `initiatives`, the initiatives whose IRC

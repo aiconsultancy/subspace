@@ -684,8 +684,11 @@ growing moves nothing else; tiles keep their fixed box.
   `gate::gate` first. Nothing goes to the server buffer or to a fleet
   agent in a private conversation (`AgentNotice::refusing`; the controls
   are hidden there too, and reactions between people in private are
-  ordinary). A new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only
-  from the labelled `Stop <ship>` item in a channel; asked for any other
+  ordinary). Until the initiatives first load (`Catalog::checking`, kept
+  on the roster and read by `Roster::not_known_yet`), no private
+  conversation sends one, as no nick is known not to be an agent yet. A
+  new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only from the
+  labelled `Stop <ship>` item in a channel; asked for any other
   way it is explained and not sent, whether or not the app recognises the
   message as an agent's, since Stargate stops a queued turn before any
   status line exists. Taking back our own stop still goes.

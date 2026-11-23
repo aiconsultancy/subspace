@@ -60,6 +60,12 @@ impl Catalog {
         !self.items.is_empty()
     }
 
+    /// Whether the first read of the memberships is still in flight: who
+    /// belongs to which fleet is not known yet.
+    pub fn checking(&self) -> bool {
+        self.fetch.is_some() && self.items.is_empty()
+    }
+
     /// The caller's initiatives, in the API's order.
     // qual:api
     pub fn memberships(&self) -> &[MemberInitiative] {
