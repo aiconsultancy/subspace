@@ -301,8 +301,9 @@ class FixtureTests(unittest.TestCase):
 
     def test_identity_projects_and_workflows_match_wire_fields(self):
         me = self.get('/me')
-        self.assertEqual(set(me), set('userId kind displayName email agentName agentRank fleet ship'.split()))
+        self.assertEqual(set(me), set('userId kind displayName username email agentName agentRank fleet ship'.split()))
         self.assertEqual(me['displayName'], 'Ada Fixture')
+        self.assertEqual(me['username'], 'ada')
         projects = self.get('/projects?includeArchived=true&limit=200')
         self.assertEqual(set(projects), {'items', 'nextCursor'})
         self.assertEqual([p['key'] for p in projects['items']], ['SUB', 'OPS'])
@@ -454,6 +455,31 @@ class FixtureTests(unittest.TestCase):
                 worker.join()
         # The shared record is never changed by a server's address.
         self.assertEqual(FIXTURE.FLEET_INITIATIVE['fleet']['fleetApiUrl'], 'http://127.0.0.1:18484')
+
+    def test_irc_credentials_are_issued_only_when_asked_for(self):
+        status, value, _ = self.request('/me/irc-credential', body={}, method='POST')
+        self.assertEqual(status, 404, value)
+        issuing = FIXTURE.FixtureServer(0, 'fixture-access', irc_credential=True)
+        worker = threading.Thread(target=issuing.serve_forever, daemon=True)
+        worker.start()
+        try:
+            request = Request(issuing.origin + '/api/v1/me/irc-credential', data=b'{}', method='POST',
+                              headers={'Authorization': 'Bearer fixture-access', 'Content-Type': 'application/json'})
+            with urlopen(request, timeout=3) as response:
+                credential = json.load(response)
+            self.assertEqual(set(credential), {'account', 'password', 'expiresAt'})
+            self.assertEqual(credential['account'], 'ada')
+            self.assertTrue(credential['password'].startswith('sirc1.'))
+            expires = datetime.fromisoformat(credential['expiresAt'].replace('Z', '+00:00'))
+            self.assertGreater(expires, datetime.now(expires.tzinfo))
+            unauthorised = Request(issuing.origin + '/api/v1/me/irc-credential', data=b'{}', method='POST')
+            with self.assertRaises(HTTPError) as refused:
+                urlopen(unauthorised, timeout=3)
+            self.assertEqual(refused.exception.code, 401)
+        finally:
+            issuing.shutdown()
+            issuing.server_close()
+            worker.join()
 
     def test_decision_scenarios_leave_other_issue_reads_available(self):
         current = self.get('/decisions?status=accepted')['items'][0]
