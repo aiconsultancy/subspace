@@ -20,6 +20,10 @@ Commands, options and fleet options are the same as install.sh:
 --api-target NAME installs a further fleet without its own Subspace API and
 registers it with the API of the fleet installed as --target NAME; later runs
 reuse it. --host-key always checks the VM's key, and repins a rebuilt VM.
+--database-url-file FILE runs the VM's Subspace API against an existing
+PostgreSQL: FILE holds its postgresql://...?sslmode=verify-full URL and is
+copied to the VM as root's (add --migrate to migrate it); --database-ca-file
+FILE gives that server's CA certificate (PEM) when the VM does not trust it.
 Every other option goes to subspace-setup on the VM, for example
   --name "Example Fleet" --rear-admiral Atlas --captains Orion,Vega --admin admiral --demo
 #>
@@ -34,7 +38,7 @@ $SetupCmd = '/opt/subspace/bootstrap/subspace-installer/vm/setup.sh'
 $FleetConsole = 'fleet-console'
 $Command = 'install'; $Mode = ''; $Target = ''; $Remote = ''; $Identity = ''; $SshPort = 22; $HostKey = ''; $SshProxy = ''
 $Cpus = 4; $Memory = 8; $Disk = 60; $InstallDeps = $false; $IrcTarget = ''; $ApiTarget = ''; $AssumeYes = $false
-$Background = $false; $SkillsFailed = $false; $Passthrough = New-Object System.Collections.Generic.List[string]
+$Background = $false; $SkillsFailed = $false; $DatabaseUrlFile = ''; $DatabaseCaFile = ''; $Passthrough = New-Object System.Collections.Generic.List[string]
 
 function Die([string]$Message) { Write-Host "install: $Message" -ForegroundColor Red; exit 1 }
 function Say([string]$Message) { Write-Host "==> $Message" }
@@ -70,6 +74,8 @@ for (; $i -lt $list.Count; $i++) {
         '--install-deps' { $InstallDeps = $true }
         '--irc-server' { $IrcTarget = Next-Value }
         '--api-target' { $ApiTarget = Next-Value }
+        '--database-url-file' { $DatabaseUrlFile = Next-Value }
+        '--database-ca-file' { $DatabaseCaFile = Next-Value }
         '--fleet-console' { $FleetConsole = Next-Value }
         { $_ -in @('--yes', '-y') } { $AssumeYes = $true }
         '--background' { $Background = $true }
@@ -638,6 +644,21 @@ function Invoke-Install {
             $Passthrough.AddRange([string[]]@('--irc-ca', '/root/fleet/irc-ca.pem'))
         }
         Write-Private (Join-Path $State 'irc-target') "$IrcTarget`n"
+    }
+
+    if ($DatabaseUrlFile) {
+        # The URL holds the database's password: it travels over SSH on standard input, never in a command line.
+        if (-not (Test-Path -LiteralPath $DatabaseUrlFile -PathType Leaf)) { Die "Cannot read --database-url-file $DatabaseUrlFile." }
+        if ($ApiTarget) { Die "--database-url-file runs this VM's own Subspace API, which --api-target leaves out." }
+        $urlScript = 'umask 077 && mkdir -p /root/fleet && cat > /root/fleet/database-url.new && mv -f /root/fleet/database-url.new /root/fleet/database-url'
+        if ((Send-VmInput (Resolve-Path -LiteralPath $DatabaseUrlFile).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $urlScript))) -ne 0) { Die 'Could not copy the database URL to the VM.' }
+        $Passthrough.AddRange([string[]]@('--database-url-file', '/root/fleet/database-url'))
+    }
+    if ($DatabaseCaFile) {
+        if (-not (Test-Path -LiteralPath $DatabaseCaFile -PathType Leaf)) { Die "Cannot read --database-ca-file $DatabaseCaFile." }
+        $caScript = 'umask 077 && mkdir -p /root/fleet && cat > /root/fleet/database-ca.pem.new && mv -f /root/fleet/database-ca.pem.new /root/fleet/database-ca.pem'
+        if ((Send-VmInput (Resolve-Path -LiteralPath $DatabaseCaFile).Path @('sudo', '-n', 'sh', '-c', (Quote-Posix $caScript))) -ne 0) { Die 'Could not copy the database CA certificate to the VM.' }
+        $Passthrough.AddRange([string[]]@('--database-ca-file', '/root/fleet/database-ca.pem'))
     }
 
     Send-Payload
