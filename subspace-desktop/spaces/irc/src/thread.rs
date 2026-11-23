@@ -106,7 +106,8 @@ pub(crate) fn open(
 }
 
 /// Rebuilds each chosen thread whose buffer changed, and lets go of those
-/// whose root is no longer held, with any reply being written to it.
+/// whose root is no longer held; a reply being written to one is kept,
+/// marked gone ([`crate::compose::reply::forget`]).
 pub(crate) fn refresh(board: &mut Irc, cx: &mut Context<Irc>) {
     let Some(hub) = board.hub.clone() else {
         return;
@@ -115,11 +116,11 @@ pub(crate) fn refresh(board: &mut Irc, cx: &mut Context<Irc>) {
     if gone.is_empty() {
         return;
     }
-    crate::dock::with_window(board, cx, move |board, window, cx| {
+    crate::dock::with_window(board, cx, move |board, _, cx| {
         for (buffer, root) in &gone {
             if let Some(hosted) = board.dock.open.get(buffer) {
                 hosted.entity.update(cx, |view, cx| {
-                    crate::compose::reply::forget(view, root, window, cx);
+                    crate::compose::reply::forget(view, root, cx);
                 });
             }
         }

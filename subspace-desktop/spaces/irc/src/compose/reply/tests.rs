@@ -2,7 +2,7 @@
 
 use subspace_client_irc::{Command, ConnectionStatus, Event};
 
-use super::{ATTACHMENTS, CHANNEL_ONLY, COMMAND, ReplyTo, command, placeholder};
+use super::{ATTACHMENTS, CHANNEL_ONLY, COMMAND, GONE, ReplyTo, command, placeholder};
 use crate::fixtures::{at, channel, network_id, query};
 use crate::state::{IrcState, Network, server_key};
 use crate::thread::{MESSAGE_TAGS, NO_REPLY_TAG, NOT_CONNECTED};
@@ -95,4 +95,20 @@ fn the_reply_row_names_the_author_and_the_start_of_the_root() {
     let long = ReplyTo::new("long", "tavi", &"word ".repeat(40));
     assert_eq!(long.excerpt.chars().count(), 80);
     assert!(long.excerpt.ends_with('…'));
+}
+
+#[test]
+fn a_reply_whose_thread_is_gone_is_never_sent() {
+    let room = channel("#aurora-lyra");
+    let tagged = network(&[MESSAGE_TAGS]);
+    let gone = ReplyTo {
+        gone: true,
+        ..root()
+    };
+    assert_eq!(command(&room, &gone, "On it.", Some(&tagged)), Err(GONE));
+    assert_eq!(
+        command(&room, &gone, "/part", Some(&tagged)),
+        Err(GONE),
+        "nor run"
+    );
 }

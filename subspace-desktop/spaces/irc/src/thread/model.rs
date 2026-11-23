@@ -68,17 +68,22 @@ impl StepKind {
 }
 
 /// The thread of message `root` in `held`, the buffer `buffer`; `None`
-/// when the buffer does not hold it.
+/// when the buffer does not hold it. Its replies are those of the
+/// conversation's thread the message is in, as the transcript counts them,
+/// so a follow-up request made as a reply shows the replies to it and a
+/// reply sent from its tab appears there; its timeline is the chosen
+/// message's own. The chosen message is shown once, as the root.
 pub(crate) fn build(buffer: &BufferKey, held: &Buffer, root: &str) -> Option<Thread> {
     let root_entry = held
         .entries
         .iter()
         .find(|entry| entry.line.id.as_deref() == Some(root) && entry.line.buffer == *buffer)?;
     let roots = ThreadRoots::new(buffer, held.entries.iter().map(|entry| &entry.line));
+    let thread = roots.root(&root_entry.line).unwrap_or(root);
     let replies = held
         .entries
         .iter()
-        .filter(|entry| is_reply(held, &roots, entry, root))
+        .filter(|entry| entry.seq != root_entry.seq && is_reply(held, &roots, entry, thread))
         .cloned()
         .collect();
     Some(Thread {
@@ -118,7 +123,12 @@ fn timeline(held: &Buffer, root_entry: &Entry, root: &str) -> Option<Timeline> {
         .or_else(|| asked.map(thread_status::agent_name))
         .unwrap_or_default();
     let mut steps = steps(&observed, root_entry.line.time);
-    let earlier_missing = ending.is_some() && observed.is_empty();
+    // Only the ending held, as after a partial history load: the steps
+    // before it are not loaded.
+    let earlier_missing = ending.is_some()
+        && observed
+            .iter()
+            .all(|notice| matches!(notice.phase, Phase::Finished(_)));
     if let Some(ending) = ending {
         settle(&mut steps, ending, root_entry.line.time);
     }

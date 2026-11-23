@@ -8,6 +8,7 @@ mod navigator;
 mod notice;
 mod scope;
 mod thread;
+mod thread_gone;
 mod views;
 
 use gpui_kit::test::TestWindowExt as _;

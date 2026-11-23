@@ -136,3 +136,68 @@ fn an_ending_kept_without_its_notices_says_the_earlier_steps_are_not_loaded() {
         "never claims success"
     );
 }
+
+#[test]
+fn a_lone_ending_notice_still_says_the_earlier_steps_are_not_loaded() {
+    let mut state = joined(vec![ship()]);
+    live(
+        &mut state,
+        [
+            request(&room(), "first", 1),
+            progress(&room(), "first", "completed", 43),
+        ],
+    );
+    let timeline = thread(&state, "first").unwrap().timeline.unwrap();
+    assert!(timeline.earlier_missing, "only the ending is held");
+}
+
+#[test]
+fn a_follow_up_request_shows_its_own_steps_and_the_replies_to_it() {
+    use crate::thread_status::tests::follow_up;
+    let mut state = joined(vec![ship()]);
+    live(
+        &mut state,
+        [
+            request(&room(), "first", 1),
+            progress(&room(), "first", "completed", 3),
+            said(&room(), Some("first"), "answer", 3),
+            follow_up(&room(), "second", "first", 5),
+            progress(&room(), "second", "accepted", 6),
+            progress(&room(), "second", "completed", 9),
+            said(&room(), Some("second"), "answer2", 9),
+        ],
+    );
+    let second = thread(&state, "second").unwrap();
+    assert_eq!(second.root.line.id.as_deref(), Some("second"));
+    assert_eq!(
+        reply_ids(&second),
+        ["answer", "answer2"],
+        "the reply to it shows"
+    );
+    let steps: Vec<_> = second
+        .timeline
+        .unwrap()
+        .steps
+        .iter()
+        .map(|step| step.kind)
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            StepKind::Stage(Stage::Accepted),
+            StepKind::Ended(Some(Outcome::Completed))
+        ]
+    );
+    // The first thread and the transcript's count agree.
+    let first = thread(&state, "first").unwrap();
+    assert_eq!(reply_ids(&first), ["answer", "second", "answer2"]);
+    let held = state.buffer(&room()).unwrap();
+    let counts = crate::transcript::replies::counts(&room(), held);
+    let seq = held
+        .entries
+        .iter()
+        .find(|entry| entry.line.id.as_deref() == Some("first"))
+        .unwrap()
+        .seq;
+    assert_eq!(counts[&seq].count(), first.replies.len());
+}
