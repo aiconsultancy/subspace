@@ -58,9 +58,14 @@ built against, is the API README's
 - **A fingerprint is unique across organisations among active credentials**, not
   only within one, because an agent token names no organisation and the lookup must
   resolve to one credential by construction. A certificate revoked in an
-  organisation cannot be registered there again, so a revoked key stays revoked
-  even if an enrolment token is still valid. The cost is that registering another
-  organisation's active certificate reveals, by a 409, that it is registered.
+  organisation cannot be registered there again: revocation is by fingerprint, so
+  the same certificate cannot come back through an enrolment token that is still
+  valid, but the same key in a new certificate has a new fingerprint and can be
+  registered. The cost is that registering another organisation's active
+  certificate reveals, by a 409, that it is registered.
+- **Revocation does not reach what is already issued.** An IRC password issued with
+  a revoked credential's token stays usable until it expires, within ten minutes,
+  and open connections, to IRC or to the update stream, are not closed.
 - **Moving an agent to another fleet revokes its keys** in the same transaction,
   audited with the reason `fleetChanged`, because the previous fleet's gateway holds
   them; the new fleet enrols a fresh key.

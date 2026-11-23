@@ -660,8 +660,14 @@ implementation of this API must match it exactly.
 - An agent may have several active credentials, so that keys can rotate. A
   fingerprint names at most one active credential in the whole database, because
   an agent token names no organisation: registering a certificate that is active
-  anywhere, or that was revoked in this organisation, receives 409. A revoked
-  credential keeps its record.
+  anywhere, or that was revoked in this organisation, receives 409. Revocation is
+  by fingerprint, that is by certificate: the same key in a new certificate has
+  another fingerprint and can be registered again. A revoked credential keeps its
+  record.
+- Revoking a credential refuses its agent tokens and IRC sign-ins from then on. It
+  does not close connections already open, to IRC or to the update stream, and an
+  [IRC password](#post-apiv1meirc-credential) already issued with one of its tokens
+  stays usable until it expires, within ten minutes.
 - Moving an agent to another fleet revokes all its active credentials in the same
   change, each audited as `agentCredentialRevoked` with the reason `fleetChanged`:
   the previous fleet's gateway holds those keys, and the new fleet enrols a fresh
@@ -802,7 +808,9 @@ An organisation administrator manages an agent's credentials:
 - `POST /api/v1/agents/{agentId}/credentials` with
   `{ "certificate", "scopes", "label"? }` registers one: 201 with it.
 - `DELETE /api/v1/agents/{agentId}/credentials/{credentialId}` revokes it and
-  answers 200 with it. Its tokens and IRC sign-ins are refused from then on.
+  answers 200 with it. Its tokens and IRC sign-ins are refused from then on; open
+  connections and IRC passwords already issued are not, as
+  [Credentials](#credentials) says.
 
 These routes are on the main listener only.
 
