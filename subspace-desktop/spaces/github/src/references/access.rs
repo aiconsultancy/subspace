@@ -49,7 +49,9 @@ impl Clock {
     }
 }
 
-/// Starts a read: its tick of the one clock.
+/// Starts a read: its tick of the one clock. The read paths take theirs
+/// from [`Clock::tick`] as each request starts; tests take one here.
+#[cfg(test)]
 pub(crate) fn begin(board: &mut Github) -> u64 {
     board.references.clock.tick()
 }

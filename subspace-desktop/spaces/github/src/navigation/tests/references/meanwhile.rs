@@ -41,7 +41,8 @@ impl Meanwhile {
     /// Ties the reads meanwhile to `board`'s clock.
     pub(super) fn arm(&self, board: &Entity<Github>, cx: &mut VisualTestContext) {
         let clock = board.update(cx, |board, _| crate::references::clock(board));
-        assert!(self.ticker.set(Box::new(clock)).is_ok(), "armed once");
+        let tick = move || clock.tick();
+        assert!(self.ticker.set(Box::new(tick)).is_ok(), "armed once");
     }
 
     /// The tick of the latest read started meanwhile.

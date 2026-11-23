@@ -217,3 +217,26 @@ fn a_pull_request_read_under_another_repository_name_is_never_cached_under_it(
         "a summary GitHub gave under another key never answers for this one"
     );
 }
+
+#[gpui_kit::test]
+fn a_detail_read_takes_its_tick_when_its_request_starts_not_when_queued(cx: &mut TestAppContext) {
+    let mock = Mock::new(|_| (403, r#"{"message":"Resource not accessible"}"#.to_owned()));
+    let (board, _listener, cx) = routed(cx, Some(&mock));
+    board.update(cx, listed_only);
+    // This Space's detail read of KEY is queued behind its debounce.
+    board.update(cx, |board, cx| board.fetch_detail(KEY.into(), true, cx));
+    // Meanwhile another read of KEY starts and succeeds; access is lost.
+    let meanwhile = tick(&board, cx);
+    board.update(cx, |board, _| {
+        let login = board.account.clone().unwrap_or_default();
+        crate::references::detail_landed(board, &login, (KEY, KEY), meanwhile);
+    });
+    // The detail request starts only now, and GitHub refuses it.
+    cx.executor().advance_clock(crate::DETAIL_DEBOUNCE);
+    cx.run_until_parked();
+    assert_eq!(mock.requests().len(), 1);
+    assert!(
+        matches!(ask(KEY, cx), ResolutionState::Unavailable),
+        "the refusal started after the other read, so it answers"
+    );
+}

@@ -7,7 +7,14 @@ use subspace_framework::client_github::model::GhItemDetail;
 use subspace_framework::core::http::Error;
 use subspace_framework::dashboard::{full_text, full_text_service};
 
-use super::{cache_error, mapping, relations};
+use super::{cache_error, mapping};
+
+mod reads;
+
+pub(super) use reads::Prepared;
+#[cfg(test)]
+pub(super) use reads::prepare;
+use reads::{ReadResult, fetch, prepare_read};
 
 #[derive(Clone)]
 pub(crate) struct Request {
@@ -17,8 +24,9 @@ pub(crate) struct Request {
     pub debounce: bool,
     /// [`crate::references::since`] when the read was asked for.
     pub since: u64,
-    /// Its tick of the one read clock ([`crate::references::begin`]).
-    pub tick: u64,
+    /// The one read clock: the read takes its tick on the background
+    /// thread immediately before its request starts, after the debounce.
+    pub clock: crate::references::Clock,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -45,7 +53,7 @@ pub(crate) fn load(board: &mut Github, request: Request, cx: &mut Context<Github
             cx.background_executor().timer(DETAIL_DEBOUNCE).await;
         }
         let (reader, cache) = (request.clone(), service.clone());
-        let (ticket, prepared) = cx
+        let (tick, (ticket, prepared)) = cx
             .background_spawn(async move {
                 prepare_read(&reader, cache.as_ref(), previous_scope.as_ref())
             })
@@ -57,7 +65,8 @@ pub(crate) fn load(board: &mut Github, request: Request, cx: &mut Context<Github
                     if !is_current(board, generation, &request.login) {
                         return;
                     }
-                    apply_live(board, &request, (result, cache_unavailable), started, cx);
+                    let result = (result, cache_unavailable, tick);
+                    apply_live(board, &request, result, started, cx);
                 });
                 return;
             }
@@ -79,14 +88,14 @@ pub(crate) fn load(board: &mut Github, request: Request, cx: &mut Context<Github
             .zip(selected)
             .filter(|_| selected_current);
         let reader = request.clone();
-        let result = cx
+        let read = cx
             .background_spawn(async move { fetch(&bound, &reader, pending) })
             .await;
         let _ = this.update(cx, |board, cx| {
             if !is_current(board, generation, &request.login) {
                 return;
             }
-            apply(board, &request, result, started, cx);
+            apply(board, &request, read, started, cx);
         });
     }));
 }
@@ -114,16 +123,10 @@ fn select_detail(
     Some((selected, read_generation(board, login)))
 }
 
-type PendingIndex = (
-    (full_text::Service, full_text::ActivationTicket),
-    full_text::Scope,
-);
-type ReadResult = Result<(GhItemDetail, Result<(), String>), Error>;
-
 fn apply_live(
     board: &mut Github,
     request: &Request,
-    (result, cache_unavailable): (Result<Box<GhItemDetail>, Error>, bool),
+    (result, cache_unavailable, tick): (Result<Box<GhItemDetail>, Error>, bool, u64),
     started: std::time::Instant,
     cx: &mut Context<Github>,
 ) {
@@ -133,95 +136,16 @@ fn apply_live(
     apply(
         board,
         request,
-        result.map(|detail| (*detail, Ok(()))),
+        (result.map(|detail| (*detail, Ok(()))), tick),
         started,
         cx,
     );
 }
 
-fn prepare_read(
-    request: &Request,
-    service: Option<&full_text::Service>,
-    previous: Option<&full_text::Scope>,
-) -> (Option<full_text::ActivationTicket>, Prepared) {
-    let ticket = service.and_then(|service| service.begin_activation("github").ok());
-    (
-        ticket,
-        prepare(
-            &request.client,
-            service,
-            previous,
-            &request.login,
-            &request.key,
-        ),
-    )
-}
-
-fn fetch(
-    bound: &subspace_framework::client_github::BoundRead,
-    request: &Request,
-    pending: Option<PendingIndex>,
-) -> ReadResult {
-    let lease = pending.as_ref().and_then(|((service, ticket), scope)| {
-        let activation = service.prepare_activation_ticket(ticket, scope).ok()?;
-        service.activate_prepared(&activation).ok()?;
-        service.lease(scope).ok()
-    });
-    let detail = match bound.item(&request.key) {
-        Ok(detail) => detail,
-        Err(_) => {
-            return request
-                .client
-                .item(&request.login, &request.key)
-                .map(|detail| (detail, Err("Bound read unavailable".into())));
-        }
-    };
-    let cached = publish(
-        pending
-            .as_ref()
-            .map(|((service, _), scope)| (service, scope)),
-        lease.as_ref(),
-        &detail,
-        bound,
-    );
-    Ok((detail, cached))
-}
-
-pub(super) enum Prepared {
-    Bound(subspace_framework::client_github::BoundRead),
-    Live(Result<Box<GhItemDetail>, Error>, bool),
-}
-
-pub(super) fn prepare(
-    client: &subspace_framework::client_github::Client,
-    service: Option<&full_text::Service>,
-    previous: Option<&full_text::Scope>,
-    login: &str,
-    key: &str,
-) -> Prepared {
-    if service.is_some_and(|service| service.policy("github").is_ok_and(|policy| policy.enabled)) {
-        match client.bind_read(login) {
-            Ok(bound) if model::same_login(bound.account(), login) => {
-                return Prepared::Bound(bound);
-            }
-            Ok(_) => return Prepared::Live(client.item(login, key).map(Box::new), true),
-            Err(error) => {
-                if matches!(error, Error::Status { status: 403, .. })
-                    && let Some((service, scope)) = service.zip(previous)
-                {
-                    let _ = service.invalidate(scope);
-                }
-                return Prepared::Live(client.item(login, key).map(Box::new), true);
-            }
-        }
-    }
-    Prepared::Live(client.item(login, key).map(Box::new), false)
-}
-
 fn apply(
     board: &mut Github,
     request: &Request,
-    result: ReadResult,
+    (result, tick): (ReadResult, u64),
     started: std::time::Instant,
     cx: &mut Context<Github>,
 ) {
@@ -240,12 +164,7 @@ fn apply(
             let account = board.data.entry(request.login.to_lowercase()).or_default();
             let key = detail.item.key.clone();
             account.apply_read_detail(detail, started);
-            crate::references::detail_landed(
-                board,
-                &request.login,
-                (&request.key, &key),
-                request.tick,
-            );
+            crate::references::detail_landed(board, &request.login, (&request.key, &key), tick);
             board
                 .retained_permits
                 .remove(&(request.login.to_lowercase(), key.clone()));
@@ -262,7 +181,7 @@ fn apply(
                 board,
                 (&request.login, &request.key),
                 &error,
-                request.tick,
+                tick,
                 cx,
             );
             failure(board, &request.key, error_text(&error), cx);
@@ -276,26 +195,6 @@ fn apply(
             board.list.select(key.into());
         }
     }
-}
-
-fn publish(
-    indexing: Option<(&full_text::Service, &full_text::Scope)>,
-    lease: Option<&full_text::Lease>,
-    detail: &GhItemDetail,
-    bound: &subspace_framework::client_github::BoundRead,
-) -> Result<(), String> {
-    let Some(((service, scope), lease)) = indexing.zip(lease) else {
-        return Ok(());
-    };
-    let document = mapping::document(
-        detail,
-        chrono::Utc::now().timestamp(),
-        bound.account_id(),
-        bound.account(),
-    )?;
-    service.upsert_leased(lease, std::slice::from_ref(&document))?;
-    relations::publish(service, scope, &detail.item, &document.id);
-    Ok(())
 }
 
 fn failure(board: &mut Github, key: &str, message: String, cx: &mut Context<Github>) {

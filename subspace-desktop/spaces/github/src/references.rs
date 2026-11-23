@@ -55,7 +55,9 @@ use subspace_framework::dashboard::contracts;
 use subspace_framework::dashboard::github_sign_in::{self, SignInEvent};
 
 use crate::Github;
-pub(crate) use access::{begin, detail_landed, detail_refused, section_landed};
+#[cfg(test)]
+pub(crate) use access::begin;
+pub(crate) use access::{Clock, detail_landed, detail_refused, section_landed};
 use held::{known, wants_read};
 use reads::read;
 use summary::details;
@@ -88,10 +90,10 @@ pub(crate) struct References {
     /// Bumped each time answers are marked stale, so a read that started
     /// before lands stale: it is older than the list.
     refreshes: u64,
-    /// Ticks as each read starts, whichever path makes it: a list section,
-    /// this Space's own detail read or a reference read
-    /// ([`access::begin`]), and each request of a reference read as it
-    /// starts. Every access decision compares these ticks.
+    /// Ticks as each read's request starts, on the background thread,
+    /// whichever path makes it: a list section, this Space's own detail
+    /// read or each request of a reference read ([`access::Clock`]). Every
+    /// access decision compares these ticks.
     clock: access::Clock,
     /// For each pull request a section lists, the tick of the latest
     /// section that listed it.
@@ -137,12 +139,10 @@ pub(crate) fn account_chosen(board: &mut Github, changed: bool, cx: &mut Context
     }
 }
 
-/// Ticks the board's read clock from any thread, as a read starting
-/// while a reference read's request is in flight would.
-#[cfg(test)]
-pub(crate) fn clock(board: &Github) -> impl Fn() -> u64 + Send + Sync + use<> {
-    let clock = board.references.clock.clone();
-    move || clock.tick()
+/// The board's read clock, for a read to take its tick on the background
+/// thread immediately before its request starts.
+pub(crate) fn clock(board: &Github) -> Clock {
+    board.references.clock.clone()
 }
 
 /// Taken when a list or detail read starts, for [`landed`].
