@@ -56,7 +56,7 @@ fn the_account_s_networks_show_read_only_with_where_they_come_from(cx: &mut Test
         );
     });
     let intro = account_view::intro("ada");
-    assert!(intro.contains("as ada") && intro.contains("Subspace account"));
+    assert!(intro.contains("as ada") && intro.contains("your Subspace API account"));
     assert!(intro.contains("can’t be edited") && intro.contains("sign out"));
     let server = &account("irc.example.com").servers[0];
     assert_eq!(
@@ -144,4 +144,59 @@ fn a_saved_network_cannot_keep_an_account_network_s_id(cx: &mut TestAppContext) 
             "{refused}"
         );
     });
+}
+
+#[gpui_kit::test]
+fn a_waiting_switch_is_withdrawn_when_the_account_or_server_changes(cx: &mut TestAppContext) {
+    let (editor, cx) = mount(cx, saved());
+    show(&editor, account("irc.example.net"), cx);
+    cx.update(|window, cx| window.click(("irc-switch-network", 0u64), cx));
+    cx.update(|window, cx| window.render_frame(cx));
+    show(&editor, account("irc.example.org"), cx);
+    cx.update(|window, _| {
+        assert!(
+            window.try_find(("irc-switch-confirmation", 0u64)).is_none(),
+            "another account or server withdraws it"
+        );
+    });
+    show(&editor, account("irc.example.net"), cx);
+    cx.update(|window, cx| window.click(("irc-switch-network", 0u64), cx));
+    cx.update(|window, cx| window.render_frame(cx));
+    // The draft's server changes under the confirmation.
+    super::type_into(&editor, 0, |inputs| &inputs.host, "irc.example.com", cx);
+    cx.update(|window, cx| window.click(("irc-switch-confirm", 0u64), cx));
+    cx.update(|_, cx| {
+        let editor = editor.read(cx);
+        assert_eq!(editor.networks.len(), 2, "checked again before removing");
+        assert_eq!(editor.account.switching, None);
+    });
+}
+
+#[gpui_kit::test]
+fn a_locked_page_cannot_switch(cx: &mut TestAppContext) {
+    let (editor, cx) = mount(cx, saved());
+    show(&editor, account("irc.example.net"), cx);
+    cx.update(|window, cx| {
+        editor.update(cx, |editor, cx| editor.ask_switch(Some(0), cx));
+        editor.update(cx, |editor, cx| editor.set_enabled(false, cx));
+        window.render_frame(cx);
+    });
+    cx.update(|window, cx| window.click(("irc-switch-confirm", 0u64), cx));
+    cx.update(|_, cx| assert_eq!(editor.read(cx).networks.len(), 2));
+}
+
+#[test]
+fn the_saved_list_is_named_apart_from_the_account_s() {
+    assert_eq!(
+        account_view::saved_words(true),
+        ("Saved networks", "No saved networks yet.")
+    );
+    assert_eq!(
+        account_view::saved_words(false),
+        ("Networks", "No networks yet.")
+    );
+    assert_eq!(
+        account_view::offer_note(),
+        "Your Subspace API account can sign in to this server for you."
+    );
 }

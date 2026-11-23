@@ -17,8 +17,7 @@ use super::form::NetworkForm;
 use super::validate::parse_port;
 use crate::managed::{AccountNetworks, Server, same_server};
 
-const OFFER_NOTE: &str = "Your Subspace account can sign in to this server for you.";
-const SWITCH_NOTE: &str = "Save removes this network and its saved passwords from irc/config.json. Subspace then connects to the server with your account.";
+const SWITCH_NOTE: &str = "Save removes this network and its saved passwords from irc/config.json. Channels then connects to the server with your account.";
 
 /// The account's networks as the page shows them, and the saved network
 /// whose switch to them waits for confirmation.
@@ -36,11 +35,20 @@ impl Account {
         }
     }
 
-    /// Takes `networks`; true when they changed.
+    /// Takes `networks`; true when they changed, which also withdraws a
+    /// switch waiting for confirmation.
     pub fn set(&mut self, networks: AccountNetworks) -> bool {
         let changed = self.networks != networks;
+        if changed {
+            self.switching = None;
+        }
         self.networks = networks;
         changed
+    }
+
+    /// Whether the saved and account networks are listed apart.
+    pub fn shown(&self) -> bool {
+        self.networks.account.is_some()
     }
 
     /// The account's server that saved network `form` connects to, while
@@ -85,10 +93,43 @@ pub(super) fn section(
 
 /// What the section says first: who the networks sign in as, and why
 /// they cannot be edited.
-pub(super) fn intro(username: &str) -> String {
+pub(super) fn intro(account: &str) -> String {
+    let service = subspace_api_client::service_name();
     format!(
-        "Subspace connects to your fleets’ IRC servers as {username}, signed in with your Subspace account. These networks follow your account: they can’t be edited here, and they go when you sign out."
+        "Channels connects to your fleets’ IRC servers as {account}, signed in with your {service} account. These networks follow your account: they can’t be edited here, and they go when you sign out."
     )
+}
+
+/// Under a saved network on one of the account's servers.
+pub(super) fn offer_note() -> String {
+    let service = subspace_api_client::service_name();
+    format!("Your {service} account can sign in to this server for you.")
+}
+
+/// The heading and empty state of the saved networks: told apart from the
+/// account's while those are shown.
+pub(super) fn saved_words(apart: bool) -> (&'static str, &'static str) {
+    if apart {
+        ("Saved networks", "No saved networks yet.")
+    } else {
+        ("Networks", "No networks yet.")
+    }
+}
+
+/// Removes saved network `key` for the account's network, once it still
+/// connects to one of the account's servers; otherwise withdraws the
+/// confirmation.
+pub(super) fn switch(editor: &mut IrcSettings, key: u64, cx: &mut Context<IrcSettings>) {
+    let still = editor.enabled
+        && editor.account.switching == Some(key)
+        && editor
+            .network(key)
+            .is_some_and(|network| editor.account.server(network, cx).is_some());
+    if still {
+        editor.remove(key, cx);
+    } else {
+        editor.ask_switch(None, cx);
+    }
 }
 
 fn server_row(
@@ -142,7 +183,7 @@ pub(super) fn offer(
     cx: &App,
 ) -> Option<AnyElement> {
     editor.account.server(network, cx)?;
-    Some(fields::note(tokens, OFFER_NOTE).into_any_element())
+    Some(fields::note(tokens, offer_note()).into_any_element())
 }
 
 /// The action that asks to switch saved network `key` to the account.
@@ -163,8 +204,8 @@ pub(super) fn switch_button(
 
 /// Confirms that saved network `key` gives way to the account's network.
 pub(super) fn confirmation(
-    title: &str,
-    key: u64,
+    (title, key): (&str, u64),
+    enabled: bool,
     tokens: &Tokens,
     cx: &mut Context<IrcSettings>,
 ) -> AnyElement {
@@ -193,7 +234,8 @@ pub(super) fn confirmation(
                         Some(IconName::UserRound),
                         "Switch",
                     )
-                    .on_click(cx.listener(move |editor, _, _, cx| editor.remove(key, cx))),
+                    .disabled(!enabled)
+                    .on_click(cx.listener(move |editor, _, _, cx| switch(editor, key, cx))),
                 ),
         )
         .into_any_element()

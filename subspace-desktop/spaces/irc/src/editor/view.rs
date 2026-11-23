@@ -39,7 +39,10 @@ fn list_page(editor: &IrcSettings, tokens: &Tokens, cx: &mut Context<IrcSettings
         .child(
             v_flex()
                 .gap_3()
-                .child(fields::heading("Networks", cx))
+                .child(fields::heading(
+                    account_view::saved_words(editor.account.shown()).0,
+                    cx,
+                ))
                 .child(network_list(editor, tokens, cx))
                 .child(
                     h_flex().child(
@@ -109,7 +112,8 @@ fn captain_notifications(
 
 fn network_list(editor: &IrcSettings, tokens: &Tokens, cx: &mut Context<IrcSettings>) -> Div {
     if editor.networks.is_empty() {
-        return fields::note(tokens, "No networks yet.");
+        let empty = account_view::saved_words(editor.account.shown()).1;
+        return fields::note(tokens, empty);
     }
     v_flex().gap_3().children(
         editor
@@ -151,7 +155,7 @@ fn network_row(
         .child(if removing {
             removal(&title, key, cx).into_any_element()
         } else if switching {
-            account_view::confirmation(&title, key, tokens, cx)
+            account_view::confirmation((&title, key), editor.enabled, tokens, cx)
         } else {
             row_actions(key, editor.enabled, cx)
                 .children(switchable.then(|| account_view::switch_button(key, editor.enabled, cx)))
