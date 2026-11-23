@@ -259,3 +259,21 @@ fn only_a_change_moves_a_conversation_s_revision() {
         "a rename moves what it shows"
     );
 }
+
+#[test]
+fn the_same_rename_made_again_by_a_new_holder_takes_a_new_stamp() {
+    let mut book = ReactionBook::new();
+    // Bob reacts, becomes Robert, and leaves.
+    book.apply(&reaction("m1", "👍", "bob", 1));
+    book.observe(&renamed("bob", "robert", None));
+    book.observe(&renamed("bob", "robert", None));
+    book.observe(&Event::Line(line(room(), "quit")));
+    // Someone else, Bob now, makes the same rename and reacts.
+    book.observe(&renamed("bob", "robert", None));
+    book.apply(&reaction("m1", "👍", "robert", 2));
+    assert_eq!(
+        book.reactions(&room(), "m1")[0].count(),
+        2,
+        "two people under one nick, each counted"
+    );
+}

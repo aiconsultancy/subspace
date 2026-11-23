@@ -1,11 +1,11 @@
 //! A bounded, pure aggregation of reactions per message for a UI to read.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 
 use super::validate_reaction;
-use crate::model::{BufferKey, Casemapping, Event, Line, NetworkId, Reaction};
+use crate::model::{BufferKey, Casemapping, Event, Line, LineKind, NetworkId, Reaction};
 
 /// Loaded messages with reactions (or remembered removals) kept; the
 /// least recently changed goes first.
@@ -28,7 +28,9 @@ const MAX_SEEN_IDS: usize = 8192;
 const MAX_HOLDERS: usize = 1024;
 
 mod groups;
+mod seen;
 use groups::{Group, record, shows, summaries};
+use seen::Seen;
 
 /// Someone who reacted.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,40 +100,16 @@ pub struct ReactionBook {
     /// When each nick, folded, was last taken by a rename on its network:
     /// accountless records under it from before then were someone else's.
     holders: BTreeMap<(NetworkId, String), u64>,
-    /// Each network's last rename, folded: the client reports one nick
-    /// change once per channel the person shares with us, and only the
-    /// first of those reports moves anything.
+    /// The rename being reported, folded, per network: the client reports
+    /// one NICK once per channel the person shares with us, each report
+    /// beside its own nick line and nothing else, and only the first of
+    /// them moves anything. Any other event ends that run, so the same
+    /// rename made again later, by whoever holds the nick then, counts.
     last_rename: BTreeMap<NetworkId, (String, String)>,
     /// The clock when what each conversation shows last changed.
     revisions: BTreeMap<BufferKey, u64>,
     seen: Seen,
     clock: u64,
-}
-
-/// Message IDs seen loaded, oldest first, bounded by [`MAX_SEEN_IDS`].
-#[derive(Debug, Clone, Default)]
-struct Seen {
-    ids: BTreeSet<Key>,
-    order: VecDeque<Key>,
-}
-
-impl Seen {
-    fn insert(&mut self, key: Key) {
-        if !self.ids.insert(key.clone()) {
-            return;
-        }
-        self.order.push_back(key);
-        if self.order.len() > MAX_SEEN_IDS
-            && let Some(oldest) = self.order.pop_front()
-        {
-            self.ids.remove(&oldest);
-        }
-    }
-
-    fn forget(&mut self, buffer: &BufferKey) {
-        self.ids.retain(|(held, _)| held != buffer);
-        self.order.retain(|(held, _)| held != buffer);
-    }
 }
 
 impl ReactionBook {
@@ -266,6 +244,9 @@ impl ReactionBook {
     /// Follows nick changes ([`Event::MemberChanged`] with a new nick)
     /// and marks the messages of lines, live or loaded, as seen.
     pub fn observe(&mut self, event: &Event) {
+        if !reports_a_rename(event) {
+            self.last_rename.clear();
+        }
         match event {
             Event::MemberChanged {
                 buffer,
@@ -368,6 +349,18 @@ impl ReactionBook {
             .get(network)
             .copied()
             .unwrap_or(Casemapping::Rfc1459)
+    }
+}
+
+/// Whether `event` belongs to the run of reports one NICK makes: a member
+/// renamed, or the nick line beside it.
+fn reports_a_rename(event: &Event) -> bool {
+    match event {
+        Event::MemberChanged {
+            old_nick, member, ..
+        } => *old_nick != member.nick,
+        Event::Line(line) => line.kind == LineKind::Nick,
+        _ => false,
     }
 }
 
