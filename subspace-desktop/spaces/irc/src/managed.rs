@@ -21,6 +21,7 @@ use subspace_api_client::initiatives::Catalog;
 use subspace_client_irc::NetworkConfig;
 
 pub(crate) use account::{Account, SignedIn};
+pub(crate) use plan::{Server, same_server};
 
 use crate::hub::Hub;
 
@@ -33,6 +34,16 @@ pub(crate) struct Managed {
     device: String,
     schedule: account::Schedule,
     networks: Vec<NetworkConfig>,
+}
+
+/// What Settings shows of the account's networks.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct AccountNetworks {
+    /// The signed-in username, while the account brings networks.
+    pub username: Option<String>,
+    /// Every server of the account's fleets a login can go to, including
+    /// those a saved network connects to instead.
+    pub servers: Vec<Server>,
 }
 
 impl Default for Managed {
@@ -67,6 +78,21 @@ impl Managed {
         initiatives: &[subspace_api_client::model::MemberInitiative],
     ) {
         self.networks = self.derive(saved, initiatives);
+    }
+
+    /// What Settings shows for the fleets in `initiatives`.
+    pub(crate) fn shown(
+        &self,
+        initiatives: &[subspace_api_client::model::MemberInitiative],
+    ) -> AccountNetworks {
+        let Account::SignedIn(person) = &self.account else {
+            return AccountNetworks::default();
+        };
+        let servers = plan::servers(initiatives);
+        AccountNetworks {
+            username: (!servers.is_empty()).then(|| person.username.clone()),
+            servers,
+        }
     }
 
     /// Sets the account as a check would, for tests: `client` stands for

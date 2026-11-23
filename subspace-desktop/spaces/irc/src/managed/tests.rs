@@ -193,3 +193,18 @@ fn an_api_without_irc_sign_ins_brings_no_network(cx: &mut TestAppContext) {
         assert_eq!(ids(&hub.effective().networks), ["local"]);
     });
 }
+
+#[gpui_kit::test]
+fn settings_see_the_account_s_servers_only_while_signed_in(cx: &mut TestAppContext) {
+    let (_board, hub, cx) = mount(cx, settings());
+    member_of(&hub, aurora("127.0.0.1"), cx);
+    let shown = |cx: &mut VisualTestContext| hub.read_with(cx, |hub, cx| hub.account_networks(cx));
+    assert_eq!(shown(cx), crate::managed::AccountNetworks::default());
+    sign_in(&hub, ada(), cx);
+    let networks = shown(cx);
+    assert_eq!(networks.username.as_deref(), Some("ada"));
+    assert_eq!(networks.servers.len(), 1);
+    assert_eq!(networks.servers[0].name(), "Aurora");
+    sign_in(&hub, Account::Without, cx);
+    assert_eq!(shown(cx), crate::managed::AccountNetworks::default());
+}
