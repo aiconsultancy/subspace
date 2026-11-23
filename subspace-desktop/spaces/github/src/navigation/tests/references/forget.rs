@@ -92,3 +92,22 @@ fn a_refusal_is_read_again_after_a_forget_and_a_refresh(cx: &mut TestAppContext)
         "the newer read lifts the refusal"
     );
 }
+
+#[gpui_kit::test]
+fn another_account_signing_out_never_drops_this_account_s_refusal_in_flight(
+    cx: &mut TestAppContext,
+) {
+    let mock = Mock::new(|_| (403, r#"{"message":"Resource not accessible"}"#.to_owned()));
+    let (board, _listener, cx) = routed(cx, Some(&mock));
+    board.update(cx, super::checks::listed_only);
+    // A reference read of the listed pull request is queued, then another
+    // account signs out, forgetting every answer, before it lands refused.
+    ask(KEY, cx);
+    emit(SignInEvent::SignedOut("other-account".into()), cx);
+    cx.run_until_parked();
+    assert_eq!(mock.requests().len(), 1);
+    assert!(
+        matches!(ask(KEY, cx), ResolutionState::Unavailable),
+        "the refusal stands, not the held list's title"
+    );
+}

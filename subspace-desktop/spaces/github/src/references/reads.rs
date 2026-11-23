@@ -106,7 +106,9 @@ fn read_one(client: &Client, clock: &super::access::Clock, login: &str, key: Str
 
 /// Lands one key's answer and announces it, so a refusal answers as soon
 /// as its own request completes. False when a forget came since the read
-/// was queued: the rest of its keys are not read.
+/// was queued: its answer is dropped and the rest of its keys are not
+/// read, but what GitHub said about access stands, as it is about the
+/// account that made the request, whatever another account did.
 fn land(
     board: &mut Github,
     login: &str,
@@ -115,17 +117,19 @@ fn land(
     cx: &mut Context<Github>,
 ) -> bool {
     let references = &mut board.references;
-    if references.generation != epoch.generation {
-        return false;
-    }
-    // A read that started before the last refresh is older than the list.
-    let older = references.refreshes != epoch.refreshes;
     let Answer {
         key,
         started,
         state,
     } = answer;
     let key = cache_key(login, &key);
+    if references.generation != epoch.generation {
+        current(references, &key, &state, started);
+        announce(cx);
+        return false;
+    }
+    // A read that started before the last refresh is older than the list.
+    let older = references.refreshes != epoch.refreshes;
     references.reading.remove(&key);
     if current(references, &key, &state, started) {
         if older {
