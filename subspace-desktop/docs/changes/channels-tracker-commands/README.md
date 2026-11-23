@@ -358,6 +358,52 @@ Left open, as decided: superseded reference jobs still make their request
 before their ticket is checked (Sol low, `hub/reference.rs`), and delayed
 accountless history matched against the current nick holder (above).
 
+### Follow-up to PR 75: third review round
+
+PR 75 was merged at `35d7456`; these fixes from its third review round
+(GPT-6.2 Sol: one high and medium findings; Claude Opus 5.5: clear, five
+lows) landed in a follow-up pull request. Each was checked against the
+code first and has its own commit and test.
+
+1. **The run row was not bound to the account and organisation** (Sol
+   high). When a run row is shown the list captures Channels' API client,
+   whose lease carries the account and organisation; Return or a click
+   runs the row only while that same client is current and its lease
+   unchanged, and the write goes with that client. Otherwise nothing is
+   written and the fresh row shows. Previews before a write, checked: the
+   run row (now bound), the message dialogs (bound to their client since
+   the first round), a typed command with the list closed (no preview),
+   and the toolbar (opens a dialog only). The test replaces Channels'
+   client between the row and Return; a loopback client has no native
+   lease, so a lease change itself is not driven by a test.
+2. **The unconfirmed-resend guard compared different forms** (both). The
+   command is captured trimmed at dispatch and every path compares that
+   form; a trailing-space `/decision` that went unconfirmed is not posted
+   again after Escape and Return.
+3. **A hand-typed channel TAGMSG could carry a stop** (Sol medium). The
+   IRC client reads a draft's raw reactions with its own tag rules
+   (`raw_reactions`) and the composer puts each through the reactions
+   gate: a stop is refused with the note pointing to the Stop item.
+4. **The destination compared the whole URL without case** (Sol medium).
+   Scheme and host compare without case, default ports filled in, and the
+   base path exactly.
+5. **A refused refresh kept the cached card** (Sol medium). A read refused
+   for sign-in or permission (`ResolutionOutcome::Denied`) drops the card;
+   a transient failure keeps it.
+6. **`/decision` length counted characters** (Opus low). The plan counts
+   UTF-16 units; the decision client refuses oversized or empty text,
+   context or evidence with its own message (`DecisionWriteError::Text`).
+7. **The evidence reference went in backticks** (Opus low). The Issues
+   decision panel and the Decisions inspector show it as plain text (or a
+   link for a safe URL), so it is now sent plain.
+8. **The tracker dialog was not a modal** (Opus low). Channels reports
+   `Modal::Dialog` while a tracker dialog is open, so the shell does not
+   open the palette over it, and its dismiss closes them.
+
+Also, being a few lines: a superseded reference read now checks its
+ticket before its request. Left open: the per-row hover notify
+(`conversation/keys.rs`), and, by decision, delayed accountless history.
+
 ## Captures
 
 Retaken after the merge with `main` (its final reactions, Thread tab and
