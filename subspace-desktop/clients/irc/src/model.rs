@@ -6,11 +6,13 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 mod config;
+mod credential;
 mod listing;
 mod reaction;
 mod replies;
 mod send_result;
 pub use config::{NetworkConfig, Sasl};
+pub use credential::{CredentialSource, IssuedLogin};
 pub use listing::ListedChannel;
 pub use reaction::{Casemapping, Reaction, ReactionChange, ReactionError, Update};
 pub use replies::ThreadRoots;

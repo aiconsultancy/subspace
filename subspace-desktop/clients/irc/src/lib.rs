@@ -17,9 +17,9 @@ mod session;
 pub mod test_support;
 
 pub use model::{
-    Anchor, BufferKey, Casemapping, Command, ConnectionStatus, Event, Line, LineKind,
-    ListedChannel, Member, NetworkConfig, NetworkId, Reaction, ReactionChange, ReactionError, Sasl,
-    SendResult, Target, ThreadRoots, Typing, Update,
+    Anchor, BufferKey, Casemapping, Command, ConnectionStatus, CredentialSource, Event,
+    IssuedLogin, Line, LineKind, ListedChannel, Member, NetworkConfig, NetworkId, Reaction,
+    ReactionChange, ReactionError, Sasl, SendResult, Target, ThreadRoots, Typing, Update,
 };
 pub use runtime::Runtime;
 pub use session::{

@@ -154,6 +154,7 @@ fn chunks_long_sasl_payloads() {
         password: "p".repeat(98),
         password_file: None,
         external: false,
+        credential: None,
     });
     let mut session = Session::new(config, Carry::default());
     session.start(now());
@@ -176,6 +177,7 @@ fn sasl_external_and_failure_still_end_negotiation() {
         password: String::new(),
         password_file: None,
         external: true,
+        credential: None,
     });
     let mut session = Session::new(config, Carry::default());
     session.start(now());
@@ -294,4 +296,27 @@ fn answers_ping_and_shows_errors() {
     let out = feed(&mut session, &["ERROR :Closing link"]);
     assert_eq!(lines(&out)[0].text, "Closing link");
     assert_eq!(lines(&out)[0].kind, LineKind::Error);
+}
+
+#[test]
+fn plain_sends_a_device_username_as_both_identities() {
+    // Ergo checks that both identities match before it takes the device
+    // off the account name, so `account@device` goes in both.
+    let mut config = config();
+    config.sasl = Some(Sasl {
+        username: "ada@desk1".into(),
+        password: "pw".into(),
+        password_file: None,
+        external: false,
+        credential: None,
+    });
+    let mut session = Session::new(config, Carry::default());
+    session.start(now());
+    feed(
+        &mut session,
+        &[":srv CAP * LS :sasl", ":srv CAP * ACK :sasl"],
+    );
+    let out = feed(&mut session, &["AUTHENTICATE +"]);
+    let payload = STANDARD.encode("ada@desk1\0ada@desk1\0pw");
+    assert_eq!(sent(&out), [format!("AUTHENTICATE {payload}")]);
 }

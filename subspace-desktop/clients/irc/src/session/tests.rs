@@ -46,6 +46,7 @@ pub(super) fn config() -> NetworkConfig {
             password: "secret".into(),
             password_file: None,
             external: false,
+            credential: None,
         }),
         channels: vec!["#subspace".into()],
         auto_connect: true,

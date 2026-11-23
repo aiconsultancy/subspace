@@ -186,13 +186,13 @@ impl Network {
         }
     }
 
-    async fn connect(&mut self, timeouts: Timeouts) -> Result<BoxStream, End> {
-        self.status(ConnectionStatus::Connecting);
-        let connecting = connection::connect(&self.config, timeouts);
-        tokio::pin!(connecting);
+    /// Waits for `work` while answering commands: a disconnect or shutdown
+    /// abandons it, and other commands are answered as offline.
+    async fn while_waiting<T>(&mut self, work: impl Future<Output = T>) -> Result<T, End> {
+        tokio::pin!(work);
         loop {
             let command = tokio::select! {
-                result = &mut connecting => break result,
+                result = &mut work => return Ok(result),
                 command = self.commands.recv() => command,
             };
             match command {
@@ -204,14 +204,30 @@ impl Network {
                 }
             }
         }
-        .map_err(connection_failed)
+    }
+
+    async fn connect(&mut self, timeouts: Timeouts) -> Result<BoxStream, End> {
+        self.status(ConnectionStatus::Connecting);
+        let config = self.config.clone();
+        self.while_waiting(connection::connect(&config, timeouts))
+            .await?
+            .map_err(connection_failed)
+    }
+
+    /// The configuration with this connect's secrets, fetched while
+    /// commands are still answered.
+    async fn secrets(&mut self) -> Result<NetworkConfig, End> {
+        let config = self.config.clone();
+        self.while_waiting(secrets::resolve(&config))
+            .await?
+            .map_err(unresolved)
     }
 
     async fn run_link(&mut self, stream: BoxStream) -> End {
         self.status(ConnectionStatus::Registering);
-        let config = match secrets::resolve(&self.config) {
+        let config = match self.secrets().await {
             Ok(config) => config,
-            Err(error) => return End::Fatal(error),
+            Err(end) => return end,
         };
         let session = Session::new(config, self.carry.clone());
         let mut link = Link::new(stream, session, self.events.clone());
@@ -241,6 +257,18 @@ fn answer_offline(
     carry.forget(command);
     events.extend(offline::reply(config, command));
     events.extend_updates(offline::refuse_reaction(command));
+}
+
+/// A settings error ends the network; a login the source could not issue
+/// yet is retried like a lost connection.
+fn unresolved(error: secrets::Unresolved) -> End {
+    match error {
+        secrets::Unresolved::Fatal(error) => End::Fatal(error),
+        secrets::Unresolved::Retry(error) => End::Lost {
+            error,
+            registered: false,
+        },
+    }
 }
 
 fn connection_failed(error: connection::ConnectError) -> End {
