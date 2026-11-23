@@ -864,6 +864,16 @@ class ExternalDatabaseTests(unittest.TestCase):
         self.assertNotIn(self.PASSWORD, environment)
         self.assertIn("POSTGRES_PASSWORD=", environment)
 
+    def test_an_existing_postgresql_turns_the_api_of_a_no_api_fleet_back_on(self):
+        stopped, _ = self.answers("--no-api")
+        self.assertFalse(stopped["api"])
+        answers, _ = self.answers("--database-url-file", self.url_file, saved=stopped)
+        self.assertTrue(answers["api"])
+        self.assertTrue(fleet_setup.external_database(answers))
+        # Asking for both on one run is still refused rather than one being ignored.
+        with self.assertRaisesRegex(fleet_setup.SetupError, "--no-api leaves out"):
+            self.answers("--database-url-file", self.url_file, "--no-api", saved=stopped)
+
     def test_setup_does_not_move_the_api_s_own_postgresql(self):
         local, _ = self.answers()
         fleet_setup.save_answers(local)

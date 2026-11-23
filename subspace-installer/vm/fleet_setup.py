@@ -287,6 +287,9 @@ def gather(args, saved):
             answers["ircCa"] = args.irc_ca
     if args.api is not None:
         answers["api"] = args.api
+    elif args.database_url_file and answers.get("api") is False:
+        # A fleet set up with --no-api: asking for an existing PostgreSQL asks for the API that uses it.
+        answers["api"] = True
     answers.setdefault("api", True)
     # An existing PostgreSQL for the API: the file's path is kept, never the URL. --migrate is for this run only.
     require(not (args.database_url_file and args.api is False),

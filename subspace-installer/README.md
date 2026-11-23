@@ -735,7 +735,8 @@ and passes it on. `--database-ca-file FILE` and `--migrate` work the same way.
 - **No demo data.** `--demo` and `subspace-setup demo` are refused: demo data
   never goes into a database the installer did not create.
 - `--database-url-file` runs the API on this VM, so it cannot be combined with
-  `--no-api` or, on the host, `--api-target`.
+  `--no-api` or, on the host, `--api-target`. On a fleet set up with
+  `--no-api`, it turns the API back on.
 
 ### Migrations
 
