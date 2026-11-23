@@ -271,6 +271,11 @@ fn overflow(
             reaction: summary.reaction.clone(),
             name: "",
             mine: summary.mine(),
+            own: summary
+                .mine()
+                .then(|| summary.reaction.clone())
+                .into_iter()
+                .collect(),
         })
         .collect();
     let (conversation, msgid) = (conversation.clone(), msgid.map(str::to_owned));
@@ -338,11 +343,13 @@ fn on_choose(
     conversation: &WeakEntity<Conversation>,
 ) -> PopupMenuItem {
     let conversation = conversation.clone();
-    let (msgid, reaction, add) = (msgid.to_owned(), choice.reaction.clone(), !choice.mine);
+    let (msgid, sends) = (msgid.to_owned(), choice.sends());
     item.on_click(move |_, _, cx| {
-        let (msgid, reaction, ship) = (msgid.clone(), reaction.clone(), ship.clone());
         _ = conversation.update(cx, |this, cx| {
-            reacting::toggle(this, (msgid, reaction), add, ship, cx);
+            for (reaction, add) in &sends {
+                let pair = (msgid.clone(), reaction.clone());
+                reacting::toggle(this, pair, *add, ship.clone(), cx);
+            }
         });
     })
 }

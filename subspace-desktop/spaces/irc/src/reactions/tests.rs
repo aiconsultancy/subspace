@@ -220,3 +220,31 @@ fn choices_offer_the_common_set_and_the_stop_group_only_when_asked() {
     let labels: Vec<String> = stop.choices.iter().map(|choice| choice.label()).collect();
     assert_eq!(labels, ["\u{270B}  Raised hand", "\u{1F6D1}  Stop sign"]);
 }
+
+#[test]
+fn a_ticked_choice_takes_back_our_exact_values() {
+    use subspace_client_irc::reactions::{ReactionSummary, Reactor};
+    let ours = |reaction: &str| ReactionSummary {
+        reaction: reaction.to_owned(),
+        reactors: vec![Reactor {
+            nick: "subspace".into(),
+            account: None,
+            own: true,
+            time: crate::fixtures::at(1),
+        }],
+        stops_agent: false,
+    };
+    let summaries = [ours("\u{2764}"), ours("\u{2764}\u{FE0F}")];
+    let heart = choices(&summaries, None).common[1].clone();
+    assert_eq!(heart.name, "Heart");
+    assert_eq!(
+        heart.sends(),
+        [
+            ("\u{2764}".to_owned(), false),
+            ("\u{2764}\u{FE0F}".to_owned(), false)
+        ],
+        "each variant we made goes"
+    );
+    let thumbs = choices(&summaries, None).common[0].clone();
+    assert_eq!(thumbs.sends(), [("\u{1F44D}".to_owned(), true)]);
+}

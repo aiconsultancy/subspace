@@ -24,9 +24,24 @@ pub(crate) struct Choice {
     pub reaction: String,
     pub name: &'static str,
     pub mine: bool,
+    /// Our reactions on the message that this choice stands for, exactly as
+    /// the client holds them (`❤` for the menu's `❤️`, a skin tone, the
+    /// variation selector): taking ours back removes these values, not the
+    /// menu's spelling.
+    pub own: Vec<String>,
 }
 
 impl Choice {
+    /// What choosing it sends: our exact values taken back when it is ours,
+    /// else the choice added.
+    pub fn sends(&self) -> Vec<(String, bool)> {
+        if self.own.is_empty() {
+            vec![(self.reaction.clone(), true)]
+        } else {
+            self.own.iter().map(|own| (own.clone(), false)).collect()
+        }
+    }
+
     /// The menu item's words: the reaction and its name.
     pub fn label(&self) -> String {
         format!("{}  {}", self.reaction, self.name)
@@ -59,16 +74,22 @@ pub(crate) struct Choices {
 /// The choices for a message showing `summaries`; `ship` names the agent
 /// a stop would ask to stop, when the stop group belongs.
 pub(crate) fn choices(summaries: &[ReactionSummary], ship: Option<&str>) -> Choices {
-    let mine = |reaction: &str| {
+    let own = |reaction: &str| {
         let key = reaction_key(reaction);
         summaries
             .iter()
-            .any(|summary| summary.mine() && reaction_key(&summary.reaction) == key)
+            .filter(|summary| summary.mine() && reaction_key(&summary.reaction) == key)
+            .map(|summary| summary.reaction.clone())
+            .collect::<Vec<_>>()
     };
-    let choice = |(reaction, name): (&str, &'static str)| Choice {
-        reaction: reaction.to_owned(),
-        name,
-        mine: mine(reaction),
+    let choice = |(reaction, name): (&str, &'static str)| {
+        let own = own(reaction);
+        Choice {
+            reaction: reaction.to_owned(),
+            name,
+            mine: !own.is_empty(),
+            own,
+        }
     };
     Choices {
         common: COMMON.iter().copied().map(choice).collect(),

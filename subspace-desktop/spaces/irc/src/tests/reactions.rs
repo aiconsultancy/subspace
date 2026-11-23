@@ -13,6 +13,7 @@ use crate::thread_status::PROGRESS_TAG;
 use crate::{Irc, view};
 
 mod gate;
+mod take_back;
 
 pub(super) fn room() -> BufferKey {
     channel("#subspace")
