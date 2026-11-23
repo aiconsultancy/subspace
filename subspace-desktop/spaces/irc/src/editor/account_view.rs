@@ -32,6 +32,8 @@ pub(crate) struct Account {
 /// A saved network removed from the draft for the account's network on
 /// its server, by the person signed in then.
 pub(crate) struct Switched {
+    /// Its id in the saved settings, if it was saved.
+    pub id: Option<String>,
     pub title: String,
     pub host: String,
     pub port: u16,
@@ -50,10 +52,16 @@ impl Account {
     /// Why Save must not drop a switched saved network, if it must not:
     /// the person who switched it is no longer signed in, their fleets
     /// cannot be confirmed now, or their account no longer has a network
-    /// for that server.
-    pub fn refused_switch(&self) -> Option<String> {
+    /// for that server. Asked of the page's copy and of `live`, the hub's
+    /// account at the moment of Save, so a copy not yet refreshed after a
+    /// sign-out cannot let Save through.
+    pub fn refused_switch(&self, live: Option<&AccountNetworks>) -> Option<String> {
+        let views = [Some(&self.networks), live];
         self.switched.iter().find_map(|switched| {
-            let why = self.lost(switched)?;
+            let why = views
+                .iter()
+                .flatten()
+                .find_map(|now| lost(now, switched))?;
             Some(format!(
                 "“{}” was not switched to your account because {why}, so it is kept. Cancel keeps your settings as they were.",
                 switched.title
@@ -61,21 +69,15 @@ impl Account {
         })
     }
 
-    fn lost(&self, switched: &Switched) -> Option<&'static str> {
-        let now = &self.networks;
-        let served = now
-            .servers
-            .iter()
-            .any(|server| same_server(&switched.host, switched.port, server));
-        match now.person.as_ref() {
-            None => Some("you are signed out"),
-            Some(person) if Some(person) != switched.person.as_ref() => {
-                Some("another account is signed in")
-            }
-            Some(_) if !now.confirmed => Some("your fleets could not be confirmed just now"),
-            Some(_) if !served => Some("your account no longer has a network for that server"),
-            Some(_) => None,
-        }
+    /// Forgets the switches a Save already applied: their saved networks
+    /// are no longer among `saved`, so a later Save is not held to them.
+    pub fn saved(&mut self, saved: &[subspace_client_irc::NetworkConfig]) {
+        self.switched.retain(|switched| {
+            switched
+                .id
+                .as_ref()
+                .is_some_and(|id| saved.iter().any(|network| network.id.0 == *id))
+        });
     }
 
     /// Takes `networks`; true when they changed, which also withdraws a
@@ -104,6 +106,24 @@ impl Account {
             .servers
             .iter()
             .find(|server| same_server(&text.host, port, server))
+    }
+}
+
+/// Why the switch of `switched` no longer holds for `now`, the account's
+/// networks as one view sees them.
+fn lost(now: &AccountNetworks, switched: &Switched) -> Option<&'static str> {
+    let served = now
+        .servers
+        .iter()
+        .any(|server| same_server(&switched.host, switched.port, server));
+    match now.person.as_ref() {
+        None => Some("you are signed out"),
+        Some(person) if Some(person) != switched.person.as_ref() => {
+            Some("another account is signed in")
+        }
+        Some(_) if !now.confirmed => Some("your fleets could not be confirmed just now"),
+        Some(_) if !served => Some("your account no longer has a network for that server"),
+        Some(_) => None,
     }
 }
 
@@ -169,6 +189,7 @@ pub(super) fn switch(editor: &mut IrcSettings, key: u64, cx: &mut Context<IrcSet
         .and_then(|network| {
             let text = network.text(cx);
             Some(Switched {
+                id: network.saved_id.clone(),
                 title: network.title(cx),
                 port: parse_port(&text.port)?,
                 host: text.host,

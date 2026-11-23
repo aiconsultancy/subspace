@@ -7,7 +7,7 @@
 mod fence;
 mod history;
 mod lifecycle;
-mod support;
+pub(crate) mod support;
 
 use gpui_kit::{TestAppContext, VisualTestContext};
 use serde_json::json;

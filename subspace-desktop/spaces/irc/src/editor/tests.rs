@@ -8,6 +8,7 @@ use subspace_framework::dashboard::settings::BoardSettingsEditor as _;
 use super::{IrcSettings, Page};
 
 mod account;
+mod save;
 
 fn saved() -> Map<String, Value> {
     json!({

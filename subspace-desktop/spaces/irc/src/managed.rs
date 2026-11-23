@@ -15,7 +15,7 @@ mod plan;
 mod servers;
 mod source;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -155,22 +155,17 @@ impl Managed {
         self.networks = plan::networks(vouched, saved, (&binding.person_id, &self.device));
     }
 
-    /// What Settings shows.
     /// What Settings shows, while the memberships read for `owner` are the
-    /// verified person's.
+    /// verified person's. An account that is no longer the one signed in
+    /// shows as nobody, at once, before the hub's next tick forgets it.
     pub(crate) fn shown(&self, owner: Option<(Option<u64>, &str)>) -> AccountNetworks {
-        let confirmed = self
-            .binding
-            .as_ref()
-            .is_some_and(|binding| binding.owns(owner));
+        let binding = self.binding.as_ref().filter(|binding| binding.current());
+        let confirmed = binding.is_some_and(|binding| binding.owns(owner));
         let vouched = || self.servers.vouched().filter(|_| confirmed);
         AccountNetworks {
             account: vouched().map(|(_, account)| account.to_owned()).next(),
             servers: vouched().map(|(entry, _)| entry.server.clone()).collect(),
-            person: self
-                .binding
-                .as_ref()
-                .map(|binding| binding.person_id.clone()),
+            person: binding.map(|binding| binding.person_id.clone()),
             confirmed,
         }
     }
