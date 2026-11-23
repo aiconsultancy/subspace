@@ -385,6 +385,62 @@ describe.skipIf(!testDatabase)("agent tokens on the main listener", () => {
     expect(readd.status).toBe(409);
   });
 
+  test("moving an agent to another fleet revokes its keys; other edits keep them", async () => {
+    const { agent, key, credential } = await keyedAgent();
+    const spare = agentKey("p256");
+    await addKey(agent.userId, spare, ["api", "irc"]);
+    const current = await (await api.call(`/api/v1/agents/${agent.userId}`, admin)).json();
+    const edit = (fields: Record<string, unknown>, version: number) =>
+      api.call(`/api/v1/agents/${agent.userId}`, admin, "PUT", {
+        name: current.name,
+        rank: current.rank,
+        fleet: current.fleet,
+        defaultModel: current.defaultModel,
+        serviceTokenClientId: current.serviceTokenClientId,
+        ircNick: current.ircNick,
+        ...fields,
+        version,
+      });
+    // An edit within the fleet keeps every key.
+    const kept = await edit({ defaultModel: "another-model" }, current.version);
+    expect(kept.status).toBe(200);
+    expect((await me(await agentToken(key, audience))).status).toBe(200);
+    const fleet = await api.call("/api/v1/fleets", admin, "POST", {
+      name: "Other fleet",
+      slug: `other-${agents}`,
+      ircHost: "irc.example.com",
+      ircPort: 6697,
+      ircTls: true,
+    });
+    expect(fleet.status).toBe(201);
+    const other = await fleet.json();
+    const moved = await edit({ fleet: other.slug }, (await kept.json()).version);
+    expect(moved.status).toBe(200);
+    expect((await moved.json()).fleetId).toBe(other.id);
+    // The previous fleet's gateway can no longer act as the agent in its new fleet.
+    expect((await me(await agentToken(key, audience))).status).toBe(401);
+    expect((await me(await agentToken(spare, audience))).status).toBe(401);
+    const list = await (await api.call(`/api/v1/agents/${agent.userId}/credentials`, admin)).json();
+    const adminId = (await (await api.call("/api/v1/me", admin)).json()).userId;
+    for (const item of list.items)
+      expect(item).toMatchObject({ revokedAt: expect.any(String), revokedByUserId: adminId });
+    const audit = await database.client.query(
+      "SELECT changes FROM audit_logs WHERE action = 'agentCredentialRevoked' AND entity_id = $1",
+      [credential.id],
+    );
+    expect(audit.rows.map((row) => row.changes)).toEqual([
+      expect.objectContaining({
+        agentId: agent.userId,
+        reason: "fleetChanged",
+        toFleetId: other.id,
+      }),
+    ]);
+    // A fresh key, registered in the new fleet, works.
+    const fresh = agentKey();
+    await addKey(agent.userId, fresh);
+    expect((await me(await agentToken(fresh, audience))).body.fleetId).toBe(other.id);
+  });
+
   test("a deactivated agent is refused with 403, and a credential without api is refused", async () => {
     const { agent, key } = await keyedAgent();
     const deactivate = await api.call(

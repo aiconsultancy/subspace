@@ -61,6 +61,9 @@ built against, is the API README's
   organisation cannot be registered there again, so a revoked key stays revoked
   even if an enrolment token is still valid. The cost is that registering another
   organisation's active certificate reveals, by a 409, that it is registered.
+- **Moving an agent to another fleet revokes its keys** in the same transaction,
+  audited with the reason `fleetChanged`, because the previous fleet's gateway holds
+  them; the new fleet enrols a fresh key.
 - **An agent's IRC nick has at most 32 characters**, a letter then letters, digits,
   `_` or `-`, the account names the IRC image's sign-in script accepts, so that
   every agent that can hold the `irc` scope can sign in. It is checked whenever a

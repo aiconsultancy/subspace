@@ -662,6 +662,10 @@ implementation of this API must match it exactly.
   an agent token names no organisation: registering a certificate that is active
   anywhere, or that was revoked in this organisation, receives 409. A revoked
   credential keeps its record.
+- Moving an agent to another fleet revokes all its active credentials in the same
+  change, each audited as `agentCredentialRevoked` with the reason `fleetChanged`:
+  the previous fleet's gateway holds those keys, and the new fleet enrols a fresh
+  one.
 
 ### Agent tokens
 

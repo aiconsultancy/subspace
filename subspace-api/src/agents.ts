@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { recordAudit } from "./audit";
@@ -9,7 +9,7 @@ import { Version } from "./initiative-contract";
 import { BearerAuth, handleDb, ValidationErrors, versionedApi } from "./middleware";
 import { cursorTime, encodeCursor, readCursor } from "./paging";
 import { endpointErrors, problem, validationProblem } from "./problems";
-import { fleets, organisations, ships, users } from "./schema";
+import { agentCredentials, fleets, organisations, ships, users } from "./schema";
 import {
   canonicalName,
   isReservedUsername,
@@ -411,6 +411,39 @@ function changeAgent(member: Member, change: AgentChange, id?: string) {
           summary: "Changed an agent registration.",
           changes: { rank: saved.agentRank, active: saved.active },
         });
+        // An agent moved to another fleet keeps none of its keys: the previous fleet's gateway
+        // holds them, and the new fleet enrols a fresh one.
+        const movedFleet =
+          old !== undefined &&
+          (old.agentFleetId !== saved.agentFleetId ||
+            (old.agentFleetId === null && old.agentFleet !== saved.agentFleet));
+        if (movedFleet) {
+          const revoked = yield* tx
+            .update(agentCredentials)
+            .set({ revokedAt: new Date(), revokedById: member.id })
+            .where(
+              and(
+                eq(agentCredentials.organisationId, member.organisationId),
+                eq(agentCredentials.userId, saved.id),
+                isNull(agentCredentials.revokedAt),
+              ),
+            )
+            .returning({ id: agentCredentials.id, fingerprint: agentCredentials.fingerprint });
+          for (const credential of revoked)
+            yield* recordAudit(tx, member, {
+              action: "agentCredentialRevoked",
+              entityType: "AgentCredential",
+              entityId: credential.id,
+              summary: "Revoked an agent's key credential when the agent moved to another fleet.",
+              changes: {
+                agentId: saved.id,
+                fingerprint: credential.fingerprint,
+                reason: "fleetChanged",
+                fromFleetId: old.agentFleetId,
+                toFleetId: saved.agentFleetId,
+              },
+            });
+        }
         return yield* getAgent(member, saved.id).pipe(Effect.provideService(Database, tx));
       }),
     );
