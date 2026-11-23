@@ -20,7 +20,7 @@ use subspace_framework::dashboard::full_text::{
 };
 use subspace_framework::dashboard::search_adapter::inactive_scope;
 
-pub(crate) use mapping::{Ended, Navigation, document_id, navigation, scope, stored};
+pub(crate) use mapping::{Ended, Navigation, document_id, ended, navigation, scope, stored};
 
 use crate::state::LINE_CAP;
 use crate::thread_status::REMEMBERED;

@@ -41,34 +41,41 @@ pub(crate) fn reserved(id: &str) -> bool {
     id.starts_with(ACCOUNT_PREFIX)
 }
 
-/// The person part of the first account network id in `text`.
-fn owner_in(text: &str) -> Option<&str> {
-    let start = text.find(ACCOUNT_PREFIX)? + ACCOUNT_PREFIX.len();
-    let rest = text.get(start..)?;
-    let (person, server) = (rest.get(..DIGEST_DIGITS)?, rest.get(DIGEST_DIGITS + 1..)?);
-    let hex = |part: &str| {
-        part.len() >= DIGEST_DIGITS
-            && part[..DIGEST_DIGITS]
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    };
-    (rest.as_bytes().get(DIGEST_DIGITS) == Some(&b'.') && hex(person) && hex(server))
-        .then_some(person)
+/// The person part of `id` when it is exactly an account network id:
+/// `@account.`, then 16 lower-case hexadecimal digits, a dot and 16 more.
+fn owner(id: &str) -> Option<&str> {
+    let (person, server) = id.strip_prefix(ACCOUNT_PREFIX)?.split_once('.')?;
+    (is_digest(person) && is_digest(server)).then_some(person)
+}
+
+fn is_digest(part: &str) -> bool {
+    part.len() == DIGEST_DIGITS
+        && part
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// The network a stored record belongs to, from its structured fields: a
+/// line's navigation, or an ending's buffer. Never from its ids or text.
+fn network_of(document: &Document) -> Option<NetworkId> {
+    crate::store::navigation(document)
+        .map(|navigation| navigation.network)
+        .or_else(|| crate::store::ended(document).map(|ended| ended.buffer.network))
 }
 
 /// Whether search must hide a stored `document` now: it belongs to an
 /// account network of a person other than `current`, the person signed in
 /// (`None` while nobody is).
 pub(crate) fn hidden(document: &Document, current: Option<&str>) -> bool {
-    [document.parent_id.as_deref(), Some(document.id.as_str())]
-        .into_iter()
-        .flatten()
-        .find_map(owner_in)
+    network_of(document)
+        .as_ref()
+        .and_then(|network| owner(&network.0))
         .is_some_and(|owner| Some(owner) != current)
 }
 
 #[cfg(test)]
 mod tests {
+    use subspace_client_irc::{BufferKey, NetworkId, Target};
     use subspace_framework::dashboard::full_text::Document;
 
     use super::{digest, hidden, network_id, reserved};
@@ -118,33 +125,85 @@ mod tests {
         assert!(reserved("@account.x.y"));
     }
 
-    #[test]
-    fn search_hides_another_person_s_account_lines_only() {
-        let ada = network_id("user-ada", &endpoint("irc.example.com", true));
-        let line = |network: &str| Document {
-            id: format!("line:{network}"),
+    /// A stored line of `network`'s `channel`, with its ids and parent as
+    /// the store writes them.
+    fn line(network: &str, channel: &str) -> Document {
+        let navigation = serde_json::json!({
+            "network": NetworkId(network.into()),
+            "target": Target::Channel(channel.into()),
+            "msgid": null,
+            "time": chrono::Utc::now(),
+            "from": "lyra",
+        });
+        Document {
+            id: format!("msgid:{network}:{channel}"),
             title: String::new(),
             body: "launch".into(),
             metadata: String::new(),
-            parent_id: Some(format!("buffer:{network}:channel:#nav")),
+            parent_id: Some(format!("buffer:{network}:c:{channel}")),
             kind: "message".into(),
             url: None,
-            navigation: String::new(),
+            navigation: navigation.to_string(),
             refreshed_at: 0,
             payload: None,
-        };
+        }
+    }
+
+    #[test]
+    fn search_hides_another_person_s_account_lines_only() {
+        let ada = network_id("user-ada", &endpoint("irc.example.com", true));
         let mine = digest("user-ada");
-        assert!(!hidden(&line(&ada.0), Some(&mine)));
-        assert!(hidden(&line(&ada.0), Some(&digest("user-bob"))));
-        assert!(hidden(&line(&ada.0), None), "nobody signed in");
+        assert!(!hidden(&line(&ada.0, "#nav"), Some(&mine)));
+        assert!(hidden(&line(&ada.0, "#nav"), Some(&digest("user-bob"))));
+        assert!(hidden(&line(&ada.0, "#nav"), None), "nobody signed in");
         assert!(
-            !hidden(&line("local"), None),
+            !hidden(&line("local", "#nav"), None),
             "a saved network's lines always show"
         );
-        assert!(!hidden(&line("@work"), Some(&mine)));
+        assert!(!hidden(&line("@work", "#nav"), Some(&mine)));
         assert!(
-            !hidden(&line("@account.x.y"), None),
+            !hidden(&line("@account.x.y", "#nav"), None),
             "a hand-made id is never classified as an account's"
         );
+        let ended = crate::store::Ended {
+            buffer: BufferKey {
+                network: ada.clone(),
+                target: Target::Channel("#nav".into()),
+            },
+            request: "request-1".into(),
+            outcome: None,
+            at: None,
+        };
+        let ending = Document {
+            // The kind the store gives a request's ending.
+            kind: "Channels request ending".into(),
+            navigation: String::new(),
+            payload: serde_json::to_string(&ended).ok(),
+            ..line("local", "#nav")
+        };
+        assert!(hidden(&ending, None), "an ending by its buffer's network");
+    }
+
+    #[test]
+    fn only_the_record_s_network_decides_never_its_names() {
+        let ada = network_id("user-ada", &endpoint("irc.example.com", true));
+        let named = line("local", &format!("#{}", ada.0));
+        assert!(
+            !hidden(&named, None),
+            "a saved channel named like an account network shows"
+        );
+        for id in [
+            "@account.0123456789abcdeé.0123456789abcdef",
+            "@account.0123456789abcdef.0123456789abcdeé",
+            "@account.0123456789abcdef.0123456789abcdef\u{e9}",
+            "@account.é",
+            "@account.0123456789abcdef.",
+            "@account.0123456789ABCDEF.0123456789abcdef",
+            "@account.0123456789abcdef.0123456789abcdef.0",
+        ] {
+            assert!(!hidden(&line(id, "#nav"), None), "{id}");
+            let text = format!("#{id}é");
+            assert!(!hidden(&line("local", &text), None), "{text}");
+        }
     }
 }
