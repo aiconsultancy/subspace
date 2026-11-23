@@ -14,6 +14,20 @@ the fleet's IRC channels.
 | [`bin/subspace_token.py`](bin/subspace_token.py) | Mints and caches your API token through the fleet's tunnel. |
 | [`bin/subspace_irc.py`](bin/subspace_irc.py) | A small IRC client that signs in as you and marks every line as from your agent. |
 
+## The fleet's own agents
+
+A fleet's rear admiral and captains get the OpenCode `subspace-tracker` skill
+from the fleet installer, which also connects them to the API's MCP server at
+its agent listener as their own agent records, with no login and no token
+(see the installer README, "The API's agent listener"). The same skill file
+serves both: it tells an agent signed in as itself to write as itself, and an
+agent using a person's login to mark its text. The commands below are for
+your own computer only.
+
+The API's own tests check that every tool these skills name is in the MCP
+tool catalogue and that the three tracker skills share the same rules
+(`subspace-api/tests/agent-skills.test.ts`).
+
 ## Your login, always marked
 
 Local agents use **your** login: your API account and your IRC account. They
