@@ -84,7 +84,7 @@ do the same as its buttons.
 | **Record decision…** | tracker writes work here, and the message names an issue or the conversation has shown one | Opens the dialog. |
 
 **Make issue** and **Record decision** (`tracker/message.rs`, `quote.rs`,
-`message/view.rs`) open a small dialog: the quoted message, an editable
+`message/view.rs`) open a small dialog: the whole message, scrolling, an editable
 title (its first line), and a choice: the project (that of the message's
 only issue, else of the newest issue in play, else the first) or the issue
 (the message's only issue; otherwise the person picks from the message's
@@ -301,6 +301,62 @@ reaction while the desktop misses it, and Bob later takes the nick, a
 replayed removal of Robert's from history matches Bob, so Robert's
 reaction stays shown. Fixing it needs the nick's holder at the operation's
 server time, which the book does not keep.
+
+### PR 75 reviews, second round
+
+GPT-6.2 Sol: not clear, two new highs; Claude Opus 5.5: clear, two medium
+and four low. Each item was checked against the code first:
+
+1. **The write client was never checked against the scope's tracker**
+   (Sol high). Before any write is dispatched, from a dialog or a typed
+   command, the client must be Subspace API at the origin the Issues scope
+   names, for an account that is still current
+   (`tracker/destination.rs`); otherwise nothing is sent and the notice
+   says why. The scope carries no account: both sides use the desktop's
+   one signed-in account, which the client's lease checks. Render tests
+   point the scope and the client at different trackers with the same NAV
+   key: Make issue, `/assign` and `/decision` send nothing. Record decision
+   goes through the same dispatch and is covered by the typed `/decision`.
+2. **A run row ran a plan rebuilt at acceptance** (Sol high). The row
+   carries what it showed (words, plan with issue, action and assignee,
+   and tracker); Return or a click builds the row again and runs only if
+   it says the same, otherwise nothing is written, the draft stays with a
+   note and the new row shows. Return with the list open is the same path;
+   with the list closed no row was shown.
+3. **The dialog showed 280 characters but wrote the whole message** (Sol
+   medium) **and a decision's body was raw Markdown** (Opus medium). The
+   dialog shows the whole message, scrolling past six rows; the decision's
+   body is fenced with its attribution in a code span, as an issue's
+   description is. Tests use link, image and mention syntax past
+   character 280. The `make-issue` capture's short message looks the same,
+   so it was not retaken.
+4. **A failed refresh left the catalogue known** (Sol medium). Only the
+   latest read counts; a failed or refused one makes the initiatives
+   unknown again, and while unknown, any nick the roster does not name is
+   refused, whatever agents the roster still holds.
+5. **A hand-typed private TAGMSG passed while the roster was unknown** (Sol
+   medium). The client names a draft's private TAGMSG recipients
+   (`private_tag_recipients`) and the composer applies the reactions gate
+   to them.
+6. **Summary and title limits counted characters** (Opus medium and low).
+   Channels' clip counts UTF-16 units without control characters, a new
+   issue's summary is checked with the client's `valid_summary`, the
+   dialog's title is checked in UTF-16 units, and the decision client
+   counts its limits in UTF-16 units.
+7. **An unconfirmed create or decision could be sent again** (Sol medium,
+   Opus low). Writes report an unconfirmed outcome apart from a refusal; a
+   dialog then keeps its button off and says it may have been saved, and
+   the unchanged draft of a typed command is not sent again. The Issues
+   hub's create-recovery key belongs to its own session, so it is not
+   reused.
+8. **`/assign` could send `assigneeId: ""`** (Opus low). A captain without
+   a user is no default; the plan asks whom.
+9. **A command was dropped silently while another write ran** (Opus low).
+   The draft stays with a note.
+
+Left open, as decided: superseded reference jobs still make their request
+before their ticket is checked (Sol low, `hub/reference.rs`), and delayed
+accountless history matched against the current nick holder (above).
 
 ## Captures
 

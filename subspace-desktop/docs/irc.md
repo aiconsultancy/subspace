@@ -688,13 +688,14 @@ growing moves nothing else; tiles keep their fixed box.
   `gate::gate` first. Nothing goes to the server buffer or to a fleet
   agent in a private conversation (`AgentNotice::refusing`; the controls
   are hidden there too, and reactions between people in private are
-  ordinary). Until a read of the initiatives has succeeded for the
+  ordinary). Unless the latest read of the initiatives succeeded for the
   current account and organisation (`Catalog::memberships_known`, kept on
   the roster and read by `Roster::not_known_yet`), no private
   conversation sends one, as no nick is known not to be an agent: not
-  while the first read runs, not after it failed or was refused, and not
-  without a Subspace API sign-in. A
-  new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only from the
+  while the first read runs, not after the latest read failed or was
+  refused (also after earlier ones succeeded), and not without a Subspace
+  API sign-in. A private `TAGMSG` typed through `/raw` meets the same gate
+  (`private_tag_recipients`). A new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only from the
   labelled `Stop <ship>` item in a channel; asked for any other
   way it is explained and not sent, whether or not the app recognises the
   message as an agent's, since Stargate stops a queued turn before any
@@ -752,12 +753,22 @@ private message.
   draft is a whole command that can run, the first row says what Return will
   do (`Return assigns NAV-2 · … to aurora-lyra`); Return or a click on it
   runs it (`ChatInput::completion_key`), while Tab only completes and on
-  that row takes the first row that inserts. Completion gathers the
+  that row takes the first row that inserts. The row carries what it
+  showed (its words, plan and tracker); at acceptance the draft's row is
+  built again and runs only if it says the same, otherwise nothing is
+  written and the new row shows for a fresh Return. One write runs at a
+  time; a command sent meanwhile is kept with a note. Completion gathers the
   tracker's facts only for a draft that starts with `/`. In reply mode a
   command is refused like any `/command` and kept with a note.
 - **Writing** (`tracker/write.rs`, `flow.rs`): on a background task, read
   `/v1/me` and the issue, repeat the checks on what the tracker returns,
-  then write once at the issue's version. The result, or the API's refusal
+  then write once at the issue's version. Before anything is sent, the
+  client must be Subspace API at the origin the Issues scope names, for an
+  account that is still current (`tracker/destination.rs`); otherwise
+  nothing is sent. A create or decision the tracker never confirmed is
+  reported as possibly saved and is not sent again from that dialog or
+  that unchanged draft. Summaries and titles are cut and checked in UTF-16
+  units without control characters, as the API counts. The result, or the API's refusal
   in plain words, shows in the conversation's notice area above the
   composer, the one reactions use; a landed write empties the composer, a
   refused one keeps it. The write never retries and never puts a token or a
@@ -783,12 +794,13 @@ private message.
   **Create issue** or **Record decision** writes, and only with the API
   client of the account and organisation the dialog opened under, while
   the Issues scope names the same tracker; otherwise nothing is sent and
-  the dialog says why. The issue's description quotes the message in a
-  fenced block, so nothing in it becomes a link or a mention, then who said
-  it, where and when, and its message ID, in a code span for the same
-  reason; a decision carries the same reference as IRC evidence
-  (`ircMessage`), and its context names the channel and network in a code
-  span.
+  the dialog says why. The dialog shows the whole message, scrolling past
+  six rows: exactly what is written. The issue's description quotes the
+  message in a fenced block, so nothing in it becomes a link or a
+  mention, then who said it, where and when, and its message ID, in a
+  code span for the same reason; a decision's body is protected the same way, carries the same
+  reference as IRC evidence (`ircMessage`), and its context names the
+  channel and network in a code span.
 
 What the API does not support is left out: assigning someone other than a
 fleet agent or the person (the API knows no IRC nick for a person), and the
