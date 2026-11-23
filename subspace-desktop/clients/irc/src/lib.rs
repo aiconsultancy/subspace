@@ -18,8 +18,8 @@ pub mod test_support;
 
 pub use model::{
     Anchor, BufferKey, Casemapping, Command, ConnectionStatus, CredentialSource, Event,
-    IssuedLogin, Line, LineKind, ListedChannel, Member, NetworkConfig, NetworkId, Reaction,
-    ReactionChange, ReactionError, Sasl, SendResult, Target, ThreadRoots, Typing, Update,
+    IssuedLogin, IssuedPassword, Line, LineKind, ListedChannel, Member, NetworkConfig, NetworkId,
+    Reaction, ReactionChange, ReactionError, Sasl, SendResult, Target, ThreadRoots, Typing, Update,
 };
 pub use runtime::Runtime;
 pub use session::{

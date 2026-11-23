@@ -12,7 +12,7 @@ mod reaction;
 mod replies;
 mod send_result;
 pub use config::{NetworkConfig, Sasl};
-pub use credential::{CredentialSource, IssuedLogin};
+pub use credential::{CredentialSource, IssuedLogin, IssuedPassword};
 pub use listing::ListedChannel;
 pub use reaction::{Casemapping, Reaction, ReactionChange, ReactionError, Update};
 pub use replies::ThreadRoots;

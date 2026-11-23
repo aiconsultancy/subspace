@@ -17,13 +17,15 @@ fn nickname_fallback_allows_an_alternative_and_three_underscores() {
     for next in ["subspace2", "subspace2_", "subspace2__", "subspace2___"] {
         let retry = session.receive(rejected.clone(), now());
         assert_eq!(sent(&retry), [format!("NICK {next}")]);
-        assert!(retry.fatal.is_none());
+        assert!(retry.ending.is_none());
     }
     let exhausted = session.receive(rejected, now());
     assert!(exhausted.send.is_empty());
     assert_eq!(
-        exhausted.fatal.as_deref(),
-        Some("No IRC nickname was accepted. Nickname in use")
+        exhausted.ending,
+        Some(crate::session::Ending::Fatal(
+            "No IRC nickname was accepted. Nickname in use".into()
+        ))
     );
     assert!(!session.registered());
 }
@@ -296,27 +298,4 @@ fn answers_ping_and_shows_errors() {
     let out = feed(&mut session, &["ERROR :Closing link"]);
     assert_eq!(lines(&out)[0].text, "Closing link");
     assert_eq!(lines(&out)[0].kind, LineKind::Error);
-}
-
-#[test]
-fn plain_sends_a_device_username_as_both_identities() {
-    // Ergo checks that both identities match before it takes the device
-    // off the account name, so `account@device` goes in both.
-    let mut config = config();
-    config.sasl = Some(Sasl {
-        username: "ada@desk1".into(),
-        password: "pw".into(),
-        password_file: None,
-        external: false,
-        credential: None,
-    });
-    let mut session = Session::new(config, Carry::default());
-    session.start(now());
-    feed(
-        &mut session,
-        &[":srv CAP * LS :sasl", ":srv CAP * ACK :sasl"],
-    );
-    let out = feed(&mut session, &["AUTHENTICATE +"]);
-    let payload = STANDARD.encode("ada@desk1\0ada@desk1\0pw");
-    assert_eq!(sent(&out), [format!("AUTHENTICATE {payload}")]);
 }

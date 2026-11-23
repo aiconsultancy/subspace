@@ -10,6 +10,7 @@ mod tests;
 
 use std::collections::VecDeque;
 use std::io;
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,7 +23,7 @@ use crate::codec::{self, LineBuffer};
 use crate::connection::{self, BoxStream, Timeouts};
 use crate::model::{Command, ConnectionStatus, Event, NetworkConfig, Update};
 use crate::proto::{self, Message};
-use crate::session::{self, Carry, Output, Session};
+use crate::session::{self, Carry, Ending, Output, Session};
 
 const TICK: Duration = Duration::from_secs(10);
 const IDLE_LIMIT: Duration = Duration::from_secs(120);
@@ -98,7 +99,7 @@ async fn run_with(
     }
     loop {
         let end = match network.connect(timeouts).await {
-            Ok(stream) => network.run_link(stream).await,
+            Ok((stream, peer)) => network.run_link(stream, peer).await,
             Err(end) => end,
         };
         let waiting = match end {
@@ -109,6 +110,10 @@ async fn run_with(
                 Waiting::Failed
             }
             End::Lost { error, registered } => network.reconnect(error, registered),
+            End::Refused(error) => {
+                network.refused();
+                network.reconnect(error, false)
+            }
         };
         if !network.wait(waiting).await {
             break;
@@ -120,8 +125,13 @@ async fn run_with(
 enum End {
     Quit,
     Shutdown,
-    Lost { error: String, registered: bool },
+    Lost {
+        error: String,
+        registered: bool,
+    },
     Fatal(String),
+    /// The server did not accept a login it had to accept.
+    Refused(String),
 }
 
 #[derive(Clone, Copy)]
@@ -206,30 +216,46 @@ impl Network {
         }
     }
 
-    async fn connect(&mut self, timeouts: Timeouts) -> Result<BoxStream, End> {
+    async fn connect(&mut self, timeouts: Timeouts) -> Result<(BoxStream, IpAddr), End> {
         self.status(ConnectionStatus::Connecting);
         let config = self.config.clone();
-        self.while_waiting(connection::connect(&config, timeouts))
+        self.while_waiting(connection::connect_to(&config, timeouts))
             .await?
             .map_err(connection_failed)
     }
 
     /// The configuration with this connect's secrets, fetched while
     /// commands are still answered.
-    async fn secrets(&mut self) -> Result<NetworkConfig, End> {
+    async fn secrets(&mut self) -> Result<secrets::Resolved, End> {
         let config = self.config.clone();
         self.while_waiting(secrets::resolve(&config))
             .await?
             .map_err(unresolved)
     }
 
-    async fn run_link(&mut self, stream: BoxStream) -> End {
+    /// Tells the network's credential source that its login was refused.
+    fn refused(&self) {
+        if let Some(source) = secrets::pending_source(&self.config) {
+            source.refused();
+        }
+    }
+
+    async fn run_link(&mut self, stream: BoxStream, peer: IpAddr) -> End {
         self.status(ConnectionStatus::Registering);
-        let config = match self.secrets().await {
-            Ok(config) => config,
+        if exposes_login(&self.config, peer) {
+            return End::Fatal(format!(
+                "Not signing in without TLS: {peer} is not this computer"
+            ));
+        }
+        let resolved = match self.secrets().await {
+            Ok(resolved) => resolved,
             Err(end) => return end,
         };
-        let session = Session::new(config, self.carry.clone());
+        let session = Session::new(resolved.config, self.carry.clone());
+        let session = match resolved.issued {
+            Some(password) => session::sign_in_with(session, password),
+            None => session,
+        };
         let mut link = Link::new(stream, session, self.events.clone());
         let end = link.run(&mut self.commands).await;
         self.events.extend(link.session.abandon());
@@ -269,6 +295,13 @@ fn unresolved(error: secrets::Unresolved) -> End {
             registered: false,
         },
     }
+}
+
+/// Whether signing in on this link would send an issued login in clear
+/// to another computer: without TLS, only a peer on this computer may get
+/// one, whatever name the configuration gives it.
+fn exposes_login(config: &NetworkConfig, peer: IpAddr) -> bool {
+    !config.tls && secrets::pending_source(config).is_some() && !peer.is_loopback()
 }
 
 fn connection_failed(error: connection::ConnectError) -> End {
@@ -412,8 +445,11 @@ impl Link {
         self.events.extend(output.written);
         self.events.extend_updates(output.updates.written);
         output
-            .fatal
-            .map(End::Fatal)
+            .ending
+            .map(|ending| match ending {
+                Ending::Fatal(error) => End::Fatal(error),
+                Ending::Refused(error) => End::Refused(error),
+            })
             .or(output.quit.then_some(End::Quit))
     }
 

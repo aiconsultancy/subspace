@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use subspace_api_client::{Client, Error};
-use subspace_client_irc::{CredentialSource, IssuedLogin};
+use subspace_client_irc::{CredentialSource, IssuedLogin, IssuedPassword};
 
 use super::device::sasl_username;
 
@@ -23,7 +23,7 @@ fn issue(client: &Client, device: &str) -> Result<IssuedLogin, String> {
     Ok(IssuedLogin {
         username: sasl_username(&credential.account, device),
         nickname: credential.account,
-        password: credential.password.expose().to_owned(),
+        password: IssuedPassword::new(credential.password.expose()),
     })
 }
 
@@ -67,7 +67,7 @@ mod tests {
                 .unwrap();
         assert_eq!(issued.nickname, "ada");
         assert_eq!(issued.username, "ada@0123456789abcdef");
-        assert_eq!(issued.password, "sirc1.xxxxxxxx");
+        assert_eq!(issued.password.expose(), "sirc1.xxxxxxxx");
         assert_eq!(mock.requests()[0].path, "/api/v1/me/irc-credential");
         assert!(login.key().ends_with(" ada"));
     }

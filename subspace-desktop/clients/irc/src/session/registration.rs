@@ -7,6 +7,8 @@ use crate::model::{ConnectionStatus, Event, LineKind, NetworkConfig};
 use crate::proto::Message;
 
 const MAX_UNDERSCORES: usize = 3;
+/// Why a connection that had to sign in ended at registration.
+const REFUSED: &str = "The server registered the connection without accepting the sign-in";
 
 pub(super) struct Registration {
     pub(super) nick: String,
@@ -67,18 +69,18 @@ pub(super) fn nick_error(session: &mut Session, message: &Message, out: &mut Out
         reg.underscores += 1;
         format!("{}_", reg.nick)
     } else {
-        out.fatal = Some(format!(
+        out.ending = Some(super::Ending::Fatal(format!(
             "No IRC nickname was accepted. {}",
             message.trailing()
-        ));
+        )));
         return;
     };
     if let Some(limit) = session.isupport.nicklen
         && nick.len() > limit
     {
-        out.fatal = Some(format!(
+        out.ending = Some(super::Ending::Fatal(format!(
             "The next IRC nickname exceeds the server’s {limit}-byte limit"
-        ));
+        )));
         return;
     }
     reg.nick = nick;
@@ -86,6 +88,13 @@ pub(super) fn nick_error(session: &mut Session, message: &Message, out: &mut Out
 }
 
 pub(super) fn welcome(session: &mut Session, message: &Message, out: &mut Output) {
+    if session.caps.issued.unaccepted() {
+        // A login that had to be accepted was not: join nothing, leave,
+        // and let the network retry.
+        out.ending = Some(super::Ending::Refused(REFUSED.to_owned()));
+        out.send(Message::new("QUIT", ["Sign-in required"]));
+        return;
+    }
     session.reg.nick = message.param(0).to_owned();
     caps::close(session, out);
     session.reg.registered = true;

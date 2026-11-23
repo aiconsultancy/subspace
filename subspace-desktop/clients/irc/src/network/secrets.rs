@@ -1,8 +1,9 @@
 //! Secrets read at connect time, so they live only in the session's memory:
 //! the SASL password from the settings, else from its password file, else
-//! a login fetched from the network's credential source.
+//! a login fetched from the network's credential source. An issued password
+//! stays apart from the configuration, for the session's one SASL exchange.
 
-use crate::model::{CredentialSource, IssuedLogin, NetworkConfig};
+use crate::model::{CredentialSource, IssuedLogin, IssuedPassword, NetworkConfig};
 
 /// Why a connect could not get its secrets.
 #[derive(Debug, PartialEq, Eq)]
@@ -15,9 +16,17 @@ pub(super) enum Unresolved {
     Retry(String),
 }
 
+/// What a connect signs in with: the configuration, registering with an
+/// issued nick and SASL username, and an issued password apart from it.
+#[derive(Debug)]
+pub(super) struct Resolved {
+    pub config: NetworkConfig,
+    pub issued: Option<IssuedPassword>,
+}
+
 /// `config` with its SASL login for this connect. Blocking work runs on a
 /// blocking thread.
-pub(super) async fn resolve(config: &NetworkConfig) -> Result<NetworkConfig, Unresolved> {
+pub(super) async fn resolve(config: &NetworkConfig) -> Result<Resolved, Unresolved> {
     let config = from_file(config).map_err(Unresolved::Fatal)?;
     let login = fetch(pending_source(&config))
         .await
@@ -50,7 +59,7 @@ fn from_file(config: &NetworkConfig) -> Result<NetworkConfig, String> {
 }
 
 /// The credential source to ask, when PLAIN still has no password.
-fn pending_source(config: &NetworkConfig) -> Option<CredentialSource> {
+pub(super) fn pending_source(config: &NetworkConfig) -> Option<CredentialSource> {
     config
         .sasl
         .as_ref()
@@ -69,17 +78,23 @@ async fn fetch(source: Option<CredentialSource>) -> Result<Option<IssuedLogin>, 
         .map(Some)
 }
 
-/// `config` registering with the issued nickname and SASL login.
-fn with_login(mut config: NetworkConfig, login: Option<IssuedLogin>) -> NetworkConfig {
+/// `config` registering with the issued nickname and SASL username, and
+/// the issued password apart from it.
+fn with_login(mut config: NetworkConfig, login: Option<IssuedLogin>) -> Resolved {
     let (Some(login), Some(sasl)) = (login, config.sasl.as_mut()) else {
-        return config;
+        return Resolved {
+            config,
+            issued: None,
+        };
     };
     sasl.username = login.username;
-    sasl.password = login.password;
     if !login.nickname.is_empty() {
         config.nickname = login.nickname;
     }
-    config
+    Resolved {
+        config,
+        issued: Some(login.password),
+    }
 }
 
 #[cfg(test)]
@@ -89,7 +104,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{Unresolved, from_file, resolve};
-    use crate::model::{CredentialSource, IssuedLogin, NetworkConfig, Sasl};
+    use crate::model::{CredentialSource, IssuedLogin, IssuedPassword, NetworkConfig, Sasl};
 
     fn config(sasl: Option<Sasl>) -> NetworkConfig {
         serde_json::from_value::<NetworkConfig>(serde_json::json!({
@@ -117,7 +132,7 @@ mod tests {
             Ok(IssuedLogin {
                 nickname: "ada".into(),
                 username: "ada@desk1".into(),
-                password: "issued-fixture".into(),
+                password: IssuedPassword::new("issued-fixture"),
             })
         })
     }
@@ -153,12 +168,17 @@ mod tests {
         let config = config(settings);
         for connect in 1..=2 {
             let resolved = resolve(&config).await.unwrap();
-            assert_eq!(resolved.nickname, "ada", "the issued account is the nick");
-            let sasl = resolved.sasl.unwrap();
             assert_eq!(
-                (sasl.username.as_str(), sasl.password.as_str()),
-                ("ada@desk1", "issued-fixture")
+                resolved.config.nickname, "ada",
+                "the issued account is the nick"
             );
+            let sasl = resolved.config.sasl.unwrap();
+            assert_eq!(sasl.username, "ada@desk1");
+            assert!(
+                sasl.password.is_empty(),
+                "the issued password stays out of the configuration"
+            );
+            assert_eq!(resolved.issued.unwrap().expose(), "issued-fixture");
             assert_eq!(
                 asked.load(Ordering::SeqCst),
                 connect,
@@ -182,7 +202,8 @@ mod tests {
                 sasl.credential = Some(issuing(&asked));
             }
             let resolved = resolve(&config(settings)).await.unwrap();
-            assert_eq!(resolved.nickname, "zack");
+            assert_eq!(resolved.config.nickname, "zack");
+            assert!(resolved.issued.is_none());
         }
         assert_eq!(asked.load(Ordering::SeqCst), 0);
     }
