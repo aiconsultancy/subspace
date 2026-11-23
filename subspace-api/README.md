@@ -263,6 +263,24 @@ links.
 | `IRC_AUTH_ORGANISATION`                                               | `<provider>:<organisation>` whose people the IRC server signs in, such as `entra:<tenant UUID>`.                |
 | `IRC_AUTH_SERVERS`                                                    | Comma-separated `host` or `host:port` of this IRC server, which credentials are bound to.                       |
 
+Compose passes every setting above through from the environment or `.env`. A
+`_FILE` setting names a path inside the container, so mount the file there with a
+`compose.override.yaml` beside `compose.yaml`, which Compose reads automatically.
+For example, to reserve the IRC server's existing accounts before the username
+backfill runs at start-up:
+
+```yaml
+services:
+  api:
+    environment:
+      RESERVED_USERNAMES_FILE: /run/config/reserved-usernames
+    volumes:
+      - ./reserved-usernames:/run/config/reserved-usernames:ro
+```
+
+Mount `IRC_CREDENTIAL_SECRET_FILE` and `IRC_AUTH_HOOK_TOKEN_FILE` the same way,
+readable by the container's `bun` user.
+
 The image defaults to `NODE_ENV=production`, which forbids development sign-in.
 Local Compose defaults to `NODE_ENV=development`. Production deployments use TLS
 for clients and the backing database and take credentials from runtime configuration.
@@ -391,7 +409,8 @@ API later gives the same username. Before the hook answers for it:
 1. List the server's accounts that belong to no registered agent: the operator's
    and any made by hand.
 2. Reserve them all. Write the names to a file, one per line, and name it in
-   `RESERVED_USERNAMES_FILE`, then restart the API. Do this before upgrading to a
+   `RESERVED_USERNAMES_FILE`, then restart the API. Under Compose, mount the file
+   into the container as [Configuration](#configuration) shows. Do this before upgrading to a
    version that allocates usernames or turning on registration, so that neither
    the username backfill nor a first sign-in hands one of them out.
 3. Give each account a person owns to that person with the username command,
