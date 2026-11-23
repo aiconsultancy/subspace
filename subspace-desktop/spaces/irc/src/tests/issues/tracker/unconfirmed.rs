@@ -59,3 +59,37 @@ fn an_unconfirmed_command_is_not_sent_again_as_it_stands(cx: &mut TestAppContext
     );
     assert_eq!(text(&input, cx), "/decision NAV-9 Decode on a pool");
 }
+
+#[gpui_kit::test]
+fn an_unconfirmed_decision_is_not_sent_again_however_the_draft_returns(cx: &mut TestAppContext) {
+    let mock = Mock::new(
+        |request| match (request.method.as_str(), request.path.as_str()) {
+            (_, "/api/v1/me") => (200, me()),
+            ("GET", "/api/v1/issues/NAV-2") => {
+                (200, crate::fixtures::tracker_issue(false, None).to_string())
+            }
+            ("POST", "/api/v1/decisions") => (502, "{}".into()),
+            _ => (404, "{}".into()),
+        },
+    );
+    let (conversation, _hub, cx) = open(cx, true, Some(&mock));
+    let input = composer(&conversation, cx);
+    let draft = "/decision NAV-2 Decode on a pool ";
+    // Through the run row, untrimmed: the write goes unconfirmed.
+    cx.simulate_input(draft);
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    // Escape closes the list; Return sends the draft trimmed.
+    cx.simulate_keystrokes("escape");
+    submit(&input, draft.trim_end(), cx);
+    let posts = mock
+        .requests()
+        .iter()
+        .filter(|request| request.method == "POST")
+        .count();
+    assert_eq!(posts, 1, "no second POST");
+    assert_eq!(
+        input.read_with(cx, |input, _| input.error().map(str::to_owned)),
+        Some(crate::tracker::UNCONFIRMED_AGAIN.to_owned())
+    );
+}

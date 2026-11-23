@@ -38,23 +38,7 @@ fn tracker(ready: bool, assignee: Option<&str>) -> Mock {
 }
 
 fn issue(ready: bool, assignee: Option<&str>) -> Value {
-    let mut value: Value = serde_json::from_str(r#"{"id":"issue-2","identifier":"NAV-2","projectId":"project-nav","projectKey":"NAV",
-        "type":"issue","title":"Course correction preview","summary":"Preview the course.",
-        "state":{"id":"state-1","name":"Todo","type":"unstarted"},
-        "assignee":null,
-        "labels":[],"priority":2,"estimate":null,"dueDate":null,"milestoneId":null,
-        "parentId":null,"blocked":false,"archivedAt":null,"createdAt":"2026-11-01T12:00:00Z",
-        "updatedAt":"2026-11-01T12:00:00Z","version":4,"progress":null,"commentCount":0,
-        "todoCounts":{"total":0,"done":0},"lastActivityAt":"2026-11-16T12:00:00Z","lastActivity":null,
-        "cycle":null,"relayedCrew":null,"provenance":null,"readyForAgents":false,
-        "description":null,"todos":[],"createdBy":null,"startedAt":null,"completedAt":null,
-        "canceledAt":null,"archivedBy":null,"parent":null,"duplicateOf":null,
-        "children":{"items":[],"nextCursor":null},"relations":{"items":[],"nextCursor":null},"mentions":[]}"#).unwrap();
-    value["readyForAgents"] = json!(ready);
-    if let Some(id) = assignee {
-        value["assignee"] = json!({"userId":id,"displayName":"Wren","isFormerMember":false,"kind":"agent","agent":null});
-    }
-    value
+    crate::fixtures::tracker_issue(ready, assignee)
 }
 
 fn me() -> String {
