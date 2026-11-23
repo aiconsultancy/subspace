@@ -46,6 +46,9 @@ pub(crate) struct Managed {
     servers: servers::Servers,
     /// Changes when the account is forgotten, so late answers are dropped.
     epoch: u64,
+    /// When to read the memberships again while they are not known for
+    /// the signed-in account.
+    catalogue: account::Retry,
     networks: Vec<NetworkConfig>,
 }
 
@@ -79,6 +82,7 @@ impl Managed {
             schedule: account::Schedule::default(),
             servers: servers::Servers::default(),
             epoch: 0,
+            catalogue: account::Retry::default(),
             networks: Vec::new(),
         }
     }
@@ -88,11 +92,18 @@ impl Managed {
         &self.networks
     }
 
-    /// Follows the fleets in `initiatives` and derives the account's
-    /// networks again among `saved` ones.
-    pub(crate) fn rederive(&mut self, saved: &[NetworkConfig], initiatives: &[MemberInitiative]) {
-        let Some(binding) = self.binding.clone() else {
-            self.servers.clear();
+    /// Follows the fleets in `initiatives`, read for the account `owner`
+    /// names, and derives the account's networks again among `saved` ones.
+    /// Memberships read for any other account plan nothing.
+    pub(crate) fn rederive(
+        &mut self,
+        saved: &[NetworkConfig],
+        (initiatives, owner): (&[MemberInitiative], Option<(Option<u64>, &str)>),
+    ) {
+        let Some(binding) = self.binding.clone().filter(|binding| binding.owns(owner)) else {
+            if self.binding.is_none() {
+                self.servers.clear();
+            }
             self.networks.clear();
             return;
         };
@@ -184,6 +195,13 @@ impl Managed {
         self.schedule.look_again();
     }
 
+    /// Membership reads asked for since they were last known for the
+    /// account, for tests.
+    #[cfg(test)]
+    pub(crate) fn catalogue_reads_for_test(&self) -> u32 {
+        self.catalogue.reads()
+    }
+
     /// Uses `env` in place of the app's account and API, for tests.
     #[cfg(test)]
     pub(crate) fn use_env_for_test(&mut self, env: Arc<dyn Env>) {
@@ -207,7 +225,22 @@ pub(crate) fn tick(hub: &mut Hub, cx: &mut Context<Hub>) {
     if hub.managed.schedule.due(now) {
         begin(hub, cx);
     }
+    reread(hub, now, cx);
     probe(hub, now, cx);
+}
+
+/// While signed in and the memberships are not known for this account,
+/// as after a failed or refused read, reads them again with backoff.
+fn reread(hub: &mut Hub, now: Instant, cx: &mut Context<Hub>) {
+    let catalog = hub.initiatives.catalog.clone();
+    let owned = hub
+        .managed
+        .binding
+        .as_ref()
+        .map(|binding| binding.owns(catalog.read(cx).verified_for()));
+    if hub.managed.catalogue.due(owned, now) {
+        catalog.update(cx, Catalog::refresh);
+    }
 }
 
 /// Checks the account on a background task.
@@ -226,14 +259,11 @@ fn begin(hub: &mut Hub, cx: &mut Context<Hub>) {
 /// Takes a check's answer. Once signed in, the fleets are read if they are
 /// not known yet, and the networks follow when either arrives.
 fn finish(hub: &mut Hub, checked: account::Checked, cx: &mut Context<Hub>) {
-    if !hub.managed.finish(checked, Instant::now()) {
+    let now = Instant::now();
+    if !hub.managed.finish(checked, now) {
         return;
     }
-    let catalog = hub.initiatives.catalog.clone();
-    if matches!(hub.managed.account, Account::SignedIn(_)) && !catalog.read(cx).memberships_known()
-    {
-        catalog.update(cx, Catalog::refresh);
-    }
+    reread(hub, now, cx);
     hub.reconcile(cx);
     cx.notify();
 }

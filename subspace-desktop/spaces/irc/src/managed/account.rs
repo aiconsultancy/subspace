@@ -99,6 +99,39 @@ pub(crate) fn outcome(result: Result<Option<Person>, Error>) -> Outcome {
     }
 }
 
+/// When to read the memberships again while they are not known for the
+/// signed-in account.
+#[derive(Default)]
+pub(crate) struct Retry {
+    at: Option<Instant>,
+    failures: u32,
+}
+
+impl Retry {
+    /// Reads asked for since the memberships were last known, for tests.
+    #[cfg(test)]
+    pub fn reads(&self) -> u32 {
+        self.failures
+    }
+
+    /// Whether to read now, given whether the memberships belong to the
+    /// signed-in account (`None` while nobody is). A read is due at once,
+    /// then after a growing wait while they still do not.
+    pub fn due(&mut self, owned: Option<bool>, now: Instant) -> bool {
+        if owned != Some(false) {
+            *self = Self::default();
+            return false;
+        }
+        if self.at.is_some_and(|at| now < at) {
+            return false;
+        }
+        let doublings = self.failures.min(RETRY_MAX_DOUBLINGS);
+        self.failures = self.failures.saturating_add(1);
+        self.at = Some(now + RETRY_FIRST.saturating_mul(1 << doublings).min(RETRY_MAX));
+        true
+    }
+}
+
 /// When to check the account.
 #[derive(Default)]
 pub(crate) struct Schedule {
@@ -167,7 +200,7 @@ mod tests {
 
     use subspace_api_client::Error;
 
-    use super::{Account, Outcome, Person, REFUSED_MAX, RETRY_MAX, Schedule, outcome};
+    use super::{Account, Outcome, Person, REFUSED_MAX, RETRY_MAX, Retry, Schedule, outcome};
 
     fn ada() -> Person {
         Person {
@@ -226,6 +259,24 @@ mod tests {
         assert!(!schedule.due(now + REFUSED_MAX * 2), "settled");
         schedule.restart();
         assert!(schedule.due(now));
+    }
+
+    #[test]
+    fn memberships_not_known_for_the_account_are_read_again_with_backoff() {
+        let now = Instant::now();
+        let mut retry = Retry::default();
+        assert!(!retry.due(None, now), "nobody signed in");
+        assert!(!retry.due(Some(true), now), "known for the account");
+        assert!(retry.due(Some(false), now), "read at once");
+        assert!(!retry.due(Some(false), now + Duration::from_secs(4)));
+        assert!(retry.due(Some(false), now + Duration::from_secs(5)));
+        assert!(!retry.due(Some(false), now + Duration::from_secs(14)));
+        assert!(retry.due(Some(false), now + Duration::from_secs(15)));
+        assert!(!retry.due(Some(true), now + Duration::from_secs(16)));
+        assert!(
+            retry.due(Some(false), now + Duration::from_secs(16)),
+            "known again resets the wait"
+        );
     }
 
     #[test]

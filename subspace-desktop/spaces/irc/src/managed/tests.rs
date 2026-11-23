@@ -4,6 +4,7 @@
 //! signing in only with its own server's login, and gone on sign-out.
 //! Fictional accounts and servers only.
 
+mod lifecycle;
 mod support;
 
 use gpui_kit::{TestAppContext, VisualTestContext};
@@ -23,7 +24,7 @@ fn signing_in_connects_each_server_the_api_vouches_for_with_its_own_login(cx: &m
     connect(&hub, &api, cx);
     member_of(
         &hub,
-        (None, "user-ada"),
+        (Some(1), "user-ada"),
         fleets("127.0.0.1", Some("127.0.0.2")),
         cx,
     );
@@ -61,7 +62,7 @@ fn a_login_goes_only_to_its_own_server_and_is_kept_under_reconnect_churn(cx: &mu
     connect(&hub, &api, cx);
     member_of(
         &hub,
-        (None, "user-ada"),
+        (Some(1), "user-ada"),
         fleets("127.0.0.1", Some("127.0.0.2")),
         cx,
     );
@@ -90,7 +91,7 @@ fn choosing_the_initiative_joins_its_channels_on_the_account_s_network(cx: &mut 
     let (_board, hub, cx) = mount(cx, settings());
     let api = Api::new(&["127.0.0.1"]);
     connect(&hub, &api, cx);
-    member_of(&hub, (None, "user-ada"), fleets("127.0.0.1", None), cx);
+    member_of(&hub, (Some(1), "user-ada"), fleets("127.0.0.1", None), cx);
     settle(&hub, cx);
     let id = configured(&hub, cx)[1].id.clone();
     let catalog = hub.read_with(cx, |hub, _| hub.initiatives.catalog.clone());
@@ -111,7 +112,7 @@ fn saving_settings_keeps_the_account_s_network_running_as_it_was(cx: &mut TestAp
     let (_board, hub, cx) = mount(cx, settings());
     let api = Api::new(&["127.0.0.1"]);
     connect(&hub, &api, cx);
-    member_of(&hub, (None, "user-ada"), fleets("127.0.0.1", None), cx);
+    member_of(&hub, (Some(1), "user-ada"), fleets("127.0.0.1", None), cx);
     settle(&hub, cx);
     let before = hub.read_with(cx, |hub, _| hub.sent().len());
     let mut saved = settings();
@@ -143,7 +144,7 @@ fn a_saved_network_on_the_fleet_s_server_is_kept_and_no_second_one_connects(
     let (_board, hub, cx) = mount(cx, saved);
     let api = Api::new(&["127.0.0.1"]);
     connect(&hub, &api, cx);
-    member_of(&hub, (None, "user-ada"), fleets("127.0.0.1", None), cx);
+    member_of(&hub, (Some(1), "user-ada"), fleets("127.0.0.1", None), cx);
     settle(&hub, cx);
     hub.read_with(cx, |hub, _| {
         assert_eq!(hosts(&hub.effective().networks), ["127.0.0.1"]);
@@ -161,7 +162,7 @@ fn an_api_without_usernames_brings_no_network(cx: &mut TestAppContext) {
     let api = Api::new(&["127.0.0.1"]);
     api.sign_in(200, person("user-ada", None));
     connect(&hub, &api, cx);
-    member_of(&hub, (None, "user-ada"), fleets("127.0.0.1", None), cx);
+    member_of(&hub, (Some(1), "user-ada"), fleets("127.0.0.1", None), cx);
     settle(&hub, cx);
     assert_eq!(configured(&hub, cx).len(), 1);
     assert!(api.asked().is_empty(), "no credential is asked for");
@@ -176,7 +177,7 @@ fn settings_see_the_vouched_servers_only_while_signed_in(cx: &mut TestAppContext
     let env = connect(&hub, &api, cx);
     member_of(
         &hub,
-        (None, "user-ada"),
+        (Some(1), "user-ada"),
         fleets("127.0.0.1", Some("127.0.0.2")),
         cx,
     );

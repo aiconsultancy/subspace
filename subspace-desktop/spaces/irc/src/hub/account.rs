@@ -20,8 +20,10 @@ impl Hub {
     /// them with the saved ones. Unchanged networks keep their connection.
     pub(crate) fn reconcile(&mut self, cx: &mut Context<Self>) {
         let catalog = self.initiatives.catalog.read(cx);
-        self.managed
-            .rederive(&self.saved.networks, catalog.memberships());
+        self.managed.rederive(
+            &self.saved.networks,
+            (catalog.memberships(), catalog.verified_for()),
+        );
         self.follow(self.effective(), cx);
     }
 

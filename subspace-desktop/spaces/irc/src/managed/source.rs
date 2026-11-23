@@ -27,6 +27,12 @@ impl Binding {
     pub fn current(&self) -> bool {
         self.env.generation() == self.generation
     }
+
+    /// Whether memberships read for `owner`, an account generation and
+    /// verified user, belong to this account.
+    pub fn owns(&self, owner: Option<(Option<u64>, &str)>) -> bool {
+        owner == Some((self.generation, self.user_id.as_str()))
+    }
 }
 
 /// The source of the network on the server `login` belongs to.
