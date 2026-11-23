@@ -1,7 +1,7 @@
 pub(crate) use crate::stores::{require_eligible, store, store_mut};
 use crate::stores::{validate_name, validate_policy};
 use crate::{
-    Document, Lease, Policy, Reranker, RerankerStatus, Scope, SourceStatus, Target,
+    Document, Lease, Policy, Reranker, RerankerStatus, Scope, SourceStatus,
     database::{self, Store},
     files, limits, maintenance, selection, storage_error, writes,
 };
@@ -251,8 +251,9 @@ impl Service {
         reference: &crate::ReferenceIdentity,
         query: &crate::RelatedQuery,
     ) -> Result<Vec<crate::RelatedItem>, String> {
+        let rules = self.rules()?;
         let stores = self.inner.stores.lock().map_err(storage_error)?;
-        crate::metadata::related(&stores, reference, query)
+        crate::metadata::related(&stores, &rules, reference, query)
     }
 
     pub fn remove(&self, scope: &Scope, ids: &[String]) -> Result<(), String> {
@@ -285,26 +286,6 @@ impl Service {
         self.validate_scope(scope)?;
         let mut stores = self.stores()?;
         writes::invalidate(store_mut(&mut stores, &scope.board)?, scope)
-    }
-
-    pub fn read(&self, target: &Target) -> Result<Option<Document>, String> {
-        self.validate_scope(&target.scope)?;
-        if target.id.len() > limits::MAX_IDENTIFIER {
-            return Err("Search target exceeds size limit".into());
-        }
-        let stores = self.stores()?;
-        let connection = &store(&stores, &target.scope.board)?.connection;
-        let snapshot = connection.unchecked_transaction().map_err(storage_error)?;
-        database::read(&snapshot, &target.scope, &target.id)
-    }
-
-    pub fn read_fenced(&self, target: &Target) -> Result<Option<crate::CachedRead>, String> {
-        self.validate_scope(&target.scope)?;
-        if target.id.len() > limits::MAX_IDENTIFIER {
-            return Err("Search target exceeds size limit".into());
-        }
-        let stores = self.stores()?;
-        crate::fenced_read::read(store(&stores, &target.scope.board)?, target)
     }
 
     pub(crate) fn revoke(&self, board: &str) -> Result<(), String> {
