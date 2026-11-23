@@ -328,6 +328,21 @@ class FleetPolicyTests(unittest.TestCase):
             validate(dict(config, api={"url": "http://127.0.0.1:3000"}), api_secrets()), person,
             Path("/workspace"), documents))
 
+    def test_an_operator_rule_for_the_api_tools_stands(self):
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        cfg = validate(config, api_secrets())
+        person = cfg["members"][0]
+        base = person["harness"]["permissions"]
+        self.assertEqual(runtime.harness_permissions(cfg, person)[-1], runtime.SUBSPACE_MCP_GRANT)
+        for effect in ("deny", "ask"):
+            for action in ("subspace_*", "subspace_create_issue"):
+                rule = {"action": action, "resource": "*", "effect": effect}
+                operator = dict(person, harness=dict(person["harness"], permissions=[*base, rule]))
+                granted = runtime.harness_permissions(cfg, operator)
+                self.assertEqual(granted, [*base, rule])
+                self.assertNotIn(runtime.SUBSPACE_MCP_GRANT, granted)
+
     def test_without_the_agent_listener_officers_get_no_api_server_or_skill(self):
         config = example_config()
         config["api"] = {"url": "http://127.0.0.1:3000"}

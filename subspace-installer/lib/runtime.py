@@ -1067,9 +1067,14 @@ def subspace_mcp_url(cfg):
 
 
 def harness_permissions(cfg, person):
-    """The officer's harness policy, plus the Subspace API's MCP tools when the agent listener is configured."""
+    """The officer's harness policy, plus the Subspace API's MCP tools when the agent listener is configured.
+
+    An operator rule that already names a subspace_ action (an allow, ask or deny) stands alone: the installer
+    adds its grant only when the policy says nothing about these tools.
+    """
     permissions = person["harness"]["permissions"]
-    if subspace_mcp_url(cfg) and SUBSPACE_MCP_GRANT not in permissions:
+    if subspace_mcp_url(cfg) and not any(
+            str(rule.get("action", "")).startswith(f"{SUBSPACE_MCP}_") for rule in permissions):
         return [*permissions, SUBSPACE_MCP_GRANT]
     return permissions
 
