@@ -1371,8 +1371,8 @@ def hook_touch(ctx):
 
 
 def hook_requests(ctx):
-    """The request log, oldest first. An entry gains answered: true once
-    its whole answer has been written."""
+    """The request log, oldest first. An entry gains answered: true, and
+    answeredAt on the same clock as at, once its whole answer is written."""
     return 200, [dict(request) for request in ctx.server.requests]
 
 
@@ -3429,6 +3429,7 @@ class Handler(BaseHTTPRequestHandler):
             # is still out from one that is back.
             with self.server.lock:
                 self.request_log['answered'] = True
+                self.request_log['answeredAt'] = round(time.monotonic() - self.server.started, 3)
 
     def dispatch(self, path, query):
         api = path == '/api/v1' or path.startswith('/api/v1/')

@@ -31,12 +31,10 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
     let hub = Hub::from_client(own_client(&mock, "nett-fixture-todo-late"), "NETT");
     open_todos(&hub);
     let (put, item) = todo_save_target(&mock, &hub);
-    // Saves A and B each get a slow answer. A is stored, but its answer is
-    // slow; the issue is opened again and save B starts on the same item
-    // before A's answer lands. B started later, so it is pending whenever
-    // A's lands. The delay leaves the steps below seconds to spare on a
-    // busy machine, where a two-second one let A land before they ended.
-    mock.config(&json!({"slowBody": {"path": put, "seconds": 8.0, "times": 2}}));
+    mock.config(&json!({"slowBody": {"path": put, "seconds": 2.0, "times": 1}}));
+    // Save A is stored, but its answer is slow; the issue is opened again
+    // and save B starts on the same item before A's answer lands. B's own
+    // answer is slower still, so it is pending whenever A's lands.
     hub.set_todo_done(&item.id, true).unwrap();
     wait_for("A sent", &|| mock.count("PUT", &item.id) == 1);
     hub.close_issue();
@@ -49,12 +47,14 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
                 .any(|row| row.id == item.id && row.completed)
         })
     });
-    let reads = mock.count("GET", "/items");
+    mock.config(&json!({"slowBody": {"path": put, "seconds": 6.0, "times": 1}}));
     hub.set_todo_done(&item.id, false).unwrap();
     // A's late answer reads the lists again: once it has, B must still be
-    // pending, not re-enabled by A's answer.
+    // pending, not re-enabled by A's answer. Look for a list read after the
+    // mock answered A, since on a busy machine A can land before this
+    // point, and a count taken here would miss its read.
     wait_for("A's answer, reconciled", &|| {
-        mock.count("GET", "/items") > reads
+        read_after_answer(&mock, &item.id)
     });
     assert!(
         hub.snapshot()
@@ -72,6 +72,23 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
         })
     });
     hub.stop();
+}
+
+/// Whether the mock logged a read of the lists after it answered the first
+/// save of `item`.
+fn read_after_answer(mock: &NettMock, item: &str) -> bool {
+    let log = mock.requests();
+    let answered = log
+        .iter()
+        .find(|r| r["method"] == "PUT" && r["path"].as_str().is_some_and(|p| p.ends_with(item)))
+        .and_then(|r| r["answeredAt"].as_f64());
+    answered.is_some_and(|answered| {
+        log.iter().any(|r| {
+            r["method"] == "GET"
+                && r["path"].as_str().is_some_and(|p| p.ends_with("/items"))
+                && r["at"].as_f64().is_some_and(|at| at >= answered)
+        })
+    })
 }
 
 fn open_todos(hub: &Hub) {
