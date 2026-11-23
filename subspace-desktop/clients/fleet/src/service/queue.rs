@@ -14,8 +14,12 @@
 //! so the service shows what the keychain holds rather than waiting for
 //! ever. A clear that fails leaves the token out of use
 //! ([`TokenLoad::ClearFailed`]): a cleared token is never used again until
-//! the person clears it again or saves a new one.
+//! the person clears it again or saves a new one. Only an operation
+//! queued with the clear or after it can end that hold: a save queued
+//! before it wrote before the delete, so its success says nothing of
+//! whether the cleared token is gone.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use gpui_kit::{AppContext as _, Context, Task};
@@ -91,7 +95,7 @@ impl FleetApi {
         }
         let wrote = matches!(outcome, Outcome::Saved(Ok(_)) | Outcome::Cleared(Ok(())));
         if wrote {
-            self.reads.cleared.remove(fleet);
+            end_hold(&mut self.reads.cleared, fleet, generation);
         }
         let (token, result) = match outcome {
             Outcome::Read(token) => (Some(token), Ok(())),
@@ -102,7 +106,8 @@ impl FleetApi {
             }
             Outcome::Saved(Err(error)) => (None, Err(TokenError::Store(error))),
         };
-        let token = token.map(|token| hold_clear(&mut self.reads.cleared, fleet, token));
+        let token =
+            token.map(|token| hold_clear(&mut self.reads.cleared, (fleet, generation), token));
         match (current, token, &result) {
             (true, Some(token), _) => self.set_token(fleet, token, cx),
             (true, None, Err(_)) => self.load_token(fleet.to_owned(), cx),
@@ -115,19 +120,32 @@ impl FleetApi {
 /// A token the person cleared stays out of use until a delete or a
 /// replacement write succeeds: a read that still finds it in the keychain,
 /// as after a refused delete and a refused save, says the clear failed
-/// rather than bringing it back. A read that finds none ends the hold.
+/// rather than bringing it back. A read that finds none ends the hold, if
+/// it was queued no earlier than the clear ([`end_hold`]).
 fn hold_clear(
-    cleared: &mut std::collections::BTreeSet<String>,
-    fleet: &str,
+    cleared: &mut BTreeMap<String, u64>,
+    (fleet, generation): (&str, u64),
     token: TokenLoad,
 ) -> TokenLoad {
     match token {
-        TokenLoad::Saved(_) if cleared.contains(fleet) => TokenLoad::ClearFailed,
+        TokenLoad::Saved(_) if cleared.contains_key(fleet) => TokenLoad::ClearFailed,
         TokenLoad::Missing => {
-            cleared.remove(fleet);
+            end_hold(cleared, fleet, generation);
             token
         }
         token => token,
+    }
+}
+
+/// Ends `fleet`'s hold for an operation queued in `generation`, only when
+/// that is the clear's own generation or a later one. An operation queued
+/// before the clear ran before its delete, so what it wrote or found says
+/// nothing of whether the cleared token is gone: a save queued before a
+/// clear whose delete is then refused leaves that token in the keychain,
+/// and it stays cleared.
+fn end_hold(cleared: &mut BTreeMap<String, u64>, fleet: &str, generation: u64) {
+    if cleared.get(fleet).is_some_and(|&since| generation >= since) {
+        cleared.remove(fleet);
     }
 }
 

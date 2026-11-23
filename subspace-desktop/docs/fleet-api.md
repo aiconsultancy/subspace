@@ -182,8 +182,12 @@ cleared token, the fleet says **Token not removed** (`ClearFailed`): the
 token is not used, followed or shared, a Retry does not bring it back,
 and Settings says the keychain may still hold it at the next start and
 offers **Clear token** again; saving a token also resolves it. The token stays out of
-use until a delete or a replacement write succeeds, also when a save queued
-after the clear fails. A Retry waiting from an older token generation is
+use until a delete or a replacement write queued with the clear or after it
+succeeds, also when a save queued after the clear fails. A save queued
+before the clear never ends the hold, even though its write lands after the
+clear began: it wrote before the delete, so a cleared token stays cleared
+when that delete is refused, and neither a later failed save nor removing
+and adding the fleet again brings it back. A Retry waiting from an older token generation is
 dropped when the generation changes, and each waiting Retry consumes only
 its own place. Each fleet
 has at most one re-read queued, and a waiting Retry checks the deadline

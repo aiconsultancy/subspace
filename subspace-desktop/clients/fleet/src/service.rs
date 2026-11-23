@@ -77,9 +77,10 @@ struct Reads {
     /// The last waiting Retry's identity, so each consumes only its own.
     deferrals: u64,
     /// The fleets the person cleared whose token no delete or replacement
-    /// write has removed yet: never used again until one does
-    /// ([`queue`]).
-    cleared: std::collections::BTreeSet<String>,
+    /// write has removed yet, each with the generation its clear began:
+    /// never used again until a write or read from that generation or a
+    /// later one finds it gone ([`queue`]).
+    cleared: BTreeMap<String, u64>,
     /// The fleets with a re-read queued and not landed: never two at once.
     rereading: std::collections::BTreeSet<String>,
     /// Each fleet's last store operation queued ([`queue`]): the fleet's
