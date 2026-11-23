@@ -3,7 +3,7 @@
 
 use gpui_kit::TestAppContext;
 
-use super::{composer, labels, open, said, signed_in, text};
+use super::{composer, labels, open, said, signed_in, submit, text};
 
 #[gpui_kit::test]
 fn tab_on_a_whole_command_only_completes_and_writes_nothing(cx: &mut TestAppContext) {
@@ -30,6 +30,49 @@ fn tab_on_a_whole_command_only_completes_and_writes_nothing(cx: &mut TestAppCont
     conversation.read_with(cx, |conversation, _| {
         assert!(conversation.tracker.refreshed.is_empty())
     });
+    hub.read_with(cx, |hub, _| {
+        assert!(said(hub).is_empty(), "{:?}", said(hub))
+    });
+}
+
+#[gpui_kit::test]
+fn a_tracker_command_in_reply_mode_is_kept_and_never_reaches_irc(cx: &mut TestAppContext) {
+    let mock = signed_in();
+    let (conversation, hub, cx) = open(cx, true, Some(&mock));
+    let input = composer(&conversation, cx);
+    // A server that carries reply tags, so reply mode would send.
+    let tags = subspace_client_irc::Event::Capabilities {
+        network: crate::fixtures::network_id(),
+        enabled: vec!["message-tags".to_owned()],
+    };
+    crate::tests::inject(&hub, vec![tags], cx);
+    cx.update(|window, cx| {
+        conversation.update(cx, |view, cx| {
+            let root = crate::compose::reply::ReplyTo::new("m1", "alice", "We need a decision");
+            crate::compose::reply::start(view, root, window, cx);
+        })
+    });
+    for command in [
+        "/decision NAV-2 Decode on a pool",
+        "/assign NAV-2 to me",
+        "/ready NAV-2",
+    ] {
+        submit(&input, command, cx);
+        assert_eq!(text(&input, cx), command, "the draft stays");
+        assert_eq!(
+            input.read_with(cx, |input, _| input.error().map(str::to_owned)),
+            Some(crate::compose::reply::COMMAND.to_owned()),
+            "{command}: kept with an explanation"
+        );
+    }
+    // Return on the completion's run row takes the same path.
+    cx.update(|window, cx| input.update(cx, |input, cx| input.set_text("", window, cx)));
+    cx.simulate_input("/ready NAV-2");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(text(&input, cx), "/ready NAV-2");
+    conversation.read_with(cx, |view, _| assert!(view.draft.reply.is_some()));
+    assert!(mock.requests().is_empty(), "nothing reached the tracker");
     hub.read_with(cx, |hub, _| {
         assert!(said(hub).is_empty(), "{:?}", said(hub))
     });
