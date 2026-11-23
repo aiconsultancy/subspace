@@ -110,8 +110,9 @@ After merging `main` (`9d2f850`) and bringing the work back (`b1fd284`):
 - `cargo fmt`, `cargo clippy -p subspace-github-board --all-targets
   --all-features -- -D warnings` and `rustqual . --findings` (no findings)
   in the desktop.
-- The Framework's GitHub client is unchanged from the work brought back;
-  its checks are listed in the pull request.
+- The Framework's GitHub client is unchanged from the work brought back:
+  `cargo fmt --check`, clippy with warnings denied and
+  `cargo test -p subspace-client-github` (152 passed) in the Framework.
 
 The rule's model test (`references/access/model.rs`) plays every
 interleaving of six reads of one pull request against the decision
