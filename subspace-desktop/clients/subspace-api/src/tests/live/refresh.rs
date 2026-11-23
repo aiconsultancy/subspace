@@ -1,10 +1,10 @@
 //! Hints refresh what is shown even when the issue's version did not move:
 //! the API keeps the version for comments, threads, attachments, links,
 //! summaries, documents and reviews.
-use super::{DETAIL, GROUPS, UPDATES, hub, sse, version, wait};
+use super::{DETAIL, GROUPS, UPDATES, hub, ready_and_caught_up, sse, version, wait};
 use super::{Server, server::Seen};
 use crate::{
-    hub::{Hub, LiveStatus},
+    hub::Hub,
     tests::{
         comment, common_path, detail, media::descriptor, page, pull_requests::pull_request, row,
     },
@@ -131,9 +131,7 @@ fn live(shown: &Arc<Shown>) -> (Server, Hub, super::server::Peer) {
     let server = Server::new(move |seen| answer.answer(seen));
     let hub = hub(&server);
     let mut peer = server.peer();
-    peer.ready();
-    wait(&hub, |snapshot| snapshot.live() == LiveStatus::Live);
-    std::thread::sleep(Duration::from_millis(1000));
+    ready_and_caught_up(&hub, &mut peer);
     (server, hub, peer)
 }
 
@@ -220,6 +218,9 @@ fn a_burst_during_a_read_gives_one_read_and_one_trailing_read() {
     wait(&hub, |snapshot| {
         snapshot.issue().unwrap().detail().unwrap().fields.title == "Renamed during the read"
     });
+    // The read in flight answers with the new title; the hints during it
+    // owe one trailing read, which follows it.
+    wait(&hub, |_| server.count("GET", DETAIL) == details + 2);
     std::thread::sleep(Duration::from_millis(2000));
     assert_eq!(server.count("GET", DETAIL), details + 2);
     assert_eq!(shown.peak.load(Ordering::SeqCst), 1, "one read in flight");

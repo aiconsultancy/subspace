@@ -120,8 +120,11 @@ pub(crate) fn common_path(path: &str) -> (u16, String) {
     }
 }
 
+/// Waits for the hub to reach a state. Passing runs return as soon as it
+/// holds; the limit only bounds a failure, and leaves room for a machine
+/// busy with other builds, whose timers and threads run late.
 pub(crate) fn wait(hub: &Hub, predicate: impl Fn(&HubSnapshot) -> bool) -> HubSnapshot {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let snapshot = hub.snapshot();
         if predicate(&snapshot) {

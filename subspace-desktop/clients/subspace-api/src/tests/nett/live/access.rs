@@ -1,5 +1,5 @@
 use super::super::{TOKEN, organisation, server::NettMock, wait};
-use super::{open_live_issue, streams, wait_for_live_list, works_hub};
+use super::{open_live_issue, streams, wait_for_live_list, wait_for_ready_catch_up, works_hub};
 use crate::hub::{Hub, LiveStatus};
 use crate::{Client, ListQuery, ListTab};
 use serde_json::json;
@@ -155,6 +155,7 @@ fn a_count_already_out_when_access_went_does_not_come_back() {
             && snapshot.list().is_some()
             && snapshot.my_issues_count().is_some()
     });
+    wait_for_ready_catch_up(&hub);
     // The list is read again; it and the two counts after it are slow.
     // Access goes once NETT has answered the last count, while its body is
     // still on the way, and the stream's catch-up finds the list refused.

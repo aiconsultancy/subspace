@@ -23,6 +23,11 @@ fn an_organisation_without_updates_neither_streams_nor_polls() {
                     .is_some_and(|issue| issue.detail().is_some())
         },
     );
+    // The issue shows from its first read; the reads that follow it must be
+    // back before the window below, or one counts as a poll.
+    wait("the opening reads back", Duration::from_secs(10), &|| {
+        hub.idle()
+    });
     mock.clear_requests();
     // The tests' poll interval is 300 ms: a NETT hub must not use it.
     std::thread::sleep(Duration::from_millis(1200));
