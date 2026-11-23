@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 
 mod record;
 pub(super) use record::Record;
-use record::{incoming, merge, same};
+use record::{current, incoming, merge, same};
 
 use crate::model::{Casemapping, Reaction, ReactionChange};
 use crate::reactions::agent_stop::is_agent_stop_reaction;
@@ -30,8 +30,14 @@ impl Group {
 }
 
 /// Applies `reaction` to its group; whether anything changed. `stamp` is
-/// the book's clock, newer than any record's.
-pub(super) fn record(groups: &mut Vec<Group>, reaction: &Reaction, stamp: u64) -> bool {
+/// the book's clock, newer than any record's; `since` is when the
+/// reaction's nick was last taken by a rename, so an accountless record
+/// from before then, an earlier holder's, is never taken for this person.
+pub(super) fn record(
+    groups: &mut Vec<Group>,
+    reaction: &Reaction,
+    (stamp, since): (u64, u64),
+) -> bool {
     let added = reaction.change == ReactionChange::Added;
     let index = groups
         .iter()
@@ -52,7 +58,7 @@ pub(super) fn record(groups: &mut Vec<Group>, reaction: &Reaction, stamp: u64) -
         &mut groups[index],
         incoming(reaction, stamp),
         can_show,
-        reaction.casemapping,
+        (reaction.casemapping, since),
     );
     if groups[index].records.is_empty() {
         groups.remove(index);
@@ -92,12 +98,19 @@ fn room_for_group(groups: &mut Vec<Group>, added: bool) -> bool {
 
 /// Brings one person's record up to `incoming` unless it is older than
 /// what is held; whether anything changed. Of several records that match,
-/// the one that most recently took the nick is that person.
-fn upsert(group: &mut Group, incoming: Record, can_show: bool, mapping: Casemapping) -> bool {
+/// the one that most recently took the nick is that person; an accountless
+/// record made before the nick's current holder took it (`since`) was
+/// someone else's and never matches.
+fn upsert(
+    group: &mut Group,
+    incoming: Record,
+    can_show: bool,
+    (mapping, since): (Casemapping, u64),
+) -> bool {
     let held = group
         .records
         .iter_mut()
-        .filter(|held| same(held, &incoming, mapping))
+        .filter(|held| same(held, &incoming, mapping) && current(held, since))
         .max_by_key(|held| held.assigned);
     match held {
         Some(held) => merge(held, incoming, can_show),

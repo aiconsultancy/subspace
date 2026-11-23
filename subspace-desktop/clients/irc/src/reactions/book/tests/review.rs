@@ -8,6 +8,15 @@ use super::super::ReactionBook;
 use super::{apply_all, at, reaction, removed, renamed, room, shown};
 use crate::model::{BufferKey, Casemapping, Event, Line, LineKind, Target};
 
+/// When each person in the first reaction on `m1` reacted.
+fn first_group_times(book: &ReactionBook) -> Vec<chrono::DateTime<chrono::Utc>> {
+    book.reactions(&room(), "m1")[0]
+        .reactors
+        .iter()
+        .map(|reactor| reactor.time)
+        .collect()
+}
+
 #[test]
 fn after_an_accountless_rename_the_current_holder_of_the_nick_is_matched() {
     let mut book = ReactionBook::new();
@@ -20,10 +29,8 @@ fn after_an_accountless_rename_the_current_holder_of_the_nick_is_matched() {
     );
     book.observe(&renamed("bob", "robert", None));
     book.apply(&removed(reaction("m1", "👍", "robert", 3)));
-    let reactors = book.reactions(&room(), "m1");
-    let times: Vec<_> = reactors[0].reactors.iter().map(|r| r.time).collect();
     assert_eq!(
-        times,
+        first_group_times(&book),
         [at(1)],
         "the removal takes the reaction of the person who now holds the nick"
     );
@@ -184,5 +191,26 @@ fn a_removal_learned_late_moves_a_backdated_place_after_it() {
         summary[0].reactors[0].time,
         at(5),
         "shown from the addition after the removal"
+    );
+}
+
+#[test]
+fn a_new_holder_of_a_nick_never_merges_into_the_previous_holder_s_reaction() {
+    let mut book = ReactionBook::new();
+    // Robert reacts and leaves; Bob takes the nick and reacts too.
+    book.apply(&reaction("m1", "👍", "robert", 1));
+    book.observe(&renamed("bob", "robert", None));
+    book.apply(&reaction("m1", "👍", "robert", 2));
+    assert_eq!(
+        book.reactions(&room(), "m1")[0].count(),
+        2,
+        "two people, each counted"
+    );
+    // The new holder takes back only their own reaction.
+    book.apply(&removed(reaction("m1", "👍", "robert", 3)));
+    assert_eq!(
+        first_group_times(&book),
+        [at(1)],
+        "the earlier holder's reaction stays"
     );
 }

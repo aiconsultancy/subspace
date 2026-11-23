@@ -147,10 +147,15 @@ impl ReactionBook {
         if fresh {
             evict_for(&mut self.messages, &key, seen);
         }
+        let since = self.held_since(
+            &reaction.buffer.network,
+            &reaction.nick,
+            reaction.casemapping,
+        );
         self.clock += 1;
         let entry = self.messages.entry(key.clone()).or_default();
         entry.seen |= seen;
-        if record(&mut entry.groups, reaction, self.clock) {
+        if record(&mut entry.groups, reaction, (self.clock, since)) {
             entry.touched = self.clock;
         }
         if fresh && entry.groups.is_empty() {
