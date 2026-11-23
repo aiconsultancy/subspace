@@ -215,7 +215,7 @@ def parse_args(argv):
     parser.add_argument("--no-lockdown", dest="lockdown", action="store_false", default=None,
                         help="skip the inbound firewall and SSH hardening (not recommended; agent isolation stays)")
     parser.add_argument("--inputs", default=str(INPUTS), help=argparse.SUPPRESS)
-    parser.add_argument("--dry-run", action="store_true", help="write and validate the inputs only")
+    parser.add_argument("--dry-run", action="store_true", help="validate the inputs only, changing nothing")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt; fail on missing answers")
     return parser.parse_args(argv)
 
@@ -1295,6 +1295,22 @@ def setup(args):
     global INPUTS
     INPUTS = Path(args.inputs)
     require(args.dry_run or os.geteuid() == 0, "Run subspace-setup as root (sudo).")
+    if args.dry_run:
+        # A dry run works on a private copy of the inputs, so the answers, generated secrets and fleet files it
+        # writes, a database URL file it is given included, never become the next real run's.
+        original = INPUTS
+        with tempfile.TemporaryDirectory(prefix="subspace-setup-dry-run-") as scratch:
+            INPUTS = Path(scratch) / "inputs"
+            if original.is_dir():
+                shutil.copytree(original, INPUTS, symlinks=True)
+            try:
+                return configure(args)
+            finally:
+                INPUTS = original
+    return configure(args)
+
+
+def configure(args):
     INPUTS.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(INPUTS, 0o700)
     saved = read_json(INPUTS / "answers.json", {})
@@ -1309,7 +1325,8 @@ def setup(args):
             "existing PostgreSQL, restore a dump of that database there and set up a fresh VM with "
             "--database-url-file (installer README, 'An existing PostgreSQL').")
     save_answers(answers)
-    secret_store = Secrets(INPUTS, answers["slug"], answers.get("keyVault"))
+    # A dry run neither reads nor writes Key Vault: a value the copied store lacks is made up for validation.
+    secret_store = Secrets(INPUTS, answers["slug"], None if args.dry_run else answers.get("keyVault"))
     members = roster(answers, rear, captains)
     local_irc = answers["irc"] == "local"
     config_path = INPUTS / "fleet.json"
@@ -1346,7 +1363,7 @@ def setup(args):
         if answers["agentDispatch"]:
             say("agent dispatch needs the API, which the dry run leaves out; the real run checks it")
         installer(config_path, dry_run=True)
-        say(f"dry run complete; inputs are in {INPUTS}")
+        say("dry run complete; nothing on this VM changed")
         return
 
     irc_ref = irc_source() if local_irc else None

@@ -803,19 +803,69 @@ class ExternalDatabaseTests(unittest.TestCase):
         argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
                 "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40,
                 "--database-url-file", self.url_file, "--dry-run"]
-        output = []
-        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "installer") as installer, \
+        output, written, vm_inputs = [], [], fleet_setup.INPUTS
+
+        def dry_installer(config_path, dry_run=False):
+            # The installer validates inputs written to a private copy, never to the VM's inputs.
+            self.assertTrue(dry_run)
+            self.assertFalse(Path(config_path).is_relative_to(vm_inputs))
+            written.extend(path.read_text() for path in Path(config_path).parent.iterdir()
+                           if path.is_file() and path.name != "database-url")
+        before = sorted(path.name for path in fleet_setup.INPUTS.iterdir())
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "installer", side_effect=dry_installer), \
                 patch.object(fleet_setup, "say", side_effect=output.append):
             fleet_setup.setup(fleet_setup.parse_args(argv))
-        installer.assert_called_once()
+        self.assertTrue(written)
         self.assertTrue(any("this VM runs no PostgreSQL container" in line for line in output))
-        written = "".join(path.read_text() for path in fleet_setup.INPUTS.iterdir() if path.name != "database-url")
-        self.assertNotIn(self.PASSWORD, "\n".join(output) + written)
+        self.assertNotIn(self.PASSWORD, "\n".join(output) + "".join(written))
+        self.assertEqual(sorted(path.name for path in fleet_setup.INPUTS.iterdir()), before)
         Path(self.url_file).chmod(0o640)
         with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "installer") as installer, \
                 self.assertRaisesRegex(fleet_setup.SetupError, "chmod 600"):
             fleet_setup.setup(fleet_setup.parse_args(argv))
         installer.assert_not_called()
+
+    def test_a_dry_run_with_another_database_changes_nothing_on_the_vm(self):
+        # An installed VM: its answers name one URL file; a dry run tries another.
+        answers, _ = self.answers("--database-url-file", self.url_file)
+        fleet_setup.save_answers(answers)
+        self.up(answers)
+        (fleet_setup.INPUTS / "fleet.json").write_text('{"installed": true}\n')
+        other = self.private("other-database-url", self.URL.replace("tracker-db", "other-db"))
+
+        def snapshot():
+            return {path.name: path.read_bytes() for path in fleet_setup.INPUTS.iterdir() if path.is_file()}
+        before = snapshot()
+        argv = ["--non-interactive", "--operator", "operator", "--inputs", str(fleet_setup.INPUTS),
+                "--stargate-ref", "c" * 40, "--database-url-file", other, "--dry-run"]
+        output = []
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "installer"), \
+                patch.object(fleet_setup, "say", side_effect=output.append):
+            fleet_setup.setup(fleet_setup.parse_args(argv))
+        self.assertTrue(any(other in line for line in output))
+        self.assertEqual(fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")["databaseUrlFile"], self.url_file)
+        self.assertEqual(snapshot(), before)
+        self.assertIn("dry run complete; nothing on this VM changed", output)
+
+    def test_the_host_installers_keep_a_dry_run_s_files_apart_from_the_vm_s_inputs(self):
+        # Without a test harness for SSH, check the text: in a dry run the host installers send the database
+        # URL and the CA files to a scratch directory they remove afterwards, and stop before reading anything back.
+        root = Path(fleet_setup.HERE).parents[1]
+        for name, scratch, branch in (("install.sh", "inputs=/root/subspace-setup-dry-run",
+                                       'if "$dry_run"; then\n        say'),
+                                      ("install.ps1", "'/root/subspace-setup-dry-run'", "if ($dryRun) {\n        Say")):
+            text = (root / name).read_text()
+            with self.subTest(name):
+                self.assertIn(scratch, text)
+                for file in ("database-url", "database-ca.pem", "irc-ca.pem"):
+                    self.assertNotRegex(text, rf"/root/fleet/{re.escape(file)}\b")
+                    self.assertRegex(text, rf"\$inputs/{re.escape(file)}")
+                dry = text[text.index(branch):]
+                dry = dry[:dry.index("return") + len("return")]
+                self.assertIn("rm", dry)
+                self.assertIn("-rf", dry)
+                self.assertNotIn("summary.env", dry)
+                self.assertLess(text.index(branch), text.index("summary.env", text.index(branch)))
 
     def test_the_other_new_settings_survive_a_run_against_an_existing_postgresql(self):
         # Slack bots, a captain's sessionRoot and repository notes are added to fleet.json by hand; setup keeps them

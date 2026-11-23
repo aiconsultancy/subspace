@@ -688,6 +688,12 @@ do_install() {
             die "The Subspace API on '$api_target' cannot register this fleet; nothing was changed."
         passthrough+=(--no-api)
     fi
+    # subspace-setup --dry-run changes nothing on the VM: the files it is given go to a scratch directory that
+    # is removed afterwards, never over the inputs (such as the database URL) that the next real run uses.
+    local dry_run=false inputs=/root/fleet arg
+    for arg in ${passthrough[@]+"${passthrough[@]}"}; do
+        if [ "$arg" = --dry-run ]; then dry_run=true; inputs=/root/subspace-setup-dry-run; fi
+    done
     if [ -n "$irc_target" ]; then
         [ -f "$home/targets/$irc_target/summary.env" ] || die "No shared IRC server '$irc_target'. Run ./install.sh irc-server first."
         local irc_host irc_port self_signed
@@ -696,10 +702,10 @@ do_install() {
         self_signed=$(sed -n 's/^SUBSPACE_IRC_SELF_SIGNED=//p' "$home/targets/$irc_target/summary.env")
         passthrough+=(--irc remote --irc-host "$irc_host" --irc-port "$irc_port")
         if [ "$self_signed" = 1 ]; then
-            vm sudo -n sh -c "'umask 077; mkdir -p /root/fleet; cat > /root/fleet/irc-ca.pem'" < "$home/targets/$irc_target/ca.pem"
-            passthrough+=(--irc-ca /root/fleet/irc-ca.pem)
+            vm sudo -n sh -c "'umask 077; mkdir -p $inputs; cat > $inputs/irc-ca.pem'" < "$home/targets/$irc_target/ca.pem"
+            passthrough+=(--irc-ca "$inputs/irc-ca.pem")
         fi
-        printf '%s\n' "$irc_target" > "$state/irc-target"
+        "$dry_run" || printf '%s\n' "$irc_target" > "$state/irc-target"
     fi
 
     if [ -n "$database_url_file" ]; then
@@ -709,21 +715,30 @@ do_install() {
         if [ "$os" = Darwin ]; then perms=$(stat -f %Lp "$database_url_file"); else perms=$(stat -c %a "$database_url_file"); fi
         case $perms in [0-7]00) ;; *) die "--database-url-file $database_url_file must be private to you: chmod 600 it." ;; esac
         [ -z "$api_target" ] || die "--database-url-file runs this VM's own Subspace API, which --api-target leaves out."
-        vm sudo -n sh -c "'umask 077; mkdir -p /root/fleet; cat > /root/fleet/database-url.new && mv -f /root/fleet/database-url.new /root/fleet/database-url'" < "$database_url_file" ||
+        vm sudo -n sh -c "'umask 077; mkdir -p $inputs; cat > $inputs/database-url.new && mv -f $inputs/database-url.new $inputs/database-url'" < "$database_url_file" ||
             die "Could not copy the database URL to the VM."
-        passthrough+=(--database-url-file /root/fleet/database-url)
+        passthrough+=(--database-url-file "$inputs/database-url")
     fi
     if [ -n "$database_ca_file" ]; then
         [ -f "$database_ca_file" ] || die "Cannot read --database-ca-file $database_ca_file."
-        vm sudo -n sh -c "'umask 077; mkdir -p /root/fleet; cat > /root/fleet/database-ca.pem.new && mv -f /root/fleet/database-ca.pem.new /root/fleet/database-ca.pem'" < "$database_ca_file" ||
+        vm sudo -n sh -c "'umask 077; mkdir -p $inputs; cat > $inputs/database-ca.pem.new && mv -f $inputs/database-ca.pem.new $inputs/database-ca.pem'" < "$database_ca_file" ||
             die "Could not copy the database CA certificate to the VM."
-        passthrough+=(--database-ca-file /root/fleet/database-ca.pem)
+        passthrough+=(--database-ca-file "$inputs/database-ca.pem")
     fi
 
     send_payload
     local -a setup_args=(setup)
     interactive || setup_args+=(--non-interactive)
     setup_args+=(${passthrough[@]+"${passthrough[@]}"})
+    if "$dry_run"; then
+        say "Running subspace-setup --dry-run on the VM. It changes nothing there."
+        local status=0
+        vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")" || status=$?
+        vm sudo -n rm -rf "$inputs" || note "Remove $inputs on the VM by hand."
+        [ "$status" = 0 ] || die "The dry run failed; read subspace-setup's output above."
+        say "Dry run complete. Run the same command without --dry-run to install."
+        return
+    fi
     say "Running subspace-setup on the VM. This takes a while the first time."
     vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")"
 
