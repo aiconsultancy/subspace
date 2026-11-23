@@ -1,7 +1,8 @@
 //! Reading pull requests the PRs Space does not hold well enough to
 //! answer: one background read per request of the keys not already being
-//! read, each key in turn, dropped if the account changed meanwhile and
-//! landing stale if a list refresh came while it ran.
+//! read, each key in turn and each landing as its request completes,
+//! dropped if the account changed meanwhile and landing stale if a list
+//! refresh came while it ran.
 
 use std::sync::Arc;
 
@@ -10,16 +11,25 @@ use subspace_framework::client_github::Client;
 use subspace_framework::contracts::github::ResolutionState;
 use subspace_framework::core::http::Error;
 
+use super::access::Decision::{Refusal, Success};
 use super::{announce, cache_key, details};
 use crate::Github;
 use crate::navigation::requested_pr;
 
-/// When a read started: the [`super::References`] generation and refresh
-/// count.
+/// When a read was queued: the [`super::References`] generation and
+/// refresh count. Each of its requests takes its own tick of the one read
+/// clock as it starts ([`super::access`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Epoch {
     generation: u64,
     refreshes: u64,
+}
+
+/// One key's answer, with the tick its request started at.
+struct Answer {
+    key: String,
+    started: u64,
+    state: ResolutionState,
 }
 
 /// Starts one background read of the `keys` not already being read, and
@@ -46,81 +56,121 @@ pub(super) fn read(
         refreshes: references.refreshes,
     };
     if !fresh.is_empty() {
-        spawn_read(client, login, fresh, epoch, cx);
+        let clock = references.clock.clone();
+        spawn_read((client, clock), login, fresh, epoch, cx);
     }
     ResolutionState::Pending
 }
 
 fn spawn_read(
-    client: Arc<Client>,
+    (client, clock): (Arc<Client>, super::access::Clock),
     login: String,
     keys: Vec<String>,
     epoch: Epoch,
     cx: &mut Context<Github>,
 ) {
     cx.spawn(async move |this, cx| {
-        let account = login.clone();
-        let answers = cx
-            .background_spawn(async move { read_all(&client, &account, keys) })
-            .await;
-        _ = this.update(cx, |board, cx| land(board, &login, answers, epoch, cx));
+        for key in keys {
+            let (client, clock, account) = (client.clone(), clock.clone(), login.clone());
+            let answer = cx
+                .background_spawn(async move { read_one(&client, &clock, &account, key) })
+                .await;
+            let landed = this.update(cx, |board, cx| land(board, &login, answer, epoch, cx));
+            if !matches!(landed, Ok(true)) {
+                break;
+            }
+        }
     })
     .detach();
 }
 
-/// Reads each key in turn, so one request never fans out into many calls.
-fn read_all(client: &Client, login: &str, keys: Vec<String>) -> Vec<(String, ResolutionState)> {
-    keys.into_iter()
-        .map(|key| {
-            let read = client
-                .item(login, &key)
-                .and_then(|detail| requested_pr((detail, ()), &key));
-            let state = match read {
-                Ok((detail, ())) => {
-                    ResolutionState::Available(details(&detail.item, &detail.check_runs))
-                }
-                Err(error) => refused(&error),
-            };
-            (key, state)
-        })
-        .collect()
+/// Reads one key. The keys of a read are read in turn, so one request
+/// never fans out into many calls, and each lands as it completes. Each
+/// request takes its tick as it starts, so a read of another path that
+/// started while an earlier key was being read is older than it.
+fn read_one(client: &Client, clock: &super::access::Clock, login: &str, key: String) -> Answer {
+    let started = clock.tick();
+    let read = client
+        .item(login, &key)
+        .and_then(|detail| requested_pr((detail, ()), &key));
+    let state = match read {
+        Ok((detail, ())) => ResolutionState::Available(details(&detail.item, &detail.check_runs)),
+        Err(error) => refused(&error),
+    };
+    Answer {
+        key,
+        started,
+        state,
+    }
 }
 
+/// Lands one key's answer and announces it, so a refusal answers as soon
+/// as its own request completes. False when a forget came since the read
+/// was queued: its answer is dropped and the rest of its keys are not
+/// read, but what GitHub said about access stands, as it is about the
+/// account that made the request, whatever another account did.
 fn land(
     board: &mut Github,
     login: &str,
-    answers: Vec<(String, ResolutionState)>,
+    answer: Answer,
     epoch: Epoch,
     cx: &mut Context<Github>,
-) {
+) -> bool {
     let references = &mut board.references;
+    let Answer {
+        key,
+        started,
+        state,
+    } = answer;
+    let key = cache_key(login, &key);
     if references.generation != epoch.generation {
-        return;
+        current(references, &key, &state, started);
+        announce(cx);
+        return false;
     }
     // A read that started before the last refresh is older than the list.
     let older = references.refreshes != epoch.refreshes;
-    for (key, state) in answers {
-        let key = cache_key(login, &key);
-        references.reading.remove(&key);
+    references.reading.remove(&key);
+    if current(references, &key, &state, started) {
         if older {
             references.stale.insert(key.clone());
         } else {
             references.stale.remove(&key);
         }
+        references.read_at.insert(key.clone(), started);
         references.answers.insert(key, state);
     }
     announce(cx);
+    true
+}
+
+/// Whether `state`, read for `key` from a read that started at `started`,
+/// still stands: a success after any refusal, a refusal after any success
+/// ([`super::access`]). Other answers always do.
+fn current(
+    references: &mut super::References,
+    key: &(String, String),
+    state: &ResolutionState,
+    started: u64,
+) -> bool {
+    match state {
+        ResolutionState::Available(_) => super::access::decide(references, key, started, Success),
+        ResolutionState::Unavailable => super::access::decide(references, key, started, Refusal),
+        _ => true,
+    }
 }
 
 /// What a failed read tells the asker, without saying whether a pull
-/// request it cannot read exists.
-fn refused(error: &Error) -> ResolutionState {
+/// request it cannot read exists. A refusal is a 403 (a rate limit is a
+/// 429), a 404 or the 400 GitHub's GraphQL `NOT_FOUND` becomes; any other
+/// 400, such as a query GitHub rejects, is a failure.
+pub(super) fn refused(error: &Error) -> ResolutionState {
     match error {
         Error::Credential(_) | Error::Status { status: 401, .. } => ResolutionState::SignedOut,
-        Error::Status {
-            status: 400 | 403 | 404,
-            ..
-        } => ResolutionState::Unavailable,
+        Error::Status { status: 403, .. } => ResolutionState::Unavailable,
+        error if subspace_framework::client_github::is_not_found(error) => {
+            ResolutionState::Unavailable
+        }
         _ => ResolutionState::Failed,
     }
 }

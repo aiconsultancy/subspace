@@ -14,6 +14,8 @@ pub struct Failure<'a> {
     pub remaining: Option<&'a str>,
     /// `x-ratelimit-reset`, Unix seconds.
     pub reset: Option<&'a str>,
+    /// `Retry-After`, which GitHub sends with a secondary rate limit.
+    pub retry_after: Option<&'a str>,
     /// GitHub's JSON `message`, or empty.
     pub message: &'a str,
 }
@@ -84,18 +86,31 @@ pub fn rejected(credential: &Credential, account: &str) -> Error {
     status(http_status::UNAUTHORIZED, message)
 }
 
+/// The message of a plain 403: GitHub refusing this account one resource.
+const ACCESS_REFUSED: &str = "GitHub refused access (HTTP 403).";
+
+/// Whether `error` is a plain 403 from [`http_failure`]: GitHub refusing
+/// the account one resource, not a rate limit, an SSO requirement or a
+/// rejected credential. Work over many items can skip that item rather
+/// than stop.
+// qual:api
+pub fn is_access_refusal(error: &Error) -> bool {
+    matches!(error, Error::Status { status: http_status::FORBIDDEN, message } if message == ACCESS_REFUSED)
+}
+
 /// Maps a failed HTTP response (not 401) to a message.
 pub fn http_failure(account: &str, api: Api, failure: Failure<'_>) -> Error {
     let Failure {
         status: code,
         remaining,
         reset,
+        retry_after,
         message,
     } = failure;
     if matches!(
         code,
         http_status::FORBIDDEN | http_status::TOO_MANY_REQUESTS
-    ) && (remaining == Some("0") || is_rate_limit(message))
+    ) && (remaining == Some("0") || retry_after.is_some() || is_rate_limit(message))
     {
         return status(
             http_status::TOO_MANY_REQUESTS,
@@ -114,6 +129,9 @@ pub fn http_failure(account: &str, api: Api, failure: Failure<'_>) -> Error {
             "GitHub took too long to answer (its 10-second query limit); try again.",
         ),
         (Api::Rest, http_status::NOT_FOUND) => not_found(),
+        // Lost or missing access: kept as 403 so callers can tell it from
+        // a transient failure. Rate limits and SSO are classified above.
+        (_, http_status::FORBIDDEN) => status(http_status::FORBIDDEN, ACCESS_REFUSED),
         _ => status(
             http_status::BAD_GATEWAY,
             format!("GitHub request failed (HTTP {code})."),

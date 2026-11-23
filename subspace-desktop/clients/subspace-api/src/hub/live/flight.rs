@@ -60,12 +60,14 @@ pub(in crate::hub) struct LiveReads {
     // A normal first load may still have an older response in flight.
     pub issue_after_load: Option<ReadKey>,
     pub list_after_load: Option<ReadKey>,
-    /// Streams that turned live, and the catch-ups their `ready` began, so
-    /// a test can wait for the catch-up that follows the latest `ready`.
+    /// The id of the latest `ready`, counting from 1, and of the latest
+    /// `ready` whose catch-up has been taken, so a test can wait for the
+    /// catch-up that follows the latest `ready`. A stream dropped before its
+    /// catch-up leaves no debt: the next `ready` gets a new id.
     #[cfg(test)]
-    pub readies: u64,
+    pub latest_ready: u64,
     #[cfg(test)]
-    pub ready_catch_ups: u64,
+    pub caught_up_ready: u64,
 }
 
 #[cfg(test)]

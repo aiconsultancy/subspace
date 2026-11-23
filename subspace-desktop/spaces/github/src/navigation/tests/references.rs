@@ -21,9 +21,16 @@ use super::loading::{client, response};
 use super::{KEY, mount, seed};
 use crate::Github;
 
+mod access;
 mod checks;
+mod codes;
+mod forget;
+mod meanwhile;
+mod newer;
 mod privacy;
 mod refresh;
+
+use meanwhile::Meanwhile;
 
 const ASKER: &str = "fixture-channels";
 const ASKS: BoardContracts = BoardContracts::new(&[
@@ -289,20 +296,6 @@ fn signing_out_answers_signed_out_until_someone_signs_in(cx: &mut TestAppContext
     assert!(heard(&listener, cx) > before, "the sign-in is announced");
     assert!(title(&ask(KEY, cx)).is_some());
     assert!(mock.requests().is_empty());
-}
-
-#[gpui_kit::test]
-fn another_account_signing_out_forgets_reads_and_reads_again(cx: &mut TestAppContext) {
-    let mock = Mock::new(|_| (200, null_repository()));
-    let (_, listener, cx) = routed(cx, Some(&mock));
-    ask(KEY, cx);
-    heard(&listener, cx);
-    assert!(matches!(ask(KEY, cx), ResolutionState::Unavailable));
-    emit(SignInEvent::SignedOut("other-account".into()), cx);
-    heard(&listener, cx);
-    assert!(matches!(ask(KEY, cx), ResolutionState::Pending));
-    heard(&listener, cx);
-    assert_eq!(mock.requests().len(), 2, "read again after the sign-out");
 }
 
 #[gpui_kit::test]

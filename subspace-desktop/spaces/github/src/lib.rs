@@ -625,12 +625,18 @@ impl Github {
         let repos = self.section_scope(section);
         let started = Instant::now();
         let since = references::since(self);
+        let clock = references::clock(self);
         cx.spawn(async move |this, cx| {
             let fetch_login = login.clone();
-            let result = cx
-                .background_spawn(
-                    async move { client.section(&fetch_login, section, repos.as_deref()) },
-                )
+            // The section's tick is taken as its request starts.
+            let (tick, result) = cx
+                .background_spawn(async move {
+                    let tick = clock.tick();
+                    (
+                        tick,
+                        client.section(&fetch_login, section, repos.as_deref()),
+                    )
+                })
                 .await;
             _ = this.update(cx, |this, cx| {
                 if this.read_generation(&account_key) != generation {
@@ -649,7 +655,7 @@ impl Github {
                 account.reloading_sections &= account.loading();
                 if loaded {
                     this.save_cache(cx);
-                    references::section_landed(this, &login, since, cx);
+                    references::section_landed(this, &login, (section, tick), since, cx);
                 }
                 search_index::start_prefetch(this, cx);
                 this.rebuild(cx);
@@ -747,6 +753,7 @@ impl Github {
                 key,
                 debounce,
                 since: references::since(self),
+                clock: references::clock(self),
             },
             cx,
         );
