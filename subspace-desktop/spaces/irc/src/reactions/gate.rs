@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn nothing_goes_in_private_before_the_roster_loads() {
-        let loading = Roster::default().with_loading(true);
+        let loading = Roster::for_catalogue(&[], false);
         let unknown = Target::Query("aurora-lyra".into());
         assert_eq!(
             gate((&unknown, &loading), "\u{1F44D}", true, Via::Ordinary),

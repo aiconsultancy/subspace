@@ -104,12 +104,15 @@ impl Roster {
         }
     }
 
-    /// This roster, marked as read while the initiatives are not known
-    /// for the current account and organisation (`loading`), when it
-    /// knows no agent yet.
-    pub(crate) fn with_loading(mut self, loading: bool) -> Self {
-        self.loading = loading && self.agents.is_empty();
-        self
+    /// The roles of `initiatives`, as [`Self::for_initiatives`], marked
+    /// as read while the initiatives are not `known` for the current
+    /// account and organisation: then a nick it does not name is not known
+    /// to be a person, whatever agents it still names.
+    pub(crate) fn for_catalogue(initiatives: &[&MemberInitiative], known: bool) -> Self {
+        Self {
+            loading: !known,
+            ..Self::for_initiatives(initiatives)
+        }
     }
 
     /// Whether `nick` may still turn out to be an agent: the initiatives

@@ -137,15 +137,15 @@ impl InitiativeIrc {
             return Rc::clone(held);
         }
         let catalog = self.catalog.read(cx);
-        let roster = Rc::new(
-            Roster::for_initiatives(&initiatives_on(
+        let roster = Rc::new(Roster::for_catalogue(
+            &initiatives_on(
                 catalog.memberships(),
                 networks,
                 network,
                 self.loopback_fixture,
-            ))
-            .with_loading(!catalog.memberships_known()),
-        );
+            ),
+            catalog.memberships_known(),
+        ));
         self.rosters
             .borrow_mut()
             .insert(network.clone(), Rc::clone(&roster));

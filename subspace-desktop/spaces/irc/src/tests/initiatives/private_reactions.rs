@@ -124,6 +124,21 @@ fn people_react_to_each_other_in_private(cx: &mut TestAppContext) {
     });
 }
 
+/// Reacts 👍 to `id` in aurora-lyra's private conversation; the
+/// conversation and how many commands had been sent before.
+fn react_privately(
+    (board, hub): (&Entity<Irc>, &Entity<Hub>),
+    id: &str,
+    cx: &mut VisualTestContext,
+) -> (Entity<Conversation>, usize) {
+    let (_, conversation) = private((board, hub), "aurora-lyra", id, cx);
+    let before = sent(hub, cx);
+    conversation.update(cx, |view, cx| {
+        crate::conversation::reacting::toggle(view, (id.into(), "👍".into()), true, None, cx);
+    });
+    (conversation, before)
+}
+
 #[gpui_kit::test]
 fn no_private_reaction_goes_while_the_initiatives_could_not_be_read(cx: &mut TestAppContext) {
     let (board, hub, cx) = ship(cx);
@@ -137,12 +152,30 @@ fn no_private_reaction_goes_while_the_initiatives_could_not_be_read(cx: &mut Tes
         })
     });
     settle(cx);
-    let (_, conversation) = private((&board, &hub), "aurora-lyra", "q3", cx);
-    let before = sent(&hub, cx);
-    conversation.update(cx, |view, cx| {
-        crate::conversation::reacting::toggle(view, ("q3".into(), "👍".into()), true, None, cx);
-    });
+    let (conversation, before) = react_privately((&board, &hub), "q3", cx);
     assert_eq!(sent(&hub, cx), before, "nothing is sent");
+    conversation.read_with(cx, |view, _| {
+        assert_eq!(
+            view.reacting.notice.as_deref(),
+            Some(crate::reactions::gate::ROSTER_LOADING)
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_failed_refresh_after_a_good_one_closes_private_reactions_again(cx: &mut TestAppContext) {
+    let (board, hub, cx) = ship(cx);
+    // The same account's next read answers NotFound: the initiatives,
+    // and so who is an agent, are unknown again.
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            let gone = Err(subspace_api_client::Error::NotFound);
+            catalog.set_memberships_for_test(Some("fixture-user".into()), gone, cx);
+        })
+    });
+    settle(cx);
+    let (conversation, before) = react_privately((&board, &hub), "q4", cx);
+    assert_eq!(sent(&hub, cx), before, "nothing is sent to a known agent");
     conversation.read_with(cx, |view, _| {
         assert_eq!(
             view.reacting.notice.as_deref(),

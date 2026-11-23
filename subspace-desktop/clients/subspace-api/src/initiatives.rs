@@ -62,10 +62,11 @@ impl Catalog {
         !self.items.is_empty()
     }
 
-    /// Whether a read of the memberships has succeeded for the current
+    /// Whether the latest read of the memberships succeeded for the current
     /// account and organisation, so who belongs to which fleet is known.
-    /// False before the first read lands, after one failed or was refused,
-    /// and once the account or organisation changes.
+    /// False before the first read lands, after a read failed or was
+    /// refused, also after earlier ones succeeded, and once the account or
+    /// organisation changes.
     pub fn memberships_known(&self) -> bool {
         self.known == Some(self.scope)
     }
@@ -263,9 +264,9 @@ impl Catalog {
                 Error::NotFound | Error::SignInNeeded | Error::Forbidden | Error::OrganisationNeeded
             )
         );
-        if result.is_ok() {
-            self.known = Some(self.scope);
-        }
+        // Known only while the latest read succeeded: a failed or refused
+        // one leaves who is an agent unknown again.
+        self.known = result.is_ok().then_some(self.scope);
         if !self.failed {
             let items = result.unwrap_or_default();
             if self.items != items {
