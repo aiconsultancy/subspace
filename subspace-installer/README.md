@@ -51,6 +51,11 @@ sudo ./install.sh --config ~/fleet.json
 sudo systemctl status subspace-fleet-gateway.service
 ```
 
+The two example files are the smallest fleet that installs: a rear admiral
+and one captain on a remote IRC server with certificates, so the secrets
+file holds no IRC password, and every optional feature off.
+[Optional settings](#optional-settings) shows the others together.
+
 For remote IRC, register a SASL account for the rear admiral and each
 captain, such as `example-atlas` and `example-orion`. They sign in with a
 certificate each, whose fingerprints the installer prints for you to bind to
@@ -1328,6 +1333,43 @@ directory, for an [existing PostgreSQL](#an-existing-postgresql):
 `/root/fleet/database-url`, root's alone with mode `0600`, and the optional
 `/root/fleet/database-ca.pem`. The host installers copy them there from
 `--database-url-file` and `--database-ca-file`.
+
+### Optional settings
+
+This fragment of a `fleet.json` adds this page's optional settings to the
+example: repository notes, a captain's `sessionRoot` and Slack bots for the
+rear admiral and the captain. Leave out any of them. Each bot needs its two
+token files in the [secrets directory](#secrets-directory), here
+`fleet.secrets/atlas/` and `fleet.secrets/orion/`. The captain's
+`sessionRoot` names the default, which a captain already pinned in its first
+repository cannot take. With an IRC server that cannot take
+certificates, set `"auth": "password"` and add `ircPasswords` to the
+secrets file. An [existing PostgreSQL](#an-existing-postgresql) for the API
+is a `subspace-setup` option, not part of this file.
+
+```json
+{
+  "rearAdmiral": {
+    "id": "atlas", "name": "Atlas", "account": "example-atlas",
+    "slack": { "appId": "A0EXAMPLE01", "users": ["U0EXAMPLE01"], "channels": ["C0EXAMPLE01"] }
+  },
+  "captains": [
+    {
+      "id": "orion", "name": "Orion", "account": "example-orion",
+      "sessionRoot": "workspace",
+      "slack": { "appId": "A0EXAMPLE02", "users": ["U0EXAMPLE01"], "channels": ["C0EXAMPLE02"], "mentionOnly": true }
+    }
+  ],
+  "repositories": [
+    {
+      "id": "project", "url": "https://github.com/example/project.git",
+      "description": "The example service.",
+      "tracker": "Example issues at https://tracker.example.com/project"
+    }
+  ],
+  "irc": { "mode": "remote", "host": "irc.example.com", "allowedAccounts": ["operator"], "auth": "certificate" }
+}
+```
 
 ## Operate a fleet
 

@@ -1420,6 +1420,8 @@ class IrcCertificateTests(unittest.TestCase):
 
     def setUp(self):
         self.config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+        # The example names the default explicitly; these tests check the default itself.
+        del self.config["irc"]["auth"]
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.work = Path(temporary.name)
@@ -1457,6 +1459,32 @@ class IrcCertificateTests(unittest.TestCase):
         # Account names fold: a password under another spelling of an officer's account is still refused.
         with self.assertRaisesRegex(Invalid, "Remove their entries from ircPasswords"):
             validate(self.config, {**self.SECRETS, "ircPasswords": {"Example-Orion": "fixture-password"}})
+
+    def test_the_example_files_are_an_installable_pair(self):
+        # Quick start copies both files: remote IRC with certificates, so the secrets hold no officer password.
+        root = Path(__file__).resolve().parents[1]
+        cfg = validate(json.loads((root / "fleet.example.json").read_text()),
+                       json.loads((root / "secrets.example.json").read_text()))
+        self.assertEqual((cfg["irc"]["auth"], cfg["passwords"]), ("certificate", {}))
+        # Every optional feature is off: no repositories (so no crew or pinned root), no Slack bot, no API.
+        self.assertEqual((cfg["repositories"], cfg["api"], cfg["agentDispatch"]), ({}, None, None))
+        self.assertFalse(any("slack" in person or "sessionRoot" in person or person["crew"]
+                             for person in cfg["members"]))
+        self.assertFalse(runtime.rear_root(cfg))
+
+    def test_the_readmes_optional_settings_complete_the_example(self):
+        root = Path(__file__).resolve().parents[1]
+        readme = (root / "README.md").read_text()
+        fragment = json.loads(re.search(r"### Optional settings\n.*?```json\n(.*?)```", readme, re.S).group(1))
+        config = {**json.loads((root / "fleet.example.json").read_text()), **fragment}
+        cfg = validate(config, json.loads((root / "secrets.example.json").read_text()))
+        rear, orion = cfg["members"]
+        self.assertEqual((rear["slack"]["appId"], orion["slack"]["appId"], orion["sessionRoot"]),
+                         ("A0EXAMPLE01", "A0EXAMPLE02", "workspace"))
+        self.assertEqual(cfg["repositoryNotes"]["project"]["tracker"],
+                         "Example issues at https://tracker.example.com/project")
+        self.assertEqual(cfg["irc"]["auth"], "certificate")
+        self.assertTrue(runtime.rear_root(cfg))
 
     def test_passwords_remain_an_explicit_choice(self):
         self.config["irc"]["auth"] = "password"
