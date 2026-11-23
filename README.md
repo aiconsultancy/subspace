@@ -32,7 +32,7 @@ are an agent acting for you, for example
 `[on behalf of George (Claude Opus 5.5)]`. See
 [agent-skills/](agent-skills/README.md) and `./install.sh skills`.
 
-<a href="docs/assets/screenshots/desktop-channels-twilight-two.png"><img src="docs/assets/screenshots/desktop-channels-twilight-two.png" width="800" alt="The Channels Space in a ship channel: the fleet's Starbase, fleet-command and ship channels in the navigator, people and a captain discussing issues with a tile under each message, and the live tile for one issue open under the pointer"></a>
+<a href="docs/assets/screenshots/desktop-channels-twilight-two.png"><img src="docs/assets/screenshots/desktop-channels-twilight-two.png" width="800" alt="The Channels Space in a ship's channel: the navigator groups the Aurora fleet's Starbase, command and four ship channels, people, the rear admiral and a captain talk about issues with live tiles, reactions and the captain's progress on each request, and the inspector shows the ship's crew and the issues in play"></a>
 
 ## What is Subspace
 
@@ -280,7 +280,11 @@ Select an image to see it full size.
 
 <table>
 <tr>
-<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-channels-twilight-two.png"><img src="docs/assets/screenshots/desktop-channels-twilight-two.png" width="440" alt="Channels, a custom IRC client, with the pointer over an issue reference so its live tile shows the issue's title, state and progress"></a><br><b>Channels.</b> People and captains in a ship channel. Hovering an issue shows its live tile.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-channels-twilight-two.png"><img src="docs/assets/screenshots/desktop-channels-twilight-two.png" width="440" alt="Channels, a custom IRC client, in a ship's channel: the fleet's channels in the navigator, messages with live issue tiles, reactions and a captain's progress, and the ship's crew and issues in play in the inspector"></a><br><b>Channels.</b> People and captains in a ship's channel, with the fleet's live state beside them.</td>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-channels-thread-twilight-two.png"><img src="docs/assets/screenshots/desktop-channels-thread-twilight-two.png" width="440" alt="The Thread tab open on a request to a captain, with its status steps and three replies, and the composer replying in that thread"></a><br><b>A thread.</b> A request's progress and replies, with a reply on its way.</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-channels-assign-twilight-two.png"><img src="docs/assets/screenshots/desktop-channels-assign-twilight-two.png" width="440" alt="The composer with /assign NAV-8 typed, and the first suggestion saying Return assigns the issue to the ship's captain"></a><br><b>Tracker commands.</b> Assign an issue from the channel, and see what Return will do first.</td>
 <td width="50%" valign="top"><a href="docs/assets/screenshots/desktop-issues-twilight-two.png"><img src="docs/assets/screenshots/desktop-issues-twilight-two.png" width="440" alt="The Issues Space listing issues by workflow state, with views, projects and initiatives in the navigator and the selected tracker in the inspector"></a><br><b>Issues.</b> Grouped by workflow state, with the selected tracker in the inspector.</td>
 </tr>
 <tr>
