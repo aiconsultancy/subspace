@@ -53,6 +53,8 @@ accounts:
     advertise-scram: true
     require-sasl:
         enabled: true
+    # Sign-in through the Subspace API, rendered only when IRC_AUTH_API_URL is set.
+@@AUTH_SCRIPT@@
     nick-reservation:
         enabled: true
         additional-nick-limit: 0
@@ -97,6 +99,9 @@ logging:
       level: info
 debug:
     recover-from-errors: true
+
+# Ergo's auth-script does not work with environment overrides (ergochat/ergo#2275).
+allow-environment-overrides: false
 
 lock-file: /ircd/ircd.lock
 datastore:

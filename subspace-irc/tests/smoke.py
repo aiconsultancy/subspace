@@ -300,6 +300,14 @@ def smoke():
         ).stdout
         context = ssl.create_default_context(cadata=cert)
         check_cost(12)
+        # Without IRC_AUTH_API_URL the auth hook is absent and no token is written.
+        config = compose(
+            "exec", "-T", "irc", "cat", "/run/subspace-irc/ircd.yaml", capture=True,
+        ).stdout
+        assert "auth-script:" not in config and "allow-environment-overrides: false" in config
+        assert compose(
+            "exec", "-T", "irc", "test", "-e", "/run/subspace-irc/auth-token", check=False,
+        ).returncode == 1
         exercise(plain, tls, context, operator_pw, agent_pw)
         check_seeded(plain, agent_pw, captain_pw, "Fleet coordination", "nst")
         check_websocket(ws, "http://localhost:3000")
