@@ -14,6 +14,8 @@ pub struct Failure<'a> {
     pub remaining: Option<&'a str>,
     /// `x-ratelimit-reset`, Unix seconds.
     pub reset: Option<&'a str>,
+    /// `Retry-After`, which GitHub sends with a secondary rate limit.
+    pub retry_after: Option<&'a str>,
     /// GitHub's JSON `message`, or empty.
     pub message: &'a str,
 }
@@ -90,12 +92,13 @@ pub fn http_failure(account: &str, api: Api, failure: Failure<'_>) -> Error {
         status: code,
         remaining,
         reset,
+        retry_after,
         message,
     } = failure;
     if matches!(
         code,
         http_status::FORBIDDEN | http_status::TOO_MANY_REQUESTS
-    ) && (remaining == Some("0") || is_rate_limit(message))
+    ) && (remaining == Some("0") || retry_after.is_some() || is_rate_limit(message))
     {
         return status(
             http_status::TOO_MANY_REQUESTS,
