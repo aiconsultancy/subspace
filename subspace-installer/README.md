@@ -525,19 +525,35 @@ and remove the old one with `NickServ CERT DEL`.
 **Keep passwords.** For a server that cannot do SASL EXTERNAL, set
 `"auth": "password"` under `irc` and supply each officer's password in
 `ircPasswords`. A remote fleet installed before certificates became the
-default has those passwords: the installer refuses it until you either set
-`"auth": "password"`, or move to certificates. To move without a gap,
-generate each officer's bundle yourself, for example
+default has those passwords: the installer refuses it, a dry run included,
+until you either set `"auth": "password"`, or move to certificates. The
+installed fleet keeps signing in with its passwords until the upgrade, so
+to move without a gap, work on your copies of the inputs in this order:
 
-```sh
-umask 077
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
-  -days 3650 -sha256 -subj "/CN=example-orion" -keyout key.pem -out irc-client.pem
-cat key.pem >> irc-client.pem && rm key.pem
-```
+1. In your secrets file, remove the rear admiral's and the captains'
+   entries from `ircPasswords` (keep any for allowlisted humans in local
+   mode). In `fleet.json`, leave `irc.auth` out or set it to
+   `"certificate"`.
+2. Generate each officer's bundle yourself and put it in your secrets
+   directory as `<officer-id>/irc-client.pem`, mode `0600`, for example
 
-supply it, bind the fingerprints `--dry-run` prints, then remove the
-officers' `ircPasswords` entries and upgrade.
+   ```sh
+   umask 077
+   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+     -days 3650 -sha256 -subj "/CN=example-orion" -keyout key.pem -out irc-client.pem
+   cat key.pem >> irc-client.pem && rm key.pem
+   ```
+
+3. Run the installer with `--dry-run` and those inputs, such as
+   `sudo ./install.sh upgrade --config ~/fleet.json --secrets-dir ~/fleet.secrets --dry-run`.
+   It prints a `NickServ CERT ADD` line with each supplied bundle's
+   fingerprint, marked `(supplied)`.
+4. Bind those fingerprints on the IRC server.
+5. Upgrade with the same inputs, without `--dry-run`.
+
+Without step 2 the dry run cannot print fingerprints, because the VM
+generates the certificates during the upgrade: the install summary prints
+them, and the officers stay off IRC until you bind them.
 
 **The Ergo the installer manages keeps passwords for now**, in local mode
 and on `subspace-setup`'s shared server alike: `subspace-setup` writes
@@ -1493,9 +1509,11 @@ one is refused, none of them is applied.
   remote fleet whose secrets file has IRC passwords for its rear admiral or
   captains, and whose `fleet.json` does not set `irc.auth`, is refused until
   you either add `"auth": "password"` under `irc` or move to certificates
-  ([IRC sign-in](#irc-sign-in)). To move without a gap, supply bundles you
-  generated yourself, bind the fingerprints the dry run prints, then remove
-  the officers' `ircPasswords` entries and upgrade. Local IRC keeps
+  ([IRC sign-in](#irc-sign-in)). To move without a gap, remove the
+  officers' `ircPasswords` entries from your copy of the secrets file and
+  supply bundles you generated yourself, dry-run to print their
+  fingerprints, bind them on the server, then upgrade; "Keep passwords"
+  under IRC sign-in has the steps. Local IRC keeps
   passwords. `subspace-setup` writes `"auth": "password"` for a shared
   server on its next run, so upgrade those fleets through setup (or the
   host installer), not with the fleet installer and the installed inputs

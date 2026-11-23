@@ -1616,6 +1616,30 @@ class IrcCertificateTests(unittest.TestCase):
         with self.assertRaisesRegex(Invalid, "certificate and its unencrypted private key"):
             runtime.irc_bundles(cfg, self.work / "fleet.secrets")
 
+    def test_the_readmes_move_from_passwords_to_certificates_works_in_its_order(self):
+        config, secrets = self.work / "fleet.json", self.work / "fleet.secrets.json"
+        config.write_text(json.dumps(self.config))
+
+        def dry_run():
+            secrets.chmod(0o600)
+            output = io.StringIO()
+            with patch.object(runtime, "IRC_CERTS", self.work / "installed"), contextlib.redirect_stdout(output):
+                runtime.main(["plan", str(config), str(secrets), str(self.work / "fleet.secrets"), "false"])
+            return output.getvalue()
+        # An installed remote fleet's secrets still hold the officers' passwords: even the dry run is refused.
+        secrets.write_text(json.dumps({**self.SECRETS, "ircPasswords": {
+            "example-atlas": "fixture-password", "example-orion": "fixture-password"}}))
+        with self.assertRaisesRegex(Invalid, "Remove their entries from ircPasswords"):
+            dry_run()
+        # 1. Remove them; 2. supply bundles; 3. the dry run prints each fingerprint to bind (4) before upgrading (5).
+        secrets.write_text(json.dumps(self.SECRETS))
+        bundles = {agent: self.bundle(f"example-{agent}") for agent in ("atlas", "orion")}
+        for agent, bundle in bundles.items():
+            self.supply(agent, bundle)
+        text = dry_run()
+        for agent, bundle in bundles.items():
+            self.assertIn(f"/msg NickServ CERT ADD example-{agent} {self.fingerprint(bundle)} (supplied)", text)
+
     def test_dry_run_prints_fingerprints_for_binding_and_never_key_material(self):
         supplied = self.bundle("example-orion")
         self.supply("orion", supplied)
