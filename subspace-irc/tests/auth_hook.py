@@ -1,12 +1,15 @@
 """Exercise sign-in through the auth hook against a stub API, using the real image."""
 
 import base64
+import hashlib
 import json
 import os
 import secrets
 import ssl
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -31,7 +34,19 @@ FAIL_CLOSED = {
     "sirc1.nameless": "hook-nameless",
     "sirc1.operator": "hook-mapper",
     "sirc1.hang": "hook-hang",
+    "sirc1.dupcase": "hook-dupcase-user",
+    "sirc1.echo": "hook-echo",
+    "sirc1.short": "hook-short-user",
+    "sirc1.huge": "hook-huge-user",
+    "sirc1.seeded": "hook-seed-mapper",
+    "sirc1.handmade": "hook-hand-mapper",
+    "sirc1.badname": "hook-badname",
+    "sirc1.reserved": "hook-reserved",
 }
+# Names that refused answers carried; none may become an account.
+CREATED_NEVER = ("hook-status", "hook-redirect", "hook-twice", "hook-string", "hook-array",
+                 "hook-dupcase", "hook-short", "hook-huge")
+FLOOD = 100
 
 
 def sasl(port, account, password, context=None):
@@ -92,6 +107,7 @@ def smoke():
         IRC_AUTH_API_URL=API_URL + "/",
         IRC_AUTH_API_TOKEN_FILE=TOKEN_PATH,
         IRC_AUTH_API_CA_FILE=CA_PATH,
+        IRC_AUTH_LOCAL_ACCOUNTS="hook-handmade, Hook-Other-Local",
         IRC_PLAIN_PORT="0",
         IRC_TLS_PORT="0",
         IRC_WS_PORT="0",
@@ -200,53 +216,92 @@ def smoke():
             config = irc_exec("cat", "/run/subspace-irc/ircd.yaml").stdout
             assert "    auth-script:\n        enabled: true\n" in config
             for setting in ('command: "/ircd-bin/subspace-auth"', "autocreate: true", "timeout: 9s",
-                            "kill-timeout: 1s", "max-concurrency: 64"):
+                            "kill-timeout: 1s", "max-concurrency: 256"):
                 assert setting in config, setting
             assert "allow-environment-overrides: false" in config
             assert "registration:\n        enabled: false" in config
             assert "require-sasl:\n        enabled: true" in config
             assert "force-nick-equals-account: true" in config
-            mode = irc_exec("stat", "-c", "%a %u", "/run/subspace-irc/auth-token").stdout.split()
-            assert mode == ["600", "10001"], mode
+            for path in ("/run/subspace-irc/auth-token", "/run/subspace-irc/local-accounts.json"):
+                mode = irc_exec("stat", "-c", "%a %u", path).stdout.split()
+                assert mode == ["600", "10001"], (path, mode)
             assert irc_exec("stat", "-c", "%a %u", "/run/subspace-irc").stdout.split() == ["700", "10001"]
-            assert "request" not in logs("auth-stub"), "the bootstrap server must not call the hook"
+            local_list = json.loads(irc_exec("cat", "/run/subspace-irc/local-accounts.json").stdout)
+            assert local_list == sorted([AGENT, OPERATOR, "hook-handmade", "hook-other-local"]), local_list
+            assert not stub_requests(), "the bootstrap server must not call the hook"
 
             # Accepted: signed in under the name the API returned, account created without a password.
             with signs_in(plain, "hook-presented@laptop", "sirc1.valid", "hook-member") as member:
                 member.send("PRIVMSG NickServ :PASSWD sirc1.valid replacement-pw replacement-pw")
                 member.expect("managed externally")
             assert account_exists(plain, "hook-member")
-            assert f"request {OPERATOR}" not in logs("auth-stub")
+            # Extra fields are ignored; Ergo gets a fresh object with the validated name.
+            signs_in(plain, "hook-extra-user", "sirc1.extra", "hook-extra").__exit__()
             # The same credential for another presented name is refused by the stub.
             refused(plain, "hook-other", "sirc1.valid")
             refused(plain, "hook-refused", "sirc1.refuse")
             for passphrase, name in FAIL_CLOSED.items():
                 refused(plain, name, passphrase)
-            # Seeded local accounts still sign in while the hook is on.
-            signs_in(plain, OPERATOR, operator_pw, OPERATOR).__exit__()
-            for name in ["hook-refused", "hook-other", *FAIL_CLOSED.values()]:
+            for name in ["hook-refused", "hook-other", *FAIL_CLOSED.values(), *CREATED_NEVER]:
                 assert not account_exists(plain, name), f"{name} must not be created"
-            # A password without the credential prefix never reaches the API.
+
+            # Local logins never reach the API: seeded accounts, the operator even with a
+            # prefixed passphrase, listed hand-made accounts and unprefixed passwords.
+            signs_in(plain, OPERATOR, operator_pw, OPERATOR).__exit__()
+            refused(plain, OPERATOR, "sirc1.valid")
+            refused(plain, "HOOK-HANDMADE", "sirc1.valid")
+            refused(plain, "hook-other-local@phone", "sirc1.valid")
             refused(plain, "hook-local-only", "plain-local-password")
 
-            # Certificate login (SASL EXTERNAL) with no passphrase reaches the API.
+            # Certificate logins stay local while IRC_AUTH_CERT_LOGINS is off.
             server_cert = irc_exec("openssl", "x509", "-in", "/ircd/local-tls.pem").stdout
             client_context = ssl.create_default_context(cadata=server_cert)
             client_context.load_cert_chain(directory / "client.pem")
-            signs_in(port(6697), "hook-cert-nick", None, "hook-cert", client_context).__exit__()
-            assert account_exists(plain, "hook-cert")
+            fingerprint = hashlib.sha256(ssl.PEM_cert_to_DER_cert(client_cert)).hexdigest()
+            with signs_in(plain, AGENT, agent_pw, AGENT) as agent:
+                agent.send(f"PRIVMSG NickServ :CERT ADD {fingerprint}")
+                agent.expect("successfully added")
+            signs_in(port(6697), "hook-cert-nick", None, AGENT, client_context).__exit__()
 
             requests = stub_requests()
-            assert "hook-presented" in requests and "certfp" in requests, requests
-            for name in (AGENT, OPERATOR, "hook-local-only"):
+            assert "hook-presented" in requests and "hook-extra-user" in requests, requests
+            for name in (AGENT, OPERATOR, "HOOK-HANDMADE", "hook-other-local", "hook-local-only", "certfp"):
                 assert name not in requests, f"local login for {name} reached the API"
 
             irc_logs = logs("irc")
-            for reason in ("answered HTTP 500", "answered HTTP 302", "unreachable or timed out",
-                           "answered with an invalid body"):
-                assert f"subspace-auth: Subspace API {reason}" in irc_logs, reason
-            assert not any(value in irc_logs for value in secrets_in_logs), "credential in Ergo logs"
-            print("Passed hook sign-in, autocreation, refusal, fail-closed answers and local fallback")
+            for reason in ("answered HTTP 500", "answered HTTP 302", "request failed (curl exit 28)",
+                           "request failed (curl exit 63)",
+                           "answered with an invalid body", "named a local-only account"):
+                assert f"subspace-auth: Subspace API {reason}" in irc_logs, (
+                    reason, sorted({line.split("subspace-auth: ")[1] for line in irc_logs.splitlines()
+                                    if "subspace-auth: " in line}))
+            # A body shorter than its Content-Length: a partial file (18), or a receive
+            # error (56) when the TLS stream ends without a close_notify.
+            assert any(f"request failed (curl exit {code})" in irc_logs for code in (18, 56))
+            for text in (*secrets_in_logs, "INJECTED", "API text never logged"):
+                assert text not in irc_logs, "API or credential text in Ergo logs"
+            print("Passed hook sign-in, fresh answers, local-only accounts and fail-closed answers")
+
+            # A slow API must not starve local logins: hold more API-bound logins than
+            # the old 64 slots, then time the operator's login while they wait.
+            flood = [threading.Thread(target=refused, args=(plain, f"hook-flood-{i}", "sirc1.hang"))
+                     for i in range(FLOOD)]
+            flood_started = time.monotonic()
+            for thread in flood:
+                thread.start()
+            deadline = flood_started + 3
+            while sum(name.startswith("hook-flood-") for name in stub_requests()) < FLOOD:
+                assert time.monotonic() < deadline, "flood did not reach the stub"
+                time.sleep(0.2)
+            started = time.monotonic()
+            signs_in(plain, OPERATOR, operator_pw, OPERATOR).__exit__()
+            elapsed = time.monotonic() - started
+            # Each flood login holds its slot for curl's four-second limit.
+            assert time.monotonic() - flood_started < 4, "flood ended before the operator login"
+            for thread in flood:
+                thread.join(30)
+            assert elapsed < 2, f"operator login waited {elapsed:.1f}s behind the API"
+            print(f"Passed operator login in {elapsed:.2f}s with {FLOOD} hanging API logins")
 
             # API down: local accounts still sign in; API credentials do not.
             compose("stop", "auth-stub")
@@ -256,37 +311,47 @@ def smoke():
 
             # TLS is verified: without the private CA the stub's certificate is refused.
             compose("up", "--wait", "--wait-timeout", "60", "--force-recreate",
-                    overrides={"IRC_AUTH_API_CA_FILE": ""}, check=True)
+                    overrides={"IRC_AUTH_API_CA_FILE": ""})
             refused(port(), "hook-presented", "sirc1.valid")
-            assert "unreachable or timed out" in logs("irc")
+            assert "request failed (curl exit 60)" in logs("irc")
             print("Passed API outage fallback and TLS verification")
 
-            # A custom credential prefix: only passphrases with it reach the API.
+            # A custom prefix, and certificate logins forwarded when enabled. The API's
+            # answer then overrides the local NickServ CERT mapping.
             compose("up", "--wait", "--wait-timeout", "60", "--force-recreate",
-                    overrides={"IRC_AUTH_PASSPHRASE_PREFIX": "custom-"})
+                    overrides={"IRC_AUTH_PASSPHRASE_PREFIX": "custom-", "IRC_AUTH_CERT_LOGINS": "true"})
             signs_in(port(), "hook-custom-user", "custom-valid", "hook-custom").__exit__()
             refused(port(), "hook-sirc-user", "sirc1.valid")
+            signs_in(port(6697), "hook-cert-nick", None, "hook-cert", client_context).__exit__()
+            assert account_exists(port(), "hook-cert")
             requests = stub_requests()
-            assert "hook-custom-user" in requests and "hook-sirc-user" not in requests, requests
-            print("Passed the passphrase prefix filter and certificate login")
+            assert "hook-custom-user" in requests and "certfp" in requests, requests
+            assert "hook-sirc-user" not in requests, requests
+            print("Passed the passphrase prefix and certificate forwarding")
 
             compose("stop", "irc")
             fails_to_start("IRC_AUTH_API_URL needs the hook token", IRC_AUTH_API_TOKEN_FILE="")
             fails_to_start("Set only one of IRC_AUTH_API_TOKEN and IRC_AUTH_API_TOKEN_FILE",
                            IRC_AUTH_API_TOKEN=hook_token)
             fails_to_start("The hook token must be", IRC_AUTH_API_TOKEN_FILE="",
-                           IRC_AUTH_API_TOKEN="short")
+                           IRC_AUTH_API_TOKEN="too-short-for-the-api-0123456")
             fails_to_start("Cannot read IRC_AUTH_API_TOKEN_FILE", IRC_AUTH_API_TOKEN_FILE="/run/missing")
             for url in ("ftp://auth-stub", "https://user:pw@auth-stub", "https://auth-stub/?q=1", "auth-stub"):
                 fails_to_start("IRC_AUTH_API_URL must be an http or https URL", IRC_AUTH_API_URL=url)
+            fails_to_start("must use https unless IRC_AUTH_API_ALLOW_HTTP=true", IRC_AUTH_API_URL="http://auth-stub")
+            # With plain HTTP allowed, the URL passes and start-up reaches the next check.
+            fails_to_start("IRC_AUTH_PASSPHRASE_PREFIX must be", IRC_AUTH_API_URL="http://auth-stub",
+                           IRC_AUTH_API_ALLOW_HTTP="true", IRC_AUTH_PASSPHRASE_PREFIX="has space")
+            fails_to_start("must be true or false", IRC_AUTH_CERT_LOGINS="yes")
             fails_to_start("IRC_AUTH_API_CA_FILE must be readable", IRC_AUTH_API_CA_FILE="/run/missing.pem")
-            fails_to_start("need IRC_AUTH_API_URL", IRC_AUTH_API_URL="")
-            fails_to_start("IRC_AUTH_PASSPHRASE_PREFIX must be", IRC_AUTH_PASSPHRASE_PREFIX="has space")
             fails_to_start("IRC_AUTH_PASSPHRASE_PREFIX must be", IRC_AUTH_PASSPHRASE_PREFIX="tab\tprefix")
+            fails_to_start("Set only one of IRC_AUTH_LOCAL_ACCOUNTS and IRC_AUTH_LOCAL_ACCOUNTS_FILE",
+                           IRC_AUTH_LOCAL_ACCOUNTS_FILE=TOKEN_PATH)
+            fails_to_start("Seeded passwords must not start with IRC_AUTH_PASSPHRASE_PREFIX",
+                           IRC_ACCOUNTS_JSON=json.dumps([{"name": AGENT, "password": "sirc1.seeded-pw"}]))
+            fails_to_start("need IRC_AUTH_API_URL", IRC_AUTH_API_URL="")
             fails_to_start("need IRC_AUTH_API_URL", IRC_AUTH_API_URL="", IRC_AUTH_API_TOKEN_FILE="",
-                           IRC_AUTH_API_CA_FILE="", IRC_AUTH_PASSPHRASE_PREFIX="custom-")
-            fails_to_start("need IRC_AUTH_API_URL", IRC_AUTH_API_URL="", IRC_AUTH_API_TOKEN_FILE="",
-                           IRC_AUTH_API_CA_FILE="", IRC_AUTH_API_TOKEN=hook_token)
+                           IRC_AUTH_API_CA_FILE="", IRC_AUTH_LOCAL_ACCOUNTS="", IRC_AUTH_CERT_LOGINS="true")
             print("Passed hook start-up validation")
         except BaseException:
             compose("logs", "--tail", "60", check=False)

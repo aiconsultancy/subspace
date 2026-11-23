@@ -19,7 +19,7 @@ INPUT_KEYS = {"accountName", "passphrase", "certfp", "peerCerts", "ip"}
 
 
 def answer(name, passphrase):
-    """Return (status, body bytes, delay in seconds) for one login."""
+    """Return (status, body bytes, delay in seconds, declared length) for one login."""
     def body(value):
         return value if isinstance(value, bytes) else json.dumps(value).encode()
 
@@ -40,12 +40,32 @@ def answer(name, passphrase):
         "sirc1.nameless": (200, {"success": True}),
         "sirc1.operator": (200, {"success": True, "accountName": OPERATOR.upper()}),
         "sirc1.hang": (200, {"success": True, "accountName": "hook-hang"}),
+        # Go matches JSON keys without regard to case: "Success" would win in Ergo.
+        "sirc1.dupcase": (200, b'{"success":false,"Success":true,"accountName":"hook-dupcase"}'),
+        "sirc1.echo": (200, {"success": False, "error": f"bad {passphrase}\nINJECTED log line"}),
+        "sirc1.extra": (200, {"success": True, "accountName": "hook-extra",
+                              "displayName": "Extra", "error": "API text never logged"}),
+        "sirc1.short": (200, {"success": True, "accountName": "hook-short"}),
+        "sirc1.huge": (200, {"success": True, "accountName": "hook-huge", "padding": "x" * 70000}),
+        "sirc1.seeded": (200, {"success": True, "accountName": "HOOK-AGENT"}),
+        "sirc1.handmade": (200, {"success": True, "accountName": "hook-handmade"}),
+        "sirc1.badname": (200, {"success": True, "accountName": "bad name!"}),
+        "sirc1.reserved": (200, {"success": True, "accountName": "NickServ"}),
     }
     status, value = answers.get(passphrase, (200, {"success": False}))
-    return status, body(value), 8 if passphrase == "sirc1.hang" else 0
+    data = body(value)
+    # A body shorter than its declared Content-Length.
+    declared = len(data) + 100 if passphrase == "sirc1.short" else len(data)
+    return status, data, 8 if passphrase == "sirc1.hang" else 0, declared
 
 
 class Handler(BaseHTTPRequestHandler):
+    def setup(self):
+        # Handshake in the request's own thread, so many concurrent clients
+        # are not serialised behind the accept loop.
+        self.request = CONTEXT.wrap_socket(self.request, server_side=True)
+        super().setup()
+
     def do_POST(self):
         expected = f"Bearer {TOKEN}"
         if not hmac.compare_digest(self.headers.get("Authorization", ""), expected):
@@ -64,16 +84,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, json.dumps({"success": True, "accountName": "hook-cert"}).encode())
         name = request.get("accountName", "")
         print("request", name, flush=True)
-        status, body, delay = answer(name, request.get("passphrase", ""))
+        status, body, delay, declared = answer(name, request.get("passphrase", ""))
         time.sleep(delay)
-        self.reply(status, body)
+        self.reply(status, body, declared)
 
-    def reply(self, status, body):
+    def reply(self, status, body, declared=None):
         self.send_response(status)
         if status == 302:
             self.send_header("Location", "https://example.com/")
         self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(len(body) if declared is None else declared))
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -84,8 +104,13 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-context.load_cert_chain("/stub/cert.pem", "/stub/key.pem")
-server = ThreadingHTTPServer(("0.0.0.0", 8443), Handler)
-server.socket = context.wrap_socket(server.socket, server_side=True)
-server.serve_forever()
+class Server(ThreadingHTTPServer):
+    request_queue_size = 512
+
+    def handle_error(self, request, client_address):
+        pass  # Health checks connect without TLS.
+
+
+CONTEXT = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+CONTEXT.load_cert_chain("/stub/cert.pem", "/stub/key.pem")
+Server(("0.0.0.0", 8443), Handler).serve_forever()
