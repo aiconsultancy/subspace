@@ -263,3 +263,24 @@ fn what_is_in_play_keeps_the_order_a_message_names_it() {
         "within the cap of eight"
     );
 }
+
+#[test]
+fn a_new_recognition_never_gives_an_issue_and_a_kept_pull_request_one_place() {
+    let pr = TileRef::PullRequest("acme/web#492".into());
+    let issue = TileRef::Issue("NAV-6".into());
+    let mut owners = TileOwners::default();
+    owners.claim([(1, std::slice::from_ref(&pr))]);
+    // A new scope recognises the issue named first in the same message:
+    // issues are let go and the message is read again.
+    owners.release_issues();
+    let now = [issue.clone(), pr.clone()];
+    owners.claim([(1, now.as_slice())]);
+    let places: std::collections::HashSet<_> = owners.0.values().collect();
+    assert_eq!(places.len(), 2, "each claim has a place of its own");
+    assert_eq!(
+        owners.in_play(),
+        [issue.clone(), pr.clone()],
+        "as the message names them"
+    );
+    assert_eq!(owners.in_play_first(1), [issue]);
+}

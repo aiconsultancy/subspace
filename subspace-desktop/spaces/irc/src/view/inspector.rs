@@ -1,9 +1,9 @@
 //! The inspector of a fleet channel, with tabs (the owner's exception in
-//! the design guide's *Inspector tabs*): a ship's channel has **Ship** and
-//! **People**, a Starbase **Starbase** and **People**, every tab about the
-//! channel in front. A later change adds **Thread**, the third and last
-//! tab the shell draws. Other conversations keep the member list under its
-//! title, without tabs.
+//! the design guide's *Inspector tabs*): a ship's channel has **Ship**,
+//! **Thread** and **People**, a Starbase **Starbase**, **Thread** and
+//! **People**, every tab about the channel in front, and three the most the
+//! shell draws. Other conversations keep the member list under its title,
+//! without tabs.
 //!
 //! What a ship or Starbase tab shows comes from the fleet's Fleet API as
 //! the hub holds it ([`crate::live`]); while the fleet is not live the tab
@@ -31,6 +31,7 @@ mod ship;
 mod starbase;
 #[cfg(test)]
 mod tests;
+pub(crate) mod thread;
 
 #[cfg(test)]
 pub(crate) use reason::reason;
@@ -41,11 +42,13 @@ pub(crate) enum InspectorTab {
     /// The channel's ship, or its fleet for a Starbase.
     #[default]
     Subject,
+    /// The thread chosen in the conversation ([`crate::thread`]).
+    Thread,
     People,
 }
 
 impl InspectorTab {
-    const ALL: [Self; 2] = [Self::Subject, Self::People];
+    const ALL: [Self; 3] = [Self::Subject, Self::Thread, Self::People];
 
     fn index(self) -> usize {
         Self::ALL
@@ -90,15 +93,19 @@ impl Subject {
     }
 }
 
-/// The tabs of a fleet channel's inspector: its subject, then its people
-/// with their count when it is known.
+/// The tabs of a fleet channel's inspector: its subject, its thread, then
+/// its people with their count when it is known.
 pub(crate) fn tabs(subject: &Subject, people: Option<usize>) -> Vec<ShellTab> {
     let people_tab = ShellTab::new("People");
     let people_tab = match people {
         Some(count) => people_tab.count(count.to_string()),
         None => people_tab,
     };
-    vec![ShellTab::new(subject.label()), people_tab]
+    vec![
+        ShellTab::new(subject.label()),
+        ShellTab::new("Thread"),
+        people_tab,
+    ]
 }
 
 /// The channel in front, its fleet's word and its roster, for a fleet
@@ -125,6 +132,11 @@ fn front(board: &Irc, cx: &App) -> Option<Front> {
         roster,
         fleet,
     })
+}
+
+/// Asks for the answers of what the Ship tab's **In play here** lists.
+pub(crate) fn want_in_play(board: &Irc, cx: &mut Context<Irc>) {
+    play::want(board, cx);
 }
 
 /// The inspector: a fleet channel's ship or Starbase and its people under
@@ -166,7 +178,12 @@ fn tabbed(board: &Irc, cx: &mut Context<Irc>) -> Option<workspace::Inspector> {
     let board_entity = cx.entity().downgrade();
     let body = match board.inspector_tab {
         InspectorTab::People => people(members, cx),
+        InspectorTab::Thread => thread::body(board, cx),
         InspectorTab::Subject => subject_body(board, &front, cx),
+    };
+    let footer = match board.inspector_tab {
+        InspectorTab::Thread => thread::footer(board, cx),
+        _ => None,
     };
     let title = format!("{} details", front.channel);
     let inspector = workspace::Inspector::new("irc-inspector", title)
@@ -176,6 +193,8 @@ fn tabbed(board: &Irc, cx: &mut Context<Irc>) -> Option<workspace::Inspector> {
             move |index, _, _, cx| {
                 _ = board_entity.update(cx, |board, cx| {
                     board.inspector_tab = InspectorTab::at(index);
+                    // Shown now: ask for what In play here lists.
+                    want_in_play(board, cx);
                     cx.notify();
                 });
             },
@@ -185,7 +204,10 @@ fn tabbed(board: &Irc, cx: &mut Context<Irc>) -> Option<workspace::Inspector> {
             cx.listener(|board, _, _, cx| dock::toggle_members(board, cx)),
         )
         .child(body);
-    Some(inspector)
+    Some(match footer {
+        Some(footer) => inspector.footer(footer),
+        None => inspector,
+    })
 }
 
 /// The People tab: the channel's member list, as without tabs.
@@ -199,9 +221,9 @@ fn people(members: Option<Entity<MemberList>>, cx: &App) -> AnyElement {
     }
 }
 
-/// The subject tab: the ship or the Starbase.
+/// The subject tab: the ship or the Starbase. Like every tab, it starts
+/// at the inspector body's own text edge, with no inset of its own.
 fn subject_body(board: &Irc, front: &Front, cx: &App) -> AnyElement {
-    let tokens = Tokens::current(cx);
     let content = match &front.subject {
         Subject::Ship { captain } => ship::body(board, front, captain, cx),
         Subject::Starbase => starbase::body(front, cx),
@@ -212,8 +234,6 @@ fn subject_body(board: &Irc, front: &Front, cx: &App) -> AnyElement {
         .w_full()
         .min_w_0()
         .gap_4()
-        .px(workspace::text_edge(&tokens))
-        .py_3()
         .child(content)
         .into_any_element()
 }

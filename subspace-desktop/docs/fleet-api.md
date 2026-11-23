@@ -162,7 +162,32 @@ so nothing asks to unlock the keychain without the person asking. The fleet
 stays **Keychain locked** while it is read again, the page hears
 `subspace:fleets-changed` only if the read finds something new, and the
 service reads one fleet's token again at most once every five seconds,
-whoever asks.
+whoever asks; a **Retry** asked sooner reads each fleet it covered once,
+when that fleet's own five seconds end, never one saved, cleared or removed
+since, and never again on a timer.
+
+Every read, save and clear of a fleet's token runs on that fleet's one
+ordered path (`service/queue.rs`; each fleet has its own, so a keychain
+call that waits on one fleet never holds up another): each waits for the
+one before and applies its result before the next starts, so the keychain and the service change in the
+order they were asked for, and a save asked before a clear never writes
+after the delete. A clear stops the token being used, followed or shared
+at once. A save, a clear or the fleet leaving the initiatives starts a new
+token generation for the fleet, and a read queued before it is dropped when
+it lands, so a cleared or replaced token never comes back, in memory or in
+the keychain. A token or address that cannot be saved is refused before
+anything changes, and a save that fails reads the keychain again, so the
+fleet never stays **Checking**. When the keychain refuses to delete a
+cleared token, the fleet says **Token not removed** (`ClearFailed`): the
+token is not used, followed or shared, a Retry does not bring it back,
+and Settings says the keychain may still hold it at the next start and
+offers **Clear token** again; saving a token also resolves it. The token stays out of
+use until a delete or a replacement write succeeds, also when a save queued
+after the clear fails. A Retry waiting from an older token generation is
+dropped when the generation changes, and each waiting Retry consumes only
+its own place. Each fleet
+has at most one re-read queued, and a waiting Retry checks the deadline
+again before reading, so one click never reads the keychain twice.
 See the Fleet Console's [README](../web-spaces/fleet-console/README.md#fleets).
 
 ## Fixtures

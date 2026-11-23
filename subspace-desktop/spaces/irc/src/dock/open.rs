@@ -226,6 +226,9 @@ fn conversation_event(
             }
         }
         ConversationEvent::Closed => closed(board, conversation, window, cx),
+        ConversationEvent::OpenThread(root) => {
+            crate::thread::open(board, &buffer, root.clone(), window, cx);
+        }
     }
 }
 

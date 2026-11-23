@@ -19,7 +19,7 @@ use crate::live::tests::aurora;
 use crate::{Irc, rows, view};
 
 /// The hub told the aurora fleet is in `state`, with the fixture's ships.
-fn set_fleet(hub: &Entity<Hub>, state: FleetState, cx: &mut VisualTestContext) {
+pub(super) fn set_fleet(hub: &Entity<Hub>, state: FleetState, cx: &mut VisualTestContext) {
     hub.update(cx, |hub, cx| {
         hub.fleets = [("aurora".to_owned(), aurora(state))].into();
         cx.notify();
@@ -41,12 +41,12 @@ pub(super) fn ship_people(
     (board, hub, cx)
 }
 
-fn live() -> FleetState {
+pub(super) fn live() -> FleetState {
     FleetState::Followed(Link::Live)
 }
 
 #[gpui_kit::test]
-fn a_live_ship_channel_s_inspector_has_ship_and_people_tabs(cx: &mut TestAppContext) {
+fn a_live_ship_channel_s_inspector_has_ship_thread_and_people_tabs(cx: &mut TestAppContext) {
     let (board, hub, cx) = ship(cx);
     set_fleet(&hub, live(), cx);
     cx.update(|window, _| {
@@ -54,6 +54,7 @@ fn a_live_ship_channel_s_inspector_has_ship_and_people_tabs(cx: &mut TestAppCont
         assert_eq!(tabs.label(), Some("#aurora-lyra details"));
         let tabs = window.within("workspace-inspector-tabs");
         assert!(tabs.try_find_by_label("Ship").is_some());
+        assert!(tabs.try_find_by_label("Thread").is_some());
         assert!(tabs.try_find_by_label("People, 4").is_some());
         assert!(window.find("irc-inspector-ship").visible());
         assert_eq!(
@@ -75,7 +76,7 @@ fn a_live_ship_channel_s_inspector_has_ship_and_people_tabs(cx: &mut TestAppCont
             "no member list here"
         );
     });
-    cx.update(|window, cx| window.click(("workspace-inspector-tab", 1usize), cx));
+    cx.update(|window, cx| window.click(("workspace-inspector-tab", 2usize), cx));
     settle(cx);
     board.read_with(cx, |board, _| {
         assert_eq!(board.inspector_tab, view::InspectorTab::People);

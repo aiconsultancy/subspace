@@ -203,3 +203,31 @@ fn a_folded_fleet_says_it_hides_a_mention(cx: &mut TestAppContext) {
         ["You were mentioned in this group"]
     );
 }
+
+#[gpui_kit::test]
+fn a_folded_fleet_that_takes_in_the_network_s_rows_opens_as_the_network_s_group_was(
+    cx: &mut TestAppContext,
+) {
+    let (board, hub, cx) = two_fleets(cx, true);
+    let group = rows::fleet_group_key(&network_id(), "borealis");
+    board.read_with(cx, |board, _| assert!(board.list.is_folded(&group)));
+    // Aurora's initiative goes: Borealis is now the network's only fleet,
+    // and its group takes in the network's own rows, which showed.
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(vec![borealis()]), cx);
+        })
+    });
+    settle(cx);
+    board.read_with(cx, |board, _| {
+        let held = board.list.groups().iter().find(|held| held.key == group);
+        assert!(
+            held.and_then(rows::absorbed_network).is_some(),
+            "the group took in the network's rows"
+        );
+        assert!(
+            !board.list.is_folded(&group),
+            "the network's rows that showed still show"
+        );
+    });
+}

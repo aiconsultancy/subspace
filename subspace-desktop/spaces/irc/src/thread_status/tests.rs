@@ -15,21 +15,21 @@ mod trust;
 
 /// The fixture ship's account, as the server reports it: named after its
 /// nick, as fleet servers require.
-const SHIP: &str = "astra";
+pub(crate) const SHIP: &str = "astra";
 
-fn room() -> BufferKey {
+pub(crate) fn room() -> BufferKey {
     channel("#ops")
 }
 
 /// The ship `astra`, logged in to [`SHIP`].
-fn ship() -> Member {
+pub(crate) fn ship() -> Member {
     let mut ship = member("astra", "+");
     ship.account = Some(SHIP.into());
     ship
 }
 
 /// Our request `id` to astra in `buffer`.
-fn request(buffer: &BufferKey, id: &str, minute: i64) -> Line {
+pub(crate) fn request(buffer: &BufferKey, id: &str, minute: i64) -> Line {
     let mut line = message(
         buffer,
         "subspace",
@@ -41,14 +41,14 @@ fn request(buffer: &BufferKey, id: &str, minute: i64) -> Line {
 }
 
 /// Our request `id` in the thread of `root`.
-fn follow_up(buffer: &BufferKey, id: &str, root: &str, minute: i64) -> Line {
+pub(crate) fn follow_up(buffer: &BufferKey, id: &str, root: &str, minute: i64) -> Line {
     let mut line = request(buffer, id, minute);
     line.reply_to = Some(root.into());
     line
 }
 
 /// A tagged notice from `nick`, logged in to `account`, answering `request`.
-fn notice_from(
+pub(crate) fn notice_from(
     (nick, account): (&str, Option<&str>),
     buffer: &BufferKey,
     request: &str,
@@ -64,12 +64,12 @@ fn notice_from(
 }
 
 /// The ship's progress notice on `request`.
-fn progress(buffer: &BufferKey, request: &str, value: &str, minute: i64) -> Line {
+pub(crate) fn progress(buffer: &BufferKey, request: &str, value: &str, minute: i64) -> Line {
     notice_from(("astra", Some(SHIP)), buffer, request, value, minute)
 }
 
 /// A visible message from astra; a reply to `request` when one is given.
-fn said(buffer: &BufferKey, request: Option<&str>, id: &str, minute: i64) -> Line {
+pub(crate) fn said(buffer: &BufferKey, request: Option<&str>, id: &str, minute: i64) -> Line {
     let mut line = message(buffer, "astra", "Visible text.", minute);
     line.id = Some(id.into());
     line.account = Some(SHIP.into());
@@ -91,7 +91,7 @@ fn connected() -> Event {
 }
 
 /// Connected and in `#ops` with `members`, holding nothing yet.
-fn joined(members: Vec<Member>) -> IrcState {
+pub(crate) fn joined(members: Vec<Member>) -> IrcState {
     let mut state = IrcState::new(&[config()], Vec::new());
     state.apply(connected(), at(0));
     state.apply(Event::Joined { buffer: room() }, at(0));
@@ -105,7 +105,7 @@ fn joined(members: Vec<Member>) -> IrcState {
     state
 }
 
-fn live(state: &mut IrcState, lines: impl IntoIterator<Item = Line>) {
+pub(crate) fn live(state: &mut IrcState, lines: impl IntoIterator<Item = Line>) {
     for line in lines {
         state.apply(Event::Line(line), at(30));
     }

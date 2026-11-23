@@ -82,11 +82,17 @@ pub(crate) struct TileOwners(HashMap<TileRef, (i64, usize)>);
 impl TileOwners {
     /// The rule: each reference of `messages`, read in order, that has no
     /// owner yet goes to the message that names it first. An owner is
-    /// never replaced.
+    /// never replaced, but a message read again (as a new recognition reads
+    /// every held message) gives its own claims their place among the
+    /// references it names now, so a kept pull request and a newly
+    /// recognised issue never share a place.
     pub fn claim<'a>(&mut self, messages: impl IntoIterator<Item = (i64, &'a [TileRef])>) {
         for (seq, refs) in messages {
             for (at, found) in refs.iter().enumerate() {
-                self.0.entry(found.clone()).or_insert((seq, at));
+                let claim = self.0.entry(found.clone()).or_insert((seq, at));
+                if claim.0 == seq {
+                    claim.1 = at;
+                }
             }
         }
     }
@@ -121,9 +127,20 @@ impl TileOwners {
     /// Every reference with a tile, in the order the conversation first
     /// showed them, message by message and within a message as it named
     /// them: what is in play in it, so a cap keeps the first named.
+    #[cfg(test)]
     pub fn in_play(&self) -> Vec<TileRef> {
+        self.in_play_first(usize::MAX)
+    }
+
+    /// The first `limit` of [`Self::in_play`], chosen before any is
+    /// cloned or the rest are sorted.
+    pub fn in_play_first(&self, limit: usize) -> Vec<TileRef> {
         let mut owned: Vec<(&(i64, usize), &TileRef)> =
             self.0.iter().map(|(found, claim)| (claim, found)).collect();
+        if limit < owned.len() {
+            owned.select_nth_unstable_by_key(limit, |(claim, _)| **claim);
+            owned.truncate(limit);
+        }
         owned.sort_unstable_by_key(|(claim, _)| **claim);
         owned.into_iter().map(|(_, found)| found.clone()).collect()
     }
@@ -145,9 +162,10 @@ impl Tiles {
         TileRef::of(found).is_some_and(|found| self.owners.shows(seq, &found))
     }
 
-    /// What is in play in the conversation; see [`TileOwners::in_play`].
-    pub fn in_play(&self) -> Vec<TileRef> {
-        self.owners.in_play()
+    /// The first `limit` of what is in play in the conversation; see
+    /// [`TileOwners::in_play_first`].
+    pub fn in_play_first(&self, limit: usize) -> Vec<TileRef> {
+        self.owners.in_play_first(limit)
     }
 
     /// Of `messages`, those not yet read under `recognition`.

@@ -19,8 +19,7 @@ pub(crate) fn message(
     cx: &App,
 ) -> (AnyElement, Vec<String>) {
     let tokens = Tokens::current(cx);
-    let hub = context.hub.upgrade();
-    let shown = displayed(original, hub.as_ref().map(|hub| hub.read(cx)));
+    let shown = shown_now(original, context, cx);
     let entry = shown.as_ref().unwrap_or(original);
     let nick = entry.line.from.clone().unwrap_or_default();
     let id: SharedString = format!("irc-line:{}", entry.seq).into();
@@ -76,19 +75,70 @@ pub(crate) fn message(
     (row, identifiers)
 }
 
+/// `original` as the hub shows it now: with resolved uploads' text hidden,
+/// when any is ([`displayed`]).
+fn shown_now(original: &Entry, context: &RowContext, cx: &App) -> Option<Entry> {
+    let hub = context.hub.upgrade();
+    displayed(original, hub.as_ref().map(|hub| hub.read(cx)))
+}
+
+/// A message as the inspector's Thread tab shows it: its sender, rank and
+/// time unless it `continues` their group, then its text with its
+/// references, as the transcript draws them. No avatar, tiles, thread facts
+/// or attachments: the transcript keeps those.
+pub(crate) fn thread_message(
+    original: &Entry,
+    continues: bool,
+    context: &RowContext,
+    cx: &App,
+) -> AnyElement {
+    let tokens = Tokens::current(cx);
+    let shown = shown_now(original, context, cx);
+    let entry = shown.as_ref().unwrap_or(original);
+    let nick = entry.line.from.clone().unwrap_or_default();
+    let rendered = markup::rich(&entry.line.text, &context.mentions);
+    let rank = context
+        .roster
+        .verified(&nick, entry.line.account.as_deref());
+    v_flex()
+        .id(SharedString::from(format!("irc-thread-line:{}", entry.seq)))
+        .role(Role::Group)
+        .aria_label(spoken(entry, rendered.as_ref()))
+        .test_support()
+        .w_full()
+        .min_w_0()
+        .gap_0p5()
+        .when(!continues, |column| {
+            column.child(header(entry, &nick, rank, &tokens, cx))
+        })
+        .when(!entry.line.text.is_empty(), |column| {
+            column.child(body(entry, rendered.as_ref(), context, &tokens, cx))
+        })
+        .into_any_element()
+}
+
 /// What a message's thread says under it: the reply count, then the status
-/// line of a request in progress or its settled line once it ended.
+/// line of a request in progress or its settled line once it ended. Where
+/// the inspector has a Thread tab, either opens the thread, and a request's
+/// line carries the count itself.
 fn thread_facts(entry: &Entry, context: &RowContext, tokens: &Tokens, cx: &App) -> Vec<AnyElement> {
-    crate::transcript::replies::metadata(entry, &context.replies, tokens)
-        .into_iter()
-        .chain(crate::transcript::status::line(
-            entry,
-            &context.statuses,
-            context.now,
-            tokens,
-            cx,
-        ))
-        .collect()
+    let link = crate::transcript::replies::link(entry, context);
+    let on_status = context.statuses.contains_key(&entry.seq);
+    crate::transcript::replies::metadata(
+        entry,
+        &context.replies,
+        (link.as_ref(), on_status),
+        tokens,
+    )
+    .into_iter()
+    .chain(crate::transcript::status::line(
+        entry,
+        (&context.statuses, link.as_ref()),
+        context.now,
+        tokens,
+        cx,
+    ))
+    .collect()
 }
 
 /// The message's upload thumbnails, from its text as sent.

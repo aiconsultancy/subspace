@@ -7,7 +7,7 @@ use subspace_client_fleet::{FleetState, Link};
 use subspace_framework::contracts::github::PullRequestStatus;
 use subspace_framework::contracts::issues::{IssueState, StateType};
 
-use super::play::{Mark, PlayLine};
+use super::play::{Answer, Mark, PlayLine};
 use super::reason::{SETTINGS, WAITING, reason};
 use super::ship::{age, figures, here_line, subtitle, work};
 use super::{InspectorTab, Subject, tabs};
@@ -15,7 +15,7 @@ use crate::fleet::ChannelKind;
 use crate::live::tests::{NOW, lyra};
 
 #[test]
-fn a_ship_and_a_starbase_have_their_subject_then_people_and_command_has_no_tabs() {
+fn a_ship_and_a_starbase_have_their_subject_thread_and_people_and_command_has_no_tabs() {
     let ship = Subject::of(&ChannelKind::Ship {
         captain: "aurora-lyra".into(),
     })
@@ -25,18 +25,25 @@ fn a_ship_and_a_starbase_have_their_subject_then_people_and_command_has_no_tabs(
             .map(|tab| tab.accessible_label().to_string())
             .collect::<Vec<_>>()
     };
-    assert_eq!(labels(tabs(&ship, Some(5))), ["Ship", "People, 5"]);
-    let starbase = Subject::of(&ChannelKind::Starbase).unwrap();
-    assert_eq!(labels(tabs(&starbase, None)), ["Starbase", "People"]);
-    assert_eq!(Subject::of(&ChannelKind::Command), None);
-    assert!(tabs(&ship, None).len() < subspace_framework::dashboard::workspace::INSPECTOR_MAX_TABS);
-    assert_eq!(InspectorTab::at(1), InspectorTab::People);
     assert_eq!(
-        InspectorTab::at(9),
-        InspectorTab::Subject,
-        "room for Thread later"
+        labels(tabs(&ship, Some(5))),
+        ["Ship", "Thread", "People, 5"]
     );
-    assert_eq!(InspectorTab::People.index(), 1);
+    let starbase = Subject::of(&ChannelKind::Starbase).unwrap();
+    assert_eq!(
+        labels(tabs(&starbase, None)),
+        ["Starbase", "Thread", "People"]
+    );
+    assert_eq!(Subject::of(&ChannelKind::Command), None);
+    assert_eq!(
+        tabs(&ship, None).len(),
+        subspace_framework::dashboard::workspace::INSPECTOR_MAX_TABS,
+        "three, the most the shell draws"
+    );
+    assert_eq!(InspectorTab::at(1), InspectorTab::Thread);
+    assert_eq!(InspectorTab::at(2), InspectorTab::People);
+    assert_eq!(InspectorTab::at(9), InspectorTab::Subject);
+    assert_eq!(InspectorTab::People.index(), 2);
 }
 
 #[test]
@@ -121,12 +128,21 @@ fn here_now_names_four_then_counts_the_rest() {
     assert_eq!(here_line(&names(7)), "p0, p1, p2, p3 and 3 others");
 }
 
-/// A reference in play, untitled.
+/// A reference in play, untitled, answered when its mark has a state.
 fn in_play(key: &str, mark: Mark) -> PlayLine {
+    let known = match &mark {
+        Mark::Issue(state) => state.is_some(),
+        Mark::PullRequest(status) => status.is_some(),
+    };
     PlayLine {
         key: key.into(),
         title: None,
         mark,
+        answer: if known {
+            Answer::Known
+        } else {
+            Answer::Loading
+        },
     }
 }
 
@@ -140,12 +156,110 @@ fn a_reference_in_play_says_its_state_once_answered() {
         Some("In Review")
     );
     assert_eq!(
-        in_play("acme/web#492", Mark::PullRequest(None)).state(),
-        None
+        in_play("acme/web#492", Mark::PullRequest(None))
+            .state()
+            .as_deref(),
+        Some("Loading"),
+        "never a bare key"
     );
+    let unavailable = PlayLine {
+        answer: Answer::Unavailable,
+        ..in_play("NAV-6", Mark::Issue(None))
+    };
+    assert_eq!(unavailable.state().as_deref(), Some("Unavailable"));
     let merged = Mark::PullRequest(Some(PullRequestStatus::Merged));
     assert_eq!(
         in_play("acme/web#492", merged).state().as_deref(),
         Some("Merged")
     );
+}
+
+#[test]
+fn a_live_fleet_with_no_current_overview_never_says_not_listed() {
+    use super::reason::{FIRST, KEPT, NOT_LISTED, unshown};
+    use crate::live::FleetLive;
+    let live = FleetState::Followed(Link::Live);
+    let first = FleetLive::new(live.clone(), None);
+    assert_eq!(unshown(Some(&first)), FIRST, "before the first overview");
+    let mut kept = crate::live::tests::snapshot();
+    kept.overview.as_mut().unwrap().overview_stale = true;
+    let kept = FleetLive::new(live.clone(), Some(&kept));
+    assert_eq!(unshown(Some(&kept)), KEPT, "data kept, not current");
+    let current = FleetLive::new(live, Some(&crate::live::tests::snapshot()));
+    assert!(current.ship("aurora-ghost").is_none());
+    assert_eq!(
+        unshown(Some(&current)),
+        NOT_LISTED,
+        "a current overview without it"
+    );
+    assert_eq!(unshown(None), FIRST);
+}
+
+#[test]
+fn a_kept_crew_detail_says_so_rather_than_not_arrived() {
+    use super::ship::crew_note;
+    let mut kept = crate::live::tests::snapshot();
+    kept.ships.get_mut("aurora-lyra").unwrap().detail_stale = true;
+    let lyra_kept = crate::live::ship::of(&kept, "aurora-lyra").unwrap();
+    assert!(lyra_kept.members.is_empty());
+    assert_eq!(
+        crew_note(&lyra_kept),
+        "The crew's detail is kept from an earlier read and not current, so it is not shown."
+    );
+    let mut pending = crate::live::tests::snapshot();
+    pending.ships.remove("aurora-lyra");
+    let lyra_pending = crate::live::ship::of(&pending, "aurora-lyra").unwrap();
+    assert_eq!(
+        crew_note(&lyra_pending),
+        "The crew's detail has not arrived yet."
+    );
+    let none = crate::live::ShipLive {
+        crew: None,
+        members: Vec::new(),
+        ..lyra()
+    };
+    assert_eq!(crew_note(&none), "This ship has no crew.");
+}
+
+#[test]
+fn an_unanswered_reference_says_loading_and_a_refused_one_unavailable() {
+    use super::play::standing;
+    let none: Option<&()> = None;
+    assert_eq!(
+        standing(none, false, false),
+        Answer::Loading,
+        "not asked yet"
+    );
+    assert_eq!(standing(Some(&()), false, true), Answer::Loading, "pending");
+    assert_eq!(standing(Some(&()), false, false), Answer::Unavailable);
+    assert_eq!(standing(Some(&()), true, false), Answer::Known);
+}
+
+#[test]
+fn the_thread_tab_draws_the_latest_replies_and_counts_the_rest() {
+    use super::thread::{earlier, earlier_words};
+    use crate::thread::MAX_REPLIES;
+    assert_eq!(earlier(MAX_REPLIES), 0);
+    assert_eq!(earlier(MAX_REPLIES + 5), 5);
+    assert_eq!(earlier_words(1), "1 earlier reply is in the channel.");
+    assert_eq!(earlier_words(5), "5 earlier replies are in the channel.");
+}
+
+#[test]
+fn a_follow_up_request_s_tab_says_its_replies_are_the_thread_s() {
+    use super::thread::replies_heading;
+    let mut thread = crate::thread::Thread {
+        root: crate::state::Entry {
+            seq: 0,
+            line: crate::fixtures::message(&crate::fixtures::channel("#a"), "mira", "Hi.", 1),
+            highlight: false,
+        },
+        timeline: None,
+        replies: Vec::new(),
+        reply_count: 0,
+        nested: false,
+    };
+    assert_eq!(replies_heading(&thread), "Replies");
+    thread.nested = true;
+    assert_eq!(replies_heading(&thread), "Replies in this thread");
 }

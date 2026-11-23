@@ -5,7 +5,7 @@
 use gpui_kit::{Context, Window};
 use subspace_client_irc::Command;
 
-use super::{AgentNotice, agents, ask, batches_lines, validate_draft};
+use super::{AgentNotice, agents, ask, batches_lines, reply, validate_draft};
 use crate::conversation::Conversation;
 
 pub(super) fn submit(
@@ -24,6 +24,10 @@ pub(super) fn submit(
     }
     // Before the attachment sender: an upload would message the agent too.
     if refuse_agent(conversation, &text, cx) {
+        return;
+    }
+    if let Some(replying) = conversation.draft.reply.clone() {
+        send_reply(conversation, &replying, text, window, cx);
         return;
     }
     if crate::uploads::outgoing::submit(conversation, text.clone(), window, cx) {
@@ -56,6 +60,34 @@ fn send_ask(
     match asked {
         ask::Asked::Send(command) => sent(conversation, command, text, window, cx),
         ask::Asked::Refused(reason) => conversation
+            .draft
+            .entity
+            .update(cx, |input, cx| input.set_error(reason.to_owned(), cx)),
+    }
+}
+
+/// Sends `text` as a reply in `replying`'s thread and leaves reply mode,
+/// or keeps the draft and says why not.
+fn send_reply(
+    conversation: &mut Conversation,
+    replying: &reply::ReplyTo,
+    text: String,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    let refusal = if conversation.tray.is_empty() {
+        let state = &conversation.hub.read(cx).state;
+        let network = state.network(&conversation.buffer.network);
+        reply::command(&conversation.buffer, replying, &text, network)
+    } else {
+        Err(reply::ATTACHMENTS)
+    };
+    match refusal {
+        Ok(command) => {
+            sent(conversation, command, text, window, cx);
+            reply::cancel(conversation, window, cx);
+        }
+        Err(reason) => conversation
             .draft
             .entity
             .update(cx, |input, cx| input.set_error(reason.to_owned(), cx)),

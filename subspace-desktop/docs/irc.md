@@ -181,8 +181,13 @@ in `live.rs` and `live/`.
   followed, and drops it when the fleet is no longer shown or the Space is
   hidden. The service opens at most one stream per fleet and closes it with
   the last handle. What the service says of each shown fleet goes to
-  `Hub::fleets`, only when it changed, where the navigator, the headers and
-  the inspector read it. The hub holds only what Channels draws (each
+  the hub as the view's share (`Hub::fleet_views`), only when it changed;
+  `Hub::fleets`, where the navigator, the headers and the inspector read
+  it, is the union of every view's share, so a hidden view never empties
+  what a shown one publishes, and a closed view's share goes with it. The
+  board reaches the fleet service only once a fleet is on show, so a
+  Channels that shows no fleet never starts it, reads no token and never
+  asks to unlock the keychain. The hub holds only what Channels draws (each
   ship as `ShipLive`), so an activity line or a sample time redraws
   nothing. A fleet with no address, no token, a changed address or no
   answer keeps today's behaviour everywhere.
@@ -202,7 +207,11 @@ in `live.rs` and `live/`.
   detail that Stargate kept after a failed read (`detailStale`), or that
   the overview or the detail marks unavailable, gives no crew lines (the
   overview's totals stand in), and a kept overview (`overviewStale`) shows
-  no ships.
+  no ships. Each says so: the Ship and Starbase tabs say **Not current**
+  for a kept overview and **Waiting** before the first one, and **Not
+  listed** only when a current overview lacks the ship; the crew says its
+  detail is kept from an earlier read rather than that it has not
+  arrived.
 - **A ship's dot** follows its crew: a crew member is working while one of
   its contexts has a current task, as Stargate counts `busy`. From the
   ship's detail once it arrives, else the overview's `crew.busy`. A ship
@@ -213,9 +222,10 @@ in `live.rs` and `live/`.
   queued`, `is idle`), then `N of M crew busy` when the API counts the crew.
   Without live data, the vouched status alone, as before.
 - **The inspector** (`view/inspector.rs` and `view/inspector/`) has tabs on
-  a ship's channel (**Ship**, **People**) and a Starbase (**Starbase**,
-  **People**), through `Inspector::tabs` under the design guide's
-  *Inspector tabs*; a later change adds **Thread** as the third. The tab
+  a ship's channel (**Ship**, **Thread**, **People**) and a Starbase
+  (**Starbase**, **Thread**, **People**), through `Inspector::tabs` under
+  the design guide's *Inspector tabs*; **Thread** is described in
+  [The Thread tab](#the-thread-tab). The tab
   list is named `<channel> details`. Other conversations keep the member
   list under its title. **People** is today's member list. **Ship**: a card
   with the captain's agent avatar and crew ring (the Icons setting, through
@@ -224,7 +234,10 @@ in `live.rs` and `live/`.
   queued work) and **Done** (the captain's done jobs), each only when the
   API gives it; **Crew**, each member with a dot, the task's phase and
   summary, and how long (`dates::age`); **In play here**, the issues and pull
-  requests the conversation's tiles show, in order, with their state; and
+  requests the conversation's tiles show, in order, with their state, or
+  **Loading** until answered and **Unavailable** when they cannot be shown
+  (the section asks for its own answers, as a tile's message may be out of
+  view); and
   **Here now**, the channel's members. **Starbase**: **Ships**, one row
   each with the captain's icon, name, state and `avatar::crew_meter`.
   While the fleet is not live the tab says why in one sentence
@@ -631,10 +644,81 @@ no count until it loads, and cyclic relationships get no count.
 `Line::thread_root`'s cycle and missing-parent behaviour. Each conversation
 retains the resulting summaries and shares them across its virtual rows.
 
-Replies remain inline, so every message stays readable. Counts are read-only;
-the pane, reply action, composer and hiding replies from the room come in PR 3.
-Unread and notification behaviour are unchanged in this slice. See the
+Replies remain inline, so every message stays readable. In a ship's channel
+or a Starbase the count reads `3 replies ›` and opens the message's thread
+in the inspector ([The Thread tab](#the-thread-tab)); elsewhere it is
+read-only. Unread and notification behaviour are unchanged. See the
 [count change record](changes/irc-reply-count/README.md).
+
+### The Thread tab
+
+A ship's channel and a Starbase have a **Thread** tab in the inspector,
+between the subject and **People** (`thread.rs`, `view/inspector/thread.rs`).
+It shows one thread at a time: a request, or any message with replies.
+
+- **Opening it.** Choosing a message's `N replies ›`, a request's status
+  line, or Enter on a focused message that has either, opens the inspector
+  on the Thread tab for that message (`ConversationEvent::OpenThread`). In
+  these channels a request's running or settled line carries its count,
+  `Done in 42 m · 3 replies ›`, only when it has replies, and the separate
+  count row is left out. With no thread chosen the tab says, in one line,
+  how to open one.
+- **Contents**, top to bottom: the root message (author, rank, time and
+  text with its reference chips, as the transcript draws them, without
+  avatar or tiles); for a request with trusted progress or an ending,
+  **Status**, a plain list of the steps the agent reported, one per change
+  of the status line's stage (**Accepted**, **Working**, **Waiting for an
+  answer**, **Writing the reply**, then **Done**, **Failed** or **Ended**),
+  each with its server time and how long it lasted, the ending with the
+  request's whole time (`in 42 m`) and a running step with `since 17:50`;
+  then **Replies · N**, grouped by author by the transcript's rule, the
+  latest 40 drawn and the rest counted (`N earlier replies are in the
+  channel.`), or `No replies yet.`
+- **Membership and trust.** A reply is a message whose `+draft/reply`
+  leads, through held parents, to the root of the conversation's thread
+  the chosen message is in, read by the same `ThreadRoots` as the counts,
+  so the tab's replies and the count agree. A follow-up request made as a
+  reply shows its own steps with that thread's replies, under the heading
+  **Replies in this thread**, so the answers to it, and a reply sent from
+  its tab, appear there; its own status line counts no replies, as only a
+  thread's first message carries the thread's count. A kept ending is
+  always the timeline's end: a held notice that ended the request
+  otherwise, or came after the kept ending, is not a step. Nothing in a
+  message's text places it in a thread. A step is a notice the buffer
+  folded under the status line's trust rule (its server account equals the
+  nick the held request asks); an untrusted notice is an ordinary reply and
+  never a step. A request whose ending was kept but none of whose notices
+  before it are held (none at all, or only the ending's) says `The steps before the end are not loaded.`, with **Load
+  around this message** (`Command::LoadAround`) while the network is
+  connected and keeps `draft/chathistory`.
+- **Lifetime.** The chosen thread is kept per conversation for the session
+  (`thread::Threads`), across the inspector's tabs and switching
+  conversations. It is rebuilt only when its buffer's held lines change, by
+  a fingerprint of their count, ends, folded count and the root's ending,
+  so a sync that leaves the buffer alone reads none of its lines; it goes
+  once its root is no longer held (the line cap, or the conversation
+  removed). A reply being written to it then stays in reply mode, marked
+  gone: the row says the thread is no longer loaded, Enter sends nothing,
+  not even a command, Escape keeps it, and only **Write to the channel**
+  leaves reply mode, keeping the text. New replies and steps show live. A linked status line
+  keeps a status element inside its button, so its changes are still
+  announced.
+- **Replying.** **Reply in thread**, the tab's footer action, puts the
+  composer into reply mode (`compose/reply.rs`): a row above the input says
+  `Replying in thread to <author>: <start of the root>`, with **Cancel
+  reply** (Escape also cancels), and the placeholder reads
+  `Reply in thread to <author>`. Sending sends `Command::Reply` to the
+  channel with `+draft/reply=<root msgid>`, so everyone in the channel sees
+  it, then leaves reply mode. A `/command` is refused in reply mode (`//`
+  is a literal slash), as are attachments, with the reason in the
+  composer. Reply mode exists only in a channel and never sends a private
+  message. Without a connection, or on a connection that did not agree
+  `message-tags`, the action is replaced by the reason.
+- **Left out**: the mock-up's `Wren closed NAV-6` on the settled line and
+  the *delegated* and *pull request* steps, which Stargate's progress tag
+  does not carry; a reply count from the server rather than the loaded
+  lines (the reply-search follow-up). See the
+  [change record](changes/channels-thread-tab/README.md).
 
 **Join…** is available only while the selected network is connected; its
 menu entry says why otherwise. Commands that need the server while a network is
@@ -659,9 +743,8 @@ are in the [change record](changes/irc-thread-status/spec.md).
   (`nick:`, `nick,` or `@nick`), or a private conversation's partner. A
   request whose sender's nick, or sender's `account` tag, is the addressed
   nick asks no one. Member lists play no part, so whoever holds the nick
-  later, only the account named after it folds. Owner decision, 21
-  November 2026: this overrides reviewer findings on the trust model.
-  Fleet IRC servers are private and tie each nick to the account of the
+  later, only the account named after it folds. This is the owner's rule
+  (21 November 2026), and the reason for it: fleet IRC servers are private and tie each nick to the account of the
   same name (`force-nick-equals-account`), so only the agent itself can
   send as its nick there. On other servers, an agent whose account is not
   named after its nick gets no status lines. Untrusted, unrecognised and
@@ -692,7 +775,9 @@ are in the [change record](changes/irc-thread-status/spec.md).
   no later or older notice reopens it. The settled line is quiet: a check
   and **Done in 42 m**, or a cross and **Failed after 3 m**, from the request's
   server time to the ending notice's (`35 s`, `42 m` or `2 h 5 m`), named
-  *<agent>: Done in 42 m*. The reply count above it is unchanged. Owner
+  *<agent>: Done in 42 m*. In a ship's channel or a Starbase the line
+  carries the reply count and opens the thread; elsewhere the count stays
+  above it. Owner
   decision, 22 November 2026: a finished request keeps a settled line, where
   the line used to disappear. The ending is kept apart from the notice with
   its outcome and server time (`thread_status::Ending`), and stored with

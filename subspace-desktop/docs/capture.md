@@ -155,7 +155,9 @@ never selected, so Channels marks its captains and rear admiral on any
 loopback connection. `--status` gives `aurora-lyra` a nick status, and
 `--late-after <s>` posts three more lines that many seconds after the
 capture build joins, so a capture that shows another buffer meanwhile finds
-them new; restart the server and the fixture before each capture.
+them new; `--thread` adds two requests to `aurora-lyra` with its threaded
+progress notices and replies, one finished and one still working, for the
+Thread tab; restart the server and the fixture before each capture.
 
 Run `python3 scripts/fleet_api_test_server.py --port 18484` to serve the same
 fleet for an installed copy of the app, and `--snapshot` to print it as one

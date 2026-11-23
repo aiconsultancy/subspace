@@ -36,6 +36,7 @@ mod state;
 mod store;
 mod style;
 mod text;
+mod thread;
 mod thread_status;
 mod tiles;
 mod toolbar;
@@ -85,9 +86,15 @@ pub struct Irc {
     /// The inspector's open tab for a fleet channel: its ship or Starbase,
     /// or its people.
     inspector_tab: view::InspectorTab,
+    /// The thread chosen in each conversation, for the inspector's Thread
+    /// tab.
+    threads: thread::Threads,
     /// The fleet groups shown so far, so a fleet's group folds only when it
     /// first appears.
     seen_fleets: std::collections::HashSet<SharedString>,
+    /// The fleet groups that took in their network's own rows at the last
+    /// layout, so a group that begins to fold as the network's group did.
+    absorbing: std::collections::HashSet<SharedString>,
     /// The group that held the selected row at the last layout, so a
     /// folded group the selection moves into opens.
     selection_group: Option<SharedString>,

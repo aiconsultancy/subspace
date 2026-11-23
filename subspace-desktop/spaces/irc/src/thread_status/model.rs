@@ -121,7 +121,7 @@ fn observation(entry: &Entry) -> Option<(&str, Observation)> {
 /// ([`subspace_client_irc::status_text`]: IRC formatting, controls and bidi
 /// overrides removed), without whitespace or invisible format characters,
 /// and cut to [`AGENT_CHARS`] with an ellipsis.
-pub(super) fn agent_name(nick: &str) -> String {
+pub(crate) fn agent_name(nick: &str) -> String {
     let clean = subspace_client_irc::status_text(nick).unwrap_or_default();
     let mut plain = clean
         .chars()

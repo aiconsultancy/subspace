@@ -222,6 +222,9 @@ record. [Change records](changes/README.md) explains the convention.
 - [Channels fleet live](changes/channels-fleet-live/README.md): each
   fleet's live state from its Fleet API in Channels: a ship's dot, the
   header pill and the Ship, Starbase and People inspector tabs.
+- [Channels Thread tab](changes/channels-thread-tab/README.md): the
+  inspector's Thread tab with a request's status timeline and its replies,
+  reply counts and status lines that open it, and reply mode.
 - [Channels tiles once](changes/channels-tiles-once/README.md): an issue or
   pull request tile only under the first message that names it, and fuller
   two-line tiles of a fixed size for both.
