@@ -144,7 +144,7 @@ impl InitiativeIrc {
                 network,
                 self.loopback_fixture,
             ))
-            .with_loading(catalog.checking()),
+            .with_loading(!catalog.memberships_known()),
         );
         self.rosters
             .borrow_mut()

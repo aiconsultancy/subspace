@@ -6,9 +6,10 @@
 //!   agent is said in a channel, and a reaction, a stop above all, is
 //!   saying something. A private conversation with a roster agent sends no
 //!   reaction, as its composer sends no message
-//!   ([`crate::compose::AgentNotice::refusing`]). Until the initiatives
-//!   first load, no one is known not to be an agent, so a private
-//!   conversation sends no reaction then either. Reactions between people
+//!   ([`crate::compose::AgentNotice::refusing`]). Until a read of the
+//!   initiatives has succeeded for the current account and organisation,
+//!   no one is known not to be an agent, so a private conversation sends
+//!   no reaction then either, also when that read failed. Reactions between people
 //!   in private are ordinary.
 //! - **A stop is sent only from its labelled item.** A new ✋ or 🛑 of ours
 //!   (Stargate's stop keys, skin tones and the variation selector folded)
@@ -48,7 +49,7 @@ pub(crate) enum Via {
 /// Why nothing is sent in the server buffer.
 pub(crate) const SERVER: &str = "Reactions are sent in conversations, not to the server.";
 
-/// Why nothing is sent in private before the initiatives first load.
+/// Why nothing is sent in private while the initiatives are not known.
 pub(crate) const ROSTER_LOADING: &str =
     "Reactions in private wait until Subspace knows who the fleet agents are.";
 

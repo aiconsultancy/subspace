@@ -123,3 +123,30 @@ fn people_react_to_each_other_in_private(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui_kit::test]
+fn no_private_reaction_goes_while_the_initiatives_could_not_be_read(cx: &mut TestAppContext) {
+    let (board, hub, cx) = ship(cx);
+    // Another organisation, whose first read of the initiatives failed:
+    // no one is known to be an agent, or known not to be.
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            catalog.change_scope_for_test(Some(99), cx);
+            let failed = Err(subspace_api_client::Error::Network);
+            catalog.set_memberships_for_test(Some("fixture-user".into()), failed, cx);
+        })
+    });
+    settle(cx);
+    let (_, conversation) = private((&board, &hub), "aurora-lyra", "q3", cx);
+    let before = sent(&hub, cx);
+    conversation.update(cx, |view, cx| {
+        crate::conversation::reacting::toggle(view, ("q3".into(), "👍".into()), true, None, cx);
+    });
+    assert_eq!(sent(&hub, cx), before, "nothing is sent");
+    conversation.read_with(cx, |view, _| {
+        assert_eq!(
+            view.reacting.notice.as_deref(),
+            Some(crate::reactions::gate::ROSTER_LOADING)
+        );
+    });
+}

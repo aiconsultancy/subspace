@@ -709,9 +709,11 @@ removes exactly the reaction you made.
 
 You can't react in a private conversation with a fleet agent: agents talk
 in channels, where everyone can see, so the pills there are read-only.
-Reactions in a private conversation with a person are ordinary. Just after
-Subspace starts, until it has read your initiatives and so knows who the
-fleet agents are, private conversations take no reactions.
+Reactions in a private conversation with a person are ordinary. Until
+Subspace has read your initiatives for your account and organisation, and
+so knows who the fleet agents are, private conversations take no
+reactions: just after it starts, if the read failed, or if you are not
+signed in to Subspace API.
 
 Reactions need a server that supports them (IRCv3 `message-tags`). Without
 that, or while the network is disconnected, the pills stay but you can't

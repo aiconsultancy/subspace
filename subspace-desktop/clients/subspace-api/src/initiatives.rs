@@ -37,6 +37,8 @@ pub struct Catalog {
     revision: u64,
     fetch: Option<Refresh>,
     failed: bool,
+    /// The account and organisation scope a read last succeeded for.
+    known: Option<Option<u64>>,
     fleet_retry: Option<Task<()>>,
     fleet_failures: u32,
     /// The account and organisation scope the items belong to. A NETT
@@ -60,10 +62,12 @@ impl Catalog {
         !self.items.is_empty()
     }
 
-    /// Whether the first read of the memberships is still in flight: who
-    /// belongs to which fleet is not known yet.
-    pub fn checking(&self) -> bool {
-        self.fetch.is_some() && self.items.is_empty()
+    /// Whether a read of the memberships has succeeded for the current
+    /// account and organisation, so who belongs to which fleet is known.
+    /// False before the first read lands, after one failed or was refused,
+    /// and once the account or organisation changes.
+    pub fn memberships_known(&self) -> bool {
+        self.known == Some(self.scope)
     }
 
     /// The caller's initiatives, in the API's order.
@@ -178,6 +182,7 @@ impl Catalog {
         self.items.clear();
         self.selected = None;
         self.failed = false;
+        self.known = None;
         self.fleet_retry = None;
         self.fleet_failures = 0;
         self.revision = self.revision.wrapping_add(1);
@@ -258,6 +263,9 @@ impl Catalog {
                 Error::NotFound | Error::SignInNeeded | Error::Forbidden | Error::OrganisationNeeded
             )
         );
+        if result.is_ok() {
+            self.known = Some(self.scope);
+        }
         if !self.failed {
             let items = result.unwrap_or_default();
             if self.items != items {

@@ -688,9 +688,12 @@ growing moves nothing else; tiles keep their fixed box.
   `gate::gate` first. Nothing goes to the server buffer or to a fleet
   agent in a private conversation (`AgentNotice::refusing`; the controls
   are hidden there too, and reactions between people in private are
-  ordinary). Until the initiatives first load (`Catalog::checking`, kept
-  on the roster and read by `Roster::not_known_yet`), no private
-  conversation sends one, as no nick is known not to be an agent yet. A
+  ordinary). Until a read of the initiatives has succeeded for the
+  current account and organisation (`Catalog::memberships_known`, kept on
+  the roster and read by `Roster::not_known_yet`), no private
+  conversation sends one, as no nick is known not to be an agent: not
+  while the first read runs, not after it failed or was refused, and not
+  without a Subspace API sign-in. A
   new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only from the
   labelled `Stop <ship>` item in a channel; asked for any other
   way it is explained and not sent, whether or not the app recognises the

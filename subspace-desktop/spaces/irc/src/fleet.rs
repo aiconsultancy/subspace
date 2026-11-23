@@ -71,8 +71,8 @@ pub(crate) struct Roster {
     /// case-folded channel, counted before nicks two roles claim are
     /// dropped, so a clash cannot hide that a fleet has two.
     admirals: HashMap<String, usize>,
-    /// The initiatives are still being read for the first time, so no one
-    /// is known not to be an agent yet.
+    /// No read of the initiatives has succeeded for the current account
+    /// and organisation, so no one is known not to be an agent yet.
     loading: bool,
 }
 
@@ -104,8 +104,9 @@ impl Roster {
         }
     }
 
-    /// This roster, marked as read before the initiatives first loaded
-    /// when `loading` and it knows no agent yet.
+    /// This roster, marked as read while the initiatives are not known
+    /// for the current account and organisation (`loading`), when it
+    /// knows no agent yet.
     pub(crate) fn with_loading(mut self, loading: bool) -> Self {
         self.loading = loading && self.agents.is_empty();
         self
