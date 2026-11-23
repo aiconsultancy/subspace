@@ -1265,12 +1265,12 @@ their crew's assignments through `stargate_crew`.
 | Field | Meaning and default |
 | --- | --- |
 | `slug`, `name` | Stable fleet ID and display label. Keep the slug fixed on a VM. Use up to 35 lowercase ASCII letters, digits and hyphens, starting with a letter or digit. |
-| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew` and `crewNames`. IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
+| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew`, `crewNames` and `sessionRoot`: `"workspace"` (the default for a new captain) or `"repository"`, where its sessions start; a pinned root never moves (see [Captain sessions](#captain-sessions)). IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
-| Member `slack` | Optional: the officer's own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its secrets directory. See [Slack for officers](#slack-for-officers). |
+| Member `slack` | Optional, for an OpenCode officer: its own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its [secrets directory](#secrets-directory). The rear admiral's bot pins its root and replaces `stakeholders.slack`. See [Slack for officers](#slack-for-officers). |
 | `harness` | Default `{"type":"opencode","model":"gpt-5.4"}` with the [role's starter permissions](#instructions-permissions-and-toolchains). Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
-| `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out. See [crew and repositories](#crew-and-repositories). |
+| `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions). The ID, URL and visibility are fixed once installed; the description and tracker may change. See [crew and repositories](#crew-and-repositories). |
 | `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |
 | `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<slug>-<id>` for a captain. Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
@@ -1282,7 +1282,7 @@ their crew's assignments through `stargate_crew`.
 | `toolchains` | Mise versions. Defaults to Node 24 plus the base OS tooling. |
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
-| `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. |
+| `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. The rear admiral posts them through `stakeholders.slack` or its own Slack bot, so one of them is required. |
 | `api` | Optional `url` (origin or ending in `/api`), `vmHost`, `fleetApiUrl` (where a desktop reaches the Fleet API, when not through the SSH tunnel; needs `stargate.api`; see [Subspace API registration](#subspace-api-registration)) `initiatives` (array of UUIDs) and `agentUrl` (the API's agent listener on this VM's loopback, such as `http://127.0.0.1:3001`; see [The API's agent listener](#the-apis-agent-listener)). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
 | `agentDispatch` | Optional [agent dispatch](#agent-dispatch): `enabled` (default `false`), `pollIntervalSeconds` (120), `answerTimeoutSeconds` (300) and `retryLadderSeconds` (`[3600, 10800, 21600, 43200]`). On, it needs `api`, a captain with crew, an OpenCode rear admiral and `rearAdmiralApiToken`. |
 
@@ -1298,6 +1298,36 @@ A named `fleet.json` looks for `fleet.secrets.json` beside it unless
 gateway receives IRC passwords or certificate bundles and its OpenCode authentication headers, plus
 any explicitly enabled integration credentials. Each OpenCode engine has an
 independent loopback port and server password.
+
+### Secrets directory
+
+Files that do not belong in either JSON file go in a secrets directory:
+`fleet.secrets/` beside `fleet.json`, or `--secrets-dir DIR`. Use owner-only
+regular files (mode `0600`) in directories without group or other write
+access. Dispatch carries the same layout in its private bundle, and
+`subspace-setup` uses `/root/fleet/fleet.secrets/`, beside its
+`/root/fleet/fleet.json`. Every file is optional unless the setting in its
+row is on.
+
+| Path | Needed for | Installed as |
+| --- | --- | --- |
+| `<member-id>/github-app.pem` | A member's `githubApp` ([GitHub Apps](#github-apps-per-fleet-member)) | The member's `~/.config/subspace/github-app.pem`, and a root-only copy under `/etc/subspace-fleet/github-apps/` |
+| `<member-id>/kubeconfig`, `<member-id>/database-dsn`, `<member-id>/cloud/<name>` | [Read-only cloud access](#read-only-cloud-access) | The member's `~/.config/subspace/cloud/` |
+| `<member-id>/slack-app-token`, `<member-id>/slack-bot-token` | An officer's own [Slack bot](#slack-for-officers), or the rear admiral's `stakeholders.slack` | Root-only `/etc/subspace-fleet/extra-secrets.json`; the gateway gets them as `SLACK_APP_TOKEN_<ID>` and `SLACK_BOT_TOKEN_<ID>` (`SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` for `stakeholders.slack`) |
+| `<member-id>/irc-client.pem` | An officer's existing IRC certificate and key, with `irc.auth` `certificate` ([IRC sign-in](#irc-sign-in)); without it the VM generates one | `/etc/subspace-fleet/irc-certs/<member-id>.pem`, owned by the gateway user that serves the officer |
+| `medical/sentry-auth-token`, `medical/irc-password` | The [medical ship](#medical-ship) | Root-only files that systemd gives its service |
+| `proxy-management-key` | [Crew quota](#crew-quota) notices | Root-only `/etc/subspace-fleet/extra-secrets.json`, and the gateway's quota watcher |
+
+Upgrades without a secrets directory keep the installed copies, and
+`--prune-secrets` with a secrets directory removes the installed cloud
+files, App keys and Slack tokens that it and the configuration no longer
+name. An installed IRC certificate is kept with or without the directory.
+
+`subspace-setup` keeps two more inputs of its own, outside the secrets
+directory, for an [existing PostgreSQL](#an-existing-postgresql):
+`/root/fleet/database-url`, root's alone with mode `0600`, and the optional
+`/root/fleet/database-ca.pem`. The host installers copy them there from
+`--database-url-file` and `--database-ca-file`.
 
 ## Operate a fleet
 
