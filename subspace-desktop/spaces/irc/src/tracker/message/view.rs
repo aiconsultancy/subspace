@@ -117,12 +117,13 @@ fn picker(
         .chosen
         .clone()
         .unwrap_or_else(|| "Choose…".to_owned());
-    let button = menu_button(
-        "irc-tracker-choice",
-        IconName::ChevronDown,
-        format!("{label}: {shown}"),
-        dialog.chosen.is_some(),
-    );
+    let icon = match dialog.kind {
+        Kind::MakeIssue => IconName::Folder,
+        Kind::RecordDecision => IconName::CircleDot,
+    };
+    // Neutral: the dialog's one primary action is the button that writes.
+    let button = menu_button("irc-tracker-choice", icon, shown.clone(), false)
+        .accessibility_label(format!("{label}: {shown}"));
     let choices = dialog.choices.clone();
     let chosen = dialog.chosen.clone();
     let menu = anchored::dropdown_menu(button, move |menu, _, _| {
