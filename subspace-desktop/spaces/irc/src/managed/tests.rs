@@ -4,6 +4,7 @@
 //! signing in only with its own server's login, and gone on sign-out.
 //! Fictional accounts and servers only.
 
+mod fence;
 mod history;
 mod lifecycle;
 mod support;
@@ -190,7 +191,6 @@ fn settings_see_the_vouched_servers_only_while_signed_in(cx: &mut TestAppContext
     // Signing out: the account is forgotten at once.
     api.sign_in(401, json!({}));
     *env.generation.lock().unwrap() = Some(2);
-    hub.update(cx, |hub, _| hub.managed.look_again_for_test());
     settle(&hub, cx);
     assert_eq!(shown(cx), crate::managed::AccountNetworks::default());
     assert_eq!(configured(&hub, cx).len(), 1, "the account's network went");

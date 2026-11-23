@@ -288,7 +288,15 @@ impl Hub {
         }
     }
 
+    /// Sends `command` to the runtime, unless it is for an account network
+    /// whose account is no longer the one signed in.
     pub fn send(&mut self, command: Command) {
+        if command
+            .network()
+            .is_some_and(|network| !self.managed.admits(network))
+        {
+            return;
+        }
         match &mut self.outbox {
             Outbox::Runtime(runtime) => runtime.send(command),
             #[cfg(test)]
@@ -327,8 +335,10 @@ impl Hub {
         crate::managed::tick(self, cx);
     }
 
-    /// Answers the agent tool calls that arrived since the last drain.
+    /// Answers the agent tool calls that arrived since the last drain,
+    /// once an account change has stopped that account's networks.
     pub fn serve_tools(&mut self, cx: &mut Context<Self>) {
+        crate::managed::fence(self, cx);
         let requests: Vec<agent_tools::Request> = self
             .tools
             .as_ref()
@@ -362,8 +372,15 @@ impl Hub {
     }
 
     /// Applies `events` in order, reads the visible buffer, raises
-    /// notifications for the others and notifies observers once.
+    /// notifications for the others and notifies observers once. An account
+    /// change first stops that account's networks, and their events are
+    /// dropped unread.
     pub fn ingest(&mut self, events: Vec<Event>, now: DateTime<Utc>, cx: &mut Context<Self>) {
+        crate::managed::fence(self, cx);
+        let events: Vec<Event> = events
+            .into_iter()
+            .filter(|event| self.managed.admits(event.network()))
+            .collect();
         let stored = match self.recall.persist {
             Some(_) => persist::stored_lines(&events),
             None => Vec::new(),

@@ -87,7 +87,6 @@ fn sign_in_as(
 ) {
     api.sign_in(200, person(who.0, Some(who.1)));
     *env.generation.lock().unwrap() = Some(generation);
-    hub.update(cx, |hub, _| hub.managed.look_again_for_test());
     settle(hub, cx);
     member_of(
         hub,
@@ -106,7 +105,6 @@ fn sign_out(
 ) {
     api.sign_in(401, json!({}));
     *env.generation.lock().unwrap() = Some(generation);
-    hub.update(cx, |hub, _| hub.managed.look_again_for_test());
     settle(hub, cx);
 }
 

@@ -20,8 +20,6 @@ const RETRY_MAX: Duration = Duration::from_secs(300);
 /// The cap while the API refuses the account, as when nobody is signed in.
 const REFUSED_MAX: Duration = Duration::from_secs(30 * 60);
 const RETRY_MAX_DOUBLINGS: u32 = 9;
-/// How often the signed-in account is compared with the one checked.
-const LOOK_EVERY: Duration = Duration::from_secs(1);
 
 /// What the API says of the signed-in person.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -141,31 +139,12 @@ pub(crate) struct Schedule {
     settled: bool,
     retry_at: Option<Instant>,
     failures: u32,
-    looked_at: Option<Instant>,
 }
 
 impl Schedule {
     /// Whether to start a check at `now`.
     pub fn due(&self, now: Instant) -> bool {
         !self.running && !self.settled && self.retry_at.is_none_or(|at| at <= now)
-    }
-
-    /// Whether to compare the signed-in account with the checked one at
-    /// `now`, which it then records.
-    pub fn look(&mut self, now: Instant) -> bool {
-        let due = self
-            .looked_at
-            .is_none_or(|at| now.saturating_duration_since(at) >= LOOK_EVERY);
-        if due {
-            self.looked_at = Some(now);
-        }
-        due
-    }
-
-    /// Compares the account again at the next look, for tests.
-    #[cfg(test)]
-    pub fn look_again(&mut self) {
-        self.looked_at = None;
     }
 
     pub fn settle(&mut self) {
@@ -188,7 +167,6 @@ impl Schedule {
     pub fn restart(&mut self) {
         *self = Self {
             running: self.running,
-            looked_at: self.looked_at,
             ..Self::default()
         };
     }
@@ -277,14 +255,5 @@ mod tests {
             retry.due(Some(false), now + Duration::from_secs(16)),
             "known again resets the wait"
         );
-    }
-
-    #[test]
-    fn the_account_is_compared_at_most_once_a_second() {
-        let now = Instant::now();
-        let mut schedule = Schedule::default();
-        assert!(schedule.look(now));
-        assert!(!schedule.look(now + Duration::from_millis(500)));
-        assert!(schedule.look(now + Duration::from_secs(1)));
     }
 }

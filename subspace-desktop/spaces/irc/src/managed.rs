@@ -23,7 +23,7 @@ use std::time::Instant;
 use gpui_kit::{App, AppContext as _, Context};
 use subspace_api_client::initiatives::Catalog;
 use subspace_api_client::model::MemberInitiative;
-use subspace_client_irc::NetworkConfig;
+use subspace_client_irc::{NetworkConfig, NetworkId};
 use subspace_framework::dashboard::full_text::Document;
 
 pub(crate) use account::Account;
@@ -175,13 +175,22 @@ impl Managed {
         }
     }
 
-    /// Whether the signed-in account is no longer the one checked, looked
-    /// at no more than once a second.
-    fn account_changed(&mut self, now: Instant) -> bool {
-        self.schedule.look(now)
-            && self
-                .checked
-                .is_some_and(|generation| generation != self.env.generation())
+    /// Whether the signed-in account is no longer the one checked.
+    fn account_changed(&self) -> bool {
+        self.checked
+            .is_some_and(|generation| generation != self.env.generation())
+    }
+
+    /// Whether commands may go to and events come from `network` now: any
+    /// saved network, and an account network only while it is derived for
+    /// the account still signed in.
+    pub(crate) fn admits(&self, network: &NetworkId) -> bool {
+        !ids::reserved(&network.0)
+            || (self
+                .binding
+                .as_ref()
+                .is_some_and(|binding| binding.current())
+                && self.networks.iter().any(|derived| derived.id == *network))
     }
 
     /// Forgets the account after it changed, so the next tick checks again
@@ -229,12 +238,6 @@ impl Managed {
         }
     }
 
-    /// Compares the signed-in account again at the next tick, for tests.
-    #[cfg(test)]
-    pub(crate) fn look_again_for_test(&mut self) {
-        self.schedule.look_again();
-    }
-
     /// Membership reads asked for since they were last known for the
     /// account, for tests.
     #[cfg(test)]
@@ -254,14 +257,21 @@ pub(crate) fn device(cx: &mut App) -> String {
     device::load(cx)
 }
 
+/// Forgets the account as soon as another signs in or out, before the hub
+/// serves a tool call or takes an event, so the account networks stop at
+/// once and nothing more is done as the previous account.
+pub(crate) fn fence(hub: &mut Hub, cx: &mut Context<Hub>) {
+    if hub.managed.account_changed() {
+        hub.managed.forget();
+        hub.reconcile(cx);
+    }
+}
+
 /// On the hub's timer: forget the account once another signs in or out,
 /// check it when due, and ask about each server when its probe is due.
 pub(crate) fn tick(hub: &mut Hub, cx: &mut Context<Hub>) {
     let now = Instant::now();
-    if hub.managed.account_changed(now) {
-        hub.managed.forget();
-        hub.reconcile(cx);
-    }
+    fence(hub, cx);
     if hub.managed.schedule.due(now) {
         begin(hub, cx);
     }

@@ -20,7 +20,6 @@ fn a_switch_never_plans_from_the_previous_account_s_fleets(cx: &mut TestAppConte
     // Bob signs in; the catalogue still holds Ada's fleets.
     api.sign_in(200, person("user-bob", Some("bob")));
     *env.generation.lock().unwrap() = Some(2);
-    hub.update(cx, |hub, _| hub.managed.look_again_for_test());
     settle(&hub, cx);
     assert_eq!(
         hosts(&configured(&hub, cx)),
@@ -59,10 +58,7 @@ fn a_check_or_probe_answered_after_an_account_change_is_dropped(cx: &mut TestApp
     cx.run_until_parked();
     hub.update(cx, crate::managed::tick);
     *env.generation.lock().unwrap() = Some(3);
-    hub.update(cx, |hub, cx| {
-        hub.managed.look_again_for_test();
-        crate::managed::tick(hub, cx);
-    });
+    hub.update(cx, crate::managed::tick);
     cx.run_until_parked();
     assert_eq!(
         configured(&hub, cx).len(),

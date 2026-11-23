@@ -10,6 +10,7 @@ mod credential;
 mod listing;
 mod reaction;
 mod replies;
+mod routing;
 mod send_result;
 pub use config::{NetworkConfig, Sasl};
 pub use credential::{CredentialSource, IssuedLogin, IssuedPassword};
