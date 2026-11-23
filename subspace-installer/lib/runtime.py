@@ -78,6 +78,9 @@ FAMILIES = {"claude": "claude-sonnet-5-5", "codex": "gpt-5.4"}
 PROVIDERS = {"claude": "claude-proxy", "codex": "openai-proxy"}
 MODEL = r"[a-zA-Z0-9][a-zA-Z0-9._/:#-]{0,127}"
 SESSIONS = ETC / "sessions"
+# Where each captain's sessions start: "workspace", the directory above its repositories (the default), or
+# "repository", its checkout of the first repository, as before. ETC/session-roots.json keeps each root.
+ROOT_MODES = ("workspace", "repository")
 MESIJ = APP / "bin/mesij"
 CREW_ID = r"[a-z0-9][a-z0-9_-]{0,31}"
 # Stargate's crew plugin accepts up to nine repositories and fifty member contexts per captain.
@@ -216,7 +219,7 @@ def source(value, label, repo, ref=None):
 def member(value):
     require(not isinstance(value, dict) or "crewGitHubApps" not in value,
             "Remove crewGitHubApps: crew run as their captain and commit and push with the captain's githubApp.")
-    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames serviceTokenClientId", ["id", "name", "account"])
+    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames serviceTokenClientId sessionRoot", ["id", "name", "account"])
     pattern(value["id"], r"[a-z][a-z0-9-]{0,19}", "member ID")
     require(not value["id"].startswith("fleet-"), "Member IDs cannot start with fleet-.")
     require(value["id"] != SENTRY_TOKEN[0], "The medical member ID is reserved for integration credentials.")
@@ -239,6 +242,9 @@ def member(value):
     if "serviceTokenClientId" in value:
         # The member's account subject at the API's identity provider, for its API agent record.
         string(value["serviceTokenClientId"], f"Member {value['id']}'s serviceTokenClientId", 200)
+    if "sessionRoot" in value:
+        # Where a captain's sessions start: its workspace (the default) or its first repository's checkout.
+        pattern(value["sessionRoot"], "|".join(ROOT_MODES), f"sessionRoot for {value['id']} (workspace or repository)")
     return value
 
 
@@ -621,6 +627,8 @@ def validate(config, credentials, check_files=True):
     require(isinstance(cfg["captains"], list), "Captains must be an array.")
     officers = [member(person) for person in [cfg["rearAdmiral"], *cfg["captains"]]]
     require(not {"crew", "crewNames"} & officers[0].keys(), "Only captains may declare crew.")
+    require("sessionRoot" not in officers[0], "Only captains take sessionRoot: the rear admiral works in its "
+            "reference checkout of the first repository.")
     irc = irc_config(cfg["irc"], slug, check_files)
     captain_ids = [person["id"] for person in officers[1:]]
     trouble = standard_channels.problem(slug, captain_ids)
@@ -1088,8 +1096,12 @@ def captain_permissions(cfg, person):
     return [*permissions, *CREW_GRANTS, *([DISPATCH_GRANT] if cfg["agentDispatch"] else [])]
 
 
-def crew_options(cfg, person, home, engine_port, session_id):
-    """Stargate crew plugin options: one worktree per repository per crew member, under the captain."""
+def crew_options(cfg, person, home, engine_port, session_id, captain_directory=None):
+    """Stargate crew plugin options: one worktree per repository per crew member, under the captain.
+
+    The captain's directory is where its pinned root works: by default its workspace, which need not be a Git
+    repository and lies outside every worktree; the first repository stays the default project either way.
+    """
     repos = list(cfg["repositories"])
 
     def project(repo):
@@ -1101,7 +1113,7 @@ def crew_options(cfg, person, home, engine_port, session_id):
     options = {
         "namespace": f"{cfg['slug']}-{person['id']}",
         "stateDirectory": str(home / ".local/stargate-crew"),
-        "captainDirectory": default["projectDirectory"],
+        "captainDirectory": str(captain_directory or default["projectDirectory"]),
         **default,
         "mesijCommand": str(MESIJ),
         "team": {
@@ -1127,31 +1139,127 @@ def crew_options(cfg, person, home, engine_port, session_id):
     return options
 
 
-def pinned_session(person, workspace):
+def pinned_session(person, workspace, project=None):
     """A captain's confirmed root session, after checking it still fits the configured crew.
 
     The record is read whatever the requested roster: zero crew or no repositories must not drop a pin.
+    workspace is the root's directory; project, for a captain with crew, the first repository's checkout,
+    which Stargate's crew state names whether or not the root works there.
     """
     try:
         record = sessions.SessionRecord(SESSIONS, person["id"]).load()
         if not record or not record.get("confirmed"):
             return None
         sessions.check_roster(record, [worker["id"] for worker in person["crew"]])
-        require(record.get("directory") == str(workspace),
-                "its first repository is fixed once its session is pinned, because Stargate's crew state names "
-                "that checkout. Restore the original first repository.")
+        fixed = ("its first repository is fixed once its session is pinned, because Stargate's crew state names "
+                 "that checkout. Restore the original first repository.")
+        require(record.get("directory") == str(workspace), fixed)
+        # Records from before the workspace root name no project: their root is the first repository.
+        require(project is None or record.get("project", record.get("directory")) == str(project), fixed)
         return pattern(record.get("sessionID"), sessions.SESSION_ID.pattern, "pinned captain session ID")
     except (Invalid, sessions.SessionError) as error:
         raise Invalid(f"Captain {person['id']}: {error}") from None
 
 
-def captain_pins(cfg):
+def recorded_roots():
+    """Each installed captain's session root mode, by captain ID, kept when a captain leaves the roster."""
+    path = ETC / "session-roots.json"
+    recorded = read_json(path) if os.access(path, os.R_OK) else {}
+    require(isinstance(recorded, dict) and all(mode in ROOT_MODES for mode in recorded.values()),
+            f"Invalid captain session root record {path}.")
+    return recorded
+
+
+def root_label(root, first):
+    """How --dry-run and notices describe a captain's session root."""
+    if root["mode"] == "workspace" or not first:
+        return f"{root['path']}, the workspace above its repositories"
+    return f"{root['path']}, its checkout of the first repository"
+
+
+def captain_roots(cfg):
+    """Where each captain's sessions start, checked before anything is installed: {captain ID: root}.
+
+    Each root has "path", "mode" (workspace or repository) and "notice", a line for the operator or None.
+    A pinned root never moves: Stargate's crew state and the gateway's backend name its directory, so a
+    sessionRoot that asks for another is refused. An unpinned captain keeps the root it was installed with
+    (recorded_roots; a checkout of the first repository from an installer without that record
+    means it started there) unless its sessionRoot names another. A new captain starts in its workspace.
+    """
+    first = next(iter(cfg["repositories"]), None)
+    recorded = recorded_roots()
+    readable = os.access(SESSIONS, os.R_OK | os.X_OK)
+    roots = {}
+    for person in cfg["members"][1:]:
+        agent_id = person["id"]
+        workspace = STATE / "agents" / agent_id / "workspace"
+        paths = {"workspace": workspace, "repository": workspace / first if first else workspace}
+        configured = person.get("sessionRoot")
+        record = None
+        if readable:
+            try:
+                record = sessions.SessionRecord(SESSIONS, agent_id).load()
+            except sessions.SessionError as error:
+                raise Invalid(f"Captain {agent_id}: {error}") from None
+        if record and record.get("confirmed"):
+            pinned = Path(str(record.get("directory")))
+            mode = "workspace" if pinned == workspace else "repository"
+            require(configured in (None, mode),
+                    f"Captain {agent_id}'s root session is pinned in {pinned}, but its sessionRoot is {configured}. "
+                    "The installer never moves a pinned session: Stargate's crew state and the gateway name its "
+                    f"directory. Remove sessionRoot or set it to {mode}, or give the crew to a new captain ID, "
+                    "whose session starts in its workspace (see Captain sessions in the installer README).")
+            root = {"path": pinned, "mode": mode, "pinned": True, "notice": None}
+            if mode == "repository" and configured is None:
+                root["notice"] = (
+                    f"Captain {agent_id}'s root session is pinned in {pinned}, its checkout of the first repository, "
+                    "and stays there: the installer never moves a pinned session, though new captains start in "
+                    'their workspace. Set its sessionRoot to "repository" to keep it there without this notice; '
+                    "see Captain sessions in the installer README to move it.")
+            roots[agent_id] = root
+            continue
+        previous = recorded.get(agent_id)
+        if previous is None and first and os.path.isdir(paths["repository"]):
+            # Installed before the workspace root: its sessions started in the first repository's checkout.
+            previous = "repository"
+        mode = configured or previous or "workspace"
+        root = {"path": paths[mode], "mode": mode, "pinned": False, "notice": None}
+        if previous and paths[previous] != paths[mode]:
+            root["notice"] = (f"Captain {agent_id} moves from {paths[previous]} to {root_label(root, first)}, as "
+                              "its sessionRoot asks: its conversations start new sessions there, and earlier "
+                              "sessions stay in its history.")
+        elif mode == "repository" and configured is None and first:
+            root["notice"] = (
+                f"Captain {agent_id} keeps starting its sessions in {root_label(root, first)}, as installed; new "
+                'captains start in their workspace. Set its sessionRoot to "workspace" to move it (its '
+                'conversations then start new sessions), or to "repository" to keep it without this notice.')
+        roots[agent_id] = root
+    return roots
+
+
+def session_root_lines(cfg):
+    """--dry-run: where each captain's sessions will start, and any pinned or installed root that differs."""
+    first = next(iter(cfg["repositories"]), None)
+    lines = []
+    for agent_id, root in captain_roots(cfg).items():
+        lines.append(f"Captain {agent_id}'s root session is pinned in {root_label(root, first)}." if root["pinned"]
+                     else f"Captain {agent_id}'s sessions will start in {root_label(root, first)}.")
+        if root["notice"]:
+            lines.append(root["notice"])
+    if lines and os.geteuid() != 0 and STATE.exists():
+        lines.append("Run the dry run as root to compare these with the sessions already pinned on this host.")
+    return lines
+
+
+def captain_pins(cfg, roots=None):
     """Each captain's pinned root session or None, checked before anything is installed."""
+    roots = roots or captain_roots(cfg)
     first = next(iter(cfg["repositories"]), None)
     pins = {}
     for person in cfg["members"][1:]:
         workspace = STATE / "agents" / person["id"] / "workspace"
-        pins[person["id"]] = pinned_session(person, workspace / first if first else workspace)
+        project = workspace / first if first and person["crew"] else None
+        pins[person["id"]] = pinned_session(person, roots[person["id"]]["path"], project)
     return pins
 
 
@@ -1269,7 +1377,7 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         if session_id:
             engine["plugins"] = [{
                 "package": str(APP / "src" / f"stargate-{cfg['stargate']['ref']}"),
-                "options": crew_options(cfg, person, home, engine_port, session_id),
+                "options": crew_options(cfg, person, home, engine_port, session_id, workspace),
             }]
             if answers_offers:
                 # Stargate's fleet plugin gives the pinned root fleet_answer_offer, over the gateway's socket.
@@ -1680,9 +1788,13 @@ def render(cfg, extra, prune=False):
     if slug_path.exists():
         require(slug_path.read_text().strip() == cfg["slug"], "Fleet slug is immutable on this VM.")
     write(slug_path, cfg["slug"] + "\n")
-    pins = captain_pins(cfg)
+    roots = captain_roots(cfg)
+    pins = captain_pins(cfg, roots)
     rear_session = rear_pin(cfg)
     withdraw_ready(pins)
+    # Record each captain's root before its checkouts are cloned, so a later run keeps it (captain_roots).
+    write(ETC / "session-roots.json",
+          json_text({**recorded_roots(), **{agent_id: root["mode"] for agent_id, root in roots.items()}}))
     tokens = {**extra["tokens"], **extra.get("slack", {}).get(cfg["members"][0]["id"], {})}
     if "reportChannel" not in cfg["integrations"]["usage"]:
         tokens.pop("proxy-management-key", None)
@@ -1731,6 +1843,9 @@ def render(cfg, extra, prune=False):
             if person["role"] == "rear_admiral":
                 workspace = references
             workspace /= next(iter(cfg["repositories"]))
+        if person["role"] == "captain":
+            # The captain's session root: its workspace above the checkouts, or where it was installed or pinned.
+            workspace = roots[agent_id]["path"]
         if harness["type"] == "opencode":
             pin = rear_session if person["role"] == "rear_admiral" else pins.get(agent_id)
             unit, backend, headers, database = render_engine(
@@ -1867,6 +1982,10 @@ def commission(prune, existing=False):
                 "model": {"providerID": PROVIDERS[harness["family"]], "id": harness["model"]},
                 "permissions": harness_permissions(cfg, person) if rear else captain_permissions(cfg, person),
             }
+            if person["crew"]:
+                # Stargate's crew state names the first repository's checkout as the default project, whether
+                # the root works there or in the workspace above it, so the record keeps it fixed too.
+                expected["project"] = str(STATE / "agents" / person["id"] / "workspace" / next(iter(cfg["repositories"])))
             if existing:
                 _, new = sessions.ensure(client, store, expected, wait=lambda c, i: sessions.wait_until_ready(c, i, 2),
                                          notice=lambda _text: None)
@@ -1994,6 +2113,10 @@ def main(args):
             rear_pin(cfg)
         prune = tail[-1] == "true"
         if verb == "render":
+            # Say once per install which captains keep a root other than the workspace, and why.
+            for root in captain_roots(cfg).values():
+                if root["notice"]:
+                    print(root["notice"])
             render(cfg, read_json(cache, private=True), prune)
             return
         directory = Path(tail[-2]) if tail[-2] else None
@@ -2045,6 +2168,8 @@ def main(args):
             if not cfg["repositories"] and len(cfg["members"]) > 1:
                 print("No repositories are configured, so captains have no crew: crew work in Git worktrees of "
                       "their captain's checkouts.")
+            for line in session_root_lines(cfg):
+                print(line)
     elif verb == "commission":
         commission(tail[0] == "true", existing="existing" in tail[1:])
     elif verb == "engine":

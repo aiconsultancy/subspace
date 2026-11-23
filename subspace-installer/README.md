@@ -95,16 +95,20 @@ describe the available logins.
 ### Crew and repositories
 
 List repositories in order as `{"id":"project","url":"https://github.com/example/project.git"}`
-objects under `repositories`. Every captain gets a checkout of each one under
-`/var/lib/subspace-fleet/agents/<captain-id>/workspace/<repository-id>`, and
-the first is each agent's default working directory. An empty list gives each
+objects under `repositories`. Every captain gets a checkout of each one, side
+by side, in its workspace,
+`/var/lib/subspace-fleet/agents/<captain-id>/workspace/<repository-id>`. A
+captain's sessions start in the workspace itself, above the checkouts, so one
+session reaches every repository (see [Captain sessions](#captain-sessions)),
+and the first repository is its crew's default. An empty list gives each
 agent an empty workspace and gives captains no crew. Repository IDs start
 with a lowercase letter, `default` is reserved, and a captain with crew takes
 at most nine repositories. The rear admiral gets read-only reference
 checkouts under `/var/lib/subspace-fleet/references/<rear-admiral-id>/` that
-the mirror service refreshes. The rear admiral can inspect them from its own
-Linux account, including Git history. `subspace-setup --repositories` fills
-this list from comma-separated HTTPS URLs, optionally written as `ID=URL`.
+the mirror service refreshes, and works in its reference checkout of the
+first repository. The rear admiral can inspect them from its own Linux
+account, including Git history. `subspace-setup --repositories` fills this
+list from comma-separated HTTPS URLs, optionally written as `ID=URL`.
 
 Set fleet-wide `crew.claude` and `crew.codex` defaults, or override either
 under a captain's `crew`. Each family takes a `count` from 0 to 10 and a
@@ -129,7 +133,9 @@ Linux user, through Stargate's crew plugin:
   `stargate_mail` and `stargate_dm` for messages.
 - A captain's crew roster and first repository are fixed once its
   [session is pinned](#captain-sessions), because Stargate keeps crew
-  identities and worktrees permanent. The installer refuses a later change,
+  identities and worktrees permanent and names the first repository's
+  checkout as the crew's default, wherever the captain's session works. The
+  installer refuses a later change,
   including crew counts of 0 or an empty repository list. Restore the
   recorded roster, or give a new roster to a new captain. Adding
   repositories after the first is allowed. A changed crew model applies to
@@ -167,10 +173,13 @@ member, the worktrees for each repository, a private state directory under
 the captain's home and the pinned Mesij command, `/opt/subspace-fleet/bin/mesij`.
 After the services start, it creates the captain's root session through the
 engine's authenticated loopback API, with the `build` agent, the captain's
-checkout of the first repository and the captain's permissions. Creating a
-session starts no model turn. The session ID goes into both the gateway's
-`backend.sessionID` and the plugin's `captainSessionID`, and the installer
-restarts the services to load the plugin.
+workspace and the captain's permissions. Creating a session starts no model
+turn. The session ID goes into both the gateway's `backend.sessionID` and the
+plugin's `captainSessionID`, and the installer restarts the services to load
+the plugin. The plugin's `captainDirectory` is the workspace and its default
+project is the checkout of the first repository: the layout Stargate's own
+guide uses, a captain directory outside every crew worktree beside a separate
+project checkout.
 
 The record lives in `/etc/subspace-fleet/sessions/<captain-id>.json`, owned
 by root with mode `0600`. The installer first reserves the ID in
@@ -204,6 +213,62 @@ repository. If a confirmed root is missing from the engine, the installer
 stops for that captain. Restore
 `/var/lib/subspace-fleet/sessions/<captain-id>/opencode.db` from a backup, or
 retire the captain and give its crew to a new captain ID.
+
+**Where sessions start.** A captain's sessions start in its workspace,
+`/var/lib/subspace-fleet/agents/<captain-id>/workspace`, above its
+checkouts, with or without crew. Its optional `sessionRoot` chooses:
+`"workspace"`, the default, or `"repository"`, its checkout of the first
+repository, where installers before this one started every captain. The
+rear admiral takes no `sessionRoot`. `--dry-run` prints where each captain's
+sessions will start and says when a pinned or installed root differs from
+the default or the setting. The installer records each captain's root in
+`/etc/subspace-fleet/session-roots.json`.
+
+**Upgrading a running fleet never moves a session.**
+
+- A captain pinned in its first repository stays there, and each run says
+  so until you set its `sessionRoot` to `"repository"`. Setting it to
+  `"workspace"` is refused: the pinned directory is named by Stargate's crew
+  state and by the gateway's records for that captain, and Stargate refuses
+  a changed captain directory once its crew state exists. To work from the
+  workspace, give the crew to a new captain ID, whose session is created
+  there.
+- A captain without a pinned session keeps the root it was installed with;
+  one whose checkout of the first repository already exists started there.
+  To move it, set its `sessionRoot` to `"workspace"`: its conversations then
+  start new sessions in the workspace, and earlier sessions stay in its
+  history. `--dry-run` shows the move first.
+- A new captain starts in its workspace.
+
+**What changes with a workspace root.** The workspace is not a Git
+repository. OpenCode 2.3.2, the pinned release, gives such a directory a
+project of its own, keyed by its path (checked in its source), and:
+
+- takes no snapshots there, so the root session cannot restore files
+  through OpenCode's snapshots; each checkout's Git history is the record;
+- reads `AGENTS.md` from the workspace and the directories above it, up to
+  the captain's home, and `.opencode/`, `opencode.json` and `.claude/` from
+  the workspace and every directory above it, never from the repositories
+  below. The root session therefore no longer loads the first repository's
+  own `AGENTS.md` or `.opencode/` automatically; crew sessions, in their
+  worktrees, still load their repository's;
+- treats every checkout as inside the session's directory, so a captain
+  without crew can work in all of its repositories under its permissions,
+  not only the first, and runs commands in a checkout by setting the shell
+  tool's working directory.
+
+The installer's engine configuration, with the crew plugin, crew agents,
+providers, MCP server and permissions, is the file `OPENCODE_CONFIG` names,
+`/etc/subspace-fleet/opencode-<captain-id>.json`, and the role instructions
+and skills are under `~/.config/opencode/`, so none of it depends on where a
+session starts. Stargate's crew plugin needs no Git repository for the
+captain's directory: it checks only that the directory exists and lies
+outside every crew worktree, and runs Git in the project checkouts and
+worktrees. Its shared working agreement, `WAYS_OF_WORKING.md`, is read from
+the captain's directory, so it now belongs in the workspace rather than in a
+checkout. Stargate's Fleet API reports a ship's repository from its crew's
+default project; for a captain without crew, which has none, it reports no
+repository.
 
 ### Instructions, permissions and toolchains
 

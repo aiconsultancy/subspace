@@ -533,6 +533,58 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertFalse(any(rule["resource"].startswith("git push") for rule in captain))
 
 
+def workspace_fleet(**api):
+    """The example fleet with crew, two repositories and, optionally, the Subspace API."""
+    config = example_config()
+    config["crew"] = {"claude": {"count": 1}, "codex": {"count": 1}}
+    config["repositories"] = [
+        {"id": "project", "url": "https://github.com/example/project.git"},
+        {"id": "library", "url": "https://github.com/example/library.git"},
+    ]
+    config["captains"].append({"id": "vega", "name": "Vega", "account": "example-vega"})
+    secrets = officer_secrets("example-vega")
+    if api:
+        config["api"] = api
+        secrets = {**secrets, "apiToken": api_secrets()["apiToken"]}
+    return validate(config, secrets)
+
+
+class WorkspaceRootTests(unittest.TestCase):
+    """A captain's session starts in its workspace above the checkouts."""
+
+    home = Path("/var/lib/subspace-fleet/agents/orion")
+
+    def test_the_crew_plugin_roots_the_captain_in_its_workspace(self):
+        cfg = workspace_fleet()
+        captain = cfg["members"][1]
+        options = runtime.crew_options(cfg, captain, self.home, 4097, "ses_fixture", self.home / "workspace")
+        # The captain's directory need not be a Git repository; the first repository stays the default project.
+        self.assertEqual(options["captainDirectory"], f"{self.home}/workspace")
+        self.assertEqual(options["projectDirectory"], f"{self.home}/workspace/project")
+        self.assertEqual(options["projects"]["library"]["projectDirectory"], f"{self.home}/workspace/library")
+        # Stargate requires the captain's directory and every worker worktree to be distinct and non-nested.
+        workers = [*options["worktrees"].values(),
+                   *(path for project in options["projects"].values() for path in project["worktrees"].values())]
+        captain_directory = Path(options["captainDirectory"])
+        for path in map(Path, workers):
+            self.assertFalse(path.is_relative_to(captain_directory) or captain_directory.is_relative_to(path))
+        # Without a directory it keeps the previous root, the first repository's checkout.
+        legacy = runtime.crew_options(cfg, captain, self.home, 4097, "ses_fixture")
+        self.assertEqual(legacy["captainDirectory"], legacy["projectDirectory"])
+
+    def test_the_session_root_is_a_captain_setting(self):
+        config = example_config()
+        config["captains"][0]["sessionRoot"] = "repository"
+        self.assertEqual(validate(config, officer_secrets())["members"][1]["sessionRoot"], "repository")
+        config["captains"][0]["sessionRoot"] = "home"
+        with self.assertRaisesRegex(Invalid, "workspace or repository"):
+            validate(config, officer_secrets())
+        config = example_config()
+        config["rearAdmiral"]["sessionRoot"] = "workspace"
+        with self.assertRaisesRegex(Invalid, "Only captains take sessionRoot"):
+            validate(config, officer_secrets())
+
+
 class StandardChannelTests(unittest.TestCase):
     """Every fleet has Starbase, a separate command channel and one ship channel per captain."""
 

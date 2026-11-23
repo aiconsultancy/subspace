@@ -187,6 +187,29 @@ class CaptainSessionTests(unittest.TestCase):
         self.assertEqual(self.server.updates, [tighter])
         self.assertEqual(self.server.sessions[session_id]["permissions"], tighter)
 
+    def test_a_workspace_root_records_its_first_repository_as_the_project(self):
+        workspace = DIRECTORY.rsplit("/", 1)[0]
+        expected = {**EXPECTED, "directory": workspace, "project": DIRECTORY}
+        session_id, _ = self.ensure(expected)
+        self.assertEqual(self.server.sessions[session_id]["location"], {"directory": workspace})
+        self.assertEqual(json.loads(self.record.confirmed.read_text())["project"], DIRECTORY)
+        self.assertEqual(self.ensure(expected), (session_id, False))
+        # The root does not work in the first repository, but Stargate's crew state still names it.
+        with self.assertRaisesRegex(sessions.SessionError, "first repository is fixed"):
+            self.ensure({**expected, "project": DIRECTORY.replace("project", "library")})
+        person = {"id": "orion", "crew": [{"id": "claude-1"}, {"id": "codex-1"}]}
+        with patch.object(runtime, "SESSIONS", Path(self.directory.name)):
+            self.assertEqual(runtime.pinned_session(person, Path(workspace), Path(DIRECTORY)), session_id)
+            with self.assertRaisesRegex(runtime.Invalid, "Captain orion: .*first repository is fixed"):
+                runtime.pinned_session(person, Path(workspace), Path(DIRECTORY.replace("project", "library")))
+
+    def test_a_record_from_before_the_workspace_root_is_its_own_project(self):
+        session_id, _ = self.ensure()
+        self.assertNotIn("project", json.loads(self.record.confirmed.read_text()))
+        self.assertEqual(self.ensure({**EXPECTED, "project": DIRECTORY}), (session_id, False))
+        with self.assertRaisesRegex(sessions.SessionError, "first repository is fixed"):
+            self.ensure({**EXPECTED, "project": DIRECTORY.replace("project", "library")})
+
     def test_render_reads_only_confirmed_records_that_still_fit(self):
         person = {"id": "orion", "crew": [{"id": "claude-1"}, {"id": "codex-1"}]}
         with patch.object(runtime, "SESSIONS", Path(self.directory.name)):
@@ -432,6 +455,118 @@ class InstalledFleet(unittest.TestCase):
                     runtime.render(runtime.validate({**config, **change}, secrets), {"tokens": {}, "cloud": {}})
                 self.assertEqual(self.events, [])
         self.assertTrue((self.etc / "sessions/orion.ready").exists())
+
+    def installed(self, config, secrets):
+        """The installed inputs commission reads, and a fake engine per officer on its allocated port."""
+        extra = {"tokens": {}, "cloud": {}}
+        for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
+            (self.etc / name).write_text(json.dumps(value))
+            (self.etc / name).chmod(0o600)
+        servers = {4096 + index: FakeOpenCode() for index in range(len(config["captains"]) + 1)}
+        self.start(patch.object(runtime.sessions, "OpenCode",
+                                side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])]))
+        return servers
+
+    def roots_record(self):
+        return json.loads((self.etc / "session-roots.json").read_text())
+
+    def engine_directory(self, captain="orion"):
+        return json.loads((self.etc / f"engine-{captain}.json").read_text())["directory"]
+
+    def test_a_new_captain_pins_its_root_in_the_workspace_above_its_checkouts(self):
+        config, secrets = crew_fleet("orion")
+        servers = self.installed(config, secrets)
+        workspace = self.state / "agents/orion/workspace"
+        self.render(config, secrets)
+        self.assertEqual(self.roots_record(), {"orion": "workspace"})
+        self.assertEqual(self.engine_directory(), str(workspace))
+
+        runtime.commission(False)
+        record = json.loads(self.store.confirmed.read_text())
+        self.assertEqual((record["directory"], record["project"]), (str(workspace), str(workspace / "project")))
+        self.assertEqual(servers[4097].sessions[record["sessionID"]]["location"], {"directory": str(workspace)})
+        options = json.loads((self.etc / "opencode-orion.json").read_text())["plugins"][0]["options"]
+        self.assertEqual((options["captainDirectory"], options["projectDirectory"], options["captainSessionID"]),
+                         (str(workspace), str(workspace / "project"), record["sessionID"]))
+        served, _ = self.gateway()
+        self.assertEqual((served["orion"]["directory"], served["orion"]["sessionID"]), (str(workspace), record["sessionID"]))
+        orion = next(entry for entry in json.loads((self.etc / "stargate.json").read_text())["irc"] if entry["id"] == "orion")
+        self.assertEqual(orion["fleetPolicy"]["assignedCheckout"], str(workspace))
+        # The rear admiral keeps its read-only reference checkout of the first repository.
+        self.assertEqual(served["atlas"]["directory"], str(self.state / "references/atlas/project"))
+        self.render(config, secrets)
+        self.assertEqual(self.events, [])
+        # The first repository stays fixed: Stargate's crew state names it as the default project.
+        config["repositories"].insert(0, {"id": "library", "url": "https://github.com/example/library.git"})
+        with self.assertRaisesRegex(runtime.Invalid, "Captain orion: .*first repository is fixed"):
+            self.render(config, secrets)
+        self.assertEqual(self.events, [])
+
+    def test_an_upgrade_never_moves_a_session_pinned_in_the_first_repository(self):
+        config, secrets = crew_fleet("orion")
+        self.pin()  # pinned before the workspace root: in the first repository's checkout
+        root = runtime.captain_roots(runtime.validate(config, secrets))["orion"]
+        self.assertEqual((root["path"], root["mode"], root["pinned"]), (Path(self.workspace), "repository", True))
+        self.assertIn("stays there: the installer never moves a pinned session", root["notice"])
+        self.render(config, secrets)
+        self.assertEqual(self.engine_directory(), self.workspace)
+        options = json.loads((self.etc / "opencode-orion.json").read_text())["plugins"][0]["options"]
+        self.assertEqual(options["captainDirectory"], self.workspace)
+        self.assertEqual(self.roots_record(), {"orion": "repository"})
+        # Asking for the workspace is refused before anything is written; asking to stay silences the notice.
+        config["captains"][0]["sessionRoot"] = "workspace"
+        with self.assertRaisesRegex(runtime.Invalid, "pinned in .*but its sessionRoot is workspace.*never moves"):
+            self.render(config, secrets)
+        self.assertEqual(self.events, [])
+        config["captains"][0]["sessionRoot"] = "repository"
+        self.assertIsNone(runtime.captain_roots(runtime.validate(config, secrets))["orion"]["notice"])
+        self.render(config, secrets)
+        self.assertEqual(self.events, [])
+
+    def test_an_installed_captain_keeps_its_root_until_its_session_root_moves_it(self):
+        config, secrets = crew_fleet("orion")
+        config["captains"][0]["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
+        checkout = self.state / "agents/orion/workspace/project"
+        checkout.mkdir(parents=True)  # installed by an installer without the workspace root
+        root = runtime.captain_roots(runtime.validate(config, secrets))["orion"]
+        self.assertIn("keeps starting its sessions in", root["notice"])
+        self.render(config, secrets)
+        self.assertEqual((self.engine_directory(), self.roots_record()), (str(checkout), {"orion": "repository"}))
+        # Recorded, it stays there even though its checkout no longer tells.
+        checkout.rmdir()
+        self.assertEqual(runtime.captain_roots(runtime.validate(config, secrets))["orion"]["path"], checkout)
+        # Moving it is an explicit setting, which says what happens to its conversations.
+        config["captains"][0]["sessionRoot"] = "workspace"
+        root = runtime.captain_roots(runtime.validate(config, secrets))["orion"]
+        self.assertIn("moves from", root["notice"])
+        self.assertIn("start new sessions there", root["notice"])
+        self.render(config, secrets)
+        self.assertEqual((self.engine_directory(), self.roots_record()), (str(checkout.parent), {"orion": "workspace"}))
+        del config["captains"][0]["sessionRoot"]
+        root = runtime.captain_roots(runtime.validate(config, secrets))["orion"]
+        self.assertEqual((root["path"], root["notice"]), (checkout.parent, None))
+        self.render(config, secrets)
+        self.assertEqual(self.events, [])
+
+    def test_the_dry_run_shows_each_captains_root_and_a_pinned_one_that_differs(self):
+        config, secrets = crew_fleet("orion", "vega")
+        self.pin("orion")
+        self.events.clear()
+        paths = []
+        for name, value in (("fleet.json", config), ("fleet.secrets.json", secrets)):
+            paths.append(Path(self.root.name) / name)
+            paths[-1].write_text(json.dumps(value))
+            paths[-1].chmod(0o600)
+        with patch.object(sys, "stdout", io.StringIO()) as output:
+            runtime.main(["plan", *map(str, paths), "", "false"])
+        text = output.getvalue()
+        self.assertIn(f"Captain orion's root session is pinned in {self.workspace}, its checkout of the first "
+                      "repository.", text)
+        self.assertIn("stays there: the installer never moves a pinned session", text)
+        self.assertIn(f"Captain vega's sessions will start in {self.state}/agents/vega/workspace, the workspace above "
+                      "its repositories.", text)
+        self.assertEqual(self.events, [])
+        self.assertFalse((self.etc / "session-roots.json").exists())
 
     def commission_setup(self, *captains):
         config, secrets = crew_fleet(*captains)

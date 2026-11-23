@@ -504,6 +504,10 @@ def check_pinned_session():
     session = json.loads(request(engine["port"], f"/api/session/{record['sessionID']}", {"Authorization": f"Basic {auth}"}))["data"]
     assert session["agent"] == "build" and session["location"]["directory"] == backend["directory"]
     assert session["permissions"] == backend["permissions"]
+    # A new captain's root works in its workspace above the checkouts; the first repository stays the project.
+    workspace = str(CAPTAIN_HOME / "workspace")
+    assert backend["directory"] == plugin["options"]["captainDirectory"] == record["directory"] == workspace
+    assert plugin["options"]["projectDirectory"] == record["project"] == f"{workspace}/sample"
 
 
 def check_shape():
