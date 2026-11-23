@@ -243,3 +243,21 @@ fn the_thread_tab_draws_the_latest_replies_and_counts_the_rest() {
     assert_eq!(earlier_words(1), "1 earlier reply is in the channel.");
     assert_eq!(earlier_words(5), "5 earlier replies are in the channel.");
 }
+
+#[test]
+fn a_follow_up_request_s_tab_says_its_replies_are_the_thread_s() {
+    use super::thread::replies_heading;
+    let mut thread = crate::thread::Thread {
+        root: crate::state::Entry {
+            seq: 0,
+            line: crate::fixtures::message(&crate::fixtures::channel("#a"), "mira", "Hi.", 1),
+            highlight: false,
+        },
+        timeline: None,
+        replies: Vec::new(),
+        nested: false,
+    };
+    assert_eq!(replies_heading(&thread), "Replies");
+    thread.nested = true;
+    assert_eq!(replies_heading(&thread), "Replies in this thread");
+}

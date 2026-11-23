@@ -90,14 +90,22 @@ fn content(
         .into_any_element()
 }
 
-/// The replies under their heading and count, grouped by author, or the
-/// line that says there are none yet.
 /// The most replies the tab draws: the latest, with the rest counted.
 pub(crate) const MAX_REPLIES: usize = 40;
 
 /// How many of `count` replies, the earliest, the tab leaves out.
 pub(crate) fn earlier(count: usize) -> usize {
     count.saturating_sub(MAX_REPLIES)
+}
+
+/// `Replies`, or `Replies in this thread` for a follow-up request made as
+/// a reply, whose tab lists its whole thread's replies.
+pub(crate) fn replies_heading(thread: &Thread) -> &'static str {
+    if thread.nested {
+        "Replies in this thread"
+    } else {
+        "Replies"
+    }
 }
 
 /// What the tab says of the earlier replies it leaves out.
@@ -108,11 +116,15 @@ pub(crate) fn earlier_words(skipped: usize) -> String {
     }
 }
 
+/// The replies under their heading and count, grouped by author, or the
+/// line that says there are none yet.
+/// For a follow-up request made as a reply, the heading says the replies
+/// are the whole thread's, as its own status line counts none.
 fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
     let tokens = Tokens::current(cx);
     let title = match thread.replies.len() {
         0 => "Replies".to_owned(),
-        count => format!("Replies · {count}"),
+        count => format!("{} · {count}", replies_heading(thread)),
     };
     let section = workspace::section(title, cx);
     if thread.replies.is_empty() {

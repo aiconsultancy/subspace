@@ -10,9 +10,10 @@
 //! cancel; Escape cancels too. The composer leaves reply mode once the
 //! reply is sent. When the thread's root is no longer held, as under the
 //! line cap, the draft stays in reply mode, marked gone: the row says the
-//! thread is no longer loaded, Enter sends nothing, and only an explicit
-//! **Write to the channel** leaves reply mode, keeping the text, so a
-//! reply never silently becomes an ordinary message or a command.
+//! thread is no longer loaded, Enter sends nothing, Escape keeps it, and
+//! only an explicit **Write to the channel** leaves reply mode, keeping
+//! the text, so a reply never silently becomes an ordinary message or a
+//! command.
 
 use gpui_kit::component::{Icon, Sizable as _, h_flex};
 use gpui_kit::{
@@ -148,6 +149,25 @@ pub(crate) fn cancel(
         .entity
         .update(cx, |input, cx| input.set_placeholder(hint, window, cx));
     cx.notify();
+}
+
+/// Escape in the composer: leaves reply mode, except for a reply whose
+/// thread is gone, which stays unsendable until the person chooses
+/// **Write to the channel**.
+pub(crate) fn escape(
+    conversation: &mut Conversation,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    if conversation
+        .draft
+        .reply
+        .as_ref()
+        .is_some_and(|reply| reply.gone)
+    {
+        return;
+    }
+    cancel(conversation, window, cx);
 }
 
 /// Marks the reply to `root`, whose thread is no longer held, as gone: it

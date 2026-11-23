@@ -27,6 +27,10 @@ fn a_reply_whose_thread_goes_is_kept_and_sent_nowhere_until_chosen(cx: &mut Test
     let before = hub.read_with(cx, |hub, _| hub.sent().len());
     let input = conversation.read_with(cx, |conversation, _| conversation.composer().clone());
     input.update(cx, |_, cx| cx.emit(ChatInputEvent::Submit("/part".into())));
+    // Escape keeps the guard: the next Enter still sends nothing.
+    input.update(cx, |_, cx| cx.emit(ChatInputEvent::Cancel));
+    settle(cx);
+    input.update(cx, |_, cx| cx.emit(ChatInputEvent::Submit("/part".into())));
     settle(cx);
     assert_eq!(
         hub.read_with(cx, |hub, _| hub.sent().len()),

@@ -17,6 +17,9 @@ pub(crate) struct Thread {
     pub timeline: Option<Timeline>,
     /// The replies the buffer holds, oldest first.
     pub replies: Vec<Entry>,
+    /// The chosen message is itself a reply, such as a follow-up request:
+    /// `replies` are its whole thread's.
+    pub nested: bool,
 }
 
 /// A request's steps, from the progress notices its status line folds.
@@ -90,7 +93,13 @@ pub(crate) fn build(buffer: &BufferKey, held: &Buffer, root: &str) -> Option<Thr
         root: root_entry.clone(),
         timeline: timeline(held, root_entry, root),
         replies,
+        nested: is_nested(thread, root),
     })
+}
+
+/// Whether the chosen message `root` is itself a reply in `thread`.
+fn is_nested(thread: &str, root: &str) -> bool {
+    thread != root
 }
 
 /// Whether `entry` is a reply in the thread of `root`: a message, not
@@ -111,7 +120,15 @@ fn timeline(held: &Buffer, root_entry: &Entry, root: &str) -> Option<Timeline> {
     if asked.is_none() && ending.is_none() {
         return None;
     }
-    let observed = observed(held, root);
+    let mut observed = observed(held, root);
+    if let Some(ending) = ending {
+        // The kept ending is the request's end, as its status line says:
+        // no held notice ends it otherwise, and none after it is a step.
+        observed.retain(|notice| {
+            !matches!(notice.phase, Phase::Finished(_))
+                && ending.at.is_none_or(|at| notice.at <= at)
+        });
+    }
     if observed.is_empty() && ending.is_none() {
         // Addressed, as `Morning, all.` reads, but no agent reported on it:
         // the transcript shows no status line either.
@@ -125,10 +142,7 @@ fn timeline(held: &Buffer, root_entry: &Entry, root: &str) -> Option<Timeline> {
     let mut steps = steps(&observed, root_entry.line.time);
     // Only the ending held, as after a partial history load: the steps
     // before it are not loaded.
-    let earlier_missing = ending.is_some()
-        && observed
-            .iter()
-            .all(|notice| matches!(notice.phase, Phase::Finished(_)));
+    let earlier_missing = ending.is_some() && observed.is_empty();
     if let Some(ending) = ending {
         settle(&mut steps, ending, root_entry.line.time);
     }

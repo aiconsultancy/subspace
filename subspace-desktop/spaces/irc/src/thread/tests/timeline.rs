@@ -174,6 +174,7 @@ fn a_follow_up_request_shows_its_own_steps_and_the_replies_to_it() {
         ["answer", "answer2"],
         "the reply to it shows"
     );
+    assert!(second.nested, "its replies are the thread's");
     let steps: Vec<_> = second
         .timeline
         .unwrap()
@@ -191,6 +192,7 @@ fn a_follow_up_request_shows_its_own_steps_and_the_replies_to_it() {
     // The first thread and the transcript's count agree.
     let first = thread(&state, "first").unwrap();
     assert_eq!(reply_ids(&first), ["answer", "second", "answer2"]);
+    assert!(!first.nested);
     let held = state.buffer(&room()).unwrap();
     let counts = crate::transcript::replies::counts(&room(), held);
     let seq = held
@@ -200,4 +202,48 @@ fn a_follow_up_request_shows_its_own_steps_and_the_replies_to_it() {
         .unwrap()
         .seq;
     assert_eq!(counts[&seq].count(), first.replies.len());
+}
+
+#[test]
+fn a_kept_ending_is_the_end_whatever_notice_is_held() {
+    // The store kept Failed; loaded history holds a folded Completed.
+    let room = room();
+    let mut held = Buffer::default();
+    let lines = [
+        request(&room, "first", 1),
+        progress(&room, "first", "accepted", 2),
+        progress(&room, "first", "completed", 43),
+    ];
+    for (seq, line) in (0..).zip(lines) {
+        held.entries.push_back(Entry {
+            seq,
+            line,
+            highlight: false,
+        });
+    }
+    held.folded.insert(1);
+    held.folded.insert(2);
+    held.requests.load(&[(
+        "first".to_owned(),
+        Ending {
+            outcome: Some(Outcome::Failed),
+            at: Some(at(40)),
+        },
+    )]);
+    let steps: Vec<_> = build(&room, &held, "first")
+        .unwrap()
+        .timeline
+        .unwrap()
+        .steps
+        .iter()
+        .map(|step| step.kind)
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            StepKind::Stage(Stage::Accepted),
+            StepKind::Ended(Some(Outcome::Failed))
+        ],
+        "the kept Failed, never the held Completed"
+    );
 }
