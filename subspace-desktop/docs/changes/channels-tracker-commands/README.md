@@ -76,7 +76,7 @@ do the same as its buttons.
 
 | Action | Shown when | Does |
 | --- | --- | --- |
-| **Add reaction** | the network supports reactions and the message has a `msgid` | Opens the reactions piece's menu at the message, stop group included when its conditions hold (`reacting::open_choices_for`). |
+| **Add reaction** | the network supports reactions and the message has a `msgid` | Opens the reactions piece's menu at the message, stop group included when its conditions hold (`reacting::open_choices_for`, in `conversation/reacting/menu.rs`). |
 | **Reply in thread** | the inspector has a Thread tab and the server carries reply tags; the message has a `msgid` | Opens the thread and starts reply mode, which sends to the channel. |
 | **Make issue…** | tracker writes work here | Opens the dialog. |
 | **Record decision…** | tracker writes work here, and the message names an issue or the conversation has shown one | Opens the dialog. |
@@ -146,8 +146,9 @@ pills and the `r` key open the same menu as the toolbar's React.
   `suggest`, `write`, `flow`, `quote`, `message`, `message/view`),
   `transcript/actions.rs`, the composer's completion (`compose/suggest.rs`,
   `compose/suggest/choice.rs`, `compose/offer.rs`, `compose/send.rs`),
-  `conversation/keys.rs` (`t`, `i`, `d`, hover), `conversation/reacting.rs`
-  (`open_choices_for`), `fleet.rs` (agents' user IDs and ships),
+  `conversation/keys.rs` (`t`, `i`, `d`, hover),
+  `conversation/reacting/menu.rs` (`open_choices_for`), `fleet.rs`
+  (agents' user IDs and ships),
   `issues/follow.rs` (`refresh`).
 - Fixture: the Subspace API fixture takes `readyForAgents` by the API's
   rule, assigns the aurora fleet's captains by their record's user IDs and
@@ -189,10 +190,64 @@ Checks: `cargo fmt`, Clippy with warnings denied and the tests of
 `mise run architecture`, and `mise run quality` in both projects (no
 findings, no regression).
 
+## Review findings
+
+Carried over from the reviews of the
+[reactions pull request](../channels-reactions/README.md) (PR 72), each
+checked against the code after merging `main`, fixed in its own commit
+with a regression test:
+
+1. **An open Stop menu sent after the message stopped qualifying**
+   (medium). Choosing **Stop \<ship\>** now reads the live roster, the held
+   message and its status line again (`conversation/reacting/menu.rs`,
+   `labelled_stop`; `reactions/stop.rs`, `concerning`); the stop goes only
+   while they still name a running agent, under the name read then, and is
+   explained otherwise.
+2. **A deferred Retry kept its first deadline after a queued read started
+   later** (medium, `clients/fleet`). A waiting Retry remembers when it was
+   asked and the service when each read actually started
+   (`service/retry.rs`): a read that started after the Retry has answered
+   it; otherwise it waits for a read in flight to land and for five seconds
+   from that read's start. This also covers the Opus pass's extra
+   keychain read inside the interval.
+3. **Accountless matching merged a nick's new holder into the previous
+   holder's record** (medium, `clients/irc`). An accountless record now
+   matches only when it belongs to the nick's current holder
+   (`groups/record.rs`, `current`).
+4. **A nick change reported once per shared channel advanced the nick's
+   stamp twice** (medium). The book remembers each network's last rename;
+   the same rename reported again, moving nothing, leaves the stamp alone.
+5. **Every reaction update rebuilt every open conversation** (medium).
+   `ReactionBook::apply` and `mark_seen` say whether anything shown changed
+   and the book keeps a revision per conversation; a discarded update wakes
+   nothing, and a conversation reads its reactions again only when its
+   revision or held lines changed.
+6. **A stop's acknowledgement depended on room in the display book**
+   (low). The hub remembers our latest live additions before the book's
+   limits (`Reactions::echoed_since`); a pending stop is acknowledged by an
+   echo after it was sent and is let go after two minutes without one (the
+   Opus pass's unpruned pending list).
+7. **An empty roster let reactions through in a private conversation**
+   (P3). Until the initiatives first load (`Catalog::checking`), a private
+   conversation takes no reaction (`Roster::not_known_yet`), with a plain
+   notice. The composer's own rule for messages is unchanged.
+8. **`/raw` could send a tagged `TAGMSG` privately** (noted). The
+   private-recipient rule (`private_recipients`) now reads TAGMSG lines as
+   it reads PRIVMSG and NOTICE, so the composer refuses one to an agent.
+
+The merge also kept `main`'s final reactions code: the toolbar's **Add
+reaction** opens the same menu, whose every choice goes through
+`reacting::toggle` and its gate, and **Reply in thread** uses the Thread
+tab's reply mode (`compose::reply::start`, sending `Command::Reply`). The
+Issues Space's contract test now counts its `issues@1/refresh` response.
+
 ## Captures
 
-Captured on macOS with `make capture` at 1440 x 900 (`resize:1440,900`) in
-Twilight Two, with `CAPTURE_FLEET=1 CAPTURE_FLEET_API=1` so the roster knows
+Retaken after the merge with `main` (its final reactions, Thread tab and
+live fleet state). Captured on macOS with `make capture` at 1440 x 900
+(`resize:1440,900`) in Twilight Two with the Icons setting at its default
+(Small), with `CAPTURE_STATE='{"app.dashboard":"irc"}'` so it opens on
+Channels and `CAPTURE_FLEET=1 CAPTURE_FLEET_API=1` so the roster knows
 the aurora fleet's ships and the API fixture has its issues, against a fresh
 loopback Ergo 2.19.1 (`scripts/irc-test-server.sh` with
 `IRC_TEST_LISTEN=127.0.0.1:16954`) and
