@@ -201,7 +201,7 @@ fn a_follow_up_request_shows_its_own_steps_and_the_replies_to_it() {
         .find(|entry| entry.line.id.as_deref() == Some("first"))
         .unwrap()
         .seq;
-    assert_eq!(counts[&seq].count(), first.replies.len());
+    assert_eq!(counts[&seq].count(), first.reply_count);
 }
 
 #[test]
@@ -245,5 +245,22 @@ fn a_kept_ending_is_the_end_whatever_notice_is_held() {
             StepKind::Ended(Some(Outcome::Failed))
         ],
         "the kept Failed, never the held Completed"
+    );
+}
+
+#[test]
+fn a_long_thread_keeps_its_count_and_only_its_latest_replies() {
+    let mut state = joined(vec![ship()]);
+    let lines: Vec<_> = std::iter::once(request(&room(), "first", 1))
+        .chain((0..45).map(|n| said(&room(), Some("first"), &format!("r{n}"), 2 + n)))
+        .collect();
+    live(&mut state, lines);
+    let found = thread(&state, "first").unwrap();
+    assert_eq!(found.reply_count, 45);
+    assert_eq!(found.replies.len(), crate::thread::MAX_REPLIES);
+    assert_eq!(
+        found.replies[0].line.id.as_deref(),
+        Some("r5"),
+        "the latest 40"
     );
 }

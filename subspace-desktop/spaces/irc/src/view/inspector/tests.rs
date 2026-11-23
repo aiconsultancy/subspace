@@ -237,7 +237,8 @@ fn an_unanswered_reference_says_loading_and_a_refused_one_unavailable() {
 
 #[test]
 fn the_thread_tab_draws_the_latest_replies_and_counts_the_rest() {
-    use super::thread::{MAX_REPLIES, earlier, earlier_words};
+    use super::thread::{earlier, earlier_words};
+    use crate::thread::MAX_REPLIES;
     assert_eq!(earlier(MAX_REPLIES), 0);
     assert_eq!(earlier(MAX_REPLIES + 5), 5);
     assert_eq!(earlier_words(1), "1 earlier reply is in the channel.");
@@ -255,6 +256,7 @@ fn a_follow_up_request_s_tab_says_its_replies_are_the_thread_s() {
         },
         timeline: None,
         replies: Vec::new(),
+        reply_count: 0,
         nested: false,
     };
     assert_eq!(replies_heading(&thread), "Replies");

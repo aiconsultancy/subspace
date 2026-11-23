@@ -15,12 +15,19 @@ pub(crate) struct Thread {
     /// The status timeline, when the root is a request with trusted
     /// progress or one that ended, as for its status line.
     pub timeline: Option<Timeline>,
-    /// The replies the buffer holds, oldest first.
+    /// The latest replies the buffer holds, at most [`MAX_REPLIES`],
+    /// oldest first.
     pub replies: Vec<Entry>,
+    /// How many replies the buffer holds, all of them.
+    pub reply_count: usize,
     /// The chosen message is itself a reply, such as a follow-up request:
     /// `replies` are its whole thread's.
     pub nested: bool,
 }
+
+/// The most replies a thread keeps to draw: the latest. A rebuild copies
+/// no more, however long the thread.
+pub(crate) const MAX_REPLIES: usize = 40;
 
 /// A request's steps, from the progress notices its status line folds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,18 +90,28 @@ pub(crate) fn build(buffer: &BufferKey, held: &Buffer, root: &str) -> Option<Thr
         .find(|entry| entry.line.id.as_deref() == Some(root) && entry.line.buffer == *buffer)?;
     let roots = ThreadRoots::new(buffer, held.entries.iter().map(|entry| &entry.line));
     let thread = roots.root(&root_entry.line).unwrap_or(root);
-    let replies = held
+    let all: Vec<&Entry> = held
         .entries
         .iter()
         .filter(|entry| entry.seq != root_entry.seq && is_reply(held, &roots, entry, thread))
-        .cloned()
         .collect();
+    let reply_count = all.len();
+    let replies = latest(&all);
     Some(Thread {
         root: root_entry.clone(),
         timeline: timeline(held, root_entry, root),
         replies,
+        reply_count,
         nested: is_nested(thread, root),
     })
+}
+
+/// The latest [`MAX_REPLIES`] of `all`, copied.
+fn latest(all: &[&Entry]) -> Vec<Entry> {
+    all[all.len().saturating_sub(MAX_REPLIES)..]
+        .iter()
+        .map(|entry| (*entry).clone())
+        .collect()
 }
 
 /// Whether the chosen message `root` is itself a reply in `thread`.
