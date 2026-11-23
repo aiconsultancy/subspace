@@ -237,7 +237,9 @@ in `live.rs` and `live/`.
   requests the conversation's tiles show, in order, with their state, or
   **Loading** until answered and **Unavailable** when they cannot be shown
   (the section asks for its own answers, as a tile's message may be out of
-  view); and
+  view, but only while it is on screen: the Space in front, the inspector
+  shown on a ship's Ship tab; an ordinary conversation, a Starbase or a
+  hidden view asks for nothing); and
   **Here now**, the channel's members. **Starbase**: **Ships**, one row
   each with the captain's icon, name, state and `avatar::crew_meter`.
   While the fleet is not live the tab says why in one sentence
