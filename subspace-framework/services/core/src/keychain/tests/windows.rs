@@ -1,17 +1,19 @@
 //! The real Windows Credential Manager, on request only.
 
-use std::collections::BTreeSet;
-
-use super::memory::{ACCOUNT, MANIFEST_PREFIX, named};
+use super::expect::namespace_in;
+use super::memory::ACCOUNT;
 use crate::Secret;
-use crate::keychain::{Keychain, Store, System};
+use crate::keychain::{Item, Keychain, Store, System};
 
-/// Deletes the test's secret however the test ends.
-struct Cleanup<'a>(&'a Keychain);
+const PROBE: &str = "probe";
+
+/// Deletes the test's credentials however the test ends.
+struct Cleanup<'a>(&'a Keychain, &'a System<'a>);
 
 impl Drop for Cleanup<'_> {
     fn drop(&mut self) {
         let _ = self.0.delete(ACCOUNT);
+        let _ = self.1.delete(PROBE);
     }
 }
 
@@ -22,33 +24,41 @@ fn a_long_secret_round_trips_through_credential_manager() {
     let service = format!("subspace-core-test-{:032x}", rand::random::<u128>());
     let store = System(&service);
     let keychain = Keychain::new(service.clone());
-    let _cleanup = Cleanup(&keychain);
-    let missing = |names: &BTreeSet<String>| names.iter().all(|name| store.get(name) == Ok(None));
+    let _cleanup = Cleanup(&keychain, &store);
+    let pattern = format!(
+        "(?i)^{}[0-9a-f]{{32}}/[0-9]+\\.{}$",
+        regex::escape(&namespace_in(&service, ACCOUNT)),
+        regex::escape(&service)
+    );
+    let chunks = || store.find(&pattern).unwrap();
 
-    // 5,000 characters, 6,250 UTF-16 code units.
+    // 5,000 characters, 6,250 UTF-16 code units: seven chunks.
     let secret = Secret::new("aé€\u{1d11e}".repeat(1_250));
     keychain.save(ACCOUNT, &secret).unwrap();
-    let primary = store.get(ACCOUNT).unwrap().unwrap();
-    assert!(primary.starts_with(MANIFEST_PREFIX));
-    let first = named(ACCOUNT, &primary);
+    let Ok(Some(Item::Bytes(manifest))) = store.get(ACCOUNT) else {
+        panic!("a split secret's credential reads back as bytes");
+    };
+    assert_eq!(chunks().len(), 7);
     assert_eq!(keychain.load(ACCOUNT).unwrap(), Some(secret));
 
-    keychain
-        .save(ACCOUNT, &Secret::new("fixture-token"))
+    // Cut short, at an even length, the manifest is still not a password.
+    store
+        .set_bytes(PROBE, &manifest[..manifest.len() - 1])
         .unwrap();
-    assert_eq!(
-        store.get(ACCOUNT).unwrap().as_deref(),
-        Some("fixture-token")
-    );
-    assert!(missing(
-        &first.into_iter().filter(|name| name != ACCOUNT).collect()
-    ));
+    assert!(matches!(store.get(PROBE), Ok(Some(Item::Bytes(_)))));
 
+    // A save removes the chunks of the generation it replaces.
+    let short = Secret::new("fixture-token");
+    keychain.save(ACCOUNT, &short).unwrap();
+    assert!(matches!(store.get(ACCOUNT), Ok(Some(Item::Text(text))) if text == "fixture-token"));
+    assert!(chunks().is_empty());
+
+    // A delete sweeps every chunk of the account.
     keychain
         .save(ACCOUNT, &Secret::new("b".repeat(5_000)))
         .unwrap();
-    let second = named(ACCOUNT, &store.get(ACCOUNT).unwrap().unwrap());
+    assert_eq!(chunks().len(), 6);
     keychain.delete(ACCOUNT).unwrap();
     assert_eq!(keychain.load(ACCOUNT).unwrap(), None);
-    assert!(missing(&second));
+    assert!(chunks().is_empty());
 }

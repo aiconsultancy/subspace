@@ -1,146 +1,289 @@
-//! An in-memory store with the Windows limit, and checks on what it holds.
+//! An in-memory credential store that answers as Windows Credential Manager
+//! does through keyring, and checks on what it holds.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
-use crate::keychain::split::{Limits, load, save};
-use crate::keychain::{KeychainError, Store};
+use regex::Regex;
+use zeroize::Zeroizing;
 
-/// One Windows credential: 2,560 bytes of UTF-16.
-pub(super) const ITEM_UNITS: usize = 1_280;
-/// The most a chunk may use, to stay comfortably under [`ITEM_UNITS`].
-const CHUNK_UNITS: usize = 1_000;
-/// The stored format's piece size and chunk limit.
+use crate::keychain::split::Limits;
+use crate::keychain::{Item, KeychainError, Store};
+
+/// `CRED_MAX_CREDENTIAL_BLOB_SIZE`: the bytes one Windows credential holds.
+pub(super) const BLOB_BYTES: usize = 2_560;
+/// The same limit for a password, which keyring stores as UTF-16.
+pub(super) const ITEM_UNITS: usize = BLOB_BYTES / 2;
+/// `CRED_MAX_USERNAME_LENGTH` and `CRED_MAX_GENERIC_TARGET_NAME_LENGTH`,
+/// which keyring checks in bytes.
+pub(super) const ACCOUNT_BYTES: usize = 513;
+pub(super) const TARGET_BYTES: usize = 32_767;
+/// The stored format's piece size, chunk header bound and chunk limit.
 pub(super) const PIECE_UNITS: usize = 960;
+pub(super) const HEADER_UNITS: usize = 37;
 pub(super) const MAX_CHUNKS: usize = 256;
-pub(super) const MANIFEST_PREFIX: &str = "subspace-keychain/chunks/v1/";
+pub(super) const MANIFEST_PREFIX: &[u8] = b"\xff\xdfsubspace-keychain/chunks/v2/";
+pub(super) const SERVICE: &str = "app.example";
 pub(super) const ACCOUNT: &str = "session";
 pub(super) const WINDOWS: Option<Limits> = Some(Limits::WINDOWS);
 
-/// Items in memory. Like Windows Credential Manager it can refuse items
-/// over [`ITEM_UNITS`], and it can fail one write, staying down after it as
-/// if the process had stopped there.
+/// A stored item, as keyring reads it back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Value {
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+/// How a chosen step fails.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Failure {
+    /// It fails and changes nothing.
+    Error,
+    /// It fails, and so does every later step, as if the process stopped.
+    Crash,
+    /// It changes the store but reports a failure.
+    Lands,
+}
+
+type Hook = Box<dyn FnOnce(&Memory)>;
+
+/// Every credential, whatever its service, by its target name in ASCII lower
+/// case, as Windows compares names, with the name as first written.
 #[derive(Default)]
-pub(super) struct Memory {
-    items: RefCell<BTreeMap<String, String>>,
-    limit: Option<usize>,
-    writes: Cell<usize>,
-    /// The write that fails, counting from 1, and whether the store stays down.
-    failure: Cell<Option<(usize, bool)>>,
+struct Credentials {
+    blobs: RefCell<BTreeMap<String, (String, Vec<u8>)>>,
+    windows: bool,
+    steps: Cell<usize>,
+    failures: RefCell<Vec<(usize, Failure)>>,
     down: Cell<bool>,
+    hook: RefCell<Option<(usize, Hook)>>,
+    strays: RefCell<Vec<String>>,
+}
+
+/// The credentials under one service. With the Windows limits it refuses
+/// what keyring refuses on Windows. Any step (a get, set, delete or find) can
+/// be made to fail, a hook can run another operation just before a chosen
+/// step, and a search can return stray names.
+pub(super) struct Memory {
+    service: String,
+    credentials: Rc<Credentials>,
+}
+
+impl Default for Memory {
+    fn default() -> Self {
+        Self {
+            service: SERVICE.to_owned(),
+            credentials: Rc::default(),
+        }
+    }
 }
 
 impl Memory {
     pub(super) fn windows() -> Self {
+        let credentials = Credentials {
+            windows: true,
+            ..Credentials::default()
+        };
         Self {
-            limit: Some(ITEM_UNITS),
+            credentials: Rc::new(credentials),
             ..Self::default()
         }
     }
 
-    pub(super) fn holding(account: &str, value: &str) -> Self {
+    pub(super) fn holding(account: &str, value: Value) -> Self {
         let store = Self::windows();
         store.insert(account, value);
         store
     }
 
-    pub(super) fn fail_write(&self, write: usize, crash: bool) {
-        self.writes.set(0);
-        self.failure.set(Some((write, crash)));
+    /// The same credentials, under another service.
+    pub(super) fn under(&self, service: &str) -> Self {
+        Self {
+            service: service.to_owned(),
+            credentials: Rc::clone(&self.credentials),
+        }
+    }
+
+    pub(super) fn fail_step(&self, step: usize, failure: Failure) {
+        self.credentials.steps.set(0);
+        *self.credentials.failures.borrow_mut() = vec![(step, failure)];
+    }
+
+    /// Makes another step of the same operation fail too.
+    pub(super) fn also_fail(&self, step: usize, failure: Failure) {
+        self.credentials.failures.borrow_mut().push((step, failure));
+    }
+
+    pub(super) fn before_step(&self, step: usize, hook: impl FnOnce(&Memory) + 'static) {
+        self.credentials.steps.set(0);
+        *self.credentials.hook.borrow_mut() = Some((step, Box::new(hook)));
     }
 
     pub(super) fn recover(&self) {
-        self.failure.set(None);
-        self.down.set(false);
+        self.credentials.failures.borrow_mut().clear();
+        self.credentials.down.set(false);
     }
 
-    pub(super) fn items(&self) -> BTreeMap<String, String> {
-        self.items.borrow().clone()
+    pub(super) fn steps(&self) -> usize {
+        self.credentials.steps.get()
+    }
+
+    /// Makes every later search also return `target`.
+    pub(super) fn stray(&self, target: &str) {
+        self.credentials.strays.borrow_mut().push(target.to_owned());
+    }
+
+    /// The items under this service, by account, read back as keyring does.
+    pub(super) fn items(&self) -> BTreeMap<String, Value> {
+        let suffix = format!(".{}", self.service).to_ascii_lowercase();
+        let blobs = self.credentials.blobs.borrow();
+        blobs
+            .iter()
+            .filter(|(folded, _)| folded.ends_with(&suffix))
+            .map(|(_, (target, blob))| {
+                let account = &target[..target.len() - suffix.len()];
+                (account.to_owned(), classify(blob))
+            })
+            .collect()
     }
 
     pub(super) fn names(&self) -> BTreeSet<String> {
-        self.items.borrow().keys().cloned().collect()
+        self.items().into_keys().collect()
     }
 
-    pub(super) fn insert(&self, account: &str, value: &str) {
-        self.items
-            .borrow_mut()
-            .insert(account.to_owned(), value.to_owned());
+    /// Every target name, under any service, as first written.
+    pub(super) fn targets(&self) -> BTreeSet<String> {
+        let blobs = self.credentials.blobs.borrow();
+        blobs.values().map(|(target, _)| target.clone()).collect()
+    }
+
+    pub(super) fn insert(&self, account: &str, value: Value) {
+        self.insert_target(&self.target(account), value);
+    }
+
+    pub(super) fn insert_target(&self, target: &str, value: Value) {
+        let blob = match value {
+            Value::Text(text) => text.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+            Value::Bytes(bytes) => bytes,
+        };
+        let mut blobs = self.credentials.blobs.borrow_mut();
+        let entry = blobs
+            .entry(target.to_ascii_lowercase())
+            .or_insert_with(|| (target.to_owned(), Vec::new()));
+        entry.1 = blob;
     }
 
     pub(super) fn remove(&self, account: &str) {
-        self.items.borrow_mut().remove(account);
+        let target = self.target(account).to_ascii_lowercase();
+        self.credentials.blobs.borrow_mut().remove(&target);
     }
+
+    fn target(&self, account: &str) -> String {
+        format!("{account}.{}", self.service)
+    }
+
+    /// Counts a step: an error if it fails before changing anything, or
+    /// `true` if it changes the store but reports a failure.
+    fn step(&self) -> Result<bool, KeychainError> {
+        let credentials = &self.credentials;
+        let step = credentials.steps.get() + 1;
+        credentials.steps.set(step);
+        let hook = credentials.hook.borrow_mut().take_if(|hook| hook.0 == step);
+        if let Some((_, hook)) = hook {
+            hook(self);
+        }
+        if credentials.down.get() {
+            return Err(KeychainError);
+        }
+        let failures = credentials.failures.borrow().clone();
+        let failure = failures.into_iter().find(|failure| failure.0 == step);
+        match failure.map(|failure| failure.1) {
+            None => Ok(false),
+            Some(Failure::Lands) => Ok(true),
+            Some(Failure::Error) => Err(KeychainError),
+            Some(Failure::Crash) => {
+                credentials.down.set(true);
+                Err(KeychainError)
+            }
+        }
+    }
+
+    fn put(&self, account: &str, value: Value) -> Result<(), KeychainError> {
+        let lands = self.step()?;
+        let target = self.target(account);
+        let bytes = match &value {
+            Value::Text(text) => text.encode_utf16().count() * 2,
+            Value::Bytes(bytes) => bytes.len(),
+        };
+        let too_long =
+            bytes > BLOB_BYTES || account.len() > ACCOUNT_BYTES || target.len() > TARGET_BYTES;
+        if self.credentials.windows && too_long {
+            return Err(KeychainError);
+        }
+        self.insert_target(&target, value);
+        report(lands)
+    }
+}
+
+fn report(lands: bool) -> Result<(), KeychainError> {
+    match lands {
+        true => Err(KeychainError),
+        false => Ok(()),
+    }
+}
+
+/// What keyring's Windows store reads back (`extract_password`): text when
+/// the blob is UTF-16LE, its bytes, as `BadEncoding`, otherwise.
+pub(super) fn classify(blob: &[u8]) -> Value {
+    let (pairs, odd) = blob.as_chunks::<2>();
+    if !odd.is_empty() {
+        return Value::Bytes(blob.to_vec());
+    }
+    let units: Vec<u16> = pairs.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
+    String::from_utf16(&units).map_or_else(|_| Value::Bytes(blob.to_vec()), Value::Text)
 }
 
 impl Store for Memory {
-    fn get(&self, account: &str) -> Result<Option<String>, KeychainError> {
-        match self.down.get() {
-            true => Err(KeychainError),
-            false => Ok(self.items.borrow().get(account).cloned()),
-        }
+    fn service(&self) -> &str {
+        &self.service
     }
 
-    fn set(&self, account: &str, value: &str) -> Result<(), KeychainError> {
-        let write = self.writes.get() + 1;
-        self.writes.set(write);
-        if let Some((_, crash)) = self.failure.get().filter(|(at, _)| *at == write) {
-            self.down.set(crash);
-            return Err(KeychainError);
-        }
-        let too_long = self
-            .limit
-            .is_some_and(|limit| value.encode_utf16().count() > limit);
-        if self.down.get() || too_long {
-            return Err(KeychainError);
-        }
-        self.insert(account, value);
-        Ok(())
+    fn get(&self, account: &str) -> Result<Option<Item>, KeychainError> {
+        self.step()?;
+        let target = self.target(account).to_ascii_lowercase();
+        let blobs = self.credentials.blobs.borrow();
+        let blob = blobs.get(&target).map(|(_, blob)| blob.clone());
+        drop(blobs);
+        Ok(blob.map(|blob| match classify(&blob) {
+            Value::Text(text) => Item::Text(text),
+            Value::Bytes(bytes) => Item::Bytes(Zeroizing::new(bytes)),
+        }))
+    }
+
+    fn set_text(&self, account: &str, value: &str) -> Result<(), KeychainError> {
+        self.put(account, Value::Text(value.to_owned()))
+    }
+
+    fn set_bytes(&self, account: &str, value: &[u8]) -> Result<(), KeychainError> {
+        self.put(account, Value::Bytes(value.to_vec()))
     }
 
     fn delete(&self, account: &str) -> Result<(), KeychainError> {
-        if self.down.get() {
-            return Err(KeychainError);
-        }
+        let lands = self.step()?;
         self.remove(account);
-        Ok(())
+        report(lands)
     }
-}
 
-/// The account and every chunk its item names, read as the format says.
-pub(super) fn named(account: &str, primary: &str) -> BTreeSet<String> {
-    let chunks = primary.strip_prefix(MANIFEST_PREFIX).map(|fields| {
-        let fields: Vec<&str> = fields.split('/').collect();
-        let count: usize = fields[1].parse().unwrap();
-        (0..count)
-            .map(|index| format!("{account}#chunk/{}/{index}", fields[0]))
-            .collect::<Vec<_>>()
-    });
-    std::iter::once(account.to_owned())
-        .chain(chunks.unwrap_or_default())
-        .collect()
-}
-
-/// Every item in `store` is the account's or a chunk its manifest names.
-pub(super) fn assert_no_orphans(store: &Memory) {
-    let primary = store.items()[ACCOUNT].clone();
-    assert_eq!(store.names(), named(ACCOUNT, &primary));
-}
-
-/// Saves `secret` on a Windows store, split, and loads it back.
-pub(super) fn assert_split_round_trip(secret: &str) {
-    let store = Memory::windows();
-    save(&store, WINDOWS, ACCOUNT, secret).unwrap();
-    let items = store.items();
-    assert!(items[ACCOUNT].starts_with(MANIFEST_PREFIX));
-    assert!(
-        items.iter().all(|(name, value)| {
-            name == ACCOUNT || value.encode_utf16().count() <= CHUNK_UNITS
-        })
-    );
-    assert_eq!(
-        load(&store, WINDOWS, ACCOUNT).unwrap().as_deref(),
-        Some(secret)
-    );
-    assert_no_orphans(&store);
+    fn find(&self, pattern: &str) -> Result<Vec<String>, KeychainError> {
+        self.step()?;
+        let pattern = Regex::new(pattern).map_err(|_| KeychainError)?;
+        let mut found: Vec<String> = self
+            .targets()
+            .into_iter()
+            .filter(|target| pattern.is_match(target))
+            .collect();
+        found.extend(self.credentials.strays.borrow().iter().cloned());
+        Ok(found)
+    }
 }
