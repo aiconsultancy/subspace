@@ -120,3 +120,69 @@ pub(super) fn history(buffer: BufferKey, ids: &[&str]) -> Event {
         complete: false,
     }
 }
+
+#[test]
+fn reacted_messages_lists_only_this_conversation_s_shown_ones() {
+    let mut book = ReactionBook::new();
+    let mut before = reaction("a0", "👍", "alice", 1);
+    before.buffer.target = Target::Channel("#a".into());
+    let mut after = reaction("z9", "👍", "alice", 1);
+    after.buffer.target = Target::Channel("#zz".into());
+    apply_all(
+        &mut book,
+        &[
+            before,
+            after,
+            reaction("m1", "👍", "alice", 1),
+            reaction("m2", "🎉", "bob", 1),
+            removed(reaction("m2", "🎉", "bob", 2)),
+        ],
+    );
+    assert_eq!(
+        book.reacted_messages(&room()),
+        ["m1"],
+        "a message only remembering a removal shows nothing"
+    );
+}
+
+#[test]
+fn a_second_rename_moves_only_the_nick_s_current_holder() {
+    let mut book = ReactionBook::new();
+    // Robert reacted as robert, then left; Bob later took the nick.
+    apply_all(
+        &mut book,
+        &[
+            reaction("m1", "👍", "robert", 1),
+            reaction("m1", "🎉", "bob", 2),
+        ],
+    );
+    book.rename(&super::network(), "bob", "robert", None);
+    book.rename(&super::network(), "robert", "charlie", None);
+    assert_eq!(
+        shown(&book, "m1"),
+        ["👍:robert", "🎉:charlie"],
+        "the earlier robert keeps his reaction"
+    );
+    // charlie's removal takes only Bob's.
+    book.apply(&removed(reaction("m1", "👍", "charlie", 3)));
+    assert_eq!(shown(&book, "m1"), ["👍:robert", "🎉:charlie"]);
+}
+
+#[test]
+fn a_removal_learned_late_moves_a_backdated_place_after_it() {
+    let mut book = ReactionBook::new();
+    let mut replayed = reaction("m1", "👍", "alice", 1);
+    replayed.history = true;
+    let mut gone = removed(reaction("m1", "👍", "alice", 3));
+    gone.history = true;
+    apply_all(
+        &mut book,
+        &[reaction("m1", "👍", "alice", 5), replayed, gone],
+    );
+    let summary = book.reactions(&room(), "m1");
+    assert_eq!(
+        summary[0].reactors[0].time,
+        at(5),
+        "shown from the addition after the removal"
+    );
+}

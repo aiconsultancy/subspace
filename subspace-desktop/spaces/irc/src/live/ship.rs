@@ -37,6 +37,9 @@ pub(crate) struct ShipLive {
     pub members: Vec<CrewLine>,
     /// Why the API could not read the ship's crew, when it could not.
     pub unavailable: Option<String>,
+    /// Whether the crew's detail is one Stargate kept after a failed read,
+    /// so it is not current and its lines are not shown.
+    pub crew_kept: bool,
 }
 
 /// One crew member and what they are on.
@@ -63,6 +66,7 @@ impl ShipLive {
 
 /// The ship in `snapshot` whose captain has the roster nick `captain`,
 /// matched to its registration ID ignoring ASCII case.
+#[cfg(test)]
 pub(crate) fn of(snapshot: &FleetSnapshot, captain: &str) -> Option<ShipLive> {
     let ship = snapshot
         .overview
@@ -73,12 +77,17 @@ pub(crate) fn of(snapshot: &FleetSnapshot, captain: &str) -> Option<ShipLive> {
     Some(live(ship, snapshot.ships.get(&ship.id)))
 }
 
-/// Every ship in `snapshot` whose registration ID `is_captain` accepts.
+/// Every ship in `snapshot` whose registration ID `is_captain` accepts;
+/// `None` while Stargate says its overview is an earlier one it kept
+/// after a failed read, as that is not live.
 pub(crate) fn all(
     snapshot: &FleetSnapshot,
     is_captain: impl Fn(&str) -> bool,
 ) -> Option<Vec<ShipLive>> {
-    let overview = snapshot.overview.as_ref()?;
+    let overview = snapshot
+        .overview
+        .as_ref()
+        .filter(|overview| !overview.overview_stale)?;
     Some(
         overview
             .ships
@@ -89,9 +98,17 @@ pub(crate) fn all(
     )
 }
 
-/// `ship` from the overview with its `detail`, when one arrived.
+/// `ship` from the overview with its `detail`, when one arrived and is
+/// current: not while either says the ship is unavailable, nor while
+/// Stargate keeps an earlier detail after a failed read, so no crew member
+/// shows on a task they were last seen on. The overview's totals stand
+/// in.
 fn live(ship: &Ship, detail: Option<&ShipDetail>) -> ShipLive {
-    let members = detail.map(|detail| detail.crew_members.as_slice());
+    let current =
+        |detail: &&ShipDetail| ship.available && detail.ship.available && !detail.detail_stale;
+    let members = detail
+        .filter(current)
+        .map(|detail| detail.crew_members.as_slice());
     let readable = ship.available;
     ShipLive {
         id: ship.id.clone(),
@@ -109,6 +126,8 @@ fn live(ship: &Ship, detail: Option<&ShipDetail>) -> ShipLive {
             present(ship.error.as_deref(), MAX_TASK_CHARS)
                 .unwrap_or_else(|| "Crew status unavailable.".to_owned())
         }),
+        crew_kept: detail
+            .is_some_and(|detail| readable && detail.ship.available && detail.detail_stale),
     }
 }
 
@@ -131,12 +150,13 @@ fn busy(member: &CrewMember) -> bool {
     member.current_task().is_some()
 }
 
-/// The crew's lines, the working first, at most [`MAX_CREW`].
+/// The crew's lines, the working first, at most [`MAX_CREW`]: chosen
+/// before any is formatted, however large the crew.
 fn lines(members: &[CrewMember]) -> Vec<CrewLine> {
-    let mut lines: Vec<CrewLine> = members.iter().map(line).collect();
-    lines.sort_by_key(|line| Reverse(line.working));
-    lines.truncate(MAX_CREW);
-    lines
+    let mut chosen: Vec<&CrewMember> = members.iter().collect();
+    chosen.sort_by_key(|member| Reverse(busy(member)));
+    chosen.truncate(MAX_CREW);
+    chosen.into_iter().map(line).collect()
 }
 
 fn line(member: &CrewMember) -> CrewLine {
@@ -168,11 +188,21 @@ fn present(text: Option<&str>, max: usize) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-/// `text` on one line, without control characters, trimmed and cut to at
-/// most `max` characters, the last an ellipsis when cut.
+/// The explicit bidirectional formatting characters: marks, embeddings,
+/// overrides and isolates, which could reorder the text drawn beside an
+/// untrusted name.
+const BIDI_CONTROLS: [char; 12] = [
+    '\u{061C}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}',
+    '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
+];
+
+/// `text` on one line, without control or bidirectional formatting
+/// characters, trimmed and cut to at most `max` characters, the last an
+/// ellipsis when cut.
 pub(crate) fn bounded(text: &str, max: usize) -> String {
     let flat: String = text
         .chars()
+        .filter(|ch| !BIDI_CONTROLS.contains(ch))
         .map(|ch| if ch.is_control() { ' ' } else { ch })
         .collect();
     let words: Vec<&str> = flat.split_whitespace().collect();

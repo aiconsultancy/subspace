@@ -138,9 +138,15 @@ total, a skipped or neutral check counting as passed) come only from check
 runs the board has read: a pull request it opened or read for a resolution
 has them. One it knows only from a list answers at once with the combined
 state alone and is read once for its runs (the same deduplicated read an
-unknown key gets); later answers carry the counts. A list refresh marks
-those reads stale, so each is read again at most once per refresh, when
-next asked.
+unknown key gets); later answers carry the counts. A list refresh (every
+section, or the favourites' sections) marks those reads stale once, when
+its first section lands, so each is read again at most once per refresh,
+when next asked, however many sections land or pull requests are opened.
+Until then a stale read lends only its counts to the list's item, and only
+while the list's combined state and last update match the read's. A read
+of a pull request the board neither opened nor lists is checked again once
+per refresh too, so one the account can no longer read stops answering. A
+signed-out account starts no read.
 
 ```rust
 // In the requester's contracts():

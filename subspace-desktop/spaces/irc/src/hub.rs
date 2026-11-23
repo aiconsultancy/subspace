@@ -71,13 +71,16 @@ pub(crate) struct Hub {
     /// Clock sampled by the existing drain timer, never by tile rendering.
     pub now: DateTime<Utc>,
     pub uploads: crate::uploads::cache::References,
-    /// What the Fleet API says of each fleet the board shows, by fleet id,
-    /// for the conversations' headers; the board keeps it current.
+    /// What the Fleet API says of each fleet a Channels view shows, by
+    /// fleet id, for the conversations' headers: the union of
+    /// [`Self::fleet_views`], which each view keeps current.
     pub fleets: crate::live::Lives,
     /// Message reactions, reaction support per network and refusals.
     pub reactions: crate::reactions::Reactions,
     /// The API client tracker commands and message actions write with.
     pub tracker: crate::tracker::Link,
+    /// Each view's share of [`Self::fleets`], by the view's entity id.
+    pub fleet_views: crate::live::Shares,
     captain_notifications: captain_notifications::Monitor,
     _timer: Option<Task<()>>,
     _settings: Option<Subscription>,
@@ -242,6 +245,7 @@ impl Hub {
             fleets: Default::default(),
             reactions: Default::default(),
             tracker: Default::default(),
+            fleet_views: Default::default(),
             _timer: None,
             _settings: None,
         }

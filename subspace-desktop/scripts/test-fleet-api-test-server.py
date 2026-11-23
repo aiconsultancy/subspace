@@ -85,19 +85,31 @@ class FleetFixtureTests(unittest.TestCase):
         self.assertNotIn('other-token', printed.getvalue())
 
     def raw(self, request):
-        """Sends `request` as bytes and returns the status line."""
+        """Sends `request` as bytes and returns the whole response."""
         host, port = self.server.server_address[:2]
         with socket.create_connection((host, port), timeout=3) as conn:
             conn.sendall(request)
-            return conn.makefile('rb').readline()
+            return conn.makefile('rb').read()
 
     def test_a_malformed_request_is_logged_without_failing_the_log(self):
+        # A one-word request line: some Python versions answer it as
+        # HTTP/0.9, with no status line, so the error is checked in the
+        # body and the log, which every version writes.
         self.server.log_requests = True
         printed = io.StringIO()
         with contextlib.redirect_stdout(printed):
-            status = self.raw(b'NONSENSE\r\n\r\n')
-        self.assertIn(b' 400 ', status)
+            response = self.raw(b'NONSENSE\r\n\r\n')
+        self.assertIn(b'400', response)
+        self.assertIn(b'Bad request syntax', response)
         self.assertEqual(printed.getvalue().splitlines(), ['request - - 400 auth=none'])
+
+    def test_a_target_that_cannot_be_parsed_is_refused_and_logged(self):
+        self.server.log_requests = True
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            response = self.raw(b'GET http://[bad/x HTTP/1.1\r\nConnection: close\r\n\r\n')
+        self.assertTrue(response.startswith(b'HTTP/1.1 400 '), response[:40])
+        self.assertEqual(printed.getvalue().splitlines(), ['request GET - 400 auth=none'])
 
     def test_control_characters_in_the_method_and_path_are_escaped(self):
         self.server.log_requests = True

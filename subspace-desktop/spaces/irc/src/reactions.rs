@@ -14,6 +14,7 @@ use subspace_client_irc::{BufferKey, Event, NetworkId, ReactionError, Update};
 use crate::state::{Buffer, IrcState};
 
 pub(crate) mod choices;
+pub(crate) mod gate;
 pub(crate) mod stop;
 #[cfg(test)]
 mod tests;
@@ -88,6 +89,12 @@ impl Reactions {
         self.support.get(network).copied().unwrap_or(false)
     }
 
+    /// Whether the client reports our `reaction`, exactly that value, on
+    /// the message `msgid` in `buffer`.
+    pub fn reacted(&self, buffer: &BufferKey, msgid: &str, reaction: &str) -> bool {
+        self.book.reacted(buffer, msgid, reaction)
+    }
+
     /// The latest refusal in `buffer`, if any.
     pub fn refusal(&self, buffer: &BufferKey) -> Option<&Refusal> {
         self.refusals.get(buffer)
@@ -118,8 +125,12 @@ impl Reactions {
 /// Takes one reaction update into `reactions`, knowing what `state`
 /// holds; see [`Reactions::update`].
 pub(crate) fn react(reactions: &mut Reactions, state: &IrcState, update: Update) -> bool {
+    // A message already known loaded needs no look through the buffer.
     let held = match &update {
-        Update::Reaction(reaction) => holds(state.buffer(&reaction.buffer), &reaction.msgid),
+        Update::Reaction(reaction) => {
+            !reactions.book.is_seen(&reaction.buffer, &reaction.msgid)
+                && holds(state.buffer(&reaction.buffer), &reaction.msgid)
+        }
         _ => false,
     };
     reactions.update(update, held)

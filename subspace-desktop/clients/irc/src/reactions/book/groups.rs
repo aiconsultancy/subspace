@@ -129,6 +129,11 @@ fn insert(group: &mut Group, incoming: Record, can_show: bool) -> bool {
     true
 }
 
+/// Whether any group shows anyone.
+pub(super) fn shows(groups: &[Group]) -> bool {
+    groups.iter().any(|group| group.shown() > 0)
+}
+
 /// Shown reactions, each with its people in time order, groups ordered by
 /// their first person.
 pub(super) fn summaries(groups: &[Group]) -> Vec<ReactionSummary> {

@@ -246,3 +246,51 @@ fn candidates_are_issues_and_pull_requests_once_each_in_order() {
     let keys: Vec<_> = found.iter().filter_map(TileRef::of).collect();
     assert_eq!(keys, vec![issue("NAV-7"), pr("acme/web#492")]);
 }
+
+#[test]
+fn what_is_in_play_keeps_the_order_a_message_names_it() {
+    // A pull request named before eight issues in one message keeps its
+    // place under the inspector's cap of eight.
+    let mut named = vec![pr("acme/web#492")];
+    named.extend((1..=8).map(|n| issue(&format!("NAV-{n}"))));
+    let mut owners = TileOwners::default();
+    owners.claim([(1, named.as_slice())]);
+    let play = owners.in_play();
+    assert_eq!(play.first(), Some(&pr("acme/web#492")));
+    assert_eq!(play, named);
+    assert!(
+        play[..8].contains(&pr("acme/web#492")),
+        "within the cap of eight"
+    );
+}
+
+#[test]
+fn a_new_recognition_never_gives_an_issue_and_a_kept_pull_request_one_place() {
+    let pr = TileRef::PullRequest("acme/web#492".into());
+    let issue = TileRef::Issue("NAV-6".into());
+    let mut owners = TileOwners::default();
+    owners.claim([(1, std::slice::from_ref(&pr))]);
+    // A new scope recognises the issue named first in the same message:
+    // issues are let go and the message is read again.
+    owners.release_issues();
+    let now = [issue.clone(), pr.clone()];
+    owners.claim([(1, now.as_slice())]);
+    let places: std::collections::HashSet<_> = owners.0.values().collect();
+    assert_eq!(places.len(), 2, "each claim has a place of its own");
+    assert_eq!(
+        owners.in_play(),
+        [issue.clone(), pr.clone()],
+        "as the message names them"
+    );
+    assert_eq!(owners.in_play_first(1), [issue]);
+}
+
+#[test]
+fn only_an_issue_counts_as_an_issue_in_play() {
+    let mut tiles = Tiles::default();
+    assert!(!tiles.has_issue_in_play());
+    read(&mut tiles, &[1, 2], &[(1, vec![pr("acme/web#492")])]);
+    assert!(!tiles.has_issue_in_play(), "a pull request is not an issue");
+    read(&mut tiles, &[1, 2], &[(2, vec![issue("NAV-7")])]);
+    assert!(tiles.has_issue_in_play());
+}

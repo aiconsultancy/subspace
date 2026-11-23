@@ -158,7 +158,7 @@ pub(crate) fn handle(
         }
         ChatInputEvent::Complete => complete::apply(conversation, window, cx),
         ChatInputEvent::Cancel if offer::is_open(conversation) => offer::close(conversation, cx),
-        ChatInputEvent::Cancel => reply::cancel(conversation, window, cx),
+        ChatInputEvent::Cancel => reply::escape(conversation, window, cx),
     }
 }
 

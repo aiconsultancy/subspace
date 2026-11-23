@@ -6,7 +6,10 @@
 //! Our reaction shows only once the client reports it: an `echo-message`
 //! echo, or the client's local echo after a successful write. Nothing is
 //! drawn ahead of that. A reaction goes to the conversation its message is
-//! in; nothing here opens or sends a private message.
+//! in; nothing here opens or sends a private message. Every reaction sent
+//! goes through [`toggle`], which asks [`crate::reactions::gate`] first:
+//! no reaction to a fleet agent in private, and a new stop reaction only
+//! from its labelled menu item.
 
 use std::rc::Rc;
 
@@ -16,8 +19,7 @@ use gpui_kit::{
     ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
     TestSupportExt as _, Window, div,
 };
-use subspace_client_irc::reactions::agent_stop::reaction_key;
-use subspace_client_irc::{Command, Target};
+use subspace_client_irc::Command;
 use subspace_framework::dashboard::Tokens;
 use subspace_framework::dashboard::action::{Intent, icon_button};
 use subspace_framework::dashboard::anchored::Anchor;
@@ -25,6 +27,7 @@ use subspace_framework::dashboard::panel::IconName;
 
 use super::Conversation;
 use crate::reactions::choices::choices;
+use crate::reactions::gate::{self, Gate, Via};
 use crate::reactions::stop::{self, Stops};
 use crate::reactions::{Shown, refusal_text};
 use crate::transcript::{Row, reactions as pills, replies};
@@ -38,8 +41,9 @@ pub(crate) struct Reacting {
     pub stops: Rc<Stops>,
     /// The network can react now.
     pub supported: bool,
-    /// A stop reaction sent and not yet reported back.
-    pending: Option<PendingStop>,
+    /// Stop reactions sent and not yet reported back, each resolved by
+    /// its own message and exact reaction.
+    pending: Vec<PendingStop>,
     /// The newest refusal already shown.
     seen_refusal: u64,
     /// The brief notice above the composer.
@@ -62,7 +66,7 @@ impl Reacting {
             shown: Rc::default(),
             stops: Rc::default(),
             supported: false,
-            pending: None,
+            pending: Vec::new(),
             seen_refusal,
             notice: None,
         }
@@ -84,7 +88,14 @@ pub(super) fn refresh(this: &mut Conversation, cx: &App) -> Before {
         .map(|held| hub.reactions.shown(&this.buffer, held))
         .unwrap_or_default();
     let stops = held
-        .map(|held| stop::stops(&this.buffer, held, &this.statuses.shown))
+        .map(|held| {
+            stop::stops(&stop::Sources {
+                buffer: &this.buffer,
+                held,
+                statuses: &this.statuses.shown,
+                roster: &this.roster,
+            })
+        })
         .unwrap_or_default();
     let supported = can_react(this, cx);
     let reacting = &mut this.reacting;
@@ -128,14 +139,15 @@ pub(super) fn changed_rows(
     changed
 }
 
-/// Whether reactions can be sent in this conversation now.
+/// Whether reactions can be sent in this conversation now: never to the
+/// server or to a fleet agent in private ([`gate::refusal`]).
 fn can_react(this: &Conversation, cx: &App) -> bool {
-    !matches!(this.buffer.target, Target::Server)
+    gate::refusal(&this.buffer.target, &this.roster).is_none()
         && this.hub.read(cx).reactions.supported(&this.buffer.network)
 }
 
-/// Shows a new refusal, and says a pending stop was sent once the client
-/// reports our reaction on that message.
+/// Shows a new refusal, and says each pending stop was sent once the
+/// client reports our exact reaction on its message.
 fn follow(this: &mut Conversation, cx: &App) {
     let hub = this.hub.read(cx);
     let refusal = hub
@@ -143,44 +155,31 @@ fn follow(this: &mut Conversation, cx: &App) {
         .refusal(&this.buffer)
         .filter(|refusal| refusal.serial > this.reacting.seen_refusal)
         .cloned();
-    let reported = this
-        .reacting
-        .pending
-        .as_ref()
-        .is_some_and(|pending| reported(this, pending, cx));
+    let (reported, waiting): (Vec<PendingStop>, Vec<PendingStop>) =
+        std::mem::take(&mut this.reacting.pending)
+            .into_iter()
+            .partition(|pending| reported(this, pending, cx));
     let reacting = &mut this.reacting;
+    reacting.pending = waiting;
     if let Some(refusal) = refusal {
         reacting.seen_refusal = refusal.serial;
         reacting.notice = Some(refusal_text(&refusal.error));
-        if reacting
+        reacting
             .pending
-            .as_ref()
-            .is_some_and(|pending| pending.msgid == refusal.msgid)
-        {
-            reacting.pending = None;
-        }
+            .retain(|pending| pending.msgid != refusal.msgid);
     }
-    if reported && let Some(pending) = reacting.pending.take() {
+    if let Some(pending) = reported.last() {
         reacting.notice = Some(stop_sent(&pending.reaction, &pending.ship));
     }
 }
 
-/// Whether the client now reports our `pending` reaction on its message.
+/// Whether the client now reports our `pending` reaction, exactly as sent,
+/// on its message.
 fn reported(this: &Conversation, pending: &PendingStop, cx: &App) -> bool {
-    let key = reaction_key(&pending.reaction);
-    let held = this.hub.read(cx).state.buffer(&this.buffer);
-    let seq = held.and_then(|held| {
-        held.entries
-            .iter()
-            .find(|entry| entry.line.id.as_deref() == Some(pending.msgid.as_str()))
-            .map(|entry| entry.seq)
-    });
-    seq.and_then(|seq| this.reacting.shown.get(&seq))
-        .is_some_and(|summaries| {
-            summaries
-                .iter()
-                .any(|summary| summary.mine() && reaction_key(&summary.reaction) == key)
-        })
+    this.hub
+        .read(cx)
+        .reactions
+        .reacted(&this.buffer, &pending.msgid, &pending.reaction)
 }
 
 /// What is known once a stop reaction was sent: only that it was.
@@ -190,10 +189,38 @@ pub(crate) fn stop_sent(reaction: &str, ship: &str) -> String {
     )
 }
 
-/// Sends our reaction to the message `msgid` in this conversation, or
-/// takes ours back. `stop` names the agent when it was chosen from the
-/// stop group, so the notice can say it was sent once it is.
+/// Asks to add our reaction to the message `msgid` in this conversation,
+/// or to take ours back. Every reaction Channels sends comes here, and
+/// goes only if [`gate::gate`] lets it: `stop` names the agent when it was
+/// chosen from the labelled stop item, so the notice can say it was sent
+/// once it is.
 pub(crate) fn toggle(
+    this: &mut Conversation,
+    (msgid, reaction): (String, String),
+    add: bool,
+    stop: Option<String>,
+    cx: &mut Context<Conversation>,
+) {
+    let via = if stop.is_some() {
+        Via::LabelledStop
+    } else {
+        Via::Ordinary
+    };
+    match gate::gate((&this.buffer.target, &this.roster), &reaction, add, via) {
+        Gate::Send => send(this, (msgid, reaction), add, stop, cx),
+        Gate::Explain => {
+            let ship = ship_of(this, &msgid, cx);
+            explain_stop(this, ship.as_deref(), cx);
+        }
+        Gate::Refuse(words) => {
+            this.reacting.notice = Some(words);
+            cx.notify();
+        }
+    }
+}
+
+/// Sends what [`toggle`] let through.
+fn send(
     this: &mut Conversation,
     (msgid, reaction): (String, String),
     add: bool,
@@ -202,11 +229,13 @@ pub(crate) fn toggle(
 ) {
     let buffer = this.buffer.clone();
     this.reacting.notice = None;
-    this.reacting.pending = stop.filter(|_| add).map(|ship| PendingStop {
-        msgid: msgid.clone(),
-        reaction: reaction.clone(),
-        ship,
-    });
+    if let Some(ship) = stop.filter(|_| add) {
+        this.reacting.pending.push(PendingStop {
+            msgid: msgid.clone(),
+            reaction: reaction.clone(),
+            ship,
+        });
+    }
     let command = if add {
         Command::React {
             buffer,
@@ -224,18 +253,36 @@ pub(crate) fn toggle(
     cx.notify();
 }
 
-/// A stop reaction's pill on an agent message is not a stop button: say
-/// where the deliberate one is.
-pub(crate) fn explain_stop(
-    this: &mut Conversation,
-    ship: Option<&str>,
-    cx: &mut Context<Conversation>,
-) {
-    let ship = ship.unwrap_or("the agent");
-    this.reacting.notice = Some(format!(
-        "To ask {ship} to stop, use Add reaction and choose under Stop {ship}, while its turn is running."
-    ));
+/// The agent a stop on the message `msgid` would concern, when the app
+/// recognises it.
+fn ship_of(this: &Conversation, msgid: &str, cx: &App) -> Option<String> {
+    let held = this.hub.read(cx).state.buffer(&this.buffer)?;
+    let seq = held
+        .entries
+        .iter()
+        .find(|entry| entry.line.id.as_deref() == Some(msgid))?
+        .seq;
+    this.reacting
+        .stops
+        .get(&seq)
+        .map(|agent| agent.ship.clone())
+}
+
+/// Says where the deliberate stop is, instead of sending a stop reaction
+/// chosen anywhere but its labelled item.
+fn explain_stop(this: &mut Conversation, ship: Option<&str>, cx: &mut Context<Conversation>) {
+    this.reacting.notice = Some(explanation(ship));
     cx.notify();
+}
+
+/// Why a stop reaction was not sent, and where the deliberate one is.
+pub(crate) fn explanation(ship: Option<&str>) -> String {
+    match ship {
+        Some(ship) => format!(
+            "To ask {ship} to stop, use Add reaction and choose under Stop {ship}, while its turn is running."
+        ),
+        None => "\u{270B} and \u{1F6D1} can stop an agent's turn, so Subspace sends them only from Add reaction, under Stop and the agent's name, on a running request to a fleet agent.".to_owned(),
+    }
 }
 
 /// Opens the reaction choices for the keyboard-focused message, at that
@@ -267,7 +314,9 @@ pub(crate) fn open_choices_for(
         .and_then(|held| held.entries.iter().find(|entry| entry.seq == seq))
         .and_then(|entry| entry.line.id.clone());
     let Some(msgid) = msgid.filter(|_| this.reacting.supported) else {
-        this.reacting.notice = Some("This message cannot take reactions here.".to_owned());
+        let refused = gate::refusal(&this.buffer.target, &this.roster);
+        this.reacting.notice =
+            Some(refused.unwrap_or_else(|| "This message cannot take reactions here.".to_owned()));
         cx.notify();
         return;
     };

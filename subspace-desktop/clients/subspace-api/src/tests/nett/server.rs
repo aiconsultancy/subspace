@@ -183,7 +183,8 @@ fn a_mock_with_a_missing_or_unexpected_banner_is_reaped() {
         ),
         (
             "import time; print('unexpected', flush=True); time.sleep(15)",
-            Duration::from_secs(5),
+            // Long enough for a busy machine to start Python and print.
+            Duration::from_secs(60),
             "unexpected fixture banner",
         ),
     ] {

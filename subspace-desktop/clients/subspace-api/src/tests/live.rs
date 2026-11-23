@@ -14,7 +14,7 @@ use crate::{
     live::{self, LiveError, Record},
 };
 use serde_json::json;
-use server::{Seen, Server, route};
+use server::{Peer, Seen, Server, route};
 use std::{
     collections::BTreeSet,
     sync::{
@@ -83,6 +83,19 @@ fn hub(server: &Server) -> Hub {
                 .is_some_and(|issue| issue.detail().is_some())
     });
     hub
+}
+
+/// Sends `ready` and waits until the hub has caught up after it. A few
+/// tenths of a second after `ready` the hub reads the list head and the open
+/// issue again, in the same step; the issue read waits for any poll already
+/// out, and once back it starts the issue's media lists again. A test that
+/// acts before that has landed races it, and a busy machine delays it, so
+/// wait for the hub to report the catch-up taken and landed rather than for
+/// a fixed time.
+fn ready_and_caught_up(hub: &Hub, peer: &mut Peer) {
+    peer.ready();
+    wait(hub, |snapshot| snapshot.live() == LiveStatus::Live);
+    wait(hub, |_| hub.caught_up_after_ready());
 }
 
 fn version(hub: &Hub) -> i64 {
@@ -182,9 +195,7 @@ fn ready_stream_resyncs_and_reads_again_after_a_hint() {
     let server = Server::new(api(current.clone()));
     let hub = hub(&server);
     let mut peer = server.peer();
-    peer.ready();
-    wait(&hub, |snapshot| snapshot.live() == LiveStatus::Live);
-    std::thread::sleep(Duration::from_millis(700));
+    ready_and_caught_up(&hub, &mut peer);
     let details = server.count("GET", DETAIL);
     // Collaboration writes keep the version: a hint still reads once.
     peer.changed("SUB-1", 1);

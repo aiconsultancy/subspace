@@ -12,39 +12,64 @@ use crate::hub::Hub;
 use crate::thread_status::PROGRESS_TAG;
 use crate::{Irc, view};
 
-fn room() -> BufferKey {
+mod gate;
+mod take_back;
+
+pub(super) fn room() -> BufferKey {
     channel("#subspace")
 }
 
-fn with_id(mut line: Line, id: &str) -> Line {
+pub(super) fn with_id(mut line: Line, id: &str) -> Line {
     line.id = Some(id.into());
     line
 }
 
-fn reaction(msgid: &str, value: &str, nick: &str) -> Update {
+pub(super) fn reaction(msgid: &str, value: &str, nick: &str) -> Update {
     let mut reaction = subspace_client_irc::test_support::reaction(room(), msgid, value, nick);
     reaction.own = nick == "subspace";
     reaction.time = at(20);
     Update::Reaction(reaction)
 }
 
-fn support(supported: bool) -> Update {
+pub(super) fn support(supported: bool) -> Update {
     Update::ReactionSupport {
         network: network_id(),
         supported,
     }
 }
 
-fn receive(hub: &Entity<Hub>, updates: Vec<Update>, cx: &mut VisualTestContext) {
+pub(super) fn receive(hub: &Entity<Hub>, updates: Vec<Update>, cx: &mut VisualTestContext) {
     hub.update(cx, |hub, cx| crate::hub::receive(hub, updates, at(30), cx));
     cx.run_until_parked();
     cx.update(|window, cx| window.render_frame(cx));
 }
 
+/// One initiative whose fleet has the captain `astra`, so the roster knows
+/// her as an agent.
+fn astra_fleet() -> Vec<subspace_api_client::model::MemberInitiative> {
+    serde_json::from_value(serde_json::json!([{
+        "id": "initiative-astra", "name": "Astra", "channels": "#subspace",
+        "fleetId": "astra-fleet",
+        "fleet": {"id": "astra-fleet", "slug": "astra-fleet", "name": "Astra fleet",
+                  "ircHost": "irc.example.test", "ircPort": 6697, "ircTls": true,
+                  "rearAdmiralName": "admiral", "captainNames": ["astra"],
+                  "agents": [{"userId": "u-astra", "name": "astra", "rank": "captain",
+                              "shipId": "s-astra", "ship": "Astra", "ircNick": "astra",
+                              "available": true}],
+                  "ships": [{"id": "s-astra", "name": "Astra", "channel": null}]}
+    }]))
+    .unwrap()
+}
+
 /// `#subspace` with alice's message `m1`, our request `r1` to astra with
 /// her progress, and support on.
-fn open(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestContext) {
+pub(super) fn open(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestContext) {
     let (board, hub, cx) = mount(cx, settings());
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(astra_fleet()), cx)
+        })
+    });
     let mut astra = member("astra", "");
     astra.account = Some("astra".into());
     let mut events = channel_events();
@@ -77,7 +102,7 @@ fn open(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestCo
     (board, hub, cx)
 }
 
-fn seq(hub: &Entity<Hub>, id: &str, cx: &mut VisualTestContext) -> i64 {
+pub(super) fn seq(hub: &Entity<Hub>, id: &str, cx: &mut VisualTestContext) -> i64 {
     hub.read_with(cx, |hub, _| {
         hub.state
             .buffer(&room())
@@ -91,7 +116,7 @@ fn seq(hub: &Entity<Hub>, id: &str, cx: &mut VisualTestContext) -> i64 {
     })
 }
 
-fn label(window: &Window, id: &str) -> Option<String> {
+pub(super) fn label(window: &Window, id: &str) -> Option<String> {
     window
         .try_find(SharedString::from(id.to_owned()))
         .and_then(|found| found.label().map(str::to_owned))

@@ -24,9 +24,11 @@ pub const MAX_REACTORS_PER_REACTION: usize = 100;
 const REMOVALS_FACTOR: usize = 2;
 /// Message IDs remembered as seen loaded.
 const MAX_SEEN_IDS: usize = 8192;
+/// Nicks remembered with when a rename last took them.
+const MAX_HOLDERS: usize = 1024;
 
 mod groups;
-use groups::{Group, record, summaries};
+use groups::{Group, record, shows, summaries};
 
 /// Someone who reacted.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +95,9 @@ struct Entry {
 pub struct ReactionBook {
     messages: BTreeMap<Key, Entry>,
     mappings: BTreeMap<NetworkId, Casemapping>,
+    /// When each nick, folded, was last taken by a rename on its network:
+    /// accountless records under it from before then were someone else's.
+    holders: BTreeMap<(NetworkId, String), u64>,
     seen: Seen,
     clock: u64,
 }
@@ -161,13 +166,20 @@ impl ReactionBook {
             .unwrap_or_default()
     }
 
-    /// The messages in `buffer` that show reactions, by message ID.
+    /// The messages in `buffer` that show reactions, by message ID. Reads
+    /// only `buffer`'s messages, and builds no summaries to find them.
     pub fn reacted_messages(&self, buffer: &BufferKey) -> Vec<&str> {
         self.messages
-            .iter()
-            .filter(|((held, _), entry)| held == buffer && !summaries(&entry.groups).is_empty())
+            .range((buffer.clone(), String::new())..)
+            .take_while(|((held, _), _)| held == buffer)
+            .filter(|(_, entry)| shows(&entry.groups))
             .map(|((_, msgid), _)| msgid.as_str())
             .collect()
+    }
+
+    /// Whether the message `msgid` in `buffer` is known to be loaded.
+    pub fn is_seen(&self, buffer: &BufferKey, msgid: &str) -> bool {
+        self.seen.ids.contains(&(buffer.clone(), msgid.to_owned()))
     }
 
     /// Whether we reacted to the message with `reaction`.
@@ -237,11 +249,12 @@ impl ReactionBook {
 
     /// Someone on `network` with `account`, if known, is now known as
     /// `new`. Entries under `old` with another known account keep their
-    /// nick: they were someone else.
+    /// nick: they were someone else. So do accountless entries made under
+    /// `old` before its current holder took it by a rename: they belonged
+    /// to an earlier holder of the nick.
     pub fn rename(&mut self, network: &NetworkId, old: &str, new: &str, account: Option<&str>) {
         let mapping = self.mapping(network);
-        let old = mapping.fold(old);
-        let account = account.map(|account| mapping.fold(account));
+        let since = self.held_since(network, old, mapping);
         self.clock += 1;
         let stamp = self.clock;
         let records = self
@@ -251,16 +264,35 @@ impl ReactionBook {
             .flat_map(|(_, entry)| entry.groups.iter_mut())
             .flat_map(|group| group.records.iter_mut());
         for record in records {
-            let theirs = record
-                .reactor
-                .account
-                .as_deref()
-                .map(|held| mapping.fold(held));
-            if mapping.fold(&record.reactor.nick) == old && (theirs.is_none() || theirs == account)
-            {
+            if holds(record, (old, account), since, mapping) {
                 new.clone_into(&mut record.reactor.nick);
                 record.assigned = stamp;
             }
+        }
+        self.took(network, new, stamp, mapping);
+    }
+
+    /// When `nick` was last taken by a rename on `network`; 0 if never.
+    fn held_since(&self, network: &NetworkId, nick: &str, mapping: Casemapping) -> u64 {
+        self.holders
+            .get(&(network.clone(), mapping.fold(nick)))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// `nick` was taken by a rename at `stamp`. Keeps the newest
+    /// [`MAX_HOLDERS`] nicks.
+    fn took(&mut self, network: &NetworkId, nick: &str, stamp: u64, mapping: Casemapping) {
+        self.holders
+            .insert((network.clone(), mapping.fold(nick)), stamp);
+        if self.holders.len() > MAX_HOLDERS
+            && let Some(oldest) = self
+                .holders
+                .iter()
+                .min_by_key(|(_, stamp)| **stamp)
+                .map(|(key, _)| key.clone())
+        {
+            self.holders.remove(&oldest);
         }
     }
 
@@ -269,6 +301,26 @@ impl ReactionBook {
             .get(network)
             .copied()
             .unwrap_or(Casemapping::Rfc1459)
+    }
+}
+
+/// Whether `record` belongs to the person renamed from `old` with
+/// `account`: under that nick, with that account or none, and, without an
+/// account, made since the nick's current holder took it (`since`).
+fn holds(
+    record: &groups::Record,
+    (old, account): (&str, Option<&str>),
+    since: u64,
+    mapping: Casemapping,
+) -> bool {
+    let reactor = &record.reactor;
+    if !mapping.same(&reactor.nick, old) {
+        return false;
+    }
+    match (reactor.account.as_deref(), account) {
+        (None, _) => record.assigned >= since,
+        (Some(held), Some(account)) => mapping.same(held, account),
+        (Some(_), None) => false,
     }
 }
 

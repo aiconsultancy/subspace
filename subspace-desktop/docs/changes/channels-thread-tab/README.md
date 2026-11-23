@@ -104,7 +104,11 @@ thread leaves reply mode.
   text and tone; there is no accent edge on the tab, the rows, the root or
   the reply row.
 - The tab's content starts at the inspector body's own text edge, with no
-  inset of its own.
+  inset of its own. So do Ship and Starbase, which added the text edge and
+  a top padding of their own until this change, so every Channels
+  inspector tab (Ship, Starbase, Thread, People) now starts at the same
+  edge and top: the design guide's inspector body edge,
+  `workspace::text_edge`.
 - The tab has no count: the reply count is in the Replies heading.
 
 ### Left out, and what each needs
@@ -147,8 +151,270 @@ thread leaves reply mode.
   plain message's thread and a reply arriving live, the choice kept per
   conversation, reply mode sending `Command::Reply` and cancelling, the
   footer's refusal without `message-tags`).
+- One inspector edge: `view/inspector.rs` (`subject_body` adds no inset);
+  `tests/initiatives/views.rs`
+  (`every_inspector_tab_starts_its_content_at_the_body_s_text_edge`).
 - Documentation: [Channels](../../irc.md#the-thread-tab) and the in-app
   Channels help.
+
+## Findings carried from pull request 69
+
+The review of [Channels fleet live](../channels-fleet-live/README.md)
+left thirteen findings open, none critical or high, to fix here. Each was
+checked against the code after merging `main` (pull request 69 with its
+review fixes) into this branch. Every fix here has a test. Those of 1 and 12 were run against
+the code before the fix and failed there; 2 and 3 moved to their own pull
+request; the Channels tests (4 to 9 and
+11) were written to fail on it by what they check, but were not run
+against it.
+
+1. **An in-flight keychain retry could bring back a cleared or replaced
+   token** (`clients/fleet/src/service.rs`). Real. Fixed in `c763063`
+   (`fix(fleet): never bring back a cleared or replaced token from a read
+   still running`; its fields grouped in `efff5a6`): a save, a clear or the fleet's removal starts a new
+   token generation for the fleet, and a read or save that began in an
+   older one is dropped when it lands. A cleared token stays cleared.
+   Tests: `service/tests/keychain.rs`,
+   `a_retry_still_reading_never_brings_back_a_cleared_token` and
+   `…_a_replaced_token`, each over 40 schedules; both failed before.
+2. **A listed pull request kept its summary after GitHub refused the read** (Sol). Moved, with its fix and tests, to its own
+   pull request on `fix/github-reference-access`; not resolved here.
+3. **A read started after a refresh's first section could override a later
+   section's fresher list** (Sol). Moved likewise; not resolved here.
+
+4. **Each Channels view replaced the process-wide fleet map**
+   (`spaces/irc/src/live/watch.rs`). Real: the hub is one per process.
+   Fixed in `891b7d2` (`fix(irc): keep each view's fleets and say when the
+   fleet's data is not current`): each view publishes its own share
+   (`Hub::fleet_views`) and `Hub::fleets` is their union; a closed view's
+   share goes with it (its release hook; the render test covers a view
+   leaving the front, not the release itself). Test:
+   `a_hidden_view_on_the_same_hub_never_empties_the_fleets_a_shown_one_shows`
+   and `the_hub_shows_every_view_s_fleets_and_a_hidden_view_takes_none_away`.
+5. **Channels could start the fleet service before showing any fleet**
+   (`live/watch.rs`). Real. Fixed in `891b7d2`: the shown fleets are
+   worked out first and the service is reached only when there is one.
+   Test: `a_view_that_shows_no_fleet_never_starts_the_fleet_service`.
+6. **The Ship tab said "Not listed" while the first overview was pending
+   or kept** (`view/inspector/ship.rs`). Real. Fixed with 11 in `891b7d2`.
+7. **Fold inheritance ran only on a fleet group's first appearance**
+   (`view/navigator.rs`). Real. Fixed in `ef948ee` (`fix(irc): fold a fleet
+   group as its network's when it begins to take in the network's rows`). Tests:
+   `a_folded_fleet_that_takes_in_the_network_s_rows_opens_as_the_network_s_group_was`
+   and the pure `fold_to` rule.
+8. **An issue scope change could give an issue and a kept pull request
+   one place in a message** (`tiles.rs`). Real. Fixed in `93662d0`
+   (`fix(irc): never show a bare key in play, and give each claim its own
+   place`): a message
+   read again gives its own claims their place among what it names now.
+   Test: `a_new_recognition_never_gives_an_issue_and_a_kept_pull_request_one_place`.
+9. **The Ship inspector sorted and cloned every tile reference each
+   render** (`view/inspector/play.rs`). Real, minor. Fixed in the same
+   commit: `in_play_first` selects the first eight before any is cloned or
+   the rest sorted. Covered by the same test.
+10. **The design guide's checklist addresses reviewers**
+    (`subspace-framework/docs/design-guide.md`). Left as it is, by
+    decision: it is the repository's own UI review checklist.
+11. **The Ship tab misstated why it showed nothing while the fleet's data
+    was kept** (`ship.rs` with `live/ship.rs`). Real. Fixed with 6, 4
+    and 5 in `891b7d2`: `FleetLive` carries whether its overview is kept and
+    `ShipLive` whether its crew detail is. The Ship and Starbase tabs say
+    **Not current** for a kept overview, **Waiting** before the first, and
+    **Not listed** only when a current overview lacks the ship; the crew
+    says its detail is kept from an earlier read. Tests:
+    `a_live_fleet_with_no_current_overview_never_says_not_listed`,
+    `a_kept_crew_detail_says_so_rather_than_not_arrived`.
+12. **A Retry within five seconds of the last read did nothing and said
+    nothing** (`clients/fleet/src/directory.rs`). Real. Fixed with 1 in
+    `c763063`: a
+    Retry asked sooner is read once that interval ends, once however often
+    it is asked, and never again on a timer. Test:
+    `a_retry_asked_too_soon_reads_once_the_interval_ends`.
+13. **The bridge test's "needs secrets" check asserted only an error**
+    (`spaces/web/src/bridge/tests.rs`). Fixed in `f11117a` (`test(web):
+    assert that the fleets need the secrets permission by its refusal`): it asserts the
+    `DENIED` refusal for both the read and the retry.
+
+### In play here
+
+A captured row read just `NAV-6`, with no title or state. A reference's
+row in **In play here** asked for nothing itself: only a transcript row
+asks for its references when drawn, so a tile whose message was out of
+view had no answer, and an answer other than a summary (pending,
+unavailable, signed out, failed) also left the title and state empty. The
+section now asks for its own references while the Ship tab shows, and a
+row shows the key with its state when known, else **Loading** until the
+answer comes and **Unavailable** when it cannot be shown (`93662d0`).
+Tests:
+`a_reference_in_play_says_its_state_once_answered`,
+`an_unanswered_reference_says_loading_and_a_refused_one_unavailable`.
+
+## Review findings
+
+This pull request's own reviews: GPT-6.2 Sol (high effort, verdict not
+clear: three high, six medium, two low) and Claude Opus 5.5 (high effort,
+clear: three P2, five P3), both of head `83e124a`. Each was checked
+against the code. Findings both raised are listed once.
+
+### Fleet token store
+
+1. **Keychain writes not ordered; a read started during a clear or save
+   not dropped** (Sol high, Opus P2 1). Real. Fixed in `ff14d0f`: every
+   read, save and clear runs on one ordered path (`service/queue.rs`);
+   each waits for the one before and applies its result before the next
+   starts, so the keychain and the service change in the order asked. A
+   clear stops the token at once; nothing queued before it can restore it
+   in memory or in the keychain. Tests (`service/tests/ordering.rs`, each
+   over 40 schedules where order matters): clear then retry, retry then
+   clear, save then clear, clear then save, the token stopping at once.
+   Five of them failed on the code before; retry then clear already passed
+   there and stays as a guard.
+2. **A failed save during the first read left the fleet Checking** (Sol
+   medium). Real. Fixed in `ff14d0f`: a token or address that cannot be
+   saved is refused before the generation moves, and a save or clear that
+   fails while current reads the keychain again. Test
+   `a_failed_save_while_the_first_read_runs_settles_from_the_keychain`
+   (failed before).
+3. **The deferred Retry served only the first deadline** (Sol medium).
+   Real. Fixed in `ff14d0f`: one waiting read per fleet the click covered,
+   each at its own deadline, none for a fleet saved, cleared or removed
+   since. Test `a_retry_reads_each_fleet_it_covered_once_its_own_interval_ends`
+   (failed before).
+
+### GitHub access
+
+4 and 5. **GitHub access refusals, read ordering, opened pull requests and
+   rate limits** (Sol high 2 and 3, Opus P2 2 and P3 8). Moved, with their
+   fixes and tests, to `fix/github-reference-access`; not resolved here.
+
+### Threads
+
+6. **A follow-up request made as a reply never showed its replies** (Opus
+   P2 3, Sol medium). Real. Fixed in `46bdbc6`: the tab shows the chosen
+   request's own steps with the replies of the conversation's thread it is
+   in, so the answers to it and a reply sent from its tab appear there,
+   and the thread's count and the transcript's agree. Test
+   `a_follow_up_request_shows_its_own_steps_and_the_replies_to_it`
+   (failed before).
+7. **Evicting a thread's root silently turned a reply draft into a channel
+   message or command** (Sol medium). Real. Fixed in `46bdbc6`: the draft
+   stays in reply mode, marked gone; the row says the thread is no longer
+   loaded, Enter sends nothing, and only **Write to the channel** leaves
+   reply mode, keeping the text. Tests
+   `a_reply_whose_thread_is_gone_is_never_sent` and
+   `a_reply_whose_thread_goes_is_kept_and_sent_nowhere_until_chosen`.
+8. **A lone ending notice hid Load around this message** (Sol low). Real.
+   Fixed in `46bdbc6`. Test
+   `a_lone_ending_notice_still_says_the_earlier_steps_are_not_loaded`
+   (failed before).
+
+### The rest
+
+9. **In play here not asked for when the Ship tab is chosen** (Sol
+   medium). Real. Fixed in `2565a0e`. Test
+   `choosing_the_ship_tab_asks_for_what_in_play_lists`.
+10. **The Thread tab drew every reply each render** (Sol medium, Opus P3
+    7). Real. Fixed in `2565a0e`: the latest 40 are drawn, the rest counted
+    in a line; the heading counts all. Test
+    `the_thread_tab_draws_the_latest_replies_and_counts_the_rest`.
+11. **Linked status lines no longer announced as status** (Opus P3 4).
+    Real. Fixed in `2565a0e`: a status element inside the button. Test
+    `a_linked_status_line_is_still_announced_as_status`.
+12. **The navigator kept absorption state for groups that disappeared**
+    (Sol low). Real. Fixed in `2565a0e`. Test
+    `a_group_that_goes_begins_to_take_in_its_rows_again_when_it_returns`.
+13. **`want_in_play` between `inspector`'s doc comment and the function**
+    (Opus P3 5). Fixed in `2565a0e`.
+14. **A test claimed to test closing a view** (Opus P3 6). Corrected in
+    `2565a0e`: the test and this record say it covers a view leaving the
+    front; the release on close is not driven by a test.
+
+### Second round
+
+Second reviews of head `32fa227`: Claude Opus 5.5 (high effort, clear,
+six P3) and GPT-6.2 Sol (high effort, not clear: three high, four medium,
+two low).
+
+**GitHub access** (Sol's three highs, the model test): moved, with
+their fixes and tests, to `fix/github-reference-access`, and taken out of this branch, which
+leaves the GitHub Space and the Framework's GitHub client as `main` has
+them. Findings 15 to 18 are not resolved here.
+
+**Fleet** (Sol medium, Opus P3):
+
+19. **A failed clear brought the token back** (Sol medium, Opus P3). Real.
+    Fixed in `43781b5`: the fleet says **Token not removed**, the token is
+    not used, followed or shared, a Retry does not bring it back, Settings
+    says the keychain may still hold it at the next start and offers
+    **Clear token** again, and saving a token resolves it. Test
+    `a_failed_clear_keeps_the_token_out_of_use_until_cleared_again_or_replaced`.
+20. **A waiting Retry could read again right after a manual one** (Sol
+    medium). Real. Fixed in `43781b5`: one re-read queued per fleet at most,
+    and the waiting Retry checks the deadline again. Test
+    `a_waiting_retry_never_reads_again_right_after_a_manual_one`.
+21. **One queue for every fleet** (Opus P3). Real. Fixed in `43781b5`: one
+    queue per fleet. Not tested: the test executor cannot hold one keychain
+    call while another runs.
+
+**Channels** (Sol, Opus P3):
+
+22. **Escape dropped a gone reply's guard** (Sol medium). Real. Fixed in
+    `2e2b108`; the render test sends `/part`, presses Escape, sends `/part`
+    again, and nothing is sent. Deleting the text does not lift the guard:
+    only **Write to the channel** does.
+23. **A held terminal notice overrode the kept ending** (Sol medium). Real.
+    Fixed in `2e2b108`. Test `a_kept_ending_is_the_end_whatever_notice_is_held`.
+24. **A follow-up request's tab count disagreed with its status line**
+    (Opus P3). Real. Fixed in `2e2b108` by wording: its heading reads
+    **Replies in this thread**; its own status line counts none, as only a
+    thread's first message carries the count.
+25. **`MAX_REPLIES` under the replies doc comment** (Opus P3). Fixed in
+    `2e2b108`.
+26. **The docs said only Write to the channel leaves a gone reply, while
+    Escape did** (Opus P3). Now true: fixed by 22.
+27. **A status element nested in a button may not be announced** (Opus P3).
+    Fixed in `35083bc`: the status element sits beside the button, which
+    still draws and opens the whole line.
+28. **The fixture's JOIN race** (Sol low). Real. Fixed in `5da66b0`. Not run
+    against a server in this round.
+29. **The trust paragraph addressed reviewers** (Sol low). Reworded in this
+    commit to state the owner's rule and its reason only.
+
+### Third round
+
+Third reviews of head `867351e`: Claude Opus 5.5 (clear, one P3) and
+GPT-6.2 Sol (not clear: two high findings on the GitHub reference access
+rule, two medium and two low elsewhere). By the owner's decision the
+GitHub access hardening is not part of the Thread tab: all of it, from
+the three rounds and the two findings carried from pull request 69 (2
+and 3), moved with its tests to `fix/github-reference-access` for its own
+pull request, and `deeaaef` takes it out of this branch, leaving the
+GitHub Space and the Framework's GitHub client as `main` has them. The
+Channels side needed no change for this: In play here and the reference
+chips use the `github@1` contract, which is unchanged. Sol's two new
+GitHub findings go with that branch.
+
+30. **A failed save after a failed clear restored the old token** (Sol
+    medium). Real. Fixed in `75253f5`: a cleared token stays out of use
+    until a delete or a replacement write succeeds. Test
+    `a_refused_delete_then_a_refused_save_never_bring_the_old_token_back`
+    (failed before).
+31. **A Retry waiting from an older generation blocked one asked now**
+    (Sol medium). Real. Fixed in `75253f5`: a new generation drops the
+    waiting Retry, and each carries its own identity. Test
+    `a_retry_from_an_older_generation_never_blocks_one_asked_now` (failed
+    before).
+32. **Opening another thread lifted a gone reply's guard** (Opus P3).
+    Real. Fixed in `b96561b`. Test
+    `opening_other_threads_never_lifts_a_gone_reply_s_guard` (failed
+    before).
+33. **Each rebuild cloned every loaded reply** (Sol low). Real. Fixed in
+    `b96561b`: the thread keeps the count and only the latest 40. Test
+    `a_long_thread_keeps_its_count_and_only_its_latest_replies`.
+34. **The fixture waited for ever for a tagged echo and never checked the
+    capabilities** (Sol low). Real. Fixed in `1547be3`: a 15 s deadline, and
+    a stop with the reason on a refused or unacknowledged capability. The
+    check was exercised by hand; the fixture was not run against a server.
 
 ## Captures
 
@@ -162,7 +428,13 @@ is fictional. The fixture plays the requests a few seconds apart, so the
 durations are seconds, not the mock-up's minutes. Steps:
 `wait:9000;click:70,215;wait:4000;shot:status-replies;click:1194,55;wait:1500;shot:thread-prompt;click:340,375;wait:2000;shot:thread-finished;click:380,591;wait:2000;shot:thread-running;click:340,375;wait:2000;click:1196,851;wait:1000;type:Thanks, that settles the baseline.;wait:800;shot:reply-mode`.
 
-![The ship's channel: mira's finished request reads "Done in 11 s · 3 replies ›" and her running one "aurora-lyra · Using a tool … working · 1 reply ›"; the inspector's tabs read Ship, Thread, People 6](evidence/status-replies.png)
+The first image was taken again after the review fixes, with the same
+fixture on `IRC_TEST_LISTEN=127.0.0.1:16961`, a config that also joins
+`#aurora-command` and every ship's channel so the navigator lists all four
+of the roster's ships, and the steps
+`resize:1440,900;wait:9000;click:70,247;wait:5000;shot:status-replies`.
+
+![The ship's channel: mira's finished request reads "Done in 11 s · 3 replies ›" and her running one "aurora-lyra · Using a tool … working"; Ships lists castor, lyra, orion and vega; the inspector's tabs read Ship, Thread, People 6, and the Ship tab's card, Crew, In play here (each row with its title and state) and Here now start at the inspector body's text edge, as the other tabs do](evidence/status-replies.png)
 
 ![The Thread tab before a thread is chosen: one line saying to choose a message's replies or a request's status line](evidence/thread-prompt.png)
 

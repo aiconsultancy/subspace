@@ -55,7 +55,7 @@ fn reply(nick: &str, id: &str, parent: &str, minute: i64) -> Line {
 
 /// The ship's channel with mira's request, its finished timeline and two
 /// replies, on a connection that agreed `caps`.
-fn finished<'a>(
+pub(super) fn finished<'a>(
     cx: &'a mut TestAppContext,
     caps: &[&str],
 ) -> (Entity<Irc>, Entity<Hub>, &'a mut VisualTestContext) {
@@ -80,7 +80,7 @@ fn finished<'a>(
     (board, hub, cx)
 }
 
-fn front(board: &Entity<Irc>, cx: &mut VisualTestContext) -> Entity<Conversation> {
+pub(super) fn front(board: &Entity<Irc>, cx: &mut VisualTestContext) -> Entity<Conversation> {
     board.read_with(cx, |board, _| {
         board.dock.open[&channel(SHIP)].entity.clone()
     })

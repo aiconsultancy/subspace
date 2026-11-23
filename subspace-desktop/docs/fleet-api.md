@@ -104,14 +104,15 @@ ID, name and recorded address, the checked `address` and the `state`);
 `FleetApi::directory_revision()` only when a fleet, its address or its token
 changes.
 
-Channels follows each fleet its navigator or the conversation in front
-shows, while the Space is in front and the fleet is `Ready` or followed,
+Channels follows each fleet its navigator (while the navigator shows) or
+the conversation in front shows, while the Space is in front and the fleet is `Ready` or followed,
 and drops the handle as soon as it no longer shows it; it reads the
 overview and each ship's detail for a ship's dot, its header and its
 inspector ([Live fleet state](irc.md#live-fleet-state)). A Space that must
 not open the token store, such as one under test, reads the service with
 `FleetApi::current(cx)`, and a test installs one over
-`TokenStore::memory()` with `FleetApi::install`.
+`TokenStore::memory()` with `FleetApi::install`, which only the client's
+`test-support` feature, enabled on dev-dependencies, offers.
 
 For a one-shot read, `FleetApi::client(fleet)` hands out a ready
 `FleetClient` (or the state that explains why not); run its blocking
@@ -154,10 +155,49 @@ installed under that ID), and only with its `secrets` grant. It returns each
 fleet as `{id, name, endpoint, token, problem}` with `token` only when it was
 saved for `endpoint`; every other web Space gets an error. The page hears
 `subspace:fleets-changed` when a fleet, its address or its token changes.
-Each request reads again any token the keychain could not read
-(`FleetApi::reload_unreadable`), so the page's **Retry** after unlocking the
-keychain finds the token, and the page hears `subspace:fleets-changed` when
-the read lands.
+`subspace.fleets.get()` never reads the keychain. Only the page's
+**Retry** calls `subspace.fleets.retry()`, which reads again any token the
+keychain could not read (`FleetApi::reload_unreadable`) before answering,
+so nothing asks to unlock the keychain without the person asking. The fleet
+stays **Keychain locked** while it is read again, the page hears
+`subspace:fleets-changed` only if the read finds something new, and the
+service reads one fleet's token again at most once every five seconds,
+whoever asks; a **Retry** asked sooner reads each fleet it covered once,
+when that fleet's own five seconds end, never one saved, cleared or removed
+since, and never again on a timer. The five seconds run from when a read
+starts, not from when it was asked for or scheduled, so a waiting Retry
+whose timer runs late, or a read queued behind others, still leaves the
+keychain alone for five seconds after it. A Retry asked while a read is
+still in flight waits for its five seconds rather than being lost, and if
+that read is still in flight then, as behind a keychain prompt, it reads
+once that read lands, unless the read settled the token.
+
+Every read, save and clear of a fleet's token runs on that fleet's one
+ordered path (`service/queue.rs`; each fleet has its own, so a keychain
+call that waits on one fleet never holds up another): each waits for the
+one before and applies its result before the next starts, so the keychain and the service change in the
+order they were asked for, and a save asked before a clear never writes
+after the delete. A clear stops the token being used, followed or shared
+at once. A save, a clear or the fleet leaving the initiatives starts a new
+token generation for the fleet, and a read queued before it is dropped when
+it lands, so a cleared or replaced token never comes back, in memory or in
+the keychain. A token or address that cannot be saved is refused before
+anything changes, and a save that fails reads the keychain again, so the
+fleet never stays **Checking**. When the keychain refuses to delete a
+cleared token, the fleet says **Token not removed** (`ClearFailed`): the
+token is not used, followed or shared, a Retry does not bring it back,
+and Settings says the keychain may still hold it at the next start and
+offers **Clear token** again; saving a token also resolves it. The token stays out of
+use until a delete or a replacement write queued with the clear or after it
+succeeds, also when a save queued after the clear fails. A save queued
+before the clear never ends the hold, even though its write lands after the
+clear began: it wrote before the delete, so a cleared token stays cleared
+when that delete is refused, and neither a later failed save nor removing
+and adding the fleet again brings it back. A Retry waiting from an older token generation is
+dropped when the generation changes, and each waiting Retry consumes only
+its own place. Each fleet
+has at most one re-read queued, and a waiting Retry checks the deadline
+again before reading, so one click never reads the keychain twice.
 See the Fleet Console's [README](../web-spaces/fleet-console/README.md#fleets).
 
 ## Fixtures

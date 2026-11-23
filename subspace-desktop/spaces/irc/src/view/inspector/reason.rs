@@ -20,6 +20,26 @@ pub(crate) const NOT_LISTED: (&str, &str) = (
     "The fleet's Fleet API does not list this ship.",
 );
 
+/// A live fleet whose Fleet API sends only an overview it kept after a
+/// failed read.
+pub(crate) const KEPT: (&str, &str) = (
+    "Not current",
+    "The fleet's Fleet API could not read the fleet just now and sent what it last read. Ships show again once it reads the fleet.",
+);
+/// A live fleet whose first overview has not arrived.
+pub(crate) const FIRST: (&str, &str) = ("Waiting", WAITING);
+
+/// Why a live fleet shows no ship of its own: its data is kept, not
+/// current; its first overview has not arrived; or else its Fleet API does
+/// not list the ship. Never "Not listed" before a current overview says so.
+pub(crate) fn unshown(fleet: Option<&crate::live::FleetLive>) -> (&'static str, &'static str) {
+    match fleet {
+        Some(fleet) if fleet.kept() => KEPT,
+        Some(fleet) if fleet.listed() => NOT_LISTED,
+        _ => FIRST,
+    }
+}
+
 /// The tab's title and sentence for a fleet in `state`; `None` while its
 /// data arrives.
 pub(crate) fn reason(state: &FleetState) -> Option<(&'static str, String)> {

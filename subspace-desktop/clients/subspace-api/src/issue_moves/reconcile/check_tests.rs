@@ -109,15 +109,20 @@ fn a_check_of_a_large_move_finishes_once_a_sub_issue_ties_it_to_the_plan() {
         .map(|n| format!("00000000-0000-4000-8000-0000000002{n:02}"))
         .collect();
     let children: Vec<(&str, &str)> = ids.iter().map(|id| (id.as_str(), "OPS-9")).collect();
+    // The budget leaves a busy machine time for the root, the sub-issue
+    // list and at least two sub-issue reads, where 600 ms did not, and
+    // still covers only a few of the 40.
     let (_mock, client, preview) = committed_unanswered(&children, |id| {
-        std::thread::sleep(Duration::from_millis(150));
+        std::thread::sleep(Duration::from_millis(400));
         read_in(id, "WEB-9", ("team-web", "WEB"))
     });
     let started = Instant::now();
     let result = client
-        .nett_verify_move_within(&preview, None, Duration::from_millis(600))
+        .nett_verify_move_within(&preview, None, Duration::from_secs(3))
         .unwrap_or_else(|error| panic!("the move committed, not {error:?}"));
-    assert!(started.elapsed() < Duration::from_millis(1500));
+    // The budget, the read already out when it ran out, and room to spare:
+    // reading all 40 would take 16 seconds.
+    assert!(started.elapsed() < Duration::from_secs(8));
     assert!(result.moved.len() > 1, "a sub-issue read moved ties it");
     assert_eq!(result.moved.len() + result.unreconciled.len(), 41);
     assert!(

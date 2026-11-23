@@ -157,7 +157,9 @@ fleets on one network claim belongs to neither.
   in `Tone::Red` before the count, which keeps the accent.
 - A fleet group that is not the selected initiative's fleet starts folded
   the first time it appears (`view/navigator.rs`, `fold_new_fleets`); with no initiative
-  selected every fleet starts open. Revealing a row in a folded group
+  selected every fleet starts open. A network's only fleet's group, which
+  takes in the network's other channels and Server row, keeps the fold of
+  the network's group instead. Revealing a row in a folded group
   unfolds it, a folded group the selected row moves into opens, and later
   syncs leave it as the user left it.
 - `People` stays a group of its own: it is a different kind of row from a
@@ -173,27 +175,43 @@ the app's one fleet service ([Fleets and the Fleet API](fleet-api.md)),
 in `live.rs` and `live/`.
 
 - **Following** (`live/watch.rs`): while the Space is in front, the board
-  holds one `FleetFollow` for each fleet whose group is in the navigator or
-  whose channel is the conversation in front, once the fleet's state is
+  holds one `FleetFollow` for each fleet whose group is in the navigator,
+  while the navigator shows, or whose channel is the conversation in front, once the fleet's state is
   `Ready` (a token saved for the address the Subspace API records) or
   followed, and drops it when the fleet is no longer shown or the Space is
   hidden. The service opens at most one stream per fleet and closes it with
   the last handle. What the service says of each shown fleet goes to
-  `Hub::fleets`, only when it changed, where the navigator, the headers and
-  the inspector read it. A fleet with no address, no token, a changed
-  address or no answer keeps today's behaviour everywhere.
+  the hub as the view's share (`Hub::fleet_views`), only when it changed;
+  `Hub::fleets`, where the navigator, the headers and the inspector read
+  it, is the union of every view's share, so a hidden view never empties
+  what a shown one publishes, and a closed view's share goes with it. The
+  board reaches the fleet service only once a fleet is on show, so a
+  Channels that shows no fleet never starts it, reads no token and never
+  asks to unlock the keychain. The hub holds only what Channels draws (each
+  ship as `ShipLive`), so an activity line or a sample time redraws
+  nothing. A fleet with no address, no token, a changed address or no
+  answer keeps today's behaviour everywhere.
 - **Matching a ship** (`live/ship.rs`): a ship's channel names its captain
   by the roster (the Subspace API's agent of rank captain), and its Fleet
   API ship is the one whose registration ID equals that captain's API nick,
   ignoring ASCII case, as the installer names both. Nothing is matched from
   a nick seen on IRC, a channel name or message text. The Starbase lists
-  only the Fleet API's ships whose ID is a roster captain's nick. Names,
-  models, tasks and phases from the API are untrusted: they are bounded
-  (32, 40 and 120 characters), stripped of control characters, put on one
-  line and drawn as text; a ship keeps at most 24 crew lines, while its
-  figures count everyone.
+  only the Fleet API's ships whose ID is the nick of a roster captain of
+  the Starbase's own fleet. Names, models, tasks and phases from the API
+  are untrusted: they are bounded (32, 40 and 120 characters), stripped of
+  control and bidirectional formatting characters, put on one line and
+  drawn as text; a ship keeps at most 24 crew lines, chosen before they are
+  formatted, while its figures count everyone.
 - **Live** means `FleetState::is_live()`: streamed or polled. Otherwise no
-  live figure shows anywhere, and nothing stale is kept.
+  live figure shows anywhere, and nothing stale is kept. A ship's crew
+  detail that Stargate kept after a failed read (`detailStale`), or that
+  the overview or the detail marks unavailable, gives no crew lines (the
+  overview's totals stand in), and a kept overview (`overviewStale`) shows
+  no ships. Each says so: the Ship and Starbase tabs say **Not current**
+  for a kept overview and **Waiting** before the first one, and **Not
+  listed** only when a current overview lacks the ship; the crew says its
+  detail is kept from an earlier read rather than that it has not
+  arrived.
 - **A ship's dot** follows its crew: a crew member is working while one of
   its contexts has a current task, as Stargate counts `busy`. From the
   ship's detail once it arrives, else the overview's `crew.busy`. A ship
@@ -216,7 +234,12 @@ in `live.rs` and `live/`.
   queued work) and **Done** (the captain's done jobs), each only when the
   API gives it; **Crew**, each member with a dot, the task's phase and
   summary, and how long (`dates::age`); **In play here**, the issues and pull
-  requests the conversation's tiles show, in order, with their state; and
+  requests the conversation's tiles show, in order, with their state, or
+  **Loading** until answered and **Unavailable** when they cannot be shown
+  (the section asks for its own answers, as a tile's message may be out of
+  view, but only while it is on screen: the Space in front, the inspector
+  shown on a ship's Ship tab; an ordinary conversation, a Starbase or a
+  hidden view asks for nothing); and
   **Here now**, the channel's members. **Starbase**: **Ships**, one row
   each with the captain's icon, name, state and `avatar::crew_meter`.
   While the fleet is not live the tab says why in one sentence
@@ -644,23 +667,39 @@ growing moves nothing else; tiles keep their fixed box.
   after ten behind **+N**. Ours is a latched button with semibold text; no
   edge line marks anything. The tooltip and accessible name say who
   reacted (`👍 from alice, bob and you`), with names cleaned and cut as
-  status lines' are. Selecting a pill sends `Command::React` or
-  `Command::Unreact` to the message's own conversation. Ours shows only once
+  status lines' are, and values shown without spaces, control or invisible
+  format characters (`shown_value`; the zero-width joiner stays); the exact
+  value held is what is sent back. Selecting a pill asks
+  `reacting::toggle` for `Command::React` or `Command::Unreact` to the
+  message's own conversation. Ours shows only once
   the client reports it (the echo, or the local echo after a successful
   write); a `ReactionRefused` shows as a brief notice above the composer.
 - **Adding** (`reactions/choices.rs`): **Add reaction** ends a row with
   pills, and `r` on a keyboard-focused message opens the same menu at the
-  message. It offers six common reactions, ticked when ours; there is no
-  emoji picker and the stop reactions are never among them.
+  message. It offers six common reactions, ticked when ours (by the folded
+  key; taking ours back sends each exact value we hold); there is no emoji
+  picker and the stop reactions are never among them.
+- **The sending rule** (`reactions/gate.rs`): every path, pills, **+N**,
+  the menus and `r`, sends through `reacting::toggle`, which asks
+  `gate::gate` first. Nothing goes to the server buffer or to a fleet
+  agent in a private conversation (`AgentNotice::refusing`; the controls
+  are hidden there too, and reactions between people in private are
+  ordinary). A new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only
+  from the labelled `Stop <ship>` item in a channel; asked for any other
+  way it is explained and not sent, whether or not the app recognises the
+  message as an agent's, since Stargate stops a queued turn before any
+  status line exists. Taking back our own stop still goes.
 - **Stop reactions** (`reactions/stop.rs`): in a channel, on a held request
-  whose status line is trusted (the agent's account is named after the
-  nick asked) and still running and current, or on that agent's own reply
+  to a fleet agent on the roster whose status line is trusted (the agent's
+  account is named after the nick asked) and still running and current, or on that agent's own reply
   to it (its nick and account both name that nick), the menu lists ✋ and 🛑
-  apart under `Stop <ship>`. Choosing one sends an ordinary reaction; once
-  the client reports it, the notice says it was sent and that the status
-  line shows the result when Stargate reports it. A ✋ or 🛑 pill on any
-  request to a verified agent, or its reply, says it asked the agent to
-  stop and never sends one when selected; elsewhere they are ordinary.
+  apart under `Stop <ship>`. Choosing one sends the reaction; once the
+  client reports that exact reaction on that message, the notice says it
+  was sent and that the status line shows the result when Stargate reports
+  it (pending stops are kept per message and reaction, so another reaction
+  in between loses none). A ✋ or 🛑 pill on a request to a verified agent,
+  or its reply, also says it asked the agent to stop. One msgid index per
+  rebuild finds each reply's request.
   This follows Stargate `main` at `d4842b8` (`routeIrcStop`,
   `src/irc/ship.ts`): a person with an account, on the request or an agent
   message answering it, while the turn is active. A fleet's own
@@ -771,17 +810,27 @@ It shows one thread at a time: a request, or any message with replies.
   of the status line's stage (**Accepted**, **Working**, **Waiting for an
   answer**, **Writing the reply**, then **Done**, **Failed** or **Ended**),
   each with its server time and how long it lasted, the ending with the
-  request's whole time (`in 42 m`) and a running step with `since 17:50`;
-  then **Replies · N**, grouped by author by the transcript's rule, or
-  `No replies yet.`
+  request's whole time (`in 42 m`) and a running step with `since 17:50`,
+  the latest 24 kept by the model and drawn, the rest counted (`N earlier
+  steps are not shown.`), so an agent that waits and works again many
+  times never builds a row per change on each render; then **Replies · N**, grouped by author by the transcript's rule, the
+  latest 40 drawn and the rest counted (`N earlier replies are in the
+  channel.`), or `No replies yet.`
 - **Membership and trust.** A reply is a message whose `+draft/reply`
-  leads, through held parents, to the root, read by the same `ThreadRoots`
-  as the counts, so the tab's replies and the count agree. Nothing in a
+  leads, through held parents, to the root of the conversation's thread
+  the chosen message is in, read by the same `ThreadRoots` as the counts,
+  so the tab's replies and the count agree. A follow-up request made as a
+  reply shows its own steps with that thread's replies, under the heading
+  **Replies in this thread**, so the answers to it, and a reply sent from
+  its tab, appear there; its own status line counts no replies, as only a
+  thread's first message carries the thread's count. A kept ending is
+  always the timeline's end: a held notice that ended the request
+  otherwise, or came after the kept ending, is not a step. Nothing in a
   message's text places it in a thread. A step is a notice the buffer
   folded under the status line's trust rule (its server account equals the
   nick the held request asks); an untrusted notice is an ordinary reply and
   never a step. A request whose ending was kept but none of whose notices
-  are held says `The steps before the end are not loaded.`, with **Load
+  before it are held (none at all, or only the ending's) says `The steps before the end are not loaded.`, with **Load
   around this message** (`Command::LoadAround`) while the network is
   connected and keeps `draft/chathistory`.
 - **Lifetime.** The chosen thread is kept per conversation for the session
@@ -790,7 +839,17 @@ It shows one thread at a time: a request, or any message with replies.
   a fingerprint of their count, ends, folded count and the root's ending,
   so a sync that leaves the buffer alone reads none of its lines; it goes
   once its root is no longer held (the line cap, or the conversation
-  removed). New replies and steps show live.
+  removed). A reply being written to it then stays in reply mode, marked
+  gone: the row says the thread is no longer loaded, Enter sends nothing,
+  not even a command, Escape keeps it, and only **Write to the channel**
+  leaves reply mode, keeping the text. **Reply in thread** on another
+  thread does not take such a draft with it: while the draft holds text,
+  the row adds **Move to \<author\>'s thread**, and only that choice moves
+  it; choosing yet another thread withdraws the offer, as does that
+  thread's root going; an emptied draft starts the new reply at once. New replies and steps show
+  live. A linked status line keeps a zero-size status element beside its
+  button, not inside it, so its changes are still announced however nested
+  roles are flattened.
 - **Replying.** **Reply in thread**, the tab's footer action, puts the
   composer into reply mode (`compose/reply.rs`): a row above the input says
   `Replying in thread to <author>: <start of the root>`, with **Cancel
@@ -831,9 +890,8 @@ are in the [change record](changes/irc-thread-status/spec.md).
   (`nick:`, `nick,` or `@nick`), or a private conversation's partner. A
   request whose sender's nick, or sender's `account` tag, is the addressed
   nick asks no one. Member lists play no part, so whoever holds the nick
-  later, only the account named after it folds. Owner decision, 21
-  November 2026: this overrides reviewer findings on the trust model.
-  Fleet IRC servers are private and tie each nick to the account of the
+  later, only the account named after it folds. This is the owner's rule
+  (21 November 2026), and the reason for it: fleet IRC servers are private and tie each nick to the account of the
   same name (`force-nick-equals-account`), so only the agent itself can
   send as its nick there. On other servers, an agent whose account is not
   named after its nick gets no status lines. Untrusted, unrecognised and

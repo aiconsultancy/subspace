@@ -552,6 +552,14 @@ def printable(text):
                    for ch in text)
 
 
+def target_path(target):
+    """The path of request target `target`, or None when it cannot be parsed."""
+    try:
+        return urlsplit(target or '').path
+    except ValueError:
+        return None
+
+
 def frame(kind, data):
     return f'event: {kind}\ndata: {json.dumps(data, separators=(",", ":"))}\n\n'.encode()
 
@@ -571,7 +579,7 @@ class Handler(BaseHTTPRequestHandler):
             headers = getattr(self, 'headers', None)
             auth = auth_fingerprint(headers.get('Authorization', '') if headers else '')
             method = printable(getattr(self, 'command', None) or '-')
-            path = printable(urlsplit(getattr(self, 'path', '') or '').path or '-')
+            path = printable(target_path(getattr(self, 'path', '')) or '-')
             print(f'request {method} {path} {code} auth={auth}', flush=True)
 
     def allowed_origin(self):
@@ -618,7 +626,9 @@ class Handler(BaseHTTPRequestHandler):
         self.do_GET(head=True)
 
     def do_GET(self, head=False):
-        path = urlsplit(self.path).path
+        path = target_path(self.path)
+        if path is None:
+            return self.reply(400, dict(error='Malformed request target.'), head)
         if not self.authorised():
             return self.reply(401, dict(error='A valid bearer token is required.'), head)
         parts = [unquote(part) for part in path.split('/') if part]
@@ -685,6 +695,10 @@ class Handler(BaseHTTPRequestHandler):
 
 class FleetServer(ThreadingHTTPServer):
     daemon_threads = True
+    # socketserver's default listen queue of 5 overflows when a client's
+    # burst arrives while the accept loop is behind, and macOS resets each
+    # connection past it. Hold a burst instead (capped at somaxconn).
+    request_queue_size = 128
 
     def __init__(self, port, token, tick=5.0, now=None, refuse_events=False, log_requests=False):
         if not token:

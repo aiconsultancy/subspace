@@ -90,13 +90,39 @@ fn content(
         .into_any_element()
 }
 
+/// How many of `count` replies, the earliest, the tab leaves out: the
+/// thread keeps only the latest [`crate::thread::MAX_REPLIES`].
+pub(crate) fn earlier(count: usize) -> usize {
+    count.saturating_sub(crate::thread::MAX_REPLIES)
+}
+
+/// `Replies`, or `Replies in this thread` for a follow-up request made as
+/// a reply, whose tab lists its whole thread's replies.
+pub(crate) fn replies_heading(thread: &Thread) -> &'static str {
+    if thread.nested {
+        "Replies in this thread"
+    } else {
+        "Replies"
+    }
+}
+
+/// What the tab says of the earlier replies it leaves out.
+pub(crate) fn earlier_words(skipped: usize) -> String {
+    match skipped {
+        1 => "1 earlier reply is in the channel.".to_owned(),
+        n => format!("{n} earlier replies are in the channel."),
+    }
+}
+
 /// The replies under their heading and count, grouped by author, or the
 /// line that says there are none yet.
+/// For a follow-up request made as a reply, the heading says the replies
+/// are the whole thread's, as its own status line counts none.
 fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
     let tokens = Tokens::current(cx);
-    let title = match thread.replies.len() {
+    let title = match thread.reply_count {
         0 => "Replies".to_owned(),
-        count => format!("Replies · {count}"),
+        count => format!("{} · {count}", replies_heading(thread)),
     };
     let section = workspace::section(title, cx);
     if thread.replies.is_empty() {
@@ -108,8 +134,17 @@ fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
             )
             .into_any_element();
     }
-    let continues = crate::thread::continues(&thread.replies);
+    // The latest replies only, so a long thread draws a bounded list; the
+    // heading still counts every loaded reply.
+    let skipped = earlier(thread.reply_count);
+    let shown = &thread.replies;
+    let continues = crate::thread::continues(shown);
     section
+        .children((skipped > 0).then(|| {
+            feedback::empty_line(&tokens, "irc-thread-earlier", earlier_words(skipped))
+                .id("irc-thread-earlier-line")
+                .test_support()
+        }))
         .child(
             v_flex()
                 .id("irc-thread-replies")
@@ -118,8 +153,7 @@ fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
                 .min_w_0()
                 .gap_1()
                 .children(
-                    thread
-                        .replies
+                    shown
                         .iter()
                         .zip(continues)
                         .map(|(entry, continues)| thread_message(entry, continues, context, cx)),

@@ -604,6 +604,7 @@ impl Github {
         }
         account.reloading_sections = matches!(refresh, SectionRefresh::Manual);
         account.loaded_at = Some(Instant::now());
+        references::refreshing(self);
         for section in sections_of(ItemKind::Pr) {
             self.load_section(client.clone(), login.clone(), section.id, cx);
         }
@@ -648,7 +649,7 @@ impl Github {
                 account.reloading_sections &= account.loading();
                 if loaded {
                     this.save_cache(cx);
-                    references::landed(this, &login, since, cx);
+                    references::section_landed(this, &login, since, cx);
                 }
                 search_index::start_prefetch(this, cx);
                 this.rebuild(cx);

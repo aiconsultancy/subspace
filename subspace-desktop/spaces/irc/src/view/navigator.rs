@@ -214,10 +214,13 @@ pub(super) fn people_mark(cx: &App) -> AnyElement {
 
 /// Folds each fleet group that appears for the first time while the
 /// selected initiative (`selected`, its fleet id if any) is not of its
-/// fleet. With no initiative selected, every fleet starts open. A new group
-/// that holds the selected row stays open, so the list keeps the selection
-/// (a channel joined on request, or one that moved into a fleet's group),
-/// and a folded group the selected row has just moved into opens; one the
+/// fleet. With no initiative selected, every fleet starts open. A network's
+/// only fleet's group, which takes in the network's own rows, instead keeps
+/// the fold of the network's group it replaces, so the network's other
+/// channels and its Server row never fold away unasked. A new group that
+/// holds the selected row stays open, so the list keeps the selection (a
+/// channel joined on request, or one that moved into a fleet's group), and
+/// a folded group the selected row has just moved into opens; one the
 /// person folded around the selection stays folded.
 pub(super) fn fold_new_fleets(
     board: &mut Irc,
@@ -229,15 +232,70 @@ pub(super) fn fold_new_fleets(
         let first = board.seen_fleets.insert(key.clone());
         let other = selected.is_some_and(|selected| selected != Some(fleet.as_str()));
         let keeps = holding == Some(key);
-        if first && other && !keeps && !board.list.is_folded(key) {
+        let network = groups
+            .iter()
+            .find(|group| &group.key == key)
+            .and_then(rows::absorbed_network)
+            .map(|network| board.list.is_folded(&network));
+        let began = began_absorbing(&mut board.absorbing, key, network.is_some());
+        let folded = board.list.is_folded(key);
+        if fold_to(first, began, starts_folded(other, keeps, network))
+            .is_some_and(|fold| fold != folded)
+        {
             board.list.toggle(key);
         }
     }
+    forget_gone(&mut board.absorbing, fleets);
     let moved = moved_into(board.selection_group.as_ref(), holding);
     if let Some(key) = moved.filter(|key| board.list.is_folded(key)) {
         board.list.toggle(key);
     }
     board.selection_group = holding.cloned();
+}
+
+/// Forgets the groups no longer laid out, so one that returns and takes
+/// in its network's rows again takes the network's fold again.
+fn forget_gone(
+    absorbing: &mut std::collections::HashSet<SharedString>,
+    fleets: &HashMap<SharedString, String>,
+) {
+    absorbing.retain(|key| fleets.contains_key(key));
+}
+
+/// Notes whether group `key` takes in its network's rows (`absorbs`) and
+/// says whether it has just begun to.
+fn began_absorbing(
+    absorbing: &mut std::collections::HashSet<SharedString>,
+    key: &SharedString,
+    absorbs: bool,
+) -> bool {
+    if absorbs {
+        absorbing.insert(key.clone())
+    } else {
+        absorbing.remove(key);
+        false
+    }
+}
+
+/// What fold a fleet group takes now, if any: a group seen for the first
+/// time folds when it starts folded (`fold`), and a group that began to
+/// take in its network's rows (`began`) folds or opens as `fold` says, so
+/// a folded group never hides the network's rows the network's own group
+/// showed. `None` leaves the person's choice.
+pub(super) fn fold_to(first: bool, began: bool, fold: bool) -> Option<bool> {
+    match (first, began) {
+        (_, true) => Some(fold),
+        (true, false) => fold.then_some(true),
+        (false, false) => None,
+    }
+}
+
+/// Whether a fleet group seen for the first time starts folded: never
+/// while it holds the selection (`keeps`); as the network's own group was
+/// (`network`) when it took in that group's rows; else while another
+/// fleet's initiative is selected (`other`).
+pub(super) fn starts_folded(other: bool, keeps: bool, network: Option<bool>) -> bool {
+    !keeps && network.unwrap_or(other)
 }
 
 /// The group the selection has just moved into: `holding` when it differs
@@ -334,6 +392,43 @@ mod tests {
 
     use super::{Marks, captain_icon, people_mark, presence_mark, row_mark, ship_dot};
     use crate::rows::{Activity, Presence};
+
+    /// A group folds when first seen if it starts folded, and takes its
+    /// network's fold when it begins to take in the network's rows.
+    #[test]
+    fn a_group_folds_on_first_sight_or_as_its_network_s_when_it_begins_to_take_in_its_rows() {
+        use super::fold_to;
+        assert_eq!(fold_to(true, false, true), Some(true));
+        assert_eq!(fold_to(true, false, false), None, "a new group is open");
+        assert_eq!(
+            fold_to(false, true, false),
+            Some(false),
+            "opens as the network's"
+        );
+        assert_eq!(
+            fold_to(false, true, true),
+            Some(true),
+            "folds as the network's"
+        );
+        assert_eq!(
+            fold_to(false, false, true),
+            None,
+            "the person's choice stands"
+        );
+    }
+
+    /// A group that disappears is forgotten, so it begins again when it
+    /// returns.
+    #[test]
+    fn a_group_that_goes_begins_to_take_in_its_rows_again_when_it_returns() {
+        use super::{began_absorbing, forget_gone};
+        let key = gpui_kit::SharedString::from("fleet");
+        let mut absorbing = std::collections::HashSet::new();
+        assert!(began_absorbing(&mut absorbing, &key, true));
+        assert!(!began_absorbing(&mut absorbing, &key, true), "already in");
+        forget_gone(&mut absorbing, &std::collections::HashMap::new());
+        assert!(began_absorbing(&mut absorbing, &key, true), "begins again");
+    }
 
     /// The drawn navigator is checked by `tests/initiatives/navigator.rs`;
     /// this checks the captain's icon in each mode of the Icons setting.

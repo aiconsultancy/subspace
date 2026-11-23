@@ -32,12 +32,13 @@ members (any context with a current task) and members with queued work.
 
 ### Following and matching
 
-- `live/watch.rs`: the board follows each fleet whose navigator group or
-  front conversation it shows, while the Space is in front and the fleet is
-  `Ready` or followed, through `FleetApi::shared` (one stream per fleet),
+- `live/watch.rs`: the board follows each fleet whose navigator group (while
+  the navigator shows) or front conversation it shows, while the Space is in
+  front and the fleet is `Ready` or followed, through `FleetApi::shared` (one stream per fleet),
   and drops the handle when it is no longer shown. Under test it reads only
   a service a test installed (`FleetApi::current`), so no test opens the
-  token store. What the service says goes to `Hub::fleets` only on change.
+  token store. What the service says goes to `Hub::fleets` only when what
+  Channels draws of it changed (`FleetLive::new`).
 - `live/ship.rs`: a ship's channel's captain is the roster's (the Subspace
   API's agent of rank captain); its Fleet API ship is the one whose
   registration ID equals that captain's API nick, ignoring ASCII case.
@@ -97,8 +98,9 @@ change adds **Thread**. The navigator's fleet groups gain `Ships` and
   tile its check counts`): a pull request the PRs Space holds only from a
   list answers at once and is read once for its check runs, deduplicated,
   bounded by the keys asked about and read again at most once per list
-  refresh. Widening every list query was not chosen: every list would pay
-  for counts no tile shows.
+  refresh, however many sections land or pull requests are opened (see
+  *Review findings* 3 and 4). Widening every list query was not chosen:
+  every list would pay for counts no tile shows.
 - **No accent edge on a selected tab** (`fix(framework): show the selected
   tab by its surface, with no accent edge`). The sweep for accent lines on
   one edge in `board-kit` and Channels found only functional marks, left as
@@ -160,7 +162,9 @@ Four low findings from the reviews of the Fleet API client.
    save helped. The bridge's `fleets.get` now calls
    `FleetApi::reload_unreadable`, and the page hears
    `subspace:fleets-changed` when the read lands. Test: a locked stand-in
-   keychain, unlocked, read again on retry.
+   keychain, unlocked, read again on retry. This made a loop while the
+   keychain stayed locked; *Review findings* 1 replaces it with
+   `fleets.retry`.
 2. **`--log-requests` raising on a malformed request** — fixed
    (`fix(capture): log a malformed request to the Fleet API fixture without
    failing`): `getattr`, `-` and `auth=none`. Test: a raw malformed request.
@@ -223,3 +227,102 @@ against the code.
 12. **A progress meter without the tracker flag** — fixed with 5.
 13. **The quadratic name clash check** — fixed with 7: titles are counted in
    one pass.
+
+## Review findings
+
+Two independent reviews of head `278800f`, merge base `b095bb0`: Claude
+Opus 5.5 at high effort (**Opus**; one P1, two P2, four P3) and GPT-6.2 Sol
+at high effort (**Sol**; eight medium, five low, verdict clear). Each
+finding was checked against the code; where both raised the same fault it
+is listed once with both names.
+
+1. **A token the keychain cannot read loops** (Opus P1; Sol medium,
+   `bridge/fleets.rs`) — fixed (`fix(fleet-client): re-read an unreadable
+   token only when the person retries`). Every `fleets.get` re-read the
+   token and announced twice; Fleet Console answered each announcement
+   with `fleets.get`. Now `fleets.get` never reads the keychain; only the
+   page's Retry sends `fleets.retry`; the fleet stays Keychain locked while
+   read again (no Checking step); a read announces only a change; and the
+   service reads one fleet's token again at most once every five seconds,
+   whoever asks. Fleet Console's every other refresh (the change event,
+   focus, visibility) is a plain one, and a fleet whose token could not be
+   read offers Retry. Tests: a follower that asks again on every
+   announcement settles after one read (`clients/fleet`); `fleets.get`
+   never reads and a second retry at once reads nothing (`spaces/web`);
+   only Retry calls `fleets.retry` (Fleet Console's `node --test`).
+2. **Fleet API news Channels does not draw re-syncs the Space** (Opus P2)
+   — fixed (`fix(irc): re-sync Channels only for Fleet API news it
+   draws`): the hub holds each fleet's state and its ships as Channels
+   draws them, so an activity line, a sample time or a ship field it does
+   not draw compares equal. Test: those leave the fleet equal; a crew
+   member going idle does not.
+3. **Check-count reads repeat per section and per opened pull request**
+   (Opus P2) — fixed (`fix(github): read a listed pull request's checks
+   once per refresh, never over the list`): a refresh marks reads stale
+   once, when its first section lands; a detail read marks nothing. Test:
+   four sections landing with Channels asking after each, and 20 detail
+   landings, read once per refresh.
+4. **A stale read overrides the fresher list** (Opus P3; Sol medium, with
+   the force-push case) — fixed in the same commit: a read since the last
+   refresh answers whole; an older one lends only its check counts to the
+   list's item, and only while the list's combined checks state and last
+   update match the read's; a read that started before a refresh lands
+   stale, so it cannot clear that refresh's mark. The list does not carry
+   the head commit, so the last update stands in for it: a force-push
+   updates the pull request. Tests: merged since, force-pushed since.
+5. **The Starbase lists another fleet's ship** (Opus P3; Sol medium) —
+   fixed (`fix(irc): list only the Starbase's own fleet's ships`): a ship
+   shows only when its captain's ship channel is in the Starbase's own
+   fleet. Test: two fleets on one network.
+6. **A network's one fleet folds the network's other channels away** (Opus
+   P3) — fixed (`fix(irc): keep a network's other channels open when its
+   one fleet first shows`): the merged group keeps the fold of the
+   network's group it replaces. Test: the group appears open with the
+   selection in People while another fleet's initiative is selected.
+7. **`FleetApi::install` is public and ungated** (Opus P3) — fixed
+   (`fix(fleet-client): offer FleetApi::install only to tests`): it and
+   `TokenStore::with_vault` are behind the client's `test-support` feature,
+   enabled only on dev-dependencies, which the architecture check enforces.
+8. **A pull request that left the lists answers from memory for good**
+   (Sol medium) — fixed in the commit of 3 and 4: a read of a pull request
+   the board neither opened nor lists is checked again once per refresh,
+   and GitHub's refusal replaces it. Test: read, refreshed, then denied.
+9. **A check-count read queued after sign-out** (Sol medium) — fixed in
+   the same commit: a signed-out account starts no read. Test: no request
+   after a sign-out.
+10. **A kept crew detail shown as live** (Sol medium) — fixed (`fix(irc):
+    never show a kept crew detail as live, and bound crew text first`): a
+    detail Stargate kept after a failed read, or one the overview or the
+    detail marks unavailable, gives no crew lines (the overview's totals
+    stand in), and a kept overview shows no ships. Tests: each case.
+11. **A hidden navigator keeps its fleets followed** (Sol medium) — fixed
+    (`fix(irc): follow the navigator's fleets only while the navigator
+    shows`): showing or hiding the navigator and a new conversation in
+    front sync the follows. Test: hidden with nothing of the fleet in
+    front lets it go; shown again follows it.
+12. **The fixture's malformed-request test expects a status line** (Sol
+    medium) — fixed (`fix(capture): answer a Fleet API fixture request
+    whose target cannot be parsed`). On this machine's Python 3.14 the
+    status line is sent and the test passed, but a version that answers a
+    one-word request as HTTP/0.9 sends none; the test now checks the error
+    body and the log.
+13. **`urlsplit` raising in the fixture's log** (Sol low) — fixed in the
+    same commit: the handler, too, dropped the connection on such a target.
+    Both treat it as unparsed: 400, path logged as `-`. Test: an invalid
+    bracketed host.
+14. **Bidirectional controls in Fleet API text** (Sol low) — fixed with 10:
+    they are stripped. Test: overrides and isolates in a ship's and a crew
+    member's name.
+15. **Crew lines formatted before the cap of 24** (Sol low) — fixed with
+    10: members are chosen, working first, before any is formatted.
+16. **In play here loses claim order under its cap of eight** (Sol low) —
+    fixed (`fix(irc): keep In play here in the order a message names its
+    references`). Test: a pull request named before eight issues.
+17. **The design guide's checklist addresses reviewers** (Sol low) — left:
+    it is the repository's own checklist for reviewing a UI change, owned by
+    the guide, not an instruction smuggled into code; reviewers are told by
+    their request what to do with it.
+
+Also noted by Opus, not findings: the `cfg(test)` switch in `watch.rs`
+leaves the release path through `FleetApi::shared` without a test; and a
+light theme's selected tab contrast is under *Not verified*.

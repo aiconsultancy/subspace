@@ -129,6 +129,25 @@ impl Hub {
         self.0.follow_uploads(&mut state);
         state.view()
     }
+    /// Whether the catch-up after the latest `ready` has been taken and has
+    /// landed: its reads of the open issue and the list head are neither out
+    /// nor owed, and nothing they queued is still waiting or being read.
+    #[cfg(test)]
+    pub(crate) fn caught_up_after_ready(&self) -> bool {
+        let state = lock(&self.0.state);
+        let reads = &state.live_reads;
+        reads.readies > 0
+            && reads.ready_catch_ups == reads.readies
+            && !reads.issue.pending()
+            && !reads.list.pending()
+            && self.0.queue.idle()
+    }
+    /// Whether no read is queued or out, so a test can wait for what a step
+    /// set going to finish before it counts requests.
+    #[cfg(test)]
+    pub(crate) fn idle(&self) -> bool {
+        self.0.queue.idle()
+    }
     /// A hub's data and queued requests belong to its original account.
     pub fn account_changed(&self) -> bool {
         self.0.client.account_changed()

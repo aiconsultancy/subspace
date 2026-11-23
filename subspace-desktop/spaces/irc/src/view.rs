@@ -56,6 +56,7 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Irc>) -> Irc {
         inspector_tab: Default::default(),
         threads: Default::default(),
         seen_fleets: Default::default(),
+        absorbing: Default::default(),
         selection_group: None,
         hub: None,
         hub_subscription: None,
@@ -131,6 +132,7 @@ pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
     crate::reveal::settle(board, cx);
     crate::live::watch::sync(board, cx);
     crate::thread::refresh(board, cx);
+    inspector::want_in_play(board, cx);
     cx.notify();
 }
 

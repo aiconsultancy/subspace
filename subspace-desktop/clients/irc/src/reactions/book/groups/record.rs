@@ -46,10 +46,12 @@ pub(super) fn incoming(reaction: &Reaction, stamp: u64) -> Record {
 /// for [`backdate`].
 pub(super) fn merge(held: &mut Record, incoming: Record, can_show: bool) -> bool {
     let own = held.reactor.own || incoming.reactor.own;
+    let mut changed = false;
     if !incoming.added {
         held.removed = held.removed.max(Some(incoming.latest));
+        changed = after_removal(held);
     }
-    let changed = advance(held, incoming, can_show);
+    let changed = advance(held, incoming, can_show) || changed;
     let marked = own != held.reactor.own;
     held.reactor.own = own;
     changed || marked
@@ -83,6 +85,20 @@ fn take(held: &mut Record, incoming: &Record) -> bool {
     was != incoming.added
 }
 
+/// A shown person's place never stays on or before a removal learned
+/// late, as when a replayed addition backdated it first: it moves to their
+/// newest addition, which came after that removal.
+fn after_removal(held: &mut Record) -> bool {
+    let stale = held.added
+        && held
+            .removed
+            .is_some_and(|removed| held.reactor.time <= removed);
+    if stale {
+        held.reactor.time = held.latest;
+    }
+    stale
+}
+
 /// Moves a shown person's place back to `time`, unless that crosses
 /// their newest known removal; whether it moved.
 fn backdate(held: &mut Record, time: DateTime<Utc>) -> bool {
@@ -108,8 +124,8 @@ pub(super) fn same(one: &Record, other: &Record, mapping: Casemapping) -> bool {
         return true;
     }
     match (&one.reactor.account, &other.reactor.account) {
-        (Some(one), Some(other)) => mapping.fold(one) == mapping.fold(other),
-        (None, None) => mapping.fold(&one.reactor.nick) == mapping.fold(&other.reactor.nick),
+        (Some(one), Some(other)) => mapping.same(one, other),
+        (None, None) => mapping.same(&one.reactor.nick, &other.reactor.nick),
         _ => false,
     }
 }

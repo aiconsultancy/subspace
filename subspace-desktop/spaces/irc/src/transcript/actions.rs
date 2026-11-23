@@ -83,7 +83,7 @@ impl Availability {
             react: conversation.reacting.supported,
             reply: threads && crate::thread::reply_refusal(network).is_none(),
             tracker: crate::tracker::available(buffer, &hub.issues).is_ok(),
-            in_play: !crate::tracker::in_play(&conversation.tiles).is_empty(),
+            in_play: conversation.tiles.has_issue_in_play(),
         }
     }
 }
