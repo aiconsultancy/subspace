@@ -3,9 +3,10 @@
 //! The manifest, in the account's own item, is the bytes `0xFF 0xDF`, then
 //! `subspace-keychain/chunks/v2/<generation>/<count>/<length>/<digest>`, 141
 //! bytes in all. `0xFF` never occurs in UTF-8, and read as UTF-16LE the first
-//! code unit is `0xDFFF`, a low surrogate with nothing before it, so the
-//! bytes are never text in either encoding, whatever their length; the odd
-//! length alone makes Windows hand them back as bytes. The generation is 32
+//! code unit is `0xDFFF`, a low surrogate with nothing before it, so no
+//! non-empty prefix of the bytes is text in either encoding; the odd length
+//! alone makes Windows hand them back as bytes. (Zero bytes read back as the
+//! empty password, as they always have.) The generation is 32
 //! random hexadecimal digits, new for every save; `count` (3 digits) and
 //! `length` (9 digits, the secret's UTF-8 length) are zero-padded; the
 //! digest is the SHA-256 of the generation followed by the secret, in
@@ -17,10 +18,10 @@
 //! the first 32 hexadecimal digits of the SHA-256 of
 //! `<service length>:<service><account>`, both with ASCII letters in lower
 //! case, as Windows compares names without case; other letters keep their
-//! case, so accounts that differ only in the case of a non-ASCII letter do
-//! not share chunks. Derived names are at most 87 bytes, whatever the
-//! account. An account containing a NUL or the marker, in any case, is
-//! refused.
+//! case, so names that differ only in the case of a non-ASCII letter do not
+//! share chunks. Derived names are at most 87 bytes, whatever the account.
+//! An account containing a NUL or the marker, in any case, or a service
+//! containing a NUL, is refused.
 
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
@@ -41,6 +42,10 @@ const DIGEST_DIGITS: usize = 64;
 const MIN_CHUNKS: usize = 2;
 /// The most chunks one secret may use: 240 KiB of ASCII in Windows chunks.
 const MAX_CHUNKS: usize = 256;
+/// The limits version 2 cuts secrets with. A load accepts only the pieces
+/// they cut, so changing either needs a new version in [`MANIFEST_PREFIX`].
+pub(super) const V2_ITEM_UNITS: usize = 1_280;
+pub(super) const V2_PIECE_UNITS: usize = 960;
 /// The longest derived name: the marker, the scope hash, the generation,
 /// two slashes and an index of at most 3 digits.
 const MAX_DERIVED_BYTES: usize = MARKER.len() + ACCOUNT_DIGITS + GENERATION_DIGITS + 5;
@@ -64,7 +69,10 @@ pub(super) fn namespace(
         account.to_lowercase(),
         account.to_uppercase().to_lowercase(),
     ];
-    let reserved = account.contains('\0') || lower.contains(MARKER) || upper.contains(MARKER);
+    let reserved = account.contains('\0')
+        || service.contains('\0')
+        || lower.contains(MARKER)
+        || upper.contains(MARKER);
     if reserved || account.len() > longest {
         return Err(KeychainError);
     }
@@ -236,12 +244,15 @@ pub(super) fn chunk_pattern(namespace: &str, service: &str) -> String {
     )
 }
 
-/// The account name of a found `target`, if it is exactly, case included,
-/// the target name of one of the namespace's chunks under `service`.
-pub(super) fn chunk_of(target: &str, namespace: &str, service: &str) -> Option<String> {
+/// The account name of a found `target`, and the header its content must
+/// start with, if the target is exactly, ignoring ASCII case as Windows
+/// does, the target name of one of the namespace's chunks under `service`.
+pub(super) fn chunk_of(target: &str, namespace: &str, service: &str) -> Option<(String, String)> {
+    let target = target.to_ascii_lowercase();
+    let service = service.to_ascii_lowercase();
     let rest = target
         .strip_prefix(namespace)?
-        .strip_suffix(service)?
+        .strip_suffix(service.as_str())?
         .strip_suffix('.')?;
     let (generation, index) = rest.split_once('/')?;
     let index = index
@@ -253,5 +264,14 @@ pub(super) fn chunk_of(target: &str, namespace: &str, service: &str) -> Option<S
             .bytes()
             .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
     let name = format!("{namespace}{generation}/{index}");
-    (hex && format!("{name}.{service}") == target).then_some(name)
+    let header = format!("{generation}/{index}/");
+    (hex && format!("{name}.{service}") == target).then_some((name, header))
+}
+
+/// Whether a found item, read back, is a chunk with this header.
+pub(super) fn owned(item: Result<Option<Item>, KeychainError>, header: &str) -> bool {
+    match item {
+        Ok(Some(Item::Text(value))) => Zeroizing::new(value).starts_with(header),
+        Ok(Some(Item::Bytes(_)) | None) | Err(_) => false,
+    }
 }

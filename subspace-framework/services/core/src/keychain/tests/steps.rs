@@ -76,6 +76,16 @@ fn a_commit_that_lands_but_reports_a_failure_keeps_its_chunks() {
     );
     assert_eq!(load(&store, WINDOWS, ACCOUNT), Ok(Some(long('n'))));
     assert_no_orphans(&store, ACCOUNT);
+
+    // When the item cannot be read again, the chunks stay too.
+    let store = failing(SHORT, 7, Failure::Lands);
+    store.also_fail(8, Failure::Error);
+    assert_eq!(
+        save(&store, WINDOWS, ACCOUNT, &long('n')),
+        Err(KeychainError)
+    );
+    assert_eq!(load(&store, WINDOWS, ACCOUNT), Ok(Some(long('n'))));
+    assert_no_orphans(&store, ACCOUNT);
 }
 
 #[test]
@@ -88,13 +98,11 @@ fn a_delete_that_stops_at_any_step_leaves_the_secret_or_none() {
                 let deleted = delete(&store, WINDOWS, ACCOUNT);
                 store.recover();
                 let loaded = load(&store, WINDOWS, ACCOUNT).unwrap();
-                // Only the first step, deleting the account's item, can fail
-                // the delete; after it nothing can.
+                // A delete succeeds exactly when the account's item is gone.
                 match deleted {
                     Ok(()) => assert_eq!(loaded, None),
-                    Err(_) => assert_eq!(step, 1),
+                    Err(_) => assert_eq!(loaded, Some(secret.clone())),
                 }
-                assert!(loaded.is_none() || loaded == Some(secret.clone()));
                 delete(&store, WINDOWS, ACCOUNT).unwrap();
                 assert!(store.names().is_empty());
             }

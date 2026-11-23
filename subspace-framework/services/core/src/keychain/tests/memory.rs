@@ -48,13 +48,14 @@ pub(super) enum Failure {
 
 type Hook = Box<dyn FnOnce(&Memory)>;
 
-/// Every credential, by target name, whatever its service.
+/// Every credential, whatever its service, by its target name in ASCII lower
+/// case, as Windows compares names, with the name as first written.
 #[derive(Default)]
 struct Credentials {
-    blobs: RefCell<BTreeMap<String, Vec<u8>>>,
+    blobs: RefCell<BTreeMap<String, (String, Vec<u8>)>>,
     windows: bool,
     steps: Cell<usize>,
-    failure: Cell<Option<(usize, Failure)>>,
+    failures: RefCell<Vec<(usize, Failure)>>,
     down: Cell<bool>,
     hook: RefCell<Option<(usize, Hook)>>,
     strays: RefCell<Vec<String>>,
@@ -106,7 +107,12 @@ impl Memory {
 
     pub(super) fn fail_step(&self, step: usize, failure: Failure) {
         self.credentials.steps.set(0);
-        self.credentials.failure.set(Some((step, failure)));
+        *self.credentials.failures.borrow_mut() = vec![(step, failure)];
+    }
+
+    /// Makes another step of the same operation fail too.
+    pub(super) fn also_fail(&self, step: usize, failure: Failure) {
+        self.credentials.failures.borrow_mut().push((step, failure));
     }
 
     pub(super) fn before_step(&self, step: usize, hook: impl FnOnce(&Memory) + 'static) {
@@ -115,7 +121,7 @@ impl Memory {
     }
 
     pub(super) fn recover(&self) {
-        self.credentials.failure.set(None);
+        self.credentials.failures.borrow_mut().clear();
         self.credentials.down.set(false);
     }
 
@@ -130,13 +136,14 @@ impl Memory {
 
     /// The items under this service, by account, read back as keyring does.
     pub(super) fn items(&self) -> BTreeMap<String, Value> {
-        let suffix = format!(".{}", self.service);
+        let suffix = format!(".{}", self.service).to_ascii_lowercase();
         let blobs = self.credentials.blobs.borrow();
         blobs
             .iter()
-            .filter_map(|(target, blob)| {
-                let account = target.strip_suffix(&suffix)?;
-                Some((account.to_owned(), classify(blob)))
+            .filter(|(folded, _)| folded.ends_with(&suffix))
+            .map(|(_, (target, blob))| {
+                let account = &target[..target.len() - suffix.len()];
+                (account.to_owned(), classify(blob))
             })
             .collect()
     }
@@ -145,9 +152,10 @@ impl Memory {
         self.items().into_keys().collect()
     }
 
-    /// Every target name, under any service.
+    /// Every target name, under any service, as first written.
     pub(super) fn targets(&self) -> BTreeSet<String> {
-        self.credentials.blobs.borrow().keys().cloned().collect()
+        let blobs = self.credentials.blobs.borrow();
+        blobs.values().map(|(target, _)| target.clone()).collect()
     }
 
     pub(super) fn insert(&self, account: &str, value: Value) {
@@ -159,17 +167,16 @@ impl Memory {
             Value::Text(text) => text.encode_utf16().flat_map(u16::to_le_bytes).collect(),
             Value::Bytes(bytes) => bytes,
         };
-        self.credentials
-            .blobs
-            .borrow_mut()
-            .insert(target.to_owned(), blob);
+        let mut blobs = self.credentials.blobs.borrow_mut();
+        let entry = blobs
+            .entry(target.to_ascii_lowercase())
+            .or_insert_with(|| (target.to_owned(), Vec::new()));
+        entry.1 = blob;
     }
 
     pub(super) fn remove(&self, account: &str) {
-        self.credentials
-            .blobs
-            .borrow_mut()
-            .remove(&self.target(account));
+        let target = self.target(account).to_ascii_lowercase();
+        self.credentials.blobs.borrow_mut().remove(&target);
     }
 
     fn target(&self, account: &str) -> String {
@@ -189,10 +196,8 @@ impl Memory {
         if credentials.down.get() {
             return Err(KeychainError);
         }
-        let failure = credentials
-            .failure
-            .get()
-            .filter(|failure| failure.0 == step);
+        let failures = credentials.failures.borrow().clone();
+        let failure = failures.into_iter().find(|failure| failure.0 == step);
         match failure.map(|failure| failure.1) {
             None => Ok(false),
             Some(Failure::Lands) => Ok(true),
@@ -246,12 +251,10 @@ impl Store for Memory {
 
     fn get(&self, account: &str) -> Result<Option<Item>, KeychainError> {
         self.step()?;
-        let blob = self
-            .credentials
-            .blobs
-            .borrow()
-            .get(&self.target(account))
-            .cloned();
+        let target = self.target(account).to_ascii_lowercase();
+        let blobs = self.credentials.blobs.borrow();
+        let blob = blobs.get(&target).map(|(_, blob)| blob.clone());
+        drop(blobs);
         Ok(blob.map(|blob| match classify(&blob) {
             Value::Text(text) => Item::Text(text),
             Value::Bytes(bytes) => Item::Bytes(Zeroizing::new(bytes)),

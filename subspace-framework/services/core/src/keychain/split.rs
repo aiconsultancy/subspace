@@ -22,8 +22,8 @@ use zeroize::Zeroizing;
 
 use super::{Item, KeychainError, Store};
 use format::{
-    chunk_header, chunk_name, chunk_of, chunk_pattern, digest, fits, generation, manifest,
-    namespace, pieces, read_manifest, room,
+    V2_ITEM_UNITS, V2_PIECE_UNITS, chunk_header, chunk_name, chunk_of, chunk_pattern, digest, fits,
+    generation, manifest, namespace, owned, pieces, read_manifest, room,
 };
 use read::decode;
 
@@ -39,6 +39,11 @@ const WINDOWS_ACCOUNT_BYTES: usize = 513;
 /// `CRED_MAX_GENERIC_TARGET_NAME_LENGTH`, which keyring applies to
 /// `<account>.<service>` in bytes.
 const WINDOWS_TARGET_BYTES: usize = 32_767;
+
+// A load accepts only the pieces these limits cut, so a secret saved with
+// other limits would fail to load: changing either needs a new format
+// version, in `format`, along with its limits.
+const _: () = assert!(WINDOWS_ITEM_UNITS == V2_ITEM_UNITS && WINDOWS_PIECE_UNITS == V2_PIECE_UNITS);
 
 /// What one stored item holds, in UTF-16 code units, and the longest names.
 #[derive(Clone, Copy)]
@@ -138,10 +143,13 @@ fn save_split(
 }
 
 /// Once the account's item is gone the secret is gone, so nothing after
-/// that commit can fail the delete.
+/// that commit can fail the delete. A delete that reports a failure has
+/// succeeded if the item is gone after all.
 fn delete_split(store: &impl Store, limits: Limits, account: &str) -> Result<(), KeychainError> {
     let namespace = namespace(store.service(), account, limits.account)?;
-    store.delete(account)?;
+    store
+        .delete(account)
+        .or_else(|_| absent(store.get(account)))?;
     sweep(store, account, &namespace);
     Ok(())
 }
@@ -197,30 +205,44 @@ fn write(
 }
 
 /// Deletes a failed save's chunks, unless the account's item names them: a
-/// commit that reported a failure may still have landed.
+/// commit that reported a failure may still have landed. When the item
+/// cannot be read the chunks stay, left over at worst.
 fn abandon(store: &impl Store, account: &str, namespace: &str, plan: &Plan) {
-    let live = chunk_names(namespace, store.get(account).ok().flatten());
     let written: Vec<String> = plan.chunks.iter().map(|(name, _)| name.clone()).collect();
+    let live = store
+        .get(account)
+        .map_or_else(|_| written.clone(), |item| chunk_names(namespace, item));
     forget(store, &unnamed(&written, &live));
 }
 
 /// Deletes, best effort, every chunk of the account under this service that
-/// its item does not name now.
+/// its item does not name now and that holds a chunk's header for its name.
 fn sweep(store: &impl Store, account: &str, namespace: &str) {
     let live = chunk_names(namespace, store.get(account).ok().flatten());
     let pattern = chunk_pattern(namespace, store.service());
     let found = store.find(&pattern).unwrap_or_default();
-    forget(store, &obsolete(&found, namespace, store.service(), &live));
+    obsolete(&found, namespace, store.service(), &live)
+        .iter()
+        .filter(|(name, header)| owned(store.get(name), header))
+        .for_each(|(name, _)| {
+            let _ = store.delete(name);
+        });
 }
 
 /// The account's chunks under `service` among the `found` target names,
-/// apart from the `live` ones.
-fn obsolete(found: &[String], namespace: &str, service: &str, live: &[String]) -> Vec<String> {
-    let chunks: Vec<String> = found
+/// apart from the `live` ones, each with the header its content must start
+/// with.
+fn obsolete(
+    found: &[String],
+    namespace: &str,
+    service: &str,
+    live: &[String],
+) -> Vec<(String, String)> {
+    found
         .iter()
         .filter_map(|target| chunk_of(target, namespace, service))
-        .collect();
-    unnamed(&chunks, live)
+        .filter(|(name, _)| !live.contains(name))
+        .collect()
 }
 
 fn unnamed(names: &[String], live: &[String]) -> Vec<String> {
@@ -257,6 +279,18 @@ fn manifest_bytes(item: Item) -> Option<Zeroizing<Vec<u8>>> {
             let _wiped = Zeroizing::new(secret);
             None
         }
+    }
+}
+
+/// Whether a delete that reported a failure removed the item anyway.
+fn absent(read: Result<Option<Item>, KeychainError>) -> Result<(), KeychainError> {
+    match read {
+        Ok(None) => Ok(()),
+        Ok(Some(Item::Text(secret))) => {
+            let _wiped = Zeroizing::new(secret);
+            Err(KeychainError)
+        }
+        Ok(Some(Item::Bytes(_))) | Err(_) => Err(KeychainError),
     }
 }
 

@@ -29,7 +29,6 @@ fn a_delete_touches_nothing_of_another_service_or_another_account() {
     let namespace = namespace_of(ACCOUNT);
     let foreign = [
         // Credentials no save writes, whose names resemble this account's chunks.
-        format!("{namespace}{}/0.{SERVICE}", generation.to_uppercase()),
         format!("{namespace}{generation}/00.{SERVICE}"),
         format!("{namespace}{generation}/0.{SERVICE}.extra"),
         format!("x{namespace}{generation}/0.{SERVICE}"),
@@ -76,24 +75,47 @@ fn a_delete_succeeds_when_the_search_fails() {
 }
 
 #[test]
-fn a_delete_skips_what_it_cannot_parse_or_delete_and_sweeps_the_rest() {
-    let (store, generation) = long_store();
-    let namespace = namespace_of(ACCOUNT);
-    for stray in [
-        String::new(),
-        "garbage".to_owned(),
-        format!("{namespace}{generation}/x.{SERVICE}"),
-        format!("{namespace}{generation}/9.{SERVICE}"),
-    ] {
-        store.stray(&stray);
+fn a_delete_skips_what_it_cannot_parse_read_or_delete_and_sweeps_the_rest() {
+    // After the account's item, its second read and the search, each chunk
+    // is read and then deleted: fail the first chunk's read, then its delete.
+    for step in [4, 5] {
+        let (store, generation) = long_store();
+        let namespace = namespace_of(ACCOUNT);
+        for stray in [
+            String::new(),
+            "garbage".to_owned(),
+            format!("{namespace}{generation}/x.{SERVICE}"),
+            format!("{namespace}{generation}/9.{SERVICE}"),
+        ] {
+            store.stray(&stray);
+        }
+        store.fail_step(step, Failure::Error);
+        assert_eq!(delete(&store, WINDOWS, ACCOUNT), Ok(()));
+        assert_eq!(store.names().len(), 1);
+        assert_eq!(load(&store, WINDOWS, ACCOUNT), Ok(None));
+        delete(&store, WINDOWS, ACCOUNT).unwrap();
+        assert!(store.names().is_empty());
     }
-    // The first of the five chunk deletions fails.
-    store.fail_step(4, Failure::Error);
-    assert_eq!(delete(&store, WINDOWS, ACCOUNT), Ok(()));
-    assert_eq!(store.names().len(), 1);
-    assert_eq!(load(&store, WINDOWS, ACCOUNT), Ok(None));
+}
+
+#[test]
+fn a_credential_under_a_chunks_name_but_without_its_header_survives() {
+    let (store, _) = long_store();
+    // The exact name a chunk of another generation would have.
+    let name = format!("{}{}/0", namespace_of(ACCOUNT), "f".repeat(32));
+    store.insert(&name, Value::Text("fixture-foreign".to_owned()));
     delete(&store, WINDOWS, ACCOUNT).unwrap();
-    assert!(store.names().is_empty());
+    assert_eq!(store.names(), BTreeSet::from([name]));
+}
+
+#[test]
+fn a_secret_saved_under_one_spelling_of_the_service_is_swept_under_another() {
+    let store = Memory::windows().under("App.Example");
+    save(&store, WINDOWS, ACCOUNT, &long('a')).unwrap();
+    let other = store.under("app.example");
+    assert_eq!(load(&other, WINDOWS, ACCOUNT), Ok(Some(long('a'))));
+    delete(&other, WINDOWS, ACCOUNT).unwrap();
+    assert!(store.targets().is_empty());
 }
 
 #[test]

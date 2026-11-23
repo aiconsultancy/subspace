@@ -108,3 +108,27 @@ fn each_service_has_its_own_namespace() {
     // The length prefix keeps the service and the account apart.
     assert_ne!(namespace_in("ab", "c"), namespace_in("a", "bc"));
 }
+
+#[test]
+fn an_account_saved_in_one_case_loads_and_deletes_in_another() {
+    let store = Memory::windows();
+    save(&store, WINDOWS, "Session", &"a".repeat(3_000)).unwrap();
+    assert_eq!(
+        load(&store, WINDOWS, "session"),
+        Ok(Some("a".repeat(3_000)))
+    );
+    delete(&store, WINDOWS, "SESSION").unwrap();
+    assert!(store.targets().is_empty());
+}
+
+#[test]
+fn a_service_with_a_nul_is_refused_before_any_step() {
+    let store = Memory::windows().under("app\0example");
+    assert_eq!(
+        save(&store, WINDOWS, ACCOUNT, &"a".repeat(3_000)),
+        Err(KeychainError)
+    );
+    assert_eq!(load(&store, WINDOWS, ACCOUNT), Err(KeychainError));
+    assert_eq!(delete(&store, WINDOWS, ACCOUNT), Err(KeychainError));
+    assert_eq!(store.steps(), 0);
+}

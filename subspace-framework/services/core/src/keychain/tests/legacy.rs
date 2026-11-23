@@ -71,3 +71,11 @@ fn what_an_earlier_build_writes_over_a_split_secret_wins() {
     delete(&store, WINDOWS, ACCOUNT).unwrap();
     assert!(store.names().is_empty());
 }
+
+#[test]
+fn an_empty_credential_reads_as_the_empty_secret_as_before() {
+    // Zero bytes are the only prefix of a manifest that is also text.
+    let store = Memory::holding(ACCOUNT, Value::Bytes(Vec::new()));
+    assert_eq!(load(&store, WINDOWS, ACCOUNT), Ok(Some(String::new())));
+    assert_eq!(old_build_load(&store, ACCOUNT), Ok(Some(String::new())));
+}
