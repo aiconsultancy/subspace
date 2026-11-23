@@ -259,7 +259,7 @@ export function loadFleetDtos(db: Db, organisationId: string, rows: FleetRow[]) 
   });
 }
 
-function findFleet(db: Db, organisationId: string, reference: string, lock = false) {
+export function findFleet(db: Db, organisationId: string, reference: string, lock = false) {
   const id = isUuid(reference) ? reference : undefined;
   const scope = and(
     eq(fleets.organisationId, organisationId),

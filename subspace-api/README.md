@@ -128,6 +128,8 @@ Upgrading from a version without first sign-in changes nobody's access by itself
 - `ENTRA_ADMIN_ROLE` never changes the provisioned role, so removing it later
   returns everyone to the role the membership command gave them.
 - IRC sign-in stays off until its settings are configured.
+- [Agent tokens](#agent-key-credentials) stay off until `AGENT_TOKEN_AUDIENCE` is
+  set, and no agent is enrolled until an administrator issues an enrolment token.
 
 ### The membership command
 
@@ -217,8 +219,8 @@ command with the verified organisation and subject:
 bun run auth:username entra 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 tamsin_q
 ```
 
-It takes a letter, then letters, digits, `-` or `_`, at most 32 characters for a
-person and 64 for an agent, whose username is its IRC nick. It may give an
+It takes a letter, then letters, digits, `-` or `_`, at most 32 characters, for a
+person or for an agent, whose username is its IRC nick. It may give an
 operator's reserved name, but refuses Ergo's service and guest names and a name
 another member or agent holds. It refuses a name another record has retired unless
 `--retired` is given, which releases that name to this member or agent: so an agent
@@ -263,6 +265,7 @@ links.
 | `RESERVED_USERNAMES`                                                  | Comma-separated operator names that no person or agent may take as a [username](#usernames).                    |
 | `RESERVED_USERNAMES_FILE`                                             | File of further reserved names, such as the IRC server's existing accounts, by line, comma or space.            |
 | `AGENT_PORT`, `AGENT_HOST`, `AGENT_ORGANISATION`                      | Optional [agent listener](#the-agent-listener): port (off when unset), address and `<provider>:<organisation>`. |
+| `AGENT_TOKEN_AUDIENCE`                                                | Public origin that [agent tokens](#agent-tokens) name in `aud`. Agent tokens are refused while unset.           |
 | `DEV_KEY_PATH`                                                        | Private development signing key file, defaulting to `.data/dev-signing-key`.                                    |
 | `DEV_CHANNELS`, `DEV_IRC_HOST`, `DEV_IRC_PORT`                        | Channel text and IRC endpoint for newly created dev organisations.                                              |
 | `STORAGE_DRIVER`, `STORAGE_PATH`                                      | Defaults to `local` and `.data/blobs`. Use `s3` for a private S3-compatible bucket.                             |
@@ -401,8 +404,12 @@ The rules, in order:
    `accountName`, ignoring an `@` and anything after it and compared without
    regard to case, is that username. The answer names the canonical username,
    which for an agent is its nick as registered.
-2. A `certfp` with no passphrase answers `success: false`. It is reserved for
-   agent key credentials.
+2. A `certfp` with no passphrase succeeds only if, compared as hexadecimal
+   without regard to case, it is the fingerprint of an active
+   [agent key credential](#agent-key-credentials) with scope `irc`, of an active
+   agent with an IRC nick, in the organisation in `IRC_AUTH_ORGANISATION`. The
+   answer names the agent's nick as registered. The `accountName` is not compared:
+   the certificate decides the account.
 3. Anything else answers `success: false`, so Ergo falls back to its own
    accounts: the break-glass operator and any hand-made accounts.
 
@@ -510,8 +517,12 @@ initiative responses, report it.
 Each agent may record `ircNick`, its nick on the fleet's IRC server, which
 fleet IRC servers tie to the account of the same name. Desktop clients mark an
 agent's rank in IRC only by this nick, never by its name. A nick starts with a
-letter and holds letters, digits, `-` and `_`, at most 64 characters, and is
-unique within the organisation, ignoring case. It is also the agent's
+letter and holds letters, digits, `-` and `_`, at most 32 characters in all, the
+account names the IRC server's sign-in script (`subspace-irc/subspace-auth.sh`)
+accepts, so that the agent can sign in to IRC; and it is unique within the
+organisation, ignoring case. The rule applies when a nick is set, by registration,
+an edit, enrolment or the username command; a longer nick saved before it stays
+until it is changed, but cannot sign in to IRC. It is also the agent's
 [username](#usernames), so it cannot be a person's username or a reserved name.
 An edit that leaves `ircNick` out keeps it; `null` clears it. The fleet's
 `agents` report it.
@@ -551,8 +562,10 @@ Human organisation administrators register and deactivate API agent identities u
 `captain` and `crew`. The `serviceTokenClientId` field carries the verified
 provider subject for the agent in that organisation. Use the WorkOS `sub`,
 the Entra `oid` or the email used by local dev sign-in. Authenticate as that
-provider account to use the API. A bearer for a deactivated identity is refused
-on subsequent requests. Humans can read organisation audit events. Agents can
+provider account to use the API, or, with no provider account, with a key
+credential and agent tokens as [Agent key credentials](#agent-key-credentials)
+describes: that is how a fleet's agents reach the main listener in production.
+A bearer for a deactivated identity is refused on subsequent requests. Humans can read organisation audit events. Agents can
 read project audit events. Captains and rear admirals can attach crew name and
 model to issue and comment writes. The authenticated agent remains the actor.
 
@@ -600,13 +613,216 @@ This trusts the listener's network as development sign-in does, minus
 administrator access: anyone who can reach the agent port can act as any
 registered agent of that organisation, and agents can act as each other.
 Expose it only to the agents' own users: the fleet installer's lockdown admits
-only root, the operator and the officers' Linux users to it.
+only root, the operator and the officers' Linux users to it. It is for loopback
+development; on the main listener, in production and through any proxy, an
+agent proves who it is with a [key credential](#agent-key-credentials) instead.
+Neither listener serves the other's way in.
 
 Issue creators, assignees and commenters follow issues automatically unless
 they explicitly unsubscribe. A member can change their subscription under
 `/api/v1/issues/{reference}/subscription` and manage their own inbox at
 `/api/v1/notifications`. The API sends in-app notices for comments, linked
 Markdown mentions and state changes.
+
+## Agent key credentials
+
+An agent can prove who it is to the main listener with a key it holds instead of
+an identity provider account, in production, through any proxy and whichever
+providers sign people in. A fleet's gateway holds one certificate per agent,
+signs a short-lived token with its key for each request it forwards, and signs
+the agent in to IRC with the same certificate. With a one-time enrolment token,
+the gateway registers its fleet's agents and their certificates itself, so the
+fleet needs no administrator's login. This is the API's answer to agent identity
+on the main listener; the [agent listener](#the-agent-listener) stays as it is,
+for loopback development. This section is the contract: the gateway and any other
+implementation of this API must match it exactly.
+
+### Credentials
+
+- A credential is an X.509 certificate, normally self-signed, with an Ed25519 key
+  or an ECDSA key on the P-256 curve. RSA, other curves and every other key type
+  are refused.
+- Its fingerprint is the SHA-256 of the certificate's DER encoding in lower-case
+  hexadecimal with no separators: the value Ergo reports as `certfp`.
+- Only its key and its fingerprint identify the agent. No other field is trusted
+  or read: not the subject, issuer, extensions or issuer's signature, and not the
+  validity dates. A certificate outside its validity dates is accepted, because a
+  self-signed certificate's dates are only what its holder asserted; revoking the
+  credential is what ends a key's use.
+- A certificate is sent as PEM text of at most 16,384 characters: one
+  `CERTIFICATE` block of canonical base64 whose bytes are exactly one DER
+  certificate, with nothing before or after it but whitespace. Anything else
+  receives 400.
+- Each credential has the scopes `api`, `irc` or both. `api` lets its key sign
+  agent tokens. `irc` lets its certificate sign the agent in to IRC, and lets an
+  agent token signed with it obtain an
+  [IRC credential](#post-apiv1meirc-credential), which otherwise receives 403.
+- An agent may have several active credentials, so that keys can rotate. A
+  fingerprint names at most one active credential in the whole database, because
+  an agent token names no organisation: registering a certificate that is active
+  anywhere, or that was revoked in this organisation, receives 409. Revocation is
+  by fingerprint, that is by certificate: the same key in a new certificate has
+  another fingerprint and can be registered again. A revoked credential keeps its
+  record.
+- Revoking a credential refuses its agent tokens and IRC sign-ins from then on. It
+  does not close connections already open, to IRC or to the update stream, and an
+  [IRC password](#post-apiv1meirc-credential) already issued with one of its tokens
+  stays usable until it expires, within ten minutes.
+- Moving an agent to another fleet revokes all its active credentials in the same
+  change, each audited as `agentCredentialRevoked` with the reason `fleetChanged`:
+  the previous fleet's gateway holds those keys, and the new fleet enrols a fresh
+  one.
+
+### Agent tokens
+
+An agent token is a JWT in compact form, sent as `Authorization: Bearer <token>`
+on the main listener to any route that takes a bearer token: every `/api/v1/`
+route that people use, and the MCP endpoint, which is `/mcp`, not under
+`/api/v1`.
+
+| Part   | Field        | Value                                                                                                     |
+| ------ | ------------ | --------------------------------------------------------------------------------------------------------- |
+| Header | `alg`        | `EdDSA` for an Ed25519 key, `ES256` for a P-256 key (the signature as JWS defines it: R and S, 64 bytes). |
+| Header | `typ`        | Exactly `subspace-agent+jwt`.                                                                             |
+| Header | `kid`        | The fingerprint.                                                                                          |
+| Claim  | `iss`        | Exactly `subspace-agent`.                                                                                 |
+| Claim  | `sub`        | The fingerprint.                                                                                          |
+| Claim  | `aud`        | `AGENT_TOKEN_AUDIENCE`, as one string.                                                                    |
+| Claim  | `iat`, `exp` | Whole seconds since the epoch; `exp` is after `iat` and at most 300 seconds after it.                     |
+| Claim  | `jti`        | A random, unique string of 1 to 256 printable ASCII characters.                                           |
+
+`AGENT_TOKEN_AUDIENCE` is the API's public origin as clients reach it: the scheme,
+the host in lower case and an optional port, with no path or trailing slash, such
+as `https://api.example.com`. The API refuses to start with any other form, and
+refuses every agent token while it is unset.
+
+The API accepts a token when all of these hold, and the caller is then that agent:
+
+1. The header has that `typ`, an `alg` of `EdDSA` or `ES256`, and a `kid` of 64
+   hexadecimal digits, compared without regard to case.
+2. The `kid` names an active, unrevoked credential with scope `api` whose key
+   signs with the header's `alg`.
+3. The signature verifies with that certificate's public key.
+4. `iss`, `aud` and `sub` are as above. `exp` has not passed and `iat` is not in
+   the future, each with the five seconds' tolerance the providers' tokens have,
+   and the lifetime is at most 300 seconds.
+5. The credential belongs to an agent of an organisation whose identity provider
+   is in `AUTH_PROVIDERS`.
+6. The agent is active. A deactivated agent receives 403, as with its provider
+   account.
+7. No token with the same `jti` was accepted for this credential before. The API
+   records each accepted `jti` in the database until a few minutes after the
+   token can no longer be accepted, so a replay to any instance is refused and the
+   record stays small.
+
+Every other failure receives 401 with one detail whatever the reason. The caller
+acts as the agent with every rule that applies to agents: `kind: "agent"`, its
+rank, fleet and ship, the fleet limits on assignments, Ready for agents and moves,
+and relayed crew. An agent is never an administrator, so the administrator routes
+answer 403 and the administrator MCP tools return the same problem as a tool
+error. A gateway mints a fresh token, with a fresh `jti`, for each request.
+
+### Enrolment
+
+An organisation administrator issues an enrolment token for one fleet, named by
+its slug or ID:
+
+- `POST /api/v1/fleets/{reference}/enrolment-tokens` with an optional body
+  `{ "expiresInSeconds": 3600, "maxUses": 16 }`. `expiresInSeconds` is 60 to
+  604,800 (seven days) and defaults to 3,600. `maxUses` is 1 to 100 and defaults
+  to 16, enough for a rear admiral and the installer's twelve captains with room
+  to spare. The answer is 201 `{ "id", "token", "expiresAt", "maxUses" }`. The
+  token begins `senr1.`, appears only in this answer and is stored only as its
+  SHA-256, which is compared in constant time.
+- `GET /api/v1/fleets/{reference}/enrolment-tokens` lists the fleet's tokens,
+  newest first and without their secrets: `id`, `fleetId`, `expiresAt`,
+  `maxUses`, `uses`, `createdAt`, `createdByUserId`, `revokedAt` and
+  `revokedByUserId`.
+- `DELETE /api/v1/fleets/{reference}/enrolment-tokens/{id}` revokes one and keeps
+  its record.
+
+The fleet's gateway, with no other login, calls `POST /api/v1/agents/enrol` with
+`Authorization: Bearer <enrolment token>`:
+
+```json
+{
+  "name": "Kestrel",
+  "rank": "captain",
+  "ship": "Swift",
+  "model": "example-model",
+  "ircNick": "Kestrel",
+  "certificate": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
+  "scopes": ["api", "irc"]
+}
+```
+
+- `name` has letters, digits and `-`, at most 64 characters. `rank` is
+  `rearAdmiral` or `captain`: crew are not enrolled. A captain needs a `ship` and
+  a rear admiral must not have one. `model` is one line of at most 100 characters.
+  `ircNick` is optional and follows the [IRC nick rule](#fleets-and-ships), at most
+  32 characters, and the [username](#usernames) rules. No other
+  property is accepted, so the body cannot name a fleet.
+- When no agent of the organisation has that name, ignoring case, the API creates
+  it in the token's fleet, creating the captain's ship there if needed, with the
+  credential: 201 `{ "agentId", "credentialId", "fingerprint" }`. The
+  administrator who issued the token is recorded as having registered it.
+- When the active agent of that name and rank belongs to the token's fleet, the
+  API adds the credential to it, whoever registered it: 201. Its ship, model and
+  nick are left as they are.
+- The same certificate with the same scopes for that agent again answers 200 with
+  the same IDs and uses nothing, even once the token's uses are spent, so a
+  gateway can retry.
+- 409: the name belongs to an agent of another fleet, to a deactivated agent, or
+  to an agent of another rank; the certificate is active for any other agent or
+  organisation, was revoked in this organisation, or is registered with other
+  scopes; or the IRC nick is a person's or another agent's or was retired. A
+  reserved nick, or any invalid field, receives 400.
+- 401: a missing, malformed or unknown token, or one that has expired, was
+  revoked or, for anything but a repeat, has no uses left. Once the token's secret
+  is right, the detail says which.
+- Every registration that is not a repeat uses one of the token's uses; enrolments
+  at the same moment never exceed `maxUses`.
+
+Enrolment can never create a person or an administrator, touch another fleet,
+change an agent's fleet or any field but its credentials, or attach a credential
+to another fleet's agent. The token routes and the enrolment route are on the main
+listener only. All four are in the OpenAPI document: the enrolment route under its
+own `enrolmentToken` bearer scheme, outside the administrator routes.
+
+An agent created by enrolment has no identity provider account. Its subject, which
+the agents API reports as `serviceTokenClientId`, is `subspace-agent:` followed by
+its own user ID. No provider issues such a subject: the API never matches a
+provider's token to one and first sign-in never registers one, the membership
+command refuses one, and an administrator cannot register an agent with one,
+though editing an enrolled agent keeps its own.
+
+### Credential management
+
+An organisation administrator manages an agent's credentials:
+
+- `GET /api/v1/agents/{agentId}/credentials` lists them, revoked ones included,
+  newest first: `id`, `agentId`, `fingerprint`, `algorithm` (`EdDSA` or `ES256`),
+  `scopes`, `label`, `certificate`, `createdAt`, `createdByUserId`,
+  `enrolmentTokenId`, `lastUsedAt` (updated at most once a minute), `revokedAt`
+  and `revokedByUserId`.
+- `POST /api/v1/agents/{agentId}/credentials` with
+  `{ "certificate", "scopes", "label"? }` registers one: 201 with it.
+- `DELETE /api/v1/agents/{agentId}/credentials/{credentialId}` revokes it and
+  answers 200 with it. Its tokens and IRC sign-ins are refused from then on; open
+  connections and IRC passwords already issued are not, as
+  [Credentials](#credentials) says.
+
+These routes are on the main listener only.
+
+### Audit and logs
+
+Audited: `agentCredentialAdded`, `agentCredentialRevoked`,
+`enrolmentTokenCreated` and `enrolmentTokenRevoked`; and, for each enrolment
+that registers something, `enrolmentTokenUsed` with the token's ID,
+`agentEnrolled` when it creates the agent, and `agentCredentialAdded`. Enrolment's
+rows name the integration `Enrolment token` as the actor. No token, secret or
+passphrase is logged, audited or returned after it is issued. A refused agent
+token is logged at debug level with its reason and fingerprint only.
 
 ## Ready for agents
 
@@ -782,9 +998,11 @@ The HTTP tests require a clean loopback Compose stack and create synthetic
 organisations. The agent listener's HTTP tests also need `AGENT_PORT` published by
 that stack, with `TEST_AGENT_API_URL` set to it and `TEST_AGENT_ORGANISATION`
 to the development organisation slug its `AGENT_ORGANISATION` names. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`.
-The sign-in, username and IRC tests need only `TEST_DATABASE_URL`: each creates
-an isolated database there and runs the API in-process, trusting a fictional
-Entra tenant whose keys only the test holds.
+The sign-in, username, IRC, agent key and enrolment tests need only
+`TEST_DATABASE_URL`: each creates an isolated database there and runs the API
+in-process, trusting a fictional Entra tenant whose keys only the test holds. The
+agent key tests generate their own Ed25519 and P-256 certificates and mint agent
+tokens as a gateway would.
 The fleet ownership race test holds a row lock in the API's own database while
 an agent writes, so when both variables are set, `TEST_DATABASE_URL` must name
 the database that `TEST_API_URL` serves, as in the example above. For signed pull request and deployment tests, sign in first as
