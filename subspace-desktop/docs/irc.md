@@ -25,9 +25,11 @@ fleet's server is unknown, for example because its fleet could not be read,
 the initiative's autojoin stays off rather than using that default: the
 header says so and the Hub reads the memberships again, waiting 5 seconds at
 first and doubling the wait after each failure, up to 5 minutes. A TLS connection must
-verify certificates unless its host is loopback. When no connection matches,
-the header names the server to add in **Settings > Channels**; the desktop
-does not create connections, because IRC needs that server's SASL account.
+verify certificates unless its host is loopback. When the API issues IRC
+sign-ins, the signed-in account brings the connection to each fleet's
+server itself (see [Networks from your account](#networks-from-your-account)).
+When no connection matches, as with an API that does not, the header names
+the server to add in **Settings > Channels**.
 Other IRC connections never receive initiative channel names. Capture can
 use a numeric loopback IRC address when the debug API is also a validated
 loopback fixture. The network task retains the selected list while it
@@ -35,6 +37,69 @@ reconnects. The board closes tabs retired by a switch and preserves cached
 message history and manually joined channels.
 
 See the [change record](changes/subspace-api-accounts/README.md).
+
+## Networks from your account
+
+With a person signed in, under any identity provider the build selects
+(`dev`, `workos` or `entra`), Channels keeps one network for each distinct
+IRC server among their fleets (`managed.rs`, `managed/`), so nobody types IRC
+settings. Only the Subspace API calls below are involved, so the provider
+makes no difference.
+
+- **Which servers.** The fleets of the caller's initiatives
+  (`GET /api/v1/me/initiatives`), each server once by host (ignoring ASCII
+  case), port and TLS, named after its fleets. Only a server reached over
+  TLS, or on loopback, counts: a plaintext server elsewhere would carry the
+  sign-in in clear, so it gets none and the header names it as before.
+  Initiatives without a fleet keep the default server and bring none.
+- **Who.** Once per sign-in, and again whenever the account changes (the
+  hub compares it at most once a second), the hub reads `GET /api/v1/me` for
+  the `username` and asks `POST /api/v1/me/irc-credential` once; that
+  password is dropped at once. The nick is the account the credential names,
+  which is the username. An API that reports no `username`, or answers 404
+  for the credential route, brings no network, and saved networks work as
+  before. A check that cannot reach the API is tried again after 5 seconds,
+  doubling up to 5 minutes; a sign-out or a refusal settles it as none.
+- **Signing in.** The network's SASL PLAIN login comes from a credential
+  source (`subspace_client_irc::CredentialSource`, beside `password` and
+  `passwordFile`). The IRC runtime asks it at every connect and reconnect,
+  where it reads a password file, on a blocking thread, while still
+  answering **Disconnect**. It posts `POST /api/v1/me/irc-credential` as the
+  signed-in person and registers with the account as the nick and
+  `account@device` as the SASL username, in both PLAIN identities, as Ergo
+  compares them before it takes the device off. The password lives only in
+  the session's memory: never in `irc/config.json`, the keychain, the state
+  file, a log or the UI. A password that expires during a session changes
+  nothing; the next reconnect asks again. When the API cannot issue one, the
+  connection shows **Reconnecting in N s** with the reason, such as
+  `Subspace API could not be reached for an IRC sign-in`, and retries with
+  its backoff; nothing asks for a password.
+- **Device.** A random 16-digit hexadecimal device ID, made once and kept in
+  the state file under `irc.device`, so Ergo can replay to each device what
+  it missed. Nothing about the computer goes into it.
+- **Derived, never saved.** The hub derives the networks again when the
+  account, the initiatives or the saved networks change, and runs them after
+  the saved ones; an unchanged network keeps its connection. They are never
+  written to `irc/config.json`, and sign-out removes them. Each id comes from
+  the account, host and port (`ada-irc-example-com-6697`), so the network's
+  stored messages return with it and never mix with another account's. It
+  joins no channels of its own: choosing an initiative sets its autojoin as
+  for any network on the fleet's server.
+- **A saved network on the same server.** When a saved network connects to
+  the same host and port, whatever its TLS settings, it is kept and no
+  second connection is made. **Settings > Channels** offers **Use account
+  sign-in…** among its actions, which asks **Switch "name" to your
+  account?** and, on Save, removes it and its saved passwords, so the
+  account's network connects instead. Keeping it is the simplest correct
+  choice: replacing it silently could drop a hand-made account the person
+  still uses, and two connections would put one person on one server twice.
+- **Settings.** **Settings > Channels** lists the account's networks under
+  **From your account**, read-only: the fleets' names, `host:port · TLS ·
+  username`, that they come from the signed-in Subspace account and go on
+  sign-out, and for a server that a saved network serves, which one.
+- **NETT** issues no IRC credentials yet, so a NETT build brings none.
+
+See the [change record](changes/channels-managed-networks/README.md).
 
 ## Fleet roles
 
@@ -290,7 +355,9 @@ The `captainNotifications` switch is on by default. See
 [Notify ship captains](../spaces/irc/help.md#notify-ship-captains).
 
 Networks live in the board's own settings file, `irc/config.json` in the
-folder of Subspace's `config.json`. With the config file at
+folder of Subspace's `config.json`. The networks the signed-in account
+brings are not among them (see
+[Networks from your account](#networks-from-your-account)). With the config file at
 `~/.config/subspace/config.json`, it is `~/.config/subspace/irc/config.json`.
 The file's top-level object holds the IRC settings. Whether the board shows
 (`boards.irc`) stays in the main `config.json`. There are three ways to

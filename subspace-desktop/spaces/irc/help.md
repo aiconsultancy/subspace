@@ -62,6 +62,11 @@ toolbar button to show or hide this guide.
 
 ## Before you start
 
+- Signed in to Subspace, you need no IRC settings when Subspace API issues
+  IRC sign-ins: Channels connects to each of your fleets' IRC servers with
+  your account, and lists them read-only under **From your account** in
+  **Settings > Channels**. They go when you sign out. Otherwise, or for
+  other servers, add networks yourself.
 - Add at least one network under **Settings > Channels**. While no network is
   configured, the board offers **Add network…**, which opens that page.
 - To let a coding agent set up networks instead, choose **Copy agent prompt**
@@ -955,6 +960,7 @@ Open **Settings** and choose **Channels** in the sidebar.
 | --- | --- | --- |
 | **Enabled** | Off in release builds, on in debug builds | Turning the board off disconnects every network. |
 | **Networks** | None | The networks to connect to. **Add network** adds one; **Edit…** and **Remove…** change one. |
+| **From your account** | — | Shown while you are signed in and Subspace API issues IRC sign-ins: one network for each of your fleets' IRC servers, read-only. They sign in as your Subspace username, follow your account and go when you sign out. |
 | **Highlight words** | None | Words, separated by commas, that mark a message as mentioning you on every network, besides your nick. |
 | **History** | — | Says that messages are kept on this computer and that **Search** turns this off (**Cache Channels**) or deletes them (**Clear cache…**). |
 
@@ -973,6 +979,12 @@ list and names any value that still needs fixing.
 | **Account sign-in (SASL)** | **None**, **Account and password (PLAIN)** or **Client certificate (EXTERNAL)**. PLAIN takes an account and a password, or **Read the password from a file**. EXTERNAL needs TLS and a client certificate. |
 | **Channels to join** | Separated by commas. Each starts with `#` or `&`. |
 | **Connect on startup** | On by default. |
+
+When one of your networks connects to the same server as a network from
+your account, it stays connected and no second connection is made; its
+**Use account sign-in…** asks **Switch "name" to your account?** and, on
+Save, removes it and its saved passwords, so your account's network
+connects instead.
 
 Password fields are masked. A saved password shows **Password saved** and its
 input stays read-only; **Clear saved password** lets you type a new one or
@@ -1004,6 +1016,7 @@ notification** follows the saved master choice.
 | A network shows **Failed** | Open its **Server** row: the error is the latest red line and in **Status**. Check `host`, `port` and `tls`, then choose **Connect**. |
 | **Reconnecting in N s** repeats | The server closed the connection or could not be reached. The runtime retries with a growing delay. |
 | SASL sign-in fails | The server's reply shows in the **Server** buffer. Check the account and password in **Settings > Channels**. |
+| A network from your account shows **Reconnecting in N s** | Its **Server** row says why, such as Subspace API not being reachable or a sign-in needed under **Settings > Account**. It tries again by itself. |
 | No older messages load | The server does not offer `draft/chathistory`; the **Server** panel's **Capabilities** list shows what it enabled. |
 | Messages are gone after a restart | **Cache Channels** is off in **Search > Cached sources**, the store was cleared, or the messages are older than its retention period. |
 | `This message is no longer on the server.` | The search result's message is older than what the conversation holds and the server's history no longer has it. |
