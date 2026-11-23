@@ -191,9 +191,11 @@ and that must stay local, by their bare account name: start-up refuses a
 name with a `@device` suffix. The script compares names with Ergo's ASCII
 case folding and ignores the device suffix of a login. It never calls the API
 for a login to a listed account, whatever the password looks like, and
-refuses any API answer that names one. The list always holds the operator, so
-a missing, empty or unreadable list is an error: the script then forwards
-nothing and Ergo checks only its local accounts.
+refuses any API answer that names one. The entrypoint writes the list as a
+versioned object, and its names may be empty on an API-only server with no
+operator or seeded accounts. A missing, unreadable, truncated or malformed
+list is an error: the script then forwards nothing and Ergo checks only its
+local accounts.
 
 The list is rebuilt from the current settings at each start. An account
 seeded on an earlier start and later removed from the seed still exists with
@@ -215,13 +217,24 @@ Ergo runs the script for every login, local ones included, and holds one of
 its 256 script slots for each run, waiting without limit for a free one. The
 script therefore admits at most `IRC_AUTH_API_CONCURRENCY` API-bound logins at
 once (default 128, at most 192), each holding a lock file under
-`/run/subspace-irc/auth-slots`. When all are busy, it refuses further
-API-bound logins at once, without waiting, and Ergo logs
-`subspace-auth: API concurrency limit reached`. Local-only and other local
+`/run/subspace-irc/auth-slots`. It tries at most eight slots, starting from
+one picked by process ID; when those are busy, it refuses the login at once,
+without waiting, and Ergo logs `subspace-auth: API concurrency limit
+reached`. Under heavy load a login can be refused just below the limit. Local-only and other local
 logins never take a lock and finish in milliseconds, so they always find a
 free Ergo slot, however slow the API or however many connections send
-prefixed passwords. Under that load some API sign-ins are refused and must be
-retried.
+prefixed passwords.
+
+Clients must retry a refused sign-in after a short pause. A burst of API
+sign-ins above the limit is refused, not queued. When two first-ever
+sign-ins for the same new account arrive at the same instant, Ergo can
+refuse one while it creates the account; a retry succeeds. That is Ergo's own
+behaviour and is accepted.
+
+Known limits, accepted because the API is trusted: an answer containing NUL
+bytes or non-standard JSON constants such as `NaN` is not specially
+rejected. The auth hook test's timing checks under a 300-login flood can be
+flaky on a heavily loaded machine.
 
 #### Transport and settings
 
