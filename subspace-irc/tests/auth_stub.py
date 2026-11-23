@@ -9,12 +9,16 @@ import hmac
 import json
 import ssl
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 OPERATOR = sys.argv[1]
 with open("/stub/token", encoding="utf-8") as token_file:
     TOKEN = token_file.read().strip()
+# Requests in flight at once, and the highest count seen, for the flood test.
+IN_FLIGHT = {"now": 0, "peak": 0}
+IN_FLIGHT_LOCK = threading.Lock()
 INPUT_KEYS = {"accountName", "passphrase", "certfp", "peerCerts", "ip"}
 
 
@@ -88,8 +92,17 @@ class Handler(BaseHTTPRequestHandler):
         name = request.get("accountName", "")
         print("request", name, flush=True)
         status, body, delay, declared = answer(name, request.get("passphrase", ""))
-        time.sleep(delay)
-        self.reply(status, body, declared)
+        with IN_FLIGHT_LOCK:
+            IN_FLIGHT["now"] += 1
+            if IN_FLIGHT["now"] > IN_FLIGHT["peak"]:
+                IN_FLIGHT["peak"] = IN_FLIGHT["now"]
+                print("peak", IN_FLIGHT["peak"], flush=True)
+        try:
+            time.sleep(delay)
+            self.reply(status, body, declared)
+        finally:
+            with IN_FLIGHT_LOCK:
+                IN_FLIGHT["now"] -= 1
 
     def reply(self, status, body, declared=None):
         self.send_response(status)

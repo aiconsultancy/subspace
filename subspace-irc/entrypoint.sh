@@ -239,12 +239,14 @@ if [ -n "$auth_url" ]; then
         die 'Seeded passwords must not start with IRC_AUTH_PASSPHRASE_PREFIX'
     fi
     # Local-only accounts: never sent to the API, and never accepted from it.
+    # A versioned object, so an empty list (an API-only server) is distinct
+    # from missing or damaged state.
     channel_seed=/dev/null
     [ ! -f "$temporary/channels" ] || channel_seed=$temporary/channels
     jq -nc --slurpfile seed "$temporary/seed" --slurpfile channels "$channel_seed" \
         --arg founder "${IRC_CHANNEL_FOUNDER:-$oper}" --argjson extra "$local_extra" '
         [$seed[0][].name] + [($channels[0] // [])[] | .founder // $founder] + [$founder] + $extra
-        | map(select(type == "string" and . != "") | ascii_downcase) | unique
+        | {version: 1, names: (map(select(type == "string" and . != "") | ascii_downcase) | unique)}
     ' > "$auth_local.tmp" || die 'Could not write the local-only account list'
     mv "$auth_local.tmp" "$auth_local"
 fi

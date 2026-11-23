@@ -49,6 +49,7 @@ FAIL_CLOSED = {
 CREATED_NEVER = ("hook-status", "hook-redirect", "hook-twice", "hook-string", "hook-array",
                  "hook-dupcase", "hook-short", "hook-huge", "hook-dupsame", "hook-longs")
 FLOOD = 300
+API_CONCURRENCY = 128  # the image's default IRC_AUTH_API_CONCURRENCY
 
 
 def sasl(port, account, password, context=None):
@@ -230,7 +231,8 @@ def smoke():
                 assert mode == ["600", "10001"], (path, mode)
             assert irc_exec("stat", "-c", "%a %u", "/run/subspace-irc").stdout.split() == ["700", "10001"]
             local_list = json.loads(irc_exec("cat", "/run/subspace-irc/local-accounts.json").stdout)
-            assert local_list == sorted([AGENT, OPERATOR, "hook-handmade", "hook-other-local"]), local_list
+            assert local_list == {"version": 1, "names": sorted(
+                [AGENT, OPERATOR, "hook-handmade", "hook-other-local"])}, local_list
             assert not stub_requests(), "the bootstrap server must not call the hook"
 
             # Accepted: signed in under the name the API returned, account created without a password.
@@ -285,8 +287,9 @@ def smoke():
                 assert text not in irc_logs, "API or credential text in Ergo logs"
             print("Passed hook sign-in, fresh answers, local-only accounts and fail-closed answers")
 
-            # The local-only list fails closed: unset, empty, null, [] or truncated
-            # refuses every login that would be forwarded, without calling the API.
+            # The local-only list fails closed: unset, empty, null, an old bare array,
+            # a wrong version or truncated state refuses every login that would be
+            # forwarded, without calling the API. A versioned empty list is valid.
             def run_hook(name, local_list):
                 options = ["-e", f"IRC_AUTH_API_URL={API_URL}", "-e", f"IRC_AUTH_API_CA_FILE={CA_PATH}",
                            "-e", "IRC_AUTH_API_TOKEN_FILE=/run/subspace-irc/auth-token",
@@ -302,14 +305,21 @@ def smoke():
                 ).stdout
 
             invalid = '{"success":false,"error":"subspace-auth: the local-only account list is missing or invalid"}\n'
-            for index, local_list in enumerate((None, "", "null", "[]", '["hook-agent"', '["a"] ["b"]',
-                                                '["hook@device"]')):
+            valid = '{"version":1,"names":["hook-agent"]}'
+            for index, local_list in enumerate((
+                None, "", "null", "[]", '["hook-agent"]', valid[:-2], valid + valid, "{}",
+                '{"version":2,"names":["hook-agent"]}', '{"version":1,"names":null}',
+                '{"version":1,"names":["hook@device"]}', '{"version":1,"names":["a"],"extra":1}',
+            )):
                 assert run_hook(f"hook-list-{index}", local_list) == invalid, local_list
-            assert run_hook("hook-list-ok", '["hook-agent"]') == '{"success":false}\n'
-            assert run_hook("hook-agent", '["hook-agent"]') == '{"success":false}\n'
+            assert run_hook("hook-list-ok", valid) == '{"success":false}\n'
+            assert run_hook("hook-list-empty", '{"version":1,"names":[]}') == '{"success":false}\n'
+            assert run_hook("hook-agent", valid) == '{"success":false}\n'
             requests = stub_requests()
-            assert "hook-list-ok" in requests and "hook-agent" not in requests, requests
-            assert not any(name.startswith("hook-list-") and name != "hook-list-ok" for name in requests)
+            assert {"hook-list-ok", "hook-list-empty"} <= set(requests), requests
+            assert "hook-agent" not in requests, requests
+            assert not any(name.startswith("hook-list-") and name not in ("hook-list-ok", "hook-list-empty")
+                           for name in requests)
             print("Passed the fail-closed local-only list")
 
             # Saturation: more concurrent API-bound logins than Ergo's 256 script slots
@@ -343,13 +353,16 @@ def smoke():
             assert not failures, f"flood logins that were not refused: {failures}"
             forwarded = sum(name.startswith("hook-flood-") for name in stub_requests())
             assert 0 < forwarded < FLOOD, forwarded
+            peak = max(int(line.split()[1]) for line in logs("auth-stub").splitlines()
+                       if line.startswith("peak "))
+            assert peak <= API_CONCURRENCY, f"{peak} requests reached the API at once"
             # Relative, not absolute, timing: an admitted flood login holds Ergo's slot
             # for curl's four-second limit, so a queued operator login would take at
             # least that long, and would finish only after flood logins released slots.
             assert finished - started < 4, f"operator login took {finished - started:.1f}s"
             assert done_before < FLOOD, "the flood had ended before the operator signed in"
             print(f"Passed operator login in {finished - started:.2f}s under {FLOOD} API-bound logins "
-                  f"({forwarded} reached the API, the rest refused at once)")
+                  f"({forwarded} reached the API, at most {peak} at once; the rest refused)")
 
             # API down: local accounts still sign in; API credentials do not.
             compose("stop", "auth-stub")
@@ -376,6 +389,17 @@ def smoke():
             assert "hook-custom-user" in requests and "certfp" in requests, requests
             assert "hook-sirc-user" not in requests, requests
             print("Passed the passphrase prefix and certificate forwarding")
+
+            # An API-only server: no operator, seeded accounts or extra local accounts,
+            # so the local-only list is empty, and people still sign in through the API.
+            compose("up", "--wait", "--wait-timeout", "60", "--force-recreate", overrides={
+                "IRC_OPER_NAME": "", "IRC_OPER_PASSWORD": "", "IRC_ACCOUNTS_JSON": "",
+                "IRC_AUTH_LOCAL_ACCOUNTS": "",
+            })
+            assert json.loads(irc_exec("cat", "/run/subspace-irc/local-accounts.json").stdout) == {
+                "version": 1, "names": []}
+            signs_in(port(), "hook-presented", "sirc1.valid", "hook-member").__exit__()
+            print("Passed an API-only server with an empty local-only list")
 
             compose("stop", "irc")
             fails_to_start("IRC_AUTH_API_URL needs the hook token", IRC_AUTH_API_TOKEN_FILE="")

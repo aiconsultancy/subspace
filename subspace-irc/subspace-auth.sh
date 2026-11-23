@@ -29,18 +29,20 @@ IFS= read -r request || refuse 'no request on stdin'
 
 prefix=${IRC_AUTH_PASSPHRASE_PREFIX:-sirc1.}
 cert_logins=${IRC_AUTH_CERT_LOGINS:-false}
-# A JSON array of account names that only sign in locally: the seeded
-# accounts, channel founders, the operator and IRC_AUTH_LOCAL_ACCOUNTS. The
-# entrypoint always lists the operator, so a missing, empty or malformed list
-# is an error: nothing is forwarded without it. Read it once and use that
-# snapshot for both checks.
+# The account names that only sign in locally (the seeded accounts, channel
+# founders, the operator and IRC_AUTH_LOCAL_ACCOUNTS), written by the
+# entrypoint as {"version": 1, "names": [...]}. The names may be empty in an
+# API-only deployment; anything other than that exact shape (unset, missing,
+# unreadable, truncated or malformed) is an error, and nothing is forwarded
+# without it. Read it once and use that snapshot for both checks.
 names='[]'
 names_valid=false
 if [ -n "${IRC_AUTH_LOCAL_LIST:-}" ] && list=$(cat "$IRC_AUTH_LOCAL_LIST" 2>/dev/null) &&
     printf '%s' "$list" | jq -se '
-        length == 1 and (.[0] | type == "array" and length > 0
-            and all(.[]; type == "string" and test("\\A[!-?A-~]{1,64}\\z")))' >/dev/null 2>&1; then
-    names=$(printf '%s' "$list" | jq -c 'map(ascii_downcase)')
+        length == 1 and (.[0] | type == "object" and keys == ["names", "version"]
+            and .version == 1 and (.names | type == "array")
+            and all(.names[]; type == "string" and test("\\A[!-?A-~]{1,64}\\z")))' >/dev/null 2>&1; then
+    names=$(printf '%s' "$list" | jq -c '.names | map(ascii_downcase)')
     names_valid=true
 fi
 
@@ -58,24 +60,6 @@ decision=$(printf '%s\n' "$request" | jq -r --argjson names "$names" --arg prefi
     else "local" end' 2>/dev/null) || refuse 'Ergo sent an invalid request'
 [ "$decision" = api ] || refuse
 [ "$names_valid" = true ] || refuse 'the local-only account list is missing or invalid'
-
-# Admit at most IRC_AUTH_API_CONCURRENCY API-bound runs at once, without
-# waiting: Ergo takes one of its shared script slots for every login, local
-# ones included, and has no acquire timeout, so a slow API must never hold
-# them all. Each run holds one lock file for its lifetime; when none is free
-# the login is refused at once and Ergo checks its local accounts.
-slots=${IRC_AUTH_SLOTS_DIR:-}
-limit=${IRC_AUTH_API_CONCURRENCY:-0}
-case $limit in '' | *[!0-9]*) limit=0 ;; esac
-[ -n "$slots" ] && [ -d "$slots" ] && [ -w "$slots" ] && [ "$limit" -gt 0 ] || refuse 'the API concurrency slots are not set up'
-slot=1
-while :; do
-    exec 8>"$slots/$slot" || refuse 'cannot open an API concurrency slot'
-    flock -n 8 && break
-    exec 8>&-
-    slot=$((slot + 1))
-    [ "$slot" -le "$limit" ] || refuse 'API concurrency limit reached'
-done
 
 url=${IRC_AUTH_API_URL:-}
 [ -n "$url" ] || refuse 'IRC_AUTH_API_URL is not set'
@@ -97,11 +81,33 @@ if [ -n "${IRC_AUTH_API_CA_FILE:-}" ]; then
     set -- --cacert "$IRC_AUTH_API_CA_FILE"
 fi
 
+# Admit at most IRC_AUTH_API_CONCURRENCY API-bound runs at once, without
+# waiting: Ergo takes one of its shared script slots for every login, local
+# ones included, and has no acquire timeout, so a slow API must never hold
+# them all. Each run holds one lock file on descriptor 8 for its lifetime.
+# The probe is bounded: from a slot picked by process ID, try at most eight,
+# and refuse at once when none is free; Ergo then checks its local accounts.
+slots=${IRC_AUTH_SLOTS_DIR:-}
+limit=${IRC_AUTH_API_CONCURRENCY:-0}
+case $limit in '' | *[!0-9]*) limit=0 ;; esac
+[ -n "$slots" ] && [ -d "$slots" ] && [ -w "$slots" ] && [ "$limit" -gt 0 ] || refuse 'the API concurrency slots are not set up'
+slot=$(($$ % limit))
+tries=0
+while :; do
+    exec 8>"$slots/$((slot + 1))" || refuse 'cannot open an API concurrency slot'
+    flock -n 8 && break
+    exec 8>&-
+    tries=$((tries + 1))
+    [ "$tries" -lt 8 ] && [ "$tries" -lt "$limit" ] || refuse 'API concurrency limit reached'
+    slot=$(((slot + 1) % limit))
+done
+
 # The token reaches curl through a here-document on descriptor 3 and the
 # request through stdin, keeping both out of the process list. No retries,
 # and short timeouts: every login holds one of Ergo's script slots, local
-# ones included, while this runs.
-response=$(printf '%s\n' "$request" |
+# ones included, while this runs. Commands below close descriptor 8, so only
+# this shell holds the slot and a killed shell cannot leave it held.
+response=$(exec 8>&-; printf '%s\n' "$request" |
     curl -q --silent --noproxy '*' --proto "$protocols" \
         --connect-timeout 2 --max-time 4 --max-filesize 65536 \
         "$@" \
@@ -124,7 +130,7 @@ body=${response%"$newline"*}
 # identical keys and Ergo's decoder matches keys without regard to case, so
 # Python's parser checks every key pair. A success must name a well-formed
 # account that is not reserved or local-only.
-verdict=$(printf '%s' "$body" | NAMES=$names python3 -I -c '
+verdict=$(exec 8>&-; printf '%s' "$body" | NAMES=$names python3 -I -c '
 import json, os, re, sys
 
 def unique_keys(pairs):
