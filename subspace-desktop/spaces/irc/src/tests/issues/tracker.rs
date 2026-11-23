@@ -12,7 +12,6 @@ use serde_json::json;
 use subspace_client_irc::{Command, Event, Line};
 use subspace_framework::client_test_support::Mock;
 use subspace_framework::contracts::issues::IssueScope;
-use subspace_framework::dashboard::{ChatInput, ChatInputEvent};
 
 use crate::conversation::Conversation;
 use crate::fixtures::{channel, message};
@@ -74,12 +73,7 @@ fn open<'a>(
     (reveal(&board, &room, cx), hub, cx)
 }
 
-/// Types `text` into the composer and sends it, as Return does.
-fn submit(input: &Entity<ChatInput>, text: &str, cx: &mut VisualTestContext) {
-    cx.update(|window, cx| input.update(cx, |input, cx| input.set_text(text, window, cx)));
-    input.update(cx, |_, cx| cx.emit(ChatInputEvent::Submit(text.into())));
-    cx.run_until_parked();
-}
+use crate::tests::completion::submit;
 
 /// What the hub said to IRC: lines and replies, not the board's own
 /// housekeeping or typing notices.

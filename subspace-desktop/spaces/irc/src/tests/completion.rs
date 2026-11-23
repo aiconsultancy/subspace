@@ -151,3 +151,14 @@ fn tab_without_a_list_completes_a_bare_nick(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("tab");
     assert_eq!(text(&input, cx), "gaius: ");
 }
+
+/// Types `text` into the composer `input` and sends it, as Return does.
+pub(super) fn submit(input: &Entity<ChatInput>, text: &str, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| input.update(cx, |input, cx| input.set_text(text, window, cx)));
+    input.update(cx, |_, cx| {
+        cx.emit(subspace_framework::dashboard::ChatInputEvent::Submit(
+            text.into(),
+        ))
+    });
+    cx.run_until_parked();
+}

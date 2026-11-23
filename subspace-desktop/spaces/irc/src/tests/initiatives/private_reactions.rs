@@ -183,3 +183,30 @@ fn a_failed_refresh_after_a_good_one_closes_private_reactions_again(cx: &mut Tes
         );
     });
 }
+
+#[gpui_kit::test]
+fn a_hand_typed_private_tagmsg_meets_the_reaction_gate(cx: &mut TestAppContext) {
+    let (board, hub, cx) = ship(cx);
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            let gone = Err(subspace_api_client::Error::Network);
+            catalog.change_scope_for_test(Some(98), cx);
+            catalog.set_memberships_for_test(Some("fixture-user".into()), gone, cx);
+        })
+    });
+    settle(cx);
+    let (_, conversation) = private((&board, &hub), "tavi", "q5", cx);
+    let input = conversation.read_with(cx, |view, _| view.composer().clone());
+    let before = sent(&hub, cx);
+    let raw = "/raw @+draft/react=\u{1F44D};+draft/reply=q5 TAGMSG tavi";
+    crate::tests::completion::submit(&input, raw, cx);
+    assert_eq!(
+        sent(&hub, cx),
+        before,
+        "nothing is sent while the roster is unknown"
+    );
+    assert_eq!(
+        input.read_with(cx, |input, _| input.error().map(str::to_owned)),
+        Some(crate::reactions::gate::ROSTER_LOADING.to_owned())
+    );
+}
