@@ -102,6 +102,9 @@ MAX_UPLOAD_BYTES = 25_000_000
 # request is answered: two largest uploads and a few JSON bodies.
 MAX_BODY_INTAKE_BYTES = 2 * MAX_UPLOAD_BYTES + 8 * MAX_JSON_BYTES
 MAX_LOGGED_REQUESTS = 10_000
+# The longest a slowBody with waitForRelease holds a body when nothing
+# releases it: longer than any test's own waits before it lets the body go.
+MAX_HELD_BODY = 120
 STREAM_SECONDS = 180
 STREAM_WRITE_SECONDS = 1
 KEEPALIVE_SECONDS = 15
@@ -1430,10 +1433,12 @@ def hook_config(ctx):
     failNext: a list of {method, path, status, retryAfter?, times}; a matching
     request (exact path, no query) gets that status instead of an answer.
     slowBody: {path, seconds, times}; the answer's status and headers go first
-    and its body after the delay. With waitForRelease, the body goes early
-    when slowBody is set again (null included), which lets every held body
-    go, or when POST /__fixture/slowBody/release lets the oldest one go. A path ending in * names every path that
-    starts with the rest. dropPutResponse: the next N file-host PUTs
+    and its body after the delay (0 to 10 seconds). With waitForRelease, the
+    delay is a limit of up to 120 seconds, and the body goes early when
+    slowBody is set again (null included), which lets every held body go, or
+    when POST /__fixture/slowBody/release lets the oldest one still held go;
+    a body whose limit ran out has left the queue. A path ending in * names
+    every path that starts with the rest. dropPutResponse: the next N file-host PUTs
     store their bytes and close the connection without answering.
     mediaReadyAtOnce: managed media completions finish checking at once and
     answer 200 with the ready state. dropMoveReply: the next N move
@@ -1489,9 +1494,10 @@ def hook_config(ctx):
         if slow is not None:
             if not isinstance(slow, dict) or set(slow) - {'path', 'seconds', 'times', 'waitForRelease'} \
                     or not isinstance(slow.get('path'), str) or not is_number(slow.get('seconds')) \
-                    or not 0 < slow['seconds'] <= 10 or not isinstance(slow.get('waitForRelease', False), bool):
-                raise Problem(400, 'slowBody is null or {"path": "/…", "seconds": 0–10, "times": K, '
-                                   '"waitForRelease": B}.')
+                    or not isinstance(slow.get('waitForRelease', False), bool) \
+                    or not 0 < slow['seconds'] <= (MAX_HELD_BODY if slow.get('waitForRelease') else 10):
+                raise Problem(400, 'slowBody is null or {"path": "/…", "seconds": 0–10 (0–120 with '
+                                   'waitForRelease), "times": K, "waitForRelease": B}.')
             slow = dict(path=slow['path'], seconds=slow['seconds'],
                         times=bounded(dict(times=slow.get('times', 1)), 'times', 1, 100),
                         waitForRelease=slow.get('waitForRelease', False))
@@ -3314,6 +3320,13 @@ class FixtureServer(ThreadingHTTPServer):
                 self.held_bodies.append(release)
             return slow['seconds'], release
 
+    def forget_held(self, release):
+        """Takes a held body out of the release queue once it has gone,
+        released or not, so a later release lets a body still held go."""
+        with self.lock:
+            if release in self.held_bodies:
+                self.held_bodies.remove(release)
+
     def release_held(self, all_held=False):
         """Lets the oldest held body go, or every one; how many went."""
         with self.lock:
@@ -3669,17 +3682,26 @@ class Handler(BaseHTTPRequestHandler):
             self.mark_answer()
         self.end_headers()
         if self.request_log is not None and (slow := self.server.take_slow(self.request_log['path'])):
+            self.hold_body(status, *slow)
+        if status != 204:
+            self.mark_answer()
+            self.wfile.write(body)
+
+    def hold_body(self, status, seconds, release):
+        """Sends the headers, logs them as sent, then waits the delay or
+        until the body is released. A held body leaves the release queue
+        however the wait ends, so a stale entry never takes a release."""
+        try:
             self.wfile.flush()
             with self.server.lock:
                 self.request_log['slowBodyHeadersStatus'] = status
-            seconds, release = slow
             if release is None:
                 time.sleep(seconds)
             else:
                 release.wait(seconds)
-        if status != 204:
-            self.mark_answer()
-            self.wfile.write(body)
+        finally:
+            if release is not None:
+                self.server.forget_held(release)
 
     def mark_answer(self):
         """Logs the answer's place just before its last bytes go."""

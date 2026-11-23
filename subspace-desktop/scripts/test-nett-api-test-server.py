@@ -1933,6 +1933,22 @@ class FailureHookTests(FileCase):
                 self.configure(slowBody=None)
             self.assertEqual(waiting.result(timeout=2)[0], 200)
 
+    def test_a_held_body_whose_limit_ran_out_leaves_the_release_queue(self):
+        # A release after the limit has nothing to let go: a stale entry
+        # would take it and leave the next held body waiting.
+        path = '/api/v1/auth/context'
+        self.configure(slowBody=dict(path=path, seconds=0.3, times=1, waitForRelease=True))
+        self.assertEqual(self.call('GET', path)[0], 200)
+        status, result, _ = self.call('POST', '/__fixture/slowBody/release', {}, token=None)
+        self.assertEqual((status, result['released']), (200, 0))
+        # A hold can outlast a test's waits only while waiting for a release.
+        self.assertEqual(self.call('POST', '/__fixture/config',
+                                   dict(slowBody=dict(path=path, seconds=120, waitForRelease=True)),
+                                   token=None)[0], 200)
+        self.assertEqual(self.call('POST', '/__fixture/config',
+                                   dict(slowBody=dict(path=path, seconds=11)), token=None)[0], 400)
+        self.configure(slowBody=None)
+
     def test_a_dropped_upload_acknowledgement_still_stores_the_bytes(self):
         data = b'# Restore notes\n'
         upload = self.ok('POST', '/issues/OPS-1/attachments/prepare', self.declaration(data))

@@ -33,9 +33,10 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
     let (put, item) = todo_save_target(&mock, &hub);
     // Both saves' answers are held until the test lets each go: A is
     // stored but answered only once B is on its way, and B stays unanswered
-    // while A's answer is handled.
+    // while A's answer is handled. The fixture's limit on a hold is longer
+    // than the waits before each release, so only a release lets one go.
     mock.config(
-        &json!({"slowBody": {"path": put, "seconds": 10.0, "times": 2, "waitForRelease": true}}),
+        &json!({"slowBody": {"path": put, "seconds": 120.0, "times": 2, "waitForRelease": true}}),
     );
     hub.set_todo_done(&item.id, true).unwrap();
     wait_for("A sent", &|| mock.count("PUT", &item.id) == 1);
