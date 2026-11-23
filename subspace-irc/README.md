@@ -128,60 +128,101 @@ opt into always-on and auto-away using `NickServ SET`.
 
 ### Sign in through the Subspace API
 
+Sign-in through the API needs the companion Subspace API change that adds
+`POST /api/v1/me/irc-credential` and `POST /api/v1/irc/authenticate`
+(pull request 81); this checkout's API does not have those endpoints yet. On
+the API side, set `IRC_CREDENTIAL_SECRET`, `IRC_AUTH_HOOK_TOKEN`,
+`IRC_AUTH_ORGANISATION` and `IRC_AUTH_SERVERS`, the host names this IRC
+server is reached by. The API issues credentials only for those servers. Its
+README describes each setting.
+
 Set `IRC_AUTH_API_URL` to the Subspace API's base URL, such as
 `https://api.example.com`, and supply the API's `IRC_AUTH_HOOK_TOKEN` as the
 hook token, preferably as a mounted file in `IRC_AUTH_API_TOKEN_FILE`. Ergo
 then runs the image's `/ircd-bin/subspace-auth` script for each login through
 its [auth-script](https://github.com/ergochat/ergo/blob/v2.19.1/docs/MANUAL.md#external-authentication-systems)
-hook.
+hook. A client gets its credential from `POST /api/v1/me/irc-credential` and
+presents it as the SASL PLAIN password with its account name; the credential
+lasts ten minutes.
 
-The script calls the API only for two kinds of login: a password that starts
-with the API's credential prefix (`IRC_AUTH_PASSPHRASE_PREFIX`, default
-`sirc1.`), and a certificate login (SASL EXTERNAL) with no password. It
-refuses every other login at once, without a network request, so Ergo goes
-straight to its local accounts. A local account's password never leaves the
-IRC server. The operator's logins never reach the API either, whatever the
-password, and the script refuses an answer that names the operator account.
-For the logins it does pass on, the script posts Ergo's request unchanged to
-`POST /api/v1/irc/authenticate` with the token as a bearer token. It waits at
-most five seconds and never retries. A client gets its credential from
-`POST /api/v1/me/irc-credential` and presents it as the SASL PLAIN password
-with its account name; the credential lasts ten minutes.
+The script calls the API only for a password that starts with the API's
+credential prefix (`IRC_AUTH_PASSPHRASE_PREFIX`, default `sirc1.`). With
+`IRC_AUTH_CERT_LOGINS=true` it also passes on certificate logins (SASL
+EXTERNAL) that carry no password. It refuses every other login at once,
+without a network request, so Ergo goes straight to its local accounts. A
+local account's password never leaves the IRC server, and start-up fails if a
+seeded password starts with the prefix. For the logins it passes on, the
+script posts Ergo's request unchanged to `POST /api/v1/irc/authenticate` with
+the token as a bearer token. It never retries.
+
+Certificate forwarding is off by default. The API refuses certificate logins
+until it holds agent certificates, each forwarded login costs an API call,
+SASL EXTERNAL attempts are not throttled, and an API answer takes precedence
+over a certificate attached locally with `NickServ CERT ADD`. Turn it on once
+the API issues agent certificates.
 
 When the API answers HTTP 200 with `{"success": true, "accountName": "..."}`,
 Ergo signs the client in to that account and creates it on the first
-sign-in. The nick becomes the account name the API returned, as
-`force-nick-equals-account` stays on. Registration stays off and SASL stays
-required.
+sign-in. The script never hands the API's body to Ergo: it checks that the
+answer is one JSON object with a boolean `success` and no keys that differ
+only in case, then writes a fresh answer. The account name must start with a
+letter and contain only letters, digits, `_` and `-`, up to 32 characters,
+and must not be an Ergo service name or `Guest-*`. Other fields, including
+any `error` text from the API, are dropped. The nick becomes the account
+name, as `force-nick-equals-account` stays on. Registration stays off and
+SASL stays required.
 
 Anything else is a refusal: `{"success": false}`, another HTTP status, a
-timeout, an unreachable API, an untrusted certificate or a body that is not a
-single JSON object with a boolean `success`. After a refusal Ergo checks its
-local accounts, so the seeded operator and service accounts keep working.
-Keep the operator as a break-glass login, and do not give local accounts
-passwords that start with the credential prefix. Ergo logs a fixed reason for
-failures, such as `subspace-auth: Subspace API answered HTTP 500`. Requests,
-the token and responses are never logged.
+timeout, an unreachable API, an untrusted certificate, an oversized or
+truncated body, or a body that fails those checks. After a refusal Ergo
+checks its local accounts, so the seeded operator and service accounts keep
+working. Keep the operator as a break-glass login. Ergo logs a fixed reason
+chosen by the script, such as `subspace-auth: Subspace API answered HTTP 500`
+or `subspace-auth: Subspace API request failed (curl exit 28)`. Requests, the
+token and responses are never logged.
+
+#### Local-only accounts
+
+Some accounts always sign in locally. The entrypoint lists every seeded
+account, every channel founder, the operator and any names in
+`IRC_AUTH_LOCAL_ACCOUNTS` or `IRC_AUTH_LOCAL_ACCOUNTS_FILE`, separated by
+commas, spaces or new lines. Add accounts that an operator created by hand
+and that must stay local. The script compares names with Ergo's ASCII case
+folding and ignores a `@device` suffix. It never calls the API for a login
+to a listed account, whatever the password looks like, and refuses any API
+answer that names one.
+
+To hand an existing hand-made account to its owner, give the owner that
+username in the API and leave the name off the local-only list. Their next
+sign-in through the API reaches the existing account. Reserve names that
+nobody owns yet on the API side, so the API never gives them to someone else.
+
+#### When the API is slow or down
 
 While the API is down, accounts that sign in through it cannot connect or
 reconnect; sessions already connected stay connected. Each such sign-in waits
-up to five seconds before Ergo falls back to local accounts. Local accounts
-sign in without waiting for the API.
+at most two seconds to connect and four seconds in all. Ergo runs the script
+for every login, local ones included, and holds one of its 256 script slots
+for each run. A local login normally takes a slot for a few milliseconds, but
+it waits for a free slot when all of them are held by API-bound logins. That
+takes more than 256 concurrent API-bound logins against a slow API, and lasts
+at most four seconds per wave.
+
+#### Transport and settings
+
+Use `https` for the API. A plain `http` URL needs `IRC_AUTH_API_ALLOW_HTTP=true`
+and is acceptable only on a private container network on one host, such as a
+Compose network shared with the API. For a private certificate authority,
+mount its certificate and set `IRC_AUTH_API_CA_FILE`; otherwise the system CA
+bundle applies. Start-up fails when the URL is set without a valid token, and
+when any other `IRC_AUTH_*` setting is set without the URL. The entrypoint
+writes the token and the local-only list to the private run directory,
+readable only by UID `10001`, and passes Ergo only their paths. The bootstrap
+server that seeds accounts and channels never runs the hook.
 
 Accounts the hook creates have no password. Ergo reports their credentials
 as managed externally, so `NickServ PASSWD` is refused and only the API can
-sign them in. The API can sign a client in to any existing account except the
-operator's, so keep seeded account names apart from API usernames unless the
-API should own them.
-
-Use `https` for the API. A plain `http` URL is accepted for a private network
-such as a Compose network. For a private certificate authority, mount its
-certificate and set `IRC_AUTH_API_CA_FILE`; otherwise the system CA bundle
-applies. Start-up fails when the URL is set without a valid token, and when
-the token, CA or prefix settings are set without the URL. The entrypoint copies the
-token into the private run directory, readable only by UID `10001`, and
-passes Ergo only its path. The bootstrap server that seeds accounts and
-channels never runs the hook.
+sign them in.
 
 Ergo's v2.19.1 manual warns that `accounts.auth-script` does not work as
 expected with environment overrides
@@ -251,10 +292,13 @@ your Compose override or through your container host's volume controls.
 | `IRC_ACCOUNTS_JSON`, `IRC_ACCOUNTS_FILE` | empty | Service-account seed JSON or mounted JSON file |
 | `IRC_CHANNELS_JSON`, `IRC_CHANNELS_FILE` | empty | Channel seed JSON or mounted JSON file |
 | `IRC_CHANNEL_FOUNDER` | operator account | Default founder for entries that omit it |
-| `IRC_AUTH_API_URL` | empty | Subspace API base URL; turns on sign-in through the API |
-| `IRC_AUTH_API_TOKEN_FILE`, `IRC_AUTH_API_TOKEN` | empty | Hook token (16–1024 URL-safe or Base64 characters), preferably as a mounted file |
+| `IRC_AUTH_API_URL` | empty | Subspace API base URL; turns on sign-in through the API. Must use `https` |
+| `IRC_AUTH_API_ALLOW_HTTP` | `false` | Allow an `http` API URL on a private container network on one host |
+| `IRC_AUTH_API_TOKEN_FILE`, `IRC_AUTH_API_TOKEN` | empty | Hook token (32–1024 URL-safe or Base64 characters), preferably as a mounted file |
 | `IRC_AUTH_API_CA_FILE` | system CA bundle | PEM file of a private CA that signed the API's certificate |
 | `IRC_AUTH_PASSPHRASE_PREFIX` | `sirc1.` | Prefix of API-issued IRC credentials; only these passwords reach the API |
+| `IRC_AUTH_CERT_LOGINS` | `false` | Pass certificate logins without a password to the API |
+| `IRC_AUTH_LOCAL_ACCOUNTS`, `IRC_AUTH_LOCAL_ACCOUNTS_FILE` | empty | Extra accounts that only sign in locally, beside the seeded ones |
 | `IRC_HISTORY_DATABASE` | `sqlite` | Where persistent history goes: `sqlite` (in the volume) or `postgresql` |
 | `IRC_POSTGRES_HOST`, `IRC_POSTGRES_PORT` | empty, `5432` | PostgreSQL server for history |
 | `IRC_POSTGRES_USER`, `IRC_POSTGRES_DATABASE` | `ergo`, `ergo_history` | Role and database Ergo uses; it creates its tables itself |
@@ -324,11 +368,14 @@ the mounted channel seed and registered channel history across recreation.
 
 The auth hook test runs the image beside a stub API over HTTPS with a private
 CA. It checks that an accepted credential signs in under the returned name
-and creates the account, and that refusals, errors, redirects, timeouts and
-malformed answers fail closed. It checks from the stub's request log that
-local passwords never reach the API while prefixed credentials, certificate
-logins and a custom prefix do. It also checks the local fallback with the API
-down, certificate verification and start-up validation.
+and creates the account, and that Ergo receives a fresh answer. Refusals,
+errors, redirects, timeouts, truncated, oversized, ambiguous and malformed
+answers, and answers naming local-only accounts all fail closed. It checks
+from the stub's request log that local and local-only logins never reach the
+API, while prefixed credentials, a custom prefix and enabled certificate
+logins do. It also checks that the operator signs in promptly while 100
+API-bound logins hang, the local fallback with the API down, certificate
+verification and start-up validation.
 
 ## Licence
 
