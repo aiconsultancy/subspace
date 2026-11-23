@@ -83,7 +83,7 @@ function fromWords(words: readonly string[], surname?: string) {
   };
 }
 
-/** The name words of `name`. "Lovelace, Ada" names the surname first. */
+/** The name words of `name`. "Quarrie, Tamsin" names the surname first. */
 function splitName(name: string) {
   const comma = name.indexOf(",");
   if (comma < 0) return fromWords(name.split(/\s+/u));
@@ -122,7 +122,7 @@ export function nameParts(source: NameSource) {
 
 /**
  * Usernames to try, in order: the first name, then the first name with successive letters of the
- * surname (`ada`, `adal`, `adalo`), then the first name with a number from 2 (`ada2`), all within
+ * surname (`tamsin`, `tamsinq`, `tamsinqu`), then the first name with a number from 2 (`tamsin2`), all within
  * 32 characters.
  */
 export function* usernameCandidates(parts: { first: string; surname: string }) {

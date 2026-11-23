@@ -39,51 +39,50 @@ describe("the username rule", () => {
     expect(foldName("Søren Ægir")).toBe("sorenaegir");
     expect(foldName("Straße")).toBe("strasse");
     expect(foldName("Þóra Ðoe")).toBe("thoradoe");
-    expect(foldName("Ａｄａ")).toBe("ada");
+    expect(foldName("Ｊｏ")).toBe("jo");
     expect(foldName("O'Brien-Smith_2")).toBe("obriensmith2");
     expect(foldName("王小明")).toBe("");
     expect(foldName("İlkay")).toBe("ilkay");
   });
 
-  test("Ada Lovelace is ada, then adal, adalo and so on, then ada2", () => {
-    expect(first(12, nameParts({ givenName: "Ada", familyName: "Lovelace" }))).toEqual([
-      "ada",
-      "adal",
-      "adalo",
-      "adalov",
-      "adalove",
-      "adalovel",
-      "adalovela",
-      "adalovelac",
-      "adalovelace",
-      "ada2",
-      "ada3",
-      "ada4",
+  test("Tamsin Quarrie is tamsin, then tamsinq, tamsinqu and so on, then tamsin2", () => {
+    expect(first(11, nameParts({ givenName: "Tamsin", familyName: "Quarrie" }))).toEqual([
+      "tamsin",
+      "tamsinq",
+      "tamsinqu",
+      "tamsinqua",
+      "tamsinquar",
+      "tamsinquarr",
+      "tamsinquarri",
+      "tamsinquarrie",
+      "tamsin2",
+      "tamsin3",
+      "tamsin4",
     ]);
   });
 
   test("the first and family names come from claims, then the name, then the e-mail", () => {
-    expect(nameParts({ givenName: "Ada", familyName: "Lovelace", name: "Countess" })).toEqual({
-      first: "ada",
-      surname: "lovelace",
+    expect(nameParts({ givenName: "Tamsin", familyName: "Quarrie", name: "Countess" })).toEqual({
+      first: "tamsin",
+      surname: "quarrie",
     });
     // Without a family name, the surname comes from the display name.
-    expect(nameParts({ givenName: "Ada", name: "Ada Lovelace" })).toEqual({
-      first: "ada",
-      surname: "lovelace",
+    expect(nameParts({ givenName: "Tamsin", name: "Tamsin Quarrie" })).toEqual({
+      first: "tamsin",
+      surname: "quarrie",
     });
-    expect(nameParts({ name: "Ada King Lovelace" })).toEqual({
-      first: "ada",
-      surname: "kinglovelace",
+    expect(nameParts({ name: "Tamsin Kestle Quarrie" })).toEqual({
+      first: "tamsin",
+      surname: "kestlequarrie",
     });
-    expect(nameParts({ name: "Lovelace, Ada" })).toEqual({ first: "ada", surname: "lovelace" });
+    expect(nameParts({ name: "Quarrie, Tamsin" })).toEqual({ first: "tamsin", surname: "quarrie" });
     // A given name with no ASCII letters falls back to the name, then the e-mail.
     expect(
       nameParts({ givenName: "小明", name: "王小明", email: "xiaoming.wang@example.com" }),
     ).toEqual({ first: "xiaoming", surname: "wang" });
-    expect(nameParts({ email: "grace_hopper+work@example.com" })).toEqual({
-      first: "grace",
-      surname: "hopper",
+    expect(nameParts({ email: "bryony_lisle+work@example.com" })).toEqual({
+      first: "bryony",
+      surname: "lisle",
     });
     expect(nameParts({ name: "王小明" })).toEqual({ first: "user", surname: "" });
     expect(nameParts({})).toEqual({ first: "user", surname: "" });
@@ -177,28 +176,32 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
     (await database.client.query("SELECT username FROM users WHERE id = $1", [userId])).rows[0]
       .username as string | null;
 
-  test("a person registered as Emmy Noether is emmy, and the next Emmy Noether is emmyn", async () => {
-    const emmy = await signIn({ given_name: "Emmy", family_name: "Noether", name: "Emmy Noether" });
-    expect(emmy.username).toBe("emmy");
-    expect(await stored(emmy.userId)).toBe("emmy");
-    const second = await signIn({ given_name: "Emmy", family_name: "Noether" });
-    expect(second.username).toBe("emmyn");
-    const third = await signIn({ given_name: "EMMY", family_name: "Nobel" });
-    expect(third.username).toBe("emmyno");
+  test("a person registered as Wenna Nethercott is wenna, and the next Wenna Nethercott is wennan", async () => {
+    const wenna = await signIn({
+      given_name: "Wenna",
+      family_name: "Nethercott",
+      name: "Wenna Nethercott",
+    });
+    expect(wenna.username).toBe("wenna");
+    expect(await stored(wenna.userId)).toBe("wenna");
+    const second = await signIn({ given_name: "Wenna", family_name: "Nethercott" });
+    expect(second.username).toBe("wennan");
+    const third = await signIn({ given_name: "WENNA", family_name: "Nevillow" });
+    expect(third.username).toBe("wennane");
     // The username never changes by itself, whatever later tokens say.
     const again = await api.call(
       "/api/v1/me",
       await tenant.sign(crypto.randomUUID(), { given_name: "Other" }),
     );
     expect(again.status).toBe(200);
-    expect(await stored(emmy.userId)).toBe("emmy");
+    expect(await stored(wenna.userId)).toBe("wenna");
   });
 
   test("concurrent registrations of people with the same first name get different usernames", async () => {
-    const surnames = ["Lovelace", "Byron", "King", "Hopper", "Turing", "Noether"];
+    const surnames = ["Quarrie", "Brackwater", "Kestle", "Lisle", "Tarrowmere", "Nethercott"];
     // Hold the organisation row while every registration starts, then release them together, so
     // they race for the same name rather than arriving one after another. Without the
-    // registration's own lock on that row, they all choose ada and all but one fail.
+    // registration's own lock on that row, they all choose tamsin and all but one fail.
     await signIn({ name: "Organisation Seed" });
     await database.client.query("BEGIN");
     const held = await database.client.query(
@@ -207,18 +210,18 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
     );
     expect(held.rowCount).toBe(1);
     const pending = Promise.all(
-      surnames.map((surname) => signIn({ given_name: "Ada", family_name: surname })),
+      surnames.map((surname) => signIn({ given_name: "Tamsin", family_name: surname })),
     );
     await Bun.sleep(300);
     await database.client.query("COMMIT");
     const people = await pending;
     const names = people.map((person) => person.username!);
     expect(new Set(names).size).toBe(surnames.length);
-    expect(names.filter((name) => name === "ada")).toHaveLength(1);
-    // Every other one is ada followed by the start of their own surname.
+    expect(names.filter((name) => name === "tamsin")).toHaveLength(1);
+    // Every other one is tamsin followed by the start of their own surname.
     names.forEach((name, index) => {
-      if (name !== "ada")
-        expect(`ada${surnames[index]!.toLowerCase()}`.startsWith(name)).toBe(true);
+      if (name !== "tamsin")
+        expect(`tamsin${surnames[index]!.toLowerCase()}`.startsWith(name)).toBe(true);
     });
   });
 
@@ -229,11 +232,11 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
     ).rows;
     await database.client.query(
       `INSERT INTO users (organisation_id, subject, display_name, agent_rank, agent_fleet, agent_model, registered_by_id, agent_irc_nick)
-       VALUES ($1, $2, 'Grace-agent', 'crew', 'alpha', 'example-model', $3, 'Grace')`,
+       VALUES ($1, $2, 'Bryony-agent', 'crew', 'alpha', 'example-model', $3, 'Bryony')`,
       [org, crypto.randomUUID(), owner.userId],
     );
-    const grace = await signIn({ given_name: "Grace", family_name: "Hopper" });
-    expect(grace.username).toBe("graceh");
+    const bryony = await signIn({ given_name: "Bryony", family_name: "Lisle" });
+    expect(bryony.username).toBe("bryonyl");
   });
 
   test("reserved names are skipped: IRC services, guest and the operator's names", async () => {
@@ -247,13 +250,15 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
   });
 
   test("non-ASCII names fold, and missing claims fall back to the name and the e-mail", async () => {
-    expect((await signIn({ given_name: "Zoë", family_name: "Ångström" })).username).toBe("zoe");
+    expect((await signIn({ given_name: "Zoë", family_name: "Ålvik" })).username).toBe("zoe");
     expect((await signIn({ name: "Łukasz Żółw" })).username).toBe("lukasz");
-    expect((await signIn({ name: "Brontë, Émilie" })).username).toBe("emilie");
+    expect((await signIn({ name: "Fernsby, Émilie" })).username).toBe("emilie");
     expect((await signIn({ name: "王小明", email: "xiaoming.wang@example.com" })).username).toBe(
       "xiaoming",
     );
-    expect((await signIn({ preferred_username: "hedy.lamarr@example.com" })).username).toBe("hedy");
+    expect((await signIn({ preferred_username: "merrin.lamarr@example.com" })).username).toBe(
+      "merrin",
+    );
     const nameless = await signIn({ name: "王小明" });
     expect(nameless.username).toBe("user");
     expect((await signIn({})).username).toBe("user2");
@@ -261,28 +266,28 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
 
   test("people and agents report their usernames where the API lists people", async () => {
     const admin = await tenant.sign(crypto.randomUUID(), {
-      given_name: "Annie",
-      family_name: "Easley",
+      given_name: "Kerensa",
+      family_name: "Doble",
       roles: [adminRole],
     });
     const me = await (await api.call("/api/v1/me", admin)).json();
-    expect(me.username).toBe("annie");
+    expect(me.username).toBe("kerensa");
     const users = await (await api.call("/api/v1/users?limit=200", admin)).json();
     expect(users.items).toContainEqual(
-      expect.objectContaining({ id: me.userId, username: "annie", kind: "human" }),
+      expect.objectContaining({ id: me.userId, username: "kerensa", kind: "human" }),
     );
     expect(users.items).toContainEqual(
-      expect.objectContaining({ username: "Grace", kind: "agent" }),
+      expect.objectContaining({ username: "Bryony", kind: "agent" }),
     );
   });
 
   test("an agent's username follows its IRC nick, and a nick cannot take a person's username", async () => {
     const admin = await tenant.sign(crypto.randomUUID(), {
-      given_name: "Mary",
-      family_name: "Jackson",
+      given_name: "Morwen",
+      family_name: "Tregear",
       roles: [adminRole],
     });
-    expect((await (await api.call("/api/v1/me", admin)).json()).username).toBe("mary");
+    expect((await (await api.call("/api/v1/me", admin)).json()).username).toBe("morwen");
     const fleet = await api.call("/api/v1/fleets", admin, "POST", {
       name: "Example fleet",
       slug: "username-fleet",
@@ -300,7 +305,7 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
         serviceTokenClientId: crypto.randomUUID(),
         ircNick,
       });
-    const taken = await register("MARY");
+    const taken = await register("MORWEN");
     expect(taken.status).toBe(409);
     const reserved = await register("ChanServ");
     expect(reserved.status).toBe(400);
@@ -343,7 +348,7 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
   });
 
   test("the database refuses a second username that differs only in case", async () => {
-    const person = await signIn({ given_name: "Katherine" });
+    const person = await signIn({ given_name: "Demelza" });
     const [{ organisation_id: org }] = (
       await database.client.query("SELECT organisation_id FROM users WHERE id = $1", [
         person.userId,
@@ -351,7 +356,7 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
     ).rows;
     await expect(
       database.client.query(
-        "INSERT INTO users (organisation_id, subject, display_name, username) VALUES ($1, $2, 'Copy', 'KATHERINE')",
+        "INSERT INTO users (organisation_id, subject, display_name, username) VALUES ($1, $2, 'Copy', 'DEMELZA')",
         [org, crypto.randomUUID()],
       ),
     ).rejects.toThrow("users_username");
@@ -359,15 +364,15 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
 
   test("a person without a username is given one on their next request", async () => {
     const oid = crypto.randomUUID();
-    const person = await signIn({ given_name: "Dorothy", family_name: "Vaughan" }, oid);
+    const person = await signIn({ given_name: "Elowen", family_name: "Trevail" }, oid);
     await database.client.query("UPDATE users SET username = NULL WHERE id = $1", [person.userId]);
     const responses = await Promise.all(
       Array.from({ length: 4 }, async () =>
         (await api.call("/api/v1/me", await tenant.sign(oid))).json(),
       ),
     );
-    expect(new Set(responses.map((body) => body.username))).toEqual(new Set(["dorothy"]));
-    expect(await stored(person.userId)).toBe("dorothy");
+    expect(new Set(responses.map((body) => body.username))).toEqual(new Set(["elowen"]));
+    expect(await stored(person.userId)).toBe("elowen");
     expect(
       Number(
         (
@@ -393,13 +398,13 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
           { displayName: name, email: null },
           "member",
           active,
-          new Set(["rosalind"]),
+          new Set(["lowenna"]),
         ).pipe(Effect.provide(databaseLayer(database.url, 2))),
       );
-    const saved = await provision("Rosalind Franklin");
-    expect(saved.username).toBe("rosalindf");
-    expect((await provision("Someone Else")).username).toBe("rosalindf");
-    expect((await provision("Someone Else", false)).username).toBe("rosalindf");
+    const saved = await provision("Lowenna Hext");
+    expect(saved.username).toBe("lowennah");
+    expect((await provision("Someone Else")).username).toBe("lowennah");
+    expect((await provision("Someone Else", false)).username).toBe("lowennah");
   });
 });
 
@@ -417,7 +422,7 @@ describe.skipIf(!testDatabase)("usernames at development sign-in", () => {
         );
       expect((await signIn("dev@example.com")).username).toBe("dev");
       expect((await signIn("member@example.com")).username).toBe("member");
-      expect((await signIn("ada@example.com", "Ada Lovelace")).username).toBe("ada");
+      expect((await signIn("tamsin@example.com", "Tamsin Quarrie")).username).toBe("tamsin");
       expect((await signIn("root@example.com")).username).toBe("root2");
       // A second sign-in keeps the member and their username.
       expect((await signIn("dev@example.com", "Someone Else")).username).toBe("dev");
@@ -467,11 +472,11 @@ describe.skipIf(!testDatabase)("the username backfill", () => {
             [organisation, crypto.randomUUID(), name, email, createdAt, ...values],
           )
         ).rows[0].id as string;
-      // Inserted newest first, so only the backfill's order decides who is ada.
-      const byron = await person(org, "Ada Byron", null, "2026-03-01T00:00:00Z");
-      const lovelace = await person(org, "Ada Lovelace", null, "2026-01-01T00:00:00Z");
-      const otherAda = await person(other, "Ada Clone", null, "2026-04-01T00:00:00Z");
-      const alan = await person(org, "Alan Turing", null, "2026-01-02T00:00:00Z");
+      // Inserted newest first, so only the backfill's order decides who is tamsin.
+      const byron = await person(org, "Tamsin Brackwater", null, "2026-03-01T00:00:00Z");
+      const quarrie = await person(org, "Tamsin Quarrie", null, "2026-01-01T00:00:00Z");
+      const otherAda = await person(other, "Tamsin Clone", null, "2026-04-01T00:00:00Z");
+      const corin = await person(org, "Corin Tarrowmere", null, "2026-01-02T00:00:00Z");
       const root = await person(org, "Root Admin", null, "2026-01-03T00:00:00Z");
       const nameless = await person(
         org,
@@ -484,11 +489,11 @@ describe.skipIf(!testDatabase)("the username backfill", () => {
       ]);
       const agent = await person(
         org,
-        "Alan",
+        "Corin",
         null,
         "2025-12-01T00:00:00Z",
         ", agent_rank, agent_fleet, agent_model, registered_by_id, agent_irc_nick",
-        ["crew", "alpha", "example-model", lovelace, "Alan"],
+        ["crew", "alpha", "example-model", quarrie, "Corin"],
       );
       const nickless = await person(
         org,
@@ -496,7 +501,7 @@ describe.skipIf(!testDatabase)("the username backfill", () => {
         null,
         "2025-12-02T00:00:00Z",
         ", agent_rank, agent_fleet, agent_model, registered_by_id",
-        ["crew", "alpha", "example-model", lovelace],
+        ["crew", "alpha", "example-model", quarrie],
       );
 
       const migrate = () => {
@@ -518,14 +523,14 @@ describe.skipIf(!testDatabase)("the username backfill", () => {
         );
       const result = await names();
       expect(result).toEqual({
-        [lovelace]: "ada",
-        [byron]: "adab",
-        [otherAda]: "ada",
-        [alan]: "alant",
+        [quarrie]: "tamsin",
+        [byron]: "tamsinb",
+        [otherAda]: "tamsin",
+        [corin]: "corint",
         [root]: "roota",
         [nameless]: "xiaoming",
         [former]: "former",
-        [agent]: "Alan",
+        [agent]: "Corin",
         [nickless]: null,
       });
       migrate();

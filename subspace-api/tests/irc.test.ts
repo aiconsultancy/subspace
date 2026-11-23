@@ -239,14 +239,14 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
   const no = { status: 200, body: JSON.stringify({ success: false }) };
 
   test("a person gets a credential for their account, and the hook accepts it", async () => {
-    const alan = await person({ given_name: "Alan", family_name: "Turing" });
-    expect(alan.username).toBe("alan");
+    const corin = await person({ given_name: "Corin", family_name: "Tarrowmere" });
+    expect(corin.username).toBe("corin");
     const before = Date.now();
-    const issued = await credential(alan.token);
+    const issued = await credential(corin.token);
     expect(issued.status).toBe(200);
     expect(issued.response.headers.get("cache-control")).toBe("private, no-store");
     expect(Object.keys(issued.body).sort()).toEqual(["account", "expiresAt", "password"]);
-    expect(issued.body.account).toBe("alan");
+    expect(issued.body.account).toBe("corin");
     expect(issued.body.password).toMatch(/^sirc1\./u);
     expect(issued.body.password.length).toBeLessThanOrEqual(200);
     expect(issued.body.expiresAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u);
@@ -254,11 +254,11 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
     expect(expires).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000 + 599_000);
     expect(expires).toBeLessThanOrEqual(Date.now() + 600_000);
 
-    const good = { accountName: "alan", passphrase: issued.body.password };
-    expect(await hook(good)).toEqual(yes("alan"));
+    const good = { accountName: "corin", passphrase: issued.body.password };
+    expect(await hook(good)).toEqual(yes("corin"));
     // Reusable until it expires; case and a device suffix are ignored; Ergo's other fields too.
-    expect(await hook(good)).toEqual(yes("alan"));
-    expect(await hook({ ...good, accountName: "ALAN@laptop-1" })).toEqual(yes("alan"));
+    expect(await hook(good)).toEqual(yes("corin"));
+    expect(await hook({ ...good, accountName: "CORIN@laptop-1" })).toEqual(yes("corin"));
     expect(
       await hook({
         ...good,
@@ -268,44 +268,42 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
         oauth2: { token: "ignored" },
         cookies: { session: "ignored" },
       }),
-    ).toEqual(yes("alan"));
+    ).toEqual(yes("corin"));
   });
 
   test("expired, tampered and foreign credentials are refused", async () => {
-    const ada = await person({ given_name: "Ada", family_name: "Lovelace" });
-    const expired = mintIrcCredential(secret, ada.userId, Date.now() - 601_000).password;
-    expect(await hook({ accountName: "ada", passphrase: expired })).toEqual(no);
-    const { body } = await credential(ada.token);
+    const tamsin = await person({ given_name: "Tamsin", family_name: "Quarrie" });
+    const expired = mintIrcCredential(secret, tamsin.userId, Date.now() - 601_000).password;
+    expect(await hook({ accountName: "tamsin", passphrase: expired })).toEqual(no);
+    const { body } = await credential(tamsin.token);
     const tampered = `${body.password.slice(0, -2)}${body.password.endsWith("AA") ? "BB" : "AA"}`;
-    expect(await hook({ accountName: "ada", passphrase: tampered })).toEqual(no);
+    expect(await hook({ accountName: "tamsin", passphrase: tampered })).toEqual(no);
     const foreign = mintIrcCredential(
       Redacted.make("another server's credential secret, 32 bytes"),
-      ada.userId,
+      tamsin.userId,
     ).password;
-    expect(await hook({ accountName: "ada", passphrase: foreign })).toEqual(no);
+    expect(await hook({ accountName: "tamsin", passphrase: foreign })).toEqual(no);
   });
 
   test("the account name must be the credential's own account", async () => {
-    const grace = await person({ given_name: "Grace", family_name: "Hopper" });
-    const other = await person({ given_name: "Hedy", family_name: "Lamarr" });
-    const { body } = await credential(grace.token);
+    const bryony = await person({ given_name: "Bryony", family_name: "Lisle" });
+    const other = await person({ given_name: "Merrin", family_name: "Oakes" });
+    const { body } = await credential(bryony.token);
     expect(await hook({ accountName: other.username, passphrase: body.password })).toEqual(no);
-    expect(await hook({ accountName: "gracehopper", passphrase: body.password })).toEqual(no);
+    expect(await hook({ accountName: "bryonylisle", passphrase: body.password })).toEqual(no);
     expect(await hook({ passphrase: body.password })).toEqual(no);
-    expect(await hook({ accountName: "@grace", passphrase: body.password })).toEqual(no);
-    expect(await hook({ accountName: "grace", passphrase: body.password })).toEqual(yes("grace"));
+    expect(await hook({ accountName: "@bryony", passphrase: body.password })).toEqual(no);
+    expect(await hook({ accountName: "bryony", passphrase: body.password })).toEqual(yes("bryony"));
   });
 
   test("a deactivated person's credential is refused", async () => {
-    const charles = await person({ given_name: "Charles", family_name: "Babbage" });
-    const { body } = await credential(charles.token);
-    expect(await hook({ accountName: "charles", passphrase: body.password })).toEqual(
-      yes("charles"),
-    );
-    await database.client.query("UPDATE users SET active = false WHERE id = $1", [charles.userId]);
-    expect(await hook({ accountName: "charles", passphrase: body.password })).toEqual(no);
+    const jory = await person({ given_name: "Jory", family_name: "Pellow" });
+    const { body } = await credential(jory.token);
+    expect(await hook({ accountName: "jory", passphrase: body.password })).toEqual(yes("jory"));
+    await database.client.query("UPDATE users SET active = false WHERE id = $1", [jory.userId]);
+    expect(await hook({ accountName: "jory", passphrase: body.password })).toEqual(no);
     // And they can no longer obtain one.
-    expect((await credential(charles.token)).status).toBe(403);
+    expect((await credential(jory.token)).status).toBe(403);
   });
 
   test("another organisation's user is refused, even with this server's secret", async () => {
@@ -355,20 +353,20 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
   });
 
   test("anything but a good credential answers success false with 200", async () => {
-    const kj = await person({ given_name: "Katherine", family_name: "Johnson" });
+    const kj = await person({ given_name: "Demelza", family_name: "Rowe" });
     const { body } = await credential(kj.token);
     // A certificate alone is reserved for agent key credentials.
-    expect(await hook({ accountName: "katherine", certfp: "ab".repeat(32) })).toEqual(no);
+    expect(await hook({ accountName: "demelza", certfp: "ab".repeat(32) })).toEqual(no);
     expect(
-      await hook({ accountName: "katherine", certfp: "ab".repeat(32), passphrase: body.password }),
-    ).toEqual(yes("katherine"));
+      await hook({ accountName: "demelza", certfp: "ab".repeat(32), passphrase: body.password }),
+    ).toEqual(yes("demelza"));
     // Local accounts' passwords and empty input are left to Ergo.
-    expect(await hook({ accountName: "katherine", passphrase: "a local password" })).toEqual(no);
-    expect(await hook({ accountName: "katherine", passphrase: "" })).toEqual(no);
+    expect(await hook({ accountName: "demelza", passphrase: "a local password" })).toEqual(no);
+    expect(await hook({ accountName: "demelza", passphrase: "" })).toEqual(no);
     expect(await hook({})).toEqual(no);
     // A body over 256 KiB is not read.
     const huge = JSON.stringify({
-      accountName: "katherine",
+      accountName: "demelza",
       passphrase: body.password,
       peerCerts: ["a".repeat(300_000)],
     });
@@ -385,12 +383,12 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
     expect((await hook({}, `${hookToken}x`)).status).toBe(401);
     expect((await hook({}, hookToken.slice(0, -1))).status).toBe(401);
     // A user's bearer token is not the hook token.
-    const user = await person({ given_name: "Mary" });
+    const user = await person({ given_name: "Morwen" });
     expect((await hook({}, user.token)).status).toBe(401);
   });
 
   test("the routes are absent when unconfigured", async () => {
-    const user = await person({ given_name: "Dorothy" });
+    const user = await person({ given_name: "Elowen" });
     const off = await credential(user.token, bare);
     expect(off.status).toBe(404);
     expect(off.body.detail).toBe("This server does not issue IRC credentials.");

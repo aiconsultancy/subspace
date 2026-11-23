@@ -140,7 +140,7 @@ command and development sign-in do the same for the people they add.
 Development sign-in without a name takes the username from the e-mail.
 
 1. The first name is `given_name`. Without one, it is the first word of `name`
-   (`Lovelace, Ada` names the surname first), then the e-mail local part read as
+   (`Quarrie, Tamsin` names the surname first), then the e-mail local part read as
    `first.last`, then `user`. The surname is `family_name`, else the rest of `name`
    or of the local part.
 2. Names are folded to lower-case ASCII: diacritics are removed, letters such as
@@ -148,8 +148,9 @@ Development sign-in without a name takes the username from the e-mail.
    leading digits are dropped, and the result has at most 32 characters. Ergo
    accepts every such name as an account.
 3. The first free name wins: the first name, then the first name with successive
-   letters of the surname, then the first name with a number from 2. Ada Lovelace
-   is `ada`, or `adal` when `ada` is taken, then `adalo` and so on, then `ada2`.
+   letters of the surname, then the first name with a number from 2. Tamsin Quarrie
+   is `tamsin`, or `tamsinq` when `tamsin` is taken, then `tamsinqu` and so on, then
+   `tamsin2`.
 4. Reserved names are skipped: Ergo's services (`nickserv`, `chanserv`,
    `operserv`, `hostserv`, `histserv`, `botserv`, `memoserv` and `global`), `guest`
    and any name starting `guest-`, and the operator's names in
@@ -244,7 +245,7 @@ main listener. The agent listener does not serve it, because anyone who reaches
 that listener can act as any agent. The request has no body.
 
 ```json
-{ "account": "ada", "password": "sirc1.<opaque>", "expiresAt": "2026-11-23T21:10:00Z" }
+{ "account": "tamsin", "password": "sirc1.<opaque>", "expiresAt": "2026-11-23T21:10:00Z" }
 ```
 
 - `account` is the user's [username](#usernames). For an agent it is its IRC nick.
@@ -286,7 +287,7 @@ not serve it.
   properties, such as `oauth2` and `cookies`, are ignored, and so is a body over
   256 KiB.
 - Once the token is accepted, the answer is always 200 with
-  `{ "success": true, "accountName": "ada" }` or `{ "success": false }`, never a
+  `{ "success": true, "accountName": "tamsin" }` or `{ "success": false }`, never a
   problem document, including for a malformed body or a database failure.
 
 The rules, in order:

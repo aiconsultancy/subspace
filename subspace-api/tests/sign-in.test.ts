@@ -90,11 +90,11 @@ test("the Entra verifier reads profile and role claims beside the identity", asy
   const oid = crypto.randomUUID();
   const identity = await verify(
     await tenant.sign(oid, {
-      name: " Ada Lovelace ",
-      email: "ada@example.com",
-      preferred_username: "ada.lovelace@example.com",
-      given_name: "Ada",
-      family_name: "Lovelace",
+      name: " Tamsin Quarrie ",
+      email: "tamsin@example.com",
+      preferred_username: "tamsin.quarrie@example.com",
+      given_name: "Tamsin",
+      family_name: "Quarrie",
       roles: ["Subspace.Admin", 7, "Reader"],
     }),
   );
@@ -104,11 +104,11 @@ test("the Entra verifier reads profile and role claims beside the identity", asy
     externalOrganisation: tenant.tenant,
     expiresAt: expect.any(Number),
     claims: {
-      name: "Ada Lovelace",
-      email: "ada@example.com",
-      preferredUsername: "ada.lovelace@example.com",
-      givenName: "Ada",
-      familyName: "Lovelace",
+      name: "Tamsin Quarrie",
+      email: "tamsin@example.com",
+      preferredUsername: "tamsin.quarrie@example.com",
+      givenName: "Tamsin",
+      familyName: "Quarrie",
       roles: ["Subspace.Admin", "Reader"],
     },
   });
@@ -129,32 +129,36 @@ test("the Entra verifier reads profile and role claims beside the identity", asy
 
 describe("profile claims at registration", () => {
   test("the display name is name, then the given and family names, then the e-mail", () => {
-    expect(profileFromClaims({ name: "Ada Lovelace", givenName: "Augusta" }).displayName).toBe(
-      "Ada Lovelace",
+    expect(profileFromClaims({ name: "Tamsin Quarrie", givenName: "Morva" }).displayName).toBe(
+      "Tamsin Quarrie",
     );
-    expect(profileFromClaims({ givenName: "Ada", familyName: "Lovelace" }).displayName).toBe(
-      "Ada Lovelace",
+    expect(profileFromClaims({ givenName: "Tamsin", familyName: "Quarrie" }).displayName).toBe(
+      "Tamsin Quarrie",
     );
-    expect(profileFromClaims({ familyName: "Lovelace" }).displayName).toBe("Lovelace");
-    expect(profileFromClaims({ email: "ada@example.com" }).displayName).toBe("ada@example.com");
+    expect(profileFromClaims({ familyName: "Quarrie" }).displayName).toBe("Quarrie");
+    expect(profileFromClaims({ email: "tamsin@example.com" }).displayName).toBe(
+      "tamsin@example.com",
+    );
     expect(profileFromClaims({}).displayName).toBe("New member");
   });
 
   test("the e-mail is email, else preferred_username, only when it looks like an address", () => {
     expect(
-      profileFromClaims({ email: "ada@example.com", preferredUsername: "al@example.com" }).email,
-    ).toBe("ada@example.com");
-    expect(profileFromClaims({ preferredUsername: "ada@example.com" }).email).toBe(
-      "ada@example.com",
+      profileFromClaims({ email: "tamsin@example.com", preferredUsername: "al@example.com" }).email,
+    ).toBe("tamsin@example.com");
+    expect(profileFromClaims({ preferredUsername: "tamsin@example.com" }).email).toBe(
+      "tamsin@example.com",
     );
     expect(
-      profileFromClaims({ email: "not an address", preferredUsername: "ada@example.com" }).email,
-    ).toBe("ada@example.com");
-    expect(profileFromClaims({ preferredUsername: "ADA\\lovelace" }).email).toBeNull();
+      profileFromClaims({ email: "not an address", preferredUsername: "tamsin@example.com" }).email,
+    ).toBe("tamsin@example.com");
+    expect(profileFromClaims({ preferredUsername: "ADA\\quarrie" }).email).toBeNull();
   });
 
   test("names become one line of at most 120 characters", () => {
-    expect(profileFromClaims({ name: "Ada\n\tLovelace\u0000" }).displayName).toBe("Ada Lovelace");
+    expect(profileFromClaims({ name: "Tamsin\n\tQuarrie\u0000" }).displayName).toBe(
+      "Tamsin Quarrie",
+    );
     expect(profileFromClaims({ name: "A".repeat(200) }).displayName).toHaveLength(120);
   });
 });
@@ -206,19 +210,19 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
   test("a never-seen person becomes a member with no initiatives", async () => {
     const oid = crypto.randomUUID();
     const token = await tenant.sign(oid, {
-      name: "Ada Lovelace",
-      email: "ada@example.com",
-      given_name: "Ada",
-      family_name: "Lovelace",
+      name: "Tamsin Quarrie",
+      email: "tamsin@example.com",
+      given_name: "Tamsin",
+      family_name: "Quarrie",
     });
     const me = await api.call("/api/v1/me", token);
     expect(me.status).toBe(200);
     expect(me.headers.get("cache-control")).toBe("private, no-store");
     expect(await me.json()).toMatchObject({
       kind: "human",
-      displayName: "Ada Lovelace",
-      email: "ada@example.com",
-      username: "ada",
+      displayName: "Tamsin Quarrie",
+      email: "tamsin@example.com",
+      username: "tamsin",
       agentRank: null,
       isAdmin: false,
     });
@@ -243,7 +247,7 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
       actor_id: row.id,
       actor_type: "human",
       entity_type: "Member",
-      changes: { provider: "entra", role: "member", username: "ada" },
+      changes: { provider: "entra", role: "member", username: "tamsin" },
     });
   });
 
@@ -266,7 +270,7 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
 
   test("concurrent first requests from one person register one member", async () => {
     const oid = crypto.randomUUID();
-    const token = await tenant.sign(oid, { name: "Grace Hopper", email: "grace@example.com" });
+    const token = await tenant.sign(oid, { name: "Bryony Lisle", email: "bryony@example.com" });
     // Hold the organisation row while every request starts, then release them together.
     expect((await api.call("/api/v1/me", await tenant.sign(crypto.randomUUID()))).status).toBe(200);
     await database.client.query("BEGIN");
@@ -314,7 +318,7 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
     const users = await count("users");
     const response = await closed.call(
       "/api/v1/me",
-      await tenant.sign(oid, { name: "Al Khwarizmi" }),
+      await tenant.sign(oid, { name: "Osric Fell" }),
     );
     expect(response.status).toBe(403);
     expect((await response.json()).detail).toBe("An active organisation membership is required.");
@@ -327,7 +331,7 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
 
   test("a deactivated person stays refused and is never reactivated", async () => {
     const oid = crypto.randomUUID();
-    const token = await tenant.sign(oid, { name: "Hedy Lamarr" });
+    const token = await tenant.sign(oid, { name: "Merrin Oakes" });
     expect((await api.call("/api/v1/me", token)).status).toBe(200);
     await database.client.query("UPDATE users SET active = false WHERE subject = $1", [oid]);
     for (const server of [api, admins]) {
@@ -345,8 +349,8 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
 
   test("the Entra admin role decides the role on each request, both ways", async () => {
     const oid = crypto.randomUUID();
-    const withRole = await tenant.sign(oid, { name: "Mary Somerville", roles: [adminRole] });
-    const without = await tenant.sign(oid, { name: "Mary Somerville", roles: ["Other.Role"] });
+    const withRole = await tenant.sign(oid, { name: "Ysolde Penhallow", roles: [adminRole] });
+    const without = await tenant.sign(oid, { name: "Ysolde Penhallow", roles: ["Other.Role"] });
     const isAdmin = async (token: string) => {
       const response = await admins.call("/api/v1/me", token);
       expect(response.status).toBe(200);
@@ -426,11 +430,11 @@ describe.skipIf(!testDatabase)("registration on the first Entra sign-in", () => 
     const oid = crypto.randomUUID();
     const response = await api.call(
       "/api/v1/me",
-      await tenant.sign(oid, { name: "Katherine Johnson", preferred_username: "kj@example.com" }),
+      await tenant.sign(oid, { name: "Demelza Rowe", preferred_username: "dr@example.com" }),
     );
     expect(await response.json()).toMatchObject({
-      displayName: "Katherine Johnson",
-      email: "kj@example.com",
+      displayName: "Demelza Rowe",
+      email: "dr@example.com",
     });
   });
 });
