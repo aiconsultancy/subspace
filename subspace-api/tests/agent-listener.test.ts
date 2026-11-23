@@ -258,6 +258,19 @@ describe("resolving the agent a header names", () => {
     expect(await choose([twinByName, twinByNick], "Twin")).toMatchObject({
       failure: { status: 401 },
     });
+    // A deactivated record sharing the name or nick does not lock out the active agent.
+    expect(await choose([{ ...twinByName, active: false }, twinByNick], "Twin")).toMatchObject({
+      success: twinByNick,
+    });
+    expect(
+      await choose(
+        [
+          { ...twinByName, active: false },
+          { ...twinByNick, active: false },
+        ],
+        "Twin",
+      ),
+    ).toMatchObject({ failure: { status: 403 } });
   });
 });
 

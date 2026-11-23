@@ -47,7 +47,8 @@ export const unknownAgentDetail = `Name a registered agent in the ${agentHeaderN
 
 /**
  * Chooses the one agent a header names from the agents whose name or IRC nick matches it,
- * ignoring case. No match, or more than one, is refused, as is an inactive agent.
+ * ignoring case: the one active match. No match or more than one active match is refused (401),
+ * as is a name that matches only deactivated agents (403).
  */
 export function chooseAgent(
   candidates: readonly Candidate[],
@@ -60,16 +61,24 @@ export function chooseAgent(
   if (!agentReference.test(reference)) return Effect.fail(problem(401, unknownAgentDetail));
   const agents = candidates.filter((row) => row.agentRank !== null);
   if (agents.length === 0) return Effect.fail(problem(401, unknownAgentDetail));
-  if (agents.length > 1)
+  // A deactivated record that shares the name or nick never hides the one active agent.
+  const active = agents.filter((row) => row.active);
+  if (active.length > 1)
     return Effect.fail(
       problem(401, `'${reference}' names more than one agent. Use the agent's registered name.`),
     );
-  const agent = agents[0]!;
-  if (!agent.active)
+  if (active.length === 1) return Effect.succeed(active[0]!);
+  if (agents.length > 1)
     return Effect.fail(
-      problem(403, `Agent '${agent.displayName}' is deactivated. Ask a human to reactivate it.`),
+      problem(
+        403,
+        `Every agent '${reference}' names is deactivated. Ask a human to reactivate one.`,
+      ),
     );
-  return Effect.succeed(agent);
+  const agent = agents[0]!;
+  return Effect.fail(
+    problem(403, `Agent '${agent.displayName}' is deactivated. Ask a human to reactivate it.`),
+  );
 }
 
 /** The agent records in the listener's organisation whose name or IRC nick matches, ignoring case. */

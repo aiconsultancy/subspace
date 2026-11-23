@@ -261,8 +261,10 @@ registered agent record of the configured organisation and acts as it:
 agents, including the fleet limits on assignments, Ready for agents and moves.
 It never resolves a person, so it never grants the administrator role, which
 the database already forbids an agent record. A missing header, an unknown
-or ambiguous name, or a person's name or subject receives 401; a deactivated
-agent receives 403; any bearer token is ignored. Before any route runs, the listener also refuses with 403 any request
+name, a name that matches more than one active agent, or a person's name or
+subject receives 401; a name that matches only deactivated agents receives
+403, and a deactivated record sharing the name or nick of an active agent
+does not hide it; any bearer token is ignored. Before any route runs, the listener also refuses with 403 any request
 that carries an `Origin` header and any `Host` other than `127.0.0.1`,
 `localhost` or `[::1]` (with an optional port), so a browser page that
 rebinds its domain to the listener's address cannot act as an agent. Docker's
