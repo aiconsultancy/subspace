@@ -24,6 +24,10 @@ pub(crate) struct Recall {
     pub persist: Option<Persist>,
     /// The networks to run once the stored buffers are restored.
     pub waiting: Option<Vec<NetworkConfig>>,
+    /// Account networks that started after that restore, held back from
+    /// the runtime until their stored buffers are read again, so each one
+    /// connects with its catch-up anchors.
+    pub starting: Vec<NetworkId>,
     /// Buffers waiting for the lines around a message.
     pub around: Vec<BufferKey>,
 }
@@ -34,8 +38,26 @@ impl Recall {
         Self {
             persist: None,
             waiting: Some(networks),
+            starting: Vec::new(),
             around: Vec::new(),
         }
+    }
+
+    /// Holds `started` back until their stored buffers are read, among the
+    /// networks still in `networks`, and returns them. Without the store, or
+    /// before the restore at start, which covers them, none is held.
+    pub fn hold(&mut self, started: Vec<NetworkId>, networks: &[NetworkConfig]) -> Vec<NetworkId> {
+        self.starting
+            .retain(|held| networks.iter().any(|network| network.id == *held));
+        if self.persist.is_none() || self.waiting.is_some() {
+            return Vec::new();
+        }
+        for network in &started {
+            if !self.starting.contains(network) {
+                self.starting.push(network.clone());
+            }
+        }
+        started
     }
 
     /// Keeps `lines` for the next write, once their buffers are in `state`:
@@ -250,47 +272,48 @@ impl Hub {
         .detach();
     }
 
-    /// Reads the stored buffers again for `started`, account networks that
+    /// Reads the stored buffers again for `held`, account networks that
     /// began to run after the restore at start, such as after signing back
-    /// in, and restores theirs with catch-up anchors. A buffer whose network
-    /// stopped meanwhile is left in the store.
-    pub(super) fn recall_started(&mut self, started: Vec<NetworkId>, cx: &mut Context<Self>) {
+    /// in, then restores theirs and starts them with catch-up anchors.
+    pub(super) fn recall_started(&mut self, held: Vec<NetworkId>, cx: &mut Context<Self>) {
         let link = self
             .recall
             .persist
             .as_ref()
             .map(|persist| persist.link.clone());
-        let Some(link) = link.filter(|_| !started.is_empty() && self.recall.waiting.is_none())
-        else {
+        let Some(link) = link.filter(|_| !held.is_empty()) else {
             return;
         };
         cx.spawn(async move |hub, cx| {
             let restored = cx.background_spawn(async move { link.restore() }).await;
             _ = hub.update(cx, |hub, cx| {
-                hub.restore_started(restored.ok().flatten().unwrap_or_default(), &started);
+                hub.restore_started(restored.ok().flatten().unwrap_or_default());
                 cx.notify();
             });
         })
         .detach();
     }
 
-    /// Restores those of `restored` whose network is among `started` and
-    /// still runs, and tells the runtime where each one's history resumes.
-    fn restore_started(&mut self, restored: Vec<Restored>, started: &[NetworkId]) {
-        let running: Vec<NetworkId> = started
-            .iter()
+    /// Restores those of `restored` whose network is held back and still
+    /// configured, then runs those networks and tells the runtime at once
+    /// where each one's history resumes, before it can connect.
+    fn restore_started(&mut self, restored: Vec<Restored>) {
+        let started: Vec<NetworkId> = std::mem::take(&mut self.recall.starting)
+            .into_iter()
             .filter(|network| self.state.network(network).is_some())
-            .cloned()
             .collect();
         for buffer in restored
             .into_iter()
-            .filter(|buffer| running.contains(&buffer.buffer.network))
+            .filter(|buffer| started.contains(&buffer.buffer.network))
         {
             self.state
                 .restore_buffer(&buffer.buffer, buffer.lines, &buffer.ended);
         }
         self.recall.keep_endings(&mut self.state);
-        for network in running {
+        let applied = &self.applied.networks;
+        let networks = super::running::next((applied, applied), &self.running, &self.state.removed);
+        self.run(networks);
+        for network in started {
             let anchors = self.state.anchors(&network);
             if !anchors.is_empty() {
                 self.send(Command::Anchors { network, anchors });

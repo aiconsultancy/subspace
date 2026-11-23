@@ -198,3 +198,87 @@ fn signing_out_and_in_again_restores_the_history_without_a_restart(cx: &mut Test
     assert_eq!(held(&hub, &nav(&ada()), cx), ["launch window for ada"]);
     assert_eq!(kept(&service), 2);
 }
+
+/// Whether her network starts before its history is back.
+fn configures_ada(command: &Command) -> bool {
+    matches!(command, Command::Configure(networks)
+        if networks.iter().any(|network| network.id == ada()))
+}
+
+/// Watches every change of the hub for her network configured while one
+/// of `buffers` is not restored yet.
+fn watch_early(
+    hub: &Entity<Hub>,
+    buffers: Vec<BufferKey>,
+    cx: &mut VisualTestContext,
+) -> std::rc::Rc<std::cell::Cell<bool>> {
+    let early = std::rc::Rc::new(std::cell::Cell::new(false));
+    let seen = std::rc::Rc::clone(&early);
+    cx.update(|_, cx| {
+        cx.observe(hub, move |hub, cx| {
+            let hub = hub.read(cx);
+            let configured = hub.sent().iter().any(configures_ada);
+            let restored = buffers.iter().all(|buffer| {
+                hub.state
+                    .buffer(buffer)
+                    .is_some_and(|held| !held.entries.is_empty())
+            });
+            seen.set(seen.get() || (configured && !restored));
+        })
+        .detach();
+    });
+    early
+}
+
+/// The conversations her network's first command after it starts says
+/// where to resume, before it can connect.
+fn anchored(hub: &Entity<Hub>, cx: &VisualTestContext) -> Vec<Target> {
+    hub.read_with(cx, |hub, _| {
+        let sent = hub.sent();
+        let started = sent
+            .iter()
+            .position(configures_ada)
+            .expect("her network runs");
+        let next = sent[started + 1..].iter().find(|command| {
+            command.network() == Some(&ada()) && !matches!(command, Command::SetAutojoin { .. })
+        });
+        let Some(Command::Anchors { anchors, .. }) = next else {
+            panic!("her network's next command is not its anchors: {sent:?}");
+        };
+        let mut targets: Vec<Target> = anchors.iter().map(|anchor| anchor.target.clone()).collect();
+        targets.sort_by_key(|target| format!("{target:?}"));
+        targets
+    })
+}
+
+#[gpui_kit::test]
+fn an_account_network_connects_only_once_its_history_is_restored(cx: &mut TestAppContext) {
+    let lyra = BufferKey {
+        network: ada(),
+        target: Target::Query("lyra".into()),
+    };
+    let (_root, service) = service();
+    publish(
+        &service,
+        vec![
+            recent(message(&nav(&ada()), "lyra", "launch window for ada", 1)),
+            recent(message(&lyra, "lyra", "docking at nine", 2)),
+        ],
+    );
+    let (_board, hub, cx) = mount_hub(cx, move |cx| {
+        hub::install_with_store_for_test(&settings(), service, cx)
+    });
+    cx.run_until_parked();
+    let early = watch_early(&hub, vec![nav(&ada()), lyra.clone()], cx);
+    let api = Api::new(&["127.0.0.1"]);
+    connect(&hub, &api, cx);
+    member_of(&hub, (Some(1), "user-ada"), fleets("127.0.0.1", None), cx);
+    settle(&hub, cx);
+    assert!(!early.get(), "configured before its history was restored");
+    assert_eq!(held(&hub, &lyra, cx), ["docking at nine"]);
+    assert_eq!(
+        anchored(&hub, cx),
+        [Target::Channel("#aurora-nav".into()), lyra.target],
+        "the channel and the private conversation"
+    );
+}
