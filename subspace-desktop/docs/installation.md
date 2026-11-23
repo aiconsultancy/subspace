@@ -262,6 +262,14 @@ fixtures without real signing or notarization.
 
 ### Publish a macOS release
 
+Either maintainer can release. Merging the release pull request and the
+Windows build need nothing but write access. Publishing needs a Mac set up as
+[Build a signed macOS application](#build-a-signed-macos-application)
+describes: the Developer ID Application certificate and its private key in
+the login Keychain (export it from one maintainer's Mac and import it on the
+other's), a notarization Keychain profile, the GitHub OAuth client secret in
+the login Keychain, and `gh` signed in.
+
 A stable release starts as a draft. Merging the app's Release Please pull
 request (see [Releases](ways-of-working.md#releases)) makes the release
 workflow tag the merge commit `subspace-desktop-v<version>` and create a
@@ -270,7 +278,7 @@ the [windows-release workflow](#the-windows-release-workflow), which attaches
 the signed Windows archive to the draft and can take a couple of hours.
 `make release-macos` publishes the release without checking for that archive,
 so wait until the draft lists `subspace-<version>-x86_64-pc-windows-msvc.zip`
-and its `.sha256`. Then, on the owner's Mac:
+and its `.sha256`. Then, on the Mac of whichever maintainer is releasing:
 
 ```bash
 gh release view subspace-desktop-v<version> -R aiconsultancy/subspace --json assets --jq '.assets[].name'
@@ -574,12 +582,9 @@ cluster (runner group `subspace-release`), never on GitHub-hosted runners:
 
 1. **resolve**, on `subspace-signing`, a Linux runner in the trusted
    deployment subnet, refuses the tag unless it is a stable release whose
-   commit is the merge commit of a merged Release Please pull request for the
-   desktop, as GitHub records it, in `main`'s first-parent history, and
-   changes only the manifest, the changelog and the `Cargo.toml` and
-   `Cargo.lock` files Release Please updates (and, when `release.yml` starts
-   the run, is the release's commit), so only reviewed code is signed, whoever pushed the
-   tag. It fixes that commit and the archive's name for the rest of the run.
+   commit is on `main` (and, when `release.yml` starts the run, is the
+   release's commit). It fixes that commit and the archive's name for the
+   rest of the run. A tag ruleset stops release tags being moved or deleted.
    The root `scripts/windows-release-resolve.sh` makes these checks, and
    `scripts/test-windows-release-resolve.sh` (part of `make release-check`)
    tests them.

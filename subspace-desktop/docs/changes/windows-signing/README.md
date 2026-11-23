@@ -35,15 +35,14 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
 - `.github/workflows/windows-release.yml` runs when `release.yml` creates an
   app release, or by hand on `main` with a tag and a mode: `publish`,
   `sign-only` or `build-only`.
-  - A first job on the signing runner refuses a tag whose commit is not on
-    `main`, so pushing a tag cannot get unreviewed code signed, and fixes
-    that commit and the archive's name for the run. The commit must be the
-    merge commit of a merged Release Please pull request for the desktop, in
-    `main`'s first-parent history, changing only the files Release Please
-    changes. It also
-    refuses a release from before this workflow, whose packaging would run
-    the app and fail. `scripts/windows-release-resolve.sh` makes these
-    checks, and any failed or unexpected GitHub API answer refuses the tag.
+  - A first job on the signing runner refuses anything but a stable release
+    tag on a commit on `main` (the release's own commit, when `release.yml`
+    starts the run), and fixes that commit and the archive's name for the
+    run. It also refuses a release from before this workflow, whose
+    packaging would run the app and fail. `scripts/windows-release-resolve.sh`
+    makes these checks. The repository's two writers are trusted, so these
+    checks catch mistakes; a tag ruleset stops release tags being moved or
+    deleted.
   - It builds that commit on `subspace-windows` with no secrets.
   - `package-release.sh` normally runs the built app to read its version
     back. The app cannot start in a Windows Server container, so the job sets
@@ -91,18 +90,13 @@ the platform's self-hosted runners rather than GitHub-hosted ones.
   It passes under macOS's bash 3.2 and under bash 5.
 - `bash scripts/test-windows-release-resolve.sh`, part of the root
   `make release-check`, runs the resolve job's checks against a local Git
-  history and a fake `gh`. It covers:
-  - a Release Please merge commit, through an annotated tag, with and without
-    the release's commit given, and a wrong commit given;
+  history. It covers:
+  - a release through an annotated tag, with and without the release's
+    commit given, and a wrong commit given;
   - malformed, pre-release, padded and missing tags;
-  - a tag on a commit off `main`, on a commit inside a merged pull request
-    and on a feature's merge commit;
+  - a tag on a commit off `main`;
   - a branch named like a tag, pointing elsewhere, either way round;
-  - every way GitHub's answer can fail to name one merged Release Please pull
-    request for the desktop into `main`, a failed API call and an answer
-    that is not a list;
-  - a release commit that changes another file, and a release from before
-    Windows builds.
+  - a release from before Windows builds.
 
   It passes under macOS's bash 3.2 and under bash 5.
 - `actionlint` passes on the workflows.

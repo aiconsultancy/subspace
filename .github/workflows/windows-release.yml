@@ -33,8 +33,8 @@
 #
 # The release workflow starts it on main when it creates an app release; wait
 # for it to attach the archive to the draft before `make release-macos`
-# publishes the release. It builds only a tag on a commit in main's
-# first-parent history, from a release that can skip running the app. The
+# publishes the release. It builds only a stable release tag on a commit on
+# main, from a release that can skip running the app. The
 # runner group admits only this file on main. To try the build or the
 # signing without attaching anything:
 #   gh workflow run windows-release.yml --ref main -f tag=subspace-desktop-v<version> -f mode=sign-only
@@ -86,7 +86,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read # Find the pull request that made the release commit.
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
@@ -98,14 +97,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # Anyone who can push a tag could otherwise get any commit signed. Only
-      # a Release Please commit in main's first-parent history is built and
-      # signed; the script, from this checkout of main, says how it checks.
+      # Only a stable release tag on a commit on main is built and signed; the
+      # script, from this checkout of main, says how it checks, and
       # scripts/test-windows-release-resolve.sh tests it.
       - name: Resolve the release
         id: release
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag }}
           EXPECTED_COMMIT: ${{ inputs.commit }}
         run: bash scripts/windows-release-resolve.sh
