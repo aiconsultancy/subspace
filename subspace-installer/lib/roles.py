@@ -7,7 +7,22 @@ from agent_files import agent_directory, write_private
 
 
 ROLES = Path(__file__).parent / "roles"
-SKILLS = ("fleet-rear-admiral", "fleet-captain", "fleet-crew")
+# The generic Subspace API skill from agent-skills/, which the fleet installer copies beside the role
+# templates; from a source checkout, the repository's own copy.
+API_SKILL = "subspace-tracker"
+API_SKILL_SOURCES = (
+    Path(__file__).parent / "agent-skills" / API_SKILL / "SKILL.md",
+    Path(__file__).resolve().parents[2] / "agent-skills" / "opencode" / API_SKILL / "SKILL.md",
+)
+SKILLS = ("fleet-rear-admiral", "fleet-captain", "fleet-crew", API_SKILL)
+
+
+def api_skill():
+    """The Subspace API skill's text, the same file a person's local OpenCode installs."""
+    for path in API_SKILL_SOURCES:
+        if path.is_file():
+            return path.read_text()
+    raise ValueError("The Subspace API skill is missing from the fleet installer.")
 
 
 def default_permissions(role, references):
@@ -113,6 +128,9 @@ def role_documents(cfg, person, references, home):
                 **values, "agent": worker["name"], "id": worker["id"], "captain": person["name"],
                 "model": worker["model"], "family": worker["family"].title(), "worktrees": worktrees,
             })
+    if (cfg.get("api") or {}).get("agentMcpUrl"):
+        # The officer reaches the API through its MCP server at the agent listener; its crew share the skill.
+        skills[API_SKILL] = api_skill()
     procedure = skills[f"fleet-{role}"].partition("\n---\n")
     if not procedure[1]:
         raise ValueError("Fleet skill templates need Markdown front matter.")

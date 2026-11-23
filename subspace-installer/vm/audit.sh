@@ -174,6 +174,23 @@ if grep -qs '^ENABLE_DEV_AUTH=true' /root/fleet/api.env; then
     warn 'Development sign-in is on: anyone who reaches the API can act as its administrator. Keep it single-operator or switch to WorkOS or Entra.'
 fi
 
+# 6b. The agent listener is the agents' only way into the API: its own port, without sign-in or admin routes.
+agent_port=$(sed -n 's/^AGENT_PORT=\([0-9][0-9]*\)$/\1/p' /root/fleet/api.env 2>/dev/null | tail -n 1)
+if [[ -n $agent_port ]]; then
+    if [[ $agent_port == 3000 || $agent_port == 5432 ]]; then
+        fail "The API's agent listener shares port $agent_port with an operator-only service. Set AGENT_PORT in /root/fleet/api.env to its own port."
+    else
+        # An invalid body: a served sign-in route answers 400 without signing anyone in; the agent listener has none.
+        status=$(curl -s -o /dev/null -m 5 -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+            --data '{"email":1}' "http://127.0.0.1:$agent_port/api/v1/auth/dev/token" 2>/dev/null)
+        case $status in
+            404) pass "Agents reach the API only on its agent listener (port $agent_port), which serves no sign-in route." ;;
+            000) warn "The API's agent listener on port $agent_port did not answer. Is the API running?" ;;
+            *) fail "Port $agent_port answers the development sign-in route (HTTP $status), so agents could sign in as anyone. Check AGENT_PORT and PORT in /root/fleet/api.env." ;;
+        esac
+    fi
+fi
+
 # 7. Public addresses.
 public=
 while read -r _ _ family address _; do

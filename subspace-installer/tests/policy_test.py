@@ -26,6 +26,11 @@ def example_config():
     return json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
 
 
+def api_secrets():
+    """The example's officer secrets plus the fixture API token that an API configuration needs."""
+    return {**officer_secrets(), "apiToken": "eyJhbGciOiJub25lIn0.eyJzdWIiOiJhZG1pbiJ9.admin"}
+
+
 def officer_secrets(*extra):
     """Passwords for the example's rear admiral and captain, plus any extra accounts."""
     return {"proxyKey": "fixture-model-proxy-key", "ircPasswords": {
@@ -254,6 +259,64 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(environment["OPENCODE_AUTHORIZATION"], next(iter(headers.values())))
         self.assertIn("fleet-crew", documents["skills"])
         self.assertIn("stargate_crew", documents["instructions"])
+
+    def test_officers_reach_the_api_agent_listener_as_themselves(self):
+        config = example_config()
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
+        cfg = validate(config, api_secrets())
+        self.assertEqual(cfg["api"]["agentMcpUrl"], "http://127.0.0.1:3001/mcp")
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        saved = {}
+
+        def save(name, settings, _user):
+            saved[name] = settings
+            return Path(f"/etc/subspace-fleet/{name}.json")
+
+        for person in cfg["members"]:
+            documents = roles.role_documents(cfg, person, Path("/references/atlas"), home)
+            # The same generic skill a person's local OpenCode installs from agent-skills/.
+            self.assertEqual(documents["skills"]["subspace-tracker"], (
+                Path(__file__).resolve().parents[2] / "agent-skills/opencode/subspace-tracker/SKILL.md").read_text())
+            with patch.object(runtime, "directory"), patch.object(runtime, "save_settings", side_effect=save), \
+                    patch.object(runtime, "serve_unit", return_value="subspace-fleet-engine.service"):
+                _, backend, _, _ = runtime.render_engine(
+                    cfg, person, home, home / "workspace/project", 4097, b"seed", documents, "ses_fixture")
+            engine = saved[f"opencode-{person['id']}"]
+            # The officer, and crew sessions on its server, act as the officer's agent record, with no token.
+            self.assertEqual(engine["mcp"], {"servers": {"subspace": {
+                "type": "remote", "url": "http://127.0.0.1:3001/mcp",
+                "headers": {"X-Subspace-Agent": person["account"]},
+            }}})
+            self.assertNotIn("Authorization", json.dumps(engine["mcp"]))
+            self.assertIn(runtime.SUBSPACE_MCP_GRANT, engine["permissions"])
+            self.assertIn(runtime.SUBSPACE_MCP_GRANT, backend["permissions"])
+            self.assertEqual(backend["permissions"].count(runtime.SUBSPACE_MCP_GRANT), 1)
+
+    def test_without_the_agent_listener_officers_get_no_api_server_or_skill(self):
+        config = example_config()
+        config["api"] = {"url": "http://127.0.0.1:3000"}
+        cfg = validate(config, api_secrets())
+        person = cfg["members"][1]
+        self.assertNotIn("subspace-tracker", roles.role_documents(cfg, person, None, Path("/home"))["skills"])
+        self.assertEqual(runtime.harness_permissions(cfg, person), person["harness"]["permissions"])
+        self.assertIsNone(runtime.subspace_mcp_url(cfg))
+
+    def test_the_agent_listener_must_be_on_loopback(self):
+        for agent_url in ("https://api.example.com", "http://192.0.2.10:3001", "http://127.0.0.1:3001/api"):
+            config = example_config()
+            config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": agent_url}
+            with self.assertRaises(Invalid):
+                validate(config, api_secrets())
+
+    def test_claude_officers_take_the_agent_header_from_a_helper(self):
+        output = subprocess.run(
+            [sys.executable, str(Path(runtime.__file__)), "agent-header", "example-orion"],
+            capture_output=True, text=True, check=True).stdout
+        self.assertEqual(json.loads(output), {"X-Subspace-Agent": "example-orion"})
+        refused = subprocess.run(
+            [sys.executable, str(Path(runtime.__file__)), "agent-header", "Example Orion"], capture_output=True)
+        self.assertNotEqual(refused.returncode, 0)
 
     def test_crew_worktrees_are_added_to_the_captain_checkout(self):
         captain = {"id": "orion", "role": "captain", "crew": [

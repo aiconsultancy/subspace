@@ -316,6 +316,11 @@ for program in runtime.py dashboard.py fleetctl.py github_app.py github_policy.p
 done
 install -d -m 0755 "$app/lib/git-hooks"
 install_file "$here/lib/git-hooks/pre-push" "$app/lib/git-hooks/pre-push" 0755
+# The generic Subspace API skill that officers with the API's agent listener receive (lib/roles.py).
+if [[ -f $here/../agent-skills/opencode/subspace-tracker/SKILL.md ]]; then
+    install -d -m 0755 "$app/lib/agent-skills/subspace-tracker"
+    install_file "$here/../agent-skills/opencode/subspace-tracker/SKILL.md" "$app/lib/agent-skills/subspace-tracker/SKILL.md" 0644
+fi
 for role in rear-admiral captain crew; do
     install -d -m 0755 "$app/lib/roles/$role"
     for template in "$here/lib/roles/$role/"*.md; do

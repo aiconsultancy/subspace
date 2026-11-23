@@ -217,6 +217,37 @@ class SetupInputsTests(unittest.TestCase):
         self.assertIn("WORKOS_CLIENT_ID=client_example\n", written)
         self.assertIn("POSTGRES_PASSWORD=", written)
 
+    def test_the_api_runs_an_agent_listener_for_the_sign_in_organisation(self):
+        answers, _, _ = answers_for(["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion"])
+        store = fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None)
+        payload = Path(self.directory.name) / "payload"
+        (payload / "subspace-api").mkdir(parents=True)
+        (payload / "subspace-api" / "compose.yaml").write_text("services: {}\n")
+        api_env = fleet_setup.INPUTS / "api.env"
+
+        def up():
+            with patch.object(fleet_setup, "PAYLOAD", payload), \
+                    patch.object(fleet_setup, "API_DIR", Path(self.directory.name) / "api"), \
+                    patch.object(fleet_setup, "compose"):
+                return fleet_setup.api_up(answers, store)
+
+        self.assertTrue(up())
+        written = api_env.read_text()
+        self.assertIn("AGENT_PORT=3001\n", written)
+        self.assertIn(f"AGENT_ORGANISATION=dev:{answers['organisation']}\n", written)
+        self.assertTrue(fleet_setup.agent_listener_enabled())
+        override = (fleet_setup.INPUTS / "api.override.yaml").read_text()
+        self.assertIn('"127.0.0.1:3000:3000"', override)
+        self.assertIn('"127.0.0.1:3001:3001"', override)
+        self.assertNotIn("0.0.0.0", override)
+        # An operator who clears the port keeps it off, and production never gets one.
+        api_env.write_text(written.replace("AGENT_PORT=3001", "AGENT_PORT="))
+        up()
+        self.assertFalse(fleet_setup.agent_listener_enabled())
+        api_env.write_text("NODE_ENV=production\n")
+        up()
+        self.assertNotIn("AGENT_PORT", api_env.read_text())
+
     def test_further_fleet_registration_carries_its_records_and_is_checked(self):
         argv = ["--name", "Fleet Two", "--rear-admiral", "Nova", "--captains", "Lyra, Vega",
                 "--irc", "remote", "--irc-host", "irc.example.com", "--no-api"]
@@ -493,6 +524,15 @@ class AgentDispatchSetupTests(unittest.TestCase):
         with patch.object(fleet_setup.pwd, "getpwnam", side_effect=KeyError), \
                 patch.object(fleet_setup, "metadata_users", return_value=[]):
             self.assertNotIn("--port-user", fleet_setup.isolation_args(answers))
+
+    def test_agents_may_reach_the_agent_listener_and_not_the_api(self):
+        answers = {"operator": "operator", "api": True, "agentDispatch": True, "metadataUsers": []}
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "metadata_users", return_value=[]):
+            args = fleet_setup.isolation_args(answers)
+        protected = [args[i + 1] for i, arg in enumerate(args) if arg == "--operator-only-port"]
+        self.assertEqual(protected, [str(fleet_setup.API_PORT), "5432"])
+        self.assertNotIn(str(fleet_setup.AGENT_API_PORT), " ".join(args))
+        self.assertNotEqual(fleet_setup.AGENT_API_PORT, fleet_setup.API_PORT)
 
 
 class IrcServerTests(unittest.TestCase):

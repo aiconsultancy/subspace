@@ -396,7 +396,7 @@ def write(example):
     cfg["irc"].update(host="127.0.0.1", caFile=str(WORK / "irc.pem"))
     cfg["operatorUsers"] = ["fixture-operator"]
     (WORK / "irc.pem").chmod(0o644)
-    cfg["api"] = {"url": "http://127.0.0.1:3000/api", "initiatives": [INITIATIVE]}
+    cfg["api"] = {"url": "http://127.0.0.1:3000/api", "initiatives": [INITIATIVE], "agentUrl": "http://127.0.0.1:3001"}
     cfg["medical"].update(enabled=True, baseUrl="http://127.0.0.1:18081",
                           projects=["your-project", "other-project"], intervalSeconds=300)
     cfg["repositories"] = [
@@ -551,8 +551,15 @@ def check_shape():
         assert "Example Fleet" in instructions
         assert (opencode / "skills" / f"fleet-{role}" / "SKILL.md").is_file()
         assert (opencode / "skills/fleet-crew/SKILL.md").is_file() == (role == "captain")
-        permissions = json.loads((etc / f"opencode-{agent}.json").read_text())["permissions"]
+        engine = json.loads((etc / f"opencode-{agent}.json").read_text())
+        permissions = engine["permissions"]
         assert {"action": "read", "resource": "*", "effect": "allow"} in permissions
+        # The API's agent listener: the officer's own name in a header, no token, and its tools allowed.
+        account = f"example-{agent}"
+        assert engine["mcp"]["servers"]["subspace"]["headers"] == {"X-Subspace-Agent": account}
+        assert engine["mcp"]["servers"]["subspace"]["url"] == "http://127.0.0.1:3001/mcp"
+        assert {"action": "subspace_*", "resource": "*", "effect": "allow"} in permissions
+        assert (opencode / "skills/subspace-tracker/SKILL.md").is_file()
         assert ({"action": "edit", "resource": "*", "effect": "allow"} in permissions) == (role != "rear-admiral")
     ref = Path("/var/lib/subspace-fleet/references/atlas/sample")
     assert subprocess.check_output(["runuser", "-u", "ss-atlas", "--", "git", "-C", ref, "show", "HEAD:README.md"], text=True).strip() == "sample"

@@ -58,6 +58,9 @@ FLEET_APP = Path("/opt/subspace-fleet")
 FLEET_ETC = Path("/etc/subspace-fleet")
 API_PROJECT = "subspace-api"
 API_PORT = 3000
+# The API's agent-only listener: a fleet agent names itself in a header there and needs no token. It serves no
+# sign-in or administrator route, so unlike API_PORT the agents' Linux users may reach it.
+AGENT_API_PORT = 3001
 STARGATE_API_PORT = 8484
 STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 LOOPBACK = "127.0.0.1"
@@ -692,7 +695,12 @@ def api_up(answers, secret_store):
             key, _, value = line.partition("=")
             if key and not key.startswith("#") and key not in environment:
                 kept[key] = value
-    merged = {**environment, **DEV_AUTH, **kept}
+    # The agent listener answers for the development sign-in organisation, which the fleet's agents are
+    # registered in. An operator can change or clear these, and the API refuses the listener in production.
+    agent = {"AGENT_PORT": AGENT_API_PORT, "AGENT_ORGANISATION": f"dev:{answers['organisation']}"}
+    merged = {**environment, **DEV_AUTH, **agent, **kept}
+    if merged.get("NODE_ENV") == "production":
+        merged.pop("AGENT_PORT")
     write_private(INPUTS / "api.env", "".join(f"{key}={value}\n" for key, value in merged.items()))
     # PostgreSQL is not published at all; the API is published on loopback only.
     write_private(INPUTS / "api.override.yaml", "\n".join([
@@ -704,6 +712,7 @@ def api_up(answers, secret_store):
         "    restart: unless-stopped",
         "    ports: !override",
         f'      - "{LOOPBACK}:{API_PORT}:3000"',
+        f'      - "{LOOPBACK}:{AGENT_API_PORT}:{AGENT_API_PORT}"',
         "",
     ]))
     say("building and starting the Subspace API and PostgreSQL (loopback only)")
@@ -719,6 +728,12 @@ def dev_auth_enabled():
         environment[key] = value
     providers = [value.strip() for value in environment.get("AUTH_PROVIDERS", "").split(",")]
     return environment.get("ENABLE_DEV_AUTH") == "true" and "dev" in providers
+
+
+def agent_listener_enabled():
+    """Whether api.env turns the API's agent listener on, on the port the fleet's agents are given."""
+    environment = dict(line.partition("=")[::2] for line in (INPUTS / "api.env").read_text().splitlines())
+    return environment.get("AGENT_PORT") == str(AGENT_API_PORT)
 
 
 def api_down():
@@ -1087,6 +1102,9 @@ def setup(args):
             answers.update(initiativeId=initiative)
             save_answers(answers)
             api_block = {"url": f"http://{LOOPBACK}:{API_PORT}", "initiatives": [initiative]}
+            if agent_listener_enabled():
+                # Officers get the API's MCP server at the agent listener, as their own agent records.
+                api_block["agentUrl"] = f"http://{LOOPBACK}:{AGENT_API_PORT}"
             # Register the fleet, its channels, ships and officers now: agent dispatch signs in as the rear
             # admiral's agent record. The installer's 'fleetctl register' sends the same records again.
             records = register_own(token, *inputs(irc_ref, api_block, bool(stargate_api), token, history))
@@ -1177,7 +1195,8 @@ def isolation_args(answers):
         except KeyError:
             gateway = False  # Not yet created: setup isolates again once the installer has run.
         if gateway:
-            # Agent dispatch: Stargate's gateway polls the API as the rear admiral. Agents never reach it.
+            # Agent dispatch: Stargate's gateway polls the API as the rear admiral. Agents never reach this port;
+            # they reach only the agent listener (AGENT_API_PORT), which is never operator-only.
             args += ["--port-user", f"{API_PORT}:{GATEWAY_USER}"]
     for user in metadata_users(answers):
         args += ["--metadata-user", user]
