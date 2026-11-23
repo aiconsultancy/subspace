@@ -62,12 +62,18 @@ was issued for until it expires. So:
   controls cannot replay what it receives against the real one.
 - **Only servers the API vouches for.** The servers come from the fleets
   of the caller's initiatives (`GET /api/v1/me/initiatives`), each once by
-  host (ignoring ASCII case), port and TLS. A host must be a DNS name or an
-  IP literal (IPv6 normalised; no whitespace, control characters, `/`, `@`
-  or port) and the port 1 to 65535, or the fleet's server is not used at
-  all. Each server is then asked for its login once (its probe): 404 gives
-  that server no network and leaves the others alone; a refusal or failure
-  is asked again with backoff.
+  host, port and TLS. Before a login can go to one, its host must be a DNS
+  name or an IP literal (no whitespace, control characters, `/`, `@` or
+  port) and its port 1 to 65535; a server that is not still serves
+  initiatives on a saved network as before, but gets no account network.
+  Each server is then asked for its login once (its probe): 404 gives that
+  server no network and leaves the others alone; a refusal or failure is
+  asked again with backoff.
+- **One form for every host comparison.** Hosts are compared in one form
+  on both sides: ASCII lower case, without a final dot or IPv6 brackets,
+  and an IP literal as Rust writes it. Everything that matched ignoring
+  ASCII case before still matches, such as a saved network named
+  `irc.example.com.` for a fleet on `irc.example.com`.
 - **Only the signed-in account's fleets.** The memberships must have been
   read for the same account generation and verified user as the client
   that asks (`Catalog::verified_for`); until they are, nothing is planned,
@@ -95,24 +101,30 @@ was issued for until it expires. So:
   `password` and `passwordFile`). The IRC runtime asks it at every connect
   and reconnect, where it reads a password file, on a blocking thread,
   while still answering **Disconnect**. The source offers that server's
-  login, kept in memory until a minute before its `expiresAt`, refuses one
-  that arrives already expired, and asks the API no sooner than 10 seconds
-  after its last request, or after a wait from 5 seconds doubling to 5
-  minutes after a failure, so a server that keeps dropping the link does
-  not cause a request per reconnect. Once its account is signed out or
-  switched, a source refuses.
+  login, kept in memory until a minute before it lapses, refuses one that
+  arrives already expired, and asks the API no sooner than 10 seconds after
+  its last request, or after a wait from 5 seconds doubling to 5 minutes
+  after a failure, so a server that keeps dropping the link does not cause
+  a request per reconnect. A login's lifetime runs from when it was
+  received: `expiresAt` less the API's own time in its `Date` header, so a
+  local clock that runs fast or slow changes nothing. A renewal that fails
+  keeps offering the held login while it has not lapsed. The lock that
+  guards a login is not held while the API answers. Once its account is
+  signed out or switched, a source refuses.
 - **On the wire.** The nick is the account the login names, and the SASL
   username `account@device` in both PLAIN identities, as Ergo compares them
   before it takes the device off. The password is an `IssuedPassword`,
   never formatted, serialised or put in the network's configuration: the
-  session holds it for its one SASL exchange and drops it once sent. SASL
-  outcomes for such a login are told in fixed words, so a server that
-  echoes the login cannot put it in the transcript. It never reaches
-  `irc/config.json`, the keychain, the state file, a log or the UI.
-- **SASL must succeed.** A server that reaches registration (001) without
-  accepting the SASL exchange is sent `QUIT` before anything is joined, the
-  connection retries with its backoff, and the source drops the login it
-  offered. A password that expires during a session changes nothing; the
+  session holds it for its one SASL exchange and drops it once sent,
+  checking at that moment that it has not lapsed and its account is still
+  signed in. SASL outcomes for such a login are told in fixed words, so a
+  server that echoes the login cannot put it in the transcript. It never
+  reaches `irc/config.json`, the keychain, the state file, a log or the UI.
+- **SASL must succeed.** A server that refuses the SASL exchange (902,
+  904 to 906) is left at once, and one that reaches registration (001)
+  without accepting it is sent `QUIT` before anything is joined; either way
+  the connection retries with its backoff, and the source drops the login
+  it offered. A password that expires during a session changes nothing; the
   next reconnect asks again. When no login can be had, the connection shows
   **Reconnecting in N s** with the reason, such as `Subspace API could not
   be reached for an IRC sign-in`; nothing asks for a password.
@@ -129,15 +141,21 @@ was issued for until it expires. So:
   no channels of their own: choosing an initiative sets the autojoin of the
   network on its fleet's server, as for any network.
 - **Ids no saved network can take.** An account network's id is
-  `@account.<person>.<server>`, from digests of the API's stable user ID
-  and the canonical endpoint, so it is the same on every run and differs
-  for every other person and server. A saved id starting with `@` is
-  refused when the settings load and in Settings.
-- **History follows the account.** Stored buffers of account networks that
-  restore before their network runs are kept aside and restored, with
-  their catch-up anchors, once it runs. When a person signs in, the stored
-  lines of every other person's account networks are deleted, so neither
-  the conversation nor Search shows them.
+  `@account.<person>.<server>`, 16 hexadecimal digits each of digests of
+  the API's stable user ID and the canonical endpoint, so it is the same on
+  every run and differs for every other person and server. Only a saved id
+  that starts with `@account.` is refused, when the settings load and in
+  Settings, and only an id of exactly that form counts as an account's;
+  other ids, `@work` among them, load and save as before.
+- **History follows the account, and is never deleted for it.** Every
+  account network's lines stay in the store under its id. While its person
+  is not signed in, the network does not run, so none of its buffers is in
+  the list, and search leaves its lines out (`Service::set_hidden`, asked
+  at every search and again before the Search view shows a result, so
+  results that arrived before the account changed are dropped too). When
+  the network runs again in the same session, as after signing back in or
+  switching back, its stored buffers are read again and restored with their
+  catch-up anchors.
 - **A saved network on the same server.** When a saved network connects to
   the same host and port, whatever its TLS settings, it is kept and no
   second connection is made. **Settings > Channels** offers **Use account
@@ -145,7 +163,11 @@ was issued for until it expires. So:
   account?**; Switch checks again that it still connects to the account's
   server and, on Save, the network and its saved passwords are removed, so
   the account's network connects instead. A change of account or server
-  withdraws the question. Keeping it is the simplest correct choice:
+  withdraws the question, and Save checks again, against the memberships
+  read for the person signed in now, that the account network for that
+  server still exists: if they signed out, another account signed in or the
+  memberships cannot be confirmed, Save stops and says why, and the saved
+  network stays. Keeping it is the simplest correct choice:
   replacing it silently could drop a hand-made account the person still
   uses, and two connections would put one person on one server twice.
 - **Settings.** **Settings > Channels** lists the account's networks under

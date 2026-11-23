@@ -11,8 +11,8 @@ Run from `subspace-desktop` on the branch, with Cargo through mise, on
   checks, format, cargo-shear, clippy with warnings denied, the tests (55
   test binaries, none failed, over the workspace with the unreleased Spaces
   and the app in its release configuration: 2,988 tests at first, 3,017
-  after the first review round) and the script fixtures,
-  `scripts/test-capture.sh` among them.
+  after the first review round, 3,025 after the second) and the script
+  fixtures, `scripts/test-capture.sh` among them.
 - `mise run quality` passed: 100.0% against `rustqual-baseline.json`, no
   new violations, and `rustqual . --findings` reports none.
 - `python3 -I scripts/test-subspace-api-test-server.py` passed (31 tests),
@@ -21,7 +21,13 @@ Run from `subspace-desktop` on the branch, with Cargo through mise, on
   others) for crates already in the lockfile on `main`; this change adds
   no crate, only `uuid`, already locked, to the Channels Space.
 
-New tests (with the first review round's):
+For the second review round the branch merged `origin/main` without
+conflicts, and `cargo metadata --locked` passed in the desktop, the
+Framework and both terminal projects. The Framework, which gained the
+search rule for hidden records, passed its own `make check` and
+`mise run quality` (100.0%).
+
+New tests (with both review rounds'):
 
 - API client (`clients/subspace-api/src/tests/irc_credential.rs`): one POST
   with the bearer naming the server, nothing sent without a host or port,
@@ -41,9 +47,20 @@ New tests (with the first review round's):
   on their own; forty connects using two probe logins, each network only its
   own server's; a switch with the old memberships still loaded; check and
   probe answers after a switch dropped; a source refusing after sign-out;
-  servers coming and going; memberships read again; history restored for
-  the account and deleted for another person; endpoint validation; saved
-  ids in the reserved namespace refused on load and in Settings.
+  servers coming and going; memberships read again; history kept across
+  another person's sign-in and back, hidden from them in the buffer list
+  and search, and restored after signing out and in again without a
+  restart; hosts compared in one form, with only a login's host held to
+  the strict rule; `@account.` ids refused on load and in Settings while
+  `@work` loads and saves; a staged switch kept at Save after sign-out or
+  while memberships cannot be confirmed.
+- Framework search (`services/search/tests/cases/isolation.rs`): a board's
+  rule hides documents from every search without deleting them.
+- Logins (`clients/subspace-api/src/tests/irc_credential.rs`,
+  `managed/login.rs`, `session/tests/sign_in.rs`): the lifetime taken from
+  the API's `Date`, an unexpired login kept through a failed renewal, a
+  refused sign-in ended at once, and a login that may no longer be sent
+  refused when it would be.
 - IRC client (`network/secrets.rs`, `network/tests/credential.rs`,
   `session/tests/registration.rs`, `model/credential.rs`): the source asked
   at each connect and reconnect and setting the nick, a saved password or
@@ -118,7 +135,7 @@ against the code and fixed in its own commit.
 - **A saved network could take an account network's id** (P1): account
   networks have `@account.` ids from digests of the user ID and endpoint,
   refused in saved settings; their history is restored with them and other
-  people's is deleted at sign-in.
+  people's was deleted at sign-in (round two keeps and hides it instead).
 - **The issued password was in the configuration** (P2): it is an
   `IssuedPassword`, sent once and dropped, with fixed SASL wording.
 - **Expiry ignored and a request per reconnect** (P2): logins are kept
@@ -139,13 +156,62 @@ against the code and fixed in its own commit.
   after a switch, a source refusing after sign-out, servers coming and
   going, and memberships read again.
 
+## Review round two
+
+The second reviews of pull request 83 found the issues below; the owner
+asked for data loss, broken use or upgrades, and anything that lets one
+identity act as another to be fixed, and the rest recorded.
+
+- **History deleted when the account changed** (data loss): nothing is
+  deleted any more. Another person's account networks do not run, so their
+  buffers are not listed, and search hides their lines through the
+  Framework's `Service::set_hidden`, including results that arrived before
+  the change. When an account network runs again in the same session, its
+  stored buffers are read again and restored with their anchors.
+- **Stricter hosts stopped matching** (upgrade): every host comparison uses
+  one form on both sides (lower case, no final dot or IPv6 brackets,
+  canonical IP), and the strict DNS-or-IP rule applies only where a login
+  is about to be sent, so the endpoint variable and initiatives on saved
+  networks match as before.
+- **Every id starting with `@` was refused** (upgrade): only `@account.` is
+  kept back, with a message that does not ask anyone to delete their
+  settings, and only an id of exactly the account form counts as an
+  account's.
+- **A staged switch could remove a saved network after sign-out**: Save
+  checks again against memberships verified for the person signed in now,
+  and stops with the reason when they signed out, another account signed
+  in, or the memberships cannot be confirmed.
+- **The credential path**: a failed renewal keeps offering an unexpired
+  login; a login's lifetime runs from the API's `Date`, not the local
+  clock; a SASL refusal drops the login at once; the login's lock is not
+  held while the API answers; and the login is checked for expiry and the
+  account at the moment it is sent.
+
+## Known limits
+
+Recorded by owner decision:
+
+- At start, the stored buffers are restored before the first account
+  check, so another person's account network buffers may be read then; none
+  is shown, since only running networks are, and nothing is deleted.
+- Beyond refusing `@account.` ids, there is no migration for hand-edited
+  ids in `irc/config.json`.
+- Fixed SASL wording applies to sessions with an issued login; a saved
+  network keeps the server's words, as the IRC client's clean-room
+  acceptance tests require.
+- Save stops while a switched network cannot be confirmed; **Cancel**
+  discards the page's other edits too.
+
 ## Not verified
 
-- **End-to-end sign-in.** No Subspace API with the credential route and no
-  Ergo server with the auth-script hook exist yet, so a real sign-in, Ergo's
-  account creation and per-device history replay were not exercised. The
-  client was tested against the written contract with offline fixtures, and
-  PLAIN's payload against Ergo 2.19.1's rule that both identities match
+- **End-to-end sign-in.** The API's credential route and Ergo's auth-script
+  hook reached `main` while this branch was in review and came in with the
+  merge. The desktop's request and answers match the API's documented
+  contract (host and port in, account, password and `expiresAt` out, 404
+  for an unlisted server, 409 retried), but no sign-in was run against a
+  real API and Ergo, so Ergo's account creation and per-device history
+  replay were not exercised. The client was tested with offline fixtures,
+  and PLAIN's payload against Ergo 2.19.1's rule that both identities match
   before the device is removed.
 - **The retrying reason on screen.** The capture's fleet server does not
   resolve, so its network retries for that reason, not for a missing

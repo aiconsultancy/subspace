@@ -55,9 +55,11 @@ described for maintainers in
   goes to the session apart from the configuration, is sent in the one
   PLAIN exchange and dropped. SASL outcomes for such a session are fixed
   words with the numeric (`The server did not accept the sign-in (904)`).
-- Such a session must sign in: at 001 without a 903, it sends `QUIT` and
-  joins nothing, the network retries as a lost connection with its backoff,
-  and the source's `on_refused` runs.
+- Such a session must sign in: a SASL refusal (902, 904 to 906) ends the
+  link at once, and 001 without a 903 sends `QUIT` and joins nothing;
+  either way the network retries as a lost connection with its backoff, and
+  the source's `on_refused` runs. `IssuedPassword::while_valid` is asked
+  before the password is sent; a lapsed login is not sent.
 - A source error is retried as a lost connection (`Reconnecting` with the
   error as its reason); a password file error stays final (`Failed`).
 
@@ -77,20 +79,26 @@ described for maintainers in
   the checked generation and user. While signed in and they are not, the
   catalogue is read again at once, then after 5 s doubling to 5 min.
 - **Servers** (`managed/plan.rs`, `initiatives/endpoint.rs`): the fleets'
-  servers with a valid host (DNS name or IP literal, IPv6 normalised, no
-  whitespace, control characters, `/`, `@` or port) and port (1 to 65535),
-  each once by host (ASCII case ignored), port and TLS, named after their
-  fleets. Only TLS servers, or plaintext ones named as loopback, count.
+  servers, each once by host, port and TLS, named after their fleets. Every
+  host comparison uses one form on both sides (`comparable_host`: ASCII
+  lower case, no final dot or IPv6 brackets, canonical IP). Only servers a
+  login may go to count (`Endpoint::sendable`: a DNS name or IP literal, no
+  whitespace, control characters, `/`, `@` or port, and a port from 1 to
+  65535), over TLS or, without it, named as loopback.
 - **Probes** (`managed/servers.rs`): each server's login is asked for once
   with its host and port. `Vouched(account)` on success; `Refused` on 404,
   for that server only; anything else is asked again after 5 s doubling (to
   30 min for 401 and 403, else 5 min). A server the catalogue drops goes
   with its login; a late answer for it changes nothing.
-- **Logins** (`managed/login.rs`): per server, the issued login is kept
-  until a minute before `expiresAt`; one that arrives expired is refused;
-  the API is asked no sooner than 10 s after the last request, or after a
-  wait from 5 s doubling to 5 min after a failure, one request at a time.
-  The probe's login is the first connect's.
+- **Logins** (`managed/login.rs`): per server, the issued login lasts
+  `valid_for` from when it was received (`expiresAt` less the API's `Date`)
+  and is kept until a minute before it lapses; one that arrives expired is
+  refused; the API is asked no sooner than 10 s after the last request, or
+  after a wait from 5 s doubling to 5 min after a failure, one request at a
+  time, without holding the lock while it answers; a failed renewal keeps
+  offering the unexpired login. The probe's login is the first connect's,
+  and each issued password is checked for expiry and the account when it
+  would be sent.
 - **Credential source** (`managed/source.rs`): one per network, keyed by API
   origin, user and server, offering only its server's login, refusing once
   its account generation is over, and dropping its login when the server
@@ -106,13 +114,16 @@ described for maintainers in
   names; host, port and TLS from the fleet; certificate checks on; nick the
   issued account; no channels; connect on start; SASL username
   `account@device`, empty password, the server's credential source.
-- **Saved ids**: a saved network whose id starts with `@` is skipped when
-  the settings load, with the reason, and Settings names the problem and
-  refuses Save until it is removed.
-- **History**: stored buffers of account networks not running at restore
-  are kept aside and restored, with anchors, once their network runs; when a
-  person signs in, stored buffers of other people's account networks
-  (kept aside, or of networks that stopped this session) are deleted.
+- **Saved ids** (`managed/ids.rs`): only a saved id that starts with
+  `@account.` is skipped when the settings load, with the reason, and named
+  in Settings, which refuses Save until it has another id; only an id of
+  exactly the account form is an account's.
+- **History**: nothing is deleted when the account changes. Account
+  networks run only for their person, so only theirs are listed; search
+  hides other people's account network lines (`Service::set_hidden`, with
+  `ids::hidden`); and when an account network starts running after the
+  restore at start, its stored buffers are read again and restored with
+  their anchors.
 - **Device** (`managed/device.rs`): `irc.device` in the state file, 16
   lower-case hexadecimal digits from a v4 UUID, made when missing or not of
   that form.
@@ -131,7 +142,10 @@ described for maintainers in
   sign-in…**, which asks **Switch "name" to your account?** with **Cancel**
   and **Switch**. A change of the account's networks withdraws the question;
   Switch is disabled on a locked page and checks again that the network
-  still serves an account server before it removes it from the draft.
+  still serves an account server before it removes it from the draft, and
+  Save stops with the reason if the person who switched it signed out,
+  another account signed in, the memberships cannot be confirmed or the
+  server is no longer the account's.
 
 ## Left out
 

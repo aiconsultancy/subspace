@@ -28,5 +28,10 @@ Back to the [record](README.md).
       check the peer before a plaintext login, retry refused checks and
       unread memberships, tighten the Settings switch, and test the timer
       path; screenshots recaptured.
+- [x] Review round two: merge `main`; keep and hide rather than delete
+      other people's history, restoring it in-session; compare hosts in one
+      form and validate only for logins; reserve only `@account.`; check a
+      staged switch again at Save; harden the credential path; record the
+      known limits.
 - [ ] End-to-end sign-in against a real API with the credential route and an
-      Ergo server with the auth hook, once both exist.
+      Ergo server with the auth hook, both now on `main`.
