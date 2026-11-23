@@ -89,10 +89,15 @@ pub(super) fn resolve(shared: &Shared, job: Job) {
         Ok(detail) => ResolutionOutcome::Available(ReferenceCard::from_detail(detail)),
         Err(crate::Error::NotFound) => ResolutionOutcome::Unavailable,
         Err(error) => {
+            let denied = matches!(error, crate::Error::SignInNeeded | crate::Error::Forbidden);
             state
                 .reference_errors
                 .insert(read.identifier(), error.into());
-            ResolutionOutcome::Error
+            if denied {
+                ResolutionOutcome::Denied
+            } else {
+                ResolutionOutcome::Error
+            }
         }
     };
     state.references.finish(read, outcome, Instant::now());
