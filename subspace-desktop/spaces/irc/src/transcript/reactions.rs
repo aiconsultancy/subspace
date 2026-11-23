@@ -6,8 +6,12 @@
 //! Selecting a pill adds or takes back our reaction. The row ends with
 //! **Add reaction**, a menu of a short fixed set of reactions
 //! ([`crate::reactions::choices`]) and, on a running request to a verified
-//! agent or that agent's reply, the stop group under `Stop <ship>`. A stop
-//! is sent only from that labelled menu item, never by selecting a pill.
+//! agent or that agent's reply, the stop group under `Stop <ship>`. Every
+//! selection goes through [`reacting::toggle`] and its one rule
+//! ([`crate::reactions::gate`]): a new ✋ or 🛑 of ours is sent only from
+//! that labelled menu item, never from a pill or the `+N` menu, whether or
+//! not the app recognises the message as an agent's; elsewhere selecting
+//! someone else's stop reaction says where the deliberate stop is.
 //!
 //! Without reaction support, or on a message without a `msgid`, the pills
 //! stay as read-only text and there is nothing to add. The inspector's
@@ -50,26 +54,21 @@ const NAMED: usize = 8;
 pub(crate) enum PillAction {
     /// Add ours, or take ours back.
     Toggle { add: bool },
-    /// A stop reaction on an agent message we have not made: say where
-    /// the deliberate stop is instead of sending one.
+    /// A stop reaction we have not made: say where the deliberate stop is
+    /// instead of sending one.
     Explain,
     /// Read-only: no support, no `msgid`, or the Thread tab.
     None,
 }
 
-/// What selecting `summary`'s pill does on a message that `can_react`.
-pub(crate) fn pill_action(
-    summary: &ReactionSummary,
-    agent: Option<&AgentMessage>,
-    can_react: bool,
-) -> PillAction {
+/// What selecting `summary`'s pill does on a message that `can_react`. It
+/// only shapes the control; [`reacting::toggle`] decides what is sent.
+pub(crate) fn pill_action(summary: &ReactionSummary, can_react: bool) -> PillAction {
     let mine = summary.mine();
-    match (can_react, agent) {
-        (false, _) => PillAction::None,
-        (true, Some(_)) if is_agent_stop_reaction(&summary.reaction) && !mine => {
-            PillAction::Explain
-        }
-        (true, _) => PillAction::Toggle { add: !mine },
+    match can_react {
+        false => PillAction::None,
+        true if is_agent_stop_reaction(&summary.reaction) && !mine => PillAction::Explain,
+        true => PillAction::Toggle { add: !mine },
     }
 }
 
@@ -122,8 +121,14 @@ pub(crate) fn row(entry: &Entry, context: &RowContext) -> Option<AnyElement> {
         let id = format!("irc-line:{}:reaction:{index}", entry.seq);
         pill(id, summary, agent, msgid.as_deref(), context)
     });
-    let overflow = (!hidden.is_empty())
-        .then(|| overflow(entry.seq, hidden, msgid.as_deref(), &context.conversation));
+    let overflow = (!hidden.is_empty()).then(|| {
+        overflow(
+            (entry.seq, agent),
+            hidden,
+            msgid.as_deref(),
+            &context.conversation,
+        )
+    });
     let add = msgid.as_ref().map(|msgid| {
         let ship = agent
             .filter(|agent| agent.running)
@@ -189,7 +194,7 @@ fn pill(
     context: &RowContext,
 ) -> AnyElement {
     let words = describe(summary, agent);
-    let action = pill_action(summary, agent, msgid.is_some());
+    let action = pill_action(summary, msgid.is_some());
     let Some(msgid) = msgid.filter(|_| action != PillAction::None) else {
         return text_pill(id, summary, &words);
     };
@@ -204,16 +209,12 @@ fn pill(
         button
     };
     let (conversation, msgid) = (context.conversation.clone(), msgid.to_owned());
-    let reaction = summary.reaction.clone();
-    let ship = agent.map(|agent| agent.ship.clone());
+    let (reaction, add) = (summary.reaction.clone(), !summary.mine());
     button
         .on_click(move |_, _, cx| {
-            let (msgid, reaction, ship) = (msgid.clone(), reaction.clone(), ship.clone());
-            _ = conversation.update(cx, |this, cx| match &action {
-                PillAction::Toggle { add } => {
-                    reacting::toggle(this, (msgid, reaction), *add, None, cx);
-                }
-                _ => reacting::explain_stop(this, ship.as_deref(), cx),
+            let (msgid, reaction) = (msgid.clone(), reaction.clone());
+            _ = conversation.update(cx, |this, cx| {
+                reacting::toggle(this, (msgid, reaction), add, None, cx);
             });
         })
         .into_any_element()
@@ -242,17 +243,18 @@ fn tipped(id: String, words: String, pill: Pill) -> AnyElement {
         .into_any_element()
 }
 
-/// `+N`: a menu of the reactions past [`SHOWN_PILLS`], each toggling ours
-/// when we can react.
+/// `+N`: a menu of the reactions past [`SHOWN_PILLS`], each selected as
+/// its pill would be, through [`reacting::toggle`], so a stop reaction in
+/// it is explained, never sent.
 fn overflow(
-    seq: i64,
+    (seq, agent): (i64, Option<&AgentMessage>),
     hidden: &[ReactionSummary],
     msgid: Option<&str>,
     conversation: &WeakEntity<Conversation>,
 ) -> AnyElement {
     let words: Vec<String> = hidden
         .iter()
-        .map(|summary| describe(summary, None))
+        .map(|summary| describe(summary, agent))
         .collect();
     let label = format!("+{}", hidden.len());
     let button = action_button(

@@ -6,6 +6,7 @@ mod header;
 mod live;
 mod navigator;
 mod notice;
+mod private_reactions;
 mod review;
 mod scope;
 mod thread;

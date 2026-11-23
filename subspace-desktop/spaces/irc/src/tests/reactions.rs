@@ -12,30 +12,32 @@ use crate::hub::Hub;
 use crate::thread_status::PROGRESS_TAG;
 use crate::{Irc, view};
 
-fn room() -> BufferKey {
+mod gate;
+
+pub(super) fn room() -> BufferKey {
     channel("#subspace")
 }
 
-fn with_id(mut line: Line, id: &str) -> Line {
+pub(super) fn with_id(mut line: Line, id: &str) -> Line {
     line.id = Some(id.into());
     line
 }
 
-fn reaction(msgid: &str, value: &str, nick: &str) -> Update {
+pub(super) fn reaction(msgid: &str, value: &str, nick: &str) -> Update {
     let mut reaction = subspace_client_irc::test_support::reaction(room(), msgid, value, nick);
     reaction.own = nick == "subspace";
     reaction.time = at(20);
     Update::Reaction(reaction)
 }
 
-fn support(supported: bool) -> Update {
+pub(super) fn support(supported: bool) -> Update {
     Update::ReactionSupport {
         network: network_id(),
         supported,
     }
 }
 
-fn receive(hub: &Entity<Hub>, updates: Vec<Update>, cx: &mut VisualTestContext) {
+pub(super) fn receive(hub: &Entity<Hub>, updates: Vec<Update>, cx: &mut VisualTestContext) {
     hub.update(cx, |hub, cx| crate::hub::receive(hub, updates, at(30), cx));
     cx.run_until_parked();
     cx.update(|window, cx| window.render_frame(cx));
@@ -43,7 +45,7 @@ fn receive(hub: &Entity<Hub>, updates: Vec<Update>, cx: &mut VisualTestContext) 
 
 /// `#subspace` with alice's message `m1`, our request `r1` to astra with
 /// her progress, and support on.
-fn open(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestContext) {
+pub(super) fn open(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestContext) {
     let (board, hub, cx) = mount(cx, settings());
     let mut astra = member("astra", "");
     astra.account = Some("astra".into());
@@ -77,7 +79,7 @@ fn open(cx: &mut TestAppContext) -> (Entity<Irc>, Entity<Hub>, &mut VisualTestCo
     (board, hub, cx)
 }
 
-fn seq(hub: &Entity<Hub>, id: &str, cx: &mut VisualTestContext) -> i64 {
+pub(super) fn seq(hub: &Entity<Hub>, id: &str, cx: &mut VisualTestContext) -> i64 {
     hub.read_with(cx, |hub, _| {
         hub.state
             .buffer(&room())
@@ -91,7 +93,7 @@ fn seq(hub: &Entity<Hub>, id: &str, cx: &mut VisualTestContext) -> i64 {
     })
 }
 
-fn label(window: &Window, id: &str) -> Option<String> {
+pub(super) fn label(window: &Window, id: &str) -> Option<String> {
     window
         .try_find(SharedString::from(id.to_owned()))
         .and_then(|found| found.label().map(str::to_owned))
