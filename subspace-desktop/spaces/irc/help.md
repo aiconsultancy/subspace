@@ -755,7 +755,10 @@ directly; nothing is posted to the channel.
 
 Type `/` to see them. The list then offers the issues this conversation has
 shown, and whom to assign. Once the command is complete, its first row says
-what `Return` will do; press `Return` to do it. A short note above the
+what `Return` will do; press `Return`, or click the row, to do it. `Tab`
+only completes a word and never runs a command. While you write a thread
+reply, a command is kept with a note instead: cancel the reply to run it.
+A short note above the
 message input says what changed, or why the tracker refused; a refused
 command stays in the message input. The issue's tile and **In play here**
 show the change once the Issues Space has read it again.
@@ -764,8 +767,9 @@ Hover a message, or focus it with the keyboard, to see its toolbar:
 **Add reaction**, **Reply in thread** (in a ship's channel or Starbase),
 **Make issue…** and **Record decision…**. The last two open a dialog where
 you can edit the title and choose the project or the issue; only its button
-changes the tracker. A new issue quotes the message with who wrote it,
-where and when.
+changes the tracker, and only under the account, organisation and tracker
+the dialog opened under: if you switch, the dialog says so and writes
+nothing. A new issue quotes the message with who wrote it, where and when.
 
 ### Move through messages with the keyboard
 

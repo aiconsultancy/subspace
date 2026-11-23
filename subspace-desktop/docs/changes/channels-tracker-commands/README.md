@@ -29,7 +29,7 @@ unknown command.
 | --- | --- |
 | `/assign <issue> [to <agent> \| to me]` | `PATCH /v1/issues/{id}` with `assigneeId` at the issue's version. In a ship's channel the default is the ship's captain. |
 | `/ready <issue> [off]` | `PATCH /v1/issues/{id}` with `readyForAgents`. |
-| `/decision <issue> <decision>` | `POST /v1/decisions` on the issue's project, linked to the issue, title from the first line, context `Recorded in Channels from #channel on Network.` |
+| `/decision <issue> <decision>` | `POST /v1/decisions` on the issue's project, linked to the issue, title from the first line, context ``Recorded in Channels from `#channel on Network`.`` (the place in a code span) |
 
 - **Checks before Return** (`tracker/plan.rs`, `check.rs`): an issue is
   named, is in the scope's projects and is not known to be unavailable; an
@@ -46,7 +46,9 @@ unknown command.
   (the captain first, the fleet's agents, `me`) and `off`. Once the draft
   is a whole command that would run, the first row says what Return will do
   (`Return assigns NAV-8 · Label unconfirmed burns in the route preview to
-  aurora-lyra`); Return or a click on it runs the command.
+  aurora-lyra`); Return or a click on it runs the command. Tab only
+  completes: on that row it takes the first row that inserts, and never
+  writes.
 - **The write** (`tracker/write.rs`, `flow.rs`): on a background task, read
   `/v1/me` (the person is signed in) and the issue, repeat the checks on the
   issue as the tracker returns it, then write once. One write at a time; the
@@ -90,7 +92,8 @@ issues and those in play). Only the dialog's button, or Return in its title,
 writes. A new issue's summary is the message's first 300 characters on one
 line; its description quotes the message in a fenced block longer than any
 backtick run in it, so nothing becomes Markdown, a link or a mention, then
-`From IRC message <msgid> by <nick> in #channel on Network, <time UTC>.` A
+`From IRC message <msgid> by <nick> in #channel on Network, <time UTC>.`,
+that line itself in a code span longer than any backtick run in it. A
 decision from a message records its words with that reference and the
 message as IRC evidence (`evidenceKind: ircMessage`). The notice reports the
 new issue's key (`Created NAV-14: …`); the dialog stays open with the
@@ -192,6 +195,8 @@ findings, no regression).
 
 ## Review findings
 
+### Carried over from PR 72
+
 Carried over from the reviews of the
 [reactions pull request](../channels-reactions/README.md) (PR 72), each
 checked against the code after merging `main`, fixed in its own commit
@@ -241,6 +246,62 @@ reaction** opens the same menu, whose every choice goes through
 tab's reply mode (`compose::reply::start`, sending `Command::Reply`). The
 Issues Space's contract test now counts its `issues@1/refresh` response.
 
+### PR 75 reviews
+
+Both reviews of this pull request (GPT-6.2 Sol: not clear, three highs;
+Claude Opus 5.5: clear, one medium), checked against the code first:
+
+1. **Tab ran a tracker command** (Sol high, Opus medium). The run row was
+   highlighted first and Tab emitted the same Complete event as Return.
+   The Framework's chat input now says which key completed
+   (`ChatInput::completion_key`, additive; Enter in an open list is bound
+   to a new `ChatCompleteWithEnter` that emits the same event). Return or a
+   click runs the row; Tab only inserts. A render test presses Tab on whole
+   `/ready` and `/assign` commands: nothing reaches the tracker or IRC.
+2. **A dialog confirmed under whatever account was current** (Sol high).
+   Make issue and Record decision hold the API client of the account and
+   organisation they opened under and the tracker's profile and origin;
+   their button writes with that client only while it is still current and
+   the scope names the same tracker, and otherwise says why and sends
+   nothing. A typed command plans and dispatches in one step with the
+   current client, so it has no such gap.
+3. **A tracker command typed in reply mode** (Sol high, Opus: refused
+   locally). Not real: `reply::command` refuses every `/command`. Proved by
+   a render test on a server with reply tags: `/decision`, `/assign` and
+   `/ready`, by Return and by the run row, reach neither IRC nor the
+   tracker, and the draft stays with "A thread reply is sent as text.
+   Cancel the reply to run a command."
+4. **Private reactions after a failed catalogue read** (Sol medium). The
+   gate stays closed until a read of the initiatives has succeeded for the
+   current account and organisation (`Catalog::memberships_known`), so
+   also after a failed or refused read, and without a Subspace API
+   sign-in.
+5. **IRC provenance as raw Markdown** (Sol medium, Opus low). The
+   description's "From IRC message …" line, the decision's evidence
+   reference and its context put the nick, channel and message ID in a code
+   span longer than any backtick run in them; a test uses hostile link and
+   mention syntax.
+6. **Rename de-duplication keyed on the last pair** (Sol medium, Opus low).
+   Repeats are now skipped only inside the run of reports one NICK makes
+   (its nick lines and member changes); any other event ends the run, so
+   the same rename made later by a new holder takes a new stamp.
+7. **Both hovered and focused rows wrote the one menu anchor** (Opus low).
+   The focused row measures into the keyboard's anchor and the hovered row
+   into a second; `r` and the toolbar's React each open at their own
+   message.
+8. **The revision map was unbounded** (Sol medium). A conversation the
+   book no longer holds anything for drops its revision; reading 0 still
+   tells an open view its last reactions went.
+9. **Completion gathered tracker facts on every edit** (Sol low). Only for
+   a draft that starts with `/`.
+
+Left open, as decided: **delayed accountless history is matched against
+the nick's current holder** (Sol medium, `groups.rs`). If Robert removes a
+reaction while the desktop misses it, and Bob later takes the nick, a
+replayed removal of Robert's from history matches Bob, so Robert's
+reaction stays shown. Fixing it needs the nick's holder at the operation's
+server time, which the book does not keep.
+
 ## Captures
 
 Retaken after the merge with `main` (its final reactions, Thread tab and
@@ -284,6 +345,11 @@ issue**; the title field's ring is the focus ring.
 - Keyboard reachability (`t`, `i`, `d`) is tested by its availability rule
   and by hand-reading the bindings, not by a render test.
 - A light theme and a narrow window are not captured.
+- The dialog's account binding is tested by changing the tracker scope;
+  an account or organisation switch (the client's native lease) is not
+  driven by a test, only read from `Client::account_changed`.
+- That completion skips the tracker's facts for ordinary chat is read from
+  the code, not measured.
 
 ## Tasks
 

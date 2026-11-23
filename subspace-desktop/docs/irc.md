@@ -750,7 +750,11 @@ private message.
   then the issues the conversation has shown (its tile owners, newest
   first), the tracker's project keys, whom to assign and `off`. Once the
   draft is a whole command that can run, the first row says what Return will
-  do (`Return assigns NAV-2 · … to aurora-lyra`) and choosing it runs it.
+  do (`Return assigns NAV-2 · … to aurora-lyra`); Return or a click on it
+  runs it (`ChatInput::completion_key`), while Tab only completes and on
+  that row takes the first row that inserts. Completion gathers the
+  tracker's facts only for a draft that starts with `/`. In reply mode a
+  command is refused like any `/command` and kept with a note.
 - **Writing** (`tracker/write.rs`, `flow.rs`): on a background task, read
   `/v1/me` and the issue, repeat the checks on what the tracker returns,
   then write once at the issue's version. The result, or the API's refusal
@@ -776,10 +780,15 @@ private message.
   open a dialog first: the quoted message, an editable title (its first
   line), and the project (the message's only issue's project, else the
   newest issue in play's) or the issue (the message's only issue). Only
-  **Create issue** or **Record decision** writes. The issue's description
-  quotes the message in a fenced block, so nothing in it becomes a link or
-  a mention, then who said it, where and when, and its message ID; a
-  decision carries the same reference as IRC evidence (`ircMessage`).
+  **Create issue** or **Record decision** writes, and only with the API
+  client of the account and organisation the dialog opened under, while
+  the Issues scope names the same tracker; otherwise nothing is sent and
+  the dialog says why. The issue's description quotes the message in a
+  fenced block, so nothing in it becomes a link or a mention, then who said
+  it, where and when, and its message ID, in a code span for the same
+  reason; a decision carries the same reference as IRC evidence
+  (`ircMessage`), and its context names the channel and network in a code
+  span.
 
 What the API does not support is left out: assigning someone other than a
 fleet agent or the person (the API knows no IRC nick for a person), and the
