@@ -134,14 +134,14 @@ fn front(board: &Irc, cx: &App) -> Option<Front> {
     })
 }
 
-/// The inspector: a fleet channel's ship or Starbase and its people under
-/// tabs; else the focused channel's members under their count, or a hint
-/// for a buffer that has none.
 /// Asks for the answers of what the Ship tab's **In play here** lists.
 pub(crate) fn want_in_play(board: &Irc, cx: &mut Context<Irc>) {
     play::want(board, cx);
 }
 
+/// The inspector: a fleet channel's ship or Starbase and its people under
+/// tabs; else the focused channel's members under their count, or a hint
+/// for a buffer that has none.
 pub(super) fn inspector(board: &Irc, cx: &mut Context<Irc>) -> workspace::Inspector {
     tabbed(board, cx).unwrap_or_else(|| members_only(board, cx))
 }
@@ -193,6 +193,8 @@ fn tabbed(board: &Irc, cx: &mut Context<Irc>) -> Option<workspace::Inspector> {
             move |index, _, _, cx| {
                 _ = board_entity.update(cx, |board, cx| {
                     board.inspector_tab = InspectorTab::at(index);
+                    // Shown now: ask for what In play here lists.
+                    want_in_play(board, cx);
                     cx.notify();
                 });
             },

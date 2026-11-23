@@ -245,11 +245,21 @@ pub(super) fn fold_new_fleets(
             board.list.toggle(key);
         }
     }
+    forget_gone(&mut board.absorbing, fleets);
     let moved = moved_into(board.selection_group.as_ref(), holding);
     if let Some(key) = moved.filter(|key| board.list.is_folded(key)) {
         board.list.toggle(key);
     }
     board.selection_group = holding.cloned();
+}
+
+/// Forgets the groups no longer laid out, so one that returns and takes
+/// in its network's rows again takes the network's fold again.
+fn forget_gone(
+    absorbing: &mut std::collections::HashSet<SharedString>,
+    fleets: &HashMap<SharedString, String>,
+) {
+    absorbing.retain(|key| fleets.contains_key(key));
 }
 
 /// Notes whether group `key` takes in its network's rows (`absorbs`) and
@@ -405,6 +415,19 @@ mod tests {
             None,
             "the person's choice stands"
         );
+    }
+
+    /// A group that disappears is forgotten, so it begins again when it
+    /// returns.
+    #[test]
+    fn a_group_that_goes_begins_to_take_in_its_rows_again_when_it_returns() {
+        use super::{began_absorbing, forget_gone};
+        let key = gpui_kit::SharedString::from("fleet");
+        let mut absorbing = std::collections::HashSet::new();
+        assert!(began_absorbing(&mut absorbing, &key, true));
+        assert!(!began_absorbing(&mut absorbing, &key, true), "already in");
+        forget_gone(&mut absorbing, &std::collections::HashMap::new());
+        assert!(began_absorbing(&mut absorbing, &key, true), "begins again");
     }
 
     /// The drawn navigator is checked by `tests/initiatives/navigator.rs`;

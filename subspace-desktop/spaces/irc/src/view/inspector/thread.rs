@@ -92,6 +92,22 @@ fn content(
 
 /// The replies under their heading and count, grouped by author, or the
 /// line that says there are none yet.
+/// The most replies the tab draws: the latest, with the rest counted.
+pub(crate) const MAX_REPLIES: usize = 40;
+
+/// How many of `count` replies, the earliest, the tab leaves out.
+pub(crate) fn earlier(count: usize) -> usize {
+    count.saturating_sub(MAX_REPLIES)
+}
+
+/// What the tab says of the earlier replies it leaves out.
+pub(crate) fn earlier_words(skipped: usize) -> String {
+    match skipped {
+        1 => "1 earlier reply is in the channel.".to_owned(),
+        n => format!("{n} earlier replies are in the channel."),
+    }
+}
+
 fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
     let tokens = Tokens::current(cx);
     let title = match thread.replies.len() {
@@ -108,8 +124,17 @@ fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
             )
             .into_any_element();
     }
-    let continues = crate::thread::continues(&thread.replies);
+    // The latest replies only, so a long thread draws a bounded list; the
+    // heading still counts every loaded reply.
+    let skipped = earlier(thread.replies.len());
+    let shown = &thread.replies[skipped..];
+    let continues = crate::thread::continues(shown);
     section
+        .children((skipped > 0).then(|| {
+            feedback::empty_line(&tokens, "irc-thread-earlier", earlier_words(skipped))
+                .id("irc-thread-earlier-line")
+                .test_support()
+        }))
         .child(
             v_flex()
                 .id("irc-thread-replies")
@@ -118,8 +143,7 @@ fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
                 .min_w_0()
                 .gap_1()
                 .children(
-                    thread
-                        .replies
+                    shown
                         .iter()
                         .zip(continues)
                         .map(|(entry, continues)| thread_message(entry, continues, context, cx)),

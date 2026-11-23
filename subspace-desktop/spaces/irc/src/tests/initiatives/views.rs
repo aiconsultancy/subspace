@@ -36,7 +36,9 @@ fn a_hidden_view_on_the_same_hub_never_empties_the_fleets_a_shown_one_shows(
     });
     settle(cx);
     assert!(shown(&hub, cx), "the hidden view publishes nothing over it");
-    // The shown view closes: its share goes with it.
+    // The shown view leaves the front: its share empties. (Its release
+    // on close, which hands the share back the same way, is not driven
+    // here: the test window keeps the view.)
     board.update_in(cx, |board, window, cx| {
         subspace_framework::dashboard::Dashboard::deactivate(board, window, cx);
     });

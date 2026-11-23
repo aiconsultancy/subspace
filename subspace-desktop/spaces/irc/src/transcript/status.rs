@@ -133,13 +133,22 @@ fn frame(
         .aria_label(linked_spoken(&spoken, count.as_deref()))
         .cursor_pointer()
         .on_click(move |_, window, cx| open(window, cx))
-        .child(marker.children(count.map(|count| {
+        // The line itself stays a status inside the button, so its stage
+        // and clock are still announced as they change.
+        .child(
             div()
-                .id(SharedString::from(format!("{id}:replies")))
+                .id(SharedString::from(format!("{id}:live")))
                 .test_support()
-                .text_color(tokens.muted)
-                .child(format!("· {count} ›"))
-        })))
+                .role(Role::Status)
+                .aria_label(spoken)
+                .child(marker.children(count.map(|count| {
+                    div()
+                        .id(SharedString::from(format!("{id}:replies")))
+                        .test_support()
+                        .text_color(tokens.muted)
+                        .child(format!("· {count} ›"))
+                }))),
+        )
         .into_any_element()
 }
 
