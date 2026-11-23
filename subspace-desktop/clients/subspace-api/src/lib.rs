@@ -8,6 +8,7 @@ mod dev_sign_in;
 mod fixture;
 pub mod hub;
 pub mod initiatives;
+mod irc_credential;
 pub mod issue_moves;
 pub mod issue_writes;
 mod list;
@@ -28,6 +29,7 @@ pub use activity::ActivityQuery;
 pub use backend::{Backend, Capabilities, backend, capabilities, service_name};
 pub use dev_sign_in::{DevSignIn, DevUser};
 pub use fixture::fixture_from_env;
+pub use irc_credential::IrcCredential;
 pub use list::{ListQuery, ListTab};
 pub use native::{
     api_base, configure_api_origin, configure_nett_origin, configured_api_origin,
