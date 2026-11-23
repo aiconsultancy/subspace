@@ -89,6 +89,10 @@ impl FleetApi {
         if matches!(outcome, Outcome::Read(_)) {
             self.reads.rereading.remove(fleet);
         }
+        let wrote = matches!(outcome, Outcome::Saved(Ok(_)) | Outcome::Cleared(Ok(())));
+        if wrote {
+            self.reads.cleared.remove(fleet);
+        }
         let (token, result) = match outcome {
             Outcome::Read(token) => (Some(token), Ok(())),
             Outcome::Saved(Ok(saved)) => (Some(TokenLoad::Saved(saved)), Ok(())),
@@ -98,12 +102,32 @@ impl FleetApi {
             }
             Outcome::Saved(Err(error)) => (None, Err(TokenError::Store(error))),
         };
+        let token = token.map(|token| hold_clear(&mut self.reads.cleared, fleet, token));
         match (current, token, &result) {
             (true, Some(token), _) => self.set_token(fleet, token, cx),
             (true, None, Err(_)) => self.load_token(fleet.to_owned(), cx),
             _ => {}
         }
         result
+    }
+}
+
+/// A token the person cleared stays out of use until a delete or a
+/// replacement write succeeds: a read that still finds it in the keychain,
+/// as after a refused delete and a refused save, says the clear failed
+/// rather than bringing it back. A read that finds none ends the hold.
+fn hold_clear(
+    cleared: &mut std::collections::BTreeSet<String>,
+    fleet: &str,
+    token: TokenLoad,
+) -> TokenLoad {
+    match token {
+        TokenLoad::Saved(_) if cleared.contains(fleet) => TokenLoad::ClearFailed,
+        TokenLoad::Missing => {
+            cleared.remove(fleet);
+            token
+        }
+        token => token,
     }
 }
 

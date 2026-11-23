@@ -72,6 +72,7 @@ impl FleetApi {
     fn forget(&mut self, fleet: &str, cx: &mut Context<Self>) -> Result<(), TokenError> {
         self.record(fleet).ok_or(TokenError::UnknownFleet)?;
         self.supersede(fleet);
+        self.reads.cleared.insert(fleet.to_owned());
         self.set_token(fleet, TokenLoad::Missing, cx);
         Ok(())
     }

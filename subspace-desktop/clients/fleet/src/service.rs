@@ -58,6 +58,14 @@ pub struct FleetInfo {
     pub state: FleetState,
 }
 
+/// A Retry waiting for its fleet's interval: the generation it was asked
+/// in and its own identity.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Deferred {
+    generation: u64,
+    id: u64,
+}
+
 /// What the service keeps of its token reads.
 #[derive(Default)]
 struct Reads {
@@ -65,7 +73,13 @@ struct Reads {
     last: BTreeMap<String, Instant>,
     /// Each fleet a Retry asked about too soon, with its generation then:
     /// it is read once its interval ends, unless it changed meanwhile.
-    deferred: BTreeMap<String, u64>,
+    deferred: BTreeMap<String, Deferred>,
+    /// The last waiting Retry's identity, so each consumes only its own.
+    deferrals: u64,
+    /// The fleets the person cleared whose token no delete or replacement
+    /// write has removed yet: never used again until one does
+    /// ([`queue`]).
+    cleared: std::collections::BTreeSet<String>,
     /// The fleets with a re-read queued and not landed: never two at once.
     rereading: std::collections::BTreeSet<String>,
     /// Each fleet's last store operation queued ([`queue`]): the fleet's
@@ -297,20 +311,28 @@ impl FleetApi {
         if self.reads.deferred.contains_key(&fleet) {
             return;
         }
-        let generation = self.generation_of(&fleet);
-        self.reads.deferred.insert(fleet.clone(), generation);
+        self.reads.deferrals = self.reads.deferrals.wrapping_add(1);
+        let asked = Deferred {
+            generation: self.generation_of(&fleet),
+            id: self.reads.deferrals,
+        };
+        self.reads.deferred.insert(fleet.clone(), asked);
         let wait = at.saturating_duration_since(now);
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(wait).await;
-            _ = this.update(cx, |this, cx| this.deferred_due(&fleet, at, cx));
+            _ = this.update(cx, |this, cx| this.deferred_due(&fleet, asked, at, cx));
         })
         .detach();
     }
 
-    /// `fleet`'s waiting Retry, at `at`: read when nothing changed it.
-    fn deferred_due(&mut self, fleet: &str, at: Instant, cx: &mut Context<Self>) {
-        let asked = self.reads.deferred.remove(fleet);
-        let unchanged = asked == Some(self.generation_of(fleet));
+    /// `fleet`'s waiting Retry `asked`, at `at`: read when it is still the
+    /// fleet's waiting Retry and nothing changed it.
+    fn deferred_due(&mut self, fleet: &str, asked: Deferred, at: Instant, cx: &mut Context<Self>) {
+        if self.reads.deferred.get(fleet) != Some(&asked) {
+            return;
+        }
+        self.reads.deferred.remove(fleet);
+        let unchanged = asked.generation == self.generation_of(fleet);
         // A Retry may have read it since: the deadline is checked again.
         let due = self
             .reads
@@ -341,6 +363,8 @@ impl FleetApi {
     /// still running lands in an older one and is dropped.
     fn supersede(&mut self, fleet: &str) -> u64 {
         let reads = &mut self.reads;
+        // A Retry waiting from the old generation no longer holds the slot.
+        reads.deferred.remove(fleet);
         reads.generation = reads.generation.wrapping_add(1);
         reads.generations.insert(fleet.to_owned(), reads.generation);
         reads.generation
