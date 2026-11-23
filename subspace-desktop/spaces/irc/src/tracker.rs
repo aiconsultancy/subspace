@@ -48,7 +48,9 @@ use crate::fleet::{ChannelKind, Roster};
 use crate::issues::IssueReferences;
 use crate::tiles::{TileRef, Tiles};
 
-pub(crate) use flow::{SCOPE_CHANGED, State, submit};
+#[cfg(test)]
+pub(crate) use flow::SCOPE_CHANGED;
+pub(crate) use flow::{State, submit};
 pub(crate) use parse::typed;
 pub(crate) use plan::Facts;
 use plan::{AgentChoice, Answer, Known};
