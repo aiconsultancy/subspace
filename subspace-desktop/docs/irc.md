@@ -89,8 +89,8 @@ was issued for until it expires. So:
 
 ### Signing in
 
-- **Who.** Once per sign-in, and again whenever the account changes (the
-  hub compares it at most once a second), the hub reads `GET /api/v1/me`
+- **Who.** Once per sign-in, and again whenever the account changes, the
+  hub reads `GET /api/v1/me`
   for the verified user ID and the `username`. Only a missing `username` or
   a 404 settles that the account brings no networks; a refused (401, 403)
   or failed read is tried again after 5 seconds, doubling up to 30 minutes
@@ -105,9 +105,12 @@ was issued for until it expires. So:
   arrives already expired, and asks the API no sooner than 10 seconds after
   its last request, or after a wait from 5 seconds doubling to 5 minutes
   after a failure, so a server that keeps dropping the link does not cause
-  a request per reconnect. A login's lifetime runs from when it was
-  received: `expiresAt` less the API's own time in its `Date` header, so a
-  local clock that runs fast or slow changes nothing. A renewal that fails
+  a request per reconnect. A login lasts from when its request was sent, on
+  the monotonic clock, for `expiresAt` less the API's own time in its
+  `Date` header and never more than the ten minutes the API gives every
+  login, so neither a local clock that runs fast or slow nor a `Date` that
+  runs behind lets it be used past its expiry. Without a usable `Date` it
+  lasts two minutes. A renewal that fails
   keeps offering the held login while it has not lapsed. The lock that
   guards a login is not held while the API answers. Once its account is
   signed out or switched, a source refuses.
@@ -147,15 +150,27 @@ was issued for until it expires. So:
   that starts with `@account.` is refused, when the settings load and in
   Settings, and only an id of exactly that form counts as an account's;
   other ids, `@work` among them, load and save as before.
+- **The account change fences its networks.** Before the hub serves a
+  queued tool call or takes the runtime's events, it compares the account
+  generation and, when it changed, forgets the account and stops its
+  networks at once. It never sends a command for an account network, or
+  takes an event from one, unless that network is derived for the account
+  still signed in, so nothing goes out as the previous account and a late
+  message cannot bring its conversation back or notify.
 - **History follows the account, and is never deleted for it.** Every
   account network's lines stay in the store under its id. While its person
   is not signed in, the network does not run, so none of its buffers is in
   the list, and search leaves its lines out (`Service::set_hidden`, asked
-  at every search and again before the Search view shows a result, so
-  results that arrived before the account changed are dropped too). When
-  the network runs again in the same session, as after signing back in or
-  switching back, its stored buffers are read again and restored with their
-  catch-up anchors.
+  while each search selects candidates, by related items and by reading a
+  result by its citation, and again before the Search view shows a result,
+  so results that arrived before the account changed are dropped too). A
+  line's account is read from its stored network ID alone, parsed exactly,
+  never from its channel's name. An account network that starts after the
+  restore at launch, as at every launch and after signing back in or
+  switching back, is held back from the runtime until its stored buffers
+  are read again and restored; it is then configured with its catch-up
+  anchors sent at once, before it can connect, so it catches up from where
+  each conversation left off.
 - **A saved network on the same server.** When a saved network connects to
   the same host and port, whatever its TLS settings, it is kept and no
   second connection is made. **Settings > Channels** offers **Use account
@@ -163,13 +178,15 @@ was issued for until it expires. So:
   account?**; Switch checks again that it still connects to the account's
   server and, on Save, the network and its saved passwords are removed, so
   the account's network connects instead. A change of account or server
-  withdraws the question, and Save checks again, against the memberships
-  read for the person signed in now, that the account network for that
-  server still exists: if they signed out, another account signed in or the
-  memberships cannot be confirmed, Save stops and says why, and the saved
-  network stays. Keeping it is the simplest correct choice:
-  replacing it silently could drop a hand-made account the person still
-  uses, and two connections would put one person on one server twice.
+  withdraws the question, and Save checks again, against the account the
+  hub has at that moment and the memberships read for that person, that the
+  account network for that server still exists: if they signed out,
+  another account signed in or the memberships cannot be confirmed, Save
+  stops and says why, and the saved network stays, even when the page has
+  not caught up with the change yet. Once a Save has applied the switch, it
+  no longer holds back a later Save. Keeping it is the simplest correct
+  choice: replacing it silently could drop a hand-made account the person
+  still uses, and two connections would put one person on one server twice.
 - **Settings.** **Settings > Channels** lists the account's networks under
   **From your account**, read-only, and the others under **Saved
   networks**: each server's fleets, `host:port · TLS · account` with the

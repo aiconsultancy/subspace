@@ -29,6 +29,8 @@ described for maintainers in
   or not printable ASCII, or an expiry that is not RFC 3339 is refused as
   `InvalidResponse`. 404 is `NotFound`; 401 is `SignInNeeded`; a transport
   failure is `Network`. A NETT client answers `NotFound` without asking.
+  `valid_for` is `expiresAt` less the answer's `Date`, at most ten minutes,
+  or two minutes without a readable `Date`.
 - `Catalog::verified_for()` names the account generation and verified user
   the memberships were read for, while the latest read succeeded for the
   current scope. `signed_in_generation()` is the current account generation.
@@ -72,9 +74,10 @@ described for maintainers in
   check has settled for the current account, a background task reads `/me`.
   `SignedIn { id, username }` with a username; `Without` for no username or
   404; 401 and 403 are checked again after 5 s doubling to 30 min, other
-  failures to 5 min. The account generation is compared at most once a
-  second; a change forgets the account, its servers, logins and networks
-  and checks again. An answer begun in another generation is dropped.
+  failures to 5 min. The account generation is compared on every tick and
+  before the hub serves tool calls or takes events (`managed::fence`); a
+  change forgets the account, its servers, logins and networks and checks
+  again. An answer begun in another generation is dropped.
 - **Memberships**: nothing is planned until `Catalog::verified_for()` names
   the checked generation and user. While signed in and they are not, the
   catalogue is read again at once, then after 5 s doubling to 5 min.
@@ -91,8 +94,8 @@ described for maintainers in
   30 min for 401 and 403, else 5 min). A server the catalogue drops goes
   with its login; a late answer for it changes nothing.
 - **Logins** (`managed/login.rs`): per server, the issued login lasts
-  `valid_for` from when it was received (`expiresAt` less the API's `Date`)
-  and is kept until a minute before it lapses; one that arrives expired is
+  `valid_for` from when its request was sent, on the monotonic clock, and
+  is kept until a minute before it lapses; one that arrives expired is
   refused; the API is asked no sooner than 10 s after the last request, or
   after a wait from 5 s doubling to 5 min after a failure, one request at a
   time, without holding the lock while it answers; a failed renewal keeps
@@ -118,12 +121,18 @@ described for maintainers in
   `@account.` is skipped when the settings load, with the reason, and named
   in Settings, which refuses Save until it has another id; only an id of
   exactly the account form is an account's.
+- **Fence** (`hub.rs`, `Managed::admits`): the hub sends a command for an
+  account network (`Command::network`), and takes an event from one
+  (`Event::network`), only while that network is derived for the account
+  still signed in.
 - **History**: nothing is deleted when the account changes. Account
   networks run only for their person, so only theirs are listed; search
   hides other people's account network lines (`Service::set_hidden`, with
-  `ids::hidden`); and when an account network starts running after the
-  restore at start, its stored buffers are read again and restored with
-  their anchors.
+  `ids::hidden`, which reads the network from a record's navigation or an
+  ending's buffer and parses it exactly); and an account network that
+  starts after the restore at start is held back (`Recall::starting`) until
+  its stored buffers are read again and restored, then configured with its
+  anchors sent at once.
 - **Device** (`managed/device.rs`): `irc.device` in the state file, 16
   lower-case hexadecimal digits from a v4 UUID, made when missing or not of
   that form.
@@ -145,7 +154,9 @@ described for maintainers in
   still serves an account server before it removes it from the draft, and
   Save stops with the reason if the person who switched it signed out,
   another account signed in, the memberships cannot be confirmed or the
-  server is no longer the account's.
+  server is no longer the account's, asked of the page's copy and of the
+  hub's account at that moment. A switch is forgotten once the hub's saved
+  settings no longer hold its network.
 
 ## Left out
 

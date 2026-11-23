@@ -11,8 +11,8 @@ Run from `subspace-desktop` on the branch, with Cargo through mise, on
   checks, format, cargo-shear, clippy with warnings denied, the tests (55
   test binaries, none failed, over the workspace with the unreleased Spaces
   and the app in its release configuration: 2,988 tests at first, 3,017
-  after the first review round, 3,025 after the second) and the script
-  fixtures, `scripts/test-capture.sh` among them.
+  after the first review round, 3,025 after the second, 3,030 after the
+  third) and the script fixtures, `scripts/test-capture.sh` among them.
 - `mise run quality` passed: 100.0% against `rustqual-baseline.json`, no
   new violations, and `rustqual . --findings` reports none.
 - `python3 -I scripts/test-subspace-api-test-server.py` passed (31 tests),
@@ -25,9 +25,9 @@ For the second review round the branch merged `origin/main` without
 conflicts, and `cargo metadata --locked` passed in the desktop, the
 Framework and both terminal projects. The Framework, which gained the
 search rule for hidden records, passed its own `make check` and
-`mise run quality` (100.0%).
+`mise run quality` (100.0%) in the second and third review rounds.
 
-New tests (with both review rounds'):
+New tests (with the three review rounds'):
 
 - API client (`clients/subspace-api/src/tests/irc_credential.rs`): one POST
   with the bearer naming the server, nothing sent without a host or port,
@@ -58,9 +58,20 @@ New tests (with both review rounds'):
   rule hides documents from every search without deleting them.
 - Logins (`clients/subspace-api/src/tests/irc_credential.rs`,
   `managed/login.rs`, `session/tests/sign_in.rs`): the lifetime taken from
-  the API's `Date`, an unexpired login kept through a failed renewal, a
-  refused sign-in ended at once, and a login that may no longer be sent
-  refused when it would be.
+  the API's `Date`, never over ten minutes, two without a readable one, and
+  counted from the request, an unexpired login kept through a failed
+  renewal, a refused sign-in ended at once, and a login that may no longer
+  be sent refused when it would be.
+- Round three: an account network never configured before its channel and
+  private conversation are restored, with its anchors as its next command
+  (`managed/tests/history.rs`); a tool call queued before sign-out refused
+  and nothing sent, and a message after it bringing no conversation back
+  (`managed/tests/fence.rs`); Save against a page not yet refreshed, and a
+  later Save after an accepted switch (`editor/tests/save.rs`); a channel
+  named like an account network, and multi-byte ids at every boundary
+  (`managed/ids.rs`); and in the Framework, a visible match among more
+  hidden ones than a search reads, and no related item or citation read
+  of a hidden record (`services/search/tests/cases/isolation.rs`).
 - IRC client (`network/secrets.rs`, `network/tests/credential.rs`,
   `session/tests/registration.rs`, `model/credential.rs`): the source asked
   at each connect and reconnect and setting the nick, a saved password or
@@ -186,6 +197,31 @@ identity act as another to be fixed, and the rest recorded.
   clock; a SASL refusal drops the login at once; the login's lock is not
   held while the API answers; and the login is checked for expiry and the
   account at the moment it is sent.
+
+## Review round three
+
+The third reviews of pull request 83 found the issues below; each was
+checked against the code and fixed in its own commit.
+
+- **Catch-up gap at every launch**: an account network starting after the
+  restore at launch was configured before its stored buffers were read
+  back, so its anchors arrived after registration and it asked only for
+  the latest lines. It is now held back until they are restored, then
+  configured with its anchors sent at once.
+- **Hidden lines through other read paths**: the Framework's rule is now
+  asked while each search selects candidates, before its limits, by
+  related items and by reading a result by its citation, plain or fenced.
+- **Sign-out race in the hub**: tool calls and events were taken before
+  the account change was noticed, at most once a second. The account is
+  now compared before either, and commands and events of an account
+  network go through only while it belongs to the account signed in.
+- **Save against a stale page**: Save now also asks the hub's account at
+  that moment, and a switch a Save applied no longer holds back later ones.
+- **The `Date` header**: a login lasts from when its request was sent, at
+  most ten minutes, and two minutes without a usable `Date`.
+- **Ownership by substring**: a stored line's account comes from its
+  structured network ID, parsed exactly, so a channel named like an
+  account network shows and no input can panic.
 
 ## Known limits
 

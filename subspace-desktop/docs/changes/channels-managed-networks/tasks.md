@@ -33,5 +33,10 @@ Back to the [record](README.md).
       form and validate only for logins; reserve only `@account.`; check a
       staged switch again at Save; harden the credential path; record the
       known limits.
+- [x] Review round three: hold a starting account network back until its
+      history is restored; hide hidden records from related items, citation
+      reads and candidate selection; fence commands and events by account;
+      check Save against the live account; bound a login's lifetime from
+      its request; decide ownership from the structured network ID.
 - [ ] End-to-end sign-in against a real API with the credential route and an
       Ergo server with the auth hook, both now on `main`.
