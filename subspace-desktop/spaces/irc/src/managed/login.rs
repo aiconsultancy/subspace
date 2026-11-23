@@ -1,19 +1,20 @@
 //! One server's issued login: asked for with that server's host and port,
 //! kept in memory until shortly before it expires, and never asked for
 //! again sooner than a minimum interval, or a growing wait after a failure.
-//! A login is only ever offered to the server it was issued for.
+//! A login is only ever offered to the server it was issued for. Its
+//! lifetime runs from when it was received, by the API's clock, so a fast
+//! or slow local clock changes nothing.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, TimeDelta, Utc};
 use subspace_api_client::{Client, Error, IrcCredential};
 use subspace_framework::core::Secret;
 
 use crate::initiatives::Endpoint;
 
 /// A kept login is asked for again this long before it expires.
-const RENEW_BEFORE: TimeDelta = TimeDelta::seconds(60);
+const RENEW_BEFORE: Duration = Duration::from_secs(60);
 /// The least time between two requests for one server.
 const MIN_INTERVAL: Duration = Duration::from_secs(10);
 /// The first wait after a failed request; each further failure doubles it.
@@ -22,9 +23,12 @@ const RETRY_MAX: Duration = Duration::from_secs(300);
 const RETRY_MAX_DOUBLINGS: u32 = 6;
 
 /// A login for one connect to the server.
+#[derive(Clone)]
 pub(crate) struct Login {
     pub account: String,
     pub password: Secret,
+    /// When it stops being accepted, on this computer's monotonic clock.
+    pub valid_until: Instant,
 }
 
 /// Why no login is offered now.
@@ -49,16 +53,12 @@ pub(crate) struct ServerLogin {
 
 #[derive(Default)]
 struct Held {
-    kept: Option<Kept>,
+    kept: Option<Login>,
     asked_at: Option<Instant>,
+    /// A request is under way; its answer is taken when it comes.
+    asking: bool,
     failures: u32,
     retry_at: Option<Instant>,
-}
-
-struct Kept {
-    account: String,
-    password: Secret,
-    expires_at: DateTime<Utc>,
 }
 
 /// What to do for a connect at a given moment.
@@ -91,95 +91,100 @@ impl ServerLogin {
     }
 
     /// The login for a connect now: the kept one while it is fresh, else a
-    /// new one when the API may be asked. Blocking; one request at a time
-    /// per server.
+    /// new one when the API may be asked. Blocking, without holding the
+    /// lock while the API answers, so [`Self::forget`] never waits on it.
     pub(crate) fn login(&self, client: &Client) -> Result<Login, Unavailable> {
-        let mut held = self
-            .held
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (now, clock) = (Instant::now(), Utc::now());
-        match held.step(now, clock) {
-            Step::Keep => held.login().ok_or(Unavailable::Waiting),
-            Step::Wait => Err(Unavailable::Waiting),
-            Step::Ask => {
-                let answer = client.irc_credential(&self.host, self.port);
-                held.take(answer, now, Utc::now())
+        let now = Instant::now();
+        {
+            let mut held = self.held();
+            match held.step(now) {
+                Step::Keep => return held.login(now).ok_or(Unavailable::Waiting),
+                Step::Wait => return Err(Unavailable::Waiting),
+                Step::Ask => held.begin(now),
             }
         }
+        let answer = client.irc_credential(&self.host, self.port);
+        self.held().take(answer, now, Instant::now())
     }
 
     /// The server refused the kept login: drop it, so the next connect
     /// asks again once that is allowed.
     pub(crate) fn forget(&self) {
-        let mut held = self
-            .held
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut held = self.held();
         held.kept = None;
         held.fail(Instant::now());
+    }
+
+    fn held(&self) -> std::sync::MutexGuard<'_, Held> {
+        self.held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
 impl Held {
-    fn step(&self, now: Instant, clock: DateTime<Utc>) -> Step {
-        if self
-            .kept
-            .as_ref()
-            .is_some_and(|kept| clock < kept.expires_at - RENEW_BEFORE)
-        {
+    fn step(&self, now: Instant) -> Step {
+        let fresh = |kept: &Login| now + RENEW_BEFORE < kept.valid_until;
+        if self.kept.as_ref().is_some_and(fresh) {
             return Step::Keep;
         }
-        let too_soon = self.retry_at.is_some_and(|at| now < at)
+        let too_soon = self.asking
+            || self.retry_at.is_some_and(|at| now < at)
             || self
                 .asked_at
                 .is_some_and(|at| now.saturating_duration_since(at) < MIN_INTERVAL);
-        match (too_soon, self.kept.as_ref()) {
+        match (too_soon, self.login(now)) {
             (false, _) => Step::Ask,
             // Too soon to renew, but the kept login has not expired yet.
-            (true, Some(kept)) if clock < kept.expires_at => Step::Keep,
-            (true, _) => Step::Wait,
+            (true, Some(_)) => Step::Keep,
+            (true, None) => Step::Wait,
         }
     }
 
-    fn login(&self) -> Option<Login> {
-        self.kept.as_ref().map(|kept| Login {
-            account: kept.account.clone(),
-            password: kept.password.clone(),
-        })
+    /// The kept login, while it has not expired at `now`.
+    fn login(&self, now: Instant) -> Option<Login> {
+        self.kept
+            .as_ref()
+            .filter(|kept| now < kept.valid_until)
+            .cloned()
     }
 
-    /// Takes the API's `answer` to a request made at `now`.
+    fn begin(&mut self, now: Instant) {
+        self.asking = true;
+        self.asked_at = Some(now);
+    }
+
+    /// Takes the API's `answer` to a request made at `asked` and received
+    /// at `received`. A failed renewal keeps offering the kept login while
+    /// it has not expired.
     fn take(
         &mut self,
         answer: Result<IrcCredential, Error>,
-        now: Instant,
-        clock: DateTime<Utc>,
+        asked: Instant,
+        received: Instant,
     ) -> Result<Login, Unavailable> {
-        self.asked_at = Some(now);
-        let credential = match answer {
-            Ok(credential) if credential.expires_at > clock => credential,
-            Ok(_) => {
-                self.fail(now);
-                return Err(Unavailable::Expired);
+        self.asking = false;
+        let unavailable = match answer {
+            Ok(credential) if !credential.valid_for.is_zero() => {
+                return Ok(self.keep(credential, received));
             }
-            Err(error) => {
-                self.fail(now);
-                return Err(Unavailable::Api(error));
-            }
+            Ok(_) => Unavailable::Expired,
+            Err(error) => Unavailable::Api(error),
         };
+        self.fail(asked);
+        self.login(received).ok_or(unavailable)
+    }
+
+    fn keep(&mut self, credential: IrcCredential, received: Instant) -> Login {
         self.failures = 0;
         self.retry_at = None;
         let login = Login {
-            account: credential.account.clone(),
-            password: credential.password.clone(),
-        };
-        self.kept = Some(Kept {
             account: credential.account,
             password: credential.password,
-            expires_at: credential.expires_at,
-        });
-        Ok(login)
+            valid_until: received + credential.valid_for,
+        };
+        self.kept = Some(login.clone());
+        login
     }
 
     fn fail(&mut self, now: Instant) {
@@ -193,86 +198,88 @@ impl Held {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use chrono::{TimeDelta, Utc};
     use subspace_api_client::{Error, IrcCredential};
     use subspace_framework::core::Secret;
 
     use super::{Held, Step, Unavailable};
 
-    fn credential(valid_for: TimeDelta) -> Result<IrcCredential, Error> {
-        Ok(test_credential(Utc::now() + valid_for))
-    }
-
-    fn test_credential(expires_at: chrono::DateTime<Utc>) -> IrcCredential {
-        subspace_api_client::IrcCredential {
+    fn credential(valid_for: Duration) -> Result<IrcCredential, Error> {
+        Ok(IrcCredential {
             account: "ada".into(),
             password: Secret::new("sirc1.xxxxxxxx"),
-            expires_at,
-        }
+            // Far in the past by the local clock: only `valid_for` counts.
+            expires_at: chrono::DateTime::UNIX_EPOCH,
+            valid_for,
+        })
+    }
+
+    fn asked(held: &mut Held, now: Instant) {
+        assert_eq!(held.step(now), Step::Ask);
+        held.begin(now);
     }
 
     #[test]
-    fn a_fresh_login_is_kept_until_shortly_before_it_expires() {
-        let (now, clock) = (Instant::now(), Utc::now());
+    fn a_login_is_kept_until_a_minute_before_it_lapses_whatever_the_local_clock() {
+        let now = Instant::now();
         let mut held = Held::default();
-        assert_eq!(held.step(now, clock), Step::Ask);
-        let login = held.take(credential(TimeDelta::minutes(10)), now, clock);
+        asked(&mut held, now);
+        let login = held.take(credential(Duration::from_secs(600)), now, now);
         assert_eq!(login.map(|login| login.account), Ok("ada".into()));
-        let later = clock + TimeDelta::minutes(5);
-        assert_eq!(held.step(now + Duration::from_secs(300), later), Step::Keep);
-        let renew = clock + TimeDelta::seconds(9 * 60 + 30);
+        assert_eq!(held.step(now + Duration::from_secs(300)), Step::Keep);
         assert_eq!(
-            held.step(now + Duration::from_secs(570), renew),
+            held.step(now + Duration::from_secs(541)),
             Step::Ask,
-            "renewed a minute before it expires"
+            "renewed a minute before it lapses"
         );
+    }
+
+    #[test]
+    fn a_failed_renewal_keeps_offering_the_unexpired_login() {
+        let now = Instant::now();
+        let mut held = Held::default();
+        asked(&mut held, now);
+        assert!(
+            held.take(credential(Duration::from_secs(600)), now, now)
+                .is_ok()
+        );
+        let renew = now + Duration::from_secs(560);
+        asked(&mut held, renew);
+        let kept = held.take(Err(Error::Network), renew, renew);
+        assert_eq!(kept.map(|login| login.account), Ok("ada".into()));
+        assert_eq!(held.step(renew + Duration::from_secs(1)), Step::Keep);
+        let lapsed = now + Duration::from_secs(601);
+        assert!(held.login(lapsed).is_none(), "not once it lapses");
+        assert_eq!(held.step(lapsed), Step::Ask);
     }
 
     #[test]
     fn requests_are_spaced_and_back_off_after_failures() {
-        let (now, clock) = (Instant::now(), Utc::now());
+        let now = Instant::now();
         let mut held = Held::default();
-        let failed = held.take(Err(Error::Network), now, clock);
+        asked(&mut held, now);
+        let failed = held.take(Err(Error::Network), now, now);
         assert_eq!(failed.err(), Some(Unavailable::Api(Error::Network)));
-        assert_eq!(held.step(now + Duration::from_secs(4), clock), Step::Wait);
-        assert_eq!(held.step(now + Duration::from_secs(10), clock), Step::Ask);
+        assert_eq!(held.step(now + Duration::from_secs(4)), Step::Wait);
         let again = now + Duration::from_secs(10);
-        let _ = held.take(Err(Error::UnexpectedStatus(503)), again, clock);
+        asked(&mut held, again);
+        let _ = held.take(Err(Error::UnexpectedStatus(503)), again, again);
         assert_eq!(
-            held.step(again + Duration::from_secs(9), clock),
+            held.step(again + Duration::from_secs(9)),
             Step::Wait,
             "the wait doubles"
         );
-        assert_eq!(held.step(again + Duration::from_secs(10), clock), Step::Ask);
+        assert_eq!(held.step(again + Duration::from_secs(10)), Step::Ask);
     }
 
     #[test]
-    fn a_login_that_arrives_expired_is_refused() {
-        let (now, clock) = (Instant::now(), Utc::now());
+    fn one_request_at_a_time_and_an_expired_answer_is_refused() {
+        let now = Instant::now();
         let mut held = Held::default();
-        let expired = held.take(
-            Ok(test_credential(clock - TimeDelta::seconds(1))),
-            now,
-            clock,
-        );
+        asked(&mut held, now);
+        assert_eq!(held.step(now), Step::Wait, "while a request is under way");
+        let expired = held.take(credential(Duration::ZERO), now, now);
         assert_eq!(expired.err(), Some(Unavailable::Expired));
         assert!(held.kept.is_none());
-        assert_eq!(held.step(now, clock), Step::Wait, "and backs off");
-    }
-
-    #[test]
-    fn a_short_lived_login_is_used_once_but_not_renewed_too_soon() {
-        let (now, clock) = (Instant::now(), Utc::now());
-        let mut held = Held::default();
-        assert!(
-            held.take(credential(TimeDelta::seconds(30)), now, clock)
-                .is_ok()
-        );
-        assert_eq!(
-            held.step(now + Duration::from_secs(2), clock),
-            Step::Keep,
-            "within the minimum interval the unexpired login is offered"
-        );
-        assert_eq!(held.step(now + Duration::from_secs(11), clock), Step::Ask);
+        assert_eq!(held.step(now), Step::Wait, "and backs off");
     }
 }

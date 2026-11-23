@@ -4,6 +4,7 @@
 //! kept until shortly before it expires; nothing here shows or logs it.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use subspace_api_client::{Client, Error};
 use subspace_client_irc::{CredentialSource, IssuedLogin, IssuedPassword};
@@ -53,15 +54,19 @@ pub(crate) fn source(
         .on_refused(move || refused.forget())
 }
 
-fn issue(binding: &Binding, login: &ServerLogin, device: &str) -> Result<IssuedLogin, String> {
+fn issue(binding: &Arc<Binding>, login: &ServerLogin, device: &str) -> Result<IssuedLogin, String> {
     if !binding.current() {
         return Err(reason(Unavailable::Api(Error::SignInNeeded)));
     }
     let login = login.login(&binding.client).map_err(reason)?;
+    // Asked again the moment it would be sent.
+    let (still, valid_until) = (Arc::clone(binding), login.valid_until);
+    let password = IssuedPassword::new(login.password.expose())
+        .while_valid(move || still.current() && Instant::now() < valid_until);
     Ok(IssuedLogin {
         username: sasl_username(&login.account, device),
         nickname: login.account,
-        password: IssuedPassword::new(login.password.expose()),
+        password,
     })
 }
 

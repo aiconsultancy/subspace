@@ -156,3 +156,35 @@ fn nett_issues_no_irc_credentials_yet_and_is_not_asked() {
     );
     assert!(mock.requests().is_empty());
 }
+
+#[test]
+fn a_login_lasts_from_the_api_s_own_time_not_the_local_clock() {
+    // The API's clock says 21:00:00 and the login expires at 21:10:00; the
+    // local clock may say anything.
+    let mock = Mock::with_headers(|_| {
+        (
+            200,
+            vec![("Date".into(), "Mon, 23 Nov 2026 21:00:00 GMT".into())],
+            ISSUED.into(),
+        )
+    });
+    let credential = client(&mock)
+        .irc_credential("irc.example.test", 6697)
+        .unwrap();
+    assert_eq!(credential.valid_for, std::time::Duration::from_secs(600));
+    let expired = Mock::with_headers(|_| {
+        (
+            200,
+            vec![("Date".into(), "Mon, 23 Nov 2026 21:20:00 GMT".into())],
+            ISSUED.into(),
+        )
+    });
+    let credential = client(&expired)
+        .irc_credential("irc.example.test", 6697)
+        .unwrap();
+    assert_eq!(
+        credential.valid_for,
+        std::time::Duration::ZERO,
+        "already expired"
+    );
+}
