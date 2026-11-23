@@ -801,6 +801,16 @@ set `AUTH_PROVIDERS=dev` and `ENABLE_DEV_AUTH=true`, then run
 `bun run db:migrate` followed by `bun run dev`. After a schema change, use
 `bun run db:generate` and commit the SQL and snapshot.
 
+`bun scripts/migrate.ts --check` compares the database's migration history
+(`drizzle.__drizzle_migrations`) with the committed migrations and changes
+nothing. It exits 0 when none is missing, 3 when any is (an empty database
+included) and 1 when it cannot read the history. The fleet installer uses it
+for a [PostgreSQL it did not create](../subspace-installer/README.md#an-existing-postgresql),
+where it also mints development tokens with `DEV_TOKEN_EXISTING_ONLY=true`:
+`auth:dev` then refuses, with exit code 4, a person or development
+organisation that is not already in the database, unless the database has no
+organisation at all.
+
 Drizzle ORM and Drizzle Kit are pinned together at `1.0.0-rc.5` for the Effect
 PostgreSQL adapter and its migration format. Upgrade both together once a
 stable release supports the adapter. Before switching, verify the existing
