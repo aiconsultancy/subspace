@@ -4,7 +4,7 @@ import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { recordAudit } from "./audit";
 import { Database } from "./db";
 import { ShipName } from "./fleets";
-import { AgentRank, CurrentMember, type Member } from "./identity";
+import { AgentRank, CurrentMember, isKeyOnlySubject, type Member } from "./identity";
 import { Version } from "./initiative-contract";
 import { BearerAuth, handleDb, ValidationErrors, versionedApi } from "./middleware";
 import { cursorTime, encodeCursor, readCursor } from "./paging";
@@ -37,8 +37,10 @@ export const IrcNick = Schema.String.check(
   Schema.isMaxLength(64),
   Schema.isPattern(/^[A-Za-z][A-Za-z0-9_-]*$/u),
 );
+/** An agent's name: letters, digits and `-`, at most 64 characters, unique in its organisation. */
+export const AgentName = Name.check(Schema.isMaxLength(64), Schema.isPattern(/^[A-Za-z0-9-]+$/u));
 const Registration = Schema.Struct({
-  name: Name.check(Schema.isMaxLength(64), Schema.isPattern(/^[A-Za-z0-9-]+$/u)),
+  name: AgentName,
   rank: AgentRank,
   fleet: Schema.optional(Schema.NullOr(Schema.String)),
   ship: Schema.optional(Schema.NullOr(Schema.String)),
@@ -172,9 +174,20 @@ function registrationFields(member: Member, data: typeof Registration.Type, old?
       org?.provider === "workos"
         ? data.serviceTokenClientId
         : data.serviceTokenClientId.toLowerCase();
+    // An enrolled agent's subject names no provider account: its edit may keep it, but no
+    // registration may give such a subject.
+    const keepsKeyOnly = isKeyOnlySubject(subject) && subject === old?.subject;
+    if (!keepsKeyOnly && isKeyOnlySubject(subject))
+      return yield* Effect.fail(
+        validationProblem(
+          "serviceTokenClientId",
+          "This form of subject is kept for agents enrolled with a key. Use the agent's account subject.",
+        ),
+      );
     if (
-      (org?.provider === "entra" && !Schema.is(Uuid)(subject)) ||
-      (org?.provider === "dev" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(subject))
+      !keepsKeyOnly &&
+      ((org?.provider === "entra" && !Schema.is(Uuid)(subject)) ||
+        (org?.provider === "dev" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(subject)))
     )
       return yield* Effect.fail(
         problem(400, "Use the account subject format for this identity provider."),
@@ -260,6 +273,55 @@ function registrationFields(member: Member, data: typeof Registration.Type, old?
   });
 }
 
+/**
+ * Refuses an agent registration whose new IRC nick is reserved (400) or was retired by another
+ * record (409), or whose account subject, agent name or IRC nick another record holds (409). A
+ * person's username counts as a taken IRC nick: it is their IRC account name. Call it inside the
+ * transaction that holds the organisation's lock, with the record being edited as `old`.
+ */
+export const checkAgentNames = (
+  tx: (typeof Database)["Service"],
+  organisationId: string,
+  registration: { subject: string; displayName: string; agentIrcNick?: string | null },
+  old?: { id: string; agentIrcNick: string | null },
+) =>
+  Effect.gen(function* () {
+    const nick = registration.agentIrcNick;
+    const newNick =
+      typeof nick === "string" &&
+      canonicalName(nick) !== (old?.agentIrcNick == null ? null : canonicalName(old.agentIrcNick));
+    if (newNick && isReservedUsername(nick, yield* ReservedUsernames))
+      return yield* Effect.fail(
+        validationProblem("ircNick", "This IRC nick is reserved. Choose another."),
+      );
+    if (newNick && (yield* retiredByAnother(tx, organisationId, nick, old?.id)))
+      return yield* Effect.fail(
+        problem(
+          409,
+          "This IRC nick was used before in this organisation and cannot be given to another account.",
+        ),
+      );
+    const nickKey = typeof nick === "string" ? canonicalName(nick) : null;
+    const [conflict] = yield* tx
+      .select({ id: users.id })
+      .from(users)
+      .where(
+        and(
+          eq(users.organisationId, organisationId),
+          sql`(${users.subject} = ${registration.subject} or
+            (${users.agentRank} is not null and lower(${users.displayName}) = lower(${registration.displayName})) or
+            (${nickKey}::text is not null and
+              (${usernameKey(users.agentIrcNick)} = ${nickKey}::text or
+               ${usernameKey(users.username)} = ${nickKey}::text)))`,
+          old ? sql`${users.id} <> ${old.id}` : undefined,
+        ),
+      );
+    if (conflict)
+      return yield* Effect.fail(
+        problem(409, "An account subject, agent name or IRC nick is already registered."),
+      );
+  });
+
 type AgentChange =
   | { kind: "register" | "update"; registration: typeof Registration.Type; version?: number }
   | { kind: "activate" | "deactivate"; version?: number };
@@ -308,44 +370,7 @@ function changeAgent(member: Member, change: AgentChange, id?: string) {
           return yield* Effect.fail(
             problem(409, "Register a new agent to bind a different account subject."),
           );
-        const nick = registration?.agentIrcNick;
-        const newNick =
-          typeof nick === "string" &&
-          canonicalName(nick) !==
-            (old?.agentIrcNick == null ? null : canonicalName(old.agentIrcNick));
-        if (newNick && isReservedUsername(nick, yield* ReservedUsernames))
-          return yield* Effect.fail(
-            validationProblem("ircNick", "This IRC nick is reserved. Choose another."),
-          );
-        if (newNick && (yield* retiredByAnother(tx, member.organisationId, nick, old?.id)))
-          return yield* Effect.fail(
-            problem(
-              409,
-              "This IRC nick was used before in this organisation and cannot be given to another account.",
-            ),
-          );
-        if (registration) {
-          const nickKey = typeof nick === "string" ? canonicalName(nick) : null;
-          const [conflict] = yield* tx
-            .select({ id: users.id })
-            .from(users)
-            .where(
-              and(
-                eq(users.organisationId, member.organisationId),
-                sql`(${users.subject} = ${registration.subject} or
-            (${users.agentRank} is not null and lower(${users.displayName}) = lower(${registration.displayName})) or
-            (${nickKey}::text is not null and
-              (${usernameKey(users.agentIrcNick)} = ${nickKey}::text or
-               ${usernameKey(users.username)} = ${nickKey}::text)))`,
-                id ? sql`${users.id} <> ${id}` : undefined,
-              ),
-            );
-          if (conflict)
-            return yield* Effect.fail(
-              // A person's username counts as a taken IRC nick: it is their IRC account name.
-              problem(409, "An account subject, agent name or IRC nick is already registered."),
-            );
-        }
+        if (registration) yield* checkAgentNames(tx, member.organisationId, registration, old);
         const [saved] = old
           ? yield* tx
               .update(users)

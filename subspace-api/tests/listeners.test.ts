@@ -185,12 +185,16 @@ describe("the API process with both listeners", () => {
     expect(await accepted.json()).toEqual({ success: false });
   });
 
-  test("agents' key credentials are managed on the main port only", async () => {
+  test("agents' key credentials and fleet enrolment are served on the main port only", async () => {
     const agentId = "00000000-0000-4000-8000-000000000099";
     const routes: [string, string][] = [
       ["GET", `/api/v1/agents/${agentId}/credentials`],
       ["POST", `/api/v1/agents/${agentId}/credentials`],
       ["DELETE", `/api/v1/agents/${agentId}/credentials/${agentId}`],
+      ["GET", "/api/v1/fleets/alpha/enrolment-tokens"],
+      ["POST", "/api/v1/fleets/alpha/enrolment-tokens"],
+      ["DELETE", `/api/v1/fleets/alpha/enrolment-tokens/${agentId}`],
+      ["POST", "/api/v1/agents/enrol"],
     ];
     for (const [method, path] of routes) {
       const body = method === "POST" ? {} : undefined;

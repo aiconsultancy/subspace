@@ -195,6 +195,50 @@ export const retiredUsernames = pgTable(
 );
 
 /**
+ * One-time tokens with which a fleet's gateway registers the fleet's agents and their keys, without
+ * an administrator's login. A token is shown once; only the SHA-256 of its text is stored. It
+ * expires, allows a number of registrations, and can be revoked; the row is kept.
+ */
+export const enrolmentTokens = pgTable(
+  "enrolment_tokens",
+  {
+    id: id(),
+    organisationId: organisationId(),
+    fleetId: uuid("fleet_id").notNull(),
+    /** The SHA-256 of the token's text in lower-case hex. */
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    maxUses: integer("max_uses").notNull(),
+    uses: integer().notNull().default(0),
+    createdById: uuid("created_by_id").notNull(),
+    createdAt: createdAt(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedById: uuid("revoked_by_id"),
+  },
+  (table) => [
+    unique("enrolment_tokens_scope_id").on(table.organisationId, table.id),
+    foreignKey({
+      columns: [table.organisationId, table.createdById],
+      foreignColumns: [users.organisationId, users.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.revokedById],
+      foreignColumns: [users.organisationId, users.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.fleetId],
+      foreignColumns: [fleets.organisationId, fleets.id],
+    }).onDelete("cascade"),
+    index("enrolment_tokens_fleet").on(table.organisationId, table.fleetId),
+    check("enrolment_tokens_hash", sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
+    check(
+      "enrolment_tokens_uses",
+      sql`${table.maxUses} between 1 and 100 and ${table.uses} between 0 and ${table.maxUses}`,
+    ),
+  ],
+);
+
+/**
  * An agent's key credentials: X.509 certificates whose keys sign the agent's tokens for the API
  * (scope `api`) and sign it in to IRC (scope `irc`), where Ergo reports the fingerprint as certfp.
  * Only the key and the fingerprint identify the agent; no other field of the certificate is read.
@@ -219,6 +263,8 @@ export const agentCredentials = pgTable(
       .notNull(),
     label: text(),
     createdById: uuid("created_by_id"),
+    /** The enrolment token a fleet's gateway registered it with, if it was not an administrator. */
+    enrolmentTokenId: uuid("enrolment_token_id"),
     createdAt: createdAt(),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
@@ -236,6 +282,10 @@ export const agentCredentials = pgTable(
     foreignKey({
       columns: [table.organisationId, table.revokedById],
       foreignColumns: [users.organisationId, users.id],
+    }),
+    foreignKey({
+      columns: [table.organisationId, table.enrolmentTokenId],
+      foreignColumns: [enrolmentTokens.organisationId, enrolmentTokens.id],
     }),
     uniqueIndex("agent_credentials_active_fingerprint")
       .on(table.fingerprint)

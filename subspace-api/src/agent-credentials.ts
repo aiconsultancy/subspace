@@ -33,6 +33,7 @@ export const AgentCredential = Schema.Struct({
   certificate: Schema.String,
   createdAt: Timestamp,
   createdByUserId: Schema.NullOr(Uuid),
+  enrolmentTokenId: Schema.NullOr(Uuid),
   lastUsedAt: Schema.NullOr(Timestamp),
   revokedAt: Schema.NullOr(Timestamp),
   revokedByUserId: Schema.NullOr(Uuid),
@@ -54,6 +55,7 @@ export const credentialDto = (row: CredentialRow) => ({
   certificate: row.certificate,
   createdAt: dateTime(row.createdAt),
   createdByUserId: row.createdById,
+  enrolmentTokenId: row.enrolmentTokenId,
   lastUsedAt: dateTimeOrNull(row.lastUsedAt),
   revokedAt: dateTimeOrNull(row.revokedAt),
   revokedByUserId: row.revokedById,
@@ -104,6 +106,7 @@ export const insertCredential = (
     scopes: readonly Scope[];
     label?: string | null;
     createdById?: string | null;
+    enrolmentTokenId?: string | null;
   },
 ) =>
   Effect.gen(function* () {
@@ -137,6 +140,7 @@ export const insertCredential = (
         scopes: [...new Set(values.scopes)].sort(),
         label: values.label ?? null,
         createdById: values.createdById ?? null,
+        enrolmentTokenId: values.enrolmentTokenId ?? null,
       })
       .returning()
       .pipe(

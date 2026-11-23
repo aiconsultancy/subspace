@@ -11,6 +11,14 @@ import {
   OpenApi,
 } from "effect/http-api";
 import { agentCredentialGroup, agentCredentialHandlers } from "./agent-credentials";
+import {
+  enrolmentAuth,
+  enrolmentGroup,
+  enrolmentHandlers,
+  enrolmentPath,
+  enrolmentTokenGroup,
+  enrolmentTokenHandlers,
+} from "./enrolment";
 import { purgeAgentTokenIds, verifyAgentToken, type AgentTokenPolicy } from "./agent-keys";
 import { agentGroup, agentHandlers } from "./agents";
 import { auditGroup, auditHandlers } from "./audit";
@@ -349,6 +357,8 @@ const api = HttpApi.make("subspace")
     mcpGroup,
     agentGroup,
     agentCredentialGroup,
+    enrolmentTokenGroup,
+    enrolmentGroup,
     auditGroup,
     notificationsGroup,
   )
@@ -529,12 +539,14 @@ const sharedProblems = (unauthorised: string) =>
         const { title, status, detail, currentVersion, errors } = JSON.parse(
           body.text ?? new TextDecoder().decode(body.body),
         );
+        // The enrolment route's own refusals say which enrolment token was refused, and why.
+        const keepDetail = path === enrolmentPath;
         return HttpServerResponse.jsonUnsafe(
           {
             type: `https://httpstatuses.com/${status}`,
             title,
             status,
-            detail: status === 401 ? unauthorised : detail,
+            detail: status === 401 && !keepDetail ? unauthorised : detail,
             instance: path,
             correlationId,
             errors: errors ?? {},
@@ -684,7 +696,8 @@ export function routes(
     }),
   ).pipe(Layer.provide(dbLayer));
 
-  // Groups the main listener alone serves: IRC credentials and agents' key credentials.
+  // Groups the main listener alone serves: IRC credentials, agents' key credentials and fleet
+  // enrolment.
   const common = Layer.mergeAll(
     handlerLayers(new Set()),
     HttpApiBuilder.group(
@@ -693,8 +706,14 @@ export function routes(
       ircCredentialHandlers(options.irc.credentialSecret, options.irc.servers),
     ),
     HttpApiBuilder.group(api, "agentCredentials", agentCredentialHandlers),
+    HttpApiBuilder.group(api, "enrolmentTokens", enrolmentTokenHandlers),
+    HttpApiBuilder.group(api, "enrolment", enrolmentHandlers),
   );
-  const services = Layer.merge(auth, validationErrors);
+  const services = Layer.mergeAll(
+    auth,
+    validationErrors,
+    enrolmentAuth.pipe(Layer.provide(dbLayer)),
+  );
 
   const endpoints = (
     options.dev && devKey
