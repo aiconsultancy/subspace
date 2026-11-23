@@ -121,6 +121,69 @@ against the code with a test that failed before the fix:
 12. **The removal-only group test passed whichever group went**: fixed in
     `ada5ab9`; it now proves the oldest group went and the next was kept.
 
+## Merged with main and the Thread tab
+
+`main` at `c502895` (the Thread tab pull request, 70, as merged after four
+review rounds) was merged into this branch in `a3a8bc6`. The one textual
+conflict was the hub's fields: it keeps both the reaction book and each
+view's share of the fleet state. The Thread tab as `main` builds it takes
+its rows' facts from the conversation's row context, so its root and
+latest replies keep their read-only pills. Tests added in `d5a53b6`, in
+`tests/initiatives/thread_reactions.rs`, prove on the merged code that a
+reaction row under a request leaves its linked status line a button with
+its status element beside it; that the tab's pills are read-only and
+selecting one sends nothing; that `r` opens the reaction menu at the
+focused message from reply mode without leaving it; and that reacting
+while a gone reply's draft is held sends only the reaction and keeps the
+guard. Reactions send only `React` and `Unreact` to the message's own
+conversation and never touch the composer's draft or reply mode.
+
+## Findings carried from pull request 70
+
+The seven findings left open at the Thread tab's final head, each checked
+against the merged code. Each fix has a test that was run against the
+code before the fix and failed there.
+
+1. **A save queued before a clear could release the hold that clear set**
+   (`clients/fleet`): fixed in `fe9d9bd`. The hold remembers the token
+   generation its clear began, and only a write or read queued in that
+   generation or later ends it; a read queued before the clear that found
+   no token no longer ends it either. A cleared token stays cleared.
+   Tests: `service/tests/hold.rs` (save, clear, refused delete, refused
+   save, then the fleet removed and added again; and a read queued before
+   the clear).
+2. **Reply in thread on another thread replaced a gone reply's target**
+   (`compose/reply.rs`): fixed in `d7ce673`. While a gone reply's draft
+   holds text, **Reply in thread** only offers the new thread; the row
+   adds **Move to the thread** beside **Write to the channel**, and the
+   draft stays unsendable until the person chooses one or empties it. An
+   offered thread that goes too is withdrawn. Tests in
+   `tests/initiatives/thread_gone.rs`.
+3. **A deferred Retry recorded its scheduled deadline as the read time**
+   (`clients/fleet/src/service.rs`): fixed in `a68c80c`. Each re-read
+   records when it starts on the fleet's ordered path, from the app's
+   clock, and a Retry asked while a read is in flight waits for its
+   interval instead of being lost. Tests in `service/tests/keychain.rs`
+   (a late timer; a Retry during an in-flight read).
+4. **In play here asked for references for ordinary conversations and
+   inactive views** (`view/inspector/play.rs`): fixed in `b3f51cd`. It
+   asks only while the Space is active, the inspector shows, and the
+   conversation in front is a ship's channel on its Ship tab. Tests in
+   `tests/initiatives/review.rs`.
+5. **The Thread tab built a row for every status transition**
+   (`thread/model.rs`, `view/inspector/thread/steps.rs`): fixed in
+   `68fdf30`. The timeline keeps its latest 24 steps and counts the rest,
+   and the tab says how many earlier steps it leaves out. Test in
+   `thread/tests/timeline.rs` (121 steps).
+6. **A follow-up request's status line shows no reply count while its tab
+   shows the thread's replies**: left as documented behaviour. The tab's
+   heading reads **Replies in this thread** for a follow-up made as a
+   reply, and [Channels](../../irc.md) says so.
+7. **The zero-size status element beside a linked status line may be
+   skipped by assistive technology**: left, unverified. It needs a check
+   with VoiceOver, which was not run; the render test proves only that the
+   element is there, beside the button, with the status role.
+
 ## Delivery
 
 - Client: `clients/irc/src/session/reactions.rs`, `session/caps.rs`,
@@ -147,14 +210,26 @@ against the code with a test that failed before the fix:
 - Documentation: [Channels](../../irc.md#reactions-in-channels), the
   in-app Channels help and [Desktop capture](../../capture.md).
 
+- Findings carried from pull request 70: `clients/fleet/src/service.rs`,
+  `service/queue.rs`, `service/tokens.rs` with
+  `service/tests/hold.rs` and `service/tests/keychain.rs`;
+  `compose/reply.rs`, `view/inspector/play.rs`, `thread/model.rs`,
+  `view/inspector/thread/steps.rs` with `tests/initiatives/thread_gone.rs`,
+  `tests/initiatives/review.rs` and `thread/tests/timeline.rs`;
+  [Fleet API](../../fleet-api.md) and [Channels](../../irc.md) updated.
+
 Checks: `cargo fmt`, Clippy with warnings denied and the tests of
-`subspace-client-irc` and `subspace-irc-board`, `mise run architecture`,
-and `mise run quality` (no findings, no regression).
+`subspace-client-irc`, `subspace-irc-board`, `subspace-client-fleet` and
+`subspace-web-board`, `mise run architecture`, and `mise run quality` (no
+findings, no regression).
 
 ## Captures
 
-Captured on macOS with `make capture` at 1440 x 900 (`resize:1440,900`) in
-Twilight Two, with `CAPTURE_FLEET=1 CAPTURE_FLEET_API=1` so the roster knows
+Retaken after the merge with `main` (the inspector's tabs now share one
+surface, as `main` draws them). Captured on macOS with `make capture` at
+1440 x 900 (`resize:1440,900`) in Twilight Two, with
+`CAPTURE_STATE='{"app.dashboard":"irc"}'` so it opens on Channels, and
+`CAPTURE_FLEET=1 CAPTURE_FLEET_API=1` so the roster knows
 the aurora fleet's ships and the navigator shows them under **Ships**,
 against a fresh loopback Ergo 2.19.1 (`scripts/irc-test-server.sh` with
 `IRC_TEST_LISTEN=127.0.0.1:16953`) and
@@ -172,7 +247,7 @@ once the server echoed it.
 
 ![Add reaction on mira's running request to aurora-lyra: the six common reactions, then apart under "Stop aurora-lyra", Raised hand and Stop sign](evidence/choices-stop.png)
 
-![The ✋ pill on the running request hovered: "✋ from sela. It asked aurora-lyra to stop; the status line shows whether it did."](evidence/stop-pill-tooltip.png)
+![The ✋ pill on the running request hovered: "✋ from sela. It asked aurora-lyra to stop; the status line shows whether it did." The request's linked status line, working with 1 reply, sits unchanged above the pill row](evidence/stop-pill-tooltip.png)
 
 Each image was compared with the design guide's shell anatomy: the zones
 are where they belong, the pills sit inside the message's own row at its
@@ -185,8 +260,12 @@ count.
 - A real Stargate stopping a turn: the stop group's conditions are tested
   against the fixture's progress tags and read from Stargate's source, not
   run against a gateway.
-- The keyboard menu (`r`) is not captured; its anchoring uses the focused
-  row's measured bounds and is exercised only by hand.
+- The keyboard menu (`r`) is not captured; a render test proves it opens
+  from the focused message, also in reply mode, but where it lands uses the
+  focused row's measured bounds and is checked only by hand.
+- The status element beside a linked status line with VoiceOver (finding
+  7 above), and the Thread tab's new **Move to the thread** and earlier
+  steps line, which are covered by tests, not captured.
 - A light theme, a narrow window and the Thread tab's read-only pills are
   covered by tests, not captured.
 - Reactions from history to a message restored from the store are marked
@@ -203,4 +282,7 @@ count.
 - [x] Support changes; messages without a `msgid`.
 - [x] Single-row re-measure; the Thread tab read-only.
 - [x] The twelve client findings.
+- [x] Merge `main` with the Thread tab; reactions proved on it.
+- [x] The seven findings carried from pull request 70 (five fixed, one
+      documented, one unverified).
 - [ ] The message hover toolbar (separate work).
