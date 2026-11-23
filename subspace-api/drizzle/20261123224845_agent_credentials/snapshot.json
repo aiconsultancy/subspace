@@ -1,0 +1,774 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "92fbada3-ef00-4522-a9da-4d43971bcc77",
+  "prevIds": [
+    "b185282a-8a47-49cb-a709-43b16da52c07"
+  ],
+  "footprints": [
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "agent_credentials"
+      ],
+      "writes": [
+        "s|tbl|public.agent_credentials",
+        "n|tbl|public.agent_credentials",
+        "e|tbl|public.agent_credentials",
+        "n|rel|public.agent_credentials",
+        "n|type|public.agent_credentials",
+        "n|rel|public.agent_credentials_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_table",
+      "statementTarget": [
+        "table",
+        "public",
+        "agent_token_ids"
+      ],
+      "writes": [
+        "s|tbl|public.agent_token_ids",
+        "n|tbl|public.agent_token_ids",
+        "e|tbl|public.agent_token_ids",
+        "n|rel|public.agent_token_ids",
+        "n|type|public.agent_token_ids",
+        "n|rel|public.agent_token_ids_pkey"
+      ],
+      "reads": [
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "agent_credentials",
+        "agent_credentials_active_fingerprint"
+      ],
+      "writes": [
+        "s|idx|public.agent_credentials_active_fingerprint",
+        "n|idx|public.agent_credentials_active_fingerprint",
+        "e|idx|public.agent_credentials_active_fingerprint",
+        "n|rel|public.agent_credentials_active_fingerprint"
+      ],
+      "reads": [
+        "n|tbl|public.agent_credentials",
+        "n|sch|public",
+        "n|col|public.agent_credentials.fingerprint"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "agent_credentials",
+        "agent_credentials_agent"
+      ],
+      "writes": [
+        "s|idx|public.agent_credentials_agent",
+        "n|idx|public.agent_credentials_agent",
+        "e|idx|public.agent_credentials_agent",
+        "n|rel|public.agent_credentials_agent"
+      ],
+      "reads": [
+        "n|tbl|public.agent_credentials",
+        "n|sch|public",
+        "n|col|public.agent_credentials.organisation_id",
+        "n|col|public.agent_credentials.user_id"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "agent_credentials",
+        "agent_credentials_fingerprint"
+      ],
+      "writes": [
+        "s|idx|public.agent_credentials_fingerprint",
+        "n|idx|public.agent_credentials_fingerprint",
+        "e|idx|public.agent_credentials_fingerprint",
+        "n|rel|public.agent_credentials_fingerprint"
+      ],
+      "reads": [
+        "n|tbl|public.agent_credentials",
+        "n|sch|public",
+        "n|col|public.agent_credentials.organisation_id",
+        "n|col|public.agent_credentials.fingerprint"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "agent_token_ids",
+        "agent_token_ids_expiry"
+      ],
+      "writes": [
+        "s|idx|public.agent_token_ids_expiry",
+        "n|idx|public.agent_token_ids_expiry",
+        "e|idx|public.agent_token_ids_expiry",
+        "n|rel|public.agent_token_ids_expiry"
+      ],
+      "reads": [
+        "n|tbl|public.agent_token_ids",
+        "n|sch|public",
+        "n|col|public.agent_token_ids.expires_at"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "agent_credentials"
+      ],
+      "writes": [
+        "s|fk|public.agent_credentials.agent_credentials_organisation_id_organisations_id_fkey",
+        "n|fk|public.agent_credentials.agent_credentials_organisation_id_organisations_id_fkey",
+        "e|fk|public.agent_credentials.agent_credentials_organisation_id_organisations_id_fkey",
+        "n|con|public.agent_credentials.agent_credentials_organisation_id_organisations_id_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.agent_credentials",
+        "n|sch|public",
+        "n|tbl|public.organisations",
+        "n|sch|public",
+        "n|col|public.agent_credentials.organisation_id",
+        "n|col|public.organisations.id",
+        "e|uniqueness|public.organisations.id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "agent_credentials"
+      ],
+      "writes": [
+        "s|fk|public.agent_credentials.agent_credentials_u8BV8STg9dr5_fkey",
+        "n|fk|public.agent_credentials.agent_credentials_u8BV8STg9dr5_fkey",
+        "e|fk|public.agent_credentials.agent_credentials_u8BV8STg9dr5_fkey",
+        "n|con|public.agent_credentials.agent_credentials_u8BV8STg9dr5_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.agent_credentials",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.agent_credentials.organisation_id",
+        "n|col|public.agent_credentials.user_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "agent_credentials"
+      ],
+      "writes": [
+        "s|fk|public.agent_credentials.agent_credentials_z1fhoPNy1SYa_fkey",
+        "n|fk|public.agent_credentials.agent_credentials_z1fhoPNy1SYa_fkey",
+        "e|fk|public.agent_credentials.agent_credentials_z1fhoPNy1SYa_fkey",
+        "n|con|public.agent_credentials.agent_credentials_z1fhoPNy1SYa_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.agent_credentials",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.agent_credentials.organisation_id",
+        "n|col|public.agent_credentials.created_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    },
+    {
+      "statementType": "create_fk",
+      "statementTarget": [
+        "table",
+        "public",
+        "agent_credentials"
+      ],
+      "writes": [
+        "s|fk|public.agent_credentials.agent_credentials_moe6O1Qrdf2C_fkey",
+        "n|fk|public.agent_credentials.agent_credentials_moe6O1Qrdf2C_fkey",
+        "e|fk|public.agent_credentials.agent_credentials_moe6O1Qrdf2C_fkey",
+        "n|con|public.agent_credentials.agent_credentials_moe6O1Qrdf2C_fkey"
+      ],
+      "reads": [
+        "n|tbl|public.agent_credentials",
+        "n|sch|public",
+        "n|tbl|public.users",
+        "n|sch|public",
+        "n|col|public.agent_credentials.organisation_id",
+        "n|col|public.agent_credentials.revoked_by_id",
+        "n|col|public.users.organisation_id",
+        "n|col|public.users.id",
+        "e|uniqueness|public.users.id.organisation_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "agent_credentials",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "name": "agent_token_ids",
+        "isRlsEnabled": false,
+        "entityType": "tables"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "gen_random_uuid()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "organisation_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "user_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "fingerprint",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "algorithm",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "certificate",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "public_key",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "scopes",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 1,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "label",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "created_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "last_used_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "revoked_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "revoked_by_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_token_ids",
+        "name": "credential_id",
+        "type": "uuid",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_token_ids",
+        "name": "jti",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_token_ids",
+        "name": "expires_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_active_fingerprint",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "fingerprint",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": "\"revoked_at\" is null",
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_agent",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "user_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_fingerprint",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "organisation_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "fingerprint",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_token_ids",
+        "name": "agent_token_ids_expiry",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "expires_at",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": false,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_organisation_id_organisations_id_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "organisations",
+        "columnsTo": [
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "CASCADE",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_u8BV8STg9dr5_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "user_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_z1fhoPNy1SYa_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "created_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_moe6O1Qrdf2C_fkey",
+        "nameExplicit": false,
+        "columns": [
+          "organisation_id",
+          "revoked_by_id"
+        ],
+        "schemaTo": "public",
+        "tableTo": "users",
+        "columnsTo": [
+          "organisation_id",
+          "id"
+        ],
+        "onUpdate": "NO ACTION",
+        "onDelete": "NO ACTION",
+        "entityType": "fks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_token_ids",
+        "name": "agent_token_ids_pkey",
+        "columns": [
+          "credential_id",
+          "jti"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_pkey",
+        "columns": [
+          "id"
+        ],
+        "nameExplicit": false,
+        "entityType": "pks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_fingerprint_hex",
+        "value": "\"fingerprint\" ~ '^[0-9a-f]{64}$'",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_algorithm",
+        "value": "\"algorithm\" in ('EdDSA', 'ES256')",
+        "entityType": "checks"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent_credentials",
+        "name": "agent_credentials_scopes",
+        "value": "cardinality(\"scopes\") between 1 and 2 and \"scopes\" <@ array['api', 'irc']::text[]",
+        "entityType": "checks"
+      }
+    }
+  ]
+}

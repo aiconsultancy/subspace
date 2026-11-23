@@ -13,9 +13,14 @@ export type Member = typeof users.$inferSelect & {
   source?: "rest" | "mcp";
   relayedCrew?: { name: string; model: string } | null;
 };
+/** The key credential an agent token was signed with, when the caller signed in that way. */
+export interface AgentCredentialUse {
+  readonly id: string;
+  readonly scopes: readonly ("api" | "irc")[];
+}
 export class CurrentMember extends Context.Service<
   CurrentMember,
-  Member & { tokenExpiresAt: number }
+  Member & { tokenExpiresAt: number; agentCredential?: AgentCredentialUse }
 >()("subspace/CurrentMember") {}
 
 export const findMember = (identity: PrincipalIdentity) =>

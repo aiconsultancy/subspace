@@ -262,6 +262,30 @@ function ircSignIn(env: NodeJS.ProcessEnv, providers: ReadonlySet<string>) {
   };
 }
 
+/**
+ * AGENT_TOKEN_AUDIENCE: the API's public origin, as clients reach it through any proxy, which
+ * every agent token names in `aud`: the scheme, host and optional port, with no path or trailing
+ * slash, in the form a URL's origin takes (lower-case host, no default port). Null when unset, and
+ * agent tokens are then refused.
+ */
+export function agentTokenAudience(env: NodeJS.ProcessEnv) {
+  const value = env.AGENT_TOKEN_AUDIENCE?.trim();
+  if (!value) return null;
+  let origin: string | undefined;
+  try {
+    const url = new URL(value);
+    origin = url.protocol === "https:" || url.protocol === "http:" ? url.origin : undefined;
+  } catch {
+    origin = undefined;
+  }
+  if (origin !== value) {
+    throw new Error(
+      "AGENT_TOKEN_AUDIENCE must be the API's public origin, such as https://api.example.com: scheme, lower-case host and optional port, with no path or trailing slash",
+    );
+  }
+  return value;
+}
+
 const loopback = ["127.0.0.1", "::1", "localhost"];
 
 /**
@@ -338,6 +362,7 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
     hostname,
     port,
     agent,
+    agentTokenAudience: agentTokenAudience(env),
     autoRegister: autoRegister(env, providers),
     reservedUsernames: reservedUsernames(env),
     irc: ircSignIn(env, providers),

@@ -10,9 +10,18 @@ import {
   HttpApiSchema,
   OpenApi,
 } from "effect/http-api";
+import { agentCredentialGroup, agentCredentialHandlers } from "./agent-credentials";
+import { purgeAgentTokenIds, verifyAgentToken, type AgentTokenPolicy } from "./agent-keys";
 import { agentGroup, agentHandlers } from "./agents";
 import { auditGroup, auditHandlers } from "./audit";
-import { devTokenLifetime, jwtVerifiers, mintDevToken, type RemoteFetch } from "./auth";
+import {
+  agentTokenIssuer,
+  devTokenLifetime,
+  jwtVerifiers,
+  mintDevToken,
+  unverifiedIssuer,
+  type RemoteFetch,
+} from "./auth";
 import { commentGroup, commentHandlers } from "./comment-mutations";
 import { type Config } from "./config";
 import { documentGroup, documentHandlers } from "./documents";
@@ -339,6 +348,7 @@ const api = HttpApi.make("subspace")
     todoGroup,
     mcpGroup,
     agentGroup,
+    agentCredentialGroup,
     auditGroup,
     notificationsGroup,
   )
@@ -600,6 +610,12 @@ export function routes(
 ) {
   const { dbLayer, github, resources } = shared;
   const verify = jwtVerifiers(options, devKey, fetchRemote);
+  const agentTokens: AgentTokenPolicy = {
+    audience: options.agentTokenAudience,
+    providers: new Set(
+      (["workos", "entra", "dev"] as const).filter((provider) => options[provider] !== null),
+    ),
+  };
   const signIn: SignInPolicy = {
     autoRegister: options.autoRegister,
     entraAdminRole: options.entra?.adminRole ?? null,
@@ -617,7 +633,23 @@ export function routes(
             if (!/^Bearer [^\s]+$/i.test(request.headers.authorization ?? "")) {
               return yield* Effect.fail(problem(401, "A bearer access token is required."));
             }
-            const identity = yield* Effect.promise(() => verify(Redacted.value(credential)));
+            const token = Redacted.value(credential);
+            // An agent token, signed with the agent's registered key, is only ever checked
+            // against agent credentials, never by an identity provider's verifier.
+            if (unverifiedIssuer(token) === agentTokenIssuer) {
+              const agent = yield* verifyAgentToken(token, agentTokens).pipe(
+                Effect.provideService(Database, db),
+              );
+              return yield* next.pipe(
+                Effect.provideService(CurrentMember, {
+                  ...agent.member,
+                  tokenExpiresAt: agent.expiresAt,
+                  agentCredential: agent.credential,
+                }),
+                Effect.map(noStore),
+              );
+            }
+            const identity = yield* Effect.promise(() => verify(token));
             if (!identity)
               return yield* Effect.fail(
                 problem(401, "The bearer access token is invalid or expired."),
@@ -652,13 +684,15 @@ export function routes(
     }),
   ).pipe(Layer.provide(dbLayer));
 
-  const common = Layer.merge(
+  // Groups the main listener alone serves: IRC credentials and agents' key credentials.
+  const common = Layer.mergeAll(
     handlerLayers(new Set()),
     HttpApiBuilder.group(
       api,
       "ircCredentials",
       ircCredentialHandlers(options.irc.credentialSecret, options.irc.servers),
     ),
+    HttpApiBuilder.group(api, "agentCredentials", agentCredentialHandlers),
   );
   const services = Layer.merge(auth, validationErrors);
 
@@ -682,6 +716,14 @@ export function routes(
       Effect.forkScoped,
     ),
   ).pipe(Layer.provide(resources));
+  // Bounds the record of accepted agent tokens: each row outlives its token by a few minutes.
+  const tokenCleanup = Layer.effectDiscard(
+    purgeAgentTokenIds.pipe(
+      Effect.catch(() => Effect.logWarning("The agent token cleanup could not complete.")),
+      Effect.repeat(Schedule.spaced("1 minute")),
+      Effect.forkScoped,
+    ),
+  ).pipe(Layer.provide(resources));
   const polling = Layer.effectDiscard(pollGitHub(options.github, github)).pipe(
     Layer.provide(resources),
   );
@@ -692,6 +734,7 @@ export function routes(
     endpoints,
     ircHook,
     cleanup,
+    tokenCleanup,
     polling,
     sharedProblems("A valid Subspace access token is required."),
   );

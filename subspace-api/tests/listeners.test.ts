@@ -185,6 +185,28 @@ describe("the API process with both listeners", () => {
     expect(await accepted.json()).toEqual({ success: false });
   });
 
+  test("agents' key credentials are managed on the main port only", async () => {
+    const agentId = "00000000-0000-4000-8000-000000000099";
+    const routes: [string, string][] = [
+      ["GET", `/api/v1/agents/${agentId}/credentials`],
+      ["POST", `/api/v1/agents/${agentId}/credentials`],
+      ["DELETE", `/api/v1/agents/${agentId}/credentials/${agentId}`],
+    ];
+    for (const [method, path] of routes) {
+      const body = method === "POST" ? {} : undefined;
+      for (const headers of [{}, agent])
+        expect([method, path, (await call(agentPort, path, method, headers, body)).status]).toEqual(
+          [method, path, 404],
+        );
+      // Routed, then refused for want of a signed-in user.
+      expect([method, path, (await call(mainPort, path, method, {}, body)).status]).toEqual([
+        method,
+        path,
+        401,
+      ]);
+    }
+  });
+
   test("the agent port refuses a request without an agent and serves one with it", async () => {
     expect((await call(agentPort, "/api/v1/me")).status).toBe(401);
     const me = await call(agentPort, "/api/v1/me", "GET", agent);
