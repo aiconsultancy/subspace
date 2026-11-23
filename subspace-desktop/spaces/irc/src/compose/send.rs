@@ -3,9 +3,9 @@
 //! composer.
 
 use gpui_kit::{Context, Window};
-use subspace_client_irc::{Command, Target};
+use subspace_client_irc::Command;
 
-use super::{AgentNotice, agents, ask, batches_lines, reply, validate_draft};
+use super::{ask, batches_lines, reply, validate_draft};
 use crate::conversation::Conversation;
 
 pub(super) fn submit(
@@ -23,7 +23,7 @@ pub(super) fn submit(
         return;
     }
     // Before the attachment sender: an upload would message the agent too.
-    if refused_privately(conversation, &text, cx) {
+    if super::gates::refused(conversation, &text, cx) {
         return;
     }
     if let Some(replying) = conversation.draft.reply.clone() {
@@ -115,55 +115,4 @@ fn sent(
         input.set_busy(false, cx);
         input.clear(window, cx);
     });
-}
-
-/// Keeps a draft that would message a fleet agent privately, or send a
-/// private TAGMSG the reactions gate refuses.
-fn refused_privately(
-    conversation: &mut Conversation,
-    text: &str,
-    cx: &mut Context<Conversation>,
-) -> bool {
-    refuse_agent(conversation, text, cx) || refuse_tag(conversation, text, cx)
-}
-
-/// Keeps a draft whose hand-typed TAGMSG, which can carry a reaction,
-/// goes to someone privately whom the reactions gate refuses
-/// ([`crate::reactions::gate::refusal`]): a fleet agent, or anyone while
-/// the initiatives are not known.
-fn refuse_tag(conversation: &mut Conversation, text: &str, cx: &mut Context<Conversation>) -> bool {
-    let refusal = subspace_client_irc::private_tag_recipients(text)
-        .into_iter()
-        .find_map(|nick| {
-            crate::reactions::gate::refusal(&Target::Query(nick), &conversation.roster)
-        });
-    let refused = refusal.is_some();
-    if let Some(words) = refusal {
-        conversation
-            .draft
-            .entity
-            .update(cx, |input, cx| input.set_error(words, cx));
-    }
-    refused
-}
-
-/// Keeps a draft that would message a fleet agent privately, and shows why.
-/// True when it was kept.
-fn refuse_agent(
-    conversation: &mut Conversation,
-    text: &str,
-    cx: &mut Context<Conversation>,
-) -> bool {
-    let nicks = agents::direct_targets(text, &conversation.buffer.target);
-    let state = &conversation.hub.read(cx).state;
-    let network = &conversation.buffer.network;
-    let notice = AgentNotice::refusing_any(&conversation.roster, &nicks, |channel| {
-        agents::listed_channel(state, network, channel).is_some()
-    });
-    let refused = notice.is_some();
-    if refused {
-        conversation.draft.agent_notice = notice;
-        cx.notify();
-    }
-    refused
 }

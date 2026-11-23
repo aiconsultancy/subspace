@@ -191,3 +191,29 @@ fn a_stop_is_acknowledged_by_its_echo_when_the_message_shows_every_reaction_it_c
         "the echo arrived though the display had no room for it"
     );
 }
+
+#[gpui_kit::test]
+fn a_stop_typed_by_hand_in_a_channel_is_refused_and_points_to_its_item(cx: &mut TestAppContext) {
+    let (board, hub, cx) = open(cx);
+    let conversation = board.read_with(cx, |board, _| board.dock.open[&room()].entity.clone());
+    let input = conversation.read_with(cx, |view, _| view.composer().clone());
+    let before = sent(&hub, cx);
+    let stop = "/raw @+draft/react=\u{270B};+draft/reply=r1 TAGMSG #subspace";
+    crate::tests::completion::submit(&input, stop, cx);
+    assert_eq!(sent(&hub, cx), before, "nothing sent");
+    let error = input.read_with(cx, |input, _| input.error().map(str::to_owned));
+    assert!(
+        error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("only from Add reaction"),
+        "{error:?}"
+    );
+    let thumbs = "/raw @+draft/react=\u{1F44D};+draft/reply=m1 TAGMSG #subspace";
+    crate::tests::completion::submit(&input, thumbs, cx);
+    assert_eq!(
+        sent(&hub, cx),
+        before + 1,
+        "an ordinary reaction goes as the gate allows"
+    );
+}

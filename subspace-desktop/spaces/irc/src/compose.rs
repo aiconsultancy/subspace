@@ -22,6 +22,7 @@ use crate::conversation::Conversation;
 mod agents;
 mod ask;
 mod complete;
+mod gates;
 mod hints;
 mod limits;
 mod offer;
