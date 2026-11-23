@@ -1,7 +1,7 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, ne, sql, type SQLWrapper } from "drizzle-orm";
 import { Context, Effect } from "effect";
 import { type Database } from "./db";
-import { organisations, users } from "./schema";
+import { organisations, retiredUsernames, users } from "./schema";
 
 /**
  * Usernames: one handle per person, which is also their IRC account name. People and agents
@@ -33,9 +33,20 @@ export const ReservedUsernames = Context.Reference<ReadonlySet<string>>(
   { defaultValue: () => new Set() },
 );
 
+/**
+ * A name's canonical form: ASCII letters in lower case and nothing else changed, as Ergo's ascii
+ * case mapping compares account names. The database uses the same form, `usernameKey`, whatever
+ * its locale.
+ */
+export const canonicalName = (name: string) =>
+  name.replace(/[A-Z]/gu, (letter) => String.fromCharCode(letter.charCodeAt(0) + 32));
+
+/** The canonical form of a name column in SQL, matching the unique index on usernames. */
+export const usernameKey = (column: SQLWrapper) => sql`lower(${column} COLLATE "C")`;
+
 /** Whether a name is reserved: an IRC service, `guest`, any `guest-` name or an operator name. */
 export function isReservedUsername(name: string, reserved: ReadonlySet<string>) {
-  const lower = name.toLowerCase();
+  const lower = canonicalName(name);
   return builtInReservedUsernames.has(lower) || lower.startsWith("guest-") || reserved.has(lower);
 }
 
@@ -150,8 +161,9 @@ export const lockUsernames = (db: Db, organisationId: string) =>
     .for("no key update");
 
 /**
- * The first free, unreserved candidate username for a person in an organisation. Call it inside
- * a transaction that holds `lockUsernames`; the unique index is the final guarantee.
+ * The first candidate username for a person in an organisation that no record holds, that was
+ * never issued and retired, and that is not reserved. Call it inside a transaction that holds
+ * `lockUsernames`; the unique index and the retirement trigger are the final guarantee.
  */
 export const allocateUsername = (
   db: Db,
@@ -167,21 +179,53 @@ export const allocateUsername = (
         const candidate = candidates.next().value!;
         if (!isReservedUsername(candidate, reserved)) batch.push(candidate);
       }
-      const taken = new Set(
-        (yield* db
-          .select({ name: sql<string>`lower(${users.username})` })
-          .from(users)
-          .where(
-            and(
-              eq(users.organisationId, organisationId),
-              inArray(sql`lower(${users.username})`, batch),
-            ),
-          )).map((row) => row.name),
-      );
+      const held = yield* db
+        .select({ name: sql<string>`${usernameKey(users.username)}` })
+        .from(users)
+        .where(
+          and(
+            eq(users.organisationId, organisationId),
+            inArray(usernameKey(users.username), batch),
+          ),
+        );
+      const retired = yield* db
+        .select({ name: retiredUsernames.name })
+        .from(retiredUsernames)
+        .where(
+          and(
+            eq(retiredUsernames.organisationId, organisationId),
+            inArray(retiredUsernames.name, batch),
+          ),
+        );
+      const taken = new Set([...held, ...retired].map((row) => row.name));
       const free = batch.find((candidate) => !taken.has(candidate));
       if (free) return free;
     }
   });
+
+/**
+ * Whether a name was retired by a record other than `userId`, so it may not be given to that
+ * record. A record may take back a name it retired itself.
+ */
+export const retiredByAnother = (
+  db: Db,
+  organisationId: string,
+  name: string,
+  userId: string | undefined,
+) =>
+  Effect.map(
+    db
+      .select({ name: retiredUsernames.name })
+      .from(retiredUsernames)
+      .where(
+        and(
+          eq(retiredUsernames.organisationId, organisationId),
+          eq(retiredUsernames.name, canonicalName(name)),
+          userId ? ne(retiredUsernames.userId, userId) : undefined,
+        ),
+      ),
+    (rows) => rows.length > 0,
+  );
 
 /**
  * Gives every person without a username one, oldest first, by the same rule as registration.

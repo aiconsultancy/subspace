@@ -132,8 +132,9 @@ to revoke API access.
 Every person has a `username`, which is also their IRC account name. People and
 agents share one namespace in each organisation, compared without regard to case:
 an agent's username is its IRC nick (`ircNick`), and the database keeps the two in
-step on every write. A unique index on the organisation and the lower-case
-username guarantees that no two records share a name.
+step on every write. Names compare in ASCII lower case, as Ergo's `ascii` case
+mapping does, whatever the database's locale: a unique index on the organisation
+and `lower(username COLLATE "C")` guarantees that no two records share a name.
 
 The API allocates a username when it registers a person, and the membership
 command and development sign-in do the same for the people they add.
@@ -160,7 +161,14 @@ Allocations in an organisation are serialised with each other and with agent
 registration changes, so people who register at the same moment with the same
 first name receive different usernames. An agent cannot register an IRC nick that
 is a person's username (409) or a reserved name (400). A username never changes by
-itself; the API does not yet offer a way to change one.
+itself.
+
+A username that has been issued is never given to anyone else, because its IRC
+account may still exist. When an agent's IRC nick changes or is cleared, or a
+person's username is changed, a database trigger records the old name as retired.
+Allocation skips retired names, an agent cannot register one (409), and the
+database refuses one to any record but the one that held it, which may take it
+back.
 
 `bun run db:migrate`, which the image runs at start-up, gives existing people
 usernames by the same rule, oldest first, after applying the migrations and in the

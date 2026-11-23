@@ -145,11 +145,12 @@ export const users = pgTable(
     uniqueIndex("user_agent_name")
       .on(table.organisationId, sql`lower(${table.displayName})`)
       .where(sql`${table.agentRank} is not null`),
+    // Names compare in ASCII lower case whatever the database locale, as Ergo's ascii mapping does.
     uniqueIndex("user_agent_irc_nick")
-      .on(table.organisationId, sql`lower(${table.agentIrcNick})`)
+      .on(table.organisationId, sql`lower(${table.agentIrcNick} COLLATE "C")`)
       .where(sql`${table.agentIrcNick} is not null`),
     uniqueIndex("users_username")
-      .on(table.organisationId, sql`lower(${table.username})`)
+      .on(table.organisationId, sql`lower(${table.username} COLLATE "C")`)
       .where(sql`${table.username} is not null`),
     foreignKey({
       columns: [table.organisationId, table.registeredById],
@@ -159,6 +160,28 @@ export const users = pgTable(
       columns: [table.organisationId, table.deactivatedById],
       foreignColumns: [table.organisationId, table.id],
     }),
+  ],
+);
+
+/**
+ * Usernames that were issued and then changed or cleared, in canonical form. Their IRC accounts
+ * may still exist, so they are never allocated to anyone else. A trigger on `users` records them.
+ */
+export const retiredUsernames = pgTable(
+  "retired_usernames",
+  {
+    organisationId: organisationId(),
+    name: text().notNull(),
+    userId: uuid("user_id").notNull(),
+    retiredAt: timestamp("retired_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.organisationId, table.name] }),
+    foreignKey({
+      columns: [table.organisationId, table.userId],
+      foreignColumns: [users.organisationId, users.id],
+    }),
+    check("retired_usernames_canonical", sql`${table.name} = lower(${table.name} COLLATE "C")`),
   ],
 );
 

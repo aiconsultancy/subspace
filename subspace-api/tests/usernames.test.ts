@@ -347,6 +347,96 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
     expect(await stored(agent.userId)).toBeNull();
   });
 
+  test("a username that was issued is never given to anyone else", async () => {
+    const admin = await tenant.sign(crypto.randomUUID(), {
+      given_name: "Senara",
+      family_name: "Polglaze",
+      roles: [adminRole],
+    });
+    expect((await api.call("/api/v1/me", admin)).status).toBe(200);
+    const fleet = await api.call("/api/v1/fleets", admin, "POST", {
+      name: "Retirement fleet",
+      slug: "retirement-fleet",
+      ircHost: "irc.example.com",
+      ircPort: 6697,
+      ircTls: true,
+    });
+    expect(fleet.status).toBe(201);
+    const fields = (name: string, ircNick: string | null, serviceTokenClientId: string) => ({
+      name,
+      rank: "rearAdmiral",
+      fleet: "retirement-fleet",
+      defaultModel: "example-model",
+      serviceTokenClientId,
+      ircNick,
+    });
+    const created = await api.call(
+      "/api/v1/agents",
+      admin,
+      "POST",
+      fields("Pellam", "Pellam", crypto.randomUUID()),
+    );
+    expect(created.status).toBe(201);
+    let agent = await created.json();
+    const rename = async (ircNick: string | null) => {
+      const response = await api.call(`/api/v1/agents/${agent.userId}`, admin, "PUT", {
+        ...fields("Pellam", ircNick, agent.serviceTokenClientId),
+        version: agent.version,
+      });
+      expect(response.status).toBe(200);
+      agent = await response.json();
+    };
+    const retired = async () =>
+      (
+        await database.client.query(
+          "SELECT name FROM retired_usernames WHERE user_id = $1 ORDER BY name",
+          [agent.userId],
+        )
+      ).rows.map((row) => row.name);
+
+    // A change of case keeps the same name; a new nick retires the old one.
+    await rename("PELLAM");
+    expect(await retired()).toEqual([]);
+    await rename("Pellam-two");
+    expect(await retired()).toEqual(["pellam"]);
+    // A new person named Pellam does not get pellam.
+    expect((await signIn({ given_name: "Pellam", family_name: "Rook" })).username).toBe("pellamr");
+    // Nor does another agent.
+    const another = await api.call(
+      "/api/v1/agents",
+      admin,
+      "POST",
+      fields("Pellam-copy", "pellam", crypto.randomUUID()),
+    );
+    expect(another.status).toBe(409);
+    // The agent that held it may take it back, and clearing its nick retires the other.
+    await rename("Pellam");
+    expect(await stored(agent.userId)).toBe("Pellam");
+    await rename(null);
+    expect(await stored(agent.userId)).toBeNull();
+    expect(await retired()).toEqual(["pellam", "pellam-two"]);
+    // The database refuses a retired name to any other record, however it is written.
+    const [{ organisation_id: org }] = (
+      await database.client.query("SELECT organisation_id FROM users WHERE id = $1", [agent.userId])
+    ).rows;
+    await expect(
+      database.client.query(
+        "INSERT INTO users (organisation_id, subject, display_name, username) VALUES ($1, $2, 'Copy', 'PELLAM-TWO')",
+        [org, crypto.randomUUID()],
+      ),
+    ).rejects.toThrow("retired");
+  });
+
+  test("names compare in ASCII lower case whatever the database locale", async () => {
+    const indexes = (
+      await database.client.query(
+        "SELECT indexname, indexdef FROM pg_indexes WHERE indexname IN ('users_username', 'user_agent_irc_nick') ORDER BY indexname",
+      )
+    ).rows;
+    expect(indexes).toHaveLength(2);
+    for (const { indexdef } of indexes) expect(indexdef).toContain('COLLATE "C"');
+  });
+
   test("the database refuses a second username that differs only in case", async () => {
     const person = await signIn({ given_name: "Demelza" });
     const [{ organisation_id: org }] = (
@@ -363,9 +453,17 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
   });
 
   test("a person without a username is given one on their next request", async () => {
+    // As an older API instance adds a person: no username. Clearing one would retire it instead.
     const oid = crypto.randomUUID();
-    const person = await signIn({ given_name: "Elowen", family_name: "Trevail" }, oid);
-    await database.client.query("UPDATE users SET username = NULL WHERE id = $1", [person.userId]);
+    const [{ id: userId }] = (
+      await database.client.query(
+        `INSERT INTO users (organisation_id, subject, display_name)
+         SELECT id, $2, 'Elowen Trevail' FROM organisations WHERE provider = 'entra' AND external_id = $1
+         RETURNING id`,
+        [tenant.tenant, oid],
+      )
+    ).rows;
+    const person = { userId: userId as string };
     const responses = await Promise.all(
       Array.from({ length: 4 }, async () =>
         (await api.call("/api/v1/me", await tenant.sign(oid))).json(),
