@@ -487,6 +487,31 @@ describe.skipIf(!testDatabase)("fleet enrolment over HTTP", () => {
     expect((await me(key)).status).toBe(200);
   });
 
+  test("a token can be issued with no body, an empty one or null, taking the defaults", async () => {
+    const path = "/api/v1/fleets/alpha/enrolment-tokens";
+    const send = (body?: string, type?: string) =>
+      fetch(`${api.origin}${path}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${admin}`, ...(type ? { "Content-Type": type } : {}) },
+        body,
+      });
+    for (const [body, type] of [
+      [undefined, undefined],
+      ["", undefined],
+      ["", "application/json"],
+      ["null", "application/json"],
+      ["{}", "application/json"],
+    ] as const) {
+      const response = await send(body, type);
+      expect([body, type, response.status]).toEqual([body, type, 201]);
+      const issued = await response.json();
+      expect(issued.maxUses).toBe(16);
+      expect(Date.parse(issued.expiresAt)).toBeGreaterThan(Date.now() + 3_590_000);
+    }
+    expect((await api.call(path, admin, "POST")).status).toBe(201);
+    expect((await send("not json", "application/json")).status).toBe(400);
+  });
+
   test("tokens are managed by administrators only, within bounds", async () => {
     const path = "/api/v1/fleets/alpha/enrolment-tokens";
     expect((await api.call(path, member, "POST", {})).status).toBe(403);

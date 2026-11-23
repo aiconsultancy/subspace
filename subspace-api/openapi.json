@@ -33779,12 +33779,19 @@
             }
           }
         },
-        "description": "An organisation administrator issues a token with which the fleet's gateway enrols the fleet's agents. The token is returned once, begins senr1. and is stored only as a hash. expiresInSeconds defaults to 3600 (60 to 604800) and maxUses to 16 (1 to 100).",
+        "description": "An organisation administrator issues a token with which the fleet's gateway enrols the fleet's agents. The token is returned once, begins senr1. and is stored only as a hash. The body may be left out. expiresInSeconds defaults to 3600 (60 to 604800) and maxUses to 16 (1 to 100).",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NewEnrolmentToken"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/NewEnrolmentToken"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             }
           },

@@ -526,12 +526,13 @@ export const enrolmentTokenGroup = HttpApiGroup.make("enrolmentTokens")
   .add(
     HttpApiEndpoint.post("issueEnrolmentToken", "/fleets/:reference/enrolment-tokens", {
       params: fleetParams,
-      payload: NewEnrolmentToken,
+      // The body is optional: none, an empty one or null takes the defaults.
+      payload: [NewEnrolmentToken, Schema.Null],
       success: IssuedEnrolmentToken.pipe(HttpApiSchema.status(201)),
       error: endpointErrors,
     }).annotate(
       OpenApi.Description,
-      `An organisation administrator issues a token with which the fleet's gateway enrols the fleet's agents. The token is returned once, begins ${enrolmentTokenPrefix} and is stored only as a hash. expiresInSeconds defaults to ${defaultEnrolmentLifetime} (60 to ${maxEnrolmentLifetime}) and maxUses to ${defaultEnrolmentUses} (1 to ${maxEnrolmentUses}).`,
+      `An organisation administrator issues a token with which the fleet's gateway enrols the fleet's agents. The token is returned once, begins ${enrolmentTokenPrefix} and is stored only as a hash. The body may be left out. expiresInSeconds defaults to ${defaultEnrolmentLifetime} (60 to ${maxEnrolmentLifetime}) and maxUses to ${defaultEnrolmentUses} (1 to ${maxEnrolmentUses}).`,
     ),
     HttpApiEndpoint.get("listEnrolmentTokens", "/fleets/:reference/enrolment-tokens", {
       params: fleetParams,
@@ -583,7 +584,9 @@ export const enrolmentTokenHandlers = (
   handlers
     .handle("issueEnrolmentToken", ({ params, payload }) =>
       handleDb(
-        Effect.flatMap(CurrentMember, (member) => issueToken(member, params.reference, payload)),
+        Effect.flatMap(CurrentMember, (member) =>
+          issueToken(member, params.reference, payload ?? {}),
+        ),
       ),
     )
     .handle("listEnrolmentTokens", ({ params }) =>
