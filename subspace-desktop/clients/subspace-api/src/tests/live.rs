@@ -236,6 +236,26 @@ fn hub_reconnects_with_the_same_scope_after_a_drop() {
     hub.stop();
 }
 
+/// A stream that ends straight after `ready`, before the catch-up that
+/// follows it is taken, must not leave the test hook waiting for a catch-up
+/// that will never come: the next stream's `ready` replaces it. The first
+/// catch-up is due 300 ms after `ready`, and the end of the stream is read
+/// at once, so the first catch-up is abandoned on any machine that is not
+/// stalled for that long; either way the second must be reported.
+#[test]
+fn a_stream_dropped_before_its_catch_up_leaves_nothing_owed() {
+    let server = Server::new(api(Arc::new(AtomicI64::new(1))));
+    let hub = hub(&server);
+    let mut first = server.peer();
+    first.ready();
+    first.close();
+    wait(&hub, |snapshot| snapshot.live() == LiveStatus::Reconnecting);
+    let mut again = server.peer();
+    ready_and_caught_up(&hub, &mut again);
+    assert!(hub.caught_up_after_ready());
+    hub.stop();
+}
+
 #[test]
 fn without_the_stream_the_open_issue_is_polled() {
     let reads = Arc::new(AtomicUsize::new(0));
