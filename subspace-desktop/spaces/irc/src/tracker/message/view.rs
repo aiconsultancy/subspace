@@ -15,7 +15,7 @@ use subspace_framework::dashboard::fields::{self, FieldLayout, LabelledInput};
 use subspace_framework::dashboard::panel::IconName;
 use subspace_framework::dashboard::{Tokens, anchored, rich};
 
-use super::{CONTEXT, CancelTrackerDialog, Dialog, Kind, QUOTE_CHARS, choose, close, confirm};
+use super::{CONTEXT, CancelTrackerDialog, Dialog, Kind, choose, close, confirm};
 use crate::conversation::Conversation;
 use crate::tracker::plan::clip;
 use crate::tracker::quote::Quoted;
@@ -81,7 +81,12 @@ pub(crate) fn render(
     Some(dialog::backdrop(&tokens, frame))
 }
 
-/// The message as the dialog quotes it: who, then the start of the text.
+/// How many rows of the message show before it scrolls.
+const QUOTE_ROWS: f32 = 6.;
+
+/// The message as the dialog quotes it: who, then every word that will be
+/// written, scrolling when it is long, so nothing is written that the
+/// person could not read here.
 fn quote(quoted: &Quoted, tokens: &Tokens) -> AnyElement {
     v_flex()
         .id("irc-tracker-quote")
@@ -96,11 +101,16 @@ fn quote(quoted: &Quoted, tokens: &Tokens) -> AnyElement {
         )
         .child(
             div()
+                .id("irc-tracker-quote-scroll")
+                .aria_label(SharedString::from(quoted.text.trim().to_owned()))
+                .test_support()
+                .max_h(tokens.row_height * QUOTE_ROWS)
+                .overflow_y_scroll()
                 .text_size(tokens.row_font)
                 .text_color(tokens.fg)
                 .child(rich::plain_text(
                     "irc-tracker-quote-text",
-                    &clip(&quoted.text, QUOTE_CHARS),
+                    quoted.text.trim(),
                 )),
         )
         .into_any_element()

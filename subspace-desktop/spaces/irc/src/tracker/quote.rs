@@ -104,7 +104,10 @@ pub(crate) fn issue_draft(
     })
 }
 
-/// The decision to record on `issue` from `quoted` with `title`.
+/// The decision to record on `issue` from `quoted` with `title`. Its body
+/// is the message protected as an issue's description is: fenced, then
+/// who said it, where and when in a code span, because Decisions renders
+/// a body as Markdown and the words are someone else's.
 pub(crate) fn decision_draft(
     quoted: &Quoted,
     issue: &str,
@@ -119,7 +122,7 @@ pub(crate) fn decision_draft(
     Ok(DecisionDraft {
         issue: issue.to_owned(),
         title,
-        text: quoted.text.trim().to_owned(),
+        text: description(quoted),
         context,
         message: Some((code_span(&quoted.reference()), excerpt)),
     })

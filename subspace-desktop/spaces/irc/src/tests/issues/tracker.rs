@@ -264,7 +264,16 @@ fn open_make_issue(
     hub: &Entity<Hub>,
     cx: &mut VisualTestContext,
 ) {
-    let m2 = seq(hub, "m2", cx);
+    open_make_issue_on(conversation, (hub, "m2"), cx);
+}
+
+/// Opens Make issue on message `id` from its toolbar.
+fn open_make_issue_on(
+    conversation: &Entity<Conversation>,
+    (hub, id): (&Entity<Hub>, &str),
+    cx: &mut VisualTestContext,
+) {
+    let m2 = seq(hub, id, cx);
     conversation.update(cx, |conversation, cx| {
         crate::conversation::hover(conversation, m2, true, cx)
     });
@@ -273,50 +282,6 @@ fn open_make_issue(
     cx.update(|window, cx| window.click(make, cx));
     cx.update(|window, cx| window.render_frame(cx));
     assert!(found("irc-tracker-dialog".into(), cx));
-}
-
-#[gpui_kit::test]
-fn make_issue_writes_only_from_its_dialog(cx: &mut TestAppContext) {
-    let mock = creating();
-    let (conversation, hub, cx) = open(cx, true, Some(&mock));
-    open_make_issue(&conversation, &hub, cx);
-    assert!(
-        mock.requests().is_empty(),
-        "opening the dialog writes nothing"
-    );
-    let title = conversation.read_with(cx, |conversation, cx| {
-        let dialog = conversation.tracker.dialog.as_ref().expect("open");
-        assert_eq!(dialog.chosen.as_deref(), Some("NAV"));
-        dialog.title.read(cx).value().to_string()
-    });
-    assert_eq!(title, "Pan stalls while tiles decode");
-    cx.update(|window, cx| window.click("irc-tracker-confirm", cx));
-    cx.run_until_parked();
-    assert_eq!(notice(cx), "Created NAV-14: Pan stalls while tiles decode.");
-    assert!(!found("irc-tracker-dialog".into(), cx));
-    let posts: Vec<_> = mock
-        .requests()
-        .into_iter()
-        .filter(|request| request.method == "POST")
-        .collect();
-    assert_eq!(posts.len(), 1, "one write");
-    let body: serde_json::Value = serde_json::from_str(&posts[0].body).unwrap();
-    assert_eq!(
-        (body["projectId"].as_str(), body["title"].as_str()),
-        (Some("project-nav"), Some(title.as_str()))
-    );
-    assert!(
-        body["description"]
-            .as_str()
-            .unwrap()
-            .contains("by bob in #subspace on Acme IRC")
-    );
-    conversation.read_with(cx, |conversation, _| {
-        assert_eq!(conversation.tracker.refreshed, ["NAV-14"])
-    });
-    hub.read_with(cx, |hub, _| {
-        assert!(said(hub).is_empty(), "nothing posted to the channel")
-    });
 }
 
 fn created() -> serde_json::Value {

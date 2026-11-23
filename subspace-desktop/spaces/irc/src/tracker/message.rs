@@ -23,8 +23,6 @@ mod view;
 pub(crate) use view::render;
 
 const CONTEXT: &str = "IrcTrackerDialog";
-/// The most characters of the message the dialog quotes.
-const QUOTE_CHARS: usize = 280;
 
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys([KeyBinding::new(

@@ -40,7 +40,13 @@ fn a_message_s_decision_keeps_a_reference_back_to_it() {
         "Recorded in Channels from #aurora-lyra on Acme IRC.".into(),
     )
     .unwrap();
-    assert_eq!(draft.text, "Decode tiles on a worker pool.");
+    assert!(
+        draft.text.starts_with(
+            "```text\nDecode tiles on a worker pool.\n```\n\nFrom `IRC message fixture-msg-1"
+        ),
+        "fenced, with its reference in a code span: {}",
+        draft.text
+    );
     let (reference, excerpt) = draft.message.unwrap();
     assert!(reference.contains("fixture-msg-1") && reference.contains("#aurora-lyra"));
     assert_eq!(excerpt, "mira: Decode tiles on a worker pool.");
@@ -111,4 +117,24 @@ fn hostile_names_and_ids_stay_inside_a_code_span() {
         "`#[docs](https://evil.example) on Acme IRC`"
     );
     assert_eq!(message::code_span("`edge`"), "`` `edge` ``", "padded");
+}
+
+#[test]
+fn a_long_message_is_written_whole_and_protected_past_what_a_preview_would_show() {
+    let tail = " ![x](https://evil.example/x.png) [docs](https://evil.example) @[Ada](member:00000000-0000-0000-0000-000000000001) ```";
+    let text = format!("{}{tail}", "a".repeat(300));
+    let message = quoted(&text);
+    let issue = message::issue_draft(&message, "NAV", "Long").unwrap();
+    let decision = message::decision_draft(&message, "NAV-2", "Long", String::new()).unwrap();
+    for body in [&issue.description, &decision.text] {
+        assert!(
+            body.contains(tail.trim_end_matches('`').trim()),
+            "written whole"
+        );
+        assert!(
+            body.starts_with("````text\n"),
+            "a fence longer than the text's own backticks"
+        );
+        assert!(body.contains("\n````\n\nFrom `IRC message "));
+    }
 }
