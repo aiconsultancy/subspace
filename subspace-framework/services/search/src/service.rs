@@ -16,11 +16,15 @@ pub struct Service {
     pub(crate) inner: Arc<Inner>,
 }
 
+/// A board's rule for documents no search may show at the moment.
+pub(crate) type Hidden = Arc<dyn Fn(&Document) -> bool + Send + Sync>;
+
 pub(crate) struct Inner {
     app: String,
     pub stores: Mutex<BTreeMap<String, Store>>,
     pub reranker: RwLock<Option<Arc<dyn Reranker>>>,
     revisions: BTreeMap<String, Arc<crate::revision::Revision>>,
+    pub(crate) hidden: RwLock<BTreeMap<String, Hidden>>,
 }
 
 impl Service {
@@ -53,6 +57,7 @@ impl Service {
                 stores: Mutex::new(stores),
                 reranker: RwLock::new(None),
                 revisions,
+                hidden: RwLock::new(BTreeMap::new()),
             }),
         })
     }

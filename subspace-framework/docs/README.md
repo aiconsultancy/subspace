@@ -90,3 +90,6 @@ If you want to build a Space or know what the Framework offers one, read
 - [Long secrets in Windows Credential Manager](changes/windows-credential-limit/README.md):
   how `Keychain` splits a secret over one Windows credential across several,
   and keeps short and earlier secrets as one.
+- [Records a board hides from search](changes/search-hidden-records/README.md):
+  `Service::set_hidden` and `Service::shows`, asked by every search and by the
+  Search view before it shows a result.

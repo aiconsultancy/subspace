@@ -32,7 +32,10 @@ pub(crate) fn search_filtered(
     let (candidates, generations) = candidates(service, query, filters, &expression)?;
     let (ranked, ranking, warning) = crate::ranking::rank(reranker, query, &candidates);
     let sources = service.sources()?;
-    let hits = revalidate(service, &ranked, &generations)?;
+    let hits: Vec<Hit> = revalidate(service, &ranked, &generations)?
+        .into_iter()
+        .filter(|hit| service.shows(hit))
+        .collect();
     let source_bytes = serde_json::to_vec(&sources).map_err(storage_error)?.len();
     let budget = RESPONSE_BYTES
         .saturating_sub(source_bytes)

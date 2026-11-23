@@ -113,3 +113,48 @@ fn independent_handles_observe_invalidation_and_service_is_send_sync() {
     assert_eq!(other.search(&query("hello")).unwrap().hits.len(), 1);
     assert!(service.sweep().is_ok());
 }
+
+#[test]
+fn a_board_hides_documents_from_every_search_without_deleting_them() {
+    let (_root, service, scope) = setup();
+    enable(&service, &scope);
+    service
+        .upsert(
+            &scope,
+            &[
+                document("mine", "launch window"),
+                document("theirs", "launch window"),
+            ],
+        )
+        .unwrap();
+    let hidden = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let rule = std::sync::Arc::clone(&hidden);
+    service
+        .set_hidden("irc", move |document| {
+            rule.load(std::sync::atomic::Ordering::SeqCst) && document.id == "theirs"
+        })
+        .unwrap();
+    let ids = |service: &Service| -> Vec<String> {
+        let mut ids: Vec<String> = service
+            .search(&query("launch"))
+            .unwrap()
+            .hits
+            .into_iter()
+            .map(|hit| hit.target.id)
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(ids(&service), ["mine"]);
+    let shown = service.search(&query("launch")).unwrap().hits;
+    hidden.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(ids(&service), ["mine", "theirs"], "nothing was deleted");
+    let kept = service.search(&query("launch")).unwrap().hits;
+    hidden.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(shown.len(), 1);
+    assert_eq!(
+        kept.iter().filter(|hit| service.shows(hit)).count(),
+        1,
+        "a result kept from earlier is asked again"
+    );
+}
