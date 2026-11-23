@@ -277,3 +277,32 @@ fn the_same_rename_made_again_by_a_new_holder_takes_a_new_stamp() {
         "two people under one nick, each counted"
     );
 }
+
+#[test]
+fn a_conversation_the_book_no_longer_holds_drops_its_revision() {
+    let mut book = ReactionBook::new();
+    assert!(book.apply(&reaction("m1", "👍", "bob", 1)));
+    let held = book.revision(&room());
+    assert!(held > 0);
+    // Reactions on messages in many short-lived conversations, more than
+    // the book keeps: the first conversation's message is dropped too.
+    for n in 0..300 {
+        let elsewhere = BufferKey {
+            network: room().network,
+            target: Target::Channel(format!("#short-{n}")),
+        };
+        let lone = crate::test_support::reaction(elsewhere, "m", "🎉", "bob");
+        book.apply(&lone);
+    }
+    assert!(
+        book.revisions.len() <= super::super::MAX_UNSEEN_MESSAGES,
+        "bounded by what the book holds: {}",
+        book.revisions.len()
+    );
+    assert_eq!(
+        book.revision(&room()),
+        0,
+        "dropped, which still differs from what a view last read"
+    );
+    assert_ne!(held, 0);
+}

@@ -163,14 +163,29 @@ impl ReactionBook {
         self.revisions.get(buffer).copied().unwrap_or_default()
     }
 
-    /// What `buffers` show changed now; whether any did.
+    /// What `buffers` show changed now; whether any did. A conversation the
+    /// book now holds nothing for drops its revision, so the map stays
+    /// within the book's own limits: reading 0 instead still tells a view
+    /// that its last reactions went.
     fn changed<'a>(&mut self, buffers: impl IntoIterator<Item = &'a BufferKey>) -> bool {
         let mut any = false;
         for buffer in buffers {
-            self.revisions.insert(buffer.clone(), self.clock);
+            if self.holds_any(buffer) {
+                self.revisions.insert(buffer.clone(), self.clock);
+            } else {
+                self.revisions.remove(buffer);
+            }
             any = true;
         }
         any
+    }
+
+    /// Whether the book holds anything for `buffer`.
+    fn holds_any(&self, buffer: &BufferKey) -> bool {
+        self.messages
+            .range((buffer.clone(), String::new())..)
+            .next()
+            .is_some_and(|((held, _), _)| held == buffer)
     }
 
     /// The reactions on one message, in first-reacted order.
