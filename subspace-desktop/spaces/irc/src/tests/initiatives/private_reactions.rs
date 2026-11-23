@@ -123,3 +123,90 @@ fn people_react_to_each_other_in_private(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// Reacts 👍 to `id` in aurora-lyra's private conversation; the
+/// conversation and how many commands had been sent before.
+fn react_privately(
+    (board, hub): (&Entity<Irc>, &Entity<Hub>),
+    id: &str,
+    cx: &mut VisualTestContext,
+) -> (Entity<Conversation>, usize) {
+    let (_, conversation) = private((board, hub), "aurora-lyra", id, cx);
+    let before = sent(hub, cx);
+    conversation.update(cx, |view, cx| {
+        crate::conversation::reacting::toggle(view, (id.into(), "👍".into()), true, None, cx);
+    });
+    (conversation, before)
+}
+
+#[gpui_kit::test]
+fn no_private_reaction_goes_while_the_initiatives_could_not_be_read(cx: &mut TestAppContext) {
+    let (board, hub, cx) = ship(cx);
+    // Another organisation, whose first read of the initiatives failed:
+    // no one is known to be an agent, or known not to be.
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            catalog.change_scope_for_test(Some(99), cx);
+            let failed = Err(subspace_api_client::Error::Network);
+            catalog.set_memberships_for_test(Some("fixture-user".into()), failed, cx);
+        })
+    });
+    settle(cx);
+    let (conversation, before) = react_privately((&board, &hub), "q3", cx);
+    assert_eq!(sent(&hub, cx), before, "nothing is sent");
+    conversation.read_with(cx, |view, _| {
+        assert_eq!(
+            view.reacting.notice.as_deref(),
+            Some(crate::reactions::gate::ROSTER_LOADING)
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_failed_refresh_after_a_good_one_closes_private_reactions_again(cx: &mut TestAppContext) {
+    let (board, hub, cx) = ship(cx);
+    // The same account's next read answers NotFound: the initiatives,
+    // and so who is an agent, are unknown again.
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            let gone = Err(subspace_api_client::Error::NotFound);
+            catalog.set_memberships_for_test(Some("fixture-user".into()), gone, cx);
+        })
+    });
+    settle(cx);
+    let (conversation, before) = react_privately((&board, &hub), "q4", cx);
+    assert_eq!(sent(&hub, cx), before, "nothing is sent to a known agent");
+    conversation.read_with(cx, |view, _| {
+        assert_eq!(
+            view.reacting.notice.as_deref(),
+            Some(crate::reactions::gate::ROSTER_LOADING)
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_hand_typed_private_tagmsg_meets_the_reaction_gate(cx: &mut TestAppContext) {
+    let (board, hub, cx) = ship(cx);
+    hub.update(cx, |hub, cx| {
+        hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
+            let gone = Err(subspace_api_client::Error::Network);
+            catalog.change_scope_for_test(Some(98), cx);
+            catalog.set_memberships_for_test(Some("fixture-user".into()), gone, cx);
+        })
+    });
+    settle(cx);
+    let (_, conversation) = private((&board, &hub), "tavi", "q5", cx);
+    let input = conversation.read_with(cx, |view, _| view.composer().clone());
+    let before = sent(&hub, cx);
+    let raw = "/raw @+draft/react=\u{1F44D};+draft/reply=q5 TAGMSG tavi";
+    crate::tests::completion::submit(&input, raw, cx);
+    assert_eq!(
+        sent(&hub, cx),
+        before,
+        "nothing is sent while the roster is unknown"
+    );
+    assert_eq!(
+        input.read_with(cx, |input, _| input.error().map(str::to_owned)),
+        Some(crate::reactions::gate::ROSTER_LOADING.to_owned())
+    );
+}

@@ -6,10 +6,12 @@
 //! and asks [`stop::target`] whether a message's reaction choices carry
 //! the stop group.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 
 use subspace_client_irc::reactions::{ReactionBook, ReactionSummary};
-use subspace_client_irc::{BufferKey, Event, NetworkId, ReactionError, Update};
+use subspace_client_irc::{
+    BufferKey, Event, NetworkId, Reaction, ReactionChange, ReactionError, Update,
+};
 
 use crate::state::{Buffer, IrcState};
 
@@ -32,12 +34,30 @@ pub(crate) struct Refusal {
     pub error: ReactionError,
 }
 
+/// How many of our latest live additions [`Reactions::echoed_since`]
+/// remembers.
+const MAX_ECHOES: usize = 64;
+
+/// One of our additions the client reported live, numbered.
+#[derive(Debug, Clone)]
+struct Echo {
+    serial: u64,
+    buffer: BufferKey,
+    msgid: String,
+    reaction: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Reactions {
     book: ReactionBook,
     support: BTreeMap<NetworkId, bool>,
     refusals: BTreeMap<BufferKey, Refusal>,
     serial: u64,
+    /// Our latest live additions, as the client reported them, before the
+    /// book's limits could drop any: a stop's acknowledgement waits for
+    /// its echo, not for room in the display.
+    echoes: VecDeque<Echo>,
+    echo_serial: u64,
 }
 
 impl Reactions {
@@ -49,15 +69,15 @@ impl Reactions {
 
     /// Takes one update that is not an event. A reaction to a message the
     /// state already `held`, such as one restored from the store, counts
-    /// that message as loaded first. True when what is shown may change.
+    /// that message as loaded first. True when what is shown may change, or
+    /// our own addition was reported live: a reaction the book discarded,
+    /// as a repeat or an older operation from history, changes nothing.
     pub fn update(&mut self, update: Update, held: bool) -> bool {
         match update {
             Update::Reaction(reaction) => {
-                if held {
-                    self.book.mark_seen(&reaction.buffer, &reaction.msgid);
-                }
-                self.book.apply(&reaction);
-                true
+                let echoed = self.note_echo(&reaction);
+                let made_room = held && self.book.mark_seen(&reaction.buffer, &reaction.msgid);
+                self.book.apply(&reaction) || made_room || echoed
             }
             Update::ReactionRefused {
                 buffer,
@@ -89,10 +109,52 @@ impl Reactions {
         self.support.get(network).copied().unwrap_or(false)
     }
 
-    /// Whether the client reports our `reaction`, exactly that value, on
-    /// the message `msgid` in `buffer`.
-    pub fn reacted(&self, buffer: &BufferKey, msgid: &str, reaction: &str) -> bool {
-        self.book.reacted(buffer, msgid, reaction)
+    /// Remembers `reaction` when it is our own addition reported live;
+    /// whether it was, as a stop sent may wait for it.
+    fn note_echo(&mut self, reaction: &Reaction) -> bool {
+        if !reaction.own || reaction.history || reaction.change != ReactionChange::Added {
+            return false;
+        }
+        self.echo_serial += 1;
+        self.echoes.push_back(Echo {
+            serial: self.echo_serial,
+            buffer: reaction.buffer.clone(),
+            msgid: reaction.msgid.clone(),
+            reaction: reaction.reaction.clone(),
+        });
+        if self.echoes.len() > MAX_ECHOES {
+            self.echoes.pop_front();
+        }
+        true
+    }
+
+    /// The number of our latest live addition, for [`Self::echoed_since`].
+    pub fn echo_serial(&self) -> u64 {
+        self.echo_serial
+    }
+
+    /// Whether the client reported our `reaction`, exactly that value, on
+    /// the message `msgid` in `buffer`, live and after addition number
+    /// `after`, whether or not the book had room to show it.
+    pub fn echoed_since(
+        &self,
+        after: u64,
+        buffer: &BufferKey,
+        (msgid, reaction): (&str, &str),
+    ) -> bool {
+        self.echoes.iter().any(|echo| {
+            echo.serial > after
+                && echo.buffer == *buffer
+                && echo.msgid == msgid
+                && echo.reaction == reaction
+        })
+    }
+
+    /// When what `buffer` shows from the book last changed: what was read
+    /// with [`Self::shown`] at the same revision, over the same held
+    /// lines, is still current.
+    pub fn revision(&self, buffer: &BufferKey) -> u64 {
+        self.book.revision(buffer)
     }
 
     /// The latest refusal in `buffer`, if any.

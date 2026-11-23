@@ -265,8 +265,9 @@ or the user's channel list holds it, **Go to** that channel; a standard name
 standing in is only named, as joining it would create it. The composer
 checks what a draft would send, through the IRC client's
 `private_recipients`, the same parse the session sends it with: every nick
-of a `/msg`, `/notice` or `/query` target list, the PRIVMSG or NOTICE that
-`/raw`, `/quote` or an unknown command carries, and text, `/me` or
+of a `/msg`, `/notice` or `/query` target list, the PRIVMSG, NOTICE or
+TAGMSG (which can carry a reaction) that `/raw`, `/quote` or an unknown
+command carries, and text, `/me` or
 attachments in an older private conversation; a channel target is never
 refused. The member list, a nick reference and a notification for a closed
 conversation check the nick, and `irc_write` refuses a message to an
@@ -625,7 +626,8 @@ Channels shows them as described in
   messages never displace loaded ones; `observe` marks the messages of
   lines as loaded, and `mark_seen` does it for lines an owner loads itself.
   `forget` drops a conversation, and `reacted_messages` lists the messages
-  in one that show reactions. It shows 20 reactions per message and 100
+  in one that show reactions. `apply` says whether anything shown may have
+  changed, and `revision` when what one conversation shows last did. It shows 20 reactions per message and 100
   people per reaction, with as many again remembered removals.
   Local echoes carry the local clock, so a large clock skew against the
   server can misorder our own operations.
@@ -657,9 +659,11 @@ Channels reads the runtime with `drain_updates`, and the hub keeps one
 `ReactionBook` (`reactions.rs`), fed every reaction and every event before
 the event applies; a reaction to a line the conversation already holds,
 such as one restored from the store, marks that message loaded first.
-Removing a conversation drops its reactions. Each conversation rebuilds
-what its messages show on every sync and measures again only the rows
-whose reactions changed (`conversation/reacting.rs`), so a row appearing or
+Removing a conversation drops its reactions. A reaction the book discarded,
+as a repeat or an older operation from a history page, wakes nothing.
+Each conversation reads what its messages show again only when its
+revision in the book or its held lines changed, and measures again only
+the rows whose reactions changed (`conversation/reacting.rs`), so a row appearing or
 growing moves nothing else; tiles keep their fixed box.
 
 - **Pills** (`transcript/reactions.rs`): under a message, one small pill per
@@ -684,8 +688,15 @@ growing moves nothing else; tiles keep their fixed box.
   `gate::gate` first. Nothing goes to the server buffer or to a fleet
   agent in a private conversation (`AgentNotice::refusing`; the controls
   are hidden there too, and reactions between people in private are
-  ordinary). A new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only
-  from the labelled `Stop <ship>` item in a channel; asked for any other
+  ordinary). Unless the latest read of the initiatives succeeded for the
+  current account and organisation (`Catalog::memberships_known`, kept on
+  the roster and read by `Roster::not_known_yet`), no private
+  conversation sends one, as no nick is known not to be an agent: not
+  while the first read runs, not after the latest read failed or was
+  refused (also after earlier ones succeeded), and not without a Subspace
+  API sign-in. A private `TAGMSG` typed through `/raw` meets the same gate
+  (`private_tag_recipients`). A new ✋ or 🛑 of ours (Stargate's folded stop keys) goes only from the
+  labelled `Stop <ship>` item in a channel; asked for any other
   way it is explained and not sent, whether or not the app recognises the
   message as an agent's, since Stargate stops a queued turn before any
   status line exists. Taking back our own stop still goes.
@@ -693,11 +704,16 @@ growing moves nothing else; tiles keep their fixed box.
   to a fleet agent on the roster whose status line is trusted (the agent's
   account is named after the nick asked) and still running and current, or on that agent's own reply
   to it (its nick and account both name that nick), the menu lists ✋ and 🛑
-  apart under `Stop <ship>`. Choosing one sends the reaction; once the
-  client reports that exact reaction on that message, the notice says it
-  was sent and that the status line shows the result when Stargate reports
-  it (pending stops are kept per message and reaction, so another reaction
-  in between loses none). A ✋ or 🛑 pill on a request to a verified agent,
+  apart under `Stop <ship>`. Choosing it checks again that the message
+  still concerns a running roster agent, and names the agent read then.
+  Choosing one sends the reaction; once the client reports that exact
+  reaction on that message live, after it was sent, the notice says it was
+  sent and that the status line shows the result when Stargate reports it.
+  Pending stops are kept per message and reaction, so another reaction in
+  between loses none; they are matched against our latest live additions
+  (`Reactions::echoed_since`), before the book's display limits, so a
+  message already showing 20 reactions still acknowledges one; and one
+  whose echo never comes is let go after two minutes. A ✋ or 🛑 pill on a request to a verified agent,
   or its reply, also says it asked the agent to stop. One msgid index per
   rebuild finds each reply's request.
   This follows Stargate `main` at `d4842b8` (`routeIrcStop`,
@@ -710,6 +726,86 @@ growing moves nothing else; tiles keep their fixed box.
   cannot take a reaction. The Thread tab shows the pills read-only.
 
 See the [change record](changes/channels-reactions/README.md).
+
+### Tracker commands and the message toolbar
+
+Channels acts on the tracker from a channel (`tracker.rs`). Every write goes
+directly to the Subspace API as the signed-in person, through the desktop's
+API client (`subspace_api_client::Client`), never as a chat message for an
+agent to act on; nothing posts a line to the channel and nothing sends a
+private message.
+
+- **Where.** In a channel, while the Issues Space answers `issues@1` with a
+  tracker scope and the tracker service is Subspace API. Elsewhere the
+  commands are not offered, and a typed one is kept with the reason; it is
+  never sent to IRC as an unknown command.
+- **Commands** (`tracker/parse.rs`, `plan.rs`, `check.rs`):
+  `/assign <issue> [to <agent> | to me]` (in a ship's channel the default is
+  the ship's captain), `/ready <issue> [off]` (the API's `readyForAgents`)
+  and `/decision <issue> <decision>` (`POST /v1/decisions` on the issue's
+  project, linked to it). The issue must be in the scope's projects and not
+  known to be missing; an assignee is a fleet agent the roster knows by API
+  nick, or the person; `/ready` refuses an assigned, closed or tracker issue,
+  as the API does. A refusal keeps the draft and shows in the composer.
+- **Completion** (`tracker/suggest.rs`): the commands among the composer's,
+  then the issues the conversation has shown (its tile owners, newest
+  first), the tracker's project keys, whom to assign and `off`. Once the
+  draft is a whole command that can run, the first row says what Return will
+  do (`Return assigns NAV-2 · … to aurora-lyra`); Return or a click on it
+  runs it (`ChatInput::completion_key`), while Tab only completes and on
+  that row takes the first row that inserts. The row carries what it
+  showed (its words, plan and tracker); at acceptance the draft's row is
+  built again and runs only if it says the same, otherwise nothing is
+  written and the new row shows for a fresh Return. One write runs at a
+  time; a command sent meanwhile is kept with a note. Completion gathers the
+  tracker's facts only for a draft that starts with `/`. In reply mode a
+  command is refused like any `/command` and kept with a note.
+- **Writing** (`tracker/write.rs`, `flow.rs`): on a background task, read
+  `/v1/me` and the issue, repeat the checks on what the tracker returns,
+  then write once at the issue's version. Before anything is sent, the
+  client must be Subspace API at the origin the Issues scope names, for an
+  account that is still current (`tracker/destination.rs`); otherwise
+  nothing is sent. A create or decision the tracker never confirmed is
+  reported as possibly saved and is not sent again from that dialog or
+  that unchanged draft. Summaries and titles are cut and checked in UTF-16
+  units without control characters, as the API counts. The result, or the API's refusal
+  in plain words, shows in the conversation's notice area above the
+  composer, the one reactions use; a landed write empties the composer, a
+  refused one keeps it. The write never retries and never puts a token or a
+  server body in the notice.
+- **Fresh tiles.** After a write Channels sends `issues@1/refresh` for the
+  issue; the Issues Space reads it again, keeping the old card until the new
+  one lands, and its `changed` brings the new state to the tiles and **In
+  play here**.
+- **Message toolbar** (`transcript/actions.rs`): over the message under the
+  pointer or with the keyboard's focus, at its top right on the content
+  surface, a compact group of icon buttons with tooltips and accessible
+  names: **Add reaction** (the reactions piece's menu, stop group
+  included), **Reply in thread** (opens the thread and starts reply mode,
+  where the inspector has a Thread tab and the server carries reply tags),
+  **Make issue…** and **Record decision…**. Each shows only when it can
+  work; the keys `r`, `t`, `i` and `d` on a focused message do the same.
+  The toolbar is drawn over the row, so it changes no height and moves
+  nothing; it has a full hairline border and no accent edge.
+- **Make issue** and **Record decision** (`tracker/message.rs`, `quote.rs`)
+  open a dialog first: the quoted message, an editable title (its first
+  line), and the project (the message's only issue's project, else the
+  newest issue in play's) or the issue (the message's only issue). Only
+  **Create issue** or **Record decision** writes, and only with the API
+  client of the account and organisation the dialog opened under, while
+  the Issues scope names the same tracker; otherwise nothing is sent and
+  the dialog says why. The dialog shows the whole message, scrolling past
+  six rows: exactly what is written. The issue's description quotes the
+  message in a fenced block, so nothing in it becomes a link or a
+  mention, then who said it, where and when, and its message ID, in a
+  code span for the same reason; a decision's body is protected the same way, carries the same
+  reference as IRC evidence (`ircMessage`), and its context names the
+  channel and network in a code span.
+
+What the API does not support is left out: assigning someone other than a
+fleet agent or the person (the API knows no IRC nick for a person), and the
+tracker commands with a NETT tracker. See the
+[change record](changes/channels-tracker-commands/README.md).
 
 ### Loaded reply counts
 

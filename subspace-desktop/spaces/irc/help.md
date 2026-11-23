@@ -230,9 +230,9 @@ shows as a person.
 All communication with a fleet's agents happens in channels, where everyone
 can see it: private messages are for people only. Choosing an agent in the
 member list or a reference to it, `/msg`, `/query` or `/notice` to it (alone
-or in a comma-separated list), a PRIVMSG or NOTICE to it through `/raw` or
-`/quote`, or a message or attachment in an older private conversation with
-it opens, uploads and sends nothing; instead a short notice above the
+or in a comma-separated list), a PRIVMSG, NOTICE or TAGMSG to it through
+`/raw` or `/quote`, or a message or attachment in an older private
+conversation with it opens, uploads and sends nothing; instead a short notice above the
 message box names the agent's channel (its ship's channel, or the Starbase
 for the rear admiral). **Go to** shows that channel when your initiative
 records it or it is already in your list. If nothing of the agent's network
@@ -709,7 +709,12 @@ removes exactly the reaction you made.
 
 You can't react in a private conversation with a fleet agent: agents talk
 in channels, where everyone can see, so the pills there are read-only.
-Reactions in a private conversation with a person are ordinary.
+Reactions in a private conversation with a person are ordinary. Until
+Subspace has read your initiatives for your account and organisation, and
+so knows who the fleet agents are, private conversations take no
+reactions: just after it starts, if the latest read failed, or if you are
+not signed in to Subspace API. A reaction typed by hand as a private
+`TAGMSG` through `/raw` is held to the same rule.
 
 Reactions need a server that supports them (IRCv3 `message-tags`). Without
 that, or while the network is disconnected, the pills stay but you can't
@@ -733,6 +738,46 @@ stop reactions, which Subspace can't see: those are sent like any other
 reaction.
 
 The inspector's **Thread** tab shows the same pills, read-only.
+
+### Act on the tracker
+
+In a channel, while the Issues Space is signed in to Subspace API, the
+message input takes three tracker commands. They change the tracker as you,
+directly; nothing is posted to the channel.
+
+- `/assign NAV-2` assigns an issue to the ship's captain in a ship's
+  channel; `/assign NAV-2 to aurora-orion` names another fleet agent, and
+  `/assign NAV-2 to me` assigns it to you.
+- `/ready NAV-2` flags an issue **Ready for agents**, and `/ready NAV-2 off`
+  clears the flag. Only an open, unassigned issue that is not a tracker can
+  be flagged.
+- `/decision NAV-2 Decode tiles on a worker pool.` records a decision on an
+  issue's project, linked to the issue.
+
+Type `/` to see them. The list then offers the issues this conversation has
+shown, and whom to assign. Once the command is complete, its first row says
+what `Return` will do; press `Return`, or click the row, to do it. If what
+it would do has changed since the row appeared, nothing is written and the
+new row shows for you to confirm with `Return` again. `Tab` only completes
+a word and never runs a command. One tracker change runs at a time; a
+command sent meanwhile stays in the message input with a note. While you write a thread
+reply, a command is kept with a note instead: cancel the reply to run it.
+A short note above the
+message input says what changed, or why the tracker refused; a refused
+command stays in the message input. The issue's tile and **In play here**
+show the change once the Issues Space has read it again.
+
+Hover a message, or focus it with the keyboard, to see its toolbar:
+**Add reaction**, **Reply in thread** (in a ship's channel or Starbase),
+**Make issue…** and **Record decision…**. The last two open a dialog where
+you can edit the title and choose the project or the issue; only its button
+changes the tracker, and only under the account, organisation and tracker
+the dialog opened under: if you switch, the dialog says so and writes
+nothing. The dialog shows the whole message, scrolling if it is long:
+exactly what will be written. A new issue, or a decision, quotes the
+message with who wrote it, where and when. If the tracker never confirms a
+write, Subspace says it may have been saved and does not send it again
+from that dialog or that draft; check the tracker first.
 
 ### Move through messages with the keyboard
 
@@ -887,6 +932,10 @@ the message input is ordinary text input.
 | `Enter` on a link or reference | Open it |
 | `Enter` on a message with replies or a request | Open its thread in the inspector |
 | `r` on a message | Add or take back a reaction |
+| `t` on a message | Reply in its thread |
+| `i` on a message | Make an issue from it |
+| `d` on a message | Record a decision from it |
+| `Esc` in a **Make issue** or **Record decision** dialog | Cancel |
 | `Esc` on a message | Back to the message input |
 
 ### Shared keys

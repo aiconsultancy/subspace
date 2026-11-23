@@ -8,6 +8,7 @@ mod previews;
 mod reserved;
 mod summaries;
 mod tiles;
+mod tracker;
 
 use std::collections::HashMap;
 
@@ -166,6 +167,7 @@ fn irc_declares_that_it_follows_and_asks_the_issues_contract() {
             (Role::Subscribes, "issues@1/changed".to_owned()),
             (Role::Requests, "issues@1/current-scope".to_owned()),
             (Role::Requests, "issues@1/resolve".to_owned()),
+            (Role::Requests, "issues@1/refresh".to_owned()),
             (Role::Subscribes, "github@1/changed".to_owned()),
             (Role::Requests, "github@1/resolve-pull-requests".to_owned()),
             (Role::Requests, "github@1/open-pull-request".to_owned()),

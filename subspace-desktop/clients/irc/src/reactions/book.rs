@@ -1,11 +1,11 @@
 //! A bounded, pure aggregation of reactions per message for a UI to read.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
 
 use super::validate_reaction;
-use crate::model::{BufferKey, Casemapping, Event, Line, NetworkId, Reaction};
+use crate::model::{BufferKey, Casemapping, Event, Line, LineKind, NetworkId, Reaction};
 
 /// Loaded messages with reactions (or remembered removals) kept; the
 /// least recently changed goes first.
@@ -28,7 +28,9 @@ const MAX_SEEN_IDS: usize = 8192;
 const MAX_HOLDERS: usize = 1024;
 
 mod groups;
+mod seen;
 use groups::{Group, record, shows, summaries};
+use seen::Seen;
 
 /// Someone who reacted.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,34 +100,16 @@ pub struct ReactionBook {
     /// When each nick, folded, was last taken by a rename on its network:
     /// accountless records under it from before then were someone else's.
     holders: BTreeMap<(NetworkId, String), u64>,
+    /// The rename being reported, folded, per network: the client reports
+    /// one NICK once per channel the person shares with us, each report
+    /// beside its own nick line and nothing else, and only the first of
+    /// them moves anything. Any other event ends that run, so the same
+    /// rename made again later, by whoever holds the nick then, counts.
+    last_rename: BTreeMap<NetworkId, (String, String)>,
+    /// The clock when what each conversation shows last changed.
+    revisions: BTreeMap<BufferKey, u64>,
     seen: Seen,
     clock: u64,
-}
-
-/// Message IDs seen loaded, oldest first, bounded by [`MAX_SEEN_IDS`].
-#[derive(Debug, Clone, Default)]
-struct Seen {
-    ids: BTreeSet<Key>,
-    order: VecDeque<Key>,
-}
-
-impl Seen {
-    fn insert(&mut self, key: Key) {
-        if !self.ids.insert(key.clone()) {
-            return;
-        }
-        self.order.push_back(key);
-        if self.order.len() > MAX_SEEN_IDS
-            && let Some(oldest) = self.order.pop_front()
-        {
-            self.ids.remove(&oldest);
-        }
-    }
-
-    fn forget(&mut self, buffer: &BufferKey) {
-        self.ids.retain(|(held, _)| held != buffer);
-        self.order.retain(|(held, _)| held != buffer);
-    }
 }
 
 impl ReactionBook {
@@ -133,29 +117,75 @@ impl ReactionBook {
         Self::default()
     }
 
-    /// Records one added or removed reaction. Invalid reactions are
-    /// ignored, as are operations older than the one held for that person.
-    pub fn apply(&mut self, reaction: &Reaction) {
+    /// Records one added or removed reaction; whether what any
+    /// conversation shows may have changed ([`Self::revision`]). Invalid
+    /// reactions are ignored, as are operations older than the one held
+    /// for that person.
+    pub fn apply(&mut self, reaction: &Reaction) -> bool {
         if validate_reaction(&reaction.reaction).is_err() || reaction.msgid.is_empty() {
-            return;
+            return false;
         }
         self.mappings
             .insert(reaction.buffer.network.clone(), reaction.casemapping);
         let key = (reaction.buffer.clone(), reaction.msgid.clone());
         let fresh = !self.messages.contains_key(&key);
         let seen = self.seen.ids.contains(&key);
-        if fresh {
-            evict_for(&mut self.messages, &key, seen);
-        }
+        let evicted = fresh
+            .then(|| evict_for(&mut self.messages, &key, seen))
+            .flatten();
+        let since = self.held_since(
+            &reaction.buffer.network,
+            &reaction.nick,
+            reaction.casemapping,
+        );
         self.clock += 1;
         let entry = self.messages.entry(key.clone()).or_default();
         entry.seen |= seen;
-        if record(&mut entry.groups, reaction, self.clock) {
+        let changed = record(&mut entry.groups, reaction, (self.clock, since));
+        if changed {
             entry.touched = self.clock;
         }
         if fresh && entry.groups.is_empty() {
             self.messages.remove(&key);
         }
+        let touched = changed.then_some(&key.0);
+        self.changed(
+            touched
+                .into_iter()
+                .chain(evicted.as_ref().map(|(buffer, _)| buffer)),
+        )
+    }
+
+    /// The book's clock when what the conversation `buffer` shows last
+    /// changed; it never goes back. A reader may keep what it built from
+    /// the book while this stays the same.
+    pub fn revision(&self, buffer: &BufferKey) -> u64 {
+        self.revisions.get(buffer).copied().unwrap_or_default()
+    }
+
+    /// What `buffers` show changed now; whether any did. A conversation the
+    /// book now holds nothing for drops its revision, so the map stays
+    /// within the book's own limits: reading 0 instead still tells a view
+    /// that its last reactions went.
+    fn changed<'a>(&mut self, buffers: impl IntoIterator<Item = &'a BufferKey>) -> bool {
+        let mut any = false;
+        for buffer in buffers {
+            if self.holds_any(buffer) {
+                self.revisions.insert(buffer.clone(), self.clock);
+            } else {
+                self.revisions.remove(buffer);
+            }
+            any = true;
+        }
+        any
+    }
+
+    /// Whether the book holds anything for `buffer`.
+    fn holds_any(&self, buffer: &BufferKey) -> bool {
+        self.messages
+            .range((buffer.clone(), String::new())..)
+            .next()
+            .is_some_and(|((held, _), _)| held == buffer)
     }
 
     /// The reactions on one message, in first-reacted order.
@@ -192,17 +222,21 @@ impl ReactionBook {
     /// The message `msgid` in `buffer` is loaded: its reactions now count
     /// against [`MAX_MESSAGES`], not the unseen budget. [`Self::observe`]
     /// calls it for every line with a `msgid`; an owner that loads lines
-    /// another way, such as from its own store, calls it itself.
-    pub fn mark_seen(&mut self, buffer: &BufferKey, msgid: &str) {
+    /// another way, such as from its own store, calls it itself. Whether
+    /// what any conversation shows changed: making room may drop another
+    /// message's reactions.
+    pub fn mark_seen(&mut self, buffer: &BufferKey, msgid: &str) -> bool {
         let key = (buffer.clone(), msgid.to_owned());
         self.seen.insert(key.clone());
         if self.messages.get(&key).is_none_or(|entry| entry.seen) {
-            return;
+            return false;
         }
-        evict_for(&mut self.messages, &key, true);
+        let evicted = evict_for(&mut self.messages, &key, true);
         if let Some(entry) = self.messages.get_mut(&key) {
             entry.seen = true;
         }
+        self.clock += 1;
+        self.changed(evicted.as_ref().map(|(buffer, _)| buffer))
     }
 
     /// Drops everything held for a conversation, such as when it is
@@ -210,6 +244,7 @@ impl ReactionBook {
     pub fn forget(&mut self, buffer: &BufferKey) {
         self.messages.retain(|(held, _), _| held != buffer);
         self.seen.forget(buffer);
+        self.revisions.remove(buffer);
     }
 
     /// How many messages hold reactions or remembered removals.
@@ -224,6 +259,9 @@ impl ReactionBook {
     /// Follows nick changes ([`Event::MemberChanged`] with a new nick)
     /// and marks the messages of lines, live or loaded, as seen.
     pub fn observe(&mut self, event: &Event) {
+        if !reports_a_rename(event) {
+            self.last_rename.clear();
+        }
         match event {
             Event::MemberChanged {
                 buffer,
@@ -251,25 +289,50 @@ impl ReactionBook {
     /// `new`. Entries under `old` with another known account keep their
     /// nick: they were someone else. So do accountless entries made under
     /// `old` before its current holder took it by a rename: they belonged
-    /// to an earlier holder of the nick.
+    /// to an earlier holder of the nick. The same rename reported again,
+    /// as the client does once per shared channel, changes nothing more,
+    /// so the nick's holder keeps the stamp its reactions moved with.
     pub fn rename(&mut self, network: &NetworkId, old: &str, new: &str, account: Option<&str>) {
         let mapping = self.mapping(network);
         let since = self.held_since(network, old, mapping);
         self.clock += 1;
         let stamp = self.clock;
+        let moved = self.move_records(network, (old, new, account), (since, stamp), mapping);
+        let pair = (mapping.fold(old), mapping.fold(new));
+        let repeated = self.last_rename.insert(network.clone(), pair.clone()) == Some(pair);
+        if moved || !repeated {
+            self.took(network, new, stamp, mapping);
+        }
+    }
+
+    /// Gives `new` to every record on `network` that `old`'s holder with
+    /// `account` made since `since`, stamped `stamp`; whether any moved.
+    fn move_records(
+        &mut self,
+        network: &NetworkId,
+        (old, new, account): (&str, &str, Option<&str>),
+        (since, stamp): (u64, u64),
+        mapping: Casemapping,
+    ) -> bool {
         let records = self
             .messages
             .iter_mut()
             .filter(|((buffer, _), _)| buffer.network == *network)
-            .flat_map(|(_, entry)| entry.groups.iter_mut())
-            .flat_map(|group| group.records.iter_mut());
-        for record in records {
-            if holds(record, (old, account), since, mapping) {
-                new.clone_into(&mut record.reactor.nick);
-                record.assigned = stamp;
-            }
+            .flat_map(|(key, entry)| {
+                let records = entry
+                    .groups
+                    .iter_mut()
+                    .flat_map(|group| group.records.iter_mut());
+                records.map(move |record| (key, record))
+            })
+            .filter(|(_, record)| holds(record, (old, account), since, mapping));
+        let mut moved = BTreeSet::new();
+        for ((buffer, _), record) in records {
+            new.clone_into(&mut record.reactor.nick);
+            record.assigned = stamp;
+            moved.insert(buffer.clone());
         }
-        self.took(network, new, stamp, mapping);
+        self.changed(&moved)
     }
 
     /// When `nick` was last taken by a rename on `network`; 0 if never.
@@ -304,6 +367,18 @@ impl ReactionBook {
     }
 }
 
+/// Whether `event` belongs to the run of reports one NICK makes: a member
+/// renamed, or the nick line beside it.
+fn reports_a_rename(event: &Event) -> bool {
+    match event {
+        Event::MemberChanged {
+            old_nick, member, ..
+        } => *old_nick != member.nick,
+        Event::Line(line) => line.kind == LineKind::Nick,
+        _ => false,
+    }
+}
+
 /// Whether `record` belongs to the person renamed from `old` with
 /// `account`: under that nick, with that account or none, and, without an
 /// account, made since the nick's current holder took it (`since`).
@@ -326,8 +401,9 @@ fn holds(
 
 /// Makes room for `key` among loaded messages (`seen`) or among those not
 /// seen yet, dropping the least recently changed message of the same kind:
-/// in the same conversation when its unseen quota is full.
-fn evict_for(messages: &mut BTreeMap<Key, Entry>, key: &Key, seen: bool) {
+/// in the same conversation when its unseen quota is full. Returns the
+/// message dropped, if any.
+fn evict_for(messages: &mut BTreeMap<Key, Entry>, key: &Key, seen: bool) -> Option<Key> {
     let others = || {
         messages
             .iter()
@@ -342,15 +418,14 @@ fn evict_for(messages: &mut BTreeMap<Key, Entry>, key: &Key, seen: bool) {
         MAX_UNSEEN_MESSAGES
     };
     if !full_buffer && others().count() < limit {
-        return;
+        return None;
     }
     let oldest = others()
         .filter(|(held, _)| !full_buffer || in_buffer(held))
         .min_by_key(|(_, entry)| entry.touched)
-        .map(|(held, _)| held.clone());
-    if let Some(oldest) = oldest {
-        messages.remove(&oldest);
-    }
+        .map(|(held, _)| held.clone())?;
+    messages.remove(&oldest);
+    Some(oldest)
 }
 
 #[cfg(test)]

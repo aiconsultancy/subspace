@@ -168,7 +168,7 @@ impl HeaderFacts {
 
 impl Conversation {
     pub(super) fn standalone_title(&self, cx: &App) -> Option<AnyElement> {
-        if self.group.is_some() {
+        if self.tab.group.is_some() {
             return None;
         }
         self.heading(true, cx)

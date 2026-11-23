@@ -661,7 +661,7 @@ def tracker_state(types):
 
 
 def validate_issue_payload(payload, create):
-    allowed = {'title', 'summary', 'description', 'stateId', 'assigneeId', 'priority', 'estimate',
+    allowed = {'title', 'summary', 'description', 'stateId', 'assigneeId', 'priority', 'estimate', 'readyForAgents',
                'dueDate', 'labelIds', 'parentId', 'type', 'milestoneId', 'cycleId', 'projectId' if create else 'version'}
     if not isinstance(payload, dict) or not payload or set(payload) - allowed:
         raise Problem(400, 'Supply editable issue fields only.')
@@ -716,9 +716,14 @@ def issue_properties(fixture, row, payload):
         values['state'] = {k: state[k] for k in ('id', 'name', 'type')}
     if 'assigneeId' in payload:
         people = {p['userId']: p for p in (ADA, GRACE, AGENT)}
+        if fixture.fleet:
+            # The aurora fleet's agents, under the user IDs its record gives them.
+            people.update({agent['userId']: dict(fleet_person(agent['name'].removeprefix('aurora-')), userId=agent['userId'])
+                           for agent in FLEET_AGENTS if agent['rank'] == 'captain'})
         if payload['assigneeId'] is not None and payload['assigneeId'] not in people:
             raise Problem(400, 'Choose an active human or agent.')
         values['assignee'] = people.get(payload['assigneeId'])
+    values['readyForAgents'] = ready_for_agents_after(row, payload, values)
     if 'labelIds' in payload:
         ids = payload['labelIds']
         if not isinstance(ids, list) or len(ids) > 100 or any(i != uid('label') for i in ids):
@@ -737,6 +742,58 @@ def issue_properties(fixture, row, payload):
         if payload['estimate'] not in points:
             raise Problem(400, 'Choose an estimate on the project scale.')
     return values
+
+
+def ready_for_agents_after(row, payload, values):
+    """The flag a write leaves, by the API's rule: only an open, unassigned
+    issue that is not a tracker may be flagged; a write that leaves an
+    assignee, a closed state or a tracker clears it."""
+    assignee = values.get('assignee', row.get('assignee'))
+    tracker = payload.get('type', row['type']) == 'tracker'
+    state = values.get('state', row['state'])
+    closed = state['type'] in ('completed', 'canceled', 'duplicate')
+    if payload.get('readyForAgents') is True:
+        if assignee is not None:
+            raise Problem(400, 'Remove the assignee before marking the issue ready for agents.')
+        if tracker:
+            raise Problem(400, 'Trackers cannot be marked ready for agents.')
+        if closed:
+            raise Problem(400, 'Reopen the issue before marking it ready for agents.')
+    if assignee is not None or tracker or closed:
+        return False
+    return payload.get('readyForAgents', row.get('readyForAgents', False))
+
+
+def log_decision(fixture, payload):
+    """POST /decisions as the signed-in person (Ada Fixture): the maker and
+    the recorder, with the IRC evidence a payload names."""
+    allowed = {'projectId', 'title', 'decidedOn', 'decision', 'context', 'issueIds',
+               'evidenceKind', 'evidenceReference', 'evidenceExcerpt'}
+    if not isinstance(payload, dict) or set(payload) - allowed:
+        raise Problem(400, 'Supply decision fields only.')
+    title, text = payload.get('title'), payload.get('decision')
+    if not isinstance(title, str) or not title.strip() or len(title) > 200 or not isinstance(text, str) or not text.strip():
+        raise Problem(400, 'Enter a title and a decision.')
+    project_row = next((p for p in fixture.projects if p['id'] == payload.get('projectId')), None)
+    if project_row is None:
+        raise Problem(404, 'Project not found.')
+    linked = [fixture.find_issue(issue_id) for issue_id in payload.get('issueIds', [])]
+    if any(row is None for row in linked):
+        raise Problem(400, 'Link existing issues.')
+    now = instant()
+    key = 'logged-' + str(uuid.uuid4())
+    row, detail = decision_record(key, title.strip(), 'proposed', now, payload['decidedOn'], project_row,
+                                  linked, text.strip())
+    provenance = dict(detail['provenance'], evidenceKind=payload.get('evidenceKind'),
+                      evidenceReference=payload.get('evidenceReference'), evidenceExcerpt=payload.get('evidenceExcerpt'))
+    row.update(tags=[], **{k: provenance[k] for k in ('evidenceKind', 'evidenceReference', 'evidenceExcerpt')})
+    detail.update(context=payload.get('context', ''), why='', implications='', alternatives='', provenance=provenance)
+    fixture.decisions[row['id']] = (row, detail)
+    for link in linked:
+        event = activity(link, now, 'decision.logged')
+        event.update(actor=actor(ADA), data=dict(decisionId=row['id']))
+        fixture.events[link['id']].insert(0, event)
+    return dict(row, **detail)
 
 
 def issue_write_route(handler, method, path, query):
@@ -763,6 +820,8 @@ def issue_write_route(handler, method, path, query):
         return 200, project_row
     if method == 'POST' and path == '/api/v1/issues':
         return 201, fixture.create_issue(handler.read_json())
+    if method == 'POST' and path == DECISIONS_PATH:
+        return 201, log_decision(fixture, handler.read_json())
     return None
 
 

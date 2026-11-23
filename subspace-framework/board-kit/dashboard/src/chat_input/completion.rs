@@ -7,7 +7,8 @@
 //! completing ([`super::ChatInput::set_completing`]), Up and Down emit
 //! `Previous` and `Next`, Enter and Tab emit `Complete` and Escape emits
 //! `Cancel`; the owner answers with [`CompletionList::step`] and
-//! [`CompletionList::active`]. A click on a row emits
+//! [`CompletionList::active`], and may read which key it was with
+//! [`super::ChatInput::completion_key`]. A click on a row emits
 //! [`CompletionEvent::Accept`]. The list never takes focus from the input.
 //!
 //! Rows use the GPUI Kit `Command` list with filtering off, because the

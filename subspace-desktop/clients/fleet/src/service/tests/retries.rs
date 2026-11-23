@@ -81,3 +81,35 @@ fn a_retry_from_an_older_generation_never_blocks_one_asked_now(cx: &mut TestAppC
     later(10, cx);
     assert_eq!(shelf.reads("aurora"), before + 1, "once");
 }
+
+/// A Retry asked while an earlier read was queued, which then started
+/// after it and was still in flight when the Retry's interval ended, is
+/// answered by that read: nothing reads again when it lands, so the
+/// keychain is never read within the interval after that read began.
+#[gpui_kit::test]
+fn a_read_that_started_after_a_retry_answers_it(cx: &mut TestAppContext) {
+    let shelf = Shelf::default();
+    let start = cx.executor().now();
+    let service = locked(&shelf, start, cx);
+    let before = shelf.reads("aurora");
+    // A read queued earlier and not started yet.
+    service.update(cx, |service, _| {
+        service.reads.rereading.insert("aurora".into());
+    });
+    retry(&service, start + Duration::from_secs(1), cx);
+    // The queued read starts at second 4, after the Retry.
+    service.update(cx, |service, _| {
+        service.read_starts("aurora", start + Duration::from_secs(4));
+    });
+    later(5, cx);
+    // It lands at second 6, still locked.
+    service.update(cx, |service, cx| service.read_landed("aurora", cx));
+    cx.run_until_parked();
+    assert_eq!(
+        shelf.reads("aurora"),
+        before,
+        "two seconds after that read began: not read again"
+    );
+    later(30, cx);
+    assert_eq!(shelf.reads("aurora"), before, "and never on a timer");
+}

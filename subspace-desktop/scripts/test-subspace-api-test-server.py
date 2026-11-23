@@ -545,6 +545,47 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(conflict[0], 409)
         self.assertEqual(conflict[1]['currentVersion'], 2)
 
+    def test_channels_tracker_writes_ready_for_agents_fleet_assignees_and_decisions(self):
+        fleet = FIXTURE.FixtureServer(0, 'fixture-access', fleet=True)
+        worker = threading.Thread(target=fleet.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(worker.join)
+        self.addCleanup(fleet.server_close)
+        self.addCleanup(fleet.shutdown)
+
+        def call(path, body=None, method=None):
+            data = json.dumps(body).encode() if body is not None else None
+            request = Request(fleet.origin + '/api/v1' + path, data=data, method=method,
+                              headers={'Authorization': 'Bearer fixture-access', 'Content-Type': 'application/json'})
+            try:
+                response = urlopen(request, timeout=3)
+            except HTTPError as error:
+                response = error
+            with response:
+                return response.status, json.load(response)
+
+        status, nav = call('/issues/NAV-3')
+        self.assertEqual(status, 200)
+        self.assertIsNone(nav['assignee'])
+        status, flagged = call('/issues/NAV-3', dict(version=nav['version'], readyForAgents=True), 'PATCH')
+        self.assertEqual((status, flagged['readyForAgents']), (200, True))
+        status, assigned = call('/issues/NAV-3', dict(version=flagged['version'], assigneeId='fixture-agent-lyra'), 'PATCH')
+        self.assertEqual(status, 200)
+        self.assertEqual(assigned['assignee']['displayName'], 'aurora-lyra')
+        self.assertFalse(assigned['readyForAgents'], 'an assignment clears the flag')
+        status, refused = call('/issues/NAV-3', dict(version=assigned['version'], readyForAgents=True), 'PATCH')
+        self.assertEqual(status, 400)
+        self.assertIn('Remove the assignee', refused['detail'])
+        decision = dict(projectId=nav['projectId'], title='Decode on a worker pool', decidedOn='2026-11-22',
+                        decision='Decode tiles on a worker pool.', context='Recorded in Channels.',
+                        issueIds=[nav['id']], evidenceKind='ircMessage', evidenceReference='IRC message m1',
+                        evidenceExcerpt='mira: decode on a pool')
+        status, logged = call('/decisions', decision)
+        self.assertEqual(status, 201)
+        self.assertEqual((logged['status'], logged['evidenceKind']), ('proposed', 'ircMessage'))
+        listed = call('/decisions?issue=NAV-3')[1]['items']
+        self.assertIn(logged['id'], [row['id'] for row in listed])
+
     def test_summary_is_required_on_create_and_cannot_be_cleared_by_patch(self):
         payload = dict(projectId=FIXTURE.uid('SUB'), title='Summary contract')
         self.assertEqual(self.request('/issues', payload)[0], 400)

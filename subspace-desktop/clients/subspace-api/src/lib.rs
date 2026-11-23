@@ -3,6 +3,7 @@
 mod activity;
 pub mod backend;
 pub mod chat_uploads;
+pub mod decision_writes;
 mod dev_sign_in;
 mod fixture;
 pub mod hub;

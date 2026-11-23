@@ -24,6 +24,7 @@ fn signed(nick: &str, prefix: Option<char>) -> Person {
 
 fn facts() -> Facts {
     Facts {
+        tracker: None,
         people: vec![
             person("galactica-captain", Some('@')),
             person("galactica-pilot", None),

@@ -6,8 +6,8 @@
 //! history stays readable, but its composer sends nothing.
 //!
 //! The rule reads what a draft would send, not how it was typed: every nick
-//! of a target list, and the PRIVMSG or NOTICE a `/raw`, `/quote` or unknown
-//! command carries, is checked, and a channel never is.
+//! of a target list, and the PRIVMSG, NOTICE or TAGMSG a `/raw`, `/quote`
+//! or unknown command carries, is checked, and a channel never is.
 //!
 //! This is a client-side rule: the server still accepts a private message
 //! sent another way.
@@ -85,9 +85,10 @@ impl AgentNotice {
     }
 }
 
-/// The nicks a draft would message privately, read from the PRIVMSG and
-/// NOTICE lines the session would send for it: each nick of a `/msg`,
-/// `/notice` or `/query` target list, of a raw PRIVMSG or NOTICE line, or
+/// The nicks a draft would message privately, read from the PRIVMSG,
+/// NOTICE and TAGMSG lines the session would send for it: each nick of a
+/// `/msg`, `/notice` or `/query` target list, of a raw PRIVMSG, NOTICE or
+/// TAGMSG line, or
 /// the other side of the private conversation `target` for text or `/me`.
 /// Channels are never named.
 pub(crate) fn direct_targets(text: &str, target: &Target) -> Vec<String> {

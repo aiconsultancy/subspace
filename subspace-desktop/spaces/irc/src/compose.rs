@@ -13,8 +13,8 @@ use gpui_kit::{
     Subscription, Window,
 };
 use subspace_client_irc::{BufferKey, MAX_INLINE_BYTES, Target, draft_line_limit};
-use subspace_framework::dashboard::chat_input::DraftLimits;
 use subspace_framework::dashboard::chat_input::completion::CompletionList;
+use subspace_framework::dashboard::chat_input::{CompletionKey, DraftLimits};
 use subspace_framework::dashboard::{ChatInput, ChatInputEvent};
 
 use crate::conversation::Conversation;
@@ -25,11 +25,13 @@ mod complete;
 mod hints;
 mod limits;
 mod offer;
+#[cfg(test)]
+pub(crate) use offer::RUN_CHANGED;
 mod paste;
 mod recall;
 pub(crate) mod reply;
 mod send;
-mod suggest;
+pub(crate) mod suggest;
 mod typing;
 
 pub(crate) use agents::{AgentNotice, listed_channel};
@@ -154,7 +156,9 @@ pub(crate) fn handle(
         ChatInputEvent::Previous => recall::step(conversation, true, window, cx),
         ChatInputEvent::Next => recall::step(conversation, false, window, cx),
         ChatInputEvent::Complete if offer::is_open(conversation) => {
-            offer::accept(conversation, None, window, cx);
+            let key = conversation.draft.entity.read(cx).completion_key();
+            let key = key.unwrap_or(CompletionKey::Tab);
+            offer::accept(conversation, offer::Pick::Key(key), window, cx);
         }
         ChatInputEvent::Complete => complete::apply(conversation, window, cx),
         ChatInputEvent::Cancel if offer::is_open(conversation) => offer::close(conversation, cx),

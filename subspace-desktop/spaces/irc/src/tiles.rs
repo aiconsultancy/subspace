@@ -168,6 +168,15 @@ impl Tiles {
         self.owners.in_play_first(limit)
     }
 
+    /// Whether any issue is in play in the conversation, without listing
+    /// what is.
+    pub fn has_issue_in_play(&self) -> bool {
+        self.owners
+            .0
+            .keys()
+            .any(|found| matches!(found, TileRef::Issue(_)))
+    }
+
     /// Of `messages`, those not yet read under `recognition`.
     pub fn unread(&self, messages: &[i64], recognition: u64) -> HashSet<i64> {
         let fresh = recognition != self.recognition;

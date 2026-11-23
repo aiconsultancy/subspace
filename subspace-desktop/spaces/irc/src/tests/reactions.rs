@@ -12,6 +12,7 @@ use crate::hub::Hub;
 use crate::thread_status::PROGRESS_TAG;
 use crate::{Irc, view};
 
+mod anchor;
 mod gate;
 mod take_back;
 

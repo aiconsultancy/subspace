@@ -61,6 +61,19 @@ impl Hub {
                 .enqueue(&mut state, Task::Reference(read), ReadPriority::Reference);
         }
     }
+    /// Reads `identifier` again because it changed, such as after a write
+    /// from Channels: the card held now stays until the new read replaces
+    /// it, and the reference version moves when it lands.
+    pub fn refresh_reference(&self, identifier: &str, profile_id: &str) {
+        let mut state = lock(&self.0.state);
+        if profile_id != crate::PROFILE_ID || !state.references_live() {
+            return;
+        }
+        let read = state.references.refresh(identifier, Instant::now());
+        state.reference_errors.remove(identifier);
+        self.0
+            .enqueue(&mut state, Task::Reference(read), ReadPriority::Reference);
+    }
 }
 
 pub(super) fn resolve(shared: &Shared, job: Job) {

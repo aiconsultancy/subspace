@@ -53,7 +53,9 @@ fn shown(book: &ReactionBook, msgid: &str) -> Vec<String> {
 }
 
 fn apply_all(book: &mut ReactionBook, reactions: &[Reaction]) {
-    reactions.iter().for_each(|reaction| book.apply(reaction));
+    for reaction in reactions {
+        book.apply(reaction);
+    }
 }
 
 #[test]

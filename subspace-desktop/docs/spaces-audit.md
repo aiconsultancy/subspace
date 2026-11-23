@@ -97,7 +97,7 @@ HTTP requests are limited to 60 requests per bind per minute and receive
 
 | Contract | Messages | Answers and publishes | Subscribes and asks | Status |
 | --- | --- | --- | --- | --- |
-| `issues` v1 (`subspace_contracts::issues`) | `current-scope` request: profile, API origin and project keys, or none while unavailable. `resolve` request: one resolution per identifier (summary, unavailable, pending, signed out or failed), at most 50; a summary's optional facts include whether the issue is flagged Ready for agents (`IssueSummary::ready_for_agents`, from the API's `readyForAgents`). `changed` event | The Issues board, from its Subspace API hub | Channels, to recognise and show issue references ([Channels issue references](irc.md#issue-references)); web Spaces, for app pages allowed `issues` ([Show issues](web-spaces-reference.md#show-issues)); Decisions, which asks for the scope to open a decision's linked issues in the answering Space ([Decisions](decisions.md#linked-issues)) | Delivered: phases 3 and 4 of the [delivery plan](changes/board-contracts/tasks.md); per-reference HTTP reads, with batch HTTP resolution to follow |
+| `issues` v1 (`subspace_contracts::issues`) | `current-scope` request: profile, API origin and project keys, or none while unavailable. `resolve` request: one resolution per identifier (summary, unavailable, pending, signed out or failed), at most 50; `refresh` request: read up to 50 identifiers again after the asker changed them, keeping the old summary until the new read lands, then `changed`; a summary's optional facts include whether the issue is flagged Ready for agents (`IssueSummary::ready_for_agents`, from the API's `readyForAgents`). `changed` event | The Issues board, from its Subspace API hub | Channels, to recognise and show issue references ([Channels issue references](irc.md#issue-references)); web Spaces, for app pages allowed `issues` ([Show issues](web-spaces-reference.md#show-issues)); Decisions, which asks for the scope to open a decision's linked issues in the answering Space ([Decisions](decisions.md#linked-issues)) | Delivered: phases 3 and 4 of the [delivery plan](changes/board-contracts/tasks.md); per-reference HTTP reads, with batch HTTP resolution to follow |
 | `github` v1 (`subspace_contracts::github`) | `open-pull-request`: navigation responder role for a validated GitHub PR URL. `resolve-pull-requests` request: one resolution per `owner/repo#n` key (summary, unavailable, pending, signed out or failed), at most 50; a summary has the combined check state and, when the pull request's check runs were read with it, how many passed of how many (`check_counts`). `changed` event | PRs, through `Dashboard::open_link`; summaries from what its current account loaded and a refresh confirmed, else one background read; a signed-out login answers signed out until it signs in or reads again | Issues, from its pull requests panel and palette. Channels, for pull request chips and hover tiles ([change record](changes/subspace-api-accounts/README.md)) | Delivered: [pull request navigation](changes/subspace-api-accounts/README.md) and [change record](changes/subspace-api-accounts/README.md); unavailable responders and unsupported links fall back to the browser |
 
 **Pull request navigation.** `github@1/open-pull-request`
@@ -193,11 +193,13 @@ the registrations differ.
 | `irc` | subscribes | `issues@1/changed` |
 | `irc` | requests | `issues@1/current-scope` |
 | `irc` | requests | `issues@1/resolve` |
+| `irc` | requests | `issues@1/refresh` |
 | `irc` | subscribes | `github@1/changed` |
 | `irc` | requests | `github@1/resolve-pull-requests` |
 | `irc` | requests | `github@1/open-pull-request` |
 | `issues` | responds | `issues@1/current-scope` |
 | `issues` | responds | `issues@1/resolve` |
+| `issues` | responds | `issues@1/refresh` |
 | `issues` | publishes | `issues@1/changed` |
 | `issues` | requests | `github@1/open-pull-request` |
 | `decisions` | requests | `issues@1/current-scope` |

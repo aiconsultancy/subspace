@@ -4,6 +4,7 @@
 //! ([`activity`]: agents' status lines and who is typing). Hosted by
 //! [`crate::conversation::Conversation`].
 
+pub(crate) mod actions;
 pub(crate) mod activity;
 mod fill;
 pub(crate) mod focus;
@@ -35,7 +36,7 @@ use crate::state::{Buffer, Entry, HistoryState};
 use crate::style;
 use crate::text;
 
-pub(crate) use line::{Claim, RowContext, displayed, thread_message, tile_refs};
+pub(crate) use line::{Claim, RowContext, displayed, named_issues, thread_message, tile_refs};
 pub(crate) use scroll::{Row, Scroller, identities, load_older, row_of};
 pub(crate) use targets::message_targets;
 pub(crate) use viewport::scroller;

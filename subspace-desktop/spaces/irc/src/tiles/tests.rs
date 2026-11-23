@@ -284,3 +284,13 @@ fn a_new_recognition_never_gives_an_issue_and_a_kept_pull_request_one_place() {
     );
     assert_eq!(owners.in_play_first(1), [issue]);
 }
+
+#[test]
+fn only_an_issue_counts_as_an_issue_in_play() {
+    let mut tiles = Tiles::default();
+    assert!(!tiles.has_issue_in_play());
+    read(&mut tiles, &[1, 2], &[(1, vec![pr("acme/web#492")])]);
+    assert!(!tiles.has_issue_in_play(), "a pull request is not an issue");
+    read(&mut tiles, &[1, 2], &[(2, vec![issue("NAV-7")])]);
+    assert!(tiles.has_issue_in_play());
+}

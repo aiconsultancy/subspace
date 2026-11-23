@@ -4,7 +4,7 @@
 
 use gpui_kit::{App, Context, Entity};
 use subspace_client_irc::BufferKey;
-use subspace_framework::contracts::issues::{Changed, CurrentScope, ResolutionState};
+use subspace_framework::contracts::issues::{Changed, CurrentScope, Refresh, ResolutionState};
 use subspace_framework::dashboard::{BoardNavigation, DashboardEvent, contracts};
 
 use super::IssueReferences;
@@ -46,6 +46,17 @@ pub(crate) fn want(hub: &mut Hub, identifiers: Vec<String>, cx: &mut Context<Hub
         let hub = cx.weak_entity();
         cx.defer(move |cx| _ = hub.update(cx, resolve_wanted));
     }
+}
+
+/// Asks the answering Space to read `identifier` again after Channels
+/// changed it in the tracker; its `changed` follows when the read lands.
+/// Without an answering Space nothing happens.
+pub(crate) fn refresh(hub: &mut Hub, identifier: String, cx: &mut Context<Hub>) {
+    let Some(scope) = hub.issues.scope() else {
+        return;
+    };
+    let request = Refresh::new(&scope.profile_id, [identifier]);
+    _ = contracts::request(ID, &request, cx);
 }
 
 fn resolve_wanted(hub: &mut Hub, cx: &mut Context<Hub>) {

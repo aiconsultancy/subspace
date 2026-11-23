@@ -6,7 +6,10 @@
 //!   agent is said in a channel, and a reaction, a stop above all, is
 //!   saying something. A private conversation with a roster agent sends no
 //!   reaction, as its composer sends no message
-//!   ([`crate::compose::AgentNotice::refusing`]). Reactions between people
+//!   ([`crate::compose::AgentNotice::refusing`]). Until a read of the
+//!   initiatives has succeeded for the current account and organisation,
+//!   no one is known not to be an agent, so a private conversation sends
+//!   no reaction then either, also when that read failed. Reactions between people
 //!   in private are ordinary.
 //! - **A stop is sent only from its labelled item.** A new ✋ or 🛑 of ours
 //!   (Stargate's stop keys, skin tones and the variation selector folded)
@@ -46,6 +49,10 @@ pub(crate) enum Via {
 /// Why nothing is sent in the server buffer.
 pub(crate) const SERVER: &str = "Reactions are sent in conversations, not to the server.";
 
+/// Why nothing is sent in private while the initiatives are not known.
+pub(crate) const ROSTER_LOADING: &str =
+    "Reactions in private wait until Subspace knows who the fleet agents are.";
+
 /// Whether `reaction`, added (`add`) or taken back, may be sent in the
 /// conversation `target`, asked for `via`.
 pub(crate) fn gate(
@@ -65,11 +72,13 @@ pub(crate) fn gate(
     }
 }
 
-/// Why `target` takes no reaction at all: the server buffer, or a private
-/// conversation with a fleet agent.
+/// Why `target` takes no reaction at all: the server buffer, a private
+/// conversation with a fleet agent, or any private conversation before
+/// the initiatives first load.
 pub(crate) fn refusal(target: &Target, roster: &Roster) -> Option<String> {
     match target {
         Target::Server => Some(SERVER.to_owned()),
+        Target::Query(nick) if roster.not_known_yet(nick) => Some(ROSTER_LOADING.to_owned()),
         Target::Query(nick) => AgentNotice::refusing(roster, nick, |_| false).map(|n| n.words()),
         Target::Channel(_) => None,
     }
@@ -79,7 +88,7 @@ pub(crate) fn refusal(target: &Target, roster: &Roster) -> Option<String> {
 mod tests {
     use subspace_client_irc::Target;
 
-    use super::{Gate, SERVER, Via, gate, refusal};
+    use super::{Gate, ROSTER_LOADING, SERVER, Via, gate, refusal};
     use crate::fleet::Roster;
     use crate::fleet::tests::{agent, fleet};
 
@@ -156,5 +165,27 @@ mod tests {
             Gate::Send
         );
         assert_eq!(refusal(&Target::Server, &roster).as_deref(), Some(SERVER));
+    }
+
+    #[test]
+    fn nothing_goes_in_private_before_the_roster_loads() {
+        let loading = Roster::for_catalogue(&[], false);
+        let unknown = Target::Query("aurora-lyra".into());
+        assert_eq!(
+            gate((&unknown, &loading), "\u{1F44D}", true, Via::Ordinary),
+            Gate::Refuse(ROSTER_LOADING.to_owned()),
+            "not yet known to be a person"
+        );
+        assert_eq!(
+            gate((&room(), &loading), "\u{1F44D}", true, Via::Ordinary),
+            Gate::Send,
+            "a channel is unaffected"
+        );
+        let loaded = Roster::default();
+        assert_eq!(
+            gate((&unknown, &loaded), "\u{1F44D}", true, Via::Ordinary),
+            Gate::Send,
+            "a loaded roster that does not name it: a person"
+        );
     }
 }

@@ -8,6 +8,15 @@ use super::super::ReactionBook;
 use super::{apply_all, at, reaction, removed, renamed, room, shown};
 use crate::model::{BufferKey, Casemapping, Event, Line, LineKind, Target};
 
+/// When each person in the first reaction on `m1` reacted.
+fn first_group_times(book: &ReactionBook) -> Vec<chrono::DateTime<chrono::Utc>> {
+    book.reactions(&room(), "m1")[0]
+        .reactors
+        .iter()
+        .map(|reactor| reactor.time)
+        .collect()
+}
+
 #[test]
 fn after_an_accountless_rename_the_current_holder_of_the_nick_is_matched() {
     let mut book = ReactionBook::new();
@@ -20,10 +29,8 @@ fn after_an_accountless_rename_the_current_holder_of_the_nick_is_matched() {
     );
     book.observe(&renamed("bob", "robert", None));
     book.apply(&removed(reaction("m1", "👍", "robert", 3)));
-    let reactors = book.reactions(&room(), "m1");
-    let times: Vec<_> = reactors[0].reactors.iter().map(|r| r.time).collect();
     assert_eq!(
-        times,
+        first_group_times(&book),
         [at(1)],
         "the removal takes the reaction of the person who now holds the nick"
     );
@@ -185,4 +192,117 @@ fn a_removal_learned_late_moves_a_backdated_place_after_it() {
         at(5),
         "shown from the addition after the removal"
     );
+}
+
+#[test]
+fn a_new_holder_of_a_nick_never_merges_into_the_previous_holder_s_reaction() {
+    let mut book = ReactionBook::new();
+    // Robert reacts and leaves; Bob takes the nick and reacts too.
+    book.apply(&reaction("m1", "👍", "robert", 1));
+    book.observe(&renamed("bob", "robert", None));
+    book.apply(&reaction("m1", "👍", "robert", 2));
+    assert_eq!(
+        book.reactions(&room(), "m1")[0].count(),
+        2,
+        "two people, each counted"
+    );
+    // The new holder takes back only their own reaction.
+    book.apply(&removed(reaction("m1", "👍", "robert", 3)));
+    assert_eq!(
+        first_group_times(&book),
+        [at(1)],
+        "the earlier holder's reaction stays"
+    );
+}
+
+#[test]
+fn a_rename_reported_once_per_shared_channel_moves_its_reactions_once() {
+    let mut book = ReactionBook::new();
+    book.apply(&reaction("m1", "👍", "bob", 1));
+    // Bob shares two channels with us: the client reports his rename twice.
+    book.observe(&renamed("bob", "robert", None));
+    book.observe(&renamed("bob", "robert", None));
+    book.observe(&renamed("robert", "charlie", None));
+    assert_eq!(
+        shown(&book, "m1"),
+        ["👍:charlie"],
+        "his reaction follows him to his next nick"
+    );
+}
+
+#[test]
+fn only_a_change_moves_a_conversation_s_revision() {
+    let mut book = ReactionBook::new();
+    assert!(book.apply(&reaction("m1", "👍", "bob", 2)));
+    let after = book.revision(&room());
+    assert!(after > 0);
+    assert!(!book.apply(&reaction("m1", "👍", "bob", 2)), "a repeat");
+    assert!(
+        !book.apply(&removed(reaction("m1", "👍", "bob", 1))),
+        "an older removal"
+    );
+    assert_eq!(book.revision(&room()), after);
+    let other = BufferKey {
+        network: room().network,
+        target: Target::Channel("#d".into()),
+    };
+    let elsewhere = crate::test_support::reaction(other.clone(), "m2", "🎉", "bob");
+    assert!(book.apply(&elsewhere));
+    assert_eq!(
+        book.revision(&room()),
+        after,
+        "another conversation's change"
+    );
+    book.observe(&renamed("bob", "robert", None));
+    assert!(
+        book.revision(&room()) > after,
+        "a rename moves what it shows"
+    );
+}
+
+#[test]
+fn the_same_rename_made_again_by_a_new_holder_takes_a_new_stamp() {
+    let mut book = ReactionBook::new();
+    // Bob reacts, becomes Robert, and leaves.
+    book.apply(&reaction("m1", "👍", "bob", 1));
+    book.observe(&renamed("bob", "robert", None));
+    book.observe(&renamed("bob", "robert", None));
+    book.observe(&Event::Line(line(room(), "quit")));
+    // Someone else, Bob now, makes the same rename and reacts.
+    book.observe(&renamed("bob", "robert", None));
+    book.apply(&reaction("m1", "👍", "robert", 2));
+    assert_eq!(
+        book.reactions(&room(), "m1")[0].count(),
+        2,
+        "two people under one nick, each counted"
+    );
+}
+
+#[test]
+fn a_conversation_the_book_no_longer_holds_drops_its_revision() {
+    let mut book = ReactionBook::new();
+    assert!(book.apply(&reaction("m1", "👍", "bob", 1)));
+    let held = book.revision(&room());
+    assert!(held > 0);
+    // Reactions on messages in many short-lived conversations, more than
+    // the book keeps: the first conversation's message is dropped too.
+    for n in 0..300 {
+        let elsewhere = BufferKey {
+            network: room().network,
+            target: Target::Channel(format!("#short-{n}")),
+        };
+        let lone = crate::test_support::reaction(elsewhere, "m", "🎉", "bob");
+        book.apply(&lone);
+    }
+    assert!(
+        book.revisions.len() <= super::super::MAX_UNSEEN_MESSAGES,
+        "bounded by what the book holds: {}",
+        book.revisions.len()
+    );
+    assert_eq!(
+        book.revision(&room()),
+        0,
+        "dropped, which still differs from what a view last read"
+    );
+    assert_ne!(held, 0);
 }

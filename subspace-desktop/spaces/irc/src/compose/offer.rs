@@ -3,6 +3,7 @@
 //! keys or a click choose from it.
 
 use gpui_kit::{App, Context, Entity, Window};
+use subspace_framework::dashboard::chat_input::CompletionKey;
 use subspace_framework::dashboard::chat_input::completion::{CompletionEvent, CompletionList};
 
 use super::suggest::{Facts, Offer, suggest};
@@ -22,8 +23,27 @@ fn current(conversation: &Conversation, cx: &App) -> Option<Offer> {
         .asking(super::ask::agent(
             &conversation.roster,
             &conversation.buffer,
-        ));
+        ))
+        .tracking(tracker_facts(conversation, &text, cx));
     suggest(&text, cursor, &facts)
+}
+
+/// What the tracker commands know, gathered only for a draft that is a
+/// slash command: ordinary chat never pays for reading every issue in
+/// play.
+fn tracker_facts(
+    conversation: &Conversation,
+    text: &str,
+    cx: &App,
+) -> Option<crate::tracker::Facts> {
+    text.starts_with('/')
+        .then(|| crate::tracker::facts(conversation, typed_issue(text), cx))
+        .flatten()
+}
+
+/// The issue a tracker command in `text` names, so its answer is gathered.
+fn typed_issue(text: &str) -> Option<String> {
+    crate::tracker::typed(text).and_then(|typed| typed.issue)
 }
 
 fn show(conversation: &mut Conversation, offer: Option<Offer>, cx: &mut Context<Conversation>) {
@@ -58,29 +78,83 @@ pub(super) fn close(conversation: &mut Conversation, cx: &mut Context<Conversati
     show(conversation, None, cx);
 }
 
-/// Replaces the word with the highlighted choice, or the one at `index`.
+/// How a row was chosen: a click on it, or a key on the highlighted one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Pick {
+    Clicked(usize),
+    Key(CompletionKey),
+}
+
+/// Replaces the word with the chosen choice. A row that runs the draft
+/// runs only on Return or a click: Tab only inserts, so on a highlighted
+/// run row it takes the first row that inserts, and never writes.
 pub(super) fn accept(
     conversation: &mut Conversation,
-    index: Option<usize>,
+    pick: Pick,
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
     let draft = &conversation.draft;
-    let Some(index) = index.or_else(|| draft.list.read(cx).active()) else {
-        return;
-    };
-    let Some((range, insert)) = draft.offer.as_ref().and_then(|offer| {
-        let choice = offer.choices.get(index)?;
-        Some((offer.range.clone(), choice.insert.clone()))
+    let active = draft.list.read(cx).active();
+    let Some((range, choice)) = draft.offer.as_ref().and_then(|offer| {
+        let index = chosen(offer, pick, active)?;
+        Some((offer.range.clone(), offer.choices.get(index)?.clone()))
     }) else {
         return;
     };
     let input = draft.entity.clone();
+    if choice.run {
+        run(conversation, &choice.shows, window, cx);
+        return;
+    }
     show(conversation, None, cx);
+    let insert = choice.insert;
     input.update(cx, |input, cx| {
         input.replace_range(range, &insert, window, cx);
         input.focus(window, cx);
     });
+}
+
+/// Runs the draft for a run row that said `shown`, while the row the
+/// draft makes now says the same: the plan, its issue, assignee and
+/// tracker. Otherwise nothing runs: the new row shows, for a fresh Return.
+fn run(
+    conversation: &mut Conversation,
+    shown: &str,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    let now = current(conversation, cx);
+    let same = now
+        .as_ref()
+        .is_some_and(|offer| offer.choices.iter().any(|c| c.run && c.shows == shown));
+    let input = conversation.draft.entity.clone();
+    if same {
+        show(conversation, None, cx);
+        let text = input.read(cx).text(cx);
+        super::send::submit(conversation, text, window, cx);
+    } else {
+        show(conversation, now, cx);
+        input.update(cx, |input, cx| input.set_error(RUN_CHANGED.to_owned(), cx));
+    }
+}
+
+/// Why a run row wrote nothing.
+pub(crate) const RUN_CHANGED: &str = "What Return does changed since the list showed it, so nothing was written. Check the first row, then press Return again.";
+
+/// The row `pick` chooses in `offer`, `active` being the highlighted one:
+/// Tab passes over rows that run the draft.
+fn chosen(offer: &Offer, pick: Pick, active: Option<usize>) -> Option<usize> {
+    match pick {
+        Pick::Clicked(index) => Some(index),
+        Pick::Key(CompletionKey::Enter) => active,
+        Pick::Key(CompletionKey::Tab) => {
+            let inserts = |index: &usize| offer.choices.get(*index).is_some_and(|c| !c.run);
+            active
+                .filter(inserts)
+                .or_else(|| (0..offer.choices.len()).find(inserts))
+        }
+    }
 }
 
 /// A click on a row of the list.
@@ -92,6 +166,6 @@ pub(super) fn clicked(
     cx: &mut Context<Conversation>,
 ) {
     match event {
-        CompletionEvent::Accept(index) => accept(conversation, Some(*index), window, cx),
+        CompletionEvent::Accept(index) => accept(conversation, Pick::Clicked(*index), window, cx),
     }
 }

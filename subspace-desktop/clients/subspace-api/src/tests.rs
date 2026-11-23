@@ -10,6 +10,7 @@ mod chat_uploads;
 mod comments;
 #[cfg(debug_assertions)]
 mod configuration;
+mod decision_writes;
 pub(crate) mod decisions;
 mod hub;
 mod initiatives;

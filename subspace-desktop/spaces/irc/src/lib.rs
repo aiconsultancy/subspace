@@ -41,6 +41,7 @@ mod thread;
 mod thread_status;
 mod tiles;
 mod toolbar;
+mod tracker;
 mod transcript;
 mod uploads;
 mod view;
@@ -376,6 +377,7 @@ impl Dashboard for Irc {
 
     fn bind_keys(cx: &mut App) {
         join::bind_keys(cx);
+        tracker::message::bind_keys(cx);
         conversation::bind_keys(cx);
     }
 

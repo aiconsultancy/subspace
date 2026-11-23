@@ -129,3 +129,10 @@ pub(super) fn same(one: &Record, other: &Record, mapping: Casemapping) -> bool {
         _ => false,
     }
 }
+
+/// Whether `held` can be the nick's current holder: it has an account or
+/// is ours, which a nick never hands on, or it was made or renamed onto
+/// the nick since its current holder took it by a rename (`since`).
+pub(super) fn current(held: &Record, since: u64) -> bool {
+    held.reactor.account.is_some() || held.reactor.own || held.assigned >= since
+}

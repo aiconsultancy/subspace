@@ -12,35 +12,38 @@
 //! from its labelled menu item.
 
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
-use gpui_kit::component::h_flex;
-use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
-    TestSupportExt as _, Window, div,
-};
+use gpui_kit::{App, AppContext as _, Context, Entity};
 use subspace_client_irc::Command;
-use subspace_framework::dashboard::Tokens;
-use subspace_framework::dashboard::action::{Intent, icon_button};
 use subspace_framework::dashboard::anchored::Anchor;
-use subspace_framework::dashboard::panel::IconName;
 
 use super::Conversation;
-use crate::reactions::choices::choices;
+
+mod menu;
+mod notice;
 use crate::reactions::gate::{self, Gate, Via};
-use crate::reactions::stop::{self, Stops};
+use crate::reactions::stop::{self, Stops, explanation, stop_sent};
 use crate::reactions::{Shown, refusal_text};
-use crate::transcript::{Row, reactions as pills, replies};
+use crate::transcript::{Row, replies};
+pub(super) use menu::open_choices;
+pub(crate) use menu::open_choices_for;
+pub(super) use notice::notice;
 
 /// One conversation's reactions for the current sync and what it is
 /// waiting to hear.
 pub(crate) struct Reacting {
     /// Where the keyboard's reaction menu opens: the focused message.
     pub anchor: Entity<Anchor>,
+    /// Where the hovered message's toolbar opens it.
+    pub hover_anchor: Entity<Anchor>,
     pub shown: Rc<Shown>,
     pub stops: Rc<Stops>,
     /// The network can react now.
     pub supported: bool,
+    /// What `shown` was read from: the book's revision for this
+    /// conversation and the held lines then.
+    shown_from: Option<ShownFrom>,
     /// Stop reactions sent and not yet reported back, each resolved by
     /// its own message and exact reaction.
     pending: Vec<PendingStop>,
@@ -50,12 +53,28 @@ pub(crate) struct Reacting {
     pub notice: Option<String>,
 }
 
+/// The book's revision for a conversation and its held lines' extent
+/// (how many, the first and the last by sequence): lines are only added
+/// and dropped, never changed in place, so an equal extent holds the same
+/// lines.
+type ShownFrom = (u64, (usize, Option<i64>, Option<i64>));
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingStop {
     msgid: String,
     reaction: String,
     ship: String,
+    /// The hub's latest live addition of ours when it was sent: only an
+    /// echo after it acknowledges this stop.
+    after: u64,
+    /// When it was sent; one whose echo never comes is let go after
+    /// [`STOP_ECHO_WAIT`].
+    sent: Instant,
 }
+
+/// How long a sent stop waits for its echo before it is let go, its
+/// notice unsaid.
+const STOP_ECHO_WAIT: Duration = Duration::from_secs(120);
 
 impl Reacting {
     /// No reactions yet; refusals made before the conversation opened are
@@ -63,13 +82,26 @@ impl Reacting {
     pub fn new(seen_refusal: u64, cx: &mut App) -> Self {
         Self {
             anchor: cx.new(Anchor::new),
+            hover_anchor: cx.new(Anchor::new),
             shown: Rc::default(),
             stops: Rc::default(),
             supported: false,
+            shown_from: None,
             pending: Vec::new(),
             seen_refusal,
             notice: None,
         }
+    }
+}
+
+/// The reaction menu's two anchors: the keyboard-focused message's, then
+/// the hovered message's.
+pub(crate) type Anchors = (Entity<Anchor>, Entity<Anchor>);
+
+impl Reacting {
+    /// Both anchors, for the rows to measure into.
+    pub(crate) fn anchors(&self) -> Anchors {
+        (self.anchor.clone(), self.hover_anchor.clone())
     }
 }
 
@@ -84,9 +116,12 @@ pub(super) struct Before {
 pub(super) fn refresh(this: &mut Conversation, cx: &App) -> Before {
     let hub = this.hub.read(cx);
     let held = hub.state.buffer(&this.buffer);
-    let shown = held
-        .map(|held| hub.reactions.shown(&this.buffer, held))
-        .unwrap_or_default();
+    let from = held.map(|held| (hub.reactions.revision(&this.buffer), extent(held)));
+    let shown = match held {
+        Some(_) if from == this.reacting.shown_from => Rc::clone(&this.reacting.shown),
+        Some(held) => Rc::new(hub.reactions.shown(&this.buffer, held)),
+        None => Rc::default(),
+    };
     let stops = held
         .map(|held| {
             stop::stops(&stop::Sources {
@@ -99,13 +134,24 @@ pub(super) fn refresh(this: &mut Conversation, cx: &App) -> Before {
         .unwrap_or_default();
     let supported = can_react(this, cx);
     let reacting = &mut this.reacting;
+    reacting.shown_from = from;
     let before = Before {
-        shown: std::mem::replace(&mut reacting.shown, Rc::new(shown)),
+        shown: std::mem::replace(&mut reacting.shown, shown),
         stops: std::mem::replace(&mut reacting.stops, Rc::new(stops)),
         supported: std::mem::replace(&mut reacting.supported, supported),
     };
     follow(this, cx);
     before
+}
+
+/// The extent of `held`'s lines, for [`ShownFrom`].
+fn extent(held: &crate::state::Buffer) -> (usize, Option<i64>, Option<i64>) {
+    let seq = |entry: &crate::state::Entry| entry.seq;
+    (
+        held.entries.len(),
+        held.entries.front().map(seq),
+        held.entries.back().map(seq),
+    )
 }
 
 /// Rows whose reactions changed, to measure again one by one; every row
@@ -160,7 +206,7 @@ fn follow(this: &mut Conversation, cx: &App) {
             .into_iter()
             .partition(|pending| reported(this, pending, cx));
     let reacting = &mut this.reacting;
-    reacting.pending = waiting;
+    reacting.pending = still_waiting(waiting, Instant::now());
     if let Some(refusal) = refusal {
         reacting.seen_refusal = refusal.serial;
         reacting.notice = Some(refusal_text(&refusal.error));
@@ -173,27 +219,34 @@ fn follow(this: &mut Conversation, cx: &App) {
     }
 }
 
-/// Whether the client now reports our `pending` reaction, exactly as sent,
-/// on its message.
+/// Whether the client has reported our `pending` reaction, exactly as
+/// sent, on its message since it was sent: its live echo, read before the
+/// book's display limits, so a message already showing every reaction it
+/// can still acknowledges a stop.
 fn reported(this: &Conversation, pending: &PendingStop, cx: &App) -> bool {
+    let target = (pending.msgid.as_str(), pending.reaction.as_str());
     this.hub
         .read(cx)
         .reactions
-        .reacted(&this.buffer, &pending.msgid, &pending.reaction)
+        .echoed_since(pending.after, &this.buffer, target)
 }
 
-/// What is known once a stop reaction was sent: only that it was.
-pub(crate) fn stop_sent(reaction: &str, ship: &str) -> String {
-    format!(
-        "Sent {reaction} to ask {ship} to stop. The status line shows the result when Stargate reports it."
-    )
+/// The stops still waiting for their echo at `now`, none for longer than
+/// [`STOP_ECHO_WAIT`].
+fn still_waiting(pending: Vec<PendingStop>, now: Instant) -> Vec<PendingStop> {
+    pending
+        .into_iter()
+        .filter(|stop| now.saturating_duration_since(stop.sent) < STOP_ECHO_WAIT)
+        .collect()
 }
 
 /// Asks to add our reaction to the message `msgid` in this conversation,
 /// or to take ours back. Every reaction Channels sends comes here, and
-/// goes only if [`gate::gate`] lets it: `stop` names the agent when it was
-/// chosen from the labelled stop item, so the notice can say it was sent
-/// once it is.
+/// goes only if [`gate::gate`] lets it. `stop` is set when it was chosen
+/// from the labelled stop item; that item counts only while the message
+/// still concerns a running roster agent now ([`menu::labelled_stop`]), so a
+/// menu left open while the turn ended or the roster changed sends
+/// nothing, and the notice names the agent read now.
 pub(crate) fn toggle(
     this: &mut Conversation,
     (msgid, reaction): (String, String),
@@ -201,6 +254,7 @@ pub(crate) fn toggle(
     stop: Option<String>,
     cx: &mut Context<Conversation>,
 ) {
+    let stop = menu::labelled_stop(this, &msgid, stop, cx);
     let via = if stop.is_some() {
         Via::LabelledStop
     } else {
@@ -230,10 +284,13 @@ fn send(
     let buffer = this.buffer.clone();
     this.reacting.notice = None;
     if let Some(ship) = stop.filter(|_| add) {
+        let after = this.hub.read(cx).reactions.echo_serial();
         this.reacting.pending.push(PendingStop {
             msgid: msgid.clone(),
             reaction: reaction.clone(),
             ship,
+            after,
+            sent: Instant::now(),
         });
     }
     let command = if add {
@@ -275,90 +332,24 @@ fn explain_stop(this: &mut Conversation, ship: Option<&str>, cx: &mut Context<Co
     cx.notify();
 }
 
-/// Why a stop reaction was not sent, and where the deliberate one is.
-pub(crate) fn explanation(ship: Option<&str>) -> String {
-    match ship {
-        Some(ship) => format!(
-            "To ask {ship} to stop, use Add reaction and choose under Stop {ship}, while its turn is running."
-        ),
-        None => "\u{270B} and \u{1F6D1} can stop an agent's turn, so Subspace sends them only from Add reaction, under Stop and the agent's name, on a running request to a fleet agent.".to_owned(),
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::{PendingStop, STOP_ECHO_WAIT, still_waiting};
+
+    #[test]
+    fn a_stop_whose_echo_never_comes_is_let_go() {
+        let sent = Instant::now();
+        let pending = vec![PendingStop {
+            msgid: "r1".into(),
+            reaction: "\u{270B}".into(),
+            ship: "astra".into(),
+            after: 0,
+            sent,
+        }];
+        let soon = sent + Duration::from_secs(5);
+        assert_eq!(still_waiting(pending.clone(), soon), pending);
+        assert!(still_waiting(pending, sent + STOP_ECHO_WAIT).is_empty());
     }
-}
-
-/// Opens the reaction choices for the keyboard-focused message, at that
-/// message, when it can take reactions.
-pub(super) fn open_choices(
-    this: &mut Conversation,
-    window: &mut Window,
-    cx: &mut Context<Conversation>,
-) {
-    let Some(seq) = this.keyboard.at.map(|at| at.seq) else {
-        return;
-    };
-    let msgid = this
-        .hub
-        .read(cx)
-        .state
-        .buffer(&this.buffer)
-        .and_then(|held| held.entries.iter().find(|entry| entry.seq == seq))
-        .and_then(|entry| entry.line.id.clone());
-    let Some(msgid) = msgid.filter(|_| this.reacting.supported) else {
-        let refused = gate::refusal(&this.buffer.target, &this.roster);
-        this.reacting.notice =
-            Some(refused.unwrap_or_else(|| "This message cannot take reactions here.".to_owned()));
-        cx.notify();
-        return;
-    };
-    let summaries = this.reacting.shown.get(&seq).cloned().unwrap_or_default();
-    let ship = this
-        .reacting
-        .stops
-        .get(&seq)
-        .filter(|agent| agent.running)
-        .map(|agent| agent.ship.clone());
-    let offered = choices(&summaries, ship.as_deref());
-    let me = this.me.clone();
-    this.reacting.anchor.update(cx, |anchor, cx| {
-        anchor.show_menu_with(window, cx, move |menu, _, _| {
-            pills::menu_items(menu, &offered, &msgid, &me)
-        });
-    });
-}
-
-/// The brief notice above the composer, with Dismiss.
-pub(super) fn notice(this: &Conversation, cx: &mut Context<Conversation>) -> Option<AnyElement> {
-    let text = this.reacting.notice.clone()?;
-    let tokens = Tokens::current(cx);
-    Some(
-        h_flex()
-            .id("irc-reaction-notice")
-            .role(Role::Status)
-            .aria_label(SharedString::from(text.clone()))
-            .w_full()
-            .gap_2()
-            .px_2()
-            .py_1()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_sm()
-                    .text_color(tokens.fg)
-                    .child(text),
-            )
-            .child(
-                icon_button(
-                    "irc-reaction-notice-dismiss",
-                    Intent::Quiet,
-                    IconName::X,
-                    "Dismiss",
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.reacting.notice = None;
-                    cx.notify();
-                })),
-            )
-            .test_support()
-            .into_any_element(),
-    )
 }

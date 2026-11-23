@@ -26,62 +26,9 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 use subspace_api_client::model::{AgentRank, Fleet, FleetAgent, MemberInitiative};
-use subspace_framework::dashboard::Tone;
-use subspace_framework::dashboard::avatar::AgentRank as AvatarRank;
 
-/// A fleet agent's rank, as the API has it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Rank {
-    RearAdmiral,
-    Captain,
-    Crew,
-}
-
-impl Rank {
-    /// The rank of an API agent; `None` for a rank this build does not know.
-    fn of(rank: AgentRank) -> Option<Self> {
-        match rank {
-            AgentRank::RearAdmiral => Some(Self::RearAdmiral),
-            AgentRank::Captain => Some(Self::Captain),
-            AgentRank::Crew => Some(Self::Crew),
-            _ => None,
-        }
-    }
-
-    /// The quiet note beside a member, such as in the member list.
-    pub(crate) fn note(self) -> &'static str {
-        match self {
-            Self::RearAdmiral => "rear admiral",
-            Self::Captain => "captain",
-            Self::Crew => "crew",
-        }
-    }
-
-    /// The mark after the agent's name in the transcript.
-    pub(crate) fn mark(self) -> &'static str {
-        match self {
-            Self::RearAdmiral => "REAR ADMIRAL",
-            Self::Captain => "CAPTAIN",
-            Self::Crew => "CREW",
-        }
-    }
-
-    /// The tone of the agent's name and mark: the rear admiral the accent,
-    /// captains blue; crew keep a person's tone and a muted mark.
-    pub(crate) fn tone(self) -> Option<Tone> {
-        self.avatar().map(AvatarRank::tone)
-    }
-
-    /// The shared agent avatar's rank: the rear admiral and captains have
-    /// one; crew keep a person's avatar.
-    pub(crate) fn avatar(self) -> Option<AvatarRank> {
-        match self {
-            Self::RearAdmiral => Some(AvatarRank::RearAdmiral),
-            Self::Captain => Some(AvatarRank::Captain),
-            Self::Crew => None,
-        }
-    }
-}
+mod rank;
+pub(crate) use rank::Rank;
 
 /// What a fleet channel is for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,6 +51,10 @@ pub(crate) struct Agent {
     /// Whether the API records `channel`, rather than a standard name
     /// standing in for it.
     pub recorded: bool,
+    /// The agent's API user, whom an assignment names.
+    pub user_id: String,
+    /// The agent's ship's name, such as `Lyra`, when it has one.
+    pub ship: Option<String>,
 }
 
 /// The fleet roles known on one network.
@@ -120,6 +71,9 @@ pub(crate) struct Roster {
     /// case-folded channel, counted before nicks two roles claim are
     /// dropped, so a clash cannot hide that a fleet has two.
     admirals: HashMap<String, usize>,
+    /// No read of the initiatives has succeeded for the current account
+    /// and organisation, so no one is known not to be an agent yet.
+    loading: bool,
 }
 
 /// The roster of a network that serves no fleet.
@@ -146,7 +100,26 @@ impl Roster {
             channels,
             fleets: Vec::new(),
             admirals,
+            loading: false,
         }
+    }
+
+    /// The roles of `initiatives`, as [`Self::for_initiatives`], marked
+    /// as read while the initiatives are not `known` for the current
+    /// account and organisation: then a nick it does not name is not known
+    /// to be a person, whatever agents it still names.
+    pub(crate) fn for_catalogue(initiatives: &[&MemberInitiative], known: bool) -> Self {
+        Self {
+            loading: !known,
+            ..Self::for_initiatives(initiatives)
+        }
+    }
+
+    /// Whether `nick` may still turn out to be an agent: the initiatives
+    /// had not loaded yet when this roster was read, so a nick it does not
+    /// know is not known to be a person.
+    pub(crate) fn not_known_yet(&self, nick: &str) -> bool {
+        self.loading && self.agent(nick).is_none()
     }
 
     /// The roles of the fleets of `initiatives`, the initiatives whose IRC
@@ -302,6 +275,8 @@ fn known(ships: &Ships, agent: &FleetAgent, starbase: Option<Place>) -> Option<(
         rank,
         channel,
         recorded,
+        user_id: agent.user_id.clone(),
+        ship: nonempty(agent.ship.as_deref()),
     };
     (!nick.is_empty()).then(|| (nick.to_owned(), agent))
 }

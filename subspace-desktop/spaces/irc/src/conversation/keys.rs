@@ -16,6 +16,7 @@ use crate::markup::Ref;
 use crate::pull_requests;
 use crate::text::Opens;
 use crate::transcript;
+use crate::transcript::actions::{self, MessageAction};
 use crate::transcript::focus::{self, TranscriptFocus};
 
 actions!(
@@ -30,6 +31,9 @@ actions!(
         OpenAttachment,
         LeaveTranscript,
         ReactToMessage,
+        ReplyToMessage,
+        MakeIssueFromMessage,
+        RecordDecisionFromMessage,
     ]
 );
 
@@ -59,6 +63,9 @@ pub(crate) const KEYS: &[KeyHelp] = &[
     ),
     KeyHelp::new("Enter / Space on an attachment", "Open it"),
     KeyHelp::new("r on a message", "Add or take back a reaction"),
+    KeyHelp::new("t on a message", "Reply in its thread"),
+    KeyHelp::new("i on a message", "Make an issue from it"),
+    KeyHelp::new("d on a message", "Record a decision from it"),
     KeyHelp::new("Esc on a message", "Back to the message input"),
 ];
 
@@ -68,6 +75,9 @@ pub(crate) struct Keyboard {
     pub handle: FocusHandle,
     pub at: Option<TranscriptFocus>,
     pub card: Option<AnyView>,
+    /// The message under the pointer, whose toolbar shows as the focused
+    /// one's does.
+    pub hovered: Option<i64>,
 }
 
 impl Keyboard {
@@ -76,6 +86,7 @@ impl Keyboard {
             handle: cx.focus_handle(),
             at: None,
             card: None,
+            hovered: None,
         }
     }
 }
@@ -104,6 +115,63 @@ pub(super) fn transcript(this: &Conversation, cx: &mut Context<Conversation>) ->
         .on_action(cx.listener(|this, _: &ReactToMessage, window, cx| {
             super::reacting::open_choices(this, window, cx);
         }))
+        .on_action(cx.listener(|this, _: &ReplyToMessage, window, cx| {
+            act(this, MessageAction::Reply, window, cx);
+        }))
+        .on_action(cx.listener(|this, _: &MakeIssueFromMessage, window, cx| {
+            act(this, MessageAction::MakeIssue, window, cx);
+        }))
+        .on_action(
+            cx.listener(|this, _: &RecordDecisionFromMessage, window, cx| {
+                act(this, MessageAction::RecordDecision, window, cx);
+            }),
+        )
+}
+
+/// Notes the message under the pointer, which shows its toolbar as the
+/// focused one's does.
+pub(crate) fn hover(
+    this: &mut Conversation,
+    seq: i64,
+    hovered: bool,
+    cx: &mut Context<Conversation>,
+) {
+    let next = match (hovered, this.keyboard.hovered) {
+        (true, _) => Some(seq),
+        (false, Some(held)) if held == seq => None,
+        (false, held) => held,
+    };
+    if next != this.keyboard.hovered {
+        this.keyboard.hovered = next;
+        cx.notify();
+    }
+}
+
+/// Does a toolbar action for the focused message, when its toolbar offers
+/// it.
+fn act(
+    this: &mut Conversation,
+    action: MessageAction,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    let Some(seq) = this.keyboard.at.map(|at| at.seq) else {
+        return;
+    };
+    let offered = {
+        let context = this.row_context(cx);
+        let mentions = super::mentions(this, cx);
+        let held = this.hub.read(cx).state.buffer(&this.buffer);
+        held.and_then(|held| held.entries.iter().find(|entry| entry.seq == seq))
+            .map(|entry| {
+                let names = !transcript::named_issues(entry, &mentions).is_empty();
+                actions::offered(entry, context.actions, names)
+            })
+            .unwrap_or_default()
+    };
+    if offered.contains(&action) {
+        actions::run(this, action, seq, window, cx);
+    }
 }
 
 /// The focused message and reference, for tests.
@@ -175,6 +243,9 @@ pub(crate) fn bind_keys(cx: &mut App) {
         KeyBinding::new("space", OpenAttachment, transcript),
         KeyBinding::new("escape", LeaveTranscript, transcript),
         KeyBinding::new("r", ReactToMessage, transcript),
+        KeyBinding::new("t", ReplyToMessage, transcript),
+        KeyBinding::new("i", MakeIssueFromMessage, transcript),
+        KeyBinding::new("d", RecordDecisionFromMessage, transcript),
         KeyBinding::new(
             "escape",
             subspace_framework::dashboard::find_in_page::Close,

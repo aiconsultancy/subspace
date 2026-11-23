@@ -55,21 +55,41 @@ pub(crate) struct Sources<'a> {
 /// Every agent message the buffer holds, for one sync. Each held message
 /// ID is looked up once, so the work grows with the buffer, not its square.
 pub(crate) fn stops(sources: &Sources) -> Stops {
-    if sources.statuses.is_empty() || !matches!(sources.buffer.target, Target::Channel(_)) {
+    let Some(ids) = held_ids(sources) else {
         return Stops::new();
-    }
-    let ids: HashMap<&str, i64> = sources
-        .held
-        .entries
-        .iter()
-        .filter_map(|entry| Some((entry.line.id.as_deref()?, entry.seq)))
-        .collect();
+    };
     sources
         .held
         .entries
         .iter()
         .filter_map(|entry| Some((entry.seq, agent_message(sources, &ids, entry)?)))
         .collect()
+}
+
+/// What a stop reaction on the held message `msgid` concerns now, read
+/// afresh from `sources` rather than from what a menu showed when it
+/// opened: a stop is sent only while this still names a running agent.
+pub(crate) fn concerning(sources: &Sources, msgid: &str) -> Option<AgentMessage> {
+    let ids = held_ids(sources)?;
+    let seq = *ids.get(msgid)?;
+    let entry = sources.held.entries.iter().find(|entry| entry.seq == seq)?;
+    agent_message(sources, &ids, entry)
+}
+
+/// Each held message ID's sequence, when the conversation can carry a
+/// stop at all: a channel with status lines.
+fn held_ids<'a>(sources: &Sources<'a>) -> Option<HashMap<&'a str, i64>> {
+    if sources.statuses.is_empty() || !matches!(sources.buffer.target, Target::Channel(_)) {
+        return None;
+    }
+    Some(
+        sources
+            .held
+            .entries
+            .iter()
+            .filter_map(|entry| Some((entry.line.id.as_deref()?, entry.seq)))
+            .collect(),
+    )
 }
 
 /// What a stop reaction on `entry` would concern, when it is a request to
@@ -106,4 +126,21 @@ fn answered_request<'a>(
     verified
         .then(|| Some((*ids.get(request)?, asked)))
         .flatten()
+}
+
+/// What is known once a stop reaction was sent: only that it was.
+pub(crate) fn stop_sent(reaction: &str, ship: &str) -> String {
+    format!(
+        "Sent {reaction} to ask {ship} to stop. The status line shows the result when Stargate reports it."
+    )
+}
+
+/// Why a stop reaction was not sent, and where the deliberate one is.
+pub(crate) fn explanation(ship: Option<&str>) -> String {
+    match ship {
+        Some(ship) => format!(
+            "To ask {ship} to stop, use Add reaction and choose under Stop {ship}, while its turn is running."
+        ),
+        None => "\u{270B} and \u{1F6D1} can stop an agent's turn, so Subspace sends them only from Add reaction, under Stop and the agent's name, on a running request to a fleet agent.".to_owned(),
+    }
 }

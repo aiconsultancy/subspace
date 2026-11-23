@@ -21,7 +21,7 @@ use subspace_framework::dashboard::{Tokens, Tone, avatar, chat_bubble};
 
 mod marks;
 mod message;
-pub(crate) use message::{displayed, message, thread_message, tile_refs};
+pub(crate) use message::{displayed, message, named_issues, thread_message, tile_refs};
 
 use super::fill::{RowFill, filled};
 use crate::fleet::Rank;
@@ -80,9 +80,14 @@ pub(crate) struct RowContext {
     pub stops: Rc<crate::reactions::stop::Stops>,
     /// The network can react now, so pills toggle and Add reaction shows.
     pub can_react: bool,
-    /// Where the keyboard's reaction menu opens: the focused message
-    /// measures itself into it.
-    pub react_anchor: Option<gpui_kit::Entity<subspace_framework::dashboard::anchored::Anchor>>,
+    /// Where the reaction menu opens: the keyboard-focused message measures
+    /// itself into the first anchor, for `r`; the hovered message into the
+    /// second, for its toolbar's React.
+    pub react_anchor: Option<crate::conversation::reacting::Anchors>,
+    /// The message under the pointer, whose toolbar shows.
+    pub hovered: Option<i64>,
+    /// What the message toolbar's actions can do in this conversation.
+    pub actions: super::actions::Availability,
 }
 
 fn time(entry: &Entry) -> String {

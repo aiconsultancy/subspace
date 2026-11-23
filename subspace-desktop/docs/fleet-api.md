@@ -170,7 +170,10 @@ whose timer runs late, or a read queued behind others, still leaves the
 keychain alone for five seconds after it. A Retry asked while a read is
 still in flight waits for its five seconds rather than being lost, and if
 that read is still in flight then, as behind a keychain prompt, it reads
-once that read lands, unless the read settled the token.
+once that read lands and five seconds from that read's start have passed,
+unless the read settled the token. A read that started after the Retry
+was asked has already read the keychain for it, so that Retry reads
+nothing more.
 
 Every read, save and clear of a fleet's token runs on that fleet's one
 ordered path (`service/queue.rs`; each fleet has its own, so a keychain
