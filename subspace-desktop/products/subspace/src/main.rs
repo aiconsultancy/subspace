@@ -6,11 +6,13 @@ mod launch;
 mod new_install;
 #[path = "../build/settings.rs"]
 mod settings;
+mod surfaces;
 mod web_spaces;
 
 include!(concat!(env!("OUT_DIR"), "/organization_logo.rs"));
 
 use std::process::ExitCode;
+use std::sync::OnceLock;
 
 use subspace_framework::github_auth::OAuthClient;
 use subspace_framework::product::{BuildInfo, BuildKind};
@@ -69,7 +71,7 @@ fn main() -> ExitCode {
             search_reranker: None,
             account: identity::registration(),
             configured_boards: Some(web_boards),
-            settings_extensions: SETTINGS_EXTENSIONS,
+            settings_extensions: settings_extensions(),
             #[cfg(feature = "terminal")]
             dock_panel: Some(subspace_terminal_panel::registration()),
             #[cfg(not(feature = "terminal"))]
@@ -83,6 +85,12 @@ fn main() -> ExitCode {
         assets(),
         subspace_framework::board_command::run,
     )
+}
+
+/// The Settings extensions this build's backend offers.
+fn settings_extensions() -> &'static [subspace_framework::shell::SettingsExtension] {
+    static OFFERED: OnceLock<Vec<subspace_framework::shell::SettingsExtension>> = OnceLock::new();
+    OFFERED.get_or_init(|| surfaces::settings_extensions(identity::backend(), SETTINGS_EXTENSIONS))
 }
 
 /// The OAuth App `build/config.rs` set, with the client secret from the
@@ -137,10 +145,15 @@ fn assets() -> &'static [(&'static str, &'static [u8])] {
     }
 }
 
-/// The Spaces this build includes, in product order. Space Lab and the
+/// The Spaces this build's backend serves, in product order.
+fn board_registrations() -> Vec<BoardRegistration> {
+    surfaces::spaces(identity::backend(), all_board_registrations())
+}
+
+/// Every Space this binary includes, in product order. Space Lab and the
 /// Component gallery are not ready to ship: each is compiled in only with its
 /// Cargo feature, which also lists it in the descriptor.
-fn board_registrations() -> Vec<BoardRegistration> {
+fn all_board_registrations() -> Vec<BoardRegistration> {
     vec![
         BoardRegistration::new::<subspace_github_board::Github>()
             .description("GitHub pull requests"),
@@ -169,6 +182,7 @@ fn web_boards(config: &subspace_framework::core::config::Config) -> Vec<BoardReg
     config
         .web_boards
         .iter()
+        .filter(|board| surfaces::shows_web_space(identity::backend(), board))
         .map(|board| {
             let page = board.clone();
             let registration = BoardRegistration::configured::<subspace_web_board::WebBoard>(
@@ -208,8 +222,10 @@ mod web_spaces_build;
 #[cfg(test)]
 mod tests {
     use super::{
-        REPOSITORY, assets, board_registrations, build_info, github_oauth, unix_time, web_boards,
+        REPOSITORY, SETTINGS_EXTENSIONS, all_board_registrations, assets, board_registrations,
+        build_info, github_oauth, unix_time, web_boards,
     };
+    use crate::settings::ApiBackend;
     use std::collections::HashSet;
     use subspace_framework::product::BuildKind;
 
@@ -257,7 +273,7 @@ mod tests {
     #[test]
     fn composed_artwork_keeps_keys_bytes_and_legacy_listing_order() {
         use subspace_framework::shell::test_support::{AssetSource as _, Assets};
-        let boards = board_registrations();
+        let boards = all_board_registrations();
         let source = Assets::new(assets(), &boards);
         let expected = [
             ("product.svg", 0x779de1f19cfb06a0),
@@ -350,7 +366,7 @@ mod tests {
     /// Lab, Space Lab's.
     #[test]
     fn the_documented_tool_inventory_matches_the_compiled_catalog() {
-        let registrations = board_registrations();
+        let registrations = all_board_registrations();
         let mut absent = SEARCH_TOOLS.to_vec();
         if !cfg!(all(
             feature = "space-lab",
@@ -390,7 +406,7 @@ mod tests {
             .filter(|line| line.starts_with("| `"))
             .map(str::to_owned)
             .collect();
-        let declared: HashSet<String> = board_registrations()
+        let declared: HashSet<String> = all_board_registrations()
             .iter()
             .flat_map(|board| {
                 board
@@ -433,7 +449,7 @@ mod tests {
     /// tools, search indexing, notifications or background reads.
     #[test]
     fn the_issues_board_keeps_issue_content_out_of_tools_search_and_alerts() {
-        let issues = board_registrations()
+        let issues = all_board_registrations()
             .into_iter()
             .find(|board| board.id == "issues")
             .unwrap();
@@ -457,13 +473,73 @@ mod tests {
             .iter()
             .map(|registration| registration.id)
             .collect();
-        let descriptor = subspace_descriptor::subspace_descriptor();
+        let mut descriptor = subspace_descriptor::subspace_descriptor();
+        super::identity::adjust_descriptor(&mut descriptor);
         let described: Vec<_> = descriptor
             .boards
             .iter()
             .map(|board| board.id.as_str())
             .collect();
         assert_eq!(described, registered);
+    }
+
+    /// Subspace API and NETT builds register every Space and Settings page;
+    /// a build with no API backend leaves out those that need the API, and
+    /// lists exactly the rest.
+    #[test]
+    fn each_backend_registers_its_spaces_and_settings_pages() {
+        let ids = |backend| {
+            super::surfaces::spaces(backend, all_board_registrations())
+                .iter()
+                .map(|board| board.id)
+                .collect::<Vec<_>>()
+        };
+        let pages = |backend| {
+            super::surfaces::settings_extensions(backend, SETTINGS_EXTENSIONS)
+                .iter()
+                .map(|extension| extension.id)
+                .collect::<Vec<_>>()
+        };
+        let all: Vec<_> = all_board_registrations()
+            .iter()
+            .map(|board| board.id)
+            .collect();
+        for backend in [ApiBackend::Subspace, ApiBackend::Nett] {
+            assert_eq!(ids(backend), all);
+            assert_eq!(pages(backend), ["web-boards", "fleets"]);
+        }
+        let none = ids(ApiBackend::None);
+        let expected: Vec<_> = all
+            .iter()
+            .copied()
+            .filter(|id| !["issues", "decisions"].contains(id))
+            .collect();
+        assert_eq!(none, expected);
+        for kept in ["github", "github-copilot-agents", "irc", "actions"] {
+            assert!(none.contains(&kept), "{kept}");
+        }
+        assert_eq!(pages(ApiBackend::None), ["web-boards"]);
+
+        // Its descriptor lists exactly those Spaces, so Settings and Add a
+        // Space offer no other, and nothing updates it to a build with an API.
+        let mut descriptor = subspace_descriptor::subspace_descriptor();
+        super::surfaces::adjust_descriptor(&mut descriptor);
+        let described: Vec<_> = descriptor
+            .boards
+            .iter()
+            .map(|board| board.id.as_str())
+            .collect();
+        assert_eq!(described, none);
+        assert!(descriptor.update.is_none());
+
+        // The stamped build serves its own backend's set.
+        let stamped: Vec<_> = board_registrations().iter().map(|board| board.id).collect();
+        assert_eq!(stamped, ids(super::identity::backend()));
+        let offered: Vec<_> = super::settings_extensions()
+            .iter()
+            .map(|extension| extension.id)
+            .collect();
+        assert_eq!(offered, pages(super::identity::backend()));
     }
 
     /// Space Lab and the Component gallery are in the binary only with their

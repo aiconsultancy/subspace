@@ -25,7 +25,9 @@ mod transport;
 pub mod uploads;
 mod writing;
 pub use activity::ActivityQuery;
-pub use backend::{Backend, Capabilities, backend, capabilities, service_name};
+pub use backend::{
+    Backend, Capabilities, backend, capabilities, configure_no_backend, has_backend, service_name,
+};
 pub use dev_sign_in::{DevSignIn, DevUser};
 pub use fixture::fixture_from_env;
 pub use list::{ListQuery, ListTab};
@@ -62,6 +64,8 @@ pub struct Client {
 
 impl Client {
     pub fn new() -> Result<Self, Error> {
+        // A build with no tracker backend builds no client, fixtures included.
+        backend::require_backend()?;
         // Debug fixtures (capture, offline servers) pair a loopback URL with
         // a private token file. Without the file, the configured origin and
         // the signed-in account apply, as in release builds.

@@ -162,6 +162,38 @@ fleet use `SUBSPACE_IRC_ENDPOINT` (`irc://host:port` or `ircs://host:port`),
 by default the local server, `irc://127.0.0.1:6667`. IRC sign-in is the
 connection's SASL account, not the API account.
 
+### A build with no API backend
+
+Set `api_backend` to `none` to build the app without Subspace API or NETT,
+for people who want Channels, the GitHub Spaces, web Spaces and the terminal
+with nothing to sign in to:
+
+```json
+{
+  "api_backend": "none"
+}
+```
+
+The build has no API origin and no account. It leaves out what needs the
+API: **Settings > Account** and any sign-in, the Issues and Decisions Spaces,
+**Settings > Fleets**, and, in Channels, the initiative picker, fleet
+context, captain notices (and their switch in **Settings > Channels**), chat
+uploads and the tracker commands, so `/assign` is ordinary IRC input.
+Channels connects to the networks you add in **Settings > Channels**. Fleet
+Console appears once its own Stargate API address and token are saved in its
+`webBoards` entry, as the installer saves them; its other fleets are the ones
+you add inside it. The public updater is off, so a release with an API never
+replaces the build.
+
+The build refuses `identity_provider`, `api_url`, `nett_api_url` and every
+`workos_`, `entra_` and `dev_` setting, and will not start while
+`SUBSPACE_API_URL`, `SUBSPACE_API_ACCESS_JWT_FILE`, `SUBSPACE_NETT_API_URL`,
+`SUBSPACE_IDENTITY_PROVIDER`, `SUBSPACE_WORKOS_*`, `SUBSPACE_DEV_*` or
+`SUBSPACE_ENTRA_*` is set to anything but an empty value. Branding
+(`organization_name`, `title_prefix`, `about_logo`) still applies. See the
+[change record](docs/changes/desktop-no-backend/README.md) for where each
+part is decided.
+
 ## Report a problem
 
 Use **Copy details** beside an error or **Copy diagnostics** in About to share

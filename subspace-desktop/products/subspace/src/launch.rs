@@ -7,9 +7,12 @@
 //! `SUBSPACE_IDENTITY_PROVIDER=` turns sign-in off for one run. A Subspace
 //! API build refuses NETT settings and, signing in with WorkOS, an invalid
 //! client ID. A NETT build refuses every Subspace API setting, signs in
-//! only with WorkOS and needs a valid NETT API URL.
+//! only with WorkOS and needs a valid NETT API URL. A build with no API
+//! backend refuses every API and sign-in setting.
 
-use crate::settings::{ApiBackend, refused_in_nett, valid_api_url, valid_workos_client_id};
+use crate::settings::{
+    ApiBackend, refused_in_nett, refused_without_backend, valid_api_url, valid_workos_client_id,
+};
 use std::collections::BTreeMap;
 
 pub(crate) const PROVIDER: &str = "SUBSPACE_IDENTITY_PROVIDER";
@@ -46,7 +49,8 @@ pub(crate) struct Stamped {
 }
 
 /// The run's one resolved configuration. A NETT launch carries no Subspace
-/// API URL, and a Subspace launch no NETT one.
+/// API URL, a Subspace launch no NETT one, and a launch with no API backend
+/// neither, nor a provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Launch {
     pub backend: ApiBackend,
@@ -83,7 +87,7 @@ pub(crate) fn resolve(
             .to_owned()
     };
     let backend = ApiBackend::parse(stamped.backend)
-        .ok_or_else(|| "The build's api_backend must be subspace or nett.".to_owned())?;
+        .ok_or_else(|| "The build's api_backend must be subspace, nett or none.".to_owned())?;
     let mut launch = Launch {
         backend,
         provider: value(PROVIDER, stamped.provider),
@@ -111,8 +115,28 @@ pub(crate) fn resolve(
             check_nett(&launch, &variables)?;
             launch.api_url.clear();
         }
+        // The build refused every API and sign-in setting and the run may
+        // set none, so the launch holds no URL, provider or client.
+        ApiBackend::None => check_without_backend(&variables)?,
     }
     Ok(launch)
+}
+
+/// A build with no API backend's rule: no API or sign-in variable, as a
+/// NETT build refuses Subspace API's.
+fn check_without_backend(variables: &BTreeMap<String, String>) -> Result<(), String> {
+    let refused = refused_without_backend(
+        variables
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+    );
+    if refused.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "This build has no API backend and does not use API or sign-in settings. Unset {} and start again.",
+        refused.join(", ")
+    ))
 }
 
 /// A Subspace API build's rules: no NETT API URL, a valid Subspace API URL
@@ -183,9 +207,12 @@ fn subspace_url_error() -> String {
 
 /// Installs the launch's one backend before any Space starts. A NETT launch
 /// installs only its NETT origin; an empty Subspace API URL leaves Issues and
-/// the Channels initiative picker without a service.
+/// the Channels initiative picker without a service. A launch with no API
+/// backend installs that choice, so no origin or client can follow.
 pub(crate) fn install(launch: &Launch) -> Result<(), String> {
     match launch.backend {
+        ApiBackend::None => subspace_api_client::configure_no_backend()
+            .map_err(|_| "This build has no API backend, but one was already configured.".into()),
         ApiBackend::Nett => {
             subspace_api_client::configure_nett_origin(&launch.nett_api_url)
                 .map_err(|_| nett_url_error())?;
@@ -387,6 +414,81 @@ mod tests {
         )
         .unwrap();
         assert_eq!(local.nett_api_url, "http://127.0.0.1:3000");
+    }
+
+    /// A build with no API backend: nothing but the backend is stamped.
+    const NONE: Stamped = Stamped {
+        backend: "none",
+        provider: "",
+        api_url: "",
+        nett_api_url: "",
+        workos_client_id: "",
+        workos_api_url: "",
+        workos_redirect_port: "",
+        entra_tenant_id: "",
+        entra_client_id: "",
+        entra_authority: "",
+        entra_api_scope: "",
+        dev_email: "",
+        dev_name: "",
+        dev_organisation: "",
+    };
+
+    #[test]
+    fn a_build_without_a_backend_resolves_no_api_and_no_provider() {
+        // Empty variables are not settings.
+        let launch = resolve(
+            &NONE,
+            vars(&[
+                ("HOME", "/tmp"),
+                ("SUBSPACE_API_URL", ""),
+                ("SUBSPACE_IDENTITY_PROVIDER", ""),
+                ("SUBSPACE_GITHUB_API_URL", "http://127.0.0.1:9000"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(launch.backend, ApiBackend::None);
+        assert_eq!(launch.provider, "", "no sign-in");
+        assert_eq!(
+            (launch.api_url.as_str(), launch.nett_api_url.as_str()),
+            ("", "")
+        );
+        assert_eq!(launch.workos_client_id, "");
+        assert_eq!(launch.dev_user.email, "");
+    }
+
+    #[test]
+    fn a_build_without_a_backend_refuses_api_and_sign_in_overrides() {
+        for (name, value) in [
+            ("SUBSPACE_API_URL", "http://127.0.0.1:3000"),
+            ("SUBSPACE_API_ACCESS_JWT_FILE", "/tmp/fixture-token"),
+            ("SUBSPACE_NETT_API_URL", "https://api.nett.example"),
+            ("SUBSPACE_IDENTITY_PROVIDER", "dev"),
+            ("SUBSPACE_WORKOS_CLIENT_ID", CLIENT),
+            ("SUBSPACE_DEV_EMAIL", "developer@example.com"),
+            (
+                "SUBSPACE_ENTRA_TENANT_ID",
+                "00000000-0000-0000-0000-000000000001",
+            ),
+        ] {
+            let refused = resolve(&NONE, vars(&[(name, value)])).unwrap_err();
+            assert!(
+                refused.contains("no API backend") && refused.contains(name),
+                "{name}: {refused}"
+            );
+        }
+        let both = resolve(
+            &NONE,
+            vars(&[
+                ("SUBSPACE_IDENTITY_PROVIDER", "workos"),
+                ("SUBSPACE_API_URL", "https://api.example.com"),
+            ]),
+        )
+        .unwrap_err();
+        assert!(
+            both.contains("Unset SUBSPACE_API_URL, SUBSPACE_IDENTITY_PROVIDER and"),
+            "{both}"
+        );
     }
 
     #[test]

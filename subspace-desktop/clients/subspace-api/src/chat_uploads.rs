@@ -180,7 +180,13 @@ pub fn canonical(reference: &str) -> Option<String> {
         .then(|| format!("UPL-{text}"))
 }
 
+/// The upload references in `text`, at most 50. A build with no tracker
+/// backend has no uploads, so it finds none and the text stays as sent.
 pub fn references(text: &str) -> Vec<String> {
+    crate::backend::require_backend().map_or_else(|_| Vec::new(), |()| found_references(text))
+}
+
+fn found_references(text: &str) -> Vec<String> {
     let upper = text.to_ascii_uppercase();
     upper
         .match_indices("UPL-")

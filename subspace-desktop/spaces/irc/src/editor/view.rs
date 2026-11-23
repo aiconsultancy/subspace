@@ -78,7 +78,10 @@ fn list_page(editor: &IrcSettings, tokens: &Tokens, cx: &mut Context<IrcSettings
                 .child(fields::heading("History", cx))
                 .child(fields::note(tokens, HISTORY_NOTE)),
         )
-        .child(captain_notifications(editor, tokens, cx))
+        // Captain notices route through the tracker's initiatives and fleets.
+        .children(
+            subspace_api_client::has_backend().then(|| captain_notifications(editor, tokens, cx)),
+        )
         .child(agent_setup(editor, tokens, cx))
         .into_any_element()
 }

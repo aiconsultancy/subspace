@@ -2,11 +2,14 @@
 //! run-time override are checked the same way: service URLs, the WorkOS
 //! client ID, and which settings belong to which tracker backend.
 
-/// The tracker backend a build talks to.
+/// The tracker backend a build talks to, or `None` for a build with no API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ApiBackend {
     Subspace,
     Nett,
+    /// No API and no sign-in: Channels, the GitHub Spaces and web Spaces
+    /// only, configured by hand.
+    None,
 }
 
 impl ApiBackend {
@@ -15,6 +18,7 @@ impl ApiBackend {
         match value.trim() {
             "" | "subspace" => Some(Self::Subspace),
             "nett" => Some(Self::Nett),
+            "none" => Some(Self::None),
             _ => None,
         }
     }
@@ -71,19 +75,46 @@ pub(crate) const SUBSPACE_ONLY_VARIABLES: [&str; 3] = [
 /// Prefixes of the other Subspace-only variables.
 pub(crate) const SUBSPACE_ONLY_PREFIXES: [&str; 2] = ["SUBSPACE_DEV_", "SUBSPACE_ENTRA_"];
 
+/// Run-time variables, besides the Subspace-only ones, that only a build
+/// with an API backend uses. In a build with no API backend every one of
+/// them set to a non-empty value is a configuration error, as in a NETT
+/// build, so nothing can give it an API or a sign-in.
+pub(crate) const BACKEND_VARIABLES: [&str; 2] =
+    ["SUBSPACE_NETT_API_URL", "SUBSPACE_IDENTITY_PROVIDER"];
+
+/// Prefixes of the other variables only a build with an API backend uses.
+pub(crate) const BACKEND_PREFIXES: [&str; 1] = ["SUBSPACE_WORKOS_"];
+
 /// The Subspace-only variables set to a non-empty value, from `(name,
 /// value)` pairs such as `std::env::vars()`.
 pub(crate) fn refused_in_nett<'a>(
     variables: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> Vec<String> {
+    set_among(variables, &SUBSPACE_ONLY_VARIABLES, &SUBSPACE_ONLY_PREFIXES)
+}
+
+/// Every API and sign-in variable set to a non-empty value: what a build
+/// with no API backend refuses.
+pub(crate) fn refused_without_backend<'a>(
+    variables: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Vec<String> {
+    let names = [SUBSPACE_ONLY_VARIABLES.as_slice(), &BACKEND_VARIABLES].concat();
+    let prefixes = [SUBSPACE_ONLY_PREFIXES.as_slice(), &BACKEND_PREFIXES].concat();
+    set_among(variables, &names, &prefixes)
+}
+
+/// The variables named in `names`, or starting with one of `prefixes`, set
+/// to a non-empty value, sorted.
+fn set_among<'a>(
+    variables: impl IntoIterator<Item = (&'a str, &'a str)>,
+    names: &[&str],
+    prefixes: &[&str],
+) -> Vec<String> {
     let mut refused: Vec<String> = variables
         .into_iter()
         .filter(|(name, value)| {
             !value.trim().is_empty()
-                && (SUBSPACE_ONLY_VARIABLES.contains(name)
-                    || SUBSPACE_ONLY_PREFIXES
-                        .iter()
-                        .any(|prefix| name.starts_with(prefix)))
+                && (names.contains(name) || prefixes.iter().any(|prefix| name.starts_with(prefix)))
         })
         .map(|(name, _)| name.to_owned())
         .collect();
@@ -93,7 +124,9 @@ pub(crate) fn refused_in_nett<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::{ApiBackend, refused_in_nett, valid_api_url, valid_workos_client_id};
+    use super::{
+        ApiBackend, refused_in_nett, refused_without_backend, valid_api_url, valid_workos_client_id,
+    };
 
     #[test]
     fn api_urls_are_https_origins_or_loopback_http() {
@@ -160,5 +193,37 @@ mod tests {
         assert_eq!(ApiBackend::parse(""), Some(ApiBackend::Subspace));
         assert_eq!(ApiBackend::parse("nett"), Some(ApiBackend::Nett));
         assert_eq!(ApiBackend::parse("other"), None);
+    }
+
+    #[test]
+    fn builds_without_a_backend_refuse_every_non_empty_api_or_sign_in_variable() {
+        assert_eq!(ApiBackend::parse(" none "), Some(ApiBackend::None));
+        let refused = refused_without_backend([
+            ("SUBSPACE_API_URL", "http://127.0.0.1:3000"),
+            ("SUBSPACE_API_ACCESS_JWT_FILE", "/tmp/fixture-token"),
+            ("SUBSPACE_NETT_API_URL", "https://api.nett.example"),
+            ("SUBSPACE_IDENTITY_PROVIDER", "dev"),
+            ("SUBSPACE_WORKOS_CLIENT_ID", "client_x"),
+            ("SUBSPACE_WORKOS_API_URL", "https://auth.example.com"),
+            ("SUBSPACE_DEV_EMAIL", "developer@example.com"),
+            ("SUBSPACE_ENTRA_CLIENT_ID", "x"),
+            // Empty is unset, and other Subspace variables are not API settings.
+            ("SUBSPACE_WORKOS_REDIRECT_PORT", " "),
+            ("SUBSPACE_GITHUB_API_URL", "http://127.0.0.1:9000"),
+            ("SUBSPACE_RELEASE_CHANNEL", "nightly"),
+        ]);
+        assert_eq!(
+            refused,
+            [
+                "SUBSPACE_API_ACCESS_JWT_FILE",
+                "SUBSPACE_API_URL",
+                "SUBSPACE_DEV_EMAIL",
+                "SUBSPACE_ENTRA_CLIENT_ID",
+                "SUBSPACE_IDENTITY_PROVIDER",
+                "SUBSPACE_NETT_API_URL",
+                "SUBSPACE_WORKOS_API_URL",
+                "SUBSPACE_WORKOS_CLIENT_ID",
+            ]
+        );
     }
 }

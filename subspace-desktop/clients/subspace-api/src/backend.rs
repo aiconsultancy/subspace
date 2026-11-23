@@ -21,22 +21,54 @@ pub enum Backend {
     Nett,
 }
 
-static BACKEND: OnceLock<Backend> = OnceLock::new();
+/// The build's choice: a backend, or `None` for a build without one.
+static BACKEND: OnceLock<Option<Backend>> = OnceLock::new();
 
 /// Records the build's backend. A second, different choice is refused, so
 /// one process can never hold both.
 pub(crate) fn claim(backend: Backend) -> Result<(), Error> {
-    if *BACKEND.get_or_init(|| backend) == backend {
+    claim_choice(Some(backend))
+}
+
+/// Records that this build has no tracker backend, before any Space starts.
+/// No API origin can be configured afterwards, no client is built, whatever
+/// the environment says, and every capability is off.
+// qual:api — a build with no API backend calls it at startup, from a launch module its tests also compile.
+pub fn configure_no_backend() -> Result<(), Error> {
+    claim_choice(None)
+}
+
+fn claim_choice(choice: Option<Backend>) -> Result<(), Error> {
+    if *BACKEND.get_or_init(|| choice) == choice {
         Ok(())
     } else {
         Err(Error::InvalidRequest)
     }
 }
 
+/// Whether this build can reach a tracker API at all: false only after
+/// [`configure_no_backend`].
+pub fn has_backend() -> bool {
+    BACKEND.get() != Some(&None)
+}
+
+/// Refuses in a build with no tracker backend, before anything is built.
+pub(crate) fn require_backend() -> Result<(), Error> {
+    if BACKEND.get() == Some(&None) {
+        Err(Error::InvalidRequest)
+    } else {
+        Ok(())
+    }
+}
+
 /// The configured backend. Before the product chooses one, as in tests and
 /// tools that build a loopback client, it is Subspace API.
 pub fn backend() -> Backend {
-    BACKEND.get().copied().unwrap_or(Backend::Subspace)
+    BACKEND
+        .get()
+        .copied()
+        .flatten()
+        .unwrap_or(Backend::Subspace)
 }
 
 /// The service's name in messages and the Issues header.
@@ -267,6 +299,18 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
+    /// What a build with no tracker backend offers: nothing.
+    pub const NONE: Self = Self {
+        initiative_channels: false,
+        chat_uploads: false,
+        captain_notices: false,
+        issue_moves: false,
+        issue_summaries: false,
+        issue_owners: false,
+        standalone_attachments: false,
+        live_updates: false,
+    };
+
     /// What `backend` offers: everything for Subspace API, and for NETT what
     /// its capability list names for the selected organisation.
     pub fn of(backend: Backend) -> Self {
@@ -293,9 +337,13 @@ impl Capabilities {
     }
 }
 
-/// What the configured backend offers.
+/// What the configured backend offers: nothing in a build without one.
 pub fn capabilities() -> Capabilities {
-    Capabilities::of(backend())
+    if has_backend() {
+        Capabilities::of(backend())
+    } else {
+        Capabilities::NONE
+    }
 }
 
 /// The features named in NETT's capability list.
