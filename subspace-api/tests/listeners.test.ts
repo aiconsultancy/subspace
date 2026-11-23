@@ -84,6 +84,7 @@ const options = config({
   IRC_CREDENTIAL_SECRET: "an example credential secret of at least 32 bytes",
   IRC_AUTH_HOOK_TOKEN: ircHookToken,
   IRC_AUTH_ORGANISATION: "dev:local",
+  IRC_AUTH_SERVERS: "irc.example.com:6697",
 });
 let scope: Scope.Closeable;
 
@@ -159,7 +160,20 @@ describe("the API process with both listeners", () => {
 
   test("the main port serves both IRC routes, the hook only with its token", async () => {
     // Routed, then refused for want of a signed-in user.
-    expect((await call(mainPort, "/api/v1/me/irc-credential", "POST")).status).toBe(401);
+    expect(
+      (
+        await call(
+          mainPort,
+          "/api/v1/me/irc-credential",
+          "POST",
+          {},
+          {
+            host: "irc.example.com",
+            port: 6697,
+          },
+        )
+      ).status,
+    ).toBe(401);
     const hook = (headers: Record<string, string>) =>
       call(mainPort, "/api/v1/irc/authenticate", "POST", headers, { accountName: "orion" });
     expect((await hook({})).status).toBe(401);

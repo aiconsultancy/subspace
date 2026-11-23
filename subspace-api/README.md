@@ -261,6 +261,7 @@ links.
 | `IRC_CREDENTIAL_SECRET`, `IRC_CREDENTIAL_SECRET_FILE`                 | Secret of at least 32 bytes that signs [IRC credentials](#irc-sign-in). Set one source; unset is off.           |
 | `IRC_AUTH_HOOK_TOKEN`, `IRC_AUTH_HOOK_TOKEN_FILE`                     | Bearer token of at least 32 printable bytes for Ergo's auth-script. Set one source.                             |
 | `IRC_AUTH_ORGANISATION`                                               | `<provider>:<organisation>` whose people the IRC server signs in, such as `entra:<tenant UUID>`.                |
+| `IRC_AUTH_SERVERS`                                                    | Comma-separated `host` or `host:port` of this IRC server, which credentials are bound to.                       |
 
 The image defaults to `NODE_ENV=production`, which forbids development sign-in.
 Local Compose defaults to `NODE_ENV=development`. Production deployments use TLS
@@ -279,14 +280,34 @@ account on the first success. Ergo never talks to an identity provider, so this
 works for every provider the API accepts. The two endpoints below are the
 contract; another implementation of this API must match them exactly.
 
-Generate each secret with, for example, `openssl rand -base64 48`, and keep both
-in the deployment's secret store or a mounted file.
+Both secrets, `IRC_CREDENTIAL_SECRET` and `IRC_AUTH_HOOK_TOKEN`, must be random
+material, never a password someone chose, at least 32 bytes and different from each
+other; the API refuses to start otherwise. Generate each separately, keep both in
+the deployment's secret store or a mounted file, and give the hook token to the IRC
+server only:
+
+```sh
+openssl rand -base64 48 > irc-credential-secret
+openssl rand -base64 48 > irc-auth-hook-token
+```
+
+`IRC_AUTH_SERVERS` lists the hosts at which this deployment's IRC server is
+reached, comma-separated, each optionally with a port, such as
+`irc.example.com:6697,irc.internal.example`. Write an IPv6 address in brackets. A
+credential is issued only for a listed server and works only on one, so a fleet
+that names some other IRC server never receives a password that the real one
+accepts. It is required whenever `IRC_CREDENTIAL_SECRET` is set.
 
 ### `POST /api/v1/me/irc-credential`
 
 Any signed-in, active user, human or agent, with their bearer access token on the
 main listener. The agent listener does not serve it, because anyone who reaches
-that listener can act as any agent. The request has no body.
+that listener can act as any agent. The body names the IRC server the client is
+about to connect to, as it will connect:
+
+```json
+{ "host": "irc.example.com", "port": 6697 }
+```
 
 ```json
 { "account": "tamsin", "password": "sirc1.<opaque>", "expiresAt": "2026-11-23T21:10:00Z" }
@@ -298,9 +319,15 @@ that listener can act as any agent. The request has no body.
   keep it in memory only.
 - `expiresAt` is the expiry in UTC to the second.
 - The response carries `Cache-Control: private, no-store`.
+- `host` is a host name or IP address and `port` an integer from 1 to 65535. A
+  missing or malformed body receives 400 with a problem document.
+- The credential is issued only when `host`, compared in ASCII without regard to
+  case, is in `IRC_AUTH_SERVERS`, with `port` too when the entry gives one.
+  Otherwise the route answers 404 with the problem detail
+  `No account sign-in for this server`, and issues nothing.
 - The usual 401 and 403 apply to a missing, invalid or expired token and a
-  deactivated member. The route answers 404 when `IRC_CREDENTIAL_SECRET` is not
-  set, and 409 for an agent without an IRC nick.
+  deactivated member. The route also answers 404 when `IRC_CREDENTIAL_SECRET` is
+  not set, and 409 for an agent without an IRC nick.
 
 A credential is `sirc1.` followed by the unpadded base64url encoding of 56 bytes:
 
@@ -308,11 +335,13 @@ A credential is `sirc1.` followed by the unpadded base64url encoding of 56 bytes
 2. the expiry as an unsigned 64-bit big-endian count of seconds since the Unix
    epoch;
 3. an HMAC-SHA256, keyed by the UTF-8 bytes of `IRC_CREDENTIAL_SECRET`, over the
-   ASCII text `sirc1.` followed by the 24 bytes of items 1 and 2.
+   ASCII text `sirc1.`, the 24 bytes of items 1 and 2, and the requested host in
+   canonical form: ASCII letters in lower case and any IPv6 brackets removed.
 
-It is stateless: nothing is stored. A credential is good while the current time
-is before its expiry and the expiry is no more than 660 seconds ahead. The
-signature is compared in constant time.
+The host is not in the credential. It is stateless: nothing is stored. A
+credential is good while the current time is before its expiry, the expiry is no
+more than 660 seconds ahead, and its signature matches one of the hosts in
+`IRC_AUTH_SERVERS`. Each signature is compared in constant time.
 
 ### `POST /api/v1/irc/authenticate`
 
@@ -320,9 +349,11 @@ Called only by Ergo's auth-script. It is not part of the OpenAPI document or the
 MCP tools, it is not behind the bearer middleware, and the agent listener does
 not serve it.
 
-- The route answers 404 unless `IRC_AUTH_HOOK_TOKEN`, `IRC_AUTH_ORGANISATION` and
-  `IRC_CREDENTIAL_SECRET` are all set. The API refuses to start with only one of
-  the first two, or with them but without the credential secret.
+- The route answers 404 unless `IRC_AUTH_HOOK_TOKEN`, `IRC_AUTH_ORGANISATION`,
+  `IRC_CREDENTIAL_SECRET` and `IRC_AUTH_SERVERS` are all set. The API refuses to
+  start with only one of the first two, with them but without the credential secret,
+  with the secret but without the servers, or with the same value for the hook
+  token and the secret.
 - It is authorised only by `Authorization: Bearer <IRC_AUTH_HOOK_TOKEN>`, compared
   in constant time. A missing or wrong token receives 401 with a problem document
   and `WWW-Authenticate: Bearer`, before the body is read.
@@ -337,7 +368,7 @@ not serve it.
 The rules, in order:
 
 1. A `passphrase` that starts with `sirc1.` succeeds only if its signature is
-   this server's, it has not expired, its user exists, is active, belongs to the
+   this deployment's for a host in `IRC_AUTH_SERVERS`, it has not expired, its user exists, is active, belongs to the
    organisation in `IRC_AUTH_ORGANISATION` and has a username, and the
    `accountName`, ignoring an `@` and anything after it and compared without
    regard to case, is that username. The answer names the canonical username,
@@ -367,8 +398,8 @@ API later gives the same username. Before the hook answers for it:
    `bun run auth:username <provider> <organisation> <subject> <account>`. The
    person must already be a member: add them with the membership command, or let
    them sign in once while the hook is still off.
-4. Only then turn on the hook: set `IRC_AUTH_HOOK_TOKEN` and
-   `IRC_AUTH_ORGANISATION`, restart the API and enable the IRC server's
+4. Only then turn on the hook: set `IRC_AUTH_HOOK_TOKEN`, `IRC_AUTH_ORGANISATION`
+   and `IRC_AUTH_SERVERS`, restart the API and enable the IRC server's
    auth-script.
 
 A reserved name that nobody holds stays with its local account, because the hook

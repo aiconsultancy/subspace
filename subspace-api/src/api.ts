@@ -657,7 +657,7 @@ export function routes(
     HttpApiBuilder.group(
       api,
       "ircCredentials",
-      ircCredentialHandlers(options.irc.credentialSecret),
+      ircCredentialHandlers(options.irc.credentialSecret, options.irc.servers),
     ),
   );
   const services = Layer.merge(auth, validationErrors);

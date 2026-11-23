@@ -168,21 +168,71 @@ function secretSetting(env: NodeJS.ProcessEnv, name: string, minimumBytes: numbe
   return secret;
 }
 
+/** An IRC server's host in canonical form: ASCII lower case, without IPv6 brackets. */
+export const canonicalHost = (host: string) =>
+  canonicalName(host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host);
+
+const hostShape = /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?|[0-9a-fA-F:.]*:[0-9a-fA-F:.]*)$/u;
+
 /**
- * IRC sign-in through the API: the secret that signs short-lived IRC credentials, and the hook
- * Ergo's auth-script calls, with its bearer token and the one organisation its server serves.
- * The hook needs all three, so setting only some of them is refused rather than left inert.
+ * IRC_AUTH_SERVERS: the hosts, each optionally with a port, at which this deployment's IRC server
+ * is reached, comma-separated, such as `irc.example.com:6697,[2001:db8::1]`. A credential is
+ * issued only for one of them and is bound to its host.
+ */
+export function ircServers(value: string) {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const bracketed = /^\[([^\]]+)\](?::([0-9]+))?$/u.exec(entry);
+      const plain = /^([^:]+)(?::([0-9]+))?$/u.exec(entry);
+      const [host, port] = bracketed
+        ? [bracketed[1]!, bracketed[2]]
+        : plain
+          ? [plain[1]!, plain[2]]
+          : [entry, undefined];
+      const number = port === undefined ? null : Number(port);
+      if (
+        !hostShape.test(host) ||
+        host.length > 253 ||
+        (number !== null && (!Number.isInteger(number) || number < 1 || number > 65535))
+      ) {
+        throw new Error(
+          "IRC_AUTH_SERVERS must be comma-separated hosts, each optionally with :port, such as irc.example.com:6697",
+        );
+      }
+      return { host: canonicalHost(host), port: number };
+    });
+}
+
+/**
+ * IRC sign-in through the API: the secret that signs short-lived IRC credentials, the IRC servers
+ * they may be issued for, and the hook Ergo's auth-script calls, with its bearer token and the one
+ * organisation its server serves. Setting only some of them is refused rather than left inert.
  */
 function ircSignIn(env: NodeJS.ProcessEnv, providers: ReadonlySet<string>) {
   const credentialSecret = secretSetting(env, "IRC_CREDENTIAL_SECRET", 32);
   const hookToken = secretSetting(env, "IRC_AUTH_HOOK_TOKEN", 32);
   const organisation = env.IRC_AUTH_ORGANISATION?.trim();
+  const servers = ircServers(env.IRC_AUTH_SERVERS ?? "");
   if (Boolean(hookToken) !== Boolean(organisation)) {
     throw new Error("Set IRC_AUTH_HOOK_TOKEN and IRC_AUTH_ORGANISATION together");
   }
+  if (hookToken && !credentialSecret) {
+    throw new Error("The IRC auth hook needs IRC_CREDENTIAL_SECRET");
+  }
+  if (credentialSecret && servers.length === 0) {
+    throw new Error("IRC_CREDENTIAL_SECRET needs IRC_AUTH_SERVERS, the hosts of this IRC server");
+  }
+  if (!credentialSecret && servers.length > 0) {
+    throw new Error("IRC_AUTH_SERVERS needs IRC_CREDENTIAL_SECRET");
+  }
+  if (hookToken && hookToken === credentialSecret) {
+    throw new Error("IRC_AUTH_HOOK_TOKEN and IRC_CREDENTIAL_SECRET must be different secrets");
+  }
   const secret = credentialSecret === null ? null : Redacted.make(credentialSecret);
-  if (!hookToken || !organisation) return { credentialSecret: secret, hook: null };
-  if (!secret) throw new Error("The IRC auth hook needs IRC_CREDENTIAL_SECRET");
+  if (!hookToken || !organisation) return { credentialSecret: secret, servers, hook: null };
   if (!/^[\x21-\x7e]+$/u.test(hookToken)) {
     throw new Error("IRC_AUTH_HOOK_TOKEN must be printable ASCII without spaces");
   }
@@ -203,6 +253,7 @@ function ircSignIn(env: NodeJS.ProcessEnv, providers: ReadonlySet<string>) {
   }
   return {
     credentialSecret: secret,
+    servers,
     hook: {
       token: Redacted.make(hookToken),
       provider: provider as Provider,

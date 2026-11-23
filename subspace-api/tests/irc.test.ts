@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { OpenApi } from "effect/http-api";
 import { Redacted } from "effect";
 import { documentedApi } from "../src/api";
-import { config } from "../src/config";
+import { config, ircServers } from "../src/config";
 import {
   ircCredentialLifetimeSeconds,
+  listedServer,
   mintIrcCredential,
   readIrcCredential,
   sameSecret,
@@ -20,42 +21,67 @@ const hookToken = "an-example-hook-token-of-at-least-32-bytes";
 const userId = "0f1e2d3c-4b5a-4968-8776-655443322110";
 const databaseUrl = "postgresql://subspace@127.0.0.1/subspace";
 
+const host = "irc.example.com";
+
 describe("IRC credentials", () => {
   test("a credential is sirc1. and an opaque payload of at most 200 characters", () => {
     const now = Date.UTC(2026, 10, 23, 21, 0, 0);
-    const { password, expiresAt } = mintIrcCredential(secret, userId, now);
+    const { password, expiresAt } = mintIrcCredential(secret, userId, host, now);
     expect(password.startsWith("sirc1.")).toBe(true);
     expect(password.length).toBeLessThanOrEqual(200);
     expect(password).toMatch(/^sirc1\.[A-Za-z0-9_-]+$/u);
     expect(password).not.toContain(userId);
+    expect(password).not.toContain(host);
     expect(expiresAt.toISOString()).toBe("2026-11-23T21:10:00.000Z");
-    expect(readIrcCredential(secret, password, now)).toEqual({ ok: true, userId });
+    expect(readIrcCredential(secret, password, [host], now)).toEqual({ ok: true, userId });
+  });
+
+  test("it is bound to the IRC server's host, ignoring ASCII case", () => {
+    const now = Date.now();
+    const { password } = mintIrcCredential(secret, userId, "IRC.Example.COM", now);
+    expect(readIrcCredential(secret, password, ["irc.example.com"], now).ok).toBe(true);
+    expect(readIrcCredential(secret, password, ["other.example.com", host], now).ok).toBe(true);
+    // A host no longer listed, or another server's, never accepts it.
+    expect(readIrcCredential(secret, password, ["other.example.com"], now)).toEqual({
+      ok: false,
+      reason: "signature",
+    });
+    expect(readIrcCredential(secret, password, [], now)).toEqual({
+      ok: false,
+      reason: "signature",
+    });
   });
 
   test("it is valid for ten minutes and reusable until then", () => {
     const now = Date.now();
-    const { password } = mintIrcCredential(secret, userId, now);
+    const { password } = mintIrcCredential(secret, userId, host, now);
     expect(ircCredentialLifetimeSeconds).toBe(600);
-    expect(readIrcCredential(secret, password, now).ok).toBe(true);
-    expect(readIrcCredential(secret, password, now + 599_000).ok).toBe(true);
-    expect(readIrcCredential(secret, password, now + 600_000)).toEqual({
+    expect(readIrcCredential(secret, password, [host], now).ok).toBe(true);
+    expect(readIrcCredential(secret, password, [host], now + 599_000).ok).toBe(true);
+    expect(readIrcCredential(secret, password, [host], now + 600_000)).toEqual({
       ok: false,
       reason: "expired",
     });
     // A credential that claims to last longer than a fresh one is refused too.
-    const future = mintIrcCredential(secret, userId, now + 3_600_000).password;
-    expect(readIrcCredential(secret, future, now)).toEqual({ ok: false, reason: "expired" });
+    const future = mintIrcCredential(secret, userId, host, now + 3_600_000).password;
+    expect(readIrcCredential(secret, future, [host], now)).toEqual({
+      ok: false,
+      reason: "expired",
+    });
   });
 
   test("a tampered, foreign or malformed credential is refused", () => {
-    const { password } = mintIrcCredential(secret, userId);
+    const { password } = mintIrcCredential(secret, userId, host);
     const flip = (index: number) =>
       password.slice(0, index) + (password[index] === "A" ? "B" : "A") + password.slice(index + 1);
     // In the user ID, in the expiry and in the signature.
     for (const index of [8, 30, password.length - 5])
-      expect(readIrcCredential(secret, flip(index))).toEqual({ ok: false, reason: "signature" });
+      expect(readIrcCredential(secret, flip(index), [host])).toEqual({
+        ok: false,
+        reason: "signature",
+      });
     const other = Redacted.make("a different credential secret of 32 bytes or more");
-    expect(readIrcCredential(other, password)).toEqual({ ok: false, reason: "signature" });
+    expect(readIrcCredential(other, password, [host])).toEqual({ ok: false, reason: "signature" });
     for (const malformed of [
       "",
       "sirc1.",
@@ -65,7 +91,10 @@ describe("IRC credentials", () => {
       password.replace(/.$/u, "="),
       `${password.slice(0, -1)}+`,
     ])
-      expect(readIrcCredential(secret, malformed)).toEqual({ ok: false, reason: "malformed" });
+      expect(readIrcCredential(secret, malformed, [host])).toEqual({
+        ok: false,
+        reason: "malformed",
+      });
   });
 
   test("secrets are compared whatever their lengths", () => {
@@ -73,21 +102,45 @@ describe("IRC credentials", () => {
     expect(sameSecret(`${hookToken}x`, Redacted.make(hookToken))).toBe(false);
     expect(sameSecret("", Redacted.make(hookToken))).toBe(false);
   });
+
+  test("a requested server matches a listed host, and its port where the entry gives one", () => {
+    const servers = ircServers("IRC.example.com:6697,chat.example.com,[2001:DB8::1]:6697,::1");
+    expect(servers).toEqual([
+      { host: "irc.example.com", port: 6697 },
+      { host: "chat.example.com", port: null },
+      { host: "2001:db8::1", port: 6697 },
+      { host: "::1", port: null },
+    ]);
+    expect(listedServer(servers, "irc.EXAMPLE.com", 6697)).toBe(true);
+    expect(listedServer(servers, "irc.example.com", 6667)).toBe(false);
+    expect(listedServer(servers, "Chat.Example.Com", 6667)).toBe(true);
+    expect(listedServer(servers, "[2001:db8::1]", 6697)).toBe(true);
+    expect(listedServer(servers, "::1", 1)).toBe(true);
+    expect(listedServer(servers, "irc.example.com.evil.example", 6697)).toBe(false);
+    expect(listedServer(servers, "evil.example", 6697)).toBe(false);
+  });
 });
 
 describe("IRC configuration", () => {
   const base = { DATABASE_URL: databaseUrl, AUTH_PROVIDERS: "dev", ENABLE_DEV_AUTH: "true" };
+  const servers = { IRC_AUTH_SERVERS: "irc.example.com:6697" };
   const hook = {
     ...base,
+    ...servers,
     IRC_CREDENTIAL_SECRET: Redacted.value(secret),
     IRC_AUTH_HOOK_TOKEN: hookToken,
     IRC_AUTH_ORGANISATION: "dev:local",
   };
 
   test("nothing is on until configured, and the credential secret works alone", () => {
-    expect(config(base).irc).toEqual({ credentialSecret: null, hook: null });
-    const alone = config({ ...base, IRC_CREDENTIAL_SECRET: Redacted.value(secret) }).irc;
+    expect(config(base).irc).toEqual({ credentialSecret: null, servers: [], hook: null });
+    const alone = config({
+      ...base,
+      ...servers,
+      IRC_CREDENTIAL_SECRET: Redacted.value(secret),
+    }).irc;
     expect(Redacted.value(alone.credentialSecret!)).toBe(Redacted.value(secret));
+    expect(alone.servers).toEqual([{ host: "irc.example.com", port: 6697 }]);
     expect(alone.hook).toBeNull();
     const full = config(hook).irc;
     expect(full.hook).toMatchObject({ provider: "dev", externalOrganisation: "local" });
@@ -116,18 +169,22 @@ describe("IRC configuration", () => {
         "Set IRC_CREDENTIAL_SECRET or IRC_CREDENTIAL_SECRET_FILE, not both",
       );
       expect(() =>
-        config({ ...base, IRC_CREDENTIAL_SECRET_FILE: join(folder, "missing") }),
+        config({ ...base, ...servers, IRC_CREDENTIAL_SECRET_FILE: join(folder, "missing") }),
       ).toThrow("IRC_CREDENTIAL_SECRET_FILE must name a readable file");
       const empty = join(folder, "empty");
       await writeFile(empty, "\n");
-      expect(() => config({ ...base, IRC_CREDENTIAL_SECRET_FILE: empty })).toThrow(
+      expect(() => config({ ...base, ...servers, IRC_CREDENTIAL_SECRET_FILE: empty })).toThrow(
         "must not be empty",
       );
     } finally {
       await rm(folder, { recursive: true });
     }
-    expect(() => config({ ...base, IRC_CREDENTIAL_SECRET: "x".repeat(31) })).toThrow(
+    expect(() => config({ ...base, ...servers, IRC_CREDENTIAL_SECRET: "x".repeat(31) })).toThrow(
       "IRC_CREDENTIAL_SECRET must be at least 32 bytes",
+    );
+    // The hook token and the credential secret must be different secrets.
+    expect(() => config({ ...hook, IRC_AUTH_HOOK_TOKEN: Redacted.value(secret) })).toThrow(
+      "IRC_AUTH_HOOK_TOKEN and IRC_CREDENTIAL_SECRET must be different secrets",
     );
     expect(() => config({ ...hook, IRC_AUTH_HOOK_TOKEN: "short" })).toThrow(
       "IRC_AUTH_HOOK_TOKEN must be at least 32 bytes",
@@ -135,6 +192,30 @@ describe("IRC configuration", () => {
     expect(() => config({ ...hook, IRC_AUTH_HOOK_TOKEN: `${hookToken} with spaces` })).toThrow(
       "printable ASCII",
     );
+  });
+
+  test("credentials need the IRC server's hosts, and the hosts need the secret", () => {
+    const { IRC_AUTH_SERVERS: _, ...withoutServers } = hook;
+    expect(() => config(withoutServers)).toThrow("IRC_CREDENTIAL_SECRET needs IRC_AUTH_SERVERS");
+    expect(() =>
+      config({ ...base, IRC_CREDENTIAL_SECRET: Redacted.value(secret), IRC_AUTH_SERVERS: " , " }),
+    ).toThrow("IRC_CREDENTIAL_SECRET needs IRC_AUTH_SERVERS");
+    expect(() => config({ ...base, ...servers })).toThrow(
+      "IRC_AUTH_SERVERS needs IRC_CREDENTIAL_SECRET",
+    );
+    for (const value of [
+      "irc.example.com:0",
+      "irc.example.com:70000",
+      "irc.example.com:port",
+      "irc.example.com:",
+      "irc example.com",
+      "https://irc.example.com",
+      "[::1",
+      "-irc.example.com",
+    ])
+      expect(() => config({ ...hook, IRC_AUTH_SERVERS: value })).toThrow(
+        "IRC_AUTH_SERVERS must be",
+      );
   });
 
   test("the hook needs its token, its organisation and the credential secret together", () => {
@@ -183,6 +264,7 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
   let api: Awaited<ReturnType<typeof startApi>>;
   let bare: Awaited<ReturnType<typeof startApi>>;
   let credentialsOnly: Awaited<ReturnType<typeof startApi>>;
+  const listed = "irc.example.com:6697,chat.example.com";
 
   beforeAll(async () => {
     database = await isolatedDatabase("irc");
@@ -195,13 +277,14 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
         IRC_AUTH_HOOK_TOKEN: hookToken,
         // The tenant in upper case, as an operator might paste it.
         IRC_AUTH_ORGANISATION: `entra:${tenant.tenant.toUpperCase()}`,
+        IRC_AUTH_SERVERS: listed,
       },
       tenant.fetchRemote,
     );
     bare = await startApi(database.url, tenant.env, tenant.fetchRemote);
     credentialsOnly = await startApi(
       database.url,
-      { ...tenant.env, IRC_CREDENTIAL_SECRET: Redacted.value(secret) },
+      { ...tenant.env, IRC_CREDENTIAL_SECRET: Redacted.value(secret), IRC_AUTH_SERVERS: listed },
       tenant.fetchRemote,
     );
   });
@@ -218,8 +301,9 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
     expect(me.status).toBe(200);
     return { token, oid, ...((await me.json()) as { userId: string; username: string }) };
   };
-  const credential = async (token: string, server = api) => {
-    const response = await server.call("/api/v1/me/irc-credential", token, "POST");
+  const ircServer = { host: "irc.example.com", port: 6697 };
+  const credential = async (token: string, server = api, body: unknown = ircServer) => {
+    const response = await server.call("/api/v1/me/irc-credential", token, "POST", body);
     return { status: response.status, response, body: await response.json() };
   };
   const hook = async (body: unknown, token = hookToken, server = api) => {
@@ -273,7 +357,7 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
 
   test("expired, tampered and foreign credentials are refused", async () => {
     const tamsin = await person({ given_name: "Tamsin", family_name: "Quarrie" });
-    const expired = mintIrcCredential(secret, tamsin.userId, Date.now() - 601_000).password;
+    const expired = mintIrcCredential(secret, tamsin.userId, host, Date.now() - 601_000).password;
     expect(await hook({ accountName: "tamsin", passphrase: expired })).toEqual(no);
     const { body } = await credential(tamsin.token);
     const tampered = `${body.password.slice(0, -2)}${body.password.endsWith("AA") ? "BB" : "AA"}`;
@@ -281,6 +365,7 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
     const foreign = mintIrcCredential(
       Redacted.make("another server's credential secret, 32 bytes"),
       tamsin.userId,
+      host,
     ).password;
     expect(await hook({ accountName: "tamsin", passphrase: foreign })).toEqual(no);
   });
@@ -318,10 +403,10 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
         [org],
       )
     ).rows;
-    const { password } = mintIrcCredential(secret, id);
+    const { password } = mintIrcCredential(secret, id, host);
     expect(await hook({ accountName: "mallory", passphrase: password })).toEqual(no);
     // An unknown user too.
-    const ghost = mintIrcCredential(secret, crypto.randomUUID()).password;
+    const ghost = mintIrcCredential(secret, crypto.randomUUID(), host).password;
     expect(await hook({ accountName: "ghost", passphrase: ghost })).toEqual(no);
   });
 
@@ -364,16 +449,109 @@ describe.skipIf(!testDatabase)("IRC sign-in over HTTP", () => {
     expect(await hook({ accountName: "demelza", passphrase: "a local password" })).toEqual(no);
     expect(await hook({ accountName: "demelza", passphrase: "" })).toEqual(no);
     expect(await hook({})).toEqual(no);
-    // A body over 256 KiB is not read.
-    const huge = JSON.stringify({
-      accountName: "demelza",
-      passphrase: body.password,
-      peerCerts: ["a".repeat(300_000)],
+    for (const text of ["", "not json", "[]", "null", '"sirc1."', '{"passphrase": 7}'])
+      expect([text, (await raw(text)).status, await (await raw(text)).text()]).toEqual([
+        text,
+        200,
+        JSON.stringify({ success: false }),
+      ]);
+  });
+
+  test("a hook body over 256 KiB answers 200 with success false, even with a good credential", async () => {
+    const lowen = await person({ given_name: "Lowen", family_name: "Carne" });
+    const { body } = await credential(lowen.token);
+    const good = { accountName: "lowen", passphrase: body.password };
+    expect(await hook(good)).toEqual(yes("lowen"));
+    const huge = JSON.stringify({ ...good, peerCerts: ["a".repeat(300_000)] });
+    const response = await raw(huge);
+    expect([response.status, await response.text()]).toEqual([
+      200,
+      JSON.stringify({ success: false }),
+    ]);
+  });
+
+  test("a credential is issued only for a listed IRC server, by host and port", async () => {
+    const jenna = await person({ given_name: "Jenna", family_name: "Rescorla" });
+    const notListed = await credential(jenna.token, api, {
+      host: "irc.elsewhere.example",
+      port: 6697,
     });
-    for (const text of ["", "not json", "[]", "null", '"sirc1."', '{"passphrase": 7}', huge])
-      expect([text.slice(0, 40), (await raw(text)).status, await (await raw(text)).text()]).toEqual(
-        [text.slice(0, 40), 200, JSON.stringify({ success: false })],
-      );
+    expect(notListed.status).toBe(404);
+    expect(notListed.response.headers.get("content-type")).toContain("application/problem+json");
+    expect(notListed.body.detail).toBe("No account sign-in for this server");
+    // The entry names a port, so another port is not this server.
+    expect(
+      (await credential(jenna.token, api, { host: "irc.example.com", port: 6667 })).status,
+    ).toBe(404);
+    // Case does not matter; an entry without a port accepts any.
+    const upper = await credential(jenna.token, api, { host: "IRC.Example.COM", port: 6697 });
+    expect(upper.status).toBe(200);
+    expect(await hook({ accountName: "jenna", passphrase: upper.body.password })).toEqual(
+      yes("jenna"),
+    );
+    const chat = await credential(jenna.token, api, { host: "chat.example.com", port: 7000 });
+    expect(chat.status).toBe(200);
+    expect(await hook({ accountName: "jenna", passphrase: chat.body.password })).toEqual(
+      yes("jenna"),
+    );
+  });
+
+  test("a credential bound to a host that is no longer listed is refused", async () => {
+    const morva = await person({ given_name: "Morva", family_name: "Teague" });
+    const issued = await credential(morva.token);
+    expect(issued.status).toBe(200);
+    // The same deployment after its IRC server moved: same secrets, another host.
+    const moved = await startApi(
+      database.url,
+      {
+        ...tenant.env,
+        IRC_CREDENTIAL_SECRET: Redacted.value(secret),
+        IRC_AUTH_HOOK_TOKEN: hookToken,
+        IRC_AUTH_ORGANISATION: `entra:${tenant.tenant}`,
+        IRC_AUTH_SERVERS: "irc.new.example",
+      },
+      tenant.fetchRemote,
+    );
+    try {
+      const old = { accountName: "morva", passphrase: issued.body.password };
+      expect(await hook(old, hookToken, moved)).toEqual(no);
+      const fresh = await credential(morva.token, moved, { host: "irc.new.example", port: 6697 });
+      expect(fresh.status).toBe(200);
+      expect(
+        await hook({ accountName: "morva", passphrase: fresh.body.password }, hookToken, moved),
+      ).toEqual(yes("morva"));
+      // And the new server's credential is no good where it was not issued.
+      expect(await hook({ accountName: "morva", passphrase: fresh.body.password })).toEqual(no);
+    } finally {
+      await moved.close();
+    }
+  });
+
+  test("the IRC server must be named in a well-formed body", async () => {
+    const elestren = await person({ given_name: "Elestren" });
+    const send = (body?: string) =>
+      fetch(`${api.origin}/api/v1/me/irc-credential`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${elestren.token}`, "Content-Type": "application/json" },
+        body,
+      });
+    for (const body of [
+      undefined,
+      "",
+      "not json",
+      "{}",
+      '{"host":"irc.example.com"}',
+      '{"port":6697}',
+      '{"host":"irc.example.com","port":"6697"}',
+      '{"host":"irc.example.com","port":0}',
+      '{"host":"irc.example.com","port":6697.5}',
+      '{"host":"irc example.com","port":6697}',
+      '{"host":7,"port":6697}',
+    ]) {
+      const response = await send(body);
+      expect([body, response.status]).toEqual([body, 400]);
+      expect(response.headers.get("content-type")).toContain("application/problem+json");
+    }
   });
 
   test("a wrong or missing hook token is refused before anything is read", async () => {
