@@ -562,7 +562,7 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
     expect(await stored(first.userId)).toBe("Root");
     expect((await signIn({ given_name: "Kerra", family_name: "Jory" })).username).toBe("kerraj");
     expect(await set(second.userId, "ROOT")).toBe("Another member or agent has that name.");
-    expect(await set(second.userId, "kerra")).toBe(
+    expect(await set(second.userId, "kerra")).toContain(
       "That name was issued to someone else before and stays retired.",
     );
     expect(await set(first.userId, "kerra")).toBe("kerra");
@@ -572,12 +572,8 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
         "That name belongs to the IRC server's services or guests.",
       );
     expect(await set(second.userId, "x", crypto.randomUUID())).toContain("No member");
-    const [{ subject: agentSubject }] = (
-      await database.client.query(
-        "SELECT subject FROM users WHERE agent_rank IS NOT NULL AND agent_irc_nick IS NOT NULL LIMIT 1",
-      )
-    ).rows;
-    expect(await set(second.userId, "agentname", agentSubject)).toContain("is an agent");
+    // A person's username is at most 32 characters; an agent's nick may be longer.
+    expect(await set(second.userId, `k${"x".repeat(32)}`)).toContain("at most 32");
     const audit = (
       await database.client.query(
         `SELECT "actorType" AS actor, source, changes FROM audit_logs WHERE action = 'usernameSet' AND entity_id = $1 ORDER BY occurred_at`,
@@ -607,6 +603,185 @@ describe.skipIf(!testDatabase)("usernames on registration", () => {
       1,
       "Another member or agent has that name.",
     ]);
+    // kerrap was retired when it changed; the command can release it for reuse.
+    const release = command("--release", "entra", tenant.tenant, "KerraP");
+    expect([release.exitCode, release.stdout.toString().trim()]).toEqual([
+      0,
+      "Released kerrap; it may be allocated or given again.",
+    ]);
+    expect((await signIn({ given_name: "Kerra", family_name: "Pengelly" })).username).toBe(
+      "kerrap",
+    );
+    const again = command("--release", "entra", tenant.tenant, "kerrap");
+    expect([again.exitCode, again.stderr.toString().trim()]).toEqual([
+      1,
+      "That name is not retired.",
+    ]);
+  });
+
+  test("an agent registered again gets its old nick back, and two agents can swap nicks", async () => {
+    const admin = await tenant.sign(crypto.randomUUID(), {
+      given_name: "Cadan",
+      family_name: "Rowse",
+      roles: [adminRole],
+    });
+    expect((await api.call("/api/v1/me", admin)).status).toBe(200);
+    expect(
+      (
+        await api.call("/api/v1/fleets", admin, "POST", {
+          name: "Reregistration fleet",
+          slug: "reregistration-fleet",
+          ircHost: "irc.example.com",
+          ircPort: 6697,
+          ircTls: true,
+        })
+      ).status,
+    ).toBe(201);
+    const fields = (name: string, ircNick: string | null, serviceTokenClientId: string) => ({
+      name,
+      rank: "rearAdmiral",
+      fleet: "reregistration-fleet",
+      defaultModel: "example-model",
+      serviceTokenClientId,
+      ircNick,
+    });
+    const register = async (name: string, ircNick: string | null) => {
+      const response = await api.call(
+        "/api/v1/agents",
+        admin,
+        "POST",
+        fields(name, ircNick, crypto.randomUUID()),
+      );
+      expect(response.status).toBe(201);
+      return response.json();
+    };
+    const edit = (
+      agent: { userId: string; serviceTokenClientId: string; version: number },
+      name: string,
+      ircNick: string | null,
+    ) =>
+      api.call(`/api/v1/agents/${agent.userId}`, admin, "PUT", {
+        ...fields(name, ircNick, agent.serviceTokenClientId),
+        version: agent.version,
+      });
+    const give = async (subject: string, name: string, reuseRetired = true) => {
+      const result = await Effect.runPromise(
+        Effect.result(
+          Effect.flatMap(Database, (db) =>
+            setUsername(
+              db,
+              { provider: "entra", externalOrganisation: tenant.tenant, subject },
+              name,
+              { reuseRetired },
+            ),
+          ).pipe(Effect.provide(databaseLayer(database.url, 2))),
+        ),
+      );
+      return "failure" in result && result.failure
+        ? (result.failure as Error).message
+        : (result as { success: { username: string } }).success.username;
+    };
+
+    // The agent's account subject changed, so it is registered again and its old record cleared.
+    const old = await register("Gwavas", "Gwavas");
+    expect((await edit(old, "Gwavas", null)).status).toBe(200);
+    const renewed = await register("Gwavas-renewed", null);
+    expect((await edit(renewed, "Gwavas-renewed", "Gwavas")).status).toBe(409);
+    expect(await give(renewed.serviceTokenClientId, "Gwavas", false)).toContain("stays retired");
+    expect(await give(renewed.serviceTokenClientId, "Gwavas")).toBe("Gwavas");
+    const rows = async (userId: string) =>
+      (
+        await database.client.query(
+          "SELECT username, agent_irc_nick, version FROM users WHERE id = $1",
+          [userId],
+        )
+      ).rows[0];
+    expect(await rows(renewed.userId)).toEqual({
+      username: "Gwavas",
+      agent_irc_nick: "Gwavas",
+      version: renewed.version + 1,
+    });
+    const agentRead = await (await api.call(`/api/v1/agents/${renewed.userId}`, admin)).json();
+    expect(agentRead.ircNick).toBe("Gwavas");
+    expect(
+      (
+        await database.client.query(
+          "SELECT action, entity_id, changes FROM audit_logs WHERE action IN ('usernameReleased', 'usernameSet') AND changes->>'to' IN ($1, 'Gwavas') ORDER BY occurred_at",
+          [renewed.userId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        action: "usernameReleased",
+        entity_id: old.userId,
+        changes: { name: "gwavas", to: renewed.userId },
+      },
+      {
+        action: "usernameSet",
+        entity_id: renewed.userId,
+        changes: { from: null, to: "Gwavas", releasedFrom: old.userId },
+      },
+    ]);
+
+    // Two agents swap nicks: one gives its nick up, then each takes the other's.
+    const first = await register("Kitto", "Kitto");
+    const second = await register("Pascoe", "Pascoe");
+    expect((await edit(first, "Kitto", null)).status).toBe(200);
+    expect(await give(second.serviceTokenClientId, "Kitto")).toBe("Kitto");
+    expect(await give(first.serviceTokenClientId, "Pascoe")).toBe("Pascoe");
+    expect((await rows(first.userId)).agent_irc_nick).toBe("Pascoe");
+    expect((await rows(second.userId)).agent_irc_nick).toBe("Kitto");
+  });
+
+  test("only the username command's path can release a retired name", async () => {
+    const { rows } = await database.client.query(
+      "SELECT organisation_id, name FROM retired_usernames LIMIT 1",
+    );
+    expect(rows).toHaveLength(1);
+    const [{ organisation_id: org, name }] = rows;
+    await expect(
+      database.client.query(
+        "DELETE FROM retired_usernames WHERE organisation_id = $1 AND name = $2",
+        [org, name],
+      ),
+    ).rejects.toThrow("released only by the username command");
+    await expect(
+      database.client.query("UPDATE retired_usernames SET user_id = user_id WHERE name = $1", [
+        name,
+      ]),
+    ).rejects.toThrow("released only by the username command");
+    // Deleting an organisation still removes its retired names.
+    const [{ id: gone }] = (
+      await database.client.query(
+        "INSERT INTO organisations (provider, external_id) VALUES ('dev', 'short-lived') RETURNING id",
+      )
+    ).rows;
+    const [{ id: person }] = (
+      await database.client.query(
+        "INSERT INTO users (organisation_id, subject, display_name, username) VALUES ($1, 'brief@example.com', 'Brief', 'brief') RETURNING id",
+        [gone],
+      )
+    ).rows;
+    await database.client.query("UPDATE users SET username = 'brief2' WHERE id = $1", [person]);
+    expect(
+      (
+        await database.client.query(
+          "SELECT name FROM retired_usernames WHERE organisation_id = $1",
+          [gone],
+        )
+      ).rows,
+    ).toEqual([{ name: "brief" }]);
+    await database.client.query("DELETE FROM organisations WHERE id = $1", [gone]);
+    expect(
+      Number(
+        (
+          await database.client.query(
+            "SELECT count(*) AS n FROM retired_usernames WHERE organisation_id = $1",
+            [gone],
+          )
+        ).rows[0].n,
+      ),
+    ).toBe(0);
   });
 });
 

@@ -1,51 +1,72 @@
+import { parseArgs } from "node:util";
 import { Effect, Schema } from "effect";
 import { Database, databaseLayer, databaseUrl } from "../src/db";
-import { setUsername, UsernameRefused } from "../src/usernames";
+import { releaseUsername, setUsername, UsernameRefused } from "../src/usernames";
 import { Uuid } from "../src/validation";
 
 /**
- * Sets a person's username explicitly, so that the owner of an existing IRC account is given its
- * name: bun run auth:username workos|entra|dev ORG SUBJECT NAME. A reserved name is allowed; a
- * name another member or agent holds or held is refused. The change is audited.
+ * The username command, for administrators. Every change is audited.
+ *
+ *   bun run auth:username [--retired] workos|entra|dev ORG SUBJECT NAME
+ *     Sets a member's username, or an agent's IRC nick, which is its username: so that the owner
+ *     of an existing IRC account is given its name, or an agent registered again gets its old
+ *     nick back. A reserved name is allowed; a name another member or agent holds is refused,
+ *     and so is a retired one unless --retired hands it to this member or agent.
+ *
+ *   bun run auth:username --release workos|entra|dev ORG NAME
+ *     Releases a retired name, so that it may be allocated or given again.
  */
-const [provider, organisation, subject, name, ...extra] = process.argv.slice(2);
+const usage =
+  "Usage: bun run auth:username [--retired] workos|entra|dev ORG SUBJECT NAME\n" +
+  "       bun run auth:username --release workos|entra|dev ORG NAME";
+const { values, positionals } = parseArgs({
+  args: process.argv.slice(2),
+  allowPositionals: true,
+  options: { retired: { type: "boolean" }, release: { type: "boolean" } },
+});
+const [provider, organisation, ...rest] = positionals;
+const expected = values.release ? 1 : 2;
 if (
   !["workos", "entra", "dev"].includes(provider ?? "") ||
   !organisation ||
-  !subject ||
-  !name ||
-  extra.length ||
+  rest.length !== expected ||
+  rest.some((value) => !value || value.length > 256) ||
   organisation.length > 256 ||
-  subject.length > 256
+  (values.release && values.retired)
 ) {
-  throw new Error("Usage: bun run auth:username workos|entra|dev ORG SUBJECT NAME");
+  throw new Error(usage);
 }
 
 const id = Schema.decodeUnknownSync(Uuid);
-const identity =
+const organisationRef =
   provider === "entra"
-    ? {
-        provider: "entra" as const,
-        externalOrganisation: id(organisation).toLowerCase(),
-        subject: id(subject).toLowerCase(),
-      }
-    : {
-        provider: provider as "workos" | "dev",
-        externalOrganisation: organisation,
-        subject: provider === "dev" ? subject.toLowerCase() : subject,
-      };
+    ? { provider: "entra" as const, externalOrganisation: id(organisation).toLowerCase() }
+    : { provider: provider as "workos" | "dev", externalOrganisation: organisation };
+const subjectOf = (subject: string) =>
+  provider === "entra"
+    ? id(subject).toLowerCase()
+    : provider === "dev"
+      ? subject.toLowerCase()
+      : subject;
+
+const work = values.release
+  ? Effect.flatMap(Database, (db) => releaseUsername(db, organisationRef, rest[0]!)).pipe(
+      Effect.map((result) => `Released ${result.name}; it may be allocated or given again.`),
+    )
+  : Effect.flatMap(Database, (db) =>
+      setUsername(db, { ...organisationRef, subject: subjectOf(rest[0]!) }, rest[1]!, {
+        reuseRetired: values.retired === true,
+      }),
+    ).pipe(
+      Effect.map((result) =>
+        result.previous
+          ? `Username changed from ${result.previous} to ${result.username}; ${result.previous} is retired.`
+          : `Username set to ${result.username}.`,
+      ),
+    );
 
 try {
-  const result = await Effect.runPromise(
-    Effect.flatMap(Database, (db) => setUsername(db, identity, name)).pipe(
-      Effect.provide(databaseLayer(databaseUrl(), 2)),
-    ),
-  );
-  console.log(
-    result.previous
-      ? `Username changed from ${result.previous} to ${result.username}; ${result.previous} is retired.`
-      : `Username set to ${result.username}.`,
-  );
+  console.log(await Effect.runPromise(work.pipe(Effect.provide(databaseLayer(databaseUrl(), 2)))));
 } catch (error) {
   const refusal = error instanceof UsernameRefused ? error : (error as { cause?: unknown }).cause;
   console.error(

@@ -192,7 +192,7 @@ account may still exist. When an agent's IRC nick changes or is cleared, or a
 person's username is changed, a database trigger records the old name as retired.
 Allocation skips retired names, an agent cannot register one (409), and the
 database refuses one to any record but the one that held it, which may take it
-back.
+back. Only the username command below can release one or hand it on.
 
 `bun run db:migrate`, which the image runs at start-up, gives existing people
 usernames by the same rule, oldest first within each organisation. It runs after
@@ -210,18 +210,26 @@ and `GET /api/v1/users` report `username`. It is null only for an agent without
 an IRC nick.
 
 To give a person a particular username, such as the name of an IRC account they
-already own, an administrator runs the username command with the person's verified
-organisation and subject:
+already own, or an agent a particular IRC nick, an administrator runs the username
+command with the verified organisation and subject:
 
 ```sh
 bun run auth:username entra 00000000-0000-0000-0000-000000000000 00000000-0000-0000-0000-000000000001 tamsin_q
 ```
 
-It takes a letter, then letters, digits, `-` or `_`, at most 32 characters. It may
-give a reserved name, but refuses a name another member or agent holds or has
-retired. The person's previous username is retired, and the change is audited as
-`usernameSet` with source `cli`. Before turning on IRC sign-in for a server that
-already has accounts, follow [Turning it on for an existing server](#turning-it-on-for-an-existing-server).
+It takes a letter, then letters, digits, `-` or `_`, at most 32 characters for a
+person and 64 for an agent, whose username is its IRC nick. It may give an
+operator's reserved name, but refuses Ergo's service and guest names and a name
+another member or agent holds. It refuses a name another record has retired unless
+`--retired` is given, which releases that name to this member or agent: so an agent
+that had to be registered again, because its account subject changed, gets its old
+nick back, and two agents can swap nicks once one of them has given its nick up.
+`bun run auth:username --release <provider> <organisation> <name>` releases a
+retired name so that it may be allocated or given again. The previous name is
+retired, and each change is audited as `usernameSet` or `usernameReleased` with
+source `cli`. The database refuses to release a retired name by any other path.
+Before turning on IRC sign-in for a server that already has accounts, follow
+[Turning it on for an existing server](#turning-it-on-for-an-existing-server).
 
 Local administrators can manage fleets, fleet assignments and initiative channel
 configuration. Initiative membership is explicit. Users see active, explicitly

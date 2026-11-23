@@ -284,25 +284,82 @@ export const backfillUsernames = (db: Db, reserved: ReadonlySet<string>, batchSi
 /** A username an administrator sets: a letter, then letters, digits, `-` or `_`, at most 32. */
 export const settableUsername = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/u;
 
-/** Why an explicit username could not be set. Safe to show to the administrator. */
+/** An agent's IRC nick, which is its username: the agents API's rule, at most 64 characters. */
+const settableNick = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u;
+
+/** Why an explicit username could not be set or released. Safe to show to the administrator. */
 export class UsernameRefused extends Error {}
 
+type OrganisationRef = { provider: "workos" | "entra" | "dev"; externalOrganisation: string };
+
+/** The organisation's row, locked as every username change locks it. */
+const lockedOrganisation = (db: Db, organisation: OrganisationRef) =>
+  Effect.map(
+    db
+      .select({ id: organisations.id })
+      .from(organisations)
+      .where(
+        and(
+          eq(organisations.provider, organisation.provider),
+          eq(organisations.externalId, organisation.externalOrganisation),
+        ),
+      )
+      .for("no key update"),
+    (rows) => rows[0],
+  );
+
+const commandAudit = (
+  organisationId: string,
+  fields: Pick<typeof auditLogs.$inferInsert, "action" | "entityId" | "summary" | "changes">,
+) => ({
+  ...fields,
+  organisationId,
+  actorType: "integration" as const,
+  actorId: null,
+  actorDisplayName: "Username command",
+  source: "cli" as const,
+  entityType: "Member",
+});
+
 /**
- * Sets a person's username explicitly, as the username command does: so that the owner of an
- * existing IRC account is given that account's name. A reserved name is allowed; a name another
- * record holds, or retired, is refused. The old username is retired by the database, and the
- * change is audited.
+ * Removes a name from the retired list, which the database allows only in a transaction that
+ * says so, as the username command's do. Returns the record that had retired it.
+ */
+const releaseRetired = (db: Db, organisationId: string, name: string) =>
+  Effect.gen(function* () {
+    yield* db.execute(sql`select set_config('subspace.release_username', 'on', true)`);
+    const [released] = yield* db
+      .delete(retiredUsernames)
+      .where(
+        and(
+          eq(retiredUsernames.organisationId, organisationId),
+          eq(retiredUsernames.name, canonicalName(name)),
+        ),
+      )
+      .returning({ userId: retiredUsernames.userId });
+    yield* db.execute(sql`select set_config('subspace.release_username', '', true)`);
+    return released?.userId;
+  });
+
+/**
+ * Sets a member's or an agent's username explicitly, as the username command does: so that the
+ * owner of an existing IRC account is given that account's name, or an agent that had to be
+ * registered again gets its old nick back. For an agent the name is its IRC nick. An operator's
+ * reserved name is allowed; Ergo's service and guest names, and a name another record holds, are
+ * refused. A name another record retired is refused unless `reuseRetired`, which releases it to
+ * this record. The old name is retired by the database, and every change is audited.
  */
 export const setUsername = (
   db: Db,
-  identity: { provider: "workos" | "entra" | "dev"; externalOrganisation: string; subject: string },
+  identity: OrganisationRef & { subject: string },
   name: string,
+  options: { reuseRetired?: boolean } = {},
 ) =>
   Effect.gen(function* () {
-    if (!settableUsername.test(name))
+    if (!settableNick.test(name))
       return yield* Effect.fail(
         new UsernameRefused(
-          "Use a letter, then letters, digits, - or _, at most 32 characters in all.",
+          "Use a letter, then letters, digits, - or _, at most 32 characters in all (64 for an agent).",
         ),
       );
     // An operator's reserved name may be given deliberately; the IRC server's own may not.
@@ -312,30 +369,21 @@ export const setUsername = (
       );
     return yield* db.transaction((tx) =>
       Effect.gen(function* () {
-        const [org] = yield* tx
-          .select({ id: organisations.id })
-          .from(organisations)
-          .where(
-            and(
-              eq(organisations.provider, identity.provider),
-              eq(organisations.externalId, identity.externalOrganisation),
-            ),
-          )
-          .for("no key update");
-        const [person] = org
+        const org = yield* lockedOrganisation(tx, identity);
+        const [record] = org
           ? yield* tx
               .select()
               .from(users)
               .where(and(eq(users.organisationId, org.id), eq(users.subject, identity.subject)))
           : [];
-        if (!org || !person)
+        if (!org || !record)
           return yield* Effect.fail(
-            new UsernameRefused("No member has that organisation and subject. Add them first."),
+            new UsernameRefused("No member or agent has that organisation and subject."),
           );
-        if (person.agentRank)
+        if (!record.agentRank && !settableUsername.test(name))
           return yield* Effect.fail(
             new UsernameRefused(
-              "That subject is an agent, whose username is its IRC nick. Change the nick instead.",
+              "Use a letter, then letters, digits, - or _, at most 32 characters in all.",
             ),
           );
         const [holder] = yield* tx
@@ -345,29 +393,77 @@ export const setUsername = (
             and(
               eq(users.organisationId, org.id),
               eq(usernameKey(users.username), canonicalName(name)),
-              ne(users.id, person.id),
+              ne(users.id, record.id),
             ),
           );
         if (holder)
           return yield* Effect.fail(new UsernameRefused("Another member or agent has that name."));
-        if (yield* retiredByAnother(tx, org.id, name, person.id))
-          return yield* Effect.fail(
-            new UsernameRefused("That name was issued to someone else before and stays retired."),
+        let releasedFrom: string | undefined;
+        if (yield* retiredByAnother(tx, org.id, name, record.id)) {
+          if (!options.reuseRetired)
+            return yield* Effect.fail(
+              new UsernameRefused(
+                "That name was issued to someone else before and stays retired. Pass --retired to give it to this member or agent.",
+              ),
+            );
+          releasedFrom = yield* releaseRetired(tx, org.id, name);
+          yield* tx.insert(auditLogs).values(
+            commandAudit(org.id, {
+              action: "usernameReleased",
+              entityId: releasedFrom ?? null,
+              summary: "Released a retired username with the username command.",
+              changes: { name: canonicalName(name), to: record.id },
+            }),
           );
-        yield* tx.update(users).set({ username: name }).where(eq(users.id, person.id));
-        yield* tx.insert(auditLogs).values({
-          organisationId: org.id,
-          action: "usernameSet",
-          actorType: "integration",
-          actorId: null,
-          actorDisplayName: "Username command",
-          source: "cli",
-          entityType: "Member",
-          entityId: person.id,
-          summary: "Set the username with the username command.",
-          changes: { from: person.username, to: name },
-        });
-        return { userId: person.id, previous: person.username, username: name };
+        }
+        yield* record.agentRank
+          ? tx
+              .update(users)
+              .set({
+                agentIrcNick: name,
+                username: name,
+                version: record.version + 1,
+                updatedAt: sql`now()`,
+              })
+              .where(eq(users.id, record.id))
+          : tx.update(users).set({ username: name }).where(eq(users.id, record.id));
+        yield* tx.insert(auditLogs).values(
+          commandAudit(org.id, {
+            action: "usernameSet",
+            entityId: record.id,
+            summary: "Set the username with the username command.",
+            changes: {
+              from: record.username,
+              to: name,
+              ...(releasedFrom ? { releasedFrom } : {}),
+            },
+          }),
+        );
+        return { userId: record.id, previous: record.username, username: name };
       }),
     );
   });
+
+/**
+ * Releases a retired name, as `bun run auth:username --release` does, so that it may be
+ * allocated or given again. Audited.
+ */
+export const releaseUsername = (db: Db, organisation: OrganisationRef, name: string) =>
+  db.transaction((tx) =>
+    Effect.gen(function* () {
+      const org = yield* lockedOrganisation(tx, organisation);
+      if (!org) return yield* Effect.fail(new UsernameRefused("No such organisation."));
+      const releasedFrom = yield* releaseRetired(tx, org.id, name);
+      if (!releasedFrom)
+        return yield* Effect.fail(new UsernameRefused("That name is not retired."));
+      yield* tx.insert(auditLogs).values(
+        commandAudit(org.id, {
+          action: "usernameReleased",
+          entityId: releasedFrom,
+          summary: "Released a retired username with the username command.",
+          changes: { name: canonicalName(name) },
+        }),
+      );
+      return { name: canonicalName(name), releasedFrom };
+    }),
+  );
