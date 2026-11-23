@@ -50,6 +50,13 @@ fn a_late_to_do_answer_leaves_a_newer_save_pending_and_is_read_again() {
                 .any(|row| row.id == item.id && row.completed)
         })
     });
+    // A is stored before its answer is held: B must not start until A's
+    // hold is first in the release queue.
+    wait_for("A held", &|| {
+        saves(&mock, &item.id)
+            .first()
+            .is_some_and(|a| a["slowBodyHeadersStatus"] == 200)
+    });
     hub.set_todo_done(&item.id, false).unwrap();
     wait_for("B held", &|| {
         saves(&mock, &item.id)
