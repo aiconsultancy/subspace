@@ -18,7 +18,9 @@ With --late-after <s>, three more lines reach `#aurora-lyra` that many seconds
 after the capture build's nick (--nick, default `subspace`) joins it, so a
 capture that has another channel in front meanwhile shows them as new. With
 --status, `aurora-lyra` sets its nick-wide status through `draft/metadata-2`,
-as an agent does while it works.
+as an agent does while it works. With --reactions, people react to some of
+the lines (IRCv3 `+draft/react` on a `TAGMSG`), and with --thread as well,
+sela reacts with a stop reaction to the running request.
 """
 
 import argparse
@@ -90,6 +92,20 @@ THREADS = (
     },
 )
 
+# With --reactions: (index in LINES, who, reaction). People only.
+REACTIONS = (
+    (1, 'mira', '\N{THUMBS UP SIGN}'),
+    (1, 'tavi', '\N{THUMBS UP SIGN}'),
+    (1, 'sela', '\N{PARTY POPPER}'),
+    (4, 'mira', '\N{HEAVY BLACK HEART}\N{VARIATION SELECTOR-16}'),
+    (4, 'tavi', '\N{THUMBS UP SIGN}'),
+    (4, 'sela', '\N{EYES}'),
+    (7, 'tavi', '\N{EYES}'),
+)
+# With --reactions and --thread: a stop reaction on the running request
+# (the last thread's), from a person.
+STOP_REACTION = ('sela', '\N{RAISED HAND}')
+
 SPEAKERS = ('mira', 'tavi', 'sela', 'aurora-lyra', 'aurora-admiral', 'aurora-orion', 'aurora-vega', 'aurora-castor')
 
 
@@ -128,11 +144,28 @@ def connect(server, nick, caps=()):
         for line in buffer.split(b'\r\n'):
             if line.startswith(b'PING'):
                 sock.sendall(b'PONG' + line[4:] + b'\r\n')
+    check_caps(nick, caps, buffer)
     if is_agent(nick):
         sock.sendall(sign_in(nick).encode())
     sock.sendall(f'JOIN {",".join(channels_for(nick))}\r\n'.encode())
     sock.settimeout(None)
     return sock
+
+
+def check_caps(nick, caps, received):
+    """Stops unless the server acknowledged every capability `nick` asked
+    for: a NAK, or no ACK naming each, ends the fixture with the reason."""
+    if not caps:
+        return
+    acked = set()
+    for line in received.decode(errors='replace').split('\r\n'):
+        if ' CAP ' in line and ' NAK ' in line:
+            raise SystemExit(f'{nick}: the server refused the capabilities: {line}')
+        if ' CAP ' in line and ' ACK ' in line:
+            acked.update(line.rsplit(':', 1)[-1].split())
+    missing = [cap for cap in caps if cap not in acked]
+    if missing:
+        raise SystemExit(f'{nick}: the server did not acknowledge {" ".join(missing)}')
 
 
 def keep_alive(sock):
@@ -149,6 +182,8 @@ def keep_alive(sock):
 # after them, by socket, for the next reader of that socket: the late-lines watcher must still see a JOIN that
 # arrived while the threads were being played.
 UNREAD = {}
+# How long to wait for the server to echo a request with its message ID.
+ECHO_DEADLINE = 15
 
 
 def late_lines(sock, socks, nick, delay, late):
@@ -184,10 +219,21 @@ def late_lines(sock, socks, nick, delay, late):
 def await_msgid(sock, text):
     """Reads `sock` until the server echoes `text` back, and returns the
     message ID it gave it. Needs `echo-message` and `message-tags`. Every
-    other line it reads is kept for the socket's next reader."""
+    other line it reads is kept for the socket's next reader. Gives up with
+    the reason after ECHO_DEADLINE seconds."""
     unread, buffer = UNREAD.pop(sock, ([], b''))
+    deadline = time.monotonic() + ECHO_DEADLINE
     while True:
-        chunk = sock.recv(4096)
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise SystemExit(f'no tagged echo of {text!r} within {ECHO_DEADLINE} s')
+        sock.settimeout(left)
+        try:
+            chunk = sock.recv(4096)
+        except socket.timeout:
+            continue
+        finally:
+            sock.settimeout(None)
         if not chunk:
             raise SystemExit('the server closed the connection before echoing the request')
         buffer += chunk
@@ -204,11 +250,19 @@ def await_msgid(sock, text):
             unread.append(line)
 
 
+def react(sock, msgid, reaction):
+    """One IRCv3 reaction to `msgid` in the ship channel."""
+    sock.sendall(f'@+draft/react={reaction};+draft/reply={msgid} TAGMSG {CHANNEL}\r\n'.encode())
+
+
 def play_threads(socks):
-    """Each request in THREADS, the captain's progress on it and its replies."""
+    """Each request in THREADS, the captain's progress on it and its replies.
+    Returns the requests' message IDs."""
+    requests = []
     for thread in THREADS:
         socks['mira'].sendall(f'PRIVMSG {CHANNEL} :{thread["ask"]}\r\n'.encode())
         request = await_msgid(socks['mira'], thread['ask'])
+        requests.append(request)
         for stage, wait in thread['steps']:
             time.sleep(wait)
             tags = f'@{PROGRESS}={stage};+draft/reply={request}'
@@ -220,6 +274,7 @@ def play_threads(socks):
             socks[speaker].sendall(f'@+draft/reply={to} PRIVMSG {CHANNEL} :{text}\r\n'.encode())
             replies.append(await_msgid(socks[speaker], text))
     print(f'played {len(THREADS)} threads in {CHANNEL}', flush=True)
+    return requests
 
 
 def main():
@@ -230,14 +285,15 @@ def main():
     parser.add_argument('--status', action='store_true', help="set aurora-lyra's status")
     parser.add_argument('--repeats', action='store_true', help='name NAV-1 and pull request 492 again')
     parser.add_argument('--thread', action='store_true', help='play two requests with progress and replies')
+    parser.add_argument('--reactions', action='store_true', help='react to some lines, and to the running request')
     options = parser.parse_args()
     if not options.server.startswith('127.0.0.1:'):
         raise SystemExit('Use a loopback server, 127.0.0.1:<port>.')
     caps = {'aurora-lyra': ('draft/metadata-2',)} if options.status else {}
-    if options.thread:
-        tagged = ('message-tags', 'echo-message')
-        for nick in ('mira', 'tavi', 'aurora-lyra'):
-            caps[nick] = tuple(caps.get(nick, ())) + tagged
+    tagged = ('message-tags', 'echo-message')
+    taggers = SPEAKERS if options.reactions else ('mira', 'tavi', 'aurora-lyra') if options.thread else ()
+    for nick in taggers:
+        caps[nick] = tuple(caps.get(nick, ())) + tagged
     socks = {nick: connect(options.server, nick, caps.get(nick, ())) for nick in SPEAKERS}
     if options.status:
         socks['aurora-lyra'].sendall(f'METADATA * SET status :{STATUS}\r\n'.encode())
@@ -246,12 +302,20 @@ def main():
         # The first to join holds the channel's operator status, which +t needs.
         first = next(nick for nick in SPEAKERS if name in channels_for(nick))
         socks[first].sendall(f'TOPIC {name} :{topic}\r\n'.encode())
+    ids = []
     for nick, text in LINES + (REPEATS if options.repeats else ()):
         socks[nick].sendall(f'PRIVMSG {CHANNEL} :{text}\r\n'.encode())
+        ids.append(await_msgid(socks[nick], text) if options.reactions else None)
         time.sleep(1.2)
     print(f'posted the lines to {CHANNEL}', flush=True)
-    if options.thread:
-        play_threads(socks)
+    for index, nick, reaction in REACTIONS if options.reactions else ():
+        react(socks[nick], ids[index], reaction)
+        time.sleep(0.3)
+    requests = play_threads(socks) if options.thread else []
+    if options.reactions and requests:
+        nick, reaction = STOP_REACTION
+        react(socks[nick], requests[-1], reaction)
+        print(f'{nick} reacted {reaction} to the running request', flush=True)
     watcher = 'mira' if options.late_after is not None else None
     threads = [threading.Thread(target=keep_alive, args=(sock,), daemon=True)
                for nick, sock in socks.items() if nick != watcher]

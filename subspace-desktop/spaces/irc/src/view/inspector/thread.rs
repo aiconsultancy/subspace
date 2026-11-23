@@ -90,12 +90,10 @@ fn content(
         .into_any_element()
 }
 
-/// The most replies the tab draws: the latest, with the rest counted.
-pub(crate) const MAX_REPLIES: usize = 40;
-
-/// How many of `count` replies, the earliest, the tab leaves out.
+/// How many of `count` replies, the earliest, the tab leaves out: the
+/// thread keeps only the latest [`crate::thread::MAX_REPLIES`].
 pub(crate) fn earlier(count: usize) -> usize {
-    count.saturating_sub(MAX_REPLIES)
+    count.saturating_sub(crate::thread::MAX_REPLIES)
 }
 
 /// `Replies`, or `Replies in this thread` for a follow-up request made as
@@ -122,7 +120,7 @@ pub(crate) fn earlier_words(skipped: usize) -> String {
 /// are the whole thread's, as its own status line counts none.
 fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
     let tokens = Tokens::current(cx);
-    let title = match thread.replies.len() {
+    let title = match thread.reply_count {
         0 => "Replies".to_owned(),
         count => format!("{} · {count}", replies_heading(thread)),
     };
@@ -138,8 +136,8 @@ fn replies(thread: &Thread, context: &RowContext, cx: &App) -> AnyElement {
     }
     // The latest replies only, so a long thread draws a bounded list; the
     // heading still counts every loaded reply.
-    let skipped = earlier(thread.replies.len());
-    let shown = &thread.replies[skipped..];
+    let skipped = earlier(thread.reply_count);
+    let shown = &thread.replies;
     let continues = crate::thread::continues(shown);
     section
         .children((skipped > 0).then(|| {

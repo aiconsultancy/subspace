@@ -15,19 +15,34 @@ pub(crate) struct Thread {
     /// The status timeline, when the root is a request with trusted
     /// progress or one that ended, as for its status line.
     pub timeline: Option<Timeline>,
-    /// The replies the buffer holds, oldest first.
+    /// The latest replies the buffer holds, at most [`MAX_REPLIES`],
+    /// oldest first.
     pub replies: Vec<Entry>,
+    /// How many replies the buffer holds, all of them.
+    pub reply_count: usize,
     /// The chosen message is itself a reply, such as a follow-up request:
     /// `replies` are its whole thread's.
     pub nested: bool,
 }
+
+/// The most replies a thread keeps to draw: the latest. A rebuild copies
+/// no more, however long the thread.
+pub(crate) const MAX_REPLIES: usize = 40;
+
+/// The most steps a timeline keeps to draw: the latest. An agent that
+/// waits and works again many times reports a step for each change, so a
+/// rebuild copies no more and the tab draws a bounded list.
+pub(crate) const MAX_STEPS: usize = 24;
 
 /// A request's steps, from the progress notices its status line folds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Timeline {
     /// The agent the request asks, as its status line names it.
     pub agent: String,
+    /// The latest steps, at most [`MAX_STEPS`], oldest first.
     pub steps: Vec<Step>,
+    /// How many earlier steps were left out of `steps`.
+    pub earlier_steps: usize,
     /// The request ended, but no notice before its ending is held, such as
     /// after a restart that restored only part of the conversation.
     pub earlier_missing: bool,
@@ -83,18 +98,28 @@ pub(crate) fn build(buffer: &BufferKey, held: &Buffer, root: &str) -> Option<Thr
         .find(|entry| entry.line.id.as_deref() == Some(root) && entry.line.buffer == *buffer)?;
     let roots = ThreadRoots::new(buffer, held.entries.iter().map(|entry| &entry.line));
     let thread = roots.root(&root_entry.line).unwrap_or(root);
-    let replies = held
+    let all: Vec<&Entry> = held
         .entries
         .iter()
         .filter(|entry| entry.seq != root_entry.seq && is_reply(held, &roots, entry, thread))
-        .cloned()
         .collect();
+    let reply_count = all.len();
+    let replies = latest(&all);
     Some(Thread {
         root: root_entry.clone(),
         timeline: timeline(held, root_entry, root),
         replies,
+        reply_count,
         nested: is_nested(thread, root),
     })
+}
+
+/// The latest [`MAX_REPLIES`] of `all`, copied.
+fn latest(all: &[&Entry]) -> Vec<Entry> {
+    all[all.len().saturating_sub(MAX_REPLIES)..]
+        .iter()
+        .map(|entry| (*entry).clone())
+        .collect()
 }
 
 /// Whether the chosen message `root` is itself a reply in `thread`.
@@ -146,9 +171,11 @@ fn timeline(held: &Buffer, root_entry: &Entry, root: &str) -> Option<Timeline> {
     if let Some(ending) = ending {
         settle(&mut steps, ending, root_entry.line.time);
     }
+    let earlier_steps = keep_latest(&mut steps);
     Some(Timeline {
         agent,
         steps,
+        earlier_steps,
         earlier_missing,
     })
 }
@@ -211,6 +238,13 @@ fn steps(observed: &[Observed], since: DateTime<Utc>) -> Vec<Step> {
         }
     }
     steps
+}
+
+/// Keeps the latest [`MAX_STEPS`] of `steps`; how many went.
+fn keep_latest(steps: &mut Vec<Step>) -> usize {
+    let earlier = steps.len().saturating_sub(MAX_STEPS);
+    steps.drain(..earlier);
+    earlier
 }
 
 /// Ends `steps` with the request's kept `ending` when no held notice did,

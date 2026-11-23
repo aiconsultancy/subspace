@@ -18,7 +18,7 @@ mod trust;
 
 use subspace_client_irc::{Line, LineKind, Target};
 
-pub(crate) use model::{Settled, Shown, Statuses, agent_name, shown_entry, statuses};
+pub(crate) use model::{Settled, Shown, Statuses, agent_name, invisible, shown_entry, statuses};
 pub(crate) use requests::{Arrival, Ending, REMEMBERED, Requests};
 pub(crate) use trust::{arrival, asked, notices};
 

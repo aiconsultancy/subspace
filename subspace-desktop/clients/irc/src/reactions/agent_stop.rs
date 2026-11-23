@@ -3,7 +3,7 @@
 //!
 //! Source: Stargate `main` at commit `da242f8` (read on 22 November
 //! 2026; the behaviour matches the v0.43.0 release the fleet installer
-//! pins): `docs/irc.md`, "Stop by reaction", `routeIrcStop` and
+//! pins, and is unchanged at `d4842b8`): `docs/irc.md`, "Stop by reaction", `routeIrcStop` and
 //! `reactionKey` in `src/irc/routing.ts`, the `stopReactions` setting in
 //! `src/irc/config.ts` and its caller in `src/irc/ship.ts`. There, a person
 //! who reacts with one of the gateway's `irc[].stopReactions` to an agent's

@@ -97,14 +97,16 @@ pub(crate) fn lines(hub: &Hub, buffer: &BufferKey) -> Vec<PlayLine> {
 }
 
 /// Asks for the answers of what the conversation in front has in play,
-/// while the inspector shows its Ship tab, as a transcript row asks for
-/// its own: the message that keeps a tile may be out of view.
+/// as a transcript row asks for its own (the message that keeps a tile
+/// may be out of view), only while the section shows: the Space is in
+/// front, the inspector shows, and it is on a ship's Ship tab. Nothing is
+/// asked for an ordinary conversation, a Starbase or a hidden view, so no
+/// GitHub or tracker quota goes on rows no one sees.
 pub(crate) fn want(board: &Irc, cx: &mut gpui_kit::Context<Irc>) {
-    let shown = board.dock.members_open() && board.inspector_tab == super::InspectorTab::Subject;
     let (Some(hub), Some(buffer)) = (board.hub.clone(), board.dock.focused.clone()) else {
         return;
     };
-    if !shown {
+    if !shows(board, cx) {
         return;
     }
     let found = hub.read(cx).tiles.get(&buffer).in_play_first(MAX_IN_PLAY);
@@ -113,6 +115,17 @@ pub(crate) fn want(board: &Irc, cx: &mut gpui_kit::Context<Irc>) {
         crate::issues::want(hub, issues, cx);
         crate::pull_requests::want(hub, prs, cx);
     });
+}
+
+/// Whether **In play here** is on screen: the Space active, its inspector
+/// shown on the subject tab, and the conversation in front a ship's
+/// channel, the only subject whose tab lists it.
+fn shows(board: &Irc, cx: &App) -> bool {
+    board.active
+        && board.dock.members_open()
+        && board.inspector_tab == super::InspectorTab::Subject
+        && super::front(board, cx)
+            .is_some_and(|front| matches!(front.subject, super::Subject::Ship { .. }))
 }
 
 /// `found` as issue identifiers and pull request keys.

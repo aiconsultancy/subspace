@@ -625,7 +625,6 @@ impl Github {
         let repos = self.section_scope(section);
         let started = Instant::now();
         let since = references::since(self);
-        let tick = references::begin(self);
         cx.spawn(async move |this, cx| {
             let fetch_login = login.clone();
             let result = cx
@@ -650,7 +649,7 @@ impl Github {
                 account.reloading_sections &= account.loading();
                 if loaded {
                     this.save_cache(cx);
-                    references::section_landed(this, &login, (section, tick), since, cx);
+                    references::section_landed(this, &login, since, cx);
                 }
                 search_index::start_prefetch(this, cx);
                 this.rebuild(cx);
@@ -740,7 +739,6 @@ impl Github {
         if let Some(account) = self.account_data_mut() {
             account.detail_errors.remove(&key);
         }
-        let tick = references::begin(self);
         search_index::load(
             self,
             search_index::Request {
@@ -749,7 +747,6 @@ impl Github {
                 key,
                 debounce,
                 since: references::since(self),
-                tick,
             },
             cx,
         );

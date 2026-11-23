@@ -141,6 +141,9 @@ struct Pending {
     jobs: PriorityQueue<Job>,
     stopped: bool,
     reference_active: bool,
+    /// Jobs a reader has taken and not finished, for tests to wait on.
+    #[cfg(test)]
+    taken: usize,
 }
 impl Queue {
     pub fn push(&self, job: Job, priority: ReadPriority) {
@@ -159,6 +162,10 @@ impl Queue {
             let references = !pending.reference_active;
             if let Some(job) = pending.jobs.pop_for(references) {
                 pending.reference_active |= matches!(job.task, Task::Reference(_));
+                #[cfg(test)]
+                {
+                    pending.taken += 1;
+                }
                 return Some(job);
             }
             pending = self
@@ -166,6 +173,12 @@ impl Queue {
                 .wait(pending)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
+    }
+    /// Whether no job is queued or being read.
+    #[cfg(test)]
+    pub fn idle(&self) -> bool {
+        let pending = lock(&self.pending);
+        pending.taken == 0 && pending.jobs.is_empty()
     }
     pub fn stop(&self) {
         let mut pending = lock(&self.pending);
@@ -205,6 +218,10 @@ struct ReaderLease<'a> {
 }
 impl Drop for ReaderLease<'_> {
     fn drop(&mut self) {
+        #[cfg(test)]
+        {
+            lock(&self.queue.pending).taken -= 1;
+        }
         if self.reference {
             lock(&self.queue.pending).reference_active = false;
             self.queue.ready.notify_all();

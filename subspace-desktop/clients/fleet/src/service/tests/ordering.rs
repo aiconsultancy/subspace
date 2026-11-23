@@ -17,10 +17,10 @@ use crate::service::FleetApi;
 use crate::{FleetAddress, FleetRecord, FleetState, TokenStore};
 
 #[derive(Default)]
-struct Held {
-    locked: bool,
-    fail_saves: bool,
-    fail_deletes: bool,
+pub(super) struct Held {
+    pub(super) locked: bool,
+    pub(super) fail_saves: bool,
+    pub(super) fail_deletes: bool,
     saved: HashMap<String, String>,
     reads: HashMap<String, usize>,
 }
@@ -28,14 +28,14 @@ struct Held {
 /// A keychain that can be locked, refuse saves or deletes, and count
 /// reads per account.
 #[derive(Clone, Default)]
-struct Shelf(Arc<Mutex<Held>>);
+pub(super) struct Shelf(Arc<Mutex<Held>>);
 
 impl Shelf {
-    fn with(&self, change: impl FnOnce(&mut Held)) {
+    pub(super) fn with(&self, change: impl FnOnce(&mut Held)) {
         change(&mut self.0.lock().unwrap());
     }
 
-    fn reads(&self, fleet: &str) -> usize {
+    pub(super) fn reads(&self, fleet: &str) -> usize {
         let held = self.0.lock().unwrap();
         held.reads
             .get(&format!("fleet-api:{fleet}"))
@@ -43,7 +43,7 @@ impl Shelf {
             .unwrap_or_default()
     }
 
-    fn empty(&self) -> bool {
+    pub(super) fn empty(&self) -> bool {
         self.0.lock().unwrap().saved.is_empty()
     }
 }
@@ -78,7 +78,7 @@ impl Vault for Shelf {
     }
 }
 
-fn store(shelf: &Shelf) -> Arc<TokenStore> {
+pub(super) fn store(shelf: &Shelf) -> Arc<TokenStore> {
     Arc::new(TokenStore::with_vault(Box::new(shelf.clone())))
 }
 
@@ -251,37 +251,6 @@ fn a_retry_reads_each_fleet_it_covered_once_its_own_interval_ends(cx: &mut TestA
 }
 
 #[gpui_kit::test]
-fn a_waiting_retry_never_reads_again_right_after_a_manual_one(cx: &mut TestAppContext) {
-    let shelf = Shelf::default();
-    shelf.with(|held| held.locked = true);
-    let service = service(store(&shelf), aurora(HOME), cx);
-    let start = Instant::now();
-    service.update(cx, |service, _| {
-        service.reads.last.insert("aurora".into(), start);
-    });
-    let before = shelf.reads("aurora");
-    let retry = |at: Instant, cx: &mut TestAppContext| {
-        service.update(cx, |service, cx| service.reload_unreadable_at(at, cx));
-        cx.run_until_parked();
-    };
-    retry(start + Duration::from_secs(3), cx);
-    assert_eq!(shelf.reads("aurora"), before, "too soon: it waits");
-    retry(start + Duration::from_secs(5), cx);
-    assert_eq!(
-        shelf.reads("aurora"),
-        before + 1,
-        "the manual Retry at second 5"
-    );
-    cx.executor().advance_clock(Duration::from_secs(2));
-    cx.run_until_parked();
-    assert_eq!(
-        shelf.reads("aurora"),
-        before + 1,
-        "the waiting one does not read again"
-    );
-}
-
-#[gpui_kit::test]
 fn a_failed_clear_keeps_the_token_out_of_use_until_cleared_again_or_replaced(
     cx: &mut TestAppContext,
 ) {
@@ -312,5 +281,29 @@ fn a_failed_clear_keeps_the_token_out_of_use_until_cleared_again_or_replaced(
         token(&service, cx).as_deref(),
         Some("newer"),
         "saving resolves it"
+    );
+}
+
+#[gpui_kit::test(iterations = 20)]
+fn a_refused_delete_then_a_refused_save_never_bring_the_old_token_back(cx: &mut TestAppContext) {
+    let shelf = Shelf::default();
+    let service = unlocked(&shelf, cx);
+    cx.run_until_parked();
+    shelf.with(|held| {
+        held.fail_deletes = true;
+        held.fail_saves = true;
+    });
+    service.update(cx, |service, cx| {
+        service.clear_token("aurora", cx).detach();
+        service
+            .save_token("aurora", Secret::new("newer"), cx)
+            .detach();
+    });
+    cx.run_until_parked();
+    assert_eq!(state(&service, cx), FleetState::ClearFailed);
+    assert_eq!(
+        token(&service, cx),
+        None,
+        "the cleared token stays out of use"
     );
 }

@@ -1240,6 +1240,10 @@ def write_hint(fixture, method, path, status, value):
 
 class FixtureServer(ThreadingHTTPServer):
     daemon_threads = True
+    # socketserver's default listen queue of 5 overflows when a client's
+    # burst arrives while the accept loop is behind, and macOS resets each
+    # connection past it. Hold a burst instead (capped at somaxconn).
+    request_queue_size = 128
 
     def __init__(self, port, access_jwt, fail_chat_uploads=None, updates_stream=True, change_after=None,
                  decision_scenario='normal', fleet=False, fleet_api_url=None):

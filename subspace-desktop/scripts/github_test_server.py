@@ -1217,6 +1217,13 @@ class Handler(BaseHTTPRequestHandler):
         self.reply(*answer)
 
 
+class Server(ThreadingHTTPServer):
+    # socketserver's default listen queue of 5 overflows when a client's
+    # burst arrives while the accept loop is behind, and macOS resets each
+    # connection past it. Hold a burst instead (capped at somaxconn).
+    request_queue_size = 128
+
+
 def main():
     global BASE_URL, RUNS_DELAY, ITEM_DELAY
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -1228,7 +1235,7 @@ def main():
     args = parser.parse_args()
     RUNS_DELAY = args.runs_delay
     ITEM_DELAY = args.item_delay
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+    server = Server(("127.0.0.1", args.port), Handler)
     BASE_URL = f"http://127.0.0.1:{server.server_port}"
     print(f"SUBSPACE_GITHUB_API_URL={BASE_URL}", flush=True)
     server.serve_forever()

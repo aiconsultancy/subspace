@@ -201,7 +201,7 @@ fn a_follow_up_request_shows_its_own_steps_and_the_replies_to_it() {
         .find(|entry| entry.line.id.as_deref() == Some("first"))
         .unwrap()
         .seq;
-    assert_eq!(counts[&seq].count(), first.replies.len());
+    assert_eq!(counts[&seq].count(), first.reply_count);
 }
 
 #[test]
@@ -245,5 +245,51 @@ fn a_kept_ending_is_the_end_whatever_notice_is_held() {
             StepKind::Ended(Some(Outcome::Failed))
         ],
         "the kept Failed, never the held Completed"
+    );
+}
+
+#[test]
+fn a_long_thread_keeps_its_count_and_only_its_latest_replies() {
+    let mut state = joined(vec![ship()]);
+    let lines: Vec<_> = std::iter::once(request(&room(), "first", 1))
+        .chain((0..45).map(|n| said(&room(), Some("first"), &format!("r{n}"), 2 + n)))
+        .collect();
+    live(&mut state, lines);
+    let found = thread(&state, "first").unwrap();
+    assert_eq!(found.reply_count, 45);
+    assert_eq!(found.replies.len(), crate::thread::MAX_REPLIES);
+    assert_eq!(
+        found.replies[0].line.id.as_deref(),
+        Some("r5"),
+        "the latest 40"
+    );
+}
+
+#[test]
+fn a_long_timeline_keeps_only_its_latest_steps() {
+    let mut state = joined(vec![ship()]);
+    let mut lines = vec![
+        request(&room(), "first", 1),
+        progress(&room(), "first", "accepted", 2),
+    ];
+    // An agent that waits and works again sixty times over.
+    for turn in 0..60 {
+        let minute = 3 + turn * 2;
+        lines.push(progress(&room(), "first", "waiting", minute));
+        lines.push(progress(&room(), "first", "tool", minute + 1));
+    }
+    live(&mut state, lines);
+    let timeline = thread(&state, "first").unwrap().timeline.unwrap();
+    assert_eq!(timeline.steps.len(), super::super::model::MAX_STEPS);
+    assert_eq!(
+        timeline.earlier_steps,
+        121 - super::super::model::MAX_STEPS,
+        "every step left out is counted"
+    );
+    let last = timeline.steps.last().unwrap();
+    assert_eq!(
+        (last.kind, last.at),
+        (StepKind::Stage(Stage::Working), Some(at(3 + 59 * 2 + 1))),
+        "the latest step is kept"
     );
 }

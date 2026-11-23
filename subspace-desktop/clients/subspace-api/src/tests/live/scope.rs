@@ -22,6 +22,8 @@ fn catch_up_waits_for_ready() {
     let server = served();
     let hub = hub(&server);
     let mut peer = server.peer();
+    // The list shows before its count reads, which follow it, are back.
+    wait(&hub, |snapshot| snapshot.my_issues_count().is_some());
     let lists = server.count("GET", GROUPS);
     std::thread::sleep(Duration::from_millis(800));
     assert_eq!(hub.snapshot().live(), LiveStatus::Connecting);

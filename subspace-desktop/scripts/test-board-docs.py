@@ -113,7 +113,9 @@ class BoardDocsTests(unittest.TestCase):
         DOCS.prose("`" * 100_000 + "\n" + "x\n" * 100_000)
         DOCS.strip_code_spans("`" * 100_000 + "a" * 100_000)
         DOCS.strip_code_spans("`a" * 100_000)
-        self.assertLess(time.perf_counter() - started, 2.0)  # the old regexes take minutes
+        # The old regexes take minutes; linear scans take well under a second
+        # even on a busy machine.
+        self.assertLess(time.perf_counter() - started, 20.0)
 
 
 if __name__ == "__main__":

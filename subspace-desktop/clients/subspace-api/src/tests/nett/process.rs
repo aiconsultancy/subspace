@@ -22,8 +22,11 @@ impl NettProcess {
             .args(extra)
             .spawn()
             .expect("python3 runs the NETT mock");
+        // Python loads the whole mock before it prints its banner, which
+        // takes far longer than usual on a machine busy with other builds.
+        // The limit only bounds a mock that never starts.
         let origin =
-            await_origin(&mut child, Duration::from_secs(10)).expect("the NETT mock started");
+            await_origin(&mut child, Duration::from_secs(60)).expect("the NETT mock started");
         Self { child, origin }
     }
 }
