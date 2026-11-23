@@ -167,3 +167,27 @@ fn a_stop_item_left_open_is_checked_again_when_chosen(cx: &mut TestAppContext) {
         "explained, not sent"
     );
 }
+
+#[gpui_kit::test]
+fn a_stop_is_acknowledged_by_its_echo_when_the_message_shows_every_reaction_it_can(
+    cx: &mut TestAppContext,
+) {
+    let (board, hub, cx) = open(cx);
+    // Twenty other reactions already fill r1's display.
+    let twenty: Vec<_> = (0x1F600..0x1F614)
+        .filter_map(char::from_u32)
+        .map(|face| reaction("r1", &face.to_string(), "bob"))
+        .collect();
+    receive(&hub, twenty, cx);
+    let conversation = board.read_with(cx, |board, _| board.dock.open[&room()].entity.clone());
+    conversation.update(cx, |view, cx| {
+        let stop = Some("astra".to_owned());
+        crate::conversation::reacting::toggle(view, ("r1".into(), HAND.into()), true, stop, cx);
+    });
+    receive(&hub, vec![reaction("r1", HAND, "subspace")], cx);
+    assert_eq!(
+        notice(cx),
+        crate::reactions::stop::stop_sent(HAND, "astra"),
+        "the echo arrived though the display had no room for it"
+    );
+}

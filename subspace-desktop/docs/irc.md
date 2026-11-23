@@ -700,11 +700,16 @@ growing moves nothing else; tiles keep their fixed box.
   to a fleet agent on the roster whose status line is trusted (the agent's
   account is named after the nick asked) and still running and current, or on that agent's own reply
   to it (its nick and account both name that nick), the menu lists ✋ and 🛑
-  apart under `Stop <ship>`. Choosing one sends the reaction; once the
-  client reports that exact reaction on that message, the notice says it
-  was sent and that the status line shows the result when Stargate reports
-  it (pending stops are kept per message and reaction, so another reaction
-  in between loses none). A ✋ or 🛑 pill on a request to a verified agent,
+  apart under `Stop <ship>`. Choosing it checks again that the message
+  still concerns a running roster agent, and names the agent read then.
+  Choosing one sends the reaction; once the client reports that exact
+  reaction on that message live, after it was sent, the notice says it was
+  sent and that the status line shows the result when Stargate reports it.
+  Pending stops are kept per message and reaction, so another reaction in
+  between loses none; they are matched against our latest live additions
+  (`Reactions::echoed_since`), before the book's display limits, so a
+  message already showing 20 reactions still acknowledges one; and one
+  whose echo never comes is let go after two minutes. A ✋ or 🛑 pill on a request to a verified agent,
   or its reply, also says it asked the agent to stop. One msgid index per
   rebuild finds each reply's request.
   This follows Stargate `main` at `d4842b8` (`routeIrcStop`,

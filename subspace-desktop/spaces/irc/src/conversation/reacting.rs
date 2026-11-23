@@ -12,6 +12,7 @@
 //! from its labelled menu item.
 
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use gpui_kit::{App, AppContext as _, Context, Entity};
 use subspace_client_irc::Command;
@@ -61,7 +62,17 @@ struct PendingStop {
     msgid: String,
     reaction: String,
     ship: String,
+    /// The hub's latest live addition of ours when it was sent: only an
+    /// echo after it acknowledges this stop.
+    after: u64,
+    /// When it was sent; one whose echo never comes is let go after
+    /// [`STOP_ECHO_WAIT`].
+    sent: Instant,
 }
+
+/// How long a sent stop waits for its echo before it is let go, its
+/// notice unsaid.
+const STOP_ECHO_WAIT: Duration = Duration::from_secs(120);
 
 impl Reacting {
     /// No reactions yet; refusals made before the conversation opened are
@@ -181,7 +192,7 @@ fn follow(this: &mut Conversation, cx: &App) {
             .into_iter()
             .partition(|pending| reported(this, pending, cx));
     let reacting = &mut this.reacting;
-    reacting.pending = waiting;
+    reacting.pending = still_waiting(waiting, Instant::now());
     if let Some(refusal) = refusal {
         reacting.seen_refusal = refusal.serial;
         reacting.notice = Some(refusal_text(&refusal.error));
@@ -194,13 +205,25 @@ fn follow(this: &mut Conversation, cx: &App) {
     }
 }
 
-/// Whether the client now reports our `pending` reaction, exactly as sent,
-/// on its message.
+/// Whether the client has reported our `pending` reaction, exactly as
+/// sent, on its message since it was sent: its live echo, read before the
+/// book's display limits, so a message already showing every reaction it
+/// can still acknowledges a stop.
 fn reported(this: &Conversation, pending: &PendingStop, cx: &App) -> bool {
+    let target = (pending.msgid.as_str(), pending.reaction.as_str());
     this.hub
         .read(cx)
         .reactions
-        .reacted(&this.buffer, &pending.msgid, &pending.reaction)
+        .echoed_since(pending.after, &this.buffer, target)
+}
+
+/// The stops still waiting for their echo at `now`, none for longer than
+/// [`STOP_ECHO_WAIT`].
+fn still_waiting(pending: Vec<PendingStop>, now: Instant) -> Vec<PendingStop> {
+    pending
+        .into_iter()
+        .filter(|stop| now.saturating_duration_since(stop.sent) < STOP_ECHO_WAIT)
+        .collect()
 }
 
 /// Asks to add our reaction to the message `msgid` in this conversation,
@@ -247,10 +270,13 @@ fn send(
     let buffer = this.buffer.clone();
     this.reacting.notice = None;
     if let Some(ship) = stop.filter(|_| add) {
+        let after = this.hub.read(cx).reactions.echo_serial();
         this.reacting.pending.push(PendingStop {
             msgid: msgid.clone(),
             reaction: reaction.clone(),
             ship,
+            after,
+            sent: Instant::now(),
         });
     }
     let command = if add {
@@ -290,4 +316,26 @@ fn ship_of(this: &Conversation, msgid: &str, cx: &App) -> Option<String> {
 fn explain_stop(this: &mut Conversation, ship: Option<&str>, cx: &mut Context<Conversation>) {
     this.reacting.notice = Some(explanation(ship));
     cx.notify();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::{PendingStop, STOP_ECHO_WAIT, still_waiting};
+
+    #[test]
+    fn a_stop_whose_echo_never_comes_is_let_go() {
+        let sent = Instant::now();
+        let pending = vec![PendingStop {
+            msgid: "r1".into(),
+            reaction: "\u{270B}".into(),
+            ship: "astra".into(),
+            after: 0,
+            sent,
+        }];
+        let soon = sent + Duration::from_secs(5);
+        assert_eq!(still_waiting(pending.clone(), soon), pending);
+        assert!(still_waiting(pending, sent + STOP_ECHO_WAIT).is_empty());
+    }
 }
