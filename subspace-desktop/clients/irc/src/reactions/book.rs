@@ -98,6 +98,10 @@ pub struct ReactionBook {
     /// When each nick, folded, was last taken by a rename on its network:
     /// accountless records under it from before then were someone else's.
     holders: BTreeMap<(NetworkId, String), u64>,
+    /// Each network's last rename, folded: the client reports one nick
+    /// change once per channel the person shares with us, and only the
+    /// first of those reports moves anything.
+    last_rename: BTreeMap<NetworkId, (String, String)>,
     seen: Seen,
     clock: u64,
 }
@@ -256,25 +260,45 @@ impl ReactionBook {
     /// `new`. Entries under `old` with another known account keep their
     /// nick: they were someone else. So do accountless entries made under
     /// `old` before its current holder took it by a rename: they belonged
-    /// to an earlier holder of the nick.
+    /// to an earlier holder of the nick. The same rename reported again,
+    /// as the client does once per shared channel, changes nothing more,
+    /// so the nick's holder keeps the stamp its reactions moved with.
     pub fn rename(&mut self, network: &NetworkId, old: &str, new: &str, account: Option<&str>) {
         let mapping = self.mapping(network);
         let since = self.held_since(network, old, mapping);
         self.clock += 1;
         let stamp = self.clock;
+        let moved = self.move_records(network, (old, new, account), (since, stamp), mapping);
+        let pair = (mapping.fold(old), mapping.fold(new));
+        let repeated = self.last_rename.insert(network.clone(), pair.clone()) == Some(pair);
+        if moved || !repeated {
+            self.took(network, new, stamp, mapping);
+        }
+    }
+
+    /// Gives `new` to every record on `network` that `old`'s holder with
+    /// `account` made since `since`, stamped `stamp`; whether any moved.
+    fn move_records(
+        &mut self,
+        network: &NetworkId,
+        (old, new, account): (&str, &str, Option<&str>),
+        (since, stamp): (u64, u64),
+        mapping: Casemapping,
+    ) -> bool {
         let records = self
             .messages
             .iter_mut()
             .filter(|((buffer, _), _)| buffer.network == *network)
             .flat_map(|(_, entry)| entry.groups.iter_mut())
-            .flat_map(|group| group.records.iter_mut());
+            .flat_map(|group| group.records.iter_mut())
+            .filter(|record| holds(record, (old, account), since, mapping));
+        let mut moved = false;
         for record in records {
-            if holds(record, (old, account), since, mapping) {
-                new.clone_into(&mut record.reactor.nick);
-                record.assigned = stamp;
-            }
+            new.clone_into(&mut record.reactor.nick);
+            record.assigned = stamp;
+            moved = true;
         }
-        self.took(network, new, stamp, mapping);
+        moved
     }
 
     /// When `nick` was last taken by a rename on `network`; 0 if never.

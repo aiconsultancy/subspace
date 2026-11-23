@@ -214,3 +214,18 @@ fn a_new_holder_of_a_nick_never_merges_into_the_previous_holder_s_reaction() {
         "the earlier holder's reaction stays"
     );
 }
+
+#[test]
+fn a_rename_reported_once_per_shared_channel_moves_its_reactions_once() {
+    let mut book = ReactionBook::new();
+    book.apply(&reaction("m1", "👍", "bob", 1));
+    // Bob shares two channels with us: the client reports his rename twice.
+    book.observe(&renamed("bob", "robert", None));
+    book.observe(&renamed("bob", "robert", None));
+    book.observe(&renamed("robert", "charlie", None));
+    assert_eq!(
+        shown(&book, "m1"),
+        ["👍:charlie"],
+        "his reaction follows him to his next nick"
+    );
+}
