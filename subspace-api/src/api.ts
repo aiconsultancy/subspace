@@ -47,6 +47,7 @@ import {
 import { createGitHubClient } from "./github-app";
 import { GithubPollState, githubPollState, pollGitHub } from "./github-poll";
 import { AgentRank, CurrentMember, localMember, publicProfile } from "./identity";
+import { ircAuthenticateLayer, ircCredentialGroup, ircCredentialHandlers } from "./irc";
 import { signedInMember, type SignInPolicy } from "./registration";
 import { ReservedUsernames } from "./usernames";
 import {
@@ -317,6 +318,7 @@ const api = HttpApi.make("subspace")
   .add(
     healthGroup,
     identityGroup,
+    ircCredentialGroup,
     fleetGroup,
     initiativeGroup,
     stakeholderGroup,
@@ -344,8 +346,9 @@ const api = HttpApi.make("subspace")
 export const documentedApi = api.add(devGroup);
 
 /**
- * The agent listener's API: every group except development sign-in and the signed GitHub
- * webhook. Its administrator routes are refused by `agentRouteFilter` before any handler runs.
+ * The agent listener's API: every group except development sign-in, the signed GitHub webhook and
+ * IRC credentials. Its administrator routes are refused by `agentRouteFilter` before any handler
+ * runs.
  */
 export const agentApi = HttpApi.make("subspace").add(
   ...groups,
@@ -648,7 +651,14 @@ export function routes(
     }),
   ).pipe(Layer.provide(dbLayer));
 
-  const common = handlerLayers(new Set());
+  const common = Layer.merge(
+    handlerLayers(new Set()),
+    HttpApiBuilder.group(
+      api,
+      "ircCredentials",
+      ircCredentialHandlers(options.irc.credentialSecret),
+    ),
+  );
   const services = Layer.merge(auth, validationErrors);
 
   const endpoints = (
@@ -674,8 +684,12 @@ export function routes(
   const polling = Layer.effectDiscard(pollGitHub(options.github, github)).pipe(
     Layer.provide(resources),
   );
+  // Ergo's auth hook: outside the HttpApi, so outside the OpenAPI document and the bearer
+  // middleware, and on this listener only.
+  const ircHook = ircAuthenticateLayer(options.irc).pipe(HttpRouter.provideRequest(resources));
   return Layer.mergeAll(
     endpoints,
+    ircHook,
     cleanup,
     polling,
     sharedProblems("A valid Subspace access token is required."),

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { Redacted } from "effect";
 import { databaseUrl } from "./db";
 import { githubConfig } from "./github-app";
 import { isUuid } from "./validation";
@@ -117,6 +119,74 @@ export function reservedUsernames(env: NodeJS.ProcessEnv): ReadonlySet<string> {
   return new Set(names);
 }
 
+/**
+ * A secret from the environment or from a file named in `<name>_FILE`, trimmed, of at least
+ * `minimumBytes` bytes. Null when neither is set; an error for both, a missing or empty file, or
+ * a short secret.
+ */
+function secretSetting(env: NodeJS.ProcessEnv, name: string, minimumBytes: number) {
+  const value = env[name]?.trim();
+  const file = env[`${name}_FILE`]?.trim();
+  if (value && file) throw new Error(`Set ${name} or ${name}_FILE, not both`);
+  let secret = value;
+  if (file) {
+    try {
+      secret = readFileSync(file, "utf8").trim();
+    } catch {
+      throw new Error(`${name}_FILE must name a readable file`);
+    }
+    if (!secret) throw new Error(`${name}_FILE must not be empty`);
+  }
+  if (!secret) return null;
+  if (Buffer.byteLength(secret, "utf8") < minimumBytes) {
+    throw new Error(`${name} must be at least ${minimumBytes} bytes`);
+  }
+  return secret;
+}
+
+/**
+ * IRC sign-in through the API: the secret that signs short-lived IRC credentials, and the hook
+ * Ergo's auth-script calls, with its bearer token and the one organisation its server serves.
+ * The hook needs all three, so setting only some of them is refused rather than left inert.
+ */
+function ircSignIn(env: NodeJS.ProcessEnv, providers: ReadonlySet<string>) {
+  const credentialSecret = secretSetting(env, "IRC_CREDENTIAL_SECRET", 32);
+  const hookToken = secretSetting(env, "IRC_AUTH_HOOK_TOKEN", 32);
+  const organisation = env.IRC_AUTH_ORGANISATION?.trim();
+  if (Boolean(hookToken) !== Boolean(organisation)) {
+    throw new Error("Set IRC_AUTH_HOOK_TOKEN and IRC_AUTH_ORGANISATION together");
+  }
+  const secret = credentialSecret === null ? null : Redacted.make(credentialSecret);
+  if (!hookToken || !organisation) return { credentialSecret: secret, hook: null };
+  if (!secret) throw new Error("The IRC auth hook needs IRC_CREDENTIAL_SECRET");
+  if (!/^[\x21-\x7e]+$/u.test(hookToken)) {
+    throw new Error("IRC_AUTH_HOOK_TOKEN must be printable ASCII without spaces");
+  }
+  const separator = organisation.indexOf(":");
+  const provider = organisation.slice(0, separator);
+  let externalOrganisation = organisation.slice(separator + 1);
+  if (separator < 1 || !externalOrganisation || !["workos", "entra", "dev"].includes(provider)) {
+    throw new Error("IRC_AUTH_ORGANISATION must be <provider>:<organisation>, such as dev:local");
+  }
+  if (!providers.has(provider)) {
+    throw new Error("IRC_AUTH_ORGANISATION must name a provider in AUTH_PROVIDERS");
+  }
+  if (provider === "entra") {
+    externalOrganisation = externalOrganisation.toLowerCase();
+    if (!isUuid(externalOrganisation)) {
+      throw new Error("IRC_AUTH_ORGANISATION must name an Entra tenant by its UUID");
+    }
+  }
+  return {
+    credentialSecret: secret,
+    hook: {
+      token: Redacted.make(hookToken),
+      provider: provider as Provider,
+      externalOrganisation,
+    },
+  };
+}
+
 const loopback = ["127.0.0.1", "::1", "localhost"];
 
 /**
@@ -195,6 +265,7 @@ export function config(env: NodeJS.ProcessEnv = process.env) {
     agent,
     autoRegister: autoRegister(env, providers),
     reservedUsernames: reservedUsernames(env),
+    irc: ircSignIn(env, providers),
     dev: providers.has("dev")
       ? {
           keyPath: env.DEV_KEY_PATH ?? ".data/dev-signing-key",

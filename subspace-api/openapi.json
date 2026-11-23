@@ -349,6 +349,113 @@
         }
       }
     },
+    "/api/v1/me/irc-credential": {
+      "post": {
+        "tags": [
+          "ircCredentials"
+        ],
+        "operationId": "ircCredentials.ircCredential",
+        "parameters": [],
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "IrcCredential",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IrcCredential"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Problem400",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem400"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Problem401",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem401"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Problem403",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem403"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Problem404",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem404"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Problem409",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem409"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Problem410",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem410"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Problem500",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem500"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Problem503",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem503"
+                }
+              }
+            }
+          }
+        },
+        "description": "Issues a short-lived password for the caller's IRC account, to give the IRC server with SASL PLAIN as the account (optionally followed by @ and a device name). The password is opaque, at most 200 characters, valid for ten minutes and reusable until it expires. 404 when this server does not issue IRC credentials; 409 for an agent without an IRC nick."
+      }
+    },
     "/api/v1/fleets": {
       "get": {
         "tags": [
@@ -40647,6 +40754,26 @@
         ],
         "additionalProperties": false
       },
+      "IrcCredential": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account",
+          "password",
+          "expiresAt"
+        ],
+        "additionalProperties": false
+      },
       "MemberInitiative": {
         "type": "object",
         "properties": {
@@ -40718,6 +40845,9 @@
     },
     {
       "name": "identity"
+    },
+    {
+      "name": "ircCredentials"
     },
     {
       "name": "fleets"

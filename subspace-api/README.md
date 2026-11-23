@@ -20,7 +20,8 @@ Use `http://127.0.0.1:3000/api` as the desktop API base and select the developme
 identity provider. The first development sign-in to each organisation creates an
 administrator and grants that user membership of the example initiative. Its
 IRC endpoint defaults to `127.0.0.1:6667`. IRC accounts, channel setup and SASL
-credentials belong to the IRC service.
+credentials belong to the IRC service, unless it signs people in through this API
+as [IRC sign-in](#irc-sign-in) describes.
 
 Mint a development bearer token with either command. Both use the same issuer,
 key and membership records.
@@ -212,6 +213,9 @@ links.
 | `STORAGE_DRIVER`, `STORAGE_PATH`                                      | Defaults to `local` and `.data/blobs`. Use `s3` for a private S3-compatible bucket.                             |
 | `S3_BUCKET`, `S3_ENDPOINT`, `S3_REGION`                               | S3 bucket, optional custom endpoint and region.                                                                 |
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_SESSION_TOKEN`        | Credentials and optional session token supplied to Bun's S3 client.                                             |
+| `IRC_CREDENTIAL_SECRET`, `IRC_CREDENTIAL_SECRET_FILE`                 | Secret of at least 32 bytes that signs [IRC credentials](#irc-sign-in). Set one source; unset is off.           |
+| `IRC_AUTH_HOOK_TOKEN`, `IRC_AUTH_HOOK_TOKEN_FILE`                     | Bearer token of at least 32 printable bytes for Ergo's auth-script. Set one source.                             |
+| `IRC_AUTH_ORGANISATION`                                               | `<provider>:<organisation>` whose people the IRC server signs in, such as `entra:<tenant UUID>`.                |
 
 The image defaults to `NODE_ENV=production`, which forbids development sign-in.
 Local Compose defaults to `NODE_ENV=development`. Production deployments use TLS
@@ -219,6 +223,89 @@ for clients and the backing database and take credentials from runtime configura
 
 Update streams return 429 at the configured limits and 503 while the listener
 reconnects. Clients can retry with backoff and refresh their issue data over REST.
+
+## IRC sign-in
+
+The API can be the identity authority for an Ergo IRC server, so that a person
+who signed in to the API also signs in to IRC with nothing set up by hand. The
+desktop asks the API for a short-lived credential and gives it to Ergo with SASL
+PLAIN. Ergo's auth-script asks the API whether it is good, and Ergo creates the
+account on the first success. Ergo never talks to an identity provider, so this
+works for every provider the API accepts. The two endpoints below are the
+contract; another implementation of this API must match them exactly.
+
+Generate each secret with, for example, `openssl rand -base64 48`, and keep both
+in the deployment's secret store or a mounted file.
+
+### `POST /api/v1/me/irc-credential`
+
+Any signed-in, active user, human or agent, with their bearer access token on the
+main listener. The agent listener does not serve it, because anyone who reaches
+that listener can act as any agent. The request has no body.
+
+```json
+{ "account": "ada", "password": "sirc1.<opaque>", "expiresAt": "2026-11-23T21:10:00Z" }
+```
+
+- `account` is the user's [username](#usernames). For an agent it is its IRC nick.
+- `password` is opaque to clients, at most 200 characters, valid for ten minutes
+  and reusable until it expires. Clients fetch a new one at each connection and
+  keep it in memory only.
+- `expiresAt` is the expiry in UTC to the second.
+- The response carries `Cache-Control: private, no-store`.
+- The usual 401 and 403 apply to a missing, invalid or expired token and a
+  deactivated member. The route answers 404 when `IRC_CREDENTIAL_SECRET` is not
+  set, and 409 for an agent without an IRC nick.
+
+A credential is `sirc1.` followed by the unpadded base64url encoding of 56 bytes:
+
+1. the user's UUID as 16 bytes, in the order its hexadecimal digits are written;
+2. the expiry as an unsigned 64-bit big-endian count of seconds since the Unix
+   epoch;
+3. an HMAC-SHA256, keyed by the UTF-8 bytes of `IRC_CREDENTIAL_SECRET`, over the
+   ASCII text `sirc1.` followed by the 24 bytes of items 1 and 2.
+
+It is stateless: nothing is stored. A credential is good while the current time
+is before its expiry and the expiry is no more than 660 seconds ahead. The
+signature is compared in constant time.
+
+### `POST /api/v1/irc/authenticate`
+
+Called only by Ergo's auth-script. It is not part of the OpenAPI document or the
+MCP tools, it is not behind the bearer middleware, and the agent listener does
+not serve it.
+
+- The route answers 404 unless `IRC_AUTH_HOOK_TOKEN`, `IRC_AUTH_ORGANISATION` and
+  `IRC_CREDENTIAL_SECRET` are all set. The API refuses to start with only one of
+  the first two, or with them but without the credential secret.
+- It is authorised only by `Authorization: Bearer <IRC_AUTH_HOOK_TOKEN>`, compared
+  in constant time. A missing or wrong token receives 401 with a problem document
+  and `WWW-Authenticate: Bearer`, before the body is read.
+- The body is Ergo's auth-script input as it is:
+  `{ "accountName"?, "passphrase"?, "certfp"?, "peerCerts"?, "ip"? }`. Other
+  properties, such as `oauth2` and `cookies`, are ignored, and so is a body over
+  256 KiB.
+- Once the token is accepted, the answer is always 200 with
+  `{ "success": true, "accountName": "ada" }` or `{ "success": false }`, never a
+  problem document, including for a malformed body or a database failure.
+
+The rules, in order:
+
+1. A `passphrase` that starts with `sirc1.` succeeds only if its signature is
+   this server's, it has not expired, its user exists, is active, belongs to the
+   organisation in `IRC_AUTH_ORGANISATION` and has a username, and the
+   `accountName`, ignoring an `@` and anything after it and compared without
+   regard to case, is that username. The answer names the canonical username,
+   which for an agent is its nick as registered.
+2. A `certfp` with no passphrase answers `success: false`. It is reserved for
+   agent key credentials.
+3. Anything else answers `success: false`, so Ergo falls back to its own
+   accounts: the break-glass operator and any hand-made accounts.
+
+The API never logs a passphrase or the hook token. It logs each decision at debug
+level with its reason and, for a correctly signed credential, the user ID. It
+does not write audit events for these decisions, because Ergo calls the hook for
+every SASL attempt, so their number has no bound.
 
 ## GitHub App and webhooks
 
@@ -568,6 +655,9 @@ The HTTP tests require a clean loopback Compose stack and create synthetic
 organisations. The agent listener's HTTP tests also need `AGENT_PORT` published by
 that stack, with `TEST_AGENT_API_URL` set to it and `TEST_AGENT_ORGANISATION`
 to the development organisation slug its `AGENT_ORGANISATION` names. The migration test creates an isolated database on the local PostgreSQL server named in `TEST_DATABASE_URL`.
+The sign-in, username and IRC tests need only `TEST_DATABASE_URL`: each creates
+an isolated database there and runs the API in-process, trusting a fictional
+Entra tenant whose keys only the test holds.
 The fleet ownership race test holds a row lock in the API's own database while
 an agent writes, so when both variables are set, `TEST_DATABASE_URL` must name
 the database that `TEST_API_URL` serves, as in the example above. For signed pull request and deployment tests, sign in first as
