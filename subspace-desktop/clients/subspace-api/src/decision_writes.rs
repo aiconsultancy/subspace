@@ -66,10 +66,13 @@ impl NewDecision {
         let title = text.title.trim();
         let decision = text.decision.trim();
         let context = text.context.map(str::trim).filter(|text| !text.is_empty());
-        if invalid_line(title)
-            || invalid_text(decision, TEXT_LIMIT)
+        if invalid_text(decision, TEXT_LIMIT)
             || context.is_some_and(|context| invalid_text(context, TEXT_LIMIT))
             || text.message.as_ref().is_some_and(invalid_evidence)
+        {
+            return Err(DecisionWriteError::Text);
+        }
+        if invalid_line(title)
             || issue_ids.len() > ISSUE_LIMIT
             || chrono::NaiveDate::parse_from_str(text.decided_on, "%Y-%m-%d").is_err()
         {
@@ -114,6 +117,10 @@ fn invalid_evidence(message: &IrcEvidence<'_>) -> bool {
 pub enum DecisionWriteError {
     #[error("Write a decision with a title of 1 to 200 characters on one line.")]
     Invalid,
+    #[error(
+        "Write a decision of up to 50,000 characters, with its context and evidence within their limits."
+    )]
+    Text,
     #[error("This tracker doesn't record decisions from here.")]
     Unsupported,
     #[error("Sign in under Settings › Account to record decisions.")]

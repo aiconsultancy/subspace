@@ -240,7 +240,8 @@ fn decision(issue: &str, rest: &str) -> Result<String, String> {
             "Write the decision after the issue: /decision {issue} <decision>."
         ));
     }
-    if rest.chars().count() > DECISION_CHARS {
+    // Counted as the API and the client count: UTF-16 units.
+    if rest.encode_utf16().count() > DECISION_CHARS {
         return Err("This decision is too long to record. Shorten it.".to_owned());
     }
     Ok(rest.to_owned())

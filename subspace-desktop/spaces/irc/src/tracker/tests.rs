@@ -263,3 +263,13 @@ fn a_captain_without_a_user_is_no_default_assignee() {
         "asks whom"
     );
 }
+
+#[test]
+fn a_decision_too_long_in_utf_16_units_gets_no_run_row() {
+    // 25,001 emoji: 25,001 characters but 50,002 UTF-16 units.
+    let text = format!("/decision NAV-2 {}", "\u{1F680}".repeat(25_001));
+    assert_eq!(
+        planned(&text),
+        Err("This decision is too long to record. Shorten it.".to_owned())
+    );
+}
