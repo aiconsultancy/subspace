@@ -145,3 +145,17 @@ fn a_rate_limit_is_a_failure_not_a_refusal(cx: &mut TestAppContext) {
     detail_failed(&board, status(429), limited, cx);
     assert!(available(cx), "the opened pull request still answers");
 }
+
+#[gpui_kit::test]
+fn a_plain_403_from_github_is_an_access_refusal(cx: &mut TestAppContext) {
+    let mock = Mock::new(|_| (403, r#"{"message":"Resource not accessible"}"#.to_owned()));
+    let (board, _listener, cx) = routed(cx, Some(&mock));
+    board.update(cx, listed_only);
+    ask(KEY, cx);
+    cx.run_until_parked();
+    assert_eq!(mock.requests().len(), 1);
+    assert!(
+        matches!(ask(KEY, cx), ResolutionState::Unavailable),
+        "the held list's title no longer answers"
+    );
+}

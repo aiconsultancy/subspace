@@ -1,19 +1,26 @@
 //! One rule for who may see a pull request, whichever path read it: every
 //! read takes a tick of one clock when it starts (a list section, this
 //! Space's own detail read, or a reference read), and a result is weighed
-//! by that tick, not by when it lands.
+//! by that tick, never by when it lands.
 //!
-//! - An access refusal (400, 403 or 404 that is not a rate limit) answers
-//!   for the pull request, ahead of what the account listed or opened,
-//!   until a read that started later than the refused one succeeds.
-//! - A success from a read that started before the refusal changes
-//!   nothing: a list section requested while the account still had access
-//!   never brings the summary back.
-//! - A refusal from a read that started before a later success is
-//!   superseded and dropped.
+//! **The invariant.** For each account and pull request the service keeps
+//! only two numbers ([`Access`]): the latest start tick of a read that
+//! landed with a refusal, and the latest of one that landed with a
+//! success. The pull request is refused exactly when the first is the
+//! larger, that is, when the most recently started read that has landed
+//! with an access decision is a refusal; the resolver then answers
+//! `Unavailable` and never a held title, status or counts, and it never
+//! answers refused once a later-started read has succeeded. Both numbers
+//! only rise, so the answer does not depend on the order reads land in,
+//! and nothing else (a refresh, a sign-in or sign-out, an account switch
+//! or a reload) lowers or clears them: refusals stay for as long as any
+//! retained data could answer. A failure (network, rate limit, signed
+//! out) decides nothing. The model test (`access/model.rs`) checks this on
+//! every interleaving of six reads.
 //!
-//! A refusal is read again on the next refresh, also for a pull request
-//! the account opened ([`super::held::wants_read`]), so one that was about
+//! An access refusal is a 400, 403 or 404 that is not a rate limit. A
+//! refusal is read again on the next refresh, also for a pull request the
+//! account opened ([`super::held::wants_read`]), so one that was about
 //! something passing does not stick.
 
 use gpui_kit::Context;
@@ -35,36 +42,62 @@ fn tick(references: &mut References) -> u64 {
     references.clock
 }
 
-/// Whether a read of `key` that started at `started` and succeeded is
-/// newer than any refusal; if so it lifts the refusal and is recorded.
-pub(super) fn confirm(references: &mut References, key: &Key, started: u64) -> bool {
-    if references
-        .refused_at
-        .get(key)
-        .is_some_and(|at| *at > started)
-    {
-        return false;
-    }
-    if references.refused_at.remove(key).is_some() {
-        references.answers.remove(key);
-    }
-    let at = references.confirmed_at.entry(key.clone()).or_default();
-    *at = (*at).max(started);
-    true
+/// What a landed read decided about access.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Decision {
+    Success,
+    Refusal,
 }
 
-/// Whether a refusal of `key` from a read that started at `started` is
-/// newer than any success; if so it is recorded.
-pub(super) fn refuse(references: &mut References, key: &Key, started: u64) -> bool {
-    if references
-        .confirmed_at
-        .get(key)
-        .is_some_and(|at| *at > started)
-    {
-        return false;
+/// The latest start ticks of the reads of one pull request that landed
+/// with a refusal and with a success. Both only rise.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Access {
+    refused: u64,
+    confirmed: u64,
+}
+
+impl Access {
+    /// Records a read that started at `started` and landed with `decision`;
+    /// whether it is now the latest of the reads that decided, so its
+    /// result may be kept.
+    pub(crate) fn land(&mut self, started: u64, decision: Decision) -> bool {
+        let latest = started > self.refused.max(self.confirmed);
+        let slot = match decision {
+            Decision::Success => &mut self.confirmed,
+            Decision::Refusal => &mut self.refused,
+        };
+        *slot = (*slot).max(started);
+        latest
     }
-    references.refused_at.insert(key.clone(), started);
-    true
+
+    /// Whether the most recently started read that decided was a refusal.
+    pub(crate) fn refused(&self) -> bool {
+        self.refused > self.confirmed
+    }
+}
+
+/// Whether `key` is refused now ([`Access::refused`]).
+pub(super) fn refused(references: &References, key: &Key) -> bool {
+    references.access.get(key).is_some_and(Access::refused)
+}
+
+/// Records that a read of `key` that started at `started` landed with
+/// `decision`, and whether it is the latest read that decided, so its
+/// answer may be kept. A success that makes the pull request readable
+/// again drops a held refusal answer.
+pub(super) fn decide(
+    references: &mut References,
+    key: &Key,
+    started: u64,
+    decision: Decision,
+) -> bool {
+    let access = references.access.entry(key.clone()).or_default();
+    let latest = access.land(started, decision);
+    if !access.refused() && references.answers.get(key).is_some_and(is_refusal) {
+        references.answers.remove(key);
+    }
+    latest
 }
 
 /// Whether `state` refuses access, rather than saying a read failed or the
@@ -111,7 +144,7 @@ fn list(references: &mut References, keys: Vec<Key>, started: u64) {
     for key in keys {
         let at = references.listed_at.entry(key.clone()).or_default();
         *at = (*at).max(started);
-        confirm(references, &key, started);
+        decide(references, &key, started, Decision::Success);
     }
 }
 
@@ -125,7 +158,12 @@ pub(crate) fn detail_landed(
     started: u64,
 ) {
     for key in [key, canonical] {
-        confirm(&mut board.references, &cache_key(login, key), started);
+        decide(
+            &mut board.references,
+            &cache_key(login, key),
+            started,
+            Decision::Success,
+        );
     }
 }
 
@@ -143,7 +181,7 @@ pub(crate) fn detail_refused(
     let state = reads::refused(error);
     let references = &mut board.references;
     let key = cache_key(login, key);
-    if !is_refusal(&state) || !refuse(references, &key, started) {
+    if !is_refusal(&state) || !decide(references, &key, started, Decision::Refusal) {
         return;
     }
     references.read_at.insert(key.clone(), started);
@@ -151,3 +189,6 @@ pub(crate) fn detail_refused(
     references.answers.insert(key, state);
     announce(cx);
 }
+
+#[cfg(test)]
+mod model;

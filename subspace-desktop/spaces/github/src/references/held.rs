@@ -22,13 +22,16 @@ pub(super) fn known(board: &Github, key: &str) -> Option<ResolutionState> {
     let cached = cache_key(login, key);
     let read = board.references.answers.get(&cached);
     let newer = newer_than_list(&board.references, &cached);
-    if board.references.refused_at.contains_key(&cached) {
+    if super::access::refused(&board.references, &cached) {
         return Some(ResolutionState::Unavailable);
     }
     match loaded(board, key) {
         Some(Loaded::Opened(item, runs)) => Some(ResolutionState::Available(details(item, runs))),
         Some(Loaded::Listed(item)) => Some(ResolutionState::Available(listed(item, read, newer))),
-        None => read.cloned(),
+        // A refusal a later success overtook answers nothing.
+        None => read
+            .filter(|read| !super::access::is_refusal(read))
+            .cloned(),
     }
 }
 
@@ -84,7 +87,7 @@ pub(super) fn wants_read(board: &Github, key: &str) -> bool {
     let stale = references.stale.contains(&cached);
     match loaded(board, key) {
         Some(Loaded::Listed(_)) => !references.answers.contains_key(&cached) || stale,
-        Some(Loaded::Opened(..)) => stale && references.refused_at.contains_key(&cached),
+        Some(Loaded::Opened(..)) => stale && super::access::refused(references, &cached),
         None => stale,
     }
 }

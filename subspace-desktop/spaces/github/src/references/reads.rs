@@ -10,6 +10,7 @@ use subspace_framework::client_github::Client;
 use subspace_framework::contracts::github::ResolutionState;
 use subspace_framework::core::http::Error;
 
+use super::access::Decision::{Refusal, Success};
 use super::{announce, cache_key, details};
 use crate::Github;
 use crate::navigation::requested_pr;
@@ -129,8 +130,8 @@ fn current(
     started: u64,
 ) -> bool {
     match state {
-        ResolutionState::Available(_) => super::access::confirm(references, key, started),
-        ResolutionState::Unavailable => super::access::refuse(references, key, started),
+        ResolutionState::Available(_) => super::access::decide(references, key, started, Success),
+        ResolutionState::Unavailable => super::access::decide(references, key, started, Refusal),
         _ => true,
     }
 }

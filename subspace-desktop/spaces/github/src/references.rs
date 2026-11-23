@@ -99,13 +99,9 @@ pub(crate) struct References {
     /// list only when it started after the latest section listing the pull
     /// request started.
     read_at: HashMap<(String, String), u64>,
-    /// Each pull request the account was refused, with the tick of the
-    /// refused read: the refusal answers until a read that started later
-    /// succeeds ([`access`]).
-    refused_at: HashMap<(String, String), u64>,
-    /// Each pull request a read succeeded for, with the latest such read's
-    /// tick: a refusal from a read that started before it is superseded.
-    confirmed_at: HashMap<(String, String), u64>,
+    /// Each pull request's access decisions ([`access::Access`]): never
+    /// cleared, so a refusal stays while any retained data could answer.
+    access: HashMap<(String, String), access::Access>,
 }
 
 /// Answers the contract for `board` and follows sign-in and sign-out. The
@@ -178,15 +174,19 @@ pub(crate) fn announce(cx: &mut Context<Github>) {
 
 /// Forgets every answer and asks the other Spaces to ask again.
 pub(crate) fn forget(board: &mut Github, cx: &mut Context<Github>) {
-    let references = &mut board.references;
+    forget_answers(&mut board.references);
+    announce(cx);
+}
+
+/// Forgets every answer and drops every read still running. The access
+/// decisions stay ([`access`]): a refusal outlives a sign-in, a sign-out or
+/// a reload, as retained lists and details could still answer.
+fn forget_answers(references: &mut References) {
     references.answers.clear();
     references.reading.clear();
     references.stale.clear();
     references.read_at.clear();
-    references.refused_at.clear();
-    references.confirmed_at.clear();
     references.generation = references.generation.wrapping_add(1);
-    announce(cx);
 }
 
 fn answer(
