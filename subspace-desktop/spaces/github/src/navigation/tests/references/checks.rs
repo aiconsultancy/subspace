@@ -14,7 +14,7 @@ use super::{ask, emit, heard, null_repository, response_with_checks, routed};
 use crate::Github;
 
 /// The seeded pull request held only from the list.
-pub(super) fn listed_only(board: &mut Github, cx: &mut Context<Github>) {
+fn listed_only(board: &mut Github, cx: &mut Context<Github>) {
     seed(board, cx);
     if let Some(account) = board.data.get_mut("octo-dev") {
         account.details.clear();
@@ -22,11 +22,7 @@ pub(super) fn listed_only(board: &mut Github, cx: &mut Context<Github>) {
 }
 
 /// Changes the listed item, as a refreshed list would.
-pub(super) fn relist(
-    board: &Entity<Github>,
-    cx: &mut VisualTestContext,
-    change: impl Fn(&mut GhItem),
-) {
+fn relist(board: &Entity<Github>, cx: &mut VisualTestContext, change: impl Fn(&mut GhItem)) {
     board.update(cx, |board, _| {
         let account = board.data.get_mut("octo-dev").unwrap();
         for section in account.sections.values_mut() {
@@ -35,35 +31,15 @@ pub(super) fn relist(
     });
 }
 
-/// A refresh of the lists starts, and `sections` of it land, each listing
-/// the seeded pull request.
-pub(super) fn refresh(board: &Entity<Github>, sections: usize, cx: &mut VisualTestContext) {
-    board.update(cx, |board, _| crate::references::refreshing(board));
-    for _ in 0..sections {
-        land_section(board, cx);
-    }
-}
-
-/// A pull request read once, then denied, as when the account lost access
-/// to its repository.
-pub(super) fn read_once_then_denied() -> Mock {
-    let served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    Mock::new(
-        move |_| match served.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
-            0 => (200, response_with_checks()),
-            _ => (200, null_repository()),
-        },
-    )
-}
-
-/// One section of a refresh lands, listing the seeded pull request.
-pub(super) fn land_section(board: &Entity<Github>, cx: &mut VisualTestContext) {
+/// A refresh of the lists starts, and `sections` of it land.
+fn refresh(board: &Entity<Github>, sections: usize, cx: &mut VisualTestContext) {
     board.update(cx, |board, cx| {
+        crate::references::refreshing(board);
         let login = board.account.clone().unwrap_or_default();
-        let since = crate::references::since(board);
-        let section = board.section;
-        let tick = crate::references::begin(board);
-        crate::references::section_landed(board, &login, (section, tick), since, cx);
+        for _ in 0..sections {
+            let since = crate::references::since(board);
+            crate::references::section_landed(board, &login, since, cx);
+        }
     });
 }
 
@@ -158,7 +134,11 @@ fn a_listed_pull_request_is_read_once_per_refresh_however_many_sections_land_or_
     confirm(&board, cx);
     board.update(cx, |board, _| crate::references::refreshing(board));
     for _ in 0..4 {
-        land_section(&board, cx);
+        board.update(cx, |board, cx| {
+            let login = board.account.clone().unwrap_or_default();
+            let since = crate::references::since(board);
+            crate::references::section_landed(board, &login, since, cx);
+        });
         ask(KEY, cx);
         cx.run_until_parked();
     }
@@ -249,7 +229,14 @@ fn a_signed_out_account_queues_no_check_count_read(cx: &mut TestAppContext) {
 fn a_pull_request_that_left_the_lists_is_checked_again_once_per_refresh(cx: &mut TestAppContext) {
     // Read once, then GitHub denies it, as when the account lost access to
     // its repository.
-    let mock = read_once_then_denied();
+    let served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mock = Mock::new({
+        let served = served.clone();
+        move |_| match served.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+            0 => (200, response_with_checks()),
+            _ => (200, null_repository()),
+        }
+    });
     let (board, _listener, cx) = routed(cx, Some(&mock));
     ask(KEY, cx);
     cx.run_until_parked();

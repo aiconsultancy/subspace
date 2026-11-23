@@ -162,8 +162,9 @@ thread leaves reply mode.
 The review of [Channels fleet live](../channels-fleet-live/README.md)
 left thirteen findings open, none critical or high, to fix here. Each was
 checked against the code after merging `main` (pull request 69 with its
-review fixes) into this branch. Every fix has a test. Those of 1, 12, 2 and 3 were run against
-the code before the fix and failed there; the Channels tests (4 to 9 and
+review fixes) into this branch. Every fix here has a test. Those of 1 and 12 were run against
+the code before the fix and failed there; 2 and 3 moved to their own pull
+request; the Channels tests (4 to 9 and
 11) were written to fail on it by what they check, but were not run
 against it.
 
@@ -176,19 +177,11 @@ against it.
    Tests: `service/tests/keychain.rs`,
    `a_retry_still_reading_never_brings_back_a_cleared_token` and
    `…_a_replaced_token`, each over 40 schedules; both failed before.
-2. **A listed pull request kept its summary after GitHub refused the read**
-   (`spaces/github/src/references/held.rs`). Real. Fixed in `bd1ae0a`
-   (`fix(github): let a refusal and a later list section win over older
-   answers`; its tests moved to `references/newer.rs` in `3e30475`): a refusal (403, 404 or 401) from a reference read or the PRs
-   Space's own detail read answers ahead of the pull request the account
-   opened or listed before it, until a later read succeeds. Tests:
-   `a_listed_pull_request_the_account_lost_access_to_stops_showing_its_summary`,
-   `an_opened_pull_request_refused_since_answers_with_the_refusal_until_read_again`.
-3. **A read started after a refresh's first section could override a
-   later section's fresher list** (`references/held.rs`). Real. Fixed in
-   `bd1ae0a`: a read answers whole only when it started after the
-   last section listing the pull request landed. Test:
-   `a_later_section_of_the_same_refresh_wins_over_a_read_that_started_before_it`.
+2. **A listed pull request kept its summary after GitHub refused the read** (Sol). Moved, with its fix and tests, to its own
+   pull request on `fix/github-reference-access`; not resolved here.
+3. **A read started after a refresh's first section could override a later
+   section's fresher list** (Sol). Moved likewise; not resolved here.
+
 4. **Each Channels view replaced the process-wide fleet map**
    (`spaces/irc/src/live/watch.rs`). Real: the hub is one per process.
    Fixed in `891b7d2` (`fix(irc): keep each view's fleets and say when the
@@ -290,32 +283,9 @@ against the code. Findings both raised are listed once.
 
 ### GitHub access
 
-4. **A late list section could bring back a refused summary** (Sol high),
-   **reference and detail reads overwrote each other's decisions** (Sol
-   high), **a refusal on an opened pull request stuck for the session**
-   (Opus P2 2) and **a pull request two sections list lost its whole
-   answer** (Opus P3 8). Real. Fixed in `a7cc283`: every read takes a tick
-   of one clock when it starts, whichever path makes it, and results are
-   weighed by it (`references/access.rs`). A refusal answers until a read
-   that started later succeeds; a section or read that started earlier
-   never lifts it; an older refusal is dropped. A refusal is read again on
-   the next refresh, also for an opened pull request. Freshness against the
-   list compares start ticks, so a read started after a refresh's sections
-   started keeps its whole answer. Tests in
-   `navigation/tests/references/access.rs`, counting the reads: a section
-   requested before a refusal, an older reference read against a newer
-   detail refusal, an older detail success against a newer refusal, an
-   opened pull request read again on refresh, a rate limit. These were not
-   run against the old code (its interfaces differ); each checks a
-   behaviour the old code lacked.
-5. **Rate limits counted as refusals** (Opus P2 2). Partly refuted: the
-   GitHub client already reports a 403 with `x-ratelimit-remaining: 0` or a
-   rate-limit message (primary and secondary) as 429, which Channels'
-   resolver treats as a failure. A 403 with only `Retry-After` was not
-   caught: fixed in the client in `0d23322`, with a test. Only 400, 403 and
-   404 now count as access refusals; a 401 or a missing credential answers
-   signed out and never overrides held data. The module documentation
-   says so.
+4 and 5. **GitHub access refusals, read ordering, opened pull requests and
+   rate limits** (Sol high 2 and 3, Opus P2 2 and P3 8). Moved, with their
+   fixes and tests, to `fix/github-reference-access`; not resolved here.
 
 ### Threads
 
@@ -365,36 +335,10 @@ Second reviews of head `32fa227`: Claude Opus 5.5 (high effort, clear,
 six P3) and GPT-6.2 Sol (high effort, not clear: three high, four medium,
 two low).
 
-**GitHub access, closed by proof** (Sol's three highs):
-
-15. **An older refusal landing late lowered the stored refusal, so a list
-    that started between them lifted the newer one** (Sol high). Real.
-    Fixed in `c49e37b`: each pull request's access is two numbers that only
-    rise, the latest start tick of a read that landed refused and of one
-    that landed with a success; it is refused exactly when the first is
-    larger. The invariant is in `references/access.rs`.
-16. **A sign-in or sign-out of an unrelated account cleared the active
-    account's refusals** (Sol high). Real. Fixed in `c49e37b`: nothing
-    clears the access record, so a refusal stays while any retained list or
-    detail could answer. The old test that pinned the clearing,
-    `another_account_signing_out_forgets_reads_and_reads_again`, became
-    `another_account_signing_out_keeps_this_account_s_refusal`.
-17. **The GitHub client reported a plain 403 as 502** (Sol high). Real.
-    Fixed in the client in `2465e93`: a 403 without rate-limit or SSO
-    indicators stays 403, with no public signature changed. The Actions
-    scope message, the one other place that read the old 502, now matches
-    the 403. Tests: the transport's own, and
-    `a_plain_403_from_github_is_an_access_refusal` through the transport and
-    the resolver (it failed with the old mapping).
-18. **The model test** (`references/access/model.rs`) plays every
-    interleaving of six reads of one pull request: every start order and
-    outcome (a section succeeds or fails, a detail or reference read
-    succeeds, is refused or fails), every landing order, and with nothing,
-    a refresh, an unrelated sign-out or both between the third and fourth
-    landings: 729 × 720 × 4 runs, checked after each landing (12.6 million
-    checks). It found no ordering beyond Sol's three once the record was
-    monotone. It exercises the decision functions the three paths call,
-    not the GPUI wiring around them, which the render tests cover.
+**GitHub access** (Sol's three highs, the model test): moved, with
+their fixes and tests, to `fix/github-reference-access`, and taken out of this branch, which
+leaves the GitHub Space and the Framework's GitHub client as `main` has
+them. Findings 15 to 18 are not resolved here.
 
 **Fleet** (Sol medium, Opus P3):
 

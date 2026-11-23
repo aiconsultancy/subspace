@@ -24,25 +24,16 @@
 //! asked about. Until the new read lands a stale read answers only with
 //! its counts, on the newer list's item, and only while its combined
 //! checks state and last update are the list's (the list does not carry
-//! the head commit; a force-push updates the pull request). Every read,
-//! whichever path makes it, takes a tick of one clock when it starts
-//! ([`access`]); a read is newer than the list only when it started after
-//! the latest section listing the pull request started, however the two
-//! land. The list query is not widened: every list would pay for counts no
-//! tile shows.
+//! the head commit; a force-push updates the pull request). A read is
+//! taken as newer than the list only when it started after the refresh
+//! that marked it stale. The list query is not widened: every list would
+//! pay for counts no tile shows.
 //!
 //! A pull request the account holds neither opened nor listed answers from
 //! its read until the next refresh, then is read again once, so one that
 //! left the lists, as when the account lost access to its repository, is
-//! not answered from memory for good: GitHub's refusal replaces it. An
-//! access refusal (400, 403 or 404; a rate limit is a failure, which the
-//! GitHub client reports as 429), from a reference read or this Space's
-//! own detail read, answers ahead of a pull request the account opened or
-//! listed, until a read that started after it succeeds; a list section or
-//! read that started before it never brings the summary back. It is read
-//! again on the next refresh. A 401 or a missing credential answers signed
-//! out and never overrides held data. A signed-out account starts no read
-//! at all.
+//! not answered from memory for good: GitHub's refusal replaces it. A
+//! signed-out account starts no read at all.
 
 use std::collections::{HashMap, HashSet};
 
@@ -55,12 +46,10 @@ use subspace_framework::dashboard::contracts;
 use subspace_framework::dashboard::github_sign_in::{self, SignInEvent};
 
 use crate::Github;
-pub(crate) use access::{begin, detail_landed, detail_refused, section_landed};
 use held::{known, wants_read};
 use reads::read;
 use summary::details;
 
-mod access;
 mod held;
 mod reads;
 mod summary;
@@ -88,20 +77,6 @@ pub(crate) struct References {
     /// Bumped each time answers are marked stale, so a read that started
     /// before lands stale: it is older than the list.
     refreshes: u64,
-    /// Ticks as each read starts, whichever path makes it: a list section,
-    /// this Space's own detail read or a reference read
-    /// ([`access::begin`]). Every access decision compares these ticks.
-    clock: u64,
-    /// For each pull request a section lists, the tick of the latest
-    /// section that listed it.
-    listed_at: HashMap<(String, String), u64>,
-    /// For each answer, the tick its read started at: it is newer than the
-    /// list only when it started after the latest section listing the pull
-    /// request started.
-    read_at: HashMap<(String, String), u64>,
-    /// Each pull request's access decisions ([`access::Access`]): never
-    /// cleared, so a refusal stays while any retained data could answer.
-    access: HashMap<(String, String), access::Access>,
 }
 
 /// Answers the contract for `board` and follows sign-in and sign-out. The
@@ -147,6 +122,19 @@ pub(crate) fn refreshing(board: &mut Github) {
     board.references.refresh_due = true;
 }
 
+/// A list section read by `login` that started at `since` just landed:
+/// the first of a refresh marks every answer stale, so each listed pull
+/// request a tile asks about is read again once per refresh.
+pub(crate) fn section_landed(
+    board: &mut Github,
+    login: &str,
+    since: u64,
+    cx: &mut Context<Github>,
+) {
+    mark_stale(&mut board.references);
+    landed(board, login, since, cx);
+}
+
 /// Marks every answer stale, once per refresh.
 fn mark_stale(references: &mut References) {
     if std::mem::take(&mut references.refresh_due) {
@@ -174,19 +162,12 @@ pub(crate) fn announce(cx: &mut Context<Github>) {
 
 /// Forgets every answer and asks the other Spaces to ask again.
 pub(crate) fn forget(board: &mut Github, cx: &mut Context<Github>) {
-    forget_answers(&mut board.references);
-    announce(cx);
-}
-
-/// Forgets every answer and drops every read still running. The access
-/// decisions stay ([`access`]): a refusal outlives a sign-in, a sign-out or
-/// a reload, as retained lists and details could still answer.
-fn forget_answers(references: &mut References) {
+    let references = &mut board.references;
     references.answers.clear();
     references.reading.clear();
     references.stale.clear();
-    references.read_at.clear();
     references.generation = references.generation.wrapping_add(1);
+    announce(cx);
 }
 
 fn answer(

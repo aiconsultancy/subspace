@@ -17,8 +17,6 @@ pub(crate) struct Request {
     pub debounce: bool,
     /// [`crate::references::since`] when the read was asked for.
     pub since: u64,
-    /// Its tick of the one read clock ([`crate::references::begin`]).
-    pub tick: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -240,12 +238,6 @@ fn apply(
             let account = board.data.entry(request.login.to_lowercase()).or_default();
             let key = detail.item.key.clone();
             account.apply_read_detail(detail, started);
-            crate::references::detail_landed(
-                board,
-                &request.login,
-                (&request.key, &key),
-                request.tick,
-            );
             board
                 .retained_permits
                 .remove(&(request.login.to_lowercase(), key.clone()));
@@ -257,16 +249,7 @@ fn apply(
             }
             crate::references::landed(board, &request.login, request.since, cx);
         }
-        Err(error) => {
-            crate::references::detail_refused(
-                board,
-                (&request.login, &request.key),
-                &error,
-                request.tick,
-                cx,
-            );
-            failure(board, &request.key, error_text(&error), cx);
-        }
+        Err(error) => failure(board, &request.key, error_text(&error), cx),
     }
     board.rebuild(cx);
     if let Some(key) = canonical {

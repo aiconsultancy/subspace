@@ -21,9 +21,7 @@ use super::loading::{client, response};
 use super::{KEY, mount, seed};
 use crate::Github;
 
-mod access;
 mod checks;
-mod newer;
 mod privacy;
 mod refresh;
 
@@ -294,29 +292,17 @@ fn signing_out_answers_signed_out_until_someone_signs_in(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
-fn another_account_signing_out_keeps_this_account_s_refusal(cx: &mut TestAppContext) {
+fn another_account_signing_out_forgets_reads_and_reads_again(cx: &mut TestAppContext) {
     let mock = Mock::new(|_| (200, null_repository()));
-    let (board, listener, cx) = routed(cx, Some(&mock));
-    board.update(cx, seed);
-    // Opened and listed, then refused: the refusal answers.
-    board.update(cx, |board, cx| {
-        let login = board.account.clone().unwrap_or_default();
-        let started = crate::references::begin(board);
-        let denied = subspace_framework::core::http::Error::Status {
-            status: 404,
-            message: "Not Found".into(),
-        };
-        crate::references::detail_refused(board, (&login, KEY), &denied, started, cx);
-    });
+    let (_, listener, cx) = routed(cx, Some(&mock));
+    ask(KEY, cx);
+    heard(&listener, cx);
     assert!(matches!(ask(KEY, cx), ResolutionState::Unavailable));
     emit(SignInEvent::SignedOut("other-account".into()), cx);
     heard(&listener, cx);
-    assert!(
-        matches!(ask(KEY, cx), ResolutionState::Unavailable),
-        "the retained title never answers again without a newer read"
-    );
+    assert!(matches!(ask(KEY, cx), ResolutionState::Pending));
     heard(&listener, cx);
-    assert!(mock.requests().is_empty());
+    assert_eq!(mock.requests().len(), 2, "read again after the sign-out");
 }
 
 #[gpui_kit::test]

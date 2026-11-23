@@ -152,7 +152,6 @@ fn check(
             status: code,
             remaining: header(&response, "x-ratelimit-remaining"),
             reset: header(&response, "x-ratelimit-reset"),
-            retry_after: header(&response, "retry-after"),
             message: &message,
         },
     ))
@@ -277,7 +276,6 @@ pub(crate) fn post_rest_json_request(
                 status: code,
                 remaining: None,
                 reset: None,
-                retry_after: None,
                 message: &message,
             },
         ));
@@ -337,7 +335,6 @@ mod tests {
             status,
             remaining,
             reset: Some("1790000000"),
-            retry_after: None,
             message,
         }
     }
@@ -358,20 +355,6 @@ mod tests {
             failure(429, None, "API rate limit exceeded"),
         );
         assert_eq!(code(&by_message), 429);
-        let secondary = Failure {
-            retry_after: Some("60"),
-            ..failure(403, None, "You have been blocked for a while.")
-        };
-        let secondary = http_failure("ann", Api::Rest, secondary);
-        assert_eq!(
-            code(&secondary),
-            429,
-            "a 403 with Retry-After is a rate limit"
-        );
-        for api in [Api::Rest, Api::GraphQl] {
-            let refused = http_failure("ann", api, failure(403, Some("4999"), "Not allowed"));
-            assert_eq!(code(&refused), 403, "a plain 403 stays an access refusal");
-        }
         assert_eq!(reset_hint(None), "; try again in a few minutes");
         assert_eq!(reset_hint(Some("0")), "; try again in a few minutes");
         assert_eq!(reset_hint(Some("3600")), "; it resets at 01:00 UTC");
@@ -407,8 +390,7 @@ mod tests {
         );
         assert_eq!(
             code(&http_failure("ann", Api::Rest, failure(403, None, "nope"))),
-            403,
-            "lost access stays a refusal, not a transient failure"
+            502
         );
     }
 
