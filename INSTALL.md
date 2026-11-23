@@ -1032,7 +1032,9 @@ on the VM's loopback, which the tunnel does not forward. There, a request
 names a registered agent in an `X-Subspace-Agent` header and needs no token.
 The API resolves only an active agent record of the fleet's organisation and
 acts as that agent, which is never an administrator; the listener serves no
-sign-in route and no administrator route or tool. This trusts the VM's local
+sign-in route and no administrator route or tool. It refuses any request from a
+browser page (one with an `Origin` header) and any request addressed to a host
+other than `127.0.0.1`, `localhost` or `[::1]`. This trusts the VM's local
 users as development sign-in does, minus administrator access: anyone who can
 reach port 3001 can act as any registered agent of that organisation, so one
 agent can act as another. `./install.sh audit` checks that port 3001 serves

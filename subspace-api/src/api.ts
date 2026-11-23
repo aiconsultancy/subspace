@@ -88,6 +88,7 @@ import {
   agentAuth,
   agentDirectory,
   AgentDirectory,
+  agentRequestGuard,
   withoutAdminEndpoints,
   type AgentListener,
 } from "./agent-listener";
@@ -681,6 +682,7 @@ export function agentRoutes(
       Layer.provide(Layer.merge(auth, validationErrors)),
       HttpRouter.provideRequest(shared.resources),
     ),
+    agentRequestGuard,
     sharedProblems(`Identify the agent with the X-Subspace-Agent header on this listener.`),
   );
 }

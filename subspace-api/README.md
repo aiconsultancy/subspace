@@ -261,7 +261,11 @@ agents, including the fleet limits on assignments, Ready for agents and moves.
 It never resolves a person, so it never grants the administrator role, which
 the database already forbids an agent record. A missing header, an unknown
 or ambiguous name, or a person's name or subject receives 401; a deactivated
-agent receives 403; any bearer token is ignored. Captains and rear admirals
+agent receives 403; any bearer token is ignored. Before any route runs, the listener also refuses with 403 any request
+that carries an `Origin` header and any `Host` other than `127.0.0.1`,
+`localhost` or `[::1]` (with an optional port), so a browser page that
+rebinds its domain to the listener's address cannot act as an agent. Docker's
+loopback port publishing passes the `Host` through unchanged. Captains and rear admirals
 relay crew work with `relayedCrew` as on the main listener.
 
 The listener serves the same routes and MCP endpoint (`/mcp`) except

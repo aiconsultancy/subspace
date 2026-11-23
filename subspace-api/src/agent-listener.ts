@@ -1,6 +1,6 @@
 import { and, eq, isNotNull, or, sql } from "drizzle-orm";
-import { Context, Effect, Layer } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { Context, Effect, Layer, type Types } from "effect";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { type Config } from "./config";
 import { Database } from "./db";
 import { CurrentMember, type Member } from "./identity";
@@ -211,3 +211,33 @@ export function withoutAdminEndpoints<A, E, R>(
     }),
   );
 }
+
+const loopbackHost = /^(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]{1,5})?$/u;
+
+/**
+ * Refuses, before any route runs, a request from a browser page (any Origin) and a request that
+ * names a host other than loopback, so a page that rebinds its own domain to this address cannot
+ * act as an agent. Every client the fleet installer configures connects to 127.0.0.1 directly,
+ * and Docker's loopback publishing passes the Host header through unchanged.
+ */
+export const agentRequestGuard = HttpRouter.middleware<
+  Types.unhandled,
+  HttpServerRequest.HttpServerRequest,
+  true
+>(
+  (next) =>
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const refuse = (detail: string) =>
+        HttpServerResponse.jsonUnsafe(problem(403, detail), {
+          status: 403,
+          contentType: "application/problem+json",
+        });
+      if (request.headers.origin !== undefined)
+        return refuse("The agent listener accepts native clients only, without an Origin.");
+      if (!loopbackHost.test(request.headers.host ?? ""))
+        return refuse("Reach the agent listener at 127.0.0.1, localhost or [::1].");
+      return yield* next;
+    }),
+  { global: true },
+);

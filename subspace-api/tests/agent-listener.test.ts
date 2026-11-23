@@ -328,6 +328,26 @@ describe("requests on the agent listener", () => {
     expect((await send("/api/v1/fleets", "Orion")).status).not.toBe(404);
   });
 
+  test("refuse a browser Origin and a host that is not loopback", async () => {
+    for (const path of ["/api/v1/me", "/mcp"]) {
+      const method = path === "/mcp" ? "POST" : "GET";
+      const body = path === "/mcp" ? { jsonrpc: "2.0", id: 1, method: "tools/list" } : undefined;
+      await refused(
+        await send(path, "Orion", method, body, { Origin: "http://127.0.0.1:3001" }),
+        403,
+        "Origin",
+      );
+      for (const host of ["attacker.example", "attacker.example:3001", "127.0.0.1.example", ""])
+        await refused(await send(path, "Orion", method, body, { Host: host }), 403, "127.0.0.1");
+      for (const host of ["127.0.0.1", "127.0.0.1:3001", "localhost:3001", "[::1]:3001"]) {
+        const response = await send(path, "Orion", method, body, { Host: host });
+        expect([host, response.status]).toEqual([host, 200]);
+      }
+    }
+    // Refused before routing: an unknown path from a browser gets the same answer.
+    await refused(await send("/nowhere", "Orion", "GET", undefined, { Origin: "null" }), 403);
+  });
+
   test("lists and calls MCP tools as the agent, without administrator tools", async () => {
     const list = await rpc("Orion", "tools/list");
     expect(list.status).toBe(200);

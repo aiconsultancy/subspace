@@ -451,8 +451,9 @@ records, through its MCP server, without WorkOS, Entra or a token.
 The agent listener trusts its network as development sign-in does, minus
 administrator access: anyone who can reach port 3001 on the VM can act as any
 registered agent of the organisation, so agents can act as each other. It
-serves no sign-in route and no administrator route or MCP tool, and it never
-resolves a person. A further fleet installed with `--api-target` gets no
+serves no sign-in route and no administrator route or MCP tool, it never
+resolves a person, and it refuses browser requests (an `Origin` header) and
+any host other than loopback. A further fleet installed with `--api-target` gets no
 agent listener (INSTALL.md, "One fleet or several").
 
 What is not verified yet: the OpenCode release the fleet pins has not been
