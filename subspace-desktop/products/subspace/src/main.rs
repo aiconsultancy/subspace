@@ -182,7 +182,6 @@ fn web_boards(config: &subspace_framework::core::config::Config) -> Vec<BoardReg
     config
         .web_boards
         .iter()
-        .filter(|board| surfaces::shows_web_space(identity::backend(), board))
         .map(|board| {
             let page = board.clone();
             let registration = BoardRegistration::configured::<subspace_web_board::WebBoard>(
@@ -228,6 +227,25 @@ mod tests {
     use crate::settings::ApiBackend;
     use std::collections::HashSet;
     use subspace_framework::product::BuildKind;
+
+    /// Fleet Console shows in every build, before any fleet is set, so a
+    /// build with no API backend can set its first fleet in Fleet Console's
+    /// own settings or add one inside it.
+    #[test]
+    fn fleet_console_shows_before_any_fleet_is_set() {
+        use subspace_framework::core::config::web_boards::{WebBoard, WebBoardSource};
+        let mut config = subspace_framework::core::config::Config::default();
+        config.web_boards.push(WebBoard {
+            id: subspace_web_board::builtin::FLEET_CONSOLE_ID.to_owned(),
+            title: "Fleet Console".to_owned(),
+            source: WebBoardSource::Folder(std::path::PathBuf::from("/apps/fleet-console")),
+            settings: Default::default(),
+            secrets: Default::default(),
+            permissions: Default::default(),
+        });
+        let ids: Vec<_> = web_boards(&config).iter().map(|board| board.id).collect();
+        assert_eq!(ids, [subspace_web_board::builtin::FLEET_CONSOLE_ID]);
+    }
 
     #[test]
     fn a_config_without_web_boards_adds_no_boards() {

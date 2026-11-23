@@ -180,9 +180,9 @@ API: **Settings > Account** and any sign-in, the Issues and Decisions Spaces,
 context, captain notices (and their switch in **Settings > Channels**), chat
 uploads and the tracker commands, so `/assign` is ordinary IRC input.
 Channels connects to the networks you add in **Settings > Channels**. Fleet
-Console appears once its own Stargate API address and token are saved in its
-`webBoards` entry, as the installer saves them; its other fleets are the ones
-you add inside it. Updates work as in every build: they come from GitHub
+Console shows the fleets you give it: the Stargate API address and token in
+**Settings > Spaces > Fleet Console** (which the installer can fill in), and
+any you add inside it. Updates work as in every build: they come from GitHub
 releases and never need the API.
 
 The build refuses `identity_provider`, `api_url`, `nett_api_url` and every
