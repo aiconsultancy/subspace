@@ -184,12 +184,12 @@ fn prefetch_one(
     let detail = ctx
         .bound
         .item(&loaded.item.key)
-        .map_err(|error| subspace_framework::dashboard::prefetch::Failure::from(&error))?;
+        .map_err(|error| item_failure(&error))?;
     let diff = if loaded.item.kind == ItemKind::Pr {
         Some(
             ctx.client
                 .diff(ctx.login, &loaded.item.key)
-                .map_err(|error| subspace_framework::dashboard::prefetch::Failure::from(&error))?,
+                .map_err(|error| item_failure(&error))?,
         )
     } else {
         None
@@ -206,6 +206,17 @@ fn prefetch_one(
         .map_err(|_| subspace_framework::dashboard::prefetch::Failure::Transient)?;
     relations::publish(&index.service, &index.scope, &detail.item, &detail.item.key);
     Ok(())
+}
+
+/// How a failed read of one item ends its prefetch: GitHub refusing the
+/// account that one item (a plain 403) is retried like a transient failure,
+/// as before the client kept it as 403, so it never stops the whole run;
+/// a rejected credential, an SSO requirement or a rate limit still does.
+fn item_failure(error: &Error) -> subspace_framework::dashboard::prefetch::Failure {
+    if subspace_framework::client_github::is_access_refusal(error) {
+        return subspace_framework::dashboard::prefetch::Failure::Transient;
+    }
+    subspace_framework::dashboard::prefetch::Failure::from(error)
 }
 
 pub(super) fn cache_error(cx: &mut Context<Github>) {
