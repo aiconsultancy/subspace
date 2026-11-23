@@ -199,3 +199,21 @@ fn a_plain_403_from_github_is_an_access_refusal(cx: &mut TestAppContext) {
         "the held list's title no longer answers"
     );
 }
+
+#[gpui_kit::test]
+fn a_pull_request_read_under_another_repository_name_is_never_cached_under_it(
+    cx: &mut TestAppContext,
+) {
+    // GitHub answers a former repository name with the pull request under
+    // its current name, which no other key reaches.
+    let mock = Mock::new(|_| (200, response("PullRequest", 421)));
+    let (_board, _listener, cx) = routed(cx, Some(&mock));
+    let alias = "octo-org/former-api#421";
+    ask(alias, cx);
+    cx.run_until_parked();
+    assert_eq!(mock.requests().len(), 1);
+    assert!(
+        matches!(ask(alias, cx), ResolutionState::Unavailable),
+        "a summary GitHub gave under another key never answers for this one"
+    );
+}
