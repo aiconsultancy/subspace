@@ -5,7 +5,7 @@ use gpui_kit::TestAppContext;
 use gpui_kit::test::TestWindowExt as _;
 use subspace_framework::contracts::issues::IssueScope;
 
-use super::{creating, found, notice, open, open_make_issue, open_make_issue_on, said};
+use super::{creating, found, notice, open, open_board, open_make_issue, open_make_issue_on, said};
 
 #[gpui_kit::test]
 fn a_dialog_writes_nothing_once_the_tracker_it_opened_under_changed(cx: &mut TestAppContext) {
@@ -97,4 +97,20 @@ fn make_issue_writes_only_from_its_dialog(cx: &mut TestAppContext) {
     hub.read_with(cx, |hub, _| {
         assert!(said(hub).is_empty(), "nothing posted to the channel")
     });
+}
+
+#[gpui_kit::test]
+fn an_open_dialog_is_the_space_s_dialog_and_dismiss_closes_it(cx: &mut TestAppContext) {
+    use subspace_framework::dashboard::{Dashboard as _, Modal};
+    let mock = creating();
+    let (board, conversation, hub, cx) = open_board(cx, true, Some(&mock));
+    open_make_issue(&conversation, &hub, cx);
+    board.read_with(cx, |board, cx| {
+        assert_eq!(board.modal(cx), Some(Modal::Dialog))
+    });
+    cx.update(|window, cx| board.update(cx, |board, cx| board.dismiss(window, cx)));
+    cx.update(|window, cx| window.render_frame(cx));
+    assert!(!found("irc-tracker-dialog".into(), cx), "dismiss closes it");
+    board.read_with(cx, |board, cx| assert_eq!(board.modal(cx), None));
+    assert!(mock.requests().is_empty());
 }

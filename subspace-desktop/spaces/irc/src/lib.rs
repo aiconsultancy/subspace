@@ -357,9 +357,9 @@ impl Dashboard for Irc {
         }
     }
 
-    fn modal(&self, _cx: &App) -> Option<subspace_framework::dashboard::Modal> {
+    fn modal(&self, cx: &App) -> Option<subspace_framework::dashboard::Modal> {
         use subspace_framework::dashboard::Modal;
-        if self.join.is_some() {
+        if self.join.is_some() || tracker::message::any_open(self, cx) {
             Some(Modal::Dialog)
         } else {
             self.initiative_menu.host().map(|_| Modal::Menu)
@@ -369,6 +369,7 @@ impl Dashboard for Irc {
     fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.initiative_menu.dismiss(window, cx);
         join::close(self, window, cx);
+        tracker::message::close_all(self, window, cx);
     }
 
     fn keys(&self) -> &'static [subspace_framework::dashboard::KeyHelp] {
