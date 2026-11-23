@@ -682,7 +682,9 @@ first. When the server can't mark replies (it lacks `message-tags`) or the
 network is not connected, the tab says so in place of the action. If the
 message you are replying to is no longer loaded, your reply is kept but
 not sent, and `Esc` keeps it so: choose **Write to the channel** to send it
-as an ordinary message instead. A long thread shows its latest 40 replies and says how many
+as an ordinary message instead. Choosing **Reply in thread** on another
+thread then doesn't move it there by itself: choose **Move to the thread**
+to reply there with it, or empty the message input first. A long thread shows its latest 40 replies and says how many
 earlier ones are in the channel.
 
 ### React to a message

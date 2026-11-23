@@ -13,7 +13,10 @@
 //! thread is no longer loaded, Enter sends nothing, Escape keeps it, and
 //! only an explicit **Write to the channel** leaves reply mode, keeping
 //! the text, so a reply never silently becomes an ordinary message or a
-//! command.
+//! command. **Reply in thread** on another thread does not take such a
+//! draft with it either: while it holds text, the row offers to move it
+//! there, and only that choice does; an emptied draft starts the new reply
+//! at once.
 
 use gpui_kit::component::{Icon, Sizable as _, h_flex};
 use gpui_kit::{
@@ -43,6 +46,9 @@ pub(crate) struct ReplyTo {
     /// The root is no longer held: nothing is sent until the person
     /// chooses to write to the channel instead.
     pub gone: bool,
+    /// While gone, the thread the person then chose **Reply in thread**
+    /// on: the draft moves there only when they confirm it.
+    pub offered: Option<Box<ReplyTo>>,
 }
 
 impl ReplyTo {
@@ -59,6 +65,7 @@ impl ReplyTo {
             author: author.to_owned(),
             excerpt: chars,
             gone: false,
+            offered: None,
         }
     }
 
@@ -81,6 +88,8 @@ pub(crate) const ATTACHMENTS: &str =
     "Attachments can't go in a thread reply yet. Cancel the reply to send them.";
 /// Why a reply whose thread is no longer loaded was kept.
 pub(crate) const GONE: &str = "The thread is no longer loaded, so this reply was not sent. Choose Write to the channel to send it as an ordinary message.";
+/// The same, once the person chose to reply in another thread.
+pub(crate) const GONE_OFFERED: &str = "The thread is no longer loaded, so this reply was not sent. Choose Move to the thread to reply there with it, or Write to the channel to send it as an ordinary message.";
 /// Why reply mode is refused outside a channel.
 pub(crate) const CHANNEL_ONLY: &str = "Thread replies are sent in a channel.";
 
@@ -115,7 +124,9 @@ pub(crate) fn command(
 }
 
 /// Puts the composer into reply mode for `reply` and gives it the
-/// keyboard. Only in a channel.
+/// keyboard. Only in a channel. A draft written for a thread that has gone
+/// stays with it while it holds text: `reply` is only offered, and the
+/// person moves the draft there with [`move_offered`].
 pub(crate) fn start(
     conversation: &mut Conversation,
     reply: ReplyTo,
@@ -125,6 +136,49 @@ pub(crate) fn start(
     if !matches!(conversation.buffer.target, Target::Channel(_)) {
         return;
     }
+    let held = !conversation
+        .draft
+        .entity
+        .read(cx)
+        .text(cx)
+        .trim()
+        .is_empty();
+    match conversation.draft.reply.as_mut() {
+        Some(current) if current.gone && held => offer(current, reply, cx),
+        _ => enter(conversation, reply, window, cx),
+    }
+}
+
+/// Offers `reply`'s thread to the gone draft `current`, without moving it.
+fn offer(current: &mut ReplyTo, reply: ReplyTo, cx: &mut Context<Conversation>) {
+    current.offered = Some(Box::new(reply));
+    cx.notify();
+}
+
+/// Moves a gone draft to the thread the person chose meanwhile, as they
+/// confirmed on the row.
+pub(crate) fn move_offered(
+    conversation: &mut Conversation,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
+    let offered = conversation
+        .draft
+        .reply
+        .as_mut()
+        .and_then(|reply| reply.offered.take());
+    if let Some(offered) = offered {
+        enter(conversation, *offered, window, cx);
+    }
+}
+
+/// Reply mode for `reply`, with the keyboard in the composer.
+fn enter(
+    conversation: &mut Conversation,
+    reply: ReplyTo,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
     let hint = placeholder(&reply);
     conversation.draft.reply = Some(reply);
     conversation.draft.entity.update(cx, |input, cx| {
@@ -173,13 +227,20 @@ pub(crate) fn escape(
 /// Marks the reply to `root`, whose thread is no longer held, as gone: it
 /// keeps the draft in reply mode and sends nothing until the person
 /// chooses to write to the channel instead.
+/// A thread offered to a gone draft that goes too is no longer offered.
 pub(crate) fn forget(conversation: &mut Conversation, root: &str, cx: &mut Context<Conversation>) {
-    if let Some(reply) = conversation
-        .draft
-        .reply
-        .as_mut()
-        .filter(|reply| reply.root == root)
+    let Some(reply) = conversation.draft.reply.as_mut() else {
+        return;
+    };
+    if reply
+        .offered
+        .as_ref()
+        .is_some_and(|offered| offered.root == root)
     {
+        reply.offered = None;
+        cx.notify();
+    }
+    if reply.root == root {
         reply.gone = true;
         cx.notify();
     }
@@ -188,7 +249,7 @@ pub(crate) fn forget(conversation: &mut Conversation, root: &str, cx: &mut Conte
 /// The row above the input in reply mode: what is replied to, and Cancel.
 pub(super) fn row(reply: &ReplyTo, cx: &mut Context<Conversation>) -> gpui_kit::AnyElement {
     if reply.gone {
-        return gone_row(cx).into_any_element();
+        return gone_row(reply.offered.as_deref(), cx).into_any_element();
     }
     let tokens = Tokens::current(cx);
     let words = reply.words();
@@ -240,14 +301,21 @@ pub(super) fn row(reply: &ReplyTo, cx: &mut Context<Conversation>) -> gpui_kit::
 }
 
 /// The row once the thread is no longer loaded: why nothing was sent, and
-/// the one way on, which keeps the text as an ordinary draft.
-fn gone_row(cx: &mut Context<Conversation>) -> impl IntoElement {
+/// the ways on: **Write to the channel**, which keeps the text as an
+/// ordinary draft, and, once the person chose another thread, **Move to
+/// the thread**.
+fn gone_row(offered: Option<&ReplyTo>, cx: &mut Context<Conversation>) -> impl IntoElement {
     let tokens = Tokens::current(cx);
+    let spoken = if offered.is_some() {
+        GONE_OFFERED
+    } else {
+        GONE
+    };
     h_flex()
         .id("irc-reply-mode")
         .test_support()
         .role(Role::Alert)
-        .aria_label(SharedString::from(GONE))
+        .aria_label(SharedString::from(spoken))
         .w_full()
         .min_w_0()
         .gap_2()
@@ -261,6 +329,7 @@ fn gone_row(cx: &mut Context<Conversation>) -> impl IntoElement {
                 .text_color(tokens.fg)
                 .child("The thread is no longer loaded. Your reply was not sent."),
         )
+        .children(offered.map(|offered| move_button(offered, cx)))
         .child(
             subspace_framework::dashboard::action::action_button(
                 "irc-reply-mode-to-channel",
@@ -270,6 +339,22 @@ fn gone_row(cx: &mut Context<Conversation>) -> impl IntoElement {
             )
             .on_click(cx.listener(|this, _, window, cx| cancel(this, window, cx))),
         )
+}
+
+/// **Move to the thread**: the draft goes to the thread the person chose
+/// after its own had gone, named in the button's accessible label.
+fn move_button(offered: &ReplyTo, cx: &mut Context<Conversation>) -> impl IntoElement {
+    subspace_framework::dashboard::action::action_button(
+        "irc-reply-mode-move",
+        Intent::Neutral,
+        Some(IconName::Reply),
+        "Move to the thread",
+    )
+    .aria_label(SharedString::from(format!(
+        "Move to the thread of {}",
+        offered.author
+    )))
+    .on_click(cx.listener(|this, _, window, cx| move_offered(this, window, cx)))
 }
 
 #[cfg(test)]

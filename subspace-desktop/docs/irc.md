@@ -762,9 +762,13 @@ It shows one thread at a time: a request, or any message with replies.
   removed). A reply being written to it then stays in reply mode, marked
   gone: the row says the thread is no longer loaded, Enter sends nothing,
   not even a command, Escape keeps it, and only **Write to the channel**
-  leaves reply mode, keeping the text. New replies and steps show live. A linked status line
-  keeps a status element inside its button, so its changes are still
-  announced.
+  leaves reply mode, keeping the text. **Reply in thread** on another
+  thread does not take such a draft with it: while the draft holds text,
+  the row adds **Move to the thread**, and only that choice moves it; an
+  emptied draft starts the new reply at once. New replies and steps show
+  live. A linked status line keeps a zero-size status element beside its
+  button, not inside it, so its changes are still announced however nested
+  roles are flattened.
 - **Replying.** **Reply in thread**, the tab's footer action, puts the
   composer into reply mode (`compose/reply.rs`): a row above the input says
   `Replying in thread to <author>: <start of the root>`, with **Cancel
