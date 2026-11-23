@@ -32,9 +32,10 @@ one that is not valid UTF-16LE, as `BadEncoding` bytes rather than text.
   manifest written as bytes, through `set_secret`: `0xFF 0xDF`, then
   `subspace-keychain/chunks/v2/<generation>/<count>/<length>/<digest>`, 141
   bytes. `0xFF` never occurs in UTF-8, and as UTF-16LE the first code unit is
-  `0xDFFF`, a low surrogate with nothing before it, so the bytes are text in
-  neither encoding at any length, even cut short; the odd length alone makes
-  Windows return them as bytes. The generation is 32 random hexadecimal
+  `0xDFFF`, a low surrogate with nothing before it, so no non-empty prefix of
+  the bytes is text in either encoding, even cut short; the odd length alone
+  makes Windows return them as bytes. Zero bytes read back as the empty
+  password, as they always have. The generation is 32 random hexadecimal
   digits, new for every save; the count (3 digits) and the secret's UTF-8
   length (9 digits) are zero-padded; the digest is the SHA-256 of the
   generation followed by the secret.
@@ -42,14 +43,19 @@ one that is not valid UTF-16LE, as `BadEncoding` bytes rather than text.
   secret, under `subspace-keychain#<scope hash>/<generation>/<index>`. The
   scope hash is the first 32 hexadecimal digits of the SHA-256 of
   `<service length>:<service><account>`, with ASCII letters in lower case,
-  so every service has its own namespace and derived names are at most 87
-  bytes for any account. Pieces are split between characters and hold at
+  so every service has its own namespace, spellings of a service or an
+  account that Windows treats as one share it, and derived names are at
+  most 87 bytes for any account. Pieces are split between characters and hold at
   most 960 UTF-16 code units; with its header of at most 37 units a chunk
   stays more than a fifth under the limit. A secret uses 2 to 256 chunks, at
-  most 240 KiB of ASCII.
+  most 240 KiB of ASCII. The piece size and the single-credential limit
+  belong to format version 2: a load accepts only the pieces they cut, so a
+  compile-time assertion ties the Windows limits to the version's, and
+  changing either needs a new version.
 - On Windows, an account name that contains a NUL, or the marker
-  `subspace-keychain#` in any case, or that is longer than 513 bytes, is
-  refused with `KeychainError` before anything is read or written. A long
+  `subspace-keychain#` in any case, or that is longer than 513 bytes, or a
+  service that contains a NUL, is refused with `KeychainError` before
+  anything is read or written. A long
   secret under a service so long that a derived target name would exceed
   32,767 bytes is refused before anything is written. The callers' accounts
   (`session`, GitHub logins and `fleet-api:<fleet>`) are unaffected.
@@ -67,12 +73,18 @@ one that is not valid UTF-16LE, as `BadEncoding` bytes rather than text.
   reports a failure reads the account's credential again and deletes its
   chunks only if that credential does not name them, since a write that
   reported a failure may have landed.
-- A delete deletes the account's credential, the commit, then sweeps: it
-  searches for the account's chunk names under this service and deletes
-  every one that the account's credential, read again, does not name. The
-  sweep is best effort. It skips names it cannot parse and items it cannot
-  delete, and once the account's credential is gone nothing can make the
-  delete return an error.
+- A save whose commit reports a failure, and whose account's credential
+  cannot then be read, keeps its chunks: the commit may have landed, and at
+  worst they are left over.
+- A delete deletes the account's credential, the commit. If that reports a
+  failure it reads the credential again and, if it is gone after all, goes
+  on as if the delete had succeeded. It then sweeps: it searches for the
+  account's chunk names under this service, and deletes every one that the
+  account's credential, read again, does not name and whose content starts
+  with the chunk header its name implies. The sweep is best effort. It
+  skips names it cannot parse and items it cannot read, that are not that
+  account's chunks, or that it cannot delete, and once the account's
+  credential is gone nothing can make the delete return an error.
 - Errors stay opaque: no file fallback, no provider details, and nothing logs
   a secret or a chunk. Copies of a secret or of its pieces made while
   splitting and joining, the bytes of a manifest read back and the SHA-256
@@ -124,7 +136,7 @@ refresh. Within a process a lock serialises split loads, saves and deletes.
 The commit is one credential write or delete, so a save or delete that stops
 at any step leaves either the previous state or the new one.
 
-### What can be left over, and when it goes
+### What can be left over, and when it goes (a known limit)
 
 Chunks that nothing names hold pieces of a secret, so they matter. They are
 left by a save that stops before its commit or fails to delete the
@@ -135,6 +147,13 @@ on this build removes them all: its sweep deletes every chunk of the account
 under the service that the account's credential does not name. Until then
 they stay in the user's credential store, under the same protection as the
 live secret.
+
+This is a known limit, accepted for now. For a user who never signs out,
+left-over generations accumulate whenever saves from two processes overlap
+or a save stops before its commit, and nothing reclaims them until a
+sign-out. Each is a superseded secret, such as an earlier session with its
+refresh token. A follow-up will consider reclaiming them by age or a
+cross-process lock.
 
 ### Two processes at once
 
@@ -153,17 +172,24 @@ live secret.
 
 The search pattern matches only `<namespace><32 hexadecimal digits>/<digits>`
 followed by `.` and the exact service, ignoring case as Windows does. Every
-name found is then parsed, and deleted only if the target name re-derived
-from its parts equals, case included, the name the store returned. Names of
-another service, another account, another case of the generation, an index
-with a leading zero or any other credential are left alone, and a found
-credential whose name cannot be read is skipped.
+name found is then parsed, and is a candidate only if the target name
+re-derived from its parts equals the name the store returned, ignoring ASCII
+case as Windows does. A candidate is then read, and deleted only if its
+content starts with the chunk header, `<generation>/<index>/`, of its name,
+so ownership rests on what is stored as well as on the name. Names of
+another service or another account, an index with a leading zero, and any
+credential that is not this account's chunk are left alone, and a found
+credential that cannot be read is skipped.
 
-Only ASCII letters are folded into the namespace. Windows treats accounts
-that differ only in the case of another letter (`É` and `é`) as one
-credential but they hash to different namespaces, so a split secret saved
-under one cannot be loaded under the other and fails closed. No caller uses
-such accounts.
+A save does not check whether a chunk's name is already taken before
+writing it: the name includes a new 128-bit random generation, so a
+collision with an existing credential is not a practical concern.
+
+Only ASCII letters are folded into the namespace, for both the service and
+the account. Windows treats names that differ only in the case of another
+letter (`É` and `é`) as one credential but they hash to different
+namespaces, so a split secret saved under one cannot be loaded under the
+other and fails closed. No caller uses such names.
 
 ### Earlier builds
 
@@ -187,8 +213,8 @@ secret stays one item holding the secret itself, so nothing changes there.
 The format code is the same on every platform. Only the limits differ,
 chosen with `cfg!(windows)`, so the Windows path compiles everywhere and its
 tests run on macOS and Linux against an in-memory store that holds every
-credential as a blob keyed by target name, reads it back with keyring's
-Windows rules, and refuses what Windows refuses: more than 2,560 bytes in a
+credential as a blob keyed by target name, compared without ASCII case,
+reads it back with keyring's Windows rules, and refuses what Windows refuses: more than 2,560 bytes in a
 credential, account names over 513 bytes and target names over 32,767.
 
 ## Delivery
@@ -281,6 +307,27 @@ it was meant to protect, and raised smaller points; each is resolved.
   reads the account's credential again first. The hash state is wiped, the
   bytes of a read are wrapped at once, the sweep's selection is a pure
   function, and `zeroize` sits in its sorted place in the workspace list.
+
+The third round found two remaining gaps and some smaller points; each is
+resolved as listed, within the same design.
+
+- A save whose commit reported a failure deleted its chunks when the
+  account's credential could not be read again, though the commit may have
+  landed: it now keeps them.
+- A delete that reported a failure returned it even when the account's
+  credential was gone: it now reads the credential again and succeeds if
+  it is.
+- The sweep decided ownership by name alone: it now also reads each
+  candidate and requires the chunk header its name implies.
+- The service was not folded as Windows folds it: the namespace and the
+  name comparison fold ASCII case of the service too, and a service with a
+  NUL is refused.
+- The piece size and the single-credential limit are tied to the format
+  version by a compile-time assertion.
+- The guarantee about the manifest's bytes is limited to non-empty
+  prefixes, and an empty credential is tested to read as the empty secret.
+- Left-over generations for a user who never signs out are recorded above
+  as a known limit.
 
 ## Tasks
 
