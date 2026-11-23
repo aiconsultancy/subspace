@@ -1428,6 +1428,38 @@ OAuth sessions, and the Docker volume. Back up
 the Ergo volume. Keep backups private. The installer leaves OS packages in
 place.
 
+### Upgrade notes
+
+Run the upgrade with `--dry-run` first. The installer checks every
+setting together before it changes the fleet, in the dry run and the real
+run alike, so when an upgrade introduces several new settings at once and
+one is refused, none of them is applied.
+
+- **IRC certificates are the default for a remote server (breaking).** A
+  remote fleet whose secrets file has IRC passwords for its rear admiral or
+  captains, and whose `fleet.json` does not set `irc.auth`, is refused until
+  you either add `"auth": "password"` under `irc` or move to certificates
+  ([IRC sign-in](#irc-sign-in)). To move without a gap, supply bundles you
+  generated yourself, bind the fingerprints the dry run prints, then remove
+  the officers' `ircPasswords` entries and upgrade. Local IRC keeps
+  passwords. `subspace-setup` writes `"auth": "password"` for a shared
+  server on its next run, so upgrade those fleets through setup (or the
+  host installer), not with the fleet installer and the installed inputs
+  alone.
+- **Captains start in their workspace.** Only new captains: a pinned root
+  never moves, and an installed captain keeps its root until its
+  `sessionRoot` moves it ([Captain sessions](#captain-sessions)). Asking a
+  pinned captain to move is refused before anything else in the run
+  applies.
+- **Slack bots for officers.** A rear admiral's new bot pins its root on
+  that run, which fixes its first repository; a captain's bot joins
+  whatever root its IRC registration has, so a captain kept in its first
+  repository is served there on both transports. Supply both tokens for
+  every bot first: a missing one stops the run.
+- **An existing PostgreSQL** is a `subspace-setup` setting, kept in its
+  answers; it changes nothing in the fleet installer's inputs and combines
+  with any of the above.
+
 ## Stargate pin
 
 The installer pins Stargate by commit: `STARGATE_REF` in
