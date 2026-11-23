@@ -678,8 +678,12 @@ It shows one thread at a time: a request, or any message with replies.
   leads, through held parents, to the root of the conversation's thread
   the chosen message is in, read by the same `ThreadRoots` as the counts,
   so the tab's replies and the count agree. A follow-up request made as a
-  reply shows its own steps with that thread's replies, so the answers to
-  it, and a reply sent from its tab, appear there. Nothing in a
+  reply shows its own steps with that thread's replies, under the heading
+  **Replies in this thread**, so the answers to it, and a reply sent from
+  its tab, appear there; its own status line counts no replies, as only a
+  thread's first message carries the thread's count. A kept ending is
+  always the timeline's end: a held notice that ended the request
+  otherwise, or came after the kept ending, is not a step. Nothing in a
   message's text places it in a thread. A step is a notice the buffer
   folded under the status line's trust rule (its server account equals the
   nick the held request asks); an untrusted notice is an ordinary reply and
@@ -695,8 +699,8 @@ It shows one thread at a time: a request, or any message with replies.
   once its root is no longer held (the line cap, or the conversation
   removed). A reply being written to it then stays in reply mode, marked
   gone: the row says the thread is no longer loaded, Enter sends nothing,
-  not even a command, and only **Write to the channel** leaves reply mode,
-  keeping the text. New replies and steps show live. A linked status line
+  not even a command, Escape keeps it, and only **Write to the channel**
+  leaves reply mode, keeping the text. New replies and steps show live. A linked status line
   keeps a status element inside its button, so its changes are still
   announced.
 - **Replying.** **Reply in thread**, the tab's footer action, puts the
@@ -739,9 +743,8 @@ are in the [change record](changes/irc-thread-status/spec.md).
   (`nick:`, `nick,` or `@nick`), or a private conversation's partner. A
   request whose sender's nick, or sender's `account` tag, is the addressed
   nick asks no one. Member lists play no part, so whoever holds the nick
-  later, only the account named after it folds. Owner decision, 21
-  November 2026: this overrides reviewer findings on the trust model.
-  Fleet IRC servers are private and tie each nick to the account of the
+  later, only the account named after it folds. This is the owner's rule
+  (21 November 2026), and the reason for it: fleet IRC servers are private and tie each nick to the account of the
   same name (`force-nick-equals-account`), so only the agent itself can
   send as its nick there. On other servers, an agent whose account is not
   named after its nick gets no status lines. Untrusted, unrecognised and

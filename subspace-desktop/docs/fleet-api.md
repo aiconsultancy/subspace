@@ -166,17 +166,24 @@ whoever asks; a **Retry** asked sooner reads each fleet it covered once,
 when that fleet's own five seconds end, never one saved, cleared or removed
 since, and never again on a timer.
 
-Every read, save and clear of a token runs on one ordered path
-(`service/queue.rs`): each waits for the one before and applies its result
-before the next starts, so the keychain and the service change in the
+Every read, save and clear of a fleet's token runs on that fleet's one
+ordered path (`service/queue.rs`; each fleet has its own, so a keychain
+call that waits on one fleet never holds up another): each waits for the
+one before and applies its result before the next starts, so the keychain and the service change in the
 order they were asked for, and a save asked before a clear never writes
 after the delete. A clear stops the token being used, followed or shared
 at once. A save, a clear or the fleet leaving the initiatives starts a new
 token generation for the fleet, and a read queued before it is dropped when
 it lands, so a cleared or replaced token never comes back, in memory or in
 the keychain. A token or address that cannot be saved is refused before
-anything changes, and a save or clear that fails reads the keychain again,
-so the fleet never stays **Checking**.
+anything changes, and a save that fails reads the keychain again, so the
+fleet never stays **Checking**. When the keychain refuses to delete a
+cleared token, the fleet says **Token not removed** (`ClearFailed`): the
+token is not used, followed or shared, a Retry does not bring it back,
+and Settings says the keychain may still hold it at the next start and
+offers **Clear token** again; saving a token also resolves it. Each fleet
+has at most one re-read queued, and a waiting Retry checks the deadline
+again before reading, so one click never reads the keychain twice.
 See the Fleet Console's [README](../web-spaces/fleet-console/README.md#fleets).
 
 ## Fixtures

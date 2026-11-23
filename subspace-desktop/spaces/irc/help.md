@@ -678,8 +678,8 @@ message. Commands and attachments can't be sent as a reply; cancel the reply
 first. When the server can't mark replies (it lacks `message-tags`) or the
 network is not connected, the tab says so in place of the action. If the
 message you are replying to is no longer loaded, your reply is kept but
-not sent: choose **Write to the channel** to send it as an ordinary message
-instead. A long thread shows its latest 40 replies and says how many
+not sent, and `Esc` keeps it so: choose **Write to the channel** to send it
+as an ordinary message instead. A long thread shows its latest 40 replies and says how many
 earlier ones are in the channel.
 
 ### Move through messages with the keyboard

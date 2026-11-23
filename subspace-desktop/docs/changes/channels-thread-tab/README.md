@@ -359,6 +359,83 @@ against the code. Findings both raised are listed once.
     `2565a0e`: the test and this record say it covers a view leaving the
     front; the release on close is not driven by a test.
 
+### Second round
+
+Second reviews of head `32fa227`: Claude Opus 5.5 (high effort, clear,
+six P3) and GPT-6.2 Sol (high effort, not clear: three high, four medium,
+two low).
+
+**GitHub access, closed by proof** (Sol's three highs):
+
+15. **An older refusal landing late lowered the stored refusal, so a list
+    that started between them lifted the newer one** (Sol high). Real.
+    Fixed in `c49e37b`: each pull request's access is two numbers that only
+    rise, the latest start tick of a read that landed refused and of one
+    that landed with a success; it is refused exactly when the first is
+    larger. The invariant is in `references/access.rs`.
+16. **A sign-in or sign-out of an unrelated account cleared the active
+    account's refusals** (Sol high). Real. Fixed in `c49e37b`: nothing
+    clears the access record, so a refusal stays while any retained list or
+    detail could answer. The old test that pinned the clearing,
+    `another_account_signing_out_forgets_reads_and_reads_again`, became
+    `another_account_signing_out_keeps_this_account_s_refusal`.
+17. **The GitHub client reported a plain 403 as 502** (Sol high). Real.
+    Fixed in the client in `2465e93`: a 403 without rate-limit or SSO
+    indicators stays 403, with no public signature changed. The Actions
+    scope message, the one other place that read the old 502, now matches
+    the 403. Tests: the transport's own, and
+    `a_plain_403_from_github_is_an_access_refusal` through the transport and
+    the resolver (it failed with the old mapping).
+18. **The model test** (`references/access/model.rs`) plays every
+    interleaving of six reads of one pull request: every start order and
+    outcome (a section succeeds or fails, a detail or reference read
+    succeeds, is refused or fails), every landing order, and with nothing,
+    a refresh, an unrelated sign-out or both between the third and fourth
+    landings: 729 × 720 × 4 runs, checked after each landing (12.6 million
+    checks). It found no ordering beyond Sol's three once the record was
+    monotone. It exercises the decision functions the three paths call,
+    not the GPUI wiring around them, which the render tests cover.
+
+**Fleet** (Sol medium, Opus P3):
+
+19. **A failed clear brought the token back** (Sol medium, Opus P3). Real.
+    Fixed in `43781b5`: the fleet says **Token not removed**, the token is
+    not used, followed or shared, a Retry does not bring it back, Settings
+    says the keychain may still hold it at the next start and offers
+    **Clear token** again, and saving a token resolves it. Test
+    `a_failed_clear_keeps_the_token_out_of_use_until_cleared_again_or_replaced`.
+20. **A waiting Retry could read again right after a manual one** (Sol
+    medium). Real. Fixed in `43781b5`: one re-read queued per fleet at most,
+    and the waiting Retry checks the deadline again. Test
+    `a_waiting_retry_never_reads_again_right_after_a_manual_one`.
+21. **One queue for every fleet** (Opus P3). Real. Fixed in `43781b5`: one
+    queue per fleet. Not tested: the test executor cannot hold one keychain
+    call while another runs.
+
+**Channels** (Sol, Opus P3):
+
+22. **Escape dropped a gone reply's guard** (Sol medium). Real. Fixed in
+    `2e2b108`; the render test sends `/part`, presses Escape, sends `/part`
+    again, and nothing is sent. Deleting the text does not lift the guard:
+    only **Write to the channel** does.
+23. **A held terminal notice overrode the kept ending** (Sol medium). Real.
+    Fixed in `2e2b108`. Test `a_kept_ending_is_the_end_whatever_notice_is_held`.
+24. **A follow-up request's tab count disagreed with its status line**
+    (Opus P3). Real. Fixed in `2e2b108` by wording: its heading reads
+    **Replies in this thread**; its own status line counts none, as only a
+    thread's first message carries the count.
+25. **`MAX_REPLIES` under the replies doc comment** (Opus P3). Fixed in
+    `2e2b108`.
+26. **The docs said only Write to the channel leaves a gone reply, while
+    Escape did** (Opus P3). Now true: fixed by 22.
+27. **A status element nested in a button may not be announced** (Opus P3).
+    Fixed in `35083bc`: the status element sits beside the button, which
+    still draws and opens the whole line.
+28. **The fixture's JOIN race** (Sol low). Real. Fixed in `5da66b0`. Not run
+    against a server in this round.
+29. **The trust paragraph addressed reviewers** (Sol low). Reworded in this
+    commit to state the owner's rule and its reason only.
+
 ## Captures
 
 Captured on macOS with `make capture` at 1440 x 900 in Twilight Two, with
