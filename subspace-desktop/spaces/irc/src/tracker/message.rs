@@ -11,7 +11,7 @@ use gpui_kit::{
 };
 use subspace_client_irc::Target;
 
-use super::flow::{self, Origin};
+use super::flow::{self, Binding, Origin};
 pub(crate) use super::quote::Kind;
 use super::quote::{Quoted, choices, decision_draft, issue_draft};
 use super::write::{Job, title_of};
@@ -41,7 +41,10 @@ pub(crate) struct Dialog {
     pub(crate) title: Entity<InputState>,
     choices: Vec<String>,
     pub(crate) chosen: Option<String>,
-    error: Option<String>,
+    pub(crate) error: Option<String>,
+    /// The account, organisation and tracker the dialog opened under: its
+    /// button writes only while they are still current.
+    binding: Binding,
     previous_focus: Option<FocusHandle>,
     _subscription: Subscription,
 }
@@ -61,6 +64,9 @@ pub(crate) fn open(
         return;
     };
     let Some((quoted, named)) = message(conversation, seq, cx) else {
+        return;
+    };
+    let Some(binding) = flow::bind(conversation, cx) else {
         return;
     };
     let (choices, chosen) = choices(kind, &named, &facts.in_play, &facts.projects);
@@ -95,6 +101,7 @@ pub(crate) fn open(
         choices,
         chosen,
         error: None,
+        binding,
         previous_focus,
         _subscription: subscription,
     });
@@ -185,10 +192,19 @@ pub(crate) fn confirm(
             decision_draft(&dialog.quoted, issue, &title, context).map(Job::Decide)
         }
     };
+    let job = job.and_then(|job| {
+        flow::still_bound(&dialog.binding, conversation.hub.read(cx)).map(|client| (job, client))
+    });
     match job {
-        Ok(job) => {
+        Ok((job, client)) => {
             dialog.error = None;
-            flow::start(conversation, job, Origin::Dialog, window, cx);
+            flow::start_with(
+                conversation,
+                (job, Origin::Dialog),
+                Some(client),
+                window,
+                cx,
+            );
         }
         Err(reason) => {
             dialog.error = Some(reason);

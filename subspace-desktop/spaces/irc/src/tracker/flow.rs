@@ -3,7 +3,10 @@
 //! composer or the dialog waits while it runs and keeps its text when it
 //! is refused.
 
+use std::sync::Arc;
+
 use gpui_kit::{AppContext as _, Context, Window};
+use subspace_api_client::Client;
 use subspace_client_irc::Target;
 
 use super::message::Dialog;
@@ -14,6 +17,9 @@ use crate::conversation::Conversation;
 /// Why a tracker command with attachments was kept.
 pub(crate) const ATTACHMENTS: &str =
     "Tracker commands don't take attachments. Send the files on their own.";
+/// Why a dialog's button wrote nothing after the account, organisation
+/// or tracker changed.
+pub(crate) const SCOPE_CHANGED: &str = "You switched account, organisation or tracker since this opened, so nothing was written. Close it and open it again.";
 /// Why nothing could be written without a client.
 const NO_CLIENT: &str = "Couldn't reach Subspace API. Check Settings › Account, then try again.";
 
@@ -26,6 +32,37 @@ pub(crate) struct State {
     /// The issues asked for again after a write, which tests read back.
     #[cfg(test)]
     pub refreshed: Vec<String>,
+}
+
+/// What a dialog opened under: the API client of the signed-in account and
+/// organisation then, and the tracker (its profile and API origin).
+pub(crate) struct Binding {
+    client: Arc<Client>,
+    tracker: (String, String),
+}
+
+/// What `conversation` would write under now, when it can write at all.
+pub(crate) fn bind(conversation: &Conversation, cx: &mut Context<Conversation>) -> Option<Binding> {
+    let tracker = tracker_of(conversation.hub.read(cx))?;
+    let client = conversation.hub.update(cx, |hub, _| hub.tracker.client())?;
+    Some(Binding { client, tracker })
+}
+
+/// The client `binding` holds, while the account, organisation and tracker
+/// it opened under are still current; otherwise why not.
+pub(crate) fn still_bound(binding: &Binding, hub: &crate::hub::Hub) -> Result<Arc<Client>, String> {
+    let same_tracker = tracker_of(hub).is_some_and(|now| now == binding.tracker);
+    if same_tracker && !binding.client.account_changed() {
+        Ok(Arc::clone(&binding.client))
+    } else {
+        Err(SCOPE_CHANGED.to_owned())
+    }
+}
+
+/// The tracker the hub's Issues scope names: its profile and API origin.
+fn tracker_of(hub: &crate::hub::Hub) -> Option<(String, String)> {
+    let scope = hub.issues.scope()?;
+    Some((scope.profile_id.clone(), scope.api_origin.clone()))
 }
 
 /// Where a write came from, which keeps its text if it is refused.
@@ -85,8 +122,8 @@ pub(crate) fn context(conversation: &Conversation, cx: &gpui_kit::App) -> String
     }
 }
 
-/// Starts `job` in the background; the notice says it is running, then
-/// what came of it.
+/// Starts `job` in the background with the current account's client; the
+/// notice says it is running, then what came of it.
 pub(crate) fn start(
     conversation: &mut Conversation,
     job: Job,
@@ -94,10 +131,21 @@ pub(crate) fn start(
     window: &mut Window,
     cx: &mut Context<Conversation>,
 ) {
+    let client = conversation.hub.update(cx, |hub, _| hub.tracker.client());
+    start_with(conversation, (job, origin), client, window, cx);
+}
+
+/// Starts `job` from `origin` in the background with `client`.
+pub(crate) fn start_with(
+    conversation: &mut Conversation,
+    (job, origin): (Job, Origin),
+    client: Option<Arc<Client>>,
+    window: &mut Window,
+    cx: &mut Context<Conversation>,
+) {
     if conversation.tracker.busy {
         return;
     }
-    let client = conversation.hub.update(cx, |hub, _| hub.tracker.client());
     let Some(client) = client else {
         finish(conversation, Err(NO_CLIENT.to_owned()), origin, window, cx);
         return;

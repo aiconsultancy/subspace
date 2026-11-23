@@ -21,6 +21,7 @@ use crate::tests::completion::{focused_composer as composer, labels, reveal, tex
 use crate::tests::{channel_events, inject, mount, settings};
 
 mod composer;
+mod dialog;
 
 fn with_id(mut line: Line, id: &str) -> Line {
     line.id = Some(id.into());
@@ -252,11 +253,13 @@ fn the_toolbar_shows_on_the_hovered_message_and_hovering_writes_nothing(cx: &mut
     assert!(mock.requests().is_empty(), "hovering writes nothing");
 }
 
-#[gpui_kit::test]
-fn make_issue_writes_only_from_its_dialog(cx: &mut TestAppContext) {
-    let mock = creating();
-    let (conversation, hub, cx) = open(cx, true, Some(&mock));
-    let m2 = seq(&hub, "m2", cx);
+/// Opens Make issue on bob's `m2` from its toolbar.
+fn open_make_issue(
+    conversation: &Entity<Conversation>,
+    hub: &Entity<Hub>,
+    cx: &mut VisualTestContext,
+) {
+    let m2 = seq(hub, "m2", cx);
     conversation.update(cx, |conversation, cx| {
         crate::conversation::hover(conversation, m2, true, cx)
     });
@@ -265,6 +268,13 @@ fn make_issue_writes_only_from_its_dialog(cx: &mut TestAppContext) {
     cx.update(|window, cx| window.click(make, cx));
     cx.update(|window, cx| window.render_frame(cx));
     assert!(found("irc-tracker-dialog".into(), cx));
+}
+
+#[gpui_kit::test]
+fn make_issue_writes_only_from_its_dialog(cx: &mut TestAppContext) {
+    let mock = creating();
+    let (conversation, hub, cx) = open(cx, true, Some(&mock));
+    open_make_issue(&conversation, &hub, cx);
     assert!(
         mock.requests().is_empty(),
         "opening the dialog writes nothing"
