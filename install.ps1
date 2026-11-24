@@ -782,8 +782,10 @@ function Invoke-Install {
     if ($hosted) { Remove-Item -Force -ErrorAction SilentlyContinue $apiFile }
     Write-DesktopConfig $IrcTarget
     Say "Done. Fleet '$($s.SUBSPACE_FLEET_NAME)' is running on a private VM."
-    Note "1. Bring the agents online: .\install.ps1 providers login codex-device --target $Target"
-    Note '   (or claude, codex). The agents stay offline until CLIProxyAPI has an account.'
+    Note "1. Sign in to the fleet's shared CLIProxyAPI for the models you chose:"
+    Note "   Claude: .\install.ps1 providers login claude --target $Target"
+    Note "   Codex:  .\install.ps1 providers login codex-device --target $Target"
+    Note "   Check existing accounts with .\install.ps1 providers --target $Target."
     Note "2. Start the tunnel:   .\install.ps1 tunnel --target $Target --background"
     Note '3. Run the desktop app (it signs in to 127.0.0.1:3000 as the admin).'
     Note "4. Check privacy:      .\install.ps1 audit --target $Target"

@@ -875,8 +875,10 @@ do_install() {
     if "$hosted"; then rm -f "$state/api-target"; fi
     IRC_TARGET=$irc_target write_desktop_config
     say "Done. Fleet '$SUBSPACE_FLEET_NAME' is running on a private VM."
-    note "1. Bring the agents online: ./install.sh providers login codex-device --target $target"
-    note "   (or claude, codex). The agents stay offline until CLIProxyAPI has an account."
+    note "1. Sign in to the fleet's shared CLIProxyAPI for the models you chose:"
+    note "   Claude: ./install.sh providers login claude --target $target"
+    note "   Codex:  ./install.sh providers login codex-device --target $target"
+    note "   Check existing accounts with ./install.sh providers --target $target."
     note "2. Start the tunnel:   ./install.sh tunnel --target $target --background"
     note "3. Run the desktop:    make run    (it signs in to 127.0.0.1:3000 as the admin)"
     note "4. Check privacy:      ./install.sh audit --target $target"

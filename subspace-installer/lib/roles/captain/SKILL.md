@@ -14,7 +14,4 @@ description: Plan a change, delegate bounded parts to your crew through Stargate
 3. Collect each hand-back with `wait` or `status` on its `taskID`. A crew
    member's final answer is its result. Answer questions that arrive through
    `stargate_dm` and read `stargate_mail` when a notice points you there.
-4. Resolve overlaps and review the combined diff. Crew commit as you, so check
-   every commit and branch before you push or open a pull request.
-5. Run the checks and report the result, the pull request and any remaining
-   risk in $channel.
+$completion

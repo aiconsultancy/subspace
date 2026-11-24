@@ -274,6 +274,9 @@ def parse_args(argv):
     parser.add_argument("--inputs", default=str(INPUTS), help=argparse.SUPPRESS)
     parser.add_argument("--dry-run", action="store_true", help="validate the inputs only, changing nothing")
     parser.add_argument("--non-interactive", action="store_true", help="never prompt; fail on missing answers")
+    parser.add_argument("--captain-tools", choices=["standard", "delegate"],
+                        help="standard lets captains code; delegate reserves coding for crew and lets captains "
+                        "inspect changes, create GitHub PRs and use the Subspace API. Kept on later runs")
     return parser.parse_args(argv)
 
 
@@ -334,6 +337,13 @@ def gather(args, saved):
             crew[family] = flag
         elif family not in crew:
             crew[family] = int(prompt(f"{family.title()}-family crew per captain", "2", interactive) or 2)
+    if args.captain_tools is not None:
+        answers["captainTools"] = args.captain_tools
+    elif interactive and not saved and not (INPUTS / "fleet.json").exists():
+        policy = prompt("Captain tools: standard (captains can code) or delegate (crew code; captains manage work, PRs and issues)",
+                        "standard", interactive)
+        require(policy in ("standard", "delegate"), "Choose standard or delegate for --captain-tools.")
+        answers["captainTools"] = policy
     models = answers.setdefault("crewModels", {})
     for family, flag in (("claude", args.crew_claude_model), ("codex", args.crew_codex_model)):
         if flag == "":
@@ -827,6 +837,8 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         if answers.get("ircCa"):
             config["irc"]["caFile"] = answers["ircCa"]
     previous = read_json(INPUTS / "fleet.json", {})
+    if policy := answers.get("captainTools", previous.get("captainTools")):
+        config["captainTools"] = policy
     # Each crew family's model: this or an earlier run's answer, else one set in fleet.json by hand.
     for family, crew in config["crew"].items():
         chosen = answers.get("crewModels", {})

@@ -198,6 +198,24 @@ class SetupInputsTests(unittest.TestCase):
                                                           ("claude", "claude-opus-5-5", "xhigh"),
                                                           ("claude", "claude-opus-5-5", "xhigh")])
 
+    def test_captain_delegate_policy_grants_pull_requests_and_leaves_coding_to_crew(self):
+        args = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion",
+                "--no-demo", "--repositories", "https://github.com/example/project.git", "--captain-tools", "delegate"]
+        answers, members, config, secrets, _ = self.generate(args)
+        cfg = validate(config, secrets, check_files=False)
+        rear, captain = cfg["members"]
+        self.assertFalse(rear.get("delegatesCoding"))
+        self.assertTrue(captain["delegatesCoding"])
+        grants = {(rule["action"], rule["resource"]) for rule in captain["harness"]["permissions"]
+                  if rule["effect"] == "allow"}
+        self.assertIn(("shell", "subspace-github gh pr create *"), grants)
+        self.assertIn(("shell", "git diff *"), grants)
+        self.assertNotIn(("edit", "*"), grants)
+        self.assertNotIn(("shell", "git commit *"), grants)
+        self.assertNotIn(("shell", "make *"), grants)
+        again = self.rerun(answers, config)
+        self.assertEqual(fleet_setup.fleet_config(again, members, "a" * 40)["captainTools"], "delegate")
+
     def test_officer_models_are_set_by_option_and_kept_on_a_rerun(self):
         base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
         answers, members, config, secrets, _ = self.generate(
