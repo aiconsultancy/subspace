@@ -20,6 +20,8 @@ use crate::thread_status::PROGRESS_TAG;
 use crate::view::InspectorTab;
 use crate::{Irc, view};
 
+mod live;
+
 const SHIP: &str = "#aurora-lyra";
 
 /// mira's request `ask1` to the captain at minute 4.
@@ -181,10 +183,9 @@ fn a_reply_count_opens_a_message_s_thread_and_new_replies_arrive_live(cx: &mut T
     );
     settle(cx);
     cx.update(|window, _| {
+        let link = window.find("irc-replies:plain");
         assert_eq!(
-            window
-                .find("irc-replies:plain")
-                .label()
+            link.label()
                 .map(|label| label.ends_with("Opens the thread")),
             Some(true)
         );
@@ -205,8 +206,15 @@ fn a_reply_count_opens_a_message_s_thread_and_new_replies_arrive_live(cx: &mut T
         vec![Event::Line(reply("aurora-lyra", "m2", "m1", 6))],
         cx,
     );
-    settle(cx);
+    cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.update(|window, _| {
+        let count = window.find("irc-replies:plain");
+        assert!(
+            count
+                .label()
+                .is_some_and(|label| label.starts_with("2 replies"))
+        );
+        assert!(window.find("inspector-section:Replies · 2").visible());
         let replies = window.within("irc-thread-replies");
         assert!(
             replies

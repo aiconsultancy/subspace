@@ -90,6 +90,31 @@ fn a_request_without_an_addressee_or_a_notice_without_an_account_folds_nothing()
 }
 
 #[test]
+fn inline_mentions_fold_only_for_one_distinct_addressed_account() {
+    for (text, folds) in [
+        ("Could you check this, @ASTRA?", true),
+        ("Thanks, @astra. Could you check this?", true),
+        ("Ask (@astra) or wait for @ASTRA.", true),
+        ("Compare @astra and @nova.", false),
+        ("Contact pilot@astra.example.", false),
+    ] {
+        let mut state = joined(vec![ship(), member("nova", "")]);
+        let mut line = request(&room(), "first", 1);
+        line.text = text.into();
+        live(
+            &mut state,
+            [
+                line,
+                progress(&room(), "first", "tool", 2),
+                notice_from(("nova", Some("nova")), &room(), "first", "completed", 3),
+            ],
+        );
+        assert_eq!(is_folded(&state, &room(), "astra-first-2"), folds, "{text}");
+        assert!(!is_folded(&state, &room(), "nova-first-3"), "{text}");
+    }
+}
+
+#[test]
 fn trusted_progress_never_counts_or_notifies_but_a_lookalike_does() {
     let private = query("astra");
     let mut state = joined(vec![ship(), member("nova", "")]);

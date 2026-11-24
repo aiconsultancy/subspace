@@ -100,11 +100,12 @@ fn is_channel_name(name: &str) -> bool {
         && !name[1..].contains(NOT_IN_CHANNEL)
 }
 
-fn is_nick(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_alphanumeric() || NICK_SPECIAL.contains(&c))
+pub(crate) fn is_nick_char(character: char) -> bool {
+    character.is_alphanumeric() || NICK_SPECIAL.contains(&character)
+}
+
+pub(crate) fn is_nick(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(is_nick_char)
 }
 
 /// What `word` holds: a pull request, a URL, a `#channel`, an
