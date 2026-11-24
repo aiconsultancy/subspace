@@ -74,6 +74,9 @@ pub(super) fn motd_end(session: &mut Session, message: &Message, out: &mut Outpu
     numerics::other(session, message, out);
     let start = session.listing.begin_once();
     out.send.extend(start.then(list));
+    if start {
+        out.send.extend(super::history::targets::request(session));
+    }
 }
 
 /// `RPL_LISTSTART` (321) says nothing the list does not.

@@ -58,6 +58,21 @@ fn missed_lines_go_in_time_order_once_each() {
 }
 
 #[test]
+fn replayed_first_direct_message_adds_an_unread_conversation() {
+    let mut state = state();
+    let alice = query("alice");
+    let line = with_id(
+        message(&alice, "alice", "while you were away", 1),
+        "offline",
+    );
+
+    assert!(state.apply(Event::Replayed(line.clone()), at(2)).is_none());
+    assert!(state.apply(Event::Replayed(line), at(2)).is_none());
+    assert_eq!(texts(&state, &alice), ["while you were away"]);
+    assert_eq!(state.buffer(&alice).unwrap().unread, 1);
+}
+
+#[test]
 fn restored_lines_count_nothing_and_skip_removed_buffers() {
     let mut state = state();
     let room = channel("#subspace");
