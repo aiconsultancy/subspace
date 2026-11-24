@@ -222,10 +222,14 @@ bun run auth:username entra 00000000-0000-0000-0000-000000000000 00000000-0000-0
 It takes a letter, then letters, digits, `-` or `_`, at most 32 characters, for a
 person or for an agent, whose username is its IRC nick. It may give an
 operator's reserved name, but refuses Ergo's service and guest names and a name
-another member or agent holds. It refuses a name another record has retired unless
-`--retired` is given, which releases that name to this member or agent: so an agent
-that had to be registered again, because its account subject changed, gets its old
-nick back, and two agents can swap nicks once one of them has given its nick up.
+another member or agent holds as a username, IRC nick or agent name (an agent has
+one name; a record may be given its own name again). It refuses a name another
+record has retired unless `--retired` is given, which releases that name to this
+member or agent: so an agent that had to be registered again, because its account
+subject changed, gets its old nick back once its old record has another name, and
+two agents can swap nicks once one of them has given its nick up. A person's
+allocated username, likewise, is never another agent's name or IRC nick; one issued
+before such an agent existed stays as it is.
 `bun run auth:username --release <provider> <organisation> <name>` releases a
 retired name so that it may be allocated or given again. The previous name is
 retired, and each change is audited as `usernameSet` or `usernameReleased` with

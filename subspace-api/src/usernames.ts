@@ -1,4 +1,15 @@
-import { and, asc, eq, inArray, isNull, ne, sql, type SQLWrapper } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  or,
+  sql,
+  type SQLWrapper,
+} from "drizzle-orm";
 import { Context, Effect, Schedule } from "effect";
 import { type Database } from "./db";
 import { auditLogs, fleets, organisations, retiredUsernames, users } from "./schema";
@@ -161,9 +172,24 @@ export const lockUsernames = (db: Db, organisationId: string) =>
     .for("no key update");
 
 /**
- * The first candidate username for a person in an organisation that no record holds, that was
- * never issued and retired, and that is not reserved. Call it inside a transaction that holds
- * `lockUsernames`; the unique index and the retirement trigger are the final guarantee.
+ * Whether a record other than `userId` holds a name, as a username, an IRC nick or an agent's
+ * name: an agent has one name, so a person's username is never another agent's name either.
+ */
+const heldByAnother = (key: string, userId?: string) =>
+  and(
+    userId ? ne(users.id, userId) : undefined,
+    or(
+      eq(usernameKey(users.username), key),
+      eq(usernameKey(users.agentIrcNick), key),
+      and(isNotNull(users.agentRank), eq(usernameKey(users.displayName), key)),
+    ),
+  );
+
+/**
+ * The first candidate username for a person in an organisation that no record holds as a
+ * username, an IRC nick or an agent's name, that was never issued and retired, and that is not
+ * reserved. Call it inside a transaction that holds `lockUsernames`; the unique index and the
+ * retirement trigger are the final guarantee.
  */
 export const allocateUsername = (
   db: Db,
@@ -179,13 +205,24 @@ export const allocateUsername = (
         const candidate = candidates.next().value!;
         if (!isReservedUsername(candidate, reserved)) batch.push(candidate);
       }
+      // People and agents share one namespace: an agent's name counts as well as its nick.
       const held = yield* db
-        .select({ name: sql<string>`${usernameKey(users.username)}` })
+        .select({
+          username: sql<string | null>`${usernameKey(users.username)}`,
+          nick: sql<string | null>`${usernameKey(users.agentIrcNick)}`,
+          agentName: sql<
+            string | null
+          >`case when ${users.agentRank} is not null then ${usernameKey(users.displayName)} end`,
+        })
         .from(users)
         .where(
           and(
             eq(users.organisationId, organisationId),
-            inArray(usernameKey(users.username), batch),
+            or(
+              inArray(usernameKey(users.username), batch),
+              inArray(usernameKey(users.agentIrcNick), batch),
+              and(isNotNull(users.agentRank), inArray(usernameKey(users.displayName), batch)),
+            ),
           ),
         );
       const retired = yield* db
@@ -197,7 +234,10 @@ export const allocateUsername = (
             inArray(retiredUsernames.name, batch),
           ),
         );
-      const taken = new Set([...held, ...retired].map((row) => row.name));
+      const taken = new Set([
+        ...held.flatMap((row) => [row.username, row.nick, row.agentName]),
+        ...retired.map((row) => row.name),
+      ]);
       const free = batch.find((candidate) => !taken.has(candidate));
       if (free) return free;
     }
@@ -384,9 +424,10 @@ const releaseRetired = (db: Db, organisationId: string, name: string) =>
  * Sets a member's or an agent's username explicitly, as the username command does: so that the
  * owner of an existing IRC account is given that account's name, or an agent that had to be
  * registered again gets its old nick back. For an agent the name is its IRC nick. An operator's
- * reserved name is allowed; Ergo's service and guest names, and a name another record holds, are
- * refused. A name another record retired is refused unless `reuseRetired`, which releases it to
- * this record. The old name is retired by the database, and every change is audited.
+ * reserved name is allowed; Ergo's service and guest names, and a name another record holds as
+ * its username, IRC nick or agent name, are refused (a record's own name may be set again). A
+ * name another record retired is refused unless `reuseRetired`, which releases it to this record.
+ * The old name is retired by the database, and every change is audited.
  */
 export const setUsername = (
   db: Db,
@@ -419,14 +460,19 @@ export const setUsername = (
           return yield* Effect.fail(
             new UsernameRefused("No member or agent has that organisation and subject."),
           );
+        // A name the record already has may be set again, even where it already matches another
+        // agent's name: names an organisation shares that way stay until one of them changes.
+        const unchanged =
+          record.username !== null && canonicalName(record.username) === canonicalName(name);
         const [holder] = yield* tx
           .select({ id: users.id })
           .from(users)
           .where(
             and(
               eq(users.organisationId, org.id),
-              eq(usernameKey(users.username), canonicalName(name)),
-              ne(users.id, record.id),
+              unchanged
+                ? and(ne(users.id, record.id), eq(usernameKey(users.username), canonicalName(name)))
+                : heldByAnother(canonicalName(name), record.id),
             ),
           );
         if (holder)
