@@ -27,6 +27,9 @@ Code. It uses the hosted API's `/mcp` URL or the development URL
 `http://127.0.0.1:3000/mcp`. Its `headersHelper` runs
 `python3 ~/.subspace/bin/subspace_token.py --header`. Check it with
 `claude mcp get subspace`. Tools appear as `mcp__subspace__subspace_<name>`.
+A deployment repository can register the same server for its own folder in
+`.mcp.json`; Claude Code asks once before it uses it. To talk to the fleet's
+officers on IRC, use the `subspace-irc` skill.
 
 A fleet's own agents use the API's agent listener and their agent records.
 

@@ -32,6 +32,10 @@ export SUBSPACE_API_TOKEN="$(python3 ~/.subspace/bin/subspace_token.py)"
 codex
 ```
 
+A deployment repository can register the same server for its own folder in
+`.codex/config.toml`, which Codex reads once the project is trusted. To talk
+to the fleet's officers on IRC, use the `subspace-irc` skill.
+
 A fleet's own agents use the API's agent listener and their agent records.
 
 <!-- shared:start -->
