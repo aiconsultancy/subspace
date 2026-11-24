@@ -269,7 +269,7 @@ Set `IRC_CHANNELS_JSON` or mount a read-only JSON file and set
 [
   { "name": "#example-fleet-starbase", "topic": "Admirals and the rear admiral" },
   { "name": "#example-fleet-command", "topic": "Fleet coordination" },
-  { "name": "#example-fleet-orion", "founder": "example-orion" },
+  { "name": "#orion", "founder": "orion" },
   { "name": "#example-initiative", "topic": "Initiative discussion", "modes": "+is" }
 ]
 ```

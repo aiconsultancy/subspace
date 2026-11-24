@@ -37,6 +37,16 @@ SENTRY_TOKEN = "fixture-sentry-read-token"
 MEDICAL_ACCOUNT = "example-medical"
 
 
+def legacy_names(config):
+    """The example fleet as subspace-setup installed fleets before plain officer names: fleet-prefixed accounts
+    (example-<id>), slot-named crew and no officerNames, which keeps those accounts and #<slug>-<id> ship channels."""
+    config.pop("officerNames", None)
+    for person in [config["rearAdmiral"], *config["captains"]]:
+        person["account"] = f"example-{person['id']}"
+        person.pop("crewNames", None)
+    return config
+
+
 class IRC(socketserver.StreamRequestHandler):
     def handle(self):
         nick = "*"
@@ -104,6 +114,7 @@ class Refusal(Exception):
     def __init__(self, status, message=""):
         super().__init__(message or f"HTTP {status}")
         self.status = status
+        self.detail = message
 
 
 class Subspace:
@@ -282,14 +293,21 @@ class Subspace:
         if (body["rank"] == "captain") != bool(ship) and body["rank"] != "crew":
             raise Refusal(400, "A captain needs a ship; a rear admiral must not supply one.")
         nick = body["ircNick"] if "ircNick" in body else (old or {}).get("ircNick")
+        # An agent has one name: a new or changed name may not be another's nick, nor a new nick another's name.
+        new_name = old is None or old["name"].lower() != body["name"].lower()
+        new_nick = bool(nick) and (old is None or (old.get("ircNick") or "").lower() != nick.lower())
         for row in self.agents.values():
             if row is old:
                 continue
+            row_nick = (row.get("ircNick") or "").lower()
             if (row["serviceTokenClientId"] == subject or row["name"].lower() == body["name"].lower()
-                    or (nick and (row.get("ircNick") or "").lower() == nick.lower())):
-                raise Refusal(409, "An account subject, agent name or IRC nick is already registered.")
-        return {"name": body["name"], "rank": body["rank"], "fleetId": fleet["id"], "shipId": body.get("shipId"),
-                "defaultModel": body["defaultModel"], "serviceTokenClientId": subject, "ircNick": nick}
+                    or (nick and row_nick == nick.lower()) or (new_name and row_nick == body["name"].lower())
+                    or (new_nick and row["name"].lower() == nick.lower())):
+                raise Refusal(409, f"An account subject, agent name or IRC nick is already registered: agent "
+                                   f"{row['name']} of fleet {row['fleet']} has it.")
+        return {"name": body["name"], "rank": body["rank"], "fleetId": fleet["id"], "fleet": fleet["slug"],
+                "shipId": body.get("shipId"), "defaultModel": body["defaultModel"], "serviceTokenClientId": subject,
+                "ircNick": nick}
 
     def summary(self):
         """The records a desktop reads: the fleets' channels, ships and active officers."""
@@ -392,7 +410,9 @@ class Sentry(BaseHTTPRequestHandler):
 
 
 def write(example):
-    cfg = json.loads(Path(example).read_text())
+    # The container smoke keeps the fleet-prefixed accounts its checks name (example-<id>): a fleet installed
+    # before plain officer names, which the installer keeps as it was.
+    cfg = legacy_names(json.loads(Path(example).read_text()))
     cfg["irc"].update(host="127.0.0.1", caFile=str(WORK / "irc.pem"))
     # The fixture IRC server takes SASL PLAIN only; policy_test.py covers certificates (SASL EXTERNAL).
     cfg["irc"]["auth"] = "password"

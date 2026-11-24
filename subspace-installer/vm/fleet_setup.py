@@ -125,9 +125,19 @@ class SetupError(Exception):
 
 
 class ApiError(SetupError):
-    def __init__(self, message, status):
-        super().__init__(message)
+    def __init__(self, message, status, detail=""):
+        super().__init__(message + (f" {detail}" if detail else ""))
         self.status = status
+        self.detail = detail
+
+
+def problem_detail(error):
+    """The detail of an API problem response, one line of at most 400 characters, or ''."""
+    try:
+        detail = json.load(error).get("detail")
+    except (ValueError, AttributeError, OSError):
+        return ""
+    return " ".join(str(detail).split())[:400] if isinstance(detail, str) else ""
 
 
 def say(message):
@@ -189,7 +199,13 @@ def parse_args(argv):
     parser.add_argument("--name", help="fleet display name, for example 'Example Fleet'")
     parser.add_argument("--slug", help="stable fleet ID; defaults to the name in lower case")
     parser.add_argument("--rear-admiral", help="the rear admiral's name, for example Atlas")
-    parser.add_argument("--captains", help="comma-separated captain (ship) names, for example 'Orion,Vega'")
+    parser.add_argument("--captains", help="comma-separated captain (ship) names, for example 'Orion,Vega'. Each "
+                        "officer's name in lower case is its one name: IRC account and nick, Subspace API agent name "
+                        "and Stargate ID, unique on the IRC server and in the API's organisation")
+    parser.add_argument("--crew-names", help="names for each captain's crew, in slot order (Claude-family crew, then "
+                        "Codex-family), as 'CAPTAIN=NAME,NAME,...;CAPTAIN=...', for example "
+                        "'Orion=Rigel,Deneb,Mira,Sirius'. Required for a new captain with crew; unique in the fleet "
+                        "ignoring case, and none an officer's name. Kept on later runs")
     parser.add_argument("--admin", help="your IRC account and nickname (default admiral)")
     parser.add_argument("--admin-email", help="development sign-in email (default developer@example.com)")
     parser.add_argument("--organisation", help="development sign-in organisation (default local)")
@@ -322,6 +338,9 @@ def gather(args, saved):
         captains = [name.strip() for name in captains.split(",") if name.strip()]
     require(captains, "Name at least one captain with --captains.")
     answers["captains"] = captains
+    if "officerNames" not in answers:
+        # A fleet set up before plain names keeps its fleet-prefixed accounts until 'rename-officers' changes them.
+        answers["officerNames"] = "prefixed" if saved.get("slug") else "plain"
     pick("admin", args.admin, "Your IRC account name", "admiral")
     pick("adminEmail", args.admin_email, "Development sign-in email", "developer@example.com")
     pick("organisation", args.organisation, "Development sign-in organisation", "local")
@@ -337,6 +356,19 @@ def gather(args, saved):
             crew[family] = flag
         elif family not in crew:
             crew[family] = int(prompt(f"{family.title()}-family crew per captain", "2", interactive) or 2)
+    named = answers.setdefault("crewNames", {})
+    if args.crew_names is not None:
+        named.update(parse_crew_names(args.crew_names, answers))
+    repositories = answers.get("repositories") or (read_json(INPUTS / "fleet.json", {}) or {}).get("repositories")
+    if interactive and repositories:
+        # Crew need a repository; ask for their names once a captain has any.
+        for name in answers["captains"]:
+            captain_id = ident(name, "Captain")
+            slots = crew_slots(answers)
+            if slots and captain_id not in named and not crew_installed(captain_id):
+                given = prompt(f"Names for {name}'s crew ({', '.join(slot_label(slot) for slot in slots)}), "
+                               "comma-separated", None, interactive) or ""
+                named.update(parse_crew_names(f"{name}={given}", answers))
     if args.captain_tools is not None:
         answers["captainTools"] = args.captain_tools
     elif interactive and not saved and not (INPUTS / "fleet.json").exists():
@@ -482,6 +514,45 @@ def gather(args, saved):
     return answers
 
 
+def crew_slots(answers):
+    """Each captain's crew slots in order, Claude-family first: claude-1, claude-2, codex-1, ..."""
+    return [f"{family}-{slot}" for family in ("claude", "codex")
+            for slot in range(1, int(answers.get("crew", {}).get(family, 0) or 0) + 1)]
+
+
+def slot_label(slot):
+    family, _, number = slot.partition("-")
+    return f"{family.title()} {number}"
+
+
+def parse_crew_names(value, answers):
+    """--crew-names 'CAPTAIN=NAME,NAME,...;CAPTAIN=...' as {captain ID: {slot: name}}, names in slot order."""
+    result = {}
+    slots = crew_slots(answers)
+    for part in (item.strip() for item in value.split(";")):
+        if not part:
+            continue
+        captain, equals, names = part.partition("=")
+        require(equals and captain.strip(), f"--crew-names takes CAPTAIN=NAME,NAME,... for each captain, separated by "
+                f"semicolons, not {part!r}.")
+        captain_id = ident(captain, "Captain")
+        require(captain_id in [ident(name, "Captain") for name in answers["captains"]],
+                f"--crew-names names {captain.strip()}, which is not one of the captains.")
+        listed = [name.strip() for name in names.split(",") if name.strip()]
+        require(len(listed) == len(slots), f"--crew-names gives {captain.strip()} {len(listed)} crew names for "
+                f"{len(slots)} crew ({', '.join(slot_label(slot) for slot in slots)}): name each one, in that order.")
+        result[captain_id] = dict(zip(slots, listed, strict=True))
+    return result
+
+
+def crew_installed(captain_id):
+    """Whether this captain's crew are installed: the fleet's inputs have the captain and repositories, so its crew
+    exist (with names or slot names) and keep them; a captain without crew yet names them when they first come."""
+    config = read_json(INPUTS / "fleet.json", {}) or {}
+    return bool(config.get("repositories")) and any(
+        isinstance(person, dict) and person.get("id") == captain_id for person in config.get("captains", []))
+
+
 def parse_repositories(value):
     """'URL' or 'ID=URL' items as [ID, URL, named]. The ID defaults to the repository's name."""
     rows = []
@@ -524,19 +595,31 @@ def check_answers(answers):
     require(SLUG.fullmatch(answers["slug"]), "The fleet ID must be at most 20 lower-case letters, digits or hyphens.")
     rear = ident(answers["rearAdmiral"], "Rear admiral")
     ids = [rear] + [ident(name, "Captain") for name in answers["captains"]]
-    require(len(set(ids)) == len(ids), "The rear admiral and captains need distinct names.")
+    names = [answers["rearAdmiral"], *answers["captains"]]
+    for index, agent in enumerate(ids):
+        for other in range(index):
+            require(ids[other] != agent,
+                    f"{names[other]} and {names[index]} differ only by case or punctuation, but each officer's name is "
+                    "its IRC account and its agent name in the Subspace API, which compare names without case. Give "
+                    "the rear admiral and every captain a distinct name." if names[other] != names[index] else
+                    "The rear admiral and captains need distinct names.")
     require(len(answers["captains"]) <= 12, "Use at most 12 captains.")
     admin = answers["admin"]
     require(ACCOUNT.fullmatch(admin) and admin not in RESERVED and not admin.startswith("guest-"),
             "Choose an IRC account of lower-case letters, digits or hyphens that starts with a letter, such as 'admiral'.")
-    agent_accounts = [f"{answers['slug']}-{agent}" for agent in ids]
+    plain = answers.get("officerNames") == "plain"
+    agent_accounts = [officer_account(answers, agent) for agent in ids]
     require(admin not in ids and admin not in agent_accounts
-            and not any(admin.startswith(f"{account}-") for account in agent_accounts[1:]),
+            and not any(admin.startswith(f"{account}-") for account in agent_accounts[1:] if not plain),
             "Your IRC account must differ from the agents' names and accounts.")
     for agent in ids:
-        require(len(f"{answers['slug']}-{agent}") <= standard_channels.MAX_ACCOUNT,
-                f"'{answers['slug']}-{agent}' is too long for its IRC account. Use a shorter fleet ID or name.")
-    trouble = standard_channels.problem(answers["slug"], ids[1:])
+        # With plain names an officer's ID is its IRC account and API username, which these may not be.
+        require(not plain or agent not in RESERVED | {"botserv", "guest"} and not agent.startswith("guest-"),
+                f"{agent} is a name the IRC server, the Subspace API or the installer keeps for itself. Choose "
+                "another name for that officer.")
+        require(len(officer_account(answers, agent)) <= standard_channels.MAX_ACCOUNT,
+                f"'{officer_account(answers, agent)}' is too long for its IRC account. Use a shorter fleet ID or name.")
+    trouble = standard_channels.problem(answers["slug"], ids[1:], plain)
     require(trouble is None, trouble)
     require(EMAIL.fullmatch(answers["adminEmail"]), "Use a valid sign-in email address.")
     if answers["irc"] == "remote":
@@ -584,8 +667,9 @@ def check_answers(answers):
                 f"--metadata-user {user} is a fleet agent's account; agents never reach cloud metadata.")
     for name in [answers["name"], *answers["captains"], answers["rearAdmiral"]]:
         require("\n" not in name and len(name) <= 100, "Names must be single lines of at most 100 characters.")
-    # The API keeps the rear admiral's name as its agent name and each captain's as its ship's name.
-    require(fleet_records.AGENT_NAME.fullmatch(answers["rearAdmiral"]),
+    # The API keeps each captain's name as its ship's name, and with fleet-prefixed names the rear admiral's as its
+    # agent name; with plain names every officer's agent name is its ID.
+    require(plain or fleet_records.AGENT_NAME.fullmatch(answers["rearAdmiral"]),
             "The rear admiral's name is also its agent name in the Subspace API: use letters, digits and hyphens, "
             "at most 64, such as Atlas.")
     require(all(len(name) <= 64 for name in answers["captains"]), "Ship names must be at most 64 characters.")
@@ -597,7 +681,45 @@ def check_answers(answers):
                 "create: drop --demo with --database-url-file.")
         if answers.get("databaseCaFile"):
             database_ca(answers["databaseCaFile"])
+    check_crew_answers(answers, ids)
     return rear, ids[1:]
+
+
+def officer_account(answers, agent_id):
+    """An officer's IRC account: its ID with plain names, else <slug>-<ID> as setup named them before."""
+    return agent_id if answers.get("officerNames") == "plain" else f"{answers['slug']}-{agent_id}"
+
+
+def check_crew_answers(answers, ids):
+    """Crew names from --crew-names: as the fleet installer takes them (runtime.crew_roster), unique in the fleet
+    ignoring case, none an officer's name, and one for every crew member of a captain not yet installed."""
+    officers = {runtime.crew_id(value) for value in [*ids, answers["rearAdmiral"], *answers["captains"]]}
+    seen = {}
+    named = answers.get("crewNames") or {}
+    for captain_id, names in named.items():
+        require(captain_id in ids[1:], f"Crew names are given for {captain_id}, which is not one of the captains.")
+        for slot, name in names.items():
+            require(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9 _-]{1,64}", name.strip())
+                    and re.fullmatch(runtime.CREW_ID, runtime.crew_id(name)),
+                    f"Crew name {name!r} for {captain_id}: use ASCII letters, digits, spaces, hyphens and "
+                    "underscores, which shorten to an ID of at most 32 characters.")
+            key = runtime.crew_id(name)
+            require(key not in officers, f"Crew name {name} for {captain_id} is an officer's name. Crew names are "
+                    "unique in the fleet and differ from the officers' names.")
+            require(key not in seen, f"Crew names {seen.get(key)} and {name} are the same, ignoring case. Give each "
+                    "crew member in the fleet its own name.")
+            seen[key] = name
+    repositories = answers.get("repositories")
+    if repositories is None:
+        repositories = (read_json(INPUTS / "fleet.json", {}) or {}).get("repositories") or []
+    slots = crew_slots(answers)
+    if not (repositories and slots):
+        return  # Without repositories, captains have no crew.
+    missing = [captain_id for captain_id in ids[1:] if not crew_installed(captain_id)
+               and set(named.get(captain_id, {})) != set(slots)]
+    require(not missing, f"Name every crew member of {', '.join(missing)}: pass --crew-names with "
+            f"{len(slots)} names per captain, in slot order ({', '.join(slot_label(slot) for slot in slots)}), "
+            "such as 'Orion=Rigel,Deneb,Mira,Sirius' (INSTALL.md, question 3). Crew names are unique in the fleet.")
 
 
 # Secrets ---------------------------------------------------------------------
@@ -675,11 +797,22 @@ def roster(answers, rear, captains):
 
     Crew run as their captain through Stargate's crew plugin and have no IRC account.
     """
-    # Accounts carry the fleet ID so that several fleets can share one IRC server.
-    slug = answers["slug"]
-    members = [{"id": rear, "name": answers["rearAdmiral"], "account": f"{slug}-{rear}"}]
+    # With plain names (new fleets) an officer's ID is its one name; a fleet set up before them keeps accounts that
+    # carry the fleet ID until 'rename-officers' changes them.
+    members = [{"id": rear, "name": answers["rearAdmiral"], "account": officer_account(answers, rear)}]
+    named = answers.get("crewNames") or {}
     for captain_id, name in zip(captains, answers["captains"], strict=True):
-        members.append({"id": captain_id, "name": name, "account": f"{slug}-{captain_id}"})
+        person = {"id": captain_id, "name": name, "account": officer_account(answers, captain_id)}
+        if named.get(captain_id):
+            person["crewNames"] = dict(named[captain_id])
+        if (answers.get("crewIds") or {}).get(captain_id):
+            person["crewIds"] = dict(answers["crewIds"][captain_id])
+        members.append(person)
+    # A renamed fleet's officers keep the account subjects the API bound their records to (rename-officers).
+    for person in members:
+        subject = ((answers.get("officerRename") or {}).get("subjects") or {}).get(person["id"])
+        if subject:
+            person["serviceTokenClientId"] = subject
     return members
 
 
@@ -812,6 +945,7 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     config = {
         "slug": slug,
         "name": answers["name"],
+        "officerNames": answers.get("officerNames", "prefixed"),
         "rearAdmiral": members[0],
         "captains": members[1:],
         "crew": {family: {"count": count} for family, count in answers["crew"].items()},
@@ -1183,6 +1317,161 @@ def hosted_checks(answers, token):
     say("hosted API: the enrolment token is valid, so its fleet exists (checked without using it)")
 
 
+# Names -----------------------------------------------------------------------
+
+def hosted_call(origin, token, method, path, body=None):
+    """One request to a hosted API under /api/v1 with a bearer token, no redirects followed; errors carry the
+    status and the API's detail (ApiError)."""
+    data = None if body is None else json.dumps(body).encode()
+    request = Request(f"{origin}/api/v1{path}", data=data, method=method, headers={
+        "Authorization": f"Bearer {token}", "Accept": "application/json", "Content-Type": "application/json"})
+    try:
+        with build_opener(NoRedirect).open(request, timeout=30) as response:
+            text = response.read().decode()
+    except HTTPError as error:
+        detail = problem_detail(error)
+        error.close()
+        raise ApiError(f"The hosted Subspace API returned HTTP {error.code} for {method} {path}.", error.code,
+                       detail) from None
+    except (URLError, OSError):
+        raise SetupError(f"Could not reach the hosted Subspace API at {origin} for {method} {path}.") from None
+    return json.loads(text) if text else {}
+
+
+def officer_records(answers, members):
+    """Each officer as the API knows it with this fleet's naming: (rank, agent name, IRC nick, ship)."""
+    plain = answers.get("officerNames") == "plain"
+    rows = []
+    for index, person in enumerate(members):
+        rank = "rearAdmiral" if index == 0 else "captain"
+        name = person["account"] if plain or index else person["name"]
+        rows.append((rank, name, person["account"], None if index == 0 else person["name"]))
+    return rows
+
+
+def stored_enrolment_token():
+    try:
+        return (INPUTS / "fleet.secrets" / runtime.ENROLMENT_TOKEN).read_text().strip() or None
+    except OSError:
+        return None
+
+
+def hosted_name_problems(answers, members, token):
+    """With the fleet's enrolment token, ask the hosted API what enrolling each officer would do (POST
+    /api/v1/agents/enrol/check), which uses nothing and changes nothing. Returns the refusals; says why when it
+    cannot ask."""
+    token = token or stored_enrolment_token()
+    if not token:
+        say("names: no enrolment token, so the hosted API was not asked about the officers' names")
+        return []
+    agents = [{"name": name, "rank": rank, "ircNick": nick, **({"ship": ship} if ship else {})}
+              for rank, name, nick, ship in officer_records(answers, members)]
+    try:
+        items = hosted_call(answers["apiUrl"], token, "POST", "/agents/enrol/check", {"agents": agents})["items"]
+    except ApiError as error:
+        if error.status == 404:
+            say("names: this hosted API predates POST /api/v1/agents/enrol/check, so it was not asked about the "
+                "officers' names; enrolment still refuses a taken name")
+        elif error.status == 401:
+            say(f"names: the hosted API did not accept the enrolment token ({error.detail or 'refused'}), so it was "
+                "not asked about the officers' names. A new officer needs a fresh token "
+                "(--api-enrolment-token-file) anyway")
+        else:
+            raise
+        return []
+    except (KeyError, TypeError):
+        raise SetupError("The hosted Subspace API answered the name check with an unexpected body.") from None
+    except SetupError as error:
+        say(f"names: {error} The officers' names were not checked; enrolment still refuses a taken name")
+        return []
+    problems = [f"{item.get('name')}: {item.get('detail')}" for item in items if item.get("outcome") == "refused"]
+    if not problems:
+        say("names: the hosted API would enrol every officer under its name ("
+            + ", ".join(f"{item.get('name')} {item.get('outcome')}" for item in items) + ")")
+    return problems
+
+
+def api_reader(answers):
+    """The admin's development token for reading the running API on this VM, signing in only as someone already
+    there, or None when that fails."""
+    try:
+        return api_token(answers, existing_only=True)
+    except SetupError:
+        return None
+
+
+def local_name_problems(answers, members, token, own=None):
+    """With the API on this VM (an administrator's token): officers whose name or IRC nick another agent holds.
+    own: {officer ID: nicks its own record may have now}, beside its new nick."""
+    if not token:
+        say("names: could not sign in to the API on this VM to read its agents; registration still refuses a taken "
+            "name")
+        return []
+    try:
+        rows = fleet_records.agents(lambda method, path, body: api_call(token, method, path, body))
+    except SetupError as error:
+        say(f"names: could not list the API's agents ({error}); registration still refuses a taken name")
+        return []
+    officers = [(name, nick, {nick, *(own or {}).get(person["id"], ())})
+                for (_, name, nick, _), person in zip(officer_records(answers, members), members, strict=True)]
+    problems = fleet_records.taken_names(rows, answers["slug"], officers)
+    if not problems:
+        say("names: no other agent in the Subspace API on this VM has an officer's name or IRC nick")
+    return problems
+
+
+def irc_name_problems(answers, members, certificates, operator, staged=None, connect_with=()):
+    """On a remote IRC server with certificate sign-in: officers whose account NickServ knows as another's.
+    An account counts as the officer's own when the officer's certificate (or, during a rename, its new staged
+    one) signs in to it. Read-only. Signs in, for a server that admits only signed-in connections, with the
+    operator's account when given, else with an officer certificate that already signs in (connect_with: more
+    bundles to try, such as the officers' current ones during a rename)."""
+    if answers.get("irc") != "remote" or answers.get("ircAuth") != "certificate":
+        return []
+    host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
+    bundles = {person["account"]: path for person in members
+               for path in [(staged or {}).get(person["id"]) or (certificates or {}).get(person["account"], (None,))[0]]
+               if path and Path(path).is_file()}
+    signed_in = {}
+    for account, path in bundles.items():
+        try:
+            signed_in[account] = irc_accounts.check_login(host, port, ca, str(path))
+        except irc_accounts.IrcError:
+            signed_in[account] = None
+    account = operator[2] if operator else None
+    client = None if account else next((str(bundles[name]) for name, as_ in signed_in.items() if as_), None)
+    for path in connect_with if not (account or client) else ():
+        try:
+            if Path(path).is_file() and irc_accounts.check_login(host, port, ca, str(path)):
+                client = str(path)
+                break
+        except irc_accounts.IrcError:
+            continue
+    try:
+        taken = irc_accounts.accounts_taken(host, port, ca, [person["account"] for person in members], client, account)
+    except irc_accounts.IrcError as error:
+        say(f"names: could not ask {host}'s NickServ about the officers' accounts ({error}); registration there still "
+            "refuses a taken account")
+        return []
+    problems = []
+    for person in members:
+        holder = taken.get(person["account"])
+        if holder and not (holder.lower() == person["account"].lower()
+                           and (signed_in.get(person["account"]) or "").lower() == person["account"].lower()):
+            problems.append(f"{person['account']} is taken on {host}: NickServ knows it as account {holder}, which the "
+                            "officer's certificate does not sign in to")
+    if not problems:
+        say(f"names: {host}'s NickServ has none of the officers' accounts under another owner")
+    return problems
+
+
+def require_names(problems):
+    require(not problems, "An officer's name is taken: " + "; ".join(problems) + ". Each officer's name is its IRC "
+            "account and its agent name in the Subspace API, which must be unique on the IRC server and in the "
+            "API's organisation. Pick another name for that officer (--rear-admiral, --captains), or free the name "
+            "there, then run setup again. Nothing was changed.")
+
+
 def stargate_agents(ref):
     """Whether Stargate at ref has the subspaceAgents section a hosted API needs: fetch that one commit, without
     history, and look for runtime.SUBSPACE_AGENTS_FILE in it."""
@@ -1487,6 +1776,15 @@ def external_schema(answers, migrate):
         say("the existing PostgreSQL already has every migration this API needs; nothing to apply")
 
 
+def api_healthy():
+    """Whether the API on this VM answers GET /health, so a dry run can read it without starting it."""
+    try:
+        with urlopen(Request(f"http://{LOOPBACK}:{API_PORT}/health"), timeout=5) as response:
+            return json.load(response).get("status") == "ok"
+    except (HTTPError, URLError, OSError, ValueError):
+        return False
+
+
 def dev_auth_enabled():
     """Whether the API still offers development sign-in, which setup uses to act as the admin."""
     environment = {}
@@ -1538,10 +1836,10 @@ def history_database(secret_store):
             "network": f"{API_PROJECT}_default"}
 
 
-def api_token(answers, email=None):
+def api_token(answers, email=None, existing_only=False):
     # In a database setup did not create, sign in only as someone already there (subspace-api's auth:dev), so a
     # mistyped --organisation or --admin-email never adds an organisation or a person. An empty one is exempt.
-    existing = ["-e", "DEV_TOKEN_EXISTING_ONLY=true"] if external_database(answers) else []
+    existing = ["-e", "DEV_TOKEN_EXISTING_ONLY=true"] if external_database(answers) or existing_only else []
     try:
         token = compose("exec", "-T", *existing, "api", "bun", "run", "--silent", "auth:dev",
                         email or answers["adminEmail"], answers["organisation"], capture=True).splitlines()[-1].strip()
@@ -1573,8 +1871,10 @@ def api_call(token, method, path, body=None):
         with urlopen(request, timeout=30) as response:
             text = response.read().decode()
     except HTTPError as error:
+        detail = problem_detail(error)
         error.close()
-        raise ApiError(f"The Subspace API returned HTTP {error.code} for {method} {path}.", error.code) from None
+        raise ApiError(f"The Subspace API returned HTTP {error.code} for {method} {path}.", error.code, detail) \
+            from None
     except (URLError, OSError):
         raise SetupError(f"Could not reach the Subspace API for {method} {path}.") from None
     return json.loads(text) if text else {}
@@ -1758,7 +2058,8 @@ def register_fleet(registration):
 
 def fleet_channels(answers, members):
     """The fleet's standard channels: Starbase, the command channel, then one ship channel per captain."""
-    return standard_channels.standard(answers["slug"], [person["id"] for person in members[1:]])
+    return standard_channels.standard(answers["slug"], [person["id"] for person in members[1:]],
+                                      answers.get("officerNames") == "plain")
 
 
 def installed_irc_auth():
@@ -2008,6 +2309,10 @@ def configure(args):
         write_json(secrets_path, private)
 
     certificates = operator = None
+    say("officer names (" + ("plain: each officer's ID is its IRC account, API name and Stargate ID" if
+                             answers["officerNames"] == "plain" else "fleet-prefixed, as installed; 'subspace-setup "
+                             "rename-officers' gives them plain names") + "): "
+        + ", ".join(person["account"] for person in members))
     if answers.get("ircAuth") == "certificate":
         operator = irc_operator(args)
         certificates = officer_certificates(members, generate=not args.dry_run)
@@ -2020,6 +2325,13 @@ def configure(args):
     if external_database(answers):
         for line in external_plan(answers, args.migrate):
             say(line)
+    # Before setup changes anything here, on the IRC server or in the API: every officer's name must be free there.
+    problems = irc_name_problems(answers, members, certificates, operator)
+    if answers.get("apiUrl"):
+        problems += hosted_name_problems(answers, members, enrolment)
+    elif answers["api"] and (INPUTS / "api.env").is_file() and dev_auth_enabled() and api_healthy():
+        problems += local_name_problems(answers, members, api_reader(answers))
+    require_names(problems)
     if args.dry_run:
         if external_database(answers):
             database_checks(answers, args.migrate)
@@ -2034,10 +2346,6 @@ def configure(args):
         # The API comes first (its token and registration go into the fleet's inputs), so check now that the
         # installer will accept those inputs: with --migrate, a refused run must not have migrated the database.
         preflight(*inputs(hashlib.sha1(b"dry-run").hexdigest()))
-
-    if certificates and operator:
-        # Before any officer starts: register the accounts, bind the certificates and check each sign-in.
-        check_certificates(answers, members, certificates, operator, register=True)
 
     irc_ref = irc_source() if local_irc else None
     # Releases from v0.40.0 have the Fleet API; a pinned commit is checked after it is installed.
@@ -2063,6 +2371,8 @@ def configure(args):
             token = api_token(answers)
             if external_database(answers):
                 existing_administrator(answers, token)
+            # An existing database may already hold an officer's name: stop before anything is registered.
+            require_names(local_name_problems(answers, members, token))
             if answers["demo"]:
                 seed_demo(answers)
             initiative = fleet_initiative(token, answers["name"], answers["slug"], answers.get("initiativeId"))
@@ -2088,6 +2398,11 @@ def configure(args):
                     "the API offers development sign-in. Pass --no-agent-dispatch, and configure api, agentDispatch "
                     "and rearAdmiralApiToken for the fleet installer by hand (subspace-installer/README.md, "
                     "'Agent dispatch').")
+
+    if certificates and operator:
+        # Before any officer starts, and once the API has its records: register the accounts, bind the certificates
+        # and check each sign-in.
+        check_certificates(answers, members, certificates, operator, register=True)
 
     write_inputs(irc_ref, api_block, bool(stargate_api), token, history)
     installer(config_path)
@@ -2231,6 +2546,316 @@ def metadata_users(answers):
     return list(dict.fromkeys(users))
 
 
+# Rename ----------------------------------------------------------------------
+
+# Stargate's subspaceAgents state for the shared gateway: <dataDirectory>/subspace-agents, <name>.pem per officer.
+GATEWAY_KEYS = runtime.STATE / "gateway" / "data" / "subspace-agents"
+
+
+def rename_parser():
+    parser = argparse.ArgumentParser(
+        prog="subspace-setup rename-officers",
+        description="Give an installed fleet's officers their plain names: each officer's ID becomes its IRC account "
+                    "and nick, its Subspace API agent name and its ship channel (#<captain-id>), as a new fleet "
+                    "has them. Safe to run again after a failure. See 'Officer names' in the installer README.")
+    parser.add_argument("--dry-run", action="store_true", help="check and print the plan, changing nothing")
+    for flag, text in (("--irc-operator", "an IRC operator's name (OPER) with NickServ's accreg capability, to "
+                        "register the new accounts and bind their certificates"),
+                       ("--irc-operator-password-file", "a root-only file (mode 0600) with that operator's password"),
+                       ("--irc-operator-account", "an IRC account the operator's connection signs in to first"),
+                       ("--irc-operator-account-password-file", "a root-only file with that account's password"),
+                       ("--api-admin-token-file", "a root-only file (mode 0600) with a bearer token of an "
+                        "administrator of the hosted Subspace API, which renames the agent records in place "
+                        "(PUT /api/v1/agents/{id}); read for this run only, never printed or saved"),
+                       ("--crew-names", "names for the crew of captains already installed, as for setup: needs a "
+                        "Stargate whose crew plugin lets a crew member's name differ from its ID")):
+        parser.add_argument(flag, help=text)
+    parser.add_argument("--inputs", default=str(INPUTS), help=argparse.SUPPRESS)
+    return parser
+
+
+def installed_plan(answers):
+    """The installed fleet's officers and their renames: [(person, old account, new account, old API name,
+    new API name, old ship channel, new ship channel)], from the fleet's own inputs."""
+    config = read_json(INPUTS / "fleet.json", {}) or {}
+    people = [config.get("rearAdmiral") or {}, *(config.get("captains") or [])]
+    require(all(isinstance(person, dict) and NAME_ID.fullmatch(str(person.get("id", ""))) for person in people),
+            "Set the fleet up first: its inputs have no officers.")
+    renamed = (answers.get("officerRename") or {}).get("from", {})
+    plan = []
+    for index, person in enumerate(people):
+        old = renamed.get(person["id"]) or person.get("account") or officer_account(answers, person["id"])
+        old_api = (person["name"] if index == 0 else old)
+        channel = None if index == 0 else (standard_channels.ship(answers["slug"], person["id"]),
+                                           standard_channels.ship(answers["slug"], person["id"], plain=True))
+        plan.append((person, old, person["id"], old_api, person["id"], channel))
+    return plan
+
+
+def staged_bundle(agent_id, account, generate):
+    """The new IRC certificate for an officer's new account, made once and kept for re-runs, or None."""
+    path = INPUTS / "rename" / agent_id / runtime.IRC_CLIENT_PEM
+    if not path.exists() and generate:
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(path.parent.parent, 0o700)
+        write_private(path, runtime.new_irc_bundle(account))
+    return path if path.exists() else None
+
+
+def copy_gateway_key(old, new):
+    """Give Stargate's key bundle and enrolment record for an officer's old API name its new name too, so the
+    gateway keeps the officer's enrolled key under the new name (a copy: the old files stay until removed)."""
+    for suffix in (".pem", ".pem.enrolment.json"):
+        source, target = GATEWAY_KEYS / f"{old}{suffix}", GATEWAY_KEYS / f"{new}{suffix}"
+        if not source.is_file() or source == target:
+            continue
+        if target.exists():
+            require(target.read_bytes() == source.read_bytes(),
+                    f"{target} exists with other contents than {source}. Move it aside, then run the rename again.")
+            continue
+        info = source.stat()
+        with tempfile.NamedTemporaryFile(dir=GATEWAY_KEYS, delete=False) as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            os.fchown(handle.fileno(), info.st_uid, info.st_gid)
+            handle.write(source.read_bytes())
+            temporary = handle.name
+        os.replace(temporary, target)
+        say(f"copied Stargate's {source.name} to {target.name}")
+
+
+def rename_officers(argv):
+    """subspace-setup rename-officers: move an installed fleet from fleet-prefixed officer names to plain ones, and
+    name the crew of installed captains where the installed Stargate allows it."""
+    global INPUTS
+    args = rename_parser().parse_args(argv)
+    INPUTS = Path(args.inputs)
+    require(args.dry_run or os.geteuid() == 0, "Run subspace-setup as root (sudo).")
+    answers = read_json(INPUTS / "answers.json", {})
+    require(answers.get("slug"), "Set the fleet up first.")
+    crew = rename_crew(answers, args.crew_names) if args.crew_names else {}
+    record = answers.get("officerRename") or {}
+    plan = installed_plan(answers)
+    officers = answers.get("officerNames") != "plain"
+    if not officers and not crew:
+        say("this fleet's officers already have plain names" + (f" (renamed from {', '.join(record['from'].values())})"
+                                                               if record.get("from") else "") + ".")
+        for line in rename_cleanup(answers, plan, record):
+            say(line)
+        return
+    members = [{"id": person["id"], "name": person["name"], "account": new} for person, _, new, *_ in plan]
+    plain = {**answers, "officerNames": "plain"}
+    hosted = bool(answers.get("apiUrl"))
+    local_api = answers.get("api") and not hosted and (INPUTS / "api.env").is_file()
+    certificate = answers.get("irc") == "remote" and answers.get("ircAuth") == "certificate"
+    staged, operator, admin = {}, None, None
+    if officers:
+        say(f"renaming fleet {answers['slug']}'s officers to plain names:")
+        for person, old, new, old_api, new_api, channel in plan:
+            say(f"  {person['name']}: IRC account {old} -> {new}; API agent {old_api} -> {new_api}"
+                + (f"; ship channel {channel[0]} -> {channel[1]}" if channel else ""))
+        admin = password_file(args.api_admin_token_file, "--api-admin-token-file", "API administrator token") \
+            if args.api_admin_token_file else None
+        require(not hosted or admin or args.dry_run,
+                f"This fleet uses the hosted Subspace API at {answers.get('apiUrl')}, whose agent records only an "
+                "administrator may rename: pass --api-admin-token-file with a token of an administrator of that API. "
+                "Nothing was changed.")
+        operator = irc_operator(args)
+        staged = {person["id"]: staged_bundle(person["id"], new, not args.dry_run) for person, _, new, *_ in plan
+                  if certificate}
+        # Read-only checks first: every new name must be free on the IRC server and in the API, or this fleet's own.
+        current = [INPUTS / "fleet.secrets" / person["id"] / runtime.IRC_CLIENT_PEM for person, *_ in plan]
+        problems = irc_name_problems(plain, members, None, operator, staged, current)
+        own = {person["id"]: {old} for person, old, *_ in plan}
+        if hosted and admin:
+            rows = fleet_records.agents(
+                lambda method, path, body: hosted_call(answers["apiUrl"], admin, method, path, body))
+            wanted = [(name, nick, {nick, *own[person["id"]]})
+                      for (_, name, nick, _), person in zip(officer_records(plain, members), members, strict=True)]
+            problems += fleet_records.taken_names(rows, answers["slug"], wanted)
+        elif local_api and dev_auth_enabled() and api_healthy():
+            problems += local_name_problems(plain, members, api_reader(answers), own)
+        require(not problems, "Cannot rename: " + "; ".join(problems) + ". An officer's ID is its plain name and "
+                "cannot change here; free the name on the IRC server or in the API, or keep the fleet's prefixed "
+                "names. Nothing was changed.")
+    if args.dry_run:
+        say("dry run: " + ("the names are free. The real run makes a new IRC certificate for each new account and "
+                           + ("registers it with --irc-operator, " if operator else
+                              "prints the NickServ lines to register it, ")
+                           + "renames the API agent records in place, moves the ship channels, then " if officers else
+                           "the real run ")
+            + "runs setup again with the new names. Nothing on this VM changed.")
+        return
+    if crew:
+        for key in ("crewNames", "crewIds"):
+            answers.setdefault(key, {}).update(crew[key])
+        save_answers(answers)
+    if officers:
+        answers["officerRename"] = record = {**record, "from": {person["id"]: old for person, old, *_ in plan}}
+        save_answers(answers)
+        # 1. IRC: the new accounts, while the officers keep signing in to the old ones.
+        if certificate:
+            rename_irc_certificates(answers, plan, staged, operator)
+        elif answers.get("irc") == "remote":
+            rename_irc_passwords(answers, members)
+        # 2. The API's agent records, in place, and the ships' channels.
+        renames = [{"old": old, "name": new_api, "nick": new, "channel": channel}
+                   for _, old, new, _, new_api, channel in plan]
+        if hosted:
+            fleet_records.rename(lambda method, path, body: hosted_call(answers["apiUrl"], admin, method, path, body),
+                                 answers["slug"], renames, say=say)
+            for _, _, _, old_api, new_api, _ in plan:
+                copy_gateway_key(old_api, new_api)
+        elif local_api:
+            token = api_token(answers)
+            rows = {str(row.get("ircNick", "")).lower(): row for row in
+                    fleet_records.agents(lambda method, path, body: api_call(token, method, path, body))}
+            # The account subjects stay: setup signs officers in by them, and the API binds each record to its own.
+            subjects = dict(record.get("subjects") or {})
+            for person, old, new, *_ in plan:
+                row = rows.get(old.lower()) or rows.get(new.lower())
+                if row and person["id"] not in subjects:
+                    subjects[person["id"]] = row["serviceTokenClientId"]
+            answers["officerRename"] = record = {**record, "subjects": subjects}
+            save_answers(answers)
+            fleet_records.rename(lambda method, path, body: api_call(token, method, path, body), answers["slug"],
+                                 renames, say=say)
+        # 3. The new certificates, kept beside the old ones for a rollback.
+        for person, *_ in plan:
+            if staged.get(person["id"]):
+                current = INPUTS / "fleet.secrets" / person["id"] / runtime.IRC_CLIENT_PEM
+                previous = INPUTS / "rename" / person["id"] / "irc-client.previous.pem"
+                if current.is_file() and current.read_text() != staged[person["id"]].read_text() \
+                        and not previous.exists():
+                    write_private(previous, current.read_text())
+                write_private(current, staged[person["id"]].read_text())
+        answers["officerNames"] = "plain"
+        save_answers(answers)
+    # 4. Switch: the fleet's inputs, Stargate, the officers' configuration and the summary, as a re-run does.
+    say("running setup with the new names")
+    configure(parse_args(["--non-interactive"]))
+    answers = read_json(INPUTS / "answers.json", {})
+    if officers:
+        answers["officerRename"] = {**answers.get("officerRename", {}), "switched": True}
+        save_answers(answers)
+    if officers and certificate:
+        host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
+        for person, _, new, *_ in plan:
+            bundle = FLEET_ETC / "irc-certs" / f"{person['id']}.pem"
+            signed = irc_accounts.check_login(host, port, ca, str(bundle)) if bundle.is_file() else None
+            say(f"{new}: the installed certificate {'signs in as ' + signed if signed else 'does not sign in'}")
+    for line in rename_cleanup(answers, plan, answers.get("officerRename") or {}):
+        say(line)
+
+
+def rename_crew(answers, value):
+    """--crew-names for installed captains: each crew member keeps its ID, so its sessions, worktrees and queued
+    tasks stay, and takes the new name. Needs a Stargate whose crew plugin lets the two differ."""
+    config = read_json(INPUTS / "fleet.json", {}) or {}
+    installed = {person["id"]: person for person in config.get("captains", []) if isinstance(person, dict)}
+    named = parse_crew_names(value, answers)
+    ids = {}
+    for captain_id in named:
+        person = installed.get(captain_id) or {}
+        current = {**{slot: slot_label(slot) for slot in crew_slots(answers)}, **(person.get("crewNames") or {})}
+        ids[captain_id] = {slot: (person.get("crewIds") or {}).get(slot) or runtime.crew_id(name)
+                           for slot, name in current.items()}
+    changed = [f"{captain_id} {slot}" for captain_id, names in named.items() for slot, name in names.items()
+               if runtime.crew_id(name) != ids[captain_id].get(slot)]
+    require(not changed or crew_names_supported(),
+            "The installed Stargate's crew plugin requires a crew member's name to match its ID (Stargate "
+            "src/coordination/crew/team.ts: 'Agent IDs must match assigned names'), and a crew member's ID cannot "
+            "change without losing its sessions, worktrees and queued tasks. Naming an installed fleet's crew ("
+            + ", ".join(changed) + ") needs a Stargate that drops that rule (installer README, 'Crew names'). "
+            "Nothing was changed.")
+    check_crew_answers({**answers, "crewNames": {**(answers.get("crewNames") or {}), **named}},
+                       [ident(answers["rearAdmiral"], "Rear admiral"),
+                        *(ident(name, "Captain") for name in answers["captains"])])
+    return {"crewNames": named, "crewIds": ids}
+
+
+def rename_irc_certificates(answers, plan, staged, operator):
+    """Register each new account and bind the officer's new certificate, or print the lines that do; stop until
+    every new certificate signs in as its new account. The old accounts keep their certificates meanwhile:
+    Ergo binds a certificate fingerprint to one account only, so each new account gets a certificate of its own."""
+    host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
+    certificates = {new: (staged[person["id"]], runtime.irc_fingerprint(staged[person["id"]].read_text(),
+                                                                        str(staged[person["id"]])))
+                    for person, _, new, *_ in plan}
+    if operator:
+        check_certificates(answers, None, certificates, operator, register=True)
+        return
+    missing = []
+    try:
+        for account, (path, fingerprint) in certificates.items():
+            if irc_accounts.check_login(host, port, ca, str(path)) != account:
+                missing.append((account, fingerprint))
+    except irc_accounts.IrcError as error:
+        raise SetupError(str(error)) from None
+    if not missing:
+        say("every new account signs in with its new certificate")
+        return
+    say(f"register the new accounts on {host} as an IRC operator with NickServ's accreg capability:")
+    for account, fingerprint in missing:
+        say(f"  /NS SAREGISTER {account}")
+        say(f"  /NS CERT ADD {account} {fingerprint}")
+    raise SetupError("The new IRC accounts are not registered yet. Send the lines above (or run rename-officers "
+                     "again with --irc-operator), then run 'sudo subspace-setup rename-officers' again. The officers "
+                     "keep signing in to their old accounts; nothing else was changed.")
+
+
+def rename_irc_passwords(answers, members):
+    """A shared IRC server that seeds accounts from each fleet's bundle: write the bundle with the new accounts
+    and stop until they sign in with their passwords. The old accounts stay in Ergo until dropped."""
+    store = Secrets(INPUTS, answers["slug"], answers.get("keyVault"))
+    plain = {**answers, "officerNames": "plain"}
+    bundle = irc_bundle(plain, members, store)
+    host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
+    missing = [row["name"] for row in bundle["accounts"]
+               if not irc_accounts.check_password(host, port, ca, row["name"], row["password"])]
+    if missing:
+        raise SetupError(f"{', '.join(missing)} cannot sign in to {host} yet. Add the fleet's new bundle there: copy "
+                         f"{INPUTS / 'irc-bundle.json'} to the IRC server and run 'sudo subspace-setup irc-server add "
+                         "<file>' (running the host installer again does it), then run 'sudo subspace-setup "
+                         "rename-officers' again. The officers keep their old accounts meanwhile.")
+    say("every new account signs in with its password")
+
+
+def rename_cleanup(answers, plan, record):
+    """What is left once the officers run under their plain names: steps outside the installer, and how to
+    remove the old names once the new ones are verified."""
+    old = record.get("from") or {}
+    if not old:
+        return []
+    olds = [old[person["id"]] for person, *_ in plan if old.get(person["id"]) and old[person["id"]] != person["id"]]
+    lines = ["once the officers are on IRC under their new names and the desktop shows their ships:"]
+    if answers.get("irc") == "remote":
+        lines += [f"  - on {answers['ircHost']}, if its Subspace API sign-in hook lists local-only accounts "
+                  "(IRC_AUTH_LOCAL_ACCOUNTS), add " + " ".join(person["id"] for person, *_ in plan)
+                  + " there and restart the IRC server; take the old names out when you drop them",
+                  "  - drop the old accounts as an IRC operator: " + "; ".join(f"/NS ERASE {name}" for name in olds),
+                  "  - the old ship channels (" + ", ".join(channel[0] for *_, channel in plan if channel)
+                  + ") stay with their history; drop or unregister them with ChanServ when no longer needed"]
+    else:
+        lines.append("  - the fleet's Ergo keeps the old accounts; drop them as its operator with /NS ERASE "
+                     + ", ".join(olds))
+    if answers.get("apiUrl"):
+        lines.append(f"  - Stargate kept the old key files beside the new ones in {GATEWAY_KEYS} ("
+                     + ", ".join(f"{row[3]}.pem" for row in plan if row[3] != row[4]) + "); remove them")
+    lines += ["  - the API keeps each old IRC nick retired for its own agent: no one else can take it",
+              "  - desktops: run the host installer again (or update Settings > Channels) for the new ship channels"]
+    return lines
+
+
+def crew_names_supported():
+    """Whether the installed Stargate lets a crew member's name differ from its ID."""
+    source = installed_stargate_source()
+    team = source / "src/coordination/crew/team.ts" if source else None
+    try:
+        return bool(team) and "Agent IDs must match assigned names" not in team.read_text()
+    except OSError:
+        return False
+
+
 def print_secret(args):
     store = read_json(INPUTS / "generated-secrets.json", {})
     answers = read_json(INPUTS / "answers.json", {})
@@ -2277,6 +2902,8 @@ def main(argv):
         except ValueError:
             raise SetupError("The fleet registration is not valid JSON.") from None
         register_fleet(registration)
+    elif argv and argv[0] == "rename-officers":
+        rename_officers(argv[1:])
     elif argv and argv[0] == "demo":
         answers = read_json(INPUTS / "answers.json", {})
         require(answers.get("api"), "The Subspace API is not set up on this VM.")
