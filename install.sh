@@ -730,7 +730,7 @@ do_install() {
     # A Subspace API on another host (--api-url, passed to setup) replaces another fleet's API, so a saved
     # --api-target from an earlier run is set aside, and forgotten once a real run succeeds.
     local hosted=false arg
-    for arg in ${passthrough[@]+"${passthrough[@]}"}; do [ "$arg" = --api-url ] && hosted=true; done
+    for arg in ${passthrough[@]+"${passthrough[@]}"}; do case $arg in --api-url|--api-url=*) hosted=true ;; esac; done
     if [ -z "$api_target" ] && [ -f "$state/api-target" ]; then
         if "$hosted"; then
             note "Leaving out the saved --api-target $(cat "$state/api-target"): --api-url names this fleet's API now."

@@ -951,14 +951,16 @@ def hosted_api(args, answers, saved):
     answers.setdefault("agentDispatch", False)
 
 
-def enrolment_token(args):
+def enrolment_token(args, saved):
     """The enrolment token given on this run, read from a root-only file and checked for its form, or None.
-    Nothing is written here: store_enrolment_token keeps it once the run's checks have passed. Never printed."""
-    stored = INPUTS / "fleet.secrets" / runtime.ENROLMENT_TOKEN
+    Nothing is written here: store_enrolment_token keeps it once the run's checks have passed. Never printed.
+
+    A run that makes the fleet hosted, a first run or a switch from an API on this VM, needs one: only a fleet
+    already saved as hosted has a token from an earlier run."""
     if not args.api_enrolment_token_file:
-        require(stored.is_file() or (FLEET_ETC / "extra-secrets.json").is_file(),
-                "The first run with --api-url needs the fleet's enrolment token: pass --api-enrolment-token-file "
-                "FILE (an administrator of the hosted API issues it for this fleet).")
+        require(saved.get("apiUrl"),
+                "The first run with --api-url, and a switch to it, need the fleet's enrolment token: pass "
+                "--api-enrolment-token-file FILE (an administrator of the hosted API issues it for this fleet).")
         return None
     token = password_file(args.api_enrolment_token_file, "--api-enrolment-token-file", "enrolment token")
     require(re.fullmatch(runtime.ENROLMENT_TOKEN_TEXT, token),
@@ -1821,7 +1823,7 @@ def configure(args):
                 f"{runtime.SUBSPACE_AGENTS_COMMIT[:12]} on, and Stargate {stargate_tag} ({stargate_ref[:12]}) has not "
                 "got it: pass --stargate-ref with that commit or a later one.")
         say(f"Stargate {stargate_ref[:12]} has subspaceAgents ({runtime.SUBSPACE_AGENTS_FILE})")
-        enrolment = enrolment_token(args)
+        enrolment = enrolment_token(args, saved)
         hosted_checks(answers, enrolment)
     save_answers(answers)
     if enrolment:

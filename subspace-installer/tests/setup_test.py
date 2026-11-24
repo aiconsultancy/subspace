@@ -1524,23 +1524,25 @@ class HostedApiSetupTests(unittest.TestCase):
     def test_the_enrolment_token_goes_to_the_secrets_directory_and_is_never_shown(self):
         _, args = self.answers("--api-url", "https://subspace.example.com",
                                "--api-enrolment-token-file", str(self.token_file))
-        self.assertEqual(fleet_setup.enrolment_token(args), HostedApi.token)
+        self.assertEqual(fleet_setup.enrolment_token(args, {}), HostedApi.token)
         stored = fleet_setup.INPUTS / "fleet.secrets" / runtime.ENROLMENT_TOKEN
         self.assertFalse(stored.exists(), "nothing is kept before the run's checks pass")
         fleet_setup.store_enrolment_token(HostedApi.token)
         self.assertEqual((stored.read_text(), stored.stat().st_mode & 0o777), (HostedApi.token + "\n", 0o600))
-        # A later run without the option checks no token: the stored one may have expired, and enrolled officers
-        # need none. A first run without any token stops.
+        # A later run of a fleet saved as hosted checks no token: the stored one may have expired, and enrolled
+        # officers need none. A run that makes a fleet hosted without a token stops, whatever files exist.
         _, later = self.answers("--api-url", "https://subspace.example.com")
-        self.assertIsNone(fleet_setup.enrolment_token(later))
-        stored.unlink()
-        with self.assertRaisesRegex(fleet_setup.SetupError, "needs the fleet's enrolment token"):
-            fleet_setup.enrolment_token(later)
+        self.assertIsNone(fleet_setup.enrolment_token(later, {"apiUrl": "https://subspace.example.com"}))
+        (fleet_setup.FLEET_ETC).mkdir()
+        (fleet_setup.FLEET_ETC / "extra-secrets.json").write_text("{}")
+        for saved in ({}, {"api": True, "slug": "example-fleet"}):
+            with self.subTest(saved), self.assertRaisesRegex(fleet_setup.SetupError, "need the fleet's enrolment token"):
+                fleet_setup.enrolment_token(later, saved)
         for text, mode, message in ((HostedApi.token, 0o644, "mode 0600"), ("not-a-token", 0o600, "senr1")):
             self.token_file.write_text(text)
             self.token_file.chmod(mode)
             with self.subTest(message), self.assertRaisesRegex(fleet_setup.SetupError, message) as refused:
-                fleet_setup.enrolment_token(args)
+                fleet_setup.enrolment_token(args, {})
             self.assertNotIn(HostedApi.token, str(refused.exception))
 
     def test_the_dry_run_checks_the_api_and_the_token_without_using_it(self):
@@ -1634,8 +1636,8 @@ class HostedApiSetupTests(unittest.TestCase):
                                      "api-enrolment-token; do"), 2)
         self.assertIn('api-enrolment-token) printf \'%s\' "$api_enrolment_token_file" ;;', shell)
         self.assertIn("@('api-enrolment-token', $ApiEnrolmentTokenFile)", powershell)
-        for text, check, first_copy in ((shell, '[ "$arg" = --api-url ] && hosted=true', "database-url.new"),
-                                        (powershell, "if ($Passthrough -contains '--api-url')", "database-url.new")):
+        for text, check, first_copy in ((shell, "--api-url|--api-url=*) hosted=true", "database-url.new"),
+                                        (powershell, "if ($hosted) {\n        if ($ApiTarget)", "database-url.new")):
             self.assertLess(text.index(check), text.index(first_copy))
 
     def test_a_refused_switch_leaves_the_fleet_as_it_was(self):
@@ -1680,6 +1682,35 @@ class HostedApiSetupTests(unittest.TestCase):
         # The explicit option with --api-url is still refused.
         self.assertIn('[ -z "$api_target" ] || die "--api-url names the fleet\'s API, so --api-target does not apply."',
                       shell)
+
+    def test_a_switch_without_a_token_changes_nothing(self):
+        # A fleet whose API runs here, installed (so the fleet installer's extra-secrets.json exists), switches
+        # without --api-enrolment-token-file: refused before setup saves anything.
+        saved = {"api": True, "slug": "example-fleet", "name": "Example Fleet"}
+        fleet_setup.write_json(fleet_setup.INPUTS / "answers.json", saved)
+        (fleet_setup.INPUTS / "api.env").write_text("POSTGRES_PASSWORD=example\n")
+        fleet_setup.FLEET_ETC.mkdir()
+        (fleet_setup.FLEET_ETC / "extra-secrets.json").write_text('{"tokens": {}, "cloud": {}}')
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        argv = ["--non-interactive", "--operator", "operator", "--rear-admiral", "Atlas", "--captains", "Orion",
+                "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40, "--api-url",
+                "https://subspace.example.com", "--switch-to-hosted-api"]
+        for dry in ([], ["--dry-run"]):
+            with self.subTest(dry=bool(dry)), patch.object(fleet_setup.pwd, "getpwnam"), \
+                    patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "stargate_agents", return_value=True), \
+                    patch.object(fleet_setup, "hosted_checks") as checks, \
+                    patch.object(fleet_setup, "installer") as installer, patch.object(fleet_setup, "say"), \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "a switch to it, need the fleet's enrolment token"):
+                fleet_setup.setup(fleet_setup.parse_args(argv + dry))
+            checks.assert_not_called()
+            installer.assert_not_called()
+            self.assertEqual({path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}, before)
+
+    def test_the_host_scripts_take_api_url_with_an_equals_sign(self):
+        root = Path(fleet_setup.HERE).parents[1]
+        self.assertIn("case $arg in --api-url|--api-url=*) hosted=true ;; esac", (root / "install.sh").read_text())
+        self.assertIn("$_ -ceq '--api-url' -or $_ -clike '--api-url=*'", (root / "install.ps1").read_text())
 
     def test_a_dry_run_on_the_pinned_release_stops_before_anything_else(self):
         argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",

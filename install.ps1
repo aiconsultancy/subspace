@@ -623,7 +623,7 @@ function Invoke-Install {
     $apiFile = Join-Path $State 'api-target'
     # A Subspace API on another host (--api-url, passed to setup) replaces another fleet's API, so a saved
     # --api-target from an earlier run is set aside, and forgotten once a real run succeeds.
-    $hosted = $Passthrough -contains '--api-url'
+    $hosted = [bool]($Passthrough | Where-Object { $_ -ceq '--api-url' -or $_ -clike '--api-url=*' })
     if (-not $ApiTarget -and (Test-Path $apiFile)) {
         if ($hosted) { Write-Host "    Leaving out the saved --api-target $((Get-Content $apiFile -Raw).Trim()): --api-url names this fleet's API now." }
         else { $script:ApiTarget = (Get-Content $apiFile -Raw).Trim() }
@@ -666,7 +666,7 @@ function Invoke-Install {
     $transient = New-Object System.Collections.Generic.List[string]
     if ($dryRun) { $transient.Add($inputs) }
     # A Subspace API on another host (--api-url, passed to setup) excludes another fleet's API and a database here.
-    if ($Passthrough -contains '--api-url') {
+    if ($hosted) {
         if ($ApiTarget) { Die "--api-url names the fleet's API, so --api-target does not apply." }
         if ($DatabaseUrlFile) { Die '--api-url uses an API on another host, which keeps its own database: leave out --database-url-file.' }
     } elseif ($ApiEnrolmentTokenFile) { Die '--api-enrolment-token-file goes with --api-url.' }
