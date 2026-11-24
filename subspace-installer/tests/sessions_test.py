@@ -462,6 +462,41 @@ class InstalledFleet(unittest.TestCase):
         self.assertEqual(self.events, [])
         self.assertEqual(marker.read_text(), f"{session_id}\n")
 
+    def test_the_dry_run_prints_each_officers_policy_changes_against_the_installed_one(self):
+        config, secrets = crew_fleet("orion")
+        self.render(config, secrets)
+        self.assertEqual(runtime.policy_lines(runtime.validate(config, secrets)),
+                         ["Tool policy unchanged: atlas, orion."])
+        # Delegate captains, a new captain and an extra rule for every officer.
+        config["captainTools"] = "delegate"
+        config["harness"] = {**config["harness"],
+                             "extraPermissions": [{"action": "shell", "resource": "kubectl get *", "effect": "allow"}]}
+        config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra"})
+        cfg = runtime.validate(config, {**secrets, "ircPasswords": {**secrets["ircPasswords"],
+                                                                    "example-lyra": "fixture-password"}})
+        lines = runtime.policy_lines(cfg)
+        orion = lines.index(next(line for line in lines if line.startswith("Tool policy of orion changes:")))
+        changes = lines[orion + 1:lines.index(next(line for line in lines[orion + 1:] if not line.startswith("  ")))]
+        self.assertIn('  - edit "*" allow', changes)
+        self.assertIn('  - shell "git commit *" allow', changes)
+        self.assertIn('  + external_directory "*" allow', changes)
+        self.assertIn('  + shell "*" allow', changes)
+        self.assertIn('  + shell "* git push *" deny', changes)
+        self.assertEqual(changes[-1], '  + shell "kubectl get *" allow')
+        added = sum(line.startswith("  +") for line in changes)
+        self.assertEqual(lines[orion], f"Tool policy of orion changes: {added} rules added and {len(changes) - added} "
+                         "removed (OpenCode permissions; the last matching rule wins):")
+        self.assertIn("Tool policy of atlas changes: 1 rules added and 0 removed (OpenCode permissions; the last "
+                      "matching rule wins):", lines)
+        self.assertIn('  + shell "kubectl get *" allow', lines[lines.index(next(
+            line for line in lines if line.startswith("Tool policy of atlas"))) + 1])
+        lyra = len(runtime.harness_permissions(cfg, cfg["members"][2]))
+        self.assertEqual(lines[-1], f"Tool policy of officers with none installed yet: lyra ({lyra} rules).")
+        # One whose installed policy this user cannot read is named.
+        with patch.object(runtime.os, "access", side_effect=lambda path, mode: not str(path).endswith("orion.json")):
+            lines = runtime.policy_lines(cfg)
+        self.assertEqual(lines[-1], "Run the dry run as root to compare the tool policy of orion with the installed one.")
+
     def test_a_marker_without_a_confirmed_record_is_withdrawn_before_anything_is_written(self):
         config, secrets = crew_fleet("orion")
         self.pin()

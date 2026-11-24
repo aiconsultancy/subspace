@@ -505,6 +505,14 @@ standard` or `--captain-tools delegate` on the host installer or
 `subspace-setup`; reruns keep the choice. In a hand-written fleet file, use
 `captainTools`. A fleet file without it means `standard`.
 
+`--dry-run` says which captains delegate, and compares each OpenCode
+officer's tool policy with the one installed in its engine configuration
+(`/etc/subspace-fleet/opencode-<id>.json`): it lists the rules the run adds
+(`+`) and removes (`-`) in policy order, since the last matching rule wins,
+or says the policy is unchanged or new. Run it as root to read the installed
+policies. The installer applies a changed policy to a pinned root session too
+([Captain sessions](#captain-sessions)).
+
 To extend the starter policy, list rules in `harness.extraPermissions`: for
 the whole fleet, in `harness.captain` or `harness.rearAdmiral` for one role,
 or in an officer's own `harness`. The installer appends them in that order

@@ -2,6 +2,7 @@
 """Validate fleet inputs and converge the system configuration."""
 
 import base64
+import difflib
 import fcntl
 import grp
 import hashlib
@@ -2299,6 +2300,57 @@ def captain_tools_line(cfg):
     return line
 
 
+def policy_lines(cfg):
+    """--dry-run: each OpenCode officer's tool policy against the one installed in its engine configuration: the
+    rules this run adds (+) and removes (-), in policy order, since the last matching rule wins. Officers with
+    the same changes share one entry."""
+
+    def text(rule):
+        return f"{rule['action']} {json.dumps(rule['resource'])} {rule['effect']}"
+
+    changed, unchanged, new, unreadable = {}, [], [], []
+    for person in cfg["members"]:
+        if person["harness"]["type"] != "opencode":
+            continue
+        path = ETC / f"opencode-{person['id']}.json"
+        policy = [text(rule) for rule in harness_permissions(cfg, person)]
+        if not path.exists():
+            new.append(f"{person['id']} ({len(policy)} rules)")
+            continue
+        if not os.access(path, os.R_OK):
+            unreadable.append(person["id"])
+            continue
+        try:
+            installed = [text(rule) for rule in read_json(path).get("permissions", [])]
+        except (Invalid, AttributeError, KeyError, TypeError):
+            unreadable.append(person["id"])
+            continue
+        lines = []
+        for tag, old_start, old_end, new_start, new_end in difflib.SequenceMatcher(
+                None, installed, policy, autojunk=False).get_opcodes():
+            if tag != "equal":
+                lines += [f"  - {rule}" for rule in installed[old_start:old_end]]
+                lines += [f"  + {rule}" for rule in policy[new_start:new_end]]
+        if lines:
+            changed.setdefault(tuple(lines), []).append(person["id"])
+        else:
+            unchanged.append(person["id"])
+    output = []
+    for lines, ids in changed.items():
+        added = sum(line.startswith("  +") for line in lines)
+        output.append(f"Tool policy of {', '.join(ids)} changes: {added} rules added and {len(lines) - added} removed "
+                      "(OpenCode permissions; the last matching rule wins):")
+        output.extend(lines)
+    if unchanged:
+        output.append(f"Tool policy unchanged: {', '.join(unchanged)}.")
+    if new:
+        output.append(f"Tool policy of officers with none installed yet: {', '.join(new)}.")
+    if unreadable:
+        output.append(f"Run the dry run as root to compare the tool policy of {', '.join(unreadable)} with the "
+                      "installed one.")
+    return output
+
+
 def unserved_message(unserved, accounts):
     models = ", ".join(sorted({f"{model} ({kind} account)" for _, model, kind in unserved}))
     officers = ", ".join(officer for officer, _, _ in unserved)
@@ -2991,6 +3043,8 @@ def main(args):
             for line in slack_plan(cfg):
                 print(line)
             if line := captain_tools_line(cfg):
+                print(line)
+            for line in policy_lines(cfg):
                 print(line)
             print("\n".join(irc_sign_in(cfg, bundles, installed=False)))
     elif verb == "commission":
