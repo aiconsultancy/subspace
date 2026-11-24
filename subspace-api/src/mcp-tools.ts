@@ -184,7 +184,7 @@ const fullRules = "Full rules: the subspace-tracker skill.";
 export const mcpInstructions = `This is the Subspace tracker. The subspace-tracker skill holds its full rules; if you have it, read it before you write. Rules for filing work:
 
 1. Call subspace_whoami first. With kind "human" you are a person's local agent: start every text you write with ${onBehalfMarker}, using your exact model and version, and for a change with no text of its own add a one-line comment with that marker saying what you changed. With kind "agent" you are a fleet agent: write as yourself, with no marker.
-2. Search before you create. Use subspace_list_issues with filters.q, and type "tracker" for trackers, closed and archived ones included (stateType ["completed", "canceled"], includeArchived true). Extend an issue or tracker that covers the work rather than filing a duplicate.
+2. Search before you create: subspace_list_issues with filters.q and includeArchived true, adding type "tracker" for trackers. With no stateType filter the search covers every state, open and closed, and includeArchived adds archived issues; filters combine, so use stateType only to narrow a search on purpose. Extend an issue or tracker that covers the work rather than filing a duplicate.
 3. Size an issue to one working session. Do not file one issue per small finding, review note or follow-up: add it as a comment (subspace_create_comment) or a to-do (subspace_add_todos) on the issue it belongs to, or batch small related items into one issue per area.
 4. Give every issue and tracker a one-line summary (required on create, at most 300 characters) that says in plain words what it is for, so a list of issues can be read without opening them; a tracker's summary says what it groups. Keep it current with subspace_update_issue when the scope changes, especially after folding or regrouping issues.
 5. Group related issues under a tracker (type "tracker", children by parentId). Reuse a tracker that fits before creating one, keep trees shallow, and do not park unrelated issues under a tracker: its state follows its direct children.`;
@@ -627,7 +627,7 @@ export const mcpTools = {
     listLabels,
   ),
   subspace_list_issues: tool(
-    'List issues with optional filters and cursor paging. Search here before creating an issue or tracker: q for words, type "tracker" for trackers, stateType ["completed", "canceled"] and includeArchived true for closed and archived ones, parent for a tracker\'s children.',
+    'List issues with optional filters and cursor paging. Filters combine. With no stateType filter it returns every state, open and closed; archived issues appear only with includeArchived true. Search here before creating an issue or tracker: q for words, includeArchived true, and type "tracker" for trackers; use stateType only to narrow on purpose. parent lists a tracker\'s children.',
     true,
     Schema.Struct({ filters: Schema.optional(IssueQuery) }),
     (member, args) => listIssues(member, args.filters ?? {}),
@@ -645,7 +645,7 @@ export const mcpTools = {
     (member, args) => getIssue(member, args.issue),
   ),
   subspace_create_issue: tool(
-    `Create an issue in a project identified by its key or UUID. Search first with subspace_list_issues, closed and archived ones included, and extend an issue or tracker that covers the work. Size an issue to one working session: put a small finding, review note or follow-up in a comment or to-do on the issue it belongs to, or batch small related items into one issue per area. Write a one-line summary (at most 300 characters) that says in plain words what the issue is for, so a list reads without opening it; a tracker's summary says what it groups. Keep it current with subspace_update_issue when the scope changes. Group related issues under a tracker (type "tracker", children by parentId): reuse a tracker that fits, keep trees shallow, and keep unrelated issues out, as a tracker's state follows its direct children. ${asPerson} the description with ${onBehalfMarker} and keep the title clean; a fleet agent (kind "agent") uses no marker. ${fullRules} A fleet agent that sets a non-null assigneeId or sends readyForAgents receives 403 when the project belongs to another fleet.`,
+    `Create an issue in a project identified by its key or UUID. Search first with subspace_list_issues (filters.q and includeArchived true, with no stateType, so open, closed and archived issues all match) and extend an issue or tracker that covers the work. Size an issue to one working session: put a small finding, review note or follow-up in a comment or to-do on the issue it belongs to, or batch small related items into one issue per area. Write a one-line summary (at most 300 characters) that says in plain words what the issue is for, so a list reads without opening it; a tracker's summary says what it groups. Keep it current with subspace_update_issue when the scope changes. Group related issues under a tracker (type "tracker", children by parentId): reuse a tracker that fits, keep trees shallow, and keep unrelated issues out, as a tracker's state follows its direct children. ${asPerson} the description with ${onBehalfMarker} and keep the title clean; a fleet agent (kind "agent") uses no marker. ${fullRules} A fleet agent that sets a non-null assigneeId or sends readyForAgents receives 403 when the project belongs to another fleet.`,
     false,
     NewIssueInProject,
     (member, { project, projectId, ...payload }) =>
@@ -657,7 +657,7 @@ export const mcpTools = {
       }),
   ),
   subspace_update_issue: tool(
-    `Patch an issue using its current version. Extend an existing issue (description, to-dos, comments) rather than filing a new one for a small follow-up. Set parentId to group an issue under a tracker of related work; a tracker's state follows its direct children, so keep unrelated issues out. ${asPerson} any description you write with ${onBehalfMarker}, and add a one-line comment with that marker for a change with no text of its own; a fleet agent (kind "agent") uses no marker. ${fullRules} A fleet agent that sets a non-null assigneeId or sends readyForAgents receives 403 when the issue's project belongs to another fleet.`,
+    `Patch an issue using its current version. Extend an existing issue (description, to-dos, comments) rather than filing a new one for a small follow-up. Keep the one-line summary current when the scope changes, especially after folding or regrouping issues; a tracker's summary says what it groups. Set parentId to group an issue under a tracker of related work; a tracker's state follows its direct children, so keep unrelated issues out. ${asPerson} any description you write with ${onBehalfMarker}, and add a one-line comment with that marker for a change with no text of its own; a fleet agent (kind "agent") uses no marker. ${fullRules} A fleet agent that sets a non-null assigneeId or sends readyForAgents receives 403 when the issue's project belongs to another fleet.`,
     false,
     Schema.Struct({ ...issue, changes: EditIssue }),
     (member, args) => editIssue(member, args.issue, args.changes),

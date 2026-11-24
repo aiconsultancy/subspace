@@ -82,8 +82,12 @@ The MCP server's instructions and the issue tools' descriptions repeat these
 rules in brief.
 
 - **Search before you create.** Look for an issue or tracker that already
-  covers the work, closed and archived ones included (see the first step
-  below), and extend it rather than filing a duplicate.
+  covers the work with `subspace_list_issues` and
+  `filters: {"q": "<words>", "includeArchived": true}`, adding
+  `"type": "tracker"` for trackers, and extend what you find rather than
+  filing a duplicate. Without a `stateType` filter the search covers every
+  state, open and closed, and `includeArchived` adds archived issues; filters
+  combine, so use `stateType` only to narrow a search on purpose.
 - **Size an issue to one working session.** Do not file one issue per small
   finding, review note or follow-up. Add it as a comment or a to-do on the
   issue it belongs to, or batch small related items into one issue per area.
@@ -104,11 +108,11 @@ An issue has a `type`: `issue` or `tracker`. A tracker groups work: its
 take a `stateId`, an assignee or an estimate, and it cannot be marked Ready
 for agents.
 
-1. **Look for an existing tracker first**, including closed and archived ones:
-   `subspace_list_issues` with `filters: {"type": "tracker", "q": "<words>"}`,
-   adding `"stateType": ["completed", "canceled"]` or `"includeArchived": true`
-   to see finished ones. Reopen or extend one that fits rather than starting
-   a duplicate.
+1. **Look for an existing tracker first**, open, closed and archived:
+   `subspace_list_issues` with
+   `filters: {"type": "tracker", "q": "<words>", "includeArchived": true}`
+   and no `stateType`, following `nextCursor` while there are more. Reopen or
+   extend one that fits rather than starting a duplicate.
 2. Only when none fits, create one with `subspace_create_issue` and
    `"type": "tracker"`. Required: `project` (key or UUID), `title`, `summary`.
 3. Add children with `parentId` set to the parent's key (`NAV-12`) or UUID, on
