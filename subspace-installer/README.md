@@ -565,7 +565,8 @@ the last matching rule decides. Text cannot tell every write from a read:
   follows `git` and its options as a bare word, such as
   `git -C project log --grep stash` (quote the word, or set the shell's
   working directory instead of using `-C`), an argument, such as a pull
-  request body, that contains ` git push ` or the like, and a branch listing
+  request title or a search pattern, that contains `git push` or the like
+  (quoted, or as the end of a longer word), and a branch listing
   with other options but none of the listing ones above, such as
   `git branch --sort=-committerdate` (add `--list`).
 
@@ -2145,6 +2146,13 @@ setting together before it changes the fleet, in the dry run and the real
 run alike, so when an upgrade introduces several new settings at once and
 one is refused, none of them is applied.
 
+- **Officers call the tracker's REST route as `subspace-request`.** On a
+  fleet with a hosted API, officers' instructions now name
+  `subspace-request` instead of the long Stargate command. The starter
+  policy allows it. A fleet whose `harness.permissions` is written by hand
+  and denies by default must add
+  `{"action": "shell", "resource": "subspace-request *", "effect": "allow"}`,
+  or its officers lose that route (the `subspace_*` tools are unaffected).
 - **IRC certificates are the default for a remote server (breaking).** A
   remote fleet whose secrets file has IRC passwords for its rear admiral or
   captains, and whose `fleet.json` does not set `irc.auth`, is refused until
