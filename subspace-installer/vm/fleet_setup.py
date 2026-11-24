@@ -103,6 +103,11 @@ REPO_ID = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 MAX_REPOSITORIES = 9
 # A crew member's model ID, as the fleet installer accepts it (runtime.MODEL).
 CREW_MODEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._/:#-]{0,127}")
+# An officer's model ID and reasoning effort (runtime.harness_config checks the effort against the model).
+OFFICER_MODEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._/:-]{0,127}")
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# The officers' model before each role had its own default. A fleet set up then keeps it until it chooses.
+LEGACY_OFFICER_MODEL = "gpt-5.4"
 # The API on this VM against an existing PostgreSQL (--database-url-file). The URL file is root's alone; the URL
 # is written only to the root-only api.env, single-quoted so Compose takes it literally, hence no quote in it.
 DATABASE_URL_TEXT = re.compile(r"[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+")
@@ -197,6 +202,15 @@ def parse_args(argv):
                         "(default claude-sonnet-5-5; kept on later runs; '' returns to the default)")
     parser.add_argument("--crew-codex-model", help="model of each Codex-family crew member, such as gpt-6.2-sol "
                         "(default gpt-5.4; kept on later runs; '' returns to the default)")
+    for role, flag, default in (("captain", "captain", runtime.OFFICER_DEFAULTS["captain"]),
+                                ("rear_admiral", "rear-admiral", runtime.OFFICER_DEFAULTS["rear_admiral"])):
+        who = "each captain" if role == "captain" else "the rear admiral"
+        parser.add_argument(f"--{flag}-model", help=f"model of {who}, such as gpt-5.4 (default {default['model']}; "
+                            "a claude-* model goes through the Claude family, any other through Codex; kept on later "
+                            "runs; '' returns to the default)")
+        parser.add_argument(f"--{flag}-effort", help=f"reasoning effort of {who}: {', '.join(EFFORTS)} (default "
+                            f"{default['effort']} on {default['model']}, else the provider's; kept on later runs; '' "
+                            "returns to the default)")
     parser.add_argument("--demo", dest="demo", action="store_true", default=None, help="seed fictional demo data")
     parser.add_argument("--no-demo", dest="demo", action="store_false")
     parser.add_argument("--irc", choices=["local", "remote"],
@@ -328,6 +342,32 @@ def gather(args, saved):
             require(CREW_MODEL.fullmatch(flag), f"--crew-{family}-model must be a model ID, such as "
                     f"{'claude-opus-5-5' if family == 'claude' else 'gpt-6.2-sol'}.")
             models[family] = flag
+    officers = answers.get("officerModels")
+    if officers is None:
+        officers = {}
+        harness = read_json(INPUTS / "fleet.json", {}).get("harness")
+        chosen = isinstance(harness, dict) and harness.keys() & {"family", "model", "captain", "rearAdmiral"}
+        if saved.get("slug") and not chosen:
+            # Set up when every officer ran gpt-5.4: it keeps that model until the operator chooses.
+            officers = {role: {"model": LEGACY_OFFICER_MODEL, "effort": ""} for role in ("captain", "rearAdmiral")}
+            if args.captain_model is None or args.rear_admiral_model is None:
+                say(f"this fleet was set up when officers defaulted to {LEGACY_OFFICER_MODEL}, so they keep it. To "
+                    "move them to the default models (Claude, which needs a claude account in the model proxy): "
+                    "subspace-setup --captain-model '' --rear-admiral-model '' (installer README, 'Officer models').")
+    for role, model, effort in (("captain", args.captain_model, args.captain_effort),
+                                ("rearAdmiral", args.rear_admiral_model, args.rear_admiral_effort)):
+        flag = "captain" if role == "captain" else "rear-admiral"
+        # '' is the fleet installer's default, even over one set in fleet.json by hand.
+        choice = officers.setdefault(role, {})
+        if model is not None:
+            require(model == "" or OFFICER_MODEL.fullmatch(model), f"--{flag}-model must be a model ID, such as "
+                    f"claude-opus-5-5. Give the reasoning effort with --{flag}-effort.")
+            # An effort belongs to its model: a new model has its default effort unless this run names one.
+            choice.update(model=model, effort="")
+        if effort is not None:
+            require(effort == "" or effort in EFFORTS, f"--{flag}-effort must be one of {', '.join(EFFORTS)}.")
+            choice["effort"] = effort
+    answers["officerModels"] = officers
     answers["irc"] = args.irc or answers.get("irc", "local")
     if answers["irc"] == "remote":
         pick("ircHost", args.irc_host, "Shared IRC server's DNS name")
@@ -798,6 +838,27 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
                 "githubPolicy", "dashboard", "proxy", "agentsview"):
         if key in previous:
             config[key] = previous[key]
+    # Each role's model and effort: this or an earlier run's answer, over one set in fleet.json by hand.
+    harness = dict(config.get("harness") or {})
+    for role, choice in answers.get("officerModels", {}).items():
+        block = dict(harness.get(role) or {})
+        if choice.get("model"):
+            block.update(model=choice["model"], family="claude" if choice["model"].startswith("claude") else "codex")
+        elif "model" in choice:
+            block.pop("model", None)
+            block.pop("family", None)
+        if choice.get("effort"):
+            block["effort"] = choice["effort"]
+        elif "effort" in choice:
+            block.pop("effort", None)
+        if block:
+            harness[role] = block
+        else:
+            harness.pop(role, None)
+    if harness:
+        config["harness"] = harness
+    else:
+        config.pop("harness", None)
     repositories = previous.get("repositories", [])
     if "repositories" in answers:
         # This run's answer replaces the list; a repository that stays keeps its visibility, and its ID

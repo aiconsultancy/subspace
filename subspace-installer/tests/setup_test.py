@@ -5,7 +5,9 @@ Run with Python 3.10 or later: python3 -B subspace-installer/tests/setup_test.py
 
 import argparse
 import base64
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -174,6 +176,93 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual(rebuilt["crew"], {"claude": {"count": 2, "model": "claude-opus-5-5"}, "codex": {"count": 2}})
         with self.assertRaisesRegex(fleet_setup.SetupError, "--crew-codex-model must be a model ID"):
             answers_for([*base, "--crew-codex-model", "gpt 6"])
+
+    def officers(self, config, secrets):
+        cfg = validate(config, secrets, check_files=False)
+        return [(person["harness"]["family"], person["harness"]["model"], person["harness"]["effort"])
+                for person in cfg["members"]]
+
+    def rerun(self, answers, config, *argv):
+        fleet_setup.save_answers(answers)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", *argv])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            return fleet_setup.gather(args, fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+
+    def test_a_new_fleet_runs_its_officers_on_the_default_models(self):
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion,Vega", "--no-demo"]
+        answers, _, config, secrets, _ = self.generate(argv)
+        self.assertNotIn("harness", config)
+        self.assertEqual(answers["officerModels"], {"captain": {}, "rearAdmiral": {}})
+        self.assertEqual(self.officers(config, secrets), [("claude", "claude-fable-5-2", "high"),
+                                                          ("claude", "claude-opus-5-5", "xhigh"),
+                                                          ("claude", "claude-opus-5-5", "xhigh")])
+
+    def test_officer_models_are_set_by_option_and_kept_on_a_rerun(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        answers, members, config, secrets, _ = self.generate(
+            [*base, "--captain-model", "gpt-6.2-sol", "--captain-effort", "high", "--rear-admiral-effort", "max"])
+        self.assertEqual(config["harness"], {"captain": {"model": "gpt-6.2-sol", "family": "codex", "effort": "high"},
+                                             "rearAdmiral": {"effort": "max"}})
+        self.assertEqual(self.officers(config, secrets), [("claude", "claude-fable-5-2", "max"),
+                                                          ("codex", "gpt-6.2-sol", "high")])
+        # A rerun without the options keeps them, with what else fleet.json's harness holds.
+        config["harness"]["type"] = "opencode"
+        again = self.rerun(answers, config)
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(rebuilt["harness"], config["harness"])
+        # A new model starts at its provider's default effort unless the run names one.
+        again = self.rerun(again, rebuilt, "--captain-model", "claude-sonnet-5-5")
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(rebuilt["harness"]["captain"], {"model": "claude-sonnet-5-5", "family": "claude"})
+        self.assertEqual(self.officers(rebuilt, secrets)[1], ("claude", "claude-sonnet-5-5", None))
+        # '' returns to the default, even over a model set in fleet.json by hand.
+        rebuilt["harness"]["rearAdmiral"]["model"] = "claude-opus-5-5"
+        again = self.rerun(again, rebuilt, "--captain-model", "", "--rear-admiral-model", "")
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(rebuilt["harness"], {"type": "opencode"})
+        self.assertEqual(self.officers(rebuilt, secrets), [("claude", "claude-fable-5-2", "high"),
+                                                           ("claude", "claude-opus-5-5", "xhigh")])
+        for option, value, message in (("--captain-effort", "extreme", "--captain-effort must be one of low, medium"),
+                                       ("--rear-admiral-model", "claude-opus-5-5#xhigh", "--rear-admiral-model must be "
+                                        "a model ID")):
+            with self.subTest(option), self.assertRaisesRegex(fleet_setup.SetupError, re.escape(message)):
+                answers_for([*base, option, value])
+        # The fleet installer checks the effort against the model.
+        answers, _, config, secrets, _ = self.generate([*base, "--captain-model", "gpt-5.4", "--captain-effort", "max"])
+        with self.assertRaisesRegex(runtime.Invalid, "'max' is not available for gpt-5.4"):
+            self.officers(config, secrets)
+
+    def test_a_fleet_set_up_before_the_role_defaults_keeps_its_model_until_it_chooses(self):
+        base = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo"]
+        answers, members, config, secrets, _ = self.generate(base)
+        del answers["officerModels"]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            again = self.rerun(answers, config)
+        self.assertIn("officers defaulted to gpt-5.4, so they keep it", output.getvalue())
+        self.assertIn("subspace-setup --captain-model '' --rear-admiral-model ''", output.getvalue())
+        rebuilt = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(self.officers(rebuilt, secrets), [("codex", "gpt-5.4", None), ("codex", "gpt-5.4", None)])
+        # Its later runs keep it quietly, and the documented command moves it to the defaults.
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            kept = self.rerun(again, rebuilt)
+        self.assertEqual((output.getvalue(), kept["officerModels"]), ("", again["officerModels"]))
+        moved = self.rerun(kept, rebuilt, "--captain-model", "", "--rear-admiral-model", "")
+        # Naming both models on the first run moves it without the note.
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            direct = self.rerun(answers, config, "--captain-model", "", "--rear-admiral-model", "")
+        self.assertEqual((output.getvalue(), direct["officerModels"]), ("", moved["officerModels"]))
+        self.assertEqual(self.officers(fleet_setup.fleet_config(moved, members, "a" * 40), secrets),
+                         [("claude", "claude-fable-5-2", "high"), ("claude", "claude-opus-5-5", "xhigh")])
+        # A fleet whose fleet.json already names the officers' model keeps that instead.
+        config["harness"] = {"type": "opencode", "family": "codex", "model": "gpt-6.2-sol"}
+        again = self.rerun(answers, config)
+        self.assertEqual(again["officerModels"], {"captain": {}, "rearAdmiral": {}})
+        self.assertEqual(self.officers(fleet_setup.fleet_config(again, members, "a" * 40), secrets),
+                         [("codex", "gpt-6.2-sol", None), ("codex", "gpt-6.2-sol", None)])
 
     def test_repositories_answer_fills_the_fleet_list_and_gives_captains_crew(self):
         argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion", "--no-demo",
