@@ -214,7 +214,11 @@ answer it now.
    (see [GitHub Apps per fleet member](subspace-installer/README.md#github-apps-per-fleet-member)).
    Ask whether those Apps exist and where their keys are. If not, install
    with the public repositories only, and tell the user how to add the private
-   ones once the Apps exist. **Default: no repositories, so no crew yet.**
+   ones once the Apps exist. Setup cannot tell a private repository from its
+   URL: the dry run warns about every repository Git cannot read without
+   credentials, and the install stops before cloning until it is marked
+   `"private": true` with the Apps in place, or removed.
+   **Default: no repositories, so no crew yet.**
 5. **Crew per captain** (**2 Claude, 2 Codex**; 0 to 10 each,
    `--crew-claude`, `--crew-codex`). Explain that crew run inside their
    captain's OpenCode server as the captain's Linux user: they share the

@@ -784,14 +784,15 @@ def irc_source():
             shutil.rmtree(work, ignore_errors=True)
 
 
-def installer(config_path, dry_run=False, secrets_dir=None):
+def installer(config_path, dry_run=False, secrets_dir=None, strict=False):
     args = [INSTALLER / "install.sh", "--config", config_path]
     if secrets_dir:
         args += ["--secrets-dir", secrets_dir]
     if dry_run:
         args.append("--dry-run")
     say("running the fleet installer" + (" (dry run)" if dry_run else ""))
-    run(*args)
+    # strict: a dry run that also refuses what the real run would refuse later, such as an unreadable repository.
+    run(*args, env={**os.environ, "SUBSPACE_FLEET_CHECK": "strict"} if strict else None)
 
 
 def preflight(config, private):
@@ -804,7 +805,7 @@ def preflight(config, private):
         write_json(config_path, config)
         write_json(Path(scratch) / "fleet.secrets.json", private)
         say("checking the fleet's configuration before the API changes")
-        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None)
+        installer(config_path, dry_run=True, secrets_dir=secrets_dir if secrets_dir.is_dir() else None, strict=True)
 
 
 def installed_stargate_source():

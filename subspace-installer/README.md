@@ -116,6 +116,13 @@ the mirror service refreshes, and works in its reference checkout of the
 first repository. The rear admiral can inspect them from its own Linux
 account, including Git history. `subspace-setup --repositories` fills this
 list from comma-separated HTTPS URLs, optionally written as `ID=URL`.
+A repository without `"private": true` is cloned without credentials, so the
+installer first checks that Git can read it that way: `--dry-run` warns about
+each one it cannot read, and an install or upgrade, and `subspace-setup`
+before it changes the API, stop before cloning anything. Mark a private
+repository `"private": true` and give the officers
+[GitHub Apps](#github-apps-per-fleet-member). An installed repository is not
+checked again.
 
 A repository also takes an optional one-line `description` and `tracker`,
 free text that names where its work is tracked, for example

@@ -31,6 +31,12 @@ import standard_channels
 import workspaces
 
 
+# Tests never reach the network: Git's anonymous repository check is replaced here; RepositoryAccessTests
+# checks the real one.
+readable_without_credentials = runtime.readable_without_credentials
+runtime.readable_without_credentials = lambda url: True
+
+
 def example_config():
     config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
     # These tests sign officers in with passwords; IrcCertificateTests covers the default, certificates.
@@ -1443,6 +1449,65 @@ class FleetRecordsTests(unittest.TestCase):
             config.pop("api")
             secrets.pop("apiToken")
             validate(config, secrets)
+
+
+class RepositoryAccessTests(unittest.TestCase):
+    """A repository the installer would clone as public must be readable without credentials."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.work = Path(temporary.name)
+        config = example_config()
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"},
+                                  {"id": "library", "url": "https://github.com/example/library.git"}]
+        (self.work / "fleet.json").write_text(json.dumps(config))
+        (self.work / "fleet.secrets.json").write_text(json.dumps(officer_secrets()))
+        (self.work / "fleet.secrets.json").chmod(0o600)
+
+    def main(self, verb, readable):
+        output = io.StringIO()
+        (self.work / "stage").mkdir(exist_ok=True)
+        tail = [str(self.work / "stage")] if verb == "prepare" else []
+        with patch.object(runtime, "ETC", self.work / "etc"), patch.object(runtime, "STATE", self.work / "state"), \
+                patch.object(runtime, "readable_without_credentials", side_effect=readable) as check, \
+                contextlib.redirect_stdout(output):
+            runtime.main([verb, str(self.work / "fleet.json"), str(self.work / "fleet.secrets.json"), *tail, "", "false"])
+        return output.getvalue(), [call.args[0] for call in check.call_args_list]
+
+    def test_the_dry_run_warns_and_the_real_run_stops_before_cloning(self):
+        private = lambda url: "library" not in url  # noqa: E731
+        text, checked = self.main("plan", private)
+        self.assertEqual(checked, ["https://github.com/example/project.git", "https://github.com/example/library.git"])
+        self.assertIn("WARNING: Git cannot read library without credentials", text)
+        self.assertIn('mark it "private": true in fleet.json and give the rear admiral and every captain a GitHub App',
+                      text)
+        with self.assertRaisesRegex(Invalid, "Git cannot read library without credentials"):
+            self.main("prepare", private)
+        self.assertFalse((self.work / "stage/fleet.json").exists())
+        text, _ = self.main("plan", lambda url: True)
+        self.assertNotIn("WARNING", text)
+        # subspace-setup's check before it changes the API refuses as the real run would.
+        with patch.dict("os.environ", {"SUBSPACE_FLEET_CHECK": "strict"}), \
+                self.assertRaisesRegex(Invalid, "Git cannot read library"):
+            self.main("plan", private)
+        # An installed repository is not checked again.
+        (self.work / "etc").mkdir()
+        (self.work / "etc/repository-sources.json").write_text(json.dumps(
+            {"library": {"url": "https://github.com/example/library.git", "private": False}}))
+        (self.work / "etc/repository-sources.json").chmod(0o600)
+        _, checked = self.main("plan", private)
+        self.assertEqual(checked, ["https://github.com/example/project.git"])
+
+    def test_the_check_asks_git_with_no_credentials_or_prompt(self):
+        with patch.object(runtime.subprocess, "run", return_value=subprocess.CompletedProcess([], 128)) as run:
+            self.assertFalse(readable_without_credentials("https://github.com/example/private.git"))
+        command, environment = run.call_args.args[0], run.call_args.kwargs["env"]
+        self.assertEqual(command, ["git", "-c", "credential.helper=", "ls-remote", "--heads", "--",
+                                   "https://github.com/example/private.git"])
+        self.assertEqual(environment["GIT_TERMINAL_PROMPT"], "0")
+        with patch.object(runtime.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 30)):
+            self.assertFalse(readable_without_credentials("https://github.com/example/slow.git"))
 
 
 class IrcCertificateTests(unittest.TestCase):
