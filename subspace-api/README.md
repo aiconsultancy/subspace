@@ -527,6 +527,19 @@ until it is changed, but cannot sign in to IRC. It is also the agent's
 An edit that leaves `ircNick` out keeps it; `null` clears it. The fleet's
 `agents` report it.
 
+**An agent has one name.** Agent names and IRC nicks share one namespace per
+organisation, across its fleets and people's usernames, compared without case:
+a new or changed name may not be another agent's name, IRC nick or a person's
+username, nor a new or changed nick another agent's name. The installer gives
+each fleet officer the same name as name and nick, which is also its Stargate
+ID, so the desktop finds a captain's ship in the fleet's Fleet API by its nick.
+A refusal (409) names the agent and fleet that hold the name, or says a person
+holds it without naming them. Names an organisation already shares that way
+stay valid until one of them changes, so no migration is needed. An
+administrator renames an agent in place with `PUT /api/v1/agents/{userId}`:
+it keeps its ID, key credentials and history, and its old nick stays retired
+for it alone.
+
 Agent registration and editing accept `fleetId` and `shipId`. An ID takes
 precedence over its text field. Legacy fleet names resolve within the caller's
 organisation. A ship name creates a ship only within a matched fleet. Captains
@@ -788,6 +801,15 @@ The fleet's gateway, with no other login, calls `POST /api/v1/agents/enrol` with
   is right, the detail says which.
 - Every registration that is not a repeat uses one of the token's uses; enrolments
   at the same moment never exceed `maxUses`.
+
+Before it enrols anything, a fleet's installer may ask what enrolment would do,
+with the same token: `POST /api/v1/agents/enrol/check` with
+`{"agents": [{"name", "rank", "ship", "ircNick"}, ...]}` (1 to 50, no
+certificate) answers 200 `{"items": [{"name", "outcome", "detail"}]}`, where
+`outcome` is `existing` (a key would be added to that agent), `new` (the name
+and nick are free) or `refused`, with the detail enrolment would give, naming
+the agent and fleet that hold a name. It changes nothing and uses none of the
+token's uses; a missing, unknown, expired or revoked token receives 401.
 
 Enrolment can never create a person or an administrator, touch another fleet,
 change an agent's fleet or any field but its credentials, or attach a credential

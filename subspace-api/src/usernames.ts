@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull, ne, sql, type SQLWrapper } from "drizzle-orm";
 import { Context, Effect, Schedule } from "effect";
 import { type Database } from "./db";
-import { auditLogs, organisations, retiredUsernames, users } from "./schema";
+import { auditLogs, fleets, organisations, retiredUsernames, users } from "./schema";
 
 /**
  * Usernames: one handle per person, which is also their IRC account name. People and agents
@@ -225,6 +225,44 @@ export const retiredByAnother = (
         ),
       ),
     (rows) => rows.length > 0,
+  );
+
+/**
+ * The record that retired a name, if a record other than `userId` did, so it may not be given to
+ * that record: its name, rank, state and fleet, for a refusal that names it.
+ */
+export const retiredHolder = (
+  db: Db,
+  organisationId: string,
+  name: string,
+  userId: string | undefined,
+) =>
+  Effect.map(
+    db
+      .select({
+        displayName: users.displayName,
+        agentRank: users.agentRank,
+        active: users.active,
+        fleet: sql<string | null>`coalesce(${fleets.slug}, ${users.agentFleet})`,
+      })
+      .from(retiredUsernames)
+      .innerJoin(
+        users,
+        and(
+          eq(users.organisationId, retiredUsernames.organisationId),
+          eq(users.id, retiredUsernames.userId),
+        ),
+      )
+      .leftJoin(fleets, eq(fleets.id, users.agentFleetId))
+      .where(
+        and(
+          eq(retiredUsernames.organisationId, organisationId),
+          eq(retiredUsernames.name, canonicalName(name)),
+          userId ? ne(retiredUsernames.userId, userId) : undefined,
+        ),
+      )
+      .limit(1),
+    (rows) => rows[0],
   );
 
 /**

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, ne, or, sql, type SQLWrapper } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { recordAudit } from "./audit";
@@ -14,7 +14,7 @@ import {
   canonicalName,
   isReservedUsername,
   ReservedUsernames,
-  retiredByAnother,
+  retiredHolder,
   usernameKey,
 } from "./usernames";
 import {
@@ -277,53 +277,136 @@ function registrationFields(member: Member, data: typeof Registration.Type, old?
   });
 }
 
+/** The fleet an agent row belongs to, by its slug, for messages. */
+const fleetSlug = sql<string | null>`coalesce(${fleets.slug}, ${users.agentFleet})`;
+
+/**
+ * Who holds a name, in the words a refusal uses: an agent by its name and fleet, or a person,
+ * whom a refusal never names (the enrolment check answers a fleet's gateway, not a member).
+ */
+export function nameHolder(row: {
+  displayName: string;
+  agentRank: string | null;
+  active: boolean;
+  fleet: string | null;
+}) {
+  if (!row.agentRank) return "a person in this organisation";
+  const fleet = row.fleet ? ` of fleet ${row.fleet}` : "";
+  return `agent ${row.displayName}${fleet}${row.active ? "" : " (deactivated)"}`;
+}
+
+const uniqueNames =
+  "An agent has one name: agent names and IRC nicks are unique in an organisation, across its fleets and people's usernames, compared without case. Choose another name.";
+
 /**
  * Refuses an agent registration whose new IRC nick is reserved (400) or was retired by another
- * record (409), or whose account subject, agent name or IRC nick another record holds (409). A
- * person's username counts as a taken IRC nick: it is their IRC account name. Call it inside the
- * transaction that holds the organisation's lock, with the record being edited as `old`.
+ * record (409), or whose account subject, agent name or IRC nick another record holds (409),
+ * naming the agent and fleet that hold it. An agent has one name, so a new or changed name may
+ * not be another record's IRC nick or username either, nor a new or changed nick another agent's
+ * name; names an organisation already shares that way stay as they are until one of them
+ * changes. A person's username counts as a taken IRC nick: it is their IRC account name. Call it
+ * inside the transaction that holds the organisation's lock, with the record being edited as
+ * `old`.
  */
 export const checkAgentNames = (
   tx: (typeof Database)["Service"],
   organisationId: string,
   registration: { subject: string; displayName: string; agentIrcNick?: string | null },
-  old?: { id: string; agentIrcNick: string | null },
+  old?: { id: string; displayName: string; agentIrcNick: string | null },
 ) =>
   Effect.gen(function* () {
     const nick = registration.agentIrcNick;
+    const nameKey = canonicalName(registration.displayName);
+    const nickKey = typeof nick === "string" ? canonicalName(nick) : null;
     const newNick =
-      typeof nick === "string" &&
-      canonicalName(nick) !== (old?.agentIrcNick == null ? null : canonicalName(old.agentIrcNick));
-    if (newNick && isReservedUsername(nick, yield* ReservedUsernames))
+      nickKey !== null &&
+      nickKey !== (old?.agentIrcNick == null ? null : canonicalName(old.agentIrcNick));
+    const newName = old === undefined || canonicalName(old.displayName) !== nameKey;
+    if (newNick && isReservedUsername(nick!, yield* ReservedUsernames))
       return yield* Effect.fail(
         validationProblem("ircNick", "This IRC nick is reserved. Choose another."),
       );
-    if (newNick && (yield* retiredByAnother(tx, organisationId, nick, old?.id)))
+    const retired = newNick ? yield* retiredHolder(tx, organisationId, nick!, old?.id) : undefined;
+    if (retired)
       return yield* Effect.fail(
         problem(
           409,
-          "This IRC nick was used before in this organisation and cannot be given to another account.",
+          `The IRC nick ${nick} was used before in this organisation, by ${nameHolder(retired)}, and cannot be given to another account. Choose another name.`,
         ),
       );
-    const nickKey = typeof nick === "string" ? canonicalName(nick) : null;
-    const [conflict] = yield* tx
-      .select({ id: users.id })
+    const nameAs = (column: SQLWrapper, key: string) => sql`${usernameKey(column)} = ${key}`;
+    const rows = yield* tx
+      .select({
+        displayName: users.displayName,
+        agentRank: users.agentRank,
+        active: users.active,
+        subject: users.subject,
+        agentIrcNick: users.agentIrcNick,
+        username: users.username,
+        fleet: fleetSlug,
+      })
       .from(users)
+      .leftJoin(fleets, eq(fleets.id, users.agentFleetId))
       .where(
         and(
           eq(users.organisationId, organisationId),
-          sql`(${users.subject} = ${registration.subject} or
-            (${users.agentRank} is not null and lower(${users.displayName}) = lower(${registration.displayName})) or
-            (${nickKey}::text is not null and
-              (${usernameKey(users.agentIrcNick)} = ${nickKey}::text or
-               ${usernameKey(users.username)} = ${nickKey}::text)))`,
-          old ? sql`${users.id} <> ${old.id}` : undefined,
+          old ? ne(users.id, old.id) : undefined,
+          or(
+            eq(users.subject, registration.subject),
+            and(
+              isNotNull(users.agentRank),
+              sql`lower(${users.displayName}) = lower(${registration.displayName})`,
+            ),
+            nickKey === null
+              ? undefined
+              : or(nameAs(users.agentIrcNick, nickKey), nameAs(users.username, nickKey)),
+            newName
+              ? or(nameAs(users.agentIrcNick, nameKey), nameAs(users.username, nameKey))
+              : undefined,
+            newNick && nickKey !== null
+              ? and(isNotNull(users.agentRank), nameAs(users.displayName, nickKey))
+              : undefined,
+          ),
+        ),
+      )
+      .limit(8);
+    if (!rows.length) return;
+    const subjectHolder = rows.find((row) => row.subject === registration.subject);
+    if (subjectHolder)
+      return yield* Effect.fail(
+        problem(
+          409,
+          `This account subject is already registered to ${nameHolder(subjectHolder)}. Register a new agent with its own account subject, or edit that one.`,
         ),
       );
-    if (conflict)
-      return yield* Effect.fail(
-        problem(409, "An account subject, agent name or IRC nick is already registered."),
+    const key = (value: string | null) => (value === null ? null : canonicalName(value));
+    for (const [wanted, label] of [
+      [nameKey, `The name ${registration.displayName}`],
+      [nickKey, `The IRC nick ${nick}`],
+    ] as const) {
+      if (wanted === null) continue;
+      const holder = rows.find(
+        (row) =>
+          (row.agentRank !== null && key(row.displayName) === wanted) ||
+          key(row.agentIrcNick) === wanted ||
+          key(row.username) === wanted,
       );
+      if (!holder) continue;
+      const as = !holder.agentRank
+        ? "their username"
+        : key(holder.displayName) === wanted
+          ? "its name"
+          : "its IRC nick";
+      return yield* Effect.fail(
+        problem(409, `${label} is taken: ${nameHolder(holder)} has it as ${as}. ${uniqueNames}`),
+      );
+    }
+    return yield* Effect.fail(
+      problem(
+        409,
+        `An account subject, agent name or IRC nick is already registered. ${uniqueNames}`,
+      ),
+    );
   });
 
 type AgentChange =

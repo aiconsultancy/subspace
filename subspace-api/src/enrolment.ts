@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
-import { Context, Effect, Layer, Redacted, Schema } from "effect";
+import { Context, Effect, Layer, Redacted, Result, Schema } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   HttpApi,
@@ -321,23 +321,82 @@ const tokenAudit = (
   source: "rest" as const,
 });
 
+/** What an enrolment asks for, without its key: the name, rank, ship and IRC nick. */
+type Wanted = Pick<typeof Enrolment.Type, "name" | "rank" | "ship" | "ircNick">;
+
+/** The ship a rank takes: a captain's own (required), none for a rear admiral (400 otherwise). */
+const shipOf = (payload: Wanted) => {
+  const shipName = payload.ship?.trim() || null;
+  if (payload.rank === "captain" && !shipName)
+    return Effect.fail(validationProblem("ship", "A captain needs a ship."));
+  if (payload.rank === "rearAdmiral" && shipName)
+    return Effect.fail(validationProblem("ship", "A rear admiral must not supply a ship."));
+  return Effect.succeed(shipName);
+};
+
+/**
+ * The agent an enrolment adds its key to: the active agent of that name, ignoring case, in the
+ * token's fleet with the requested rank, or none for a new agent. Agent names are unique in an
+ * organisation, so a name held in another fleet, by a deactivated agent or with another rank is
+ * refused (409), naming the agent and its fleet.
+ */
+const enrolledAgent = (
+  tx: (typeof Database)["Service"],
+  organisationId: string,
+  fleet: typeof fleets.$inferSelect,
+  payload: Wanted,
+) =>
+  Effect.gen(function* () {
+    const [row] = yield* tx
+      .select({
+        agent: users,
+        fleet: sql<string | null>`coalesce(${fleets.slug}, ${users.agentFleet})`,
+      })
+      .from(users)
+      .leftJoin(fleets, eq(fleets.id, users.agentFleetId))
+      .where(
+        and(
+          eq(users.organisationId, organisationId),
+          isNotNull(users.agentRank),
+          sql`lower(${users.displayName}) = lower(${payload.name})`,
+        ),
+      );
+    const existing = row?.agent;
+    if (existing && existing.agentFleetId !== fleet.id)
+      return yield* Effect.fail(
+        problem(
+          409,
+          `The name ${payload.name} is taken: agent ${existing.displayName} of fleet ${row!.fleet ?? "(none)"} has it, and agent names are unique in an organisation, ignoring case. Choose another name.`,
+        ),
+      );
+    if (existing && !existing.active)
+      return yield* Effect.fail(
+        problem(
+          409,
+          `Agent '${existing.displayName}' is deactivated. Ask an administrator to reactivate it.`,
+        ),
+      );
+    if (existing && existing.agentRank !== payload.rank)
+      return yield* Effect.fail(
+        problem(
+          409,
+          `Agent '${existing.displayName}' is registered with the rank ${existing.agentRank}.`,
+        ),
+      );
+    return existing;
+  });
+
 /**
  * Registers an agent of the token's fleet, or a credential of an existing one, under the
  * organisation's lock and the token's row lock. The agent is the active agent of that name in the
- * token's fleet, with the requested rank; a name held in another fleet, by a deactivated agent or
- * with another rank is refused (409). The same certificate again for the same agent and scopes is
- * answered 200 with the same IDs and uses nothing; any other registration uses one of the
- * token's uses.
+ * token's fleet, with the requested rank (enrolledAgent); a new agent's name and IRC nick must
+ * be free in the organisation (checkAgentNames). The same certificate again for the same agent
+ * and scopes is answered 200 with the same IDs and uses nothing; any other registration uses one
+ * of the token's uses.
  */
 const enrol = (grant: (typeof EnrolmentGrant)["Service"], payload: typeof Enrolment.Type) =>
   Effect.gen(function* () {
-    const shipName = payload.ship?.trim() || null;
-    if (payload.rank === "captain" && !shipName)
-      return yield* Effect.fail(validationProblem("ship", "A captain needs a ship."));
-    if (payload.rank === "rearAdmiral" && shipName)
-      return yield* Effect.fail(
-        validationProblem("ship", "A rear admiral must not supply a ship."),
-      );
+    const shipName = yield* shipOf(payload);
     const certificate = yield* readCertificate(payload.certificate);
     const scopes = [...payload.scopes].sort();
     const db = yield* Database;
@@ -365,34 +424,7 @@ const enrol = (grant: (typeof EnrolmentGrant)["Service"], payload: typeof Enrolm
         if (!fleet) return yield* Effect.fail(problem(401, invalidToken));
 
         // Agent names are unique in an organisation, so at most one agent has this one.
-        const [existing] = yield* tx
-          .select()
-          .from(users)
-          .where(
-            and(
-              eq(users.organisationId, token.organisationId),
-              isNotNull(users.agentRank),
-              sql`lower(${users.displayName}) = lower(${payload.name})`,
-            ),
-          );
-        if (existing && existing.agentFleetId !== fleet.id)
-          return yield* Effect.fail(
-            problem(409, `An agent named '${existing.displayName}' belongs to another fleet.`),
-          );
-        if (existing && !existing.active)
-          return yield* Effect.fail(
-            problem(
-              409,
-              `Agent '${existing.displayName}' is deactivated. Ask an administrator to reactivate it.`,
-            ),
-          );
-        if (existing && existing.agentRank !== payload.rank)
-          return yield* Effect.fail(
-            problem(
-              409,
-              `Agent '${existing.displayName}' is registered with the rank ${existing.agentRank}.`,
-            ),
-          );
+        const existing = yield* enrolledAgent(tx, token.organisationId, fleet, payload);
 
         const active = yield* activeCredential(tx, certificate.fingerprint);
         if (active) {
@@ -519,6 +551,88 @@ const enrol = (grant: (typeof EnrolmentGrant)["Service"], payload: typeof Enrolm
     );
   });
 
+/** At most this many agents in one enrolment check: a rear admiral and the installer's captains. */
+export const maxEnrolmentChecks = 50;
+
+const EnrolmentCheck = Schema.Struct({
+  agents: Schema.Array(
+    Schema.Struct({
+      name: AgentName,
+      rank: Schema.Literals(["rearAdmiral", "captain"]),
+      ship: Schema.optional(Schema.NullOr(ShipName)),
+      ircNick: Schema.optional(Schema.NullOr(IrcNick)),
+    }),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(maxEnrolmentChecks)),
+}).annotate({ identifier: "AgentEnrolmentCheck" });
+
+const EnrolmentCheckResult = Schema.Struct({
+  items: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      outcome: Schema.Literals(["new", "existing", "refused"]),
+      detail: Schema.NullOr(Schema.String),
+    }),
+  ),
+}).annotate({ identifier: "AgentEnrolmentCheckResult" });
+
+/** A refusal an enrolment answers with a status and detail (400 or 409), as opposed to a failure. */
+const refusal = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "status" in error &&
+  (error.status === 400 || error.status === 409) &&
+  "detail" in error &&
+  typeof error.detail === "string"
+    ? error.detail +
+      ("errors" in error && error.errors && typeof error.errors === "object"
+        ? Object.values(error.errors as Record<string, readonly string[]>)
+            .flat()
+            .map((message) => ` ${message}`)
+            .join("")
+        : "")
+    : undefined;
+
+/**
+ * What enrolling each agent with this token would do, without a key and without changing
+ * anything or using the token: add a key to the existing agent of that name in the fleet, make
+ * a new agent, or refuse it, with the refusal's detail. The same rules as enrolment, so a
+ * fleet's installer can check its officers' names before it registers anything.
+ */
+const checkEnrolment = (
+  grant: (typeof EnrolmentGrant)["Service"],
+  payload: typeof EnrolmentCheck.Type,
+) =>
+  Effect.gen(function* () {
+    const db = yield* Database;
+    const [fleet] = yield* db
+      .select()
+      .from(fleets)
+      .where(and(eq(fleets.organisationId, grant.organisationId), eq(fleets.id, grant.fleetId)));
+    if (!fleet) return yield* Effect.fail(problem(401, invalidToken));
+    const items = [];
+    for (const wanted of payload.agents) {
+      const decided = yield* Effect.gen(function* () {
+        yield* shipOf(wanted);
+        const existing = yield* enrolledAgent(db, grant.organisationId, fleet, wanted);
+        if (existing) return "existing" as const;
+        yield* checkAgentNames(db, grant.organisationId, {
+          subject: keyOnlySubject(randomUUID()),
+          displayName: wanted.name,
+          agentIrcNick: wanted.ircNick ?? null,
+        });
+        return "new" as const;
+      }).pipe(Effect.result);
+      if (Result.isSuccess(decided)) {
+        items.push({ name: wanted.name, outcome: decided.success, detail: null });
+        continue;
+      }
+      const detail = refusal(decided.failure);
+      if (detail === undefined) return yield* Effect.fail(decided.failure);
+      items.push({ name: wanted.name, outcome: "refused" as const, detail });
+    }
+    return { items };
+  });
+
 const fleetParams = { reference: FleetRef };
 
 /** An administrator's enrolment tokens for a fleet, on the main listener only. */
@@ -557,6 +671,7 @@ export const enrolmentTokenGroup = HttpApiGroup.make("enrolmentTokens")
   .middleware(ValidationErrors);
 
 export const enrolmentPath = `${versionedApi}/agents/enrol`;
+export const enrolmentCheckPath = `${enrolmentPath}/check`;
 
 /**
  * The fleet gateway's enrolment route, authorised by an enrolment token alone: outside the
@@ -570,7 +685,15 @@ export const enrolmentGroup = HttpApiGroup.make("enrolment")
       error: [...endpointErrors, Unauthorised],
     }).annotate(
       OpenApi.Description,
-      "A fleet's gateway registers a rear admiral or captain of the enrolment token's fleet with a certificate, or adds the certificate to the active agent of that name and rank in that fleet (201). The same certificate with the same scopes again answers 200 with the same IDs. 401 for a missing, unknown, expired, revoked or used-up token; 409 for a name held in another fleet, by a deactivated agent or with another rank, or a certificate registered elsewhere or revoked.",
+      "A fleet's gateway registers a rear admiral or captain of the enrolment token's fleet with a certificate, or adds the certificate to the active agent of that name and rank in that fleet (201). The same certificate with the same scopes again answers 200 with the same IDs. 401 for a missing, unknown, expired, revoked or used-up token; 409 for a name held in another fleet, by a deactivated agent or with another rank, a new agent's name or IRC nick that another agent or person holds (the detail names the agent and its fleet), or a certificate registered elsewhere or revoked.",
+    ),
+    HttpApiEndpoint.post("checkEnrolment", "/agents/enrol/check", {
+      payload: EnrolmentCheck,
+      success: EnrolmentCheckResult,
+      error: [...endpointErrors, Unauthorised],
+    }).annotate(
+      OpenApi.Description,
+      `A fleet's installer asks, with the fleet's enrolment token, what enrolling each of up to ${maxEnrolmentChecks} agents would do, by the same rules as enrolment: existing (a key is added to the active agent of that name and rank in the token's fleet), new (the name and IRC nick are free) or refused, with the reason, which names the agent and fleet that hold a name. It takes no key, changes nothing and uses none of the token's uses. 401 for a missing, unknown, expired or revoked token.`,
     ),
   )
   .annotate(HttpApi.PayloadParseOptions, { onExcessProperty: "error" })
@@ -603,6 +726,10 @@ export const enrolmentTokenHandlers = (
 export const enrolmentHandlers = (
   handlers: import("effect/http-api/HttpApiBuilder").Handlers.FromGroup<typeof enrolmentGroup>,
 ) =>
-  handlers.handle("enrolAgent", ({ payload }) =>
-    handleDb(Effect.flatMap(EnrolmentGrant, (grant) => enrol(grant, payload))),
-  );
+  handlers
+    .handle("enrolAgent", ({ payload }) =>
+      handleDb(Effect.flatMap(EnrolmentGrant, (grant) => enrol(grant, payload))),
+    )
+    .handle("checkEnrolment", ({ payload }) =>
+      handleDb(Effect.flatMap(EnrolmentGrant, (grant) => checkEnrolment(grant, payload))),
+    );
