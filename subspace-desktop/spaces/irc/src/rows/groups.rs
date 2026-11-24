@@ -8,12 +8,11 @@
 use std::collections::HashMap;
 
 use gpui_kit::SharedString;
-use subspace_client_irc::BufferKey;
 use subspace_framework::dashboard::{Glyph, Group, Row, Tone};
 
-use super::sections::{Held, Sections};
+use super::sections::{Entry, Sections};
 use super::{
-    Layout, activity, arrange, fleet_group_key, listed_rows, people_group_key, row, status_label,
+    Layout, activity, arrange, fleet_group_key, listed_row, people_group_key, row, status_label,
     status_tone, title,
 };
 use crate::fleet::{ChannelKind, FleetPlace, Roster, short_name};
@@ -43,7 +42,11 @@ pub(super) fn network(
 ) {
     let sections = Sections::of(state, network, roster);
     let fleets = fleet_groups(network, (roster, lives), sections.fleets, layout);
-    let rest = network_rows(state, network, sections.rest, layout);
+    let rest = sections
+        .rest
+        .iter()
+        .map(|entry| entry_row(entry, layout))
+        .collect();
     let people = people_group(state, network, sections.people, layout);
     let parts = arrange::Parts {
         fleets,
@@ -74,7 +77,7 @@ fn push_groups(layout: &mut Layout, network: &Network, groups: Vec<Group>) {
 fn fleet_groups(
     network: &Network,
     (roster, lives): (&Roster, &Lives),
-    fleets: Vec<Vec<Held<'_>>>,
+    fleets: Vec<Vec<Entry<'_>>>,
     layout: &mut Layout,
 ) -> Vec<Group> {
     let single = roster.fleets().len() == 1;
@@ -91,12 +94,12 @@ fn fleet_groups(
         };
         let mut rows: Vec<Row> = held
             .iter()
-            .map(|(key, buffer)| fleet_row(key, buffer, &fleet, layout))
+            .map(|entry| fleet_row(entry, &fleet, layout))
             .collect();
-        let full: Vec<&str> = held.iter().map(|(key, _)| title(key)).collect();
+        let full: Vec<&str> = held.iter().map(|entry| title(entry.key())).collect();
         unclash(&mut rows, &full);
         let key = fleet_group_key(&network.id, &place.id);
-        let kinds = held.iter().map(|(key, _)| roster.channel(title(key)));
+        let kinds = full.iter().map(|name| roster.channel(name));
         let captions = captions(rows.iter().map(|row| row.key.clone()).zip(kinds));
         if !captions.is_empty() {
             layout.captions.insert(key.clone(), captions);
@@ -112,7 +115,7 @@ fn fleet_groups(
 fn people_group(
     state: &IrcState,
     network: &Network,
-    people: Vec<Held<'_>>,
+    people: Vec<Entry<'_>>,
     layout: &mut Layout,
 ) -> Option<Group> {
     if people.is_empty() {
@@ -121,7 +124,7 @@ fn people_group(
     let presences = activity::presences(state, &network.id);
     let rows = people
         .iter()
-        .map(|(key, buffer)| person_row(&presences, key, buffer, layout))
+        .map(|entry| person_row(&presences, entry, layout))
         .collect();
     Some(Group {
         key: people_group_key(&network.id),
@@ -135,12 +138,11 @@ fn people_group(
 /// A person's row, with their presence recorded for its mark.
 fn person_row(
     presences: &HashMap<String, activity::Presence>,
-    key: &BufferKey,
-    buffer: &Buffer,
+    entry: &Entry<'_>,
     layout: &mut Layout,
 ) -> Row {
-    let row = keyed(row(key, buffer), key, layout);
-    let presence = activity::presence(presences, title(key));
+    let row = entry_row(entry, layout);
+    let presence = activity::presence(presences, title(entry.key()));
     layout.people.insert(row.key.clone(), presence);
     row
 }
@@ -155,39 +157,30 @@ fn people_name(networks: usize, network: &str) -> String {
     }
 }
 
-/// The network's own rows: its server, the channels of no fleet and the
-/// private conversations not in `People`, then the listed channels.
-fn network_rows(
-    state: &IrcState,
-    network: &Network,
-    rest: Vec<Held<'_>>,
-    layout: &mut Layout,
-) -> Vec<Row> {
-    let mut rows: Vec<Row> = rest
-        .iter()
-        .map(|(key, buffer)| keyed(row(key, buffer), key, layout))
-        .collect();
-    rows.extend(listed_rows(state, &network.id, &mut layout.listed));
-    rows
-}
-
-/// Records which buffer `row` names.
-fn keyed(row: Row, key: &BufferKey, layout: &mut Layout) -> Row {
-    layout.buffers.insert(row.key.clone(), key.clone());
+/// Builds a row and records its target for opening or joining.
+fn entry_row(entry: &Entry<'_>, layout: &mut Layout) -> Row {
+    let (row, keys) = match entry {
+        Entry::Buffer(key, buffer) => (row(key, buffer), &mut layout.buffers),
+        Entry::Listed(key, users) => (listed_row(key, *users), &mut layout.listed),
+    };
+    keys.insert(row.key.clone(), entry.key().clone());
     row
 }
 
 /// A fleet channel's row: its name without the fleet's prefix (see
-/// [`unclash`] for names that would read alike), and for a ship, its
+/// [`unclash`] for names that would read alike), and for a ship buffer, its
 /// activity recorded for its dot.
-fn fleet_row(key: &BufferKey, buffer: &Buffer, fleet: &Fleet<'_>, layout: &mut Layout) -> Row {
-    let mut row = row(key, buffer);
-    row.title = short_name(fleet.place.slug.as_deref(), title(key))
+fn fleet_row(entry: &Entry<'_>, fleet: &Fleet<'_>, layout: &mut Layout) -> Row {
+    let mut row = entry_row(entry, layout);
+    let name = title(entry.key());
+    row.title = short_name(fleet.place.slug.as_deref(), name)
         .to_owned()
         .into();
-    let ship = ship_activity(key, buffer, fleet).map(|ship| (row.key.clone(), ship));
-    layout.ships.extend(ship);
-    keyed(row, key, layout)
+    if let Entry::Buffer(_, buffer) = entry {
+        let ship = ship_activity(name, buffer, fleet).map(|ship| (row.key.clone(), ship));
+        layout.ships.extend(ship);
+    }
+    row
 }
 
 /// Gives every row of `rows` whose title another row also has, ignoring
@@ -207,12 +200,8 @@ pub(super) fn unclash(rows: &mut [Row], full: &[&str]) {
 }
 
 /// A ship channel's activity; `None` for any other channel.
-fn ship_activity(
-    key: &BufferKey,
-    buffer: &Buffer,
-    fleet: &Fleet<'_>,
-) -> Option<activity::Activity> {
-    let captain = activity::captain(fleet.roster.channel(title(key))?)?;
+fn ship_activity(name: &str, buffer: &Buffer, fleet: &Fleet<'_>) -> Option<activity::Activity> {
+    let captain = activity::captain(fleet.roster.channel(name)?)?;
     let live = fleet.live.and_then(|live| live.ship(captain));
     Some(activity::ship(
         captain,

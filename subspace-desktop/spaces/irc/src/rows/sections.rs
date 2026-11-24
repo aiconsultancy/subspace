@@ -1,4 +1,4 @@
-//! Which navigator group each of a network's buffers belongs to: one of its
+//! Which navigator group each of a network's rows belongs to: one of its
 //! fleets', `People`, or the network's own.
 
 use subspace_client_irc::{BufferKey, Target};
@@ -6,47 +6,66 @@ use subspace_client_irc::{BufferKey, Target};
 use crate::fleet::{ChannelKind, FleetPlace, Roster, short_name};
 use crate::state::{Buffer, IrcState, Network};
 
-/// A buffer and its state, as the state holds them.
-pub(super) type Held<'a> = (&'a BufferKey, &'a Buffer);
+/// A buffer or an unjoined channel from the server's list.
+pub(super) enum Entry<'a> {
+    Buffer(&'a BufferKey, &'a Buffer),
+    Listed(BufferKey, u32),
+}
 
-/// A network's buffers by navigator group.
+impl Entry<'_> {
+    pub(super) fn key(&self) -> &BufferKey {
+        match self {
+            Self::Buffer(key, _) => key,
+            Self::Listed(key, _) => key,
+        }
+    }
+}
+
+/// A network's rows by navigator group.
 pub(super) struct Sections<'a> {
     /// Each fleet's channels, in the roster's fleet order: the Starbase, the
     /// command channel, the ships, then the rest, each by name.
-    pub fleets: Vec<Vec<Held<'a>>>,
+    pub fleets: Vec<Vec<Entry<'a>>>,
     /// Private conversations with people, on a network that serves a fleet.
-    pub people: Vec<Held<'a>>,
+    pub people: Vec<Entry<'a>>,
     /// The server, the channels of no fleet and, on a network that serves
     /// no fleet, every private conversation; on one that does, those with
     /// an agent, which stay where they were.
-    pub rest: Vec<Held<'a>>,
+    pub rest: Vec<Entry<'a>>,
 }
 
 impl<'a> Sections<'a> {
-    /// `network`'s buffers in `state`, sorted into groups by `roster`.
+    /// `network`'s buffers and listed channels, grouped by `roster`.
     pub(super) fn of(state: &'a IrcState, network: &Network, roster: &Roster) -> Self {
-        let mut held: Vec<Held<'a>> = state
+        let mut held: Vec<_> = state
             .buffers()
             .filter(|(key, _)| key.network == network.id)
             .collect();
         held.sort_by_cached_key(|(key, _)| super::order(key));
         let mut sections = Self {
-            fleets: vec![Vec::new(); roster.fleets().len()],
+            fleets: roster.fleets().iter().map(|_| Vec::new()).collect(),
             people: Vec::new(),
             rest: Vec::new(),
         };
-        for entry in held {
-            sections.place(entry, roster);
+        for (key, buffer) in held {
+            sections.place(Entry::Buffer(key, buffer), roster);
+        }
+        for channel in super::unjoined(state, &network.id) {
+            let key = BufferKey {
+                network: network.id.clone(),
+                target: Target::Channel(channel.name.clone()),
+            };
+            sections.place(Entry::Listed(key, channel.users), roster);
         }
         for (fleet, rows) in roster.fleets().iter().zip(&mut sections.fleets) {
-            rows.sort_by_cached_key(|(key, _)| fleet_order(key, fleet, roster));
+            rows.sort_by_cached_key(|entry| fleet_order(entry.key(), fleet, roster));
         }
         sections
     }
 
-    fn place(&mut self, entry: Held<'a>, roster: &Roster) {
+    fn place(&mut self, entry: Entry<'a>, roster: &Roster) {
         let fleets = roster.fleets();
-        let section = match &entry.0.target {
+        let section = match &entry.key().target {
             Target::Channel(name) => fleets
                 .iter()
                 .position(|fleet| fleet.holds(name))

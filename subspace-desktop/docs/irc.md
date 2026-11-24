@@ -254,7 +254,7 @@ channel whose captain is unknown is a plain channel.
 
 ### The navigator by fleet
 
-The navigator groups a network's buffers by fleet (`rows.rs`,
+The navigator groups a network's buffers and listed channels by fleet (`rows.rs`,
 `rows/sections.rs`, `rows/groups.rs`). The roster carries each fleet on the
 network (`fleet/places.rs`, `FleetPlace`): its API id and name, its slug, and
 the channels it claims, being its Starbase, command and ship channels as the
@@ -268,22 +268,22 @@ fleets on one network claim belongs to neither.
   (`#aurora-lyra` shows as `lyra`); search still finds the full name. The
   captions `Ships` (above the first ship) and `Channels` (above the fleet's
   other channels after its ships) come through `ListDashboard::group_captions`.
-  A fleet with no buffer open has no group, unless it is its network's only
-  fleet. The header carries the network's connection state.
+  A fleet with no buffer or listed channel has no group, unless it is its
+  network's only fleet. The header carries the network's connection state.
 - **A network that holds one fleet is one group** (`rows/arrange.rs`): the
   fleet's, named after the fleet, which also holds, under an `Other`
-  caption, the network's channels no fleet claims, its older private
-  conversations with agents and its listed channels, with the Server row
-  last. So one IRC server for an organisation that holds one fleet shows one
-  heading, not the fleet's and the network's.
+  caption, the network's channels no fleet claims and its older private
+  conversations with agents, with the Server row last. So one IRC server
+  for an organisation that holds one fleet shows one heading, not the
+  fleet's and the network's.
 - **People**, keyed `irc␟<network>␟p`, follows the fleets on a network that
   serves one and holds the private conversations with people. A private
   conversation with a nick the roster knows as an agent stays in the
   network's group, so history stays reachable but `People` never offers an
   agent. With more than one network it reads `People · <network>`.
 - **The network's group**, on a network that holds several fleets, comes
-  last, keeps its key and holds the server row, the channels of no fleet,
-  those older private conversations and the listed channels. It is named
+  last, keeps its key and holds the server row, the channels of no fleet and
+  those older private conversations. It is named
   after the network, or `<name> network` when a fleet has the same name
   ignoring case, so the same heading never shows twice. A network that
   serves no fleet has only this group, as before. Search finds a row by its
