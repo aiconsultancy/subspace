@@ -328,6 +328,21 @@ answer it now.
     is no demo data in a database the installer did not create, and no way
     back to a database on the VM. See
     [An existing PostgreSQL](subspace-installer/README.md#an-existing-postgresql).
+16. **A Subspace API on another host?** (**no**: the API runs on the fleet
+    VM.) If their organisation already runs one for several fleets, the
+    fleet can use it instead, with no API or database on the VM and no
+    administrator token there. Ask for its HTTPS origin (for example
+    `https://subspace.example.com`) and for a file on this computer holding
+    the fleet's enrolment token (`senr1.…`, `chmod 600`; never paste it into
+    the chat), which one of that API's administrators issues for this fleet
+    after creating it there. Pass `--api-url URL --api-enrolment-token-file
+    FILE`. It excludes question 15 and agent dispatch, and needs a Stargate
+    commit with its `subspaceAgents` section, at or after `5630a5c`, which no
+    release has yet: add `--stargate-ref <that commit or later>`. The VM must
+    reach the API over HTTPS. On a VM whose API already keeps a tracker,
+    switching needs `--switch-to-hosted-api` and leaves that tracker behind:
+    ask first. See
+    [A hosted Subspace API](subspace-installer/README.md#a-hosted-subspace-api).
 
 Then confirm the plan once, as the box at the top of this page describes,
 and run without stopping to ask again.
@@ -459,6 +474,11 @@ whichever ports sshd listens on), and
 `--access cloudflare` with the `--ssh-proxy` from
 [Private access](docs/private-access.md#cloudflare-zero-trust) instead. Leave
 `--access` out only for an existing VM you reach another private way.
+
+For a hosted API (question 16), add `--api-url URL --api-enrolment-token-file
+FILE --stargate-ref SHA` instead; the dry run checks that the API answers,
+that the token is valid (without using it) and that the Stargate commit has
+`subspaceAgents`.
 
 For an existing PostgreSQL (question 15), add `--database-url-file FILE`
 (`--database-ca-file FILE` for a private CA, `--migrate` to apply missing
@@ -1131,6 +1151,7 @@ permissions, Slack and Teams.
 | An existing PostgreSQL's URL and CA | `/root/fleet/database-url` and `database-ca.pem` (root-only), copied from your files on each run that passes them |
 | Officers' IRC certificates (remote IRC) | `/root/fleet/fleet.secrets/<officer-id>/irc-client.pem` (root-only), generated on the VM; only fingerprints are printed |
 | An IRC operator's password, and its sign-in account's | Your files only: copied to the VM for the run that passes them, then removed; never printed or saved |
+| A hosted API's enrolment token | Your file, copied to the VM for the run that passes it and then removed; setup keeps the token root-only in `/root/fleet/fleet.secrets/`, and the gateway user's copy is mode 0600 |
 | Model provider logins | `/var/lib/subspace-fleet/proxy/auth` on the VM, owned by the proxy user |
 | Your IRC password and Stargate API token | `~/.subspace/targets/<target>/` on your computer, owner-only |
 | A shared IRC server's secrets, in a container | Owner-only files on your computer and the platform's secret store ([Run the shared IRC server in a container](#run-the-shared-irc-server-in-a-container)) |
