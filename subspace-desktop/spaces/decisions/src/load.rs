@@ -174,13 +174,16 @@ impl Failure {
     ];
 
     pub(crate) fn title(self) -> &'static str {
-        Self::TITLES[self as usize]
+        match self {
+            Failure::SignIn => subspace_api_client::sign_in_state().0,
+            _ => Self::TITLES[self as usize],
+        }
     }
 
     pub(crate) fn message(self) -> String {
         let service = subspace_api_client::service_name();
         match self {
-            Failure::SignIn => "Sign in under Settings › Account, then try again.".to_owned(),
+            Failure::SignIn => subspace_api_client::sign_in_state().1,
             Failure::Forbidden => {
                 format!("{service} refused access. Try again after access is restored.")
             }

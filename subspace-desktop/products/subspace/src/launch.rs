@@ -8,7 +8,11 @@
 //! API build refuses NETT settings and, signing in with WorkOS, an invalid
 //! client ID. A NETT build refuses every Subspace API setting, signs in
 //! only with WorkOS and needs a valid NETT API URL. A build with no API
-//! backend refuses every API and sign-in setting.
+//! backend refuses every API and sign-in setting. Every build names one of
+//! the providers it signs in with, and builds that provider's
+//! configuration here, so a value sign-in would refuse stops the launch.
+//! Development sign-in with an API on another computer is not refused: the
+//! app opens and says sign-in is unavailable.
 
 use crate::connection::{Connection, in_file_terms};
 use crate::settings::{
@@ -16,7 +20,10 @@ use crate::settings::{
     valid_workos_client_id,
 };
 use std::collections::BTreeMap;
+use subspace_framework::{entra_auth, workos_auth};
 
+/// The Subspace API's resource name in sign-in requests.
+pub(crate) const API_RESOURCE: &str = "subspace-api";
 pub(crate) const PROVIDER: &str = "SUBSPACE_IDENTITY_PROVIDER";
 pub(crate) const API_URL: &str = "SUBSPACE_API_URL";
 pub(crate) const NETT_API_URL: &str = "SUBSPACE_NETT_API_URL";
@@ -195,11 +202,6 @@ fn check_subspace(launch: &Launch, variables: &BTreeMap<String, String>) -> Resu
     if !launch.api_url.is_empty() && !valid_api_url(&launch.api_url) {
         return Err(subspace_url_error());
     }
-    if launch.provider == "dev" && !launch.api_url.is_empty() && !loopback_url(&launch.api_url) {
-        return Err(format!(
-            "The dev provider signs in only against an API on this computer. Set the API URL (api_url or {API_URL}) to a loopback address, such as http://127.0.0.1:3000, or choose another identity_provider."
-        ));
-    }
     // The build refuses an invalid WorkOS client, and so does a run that
     // overrides it: a bad ID fails here, not at sign-in.
     if launch.provider == "workos" && !valid_workos_client_id(&launch.workos_client_id) {
@@ -207,7 +209,7 @@ fn check_subspace(launch: &Launch, variables: &BTreeMap<String, String>) -> Resu
             "The workos provider requires a WorkOS client ID (workos_client_id or {WORKOS_CLIENT_ID}), such as client_01ABC."
         ));
     }
-    Ok(())
+    check_sign_in(launch)
 }
 
 /// A NETT build's rules: no Subspace-only variable, the WorkOS provider or
@@ -239,7 +241,113 @@ fn check_nett(launch: &Launch, variables: &BTreeMap<String, String>) -> Result<(
     if !valid_api_url(&launch.nett_api_url) {
         return Err(nett_url_error());
     }
-    Ok(())
+    check_sign_in(launch)
+}
+
+/// The provider is one this app signs in with, and its configuration is
+/// built here as sign-in builds it, so a value sign-in would refuse stops
+/// the launch, named by its setting, rather than silently turning sign-in
+/// off.
+fn check_sign_in(launch: &Launch) -> Result<(), String> {
+    match launch.provider.as_str() {
+        "" | "dev" => Ok(()),
+        "workos" => workos_config(launch).map(drop),
+        "entra" => entra_config(launch).map(drop),
+        other => Err(format!(
+            "The identity provider (identity_provider or {PROVIDER}) must be dev, workos, entra or empty, not \"{other}\"."
+        )),
+    }
+}
+
+/// The WorkOS configuration the launch selects, with its client, API and
+/// redirect port; an error names the setting that gave the value.
+pub(crate) fn workos_config(launch: &Launch) -> Result<workos_auth::Config, String> {
+    let mut config = workos_auth::Config::new(&launch.workos_client_id).map_err(|_| {
+        unusable(
+            "WorkOS client ID",
+            "workos_client_id",
+            WORKOS_CLIENT_ID,
+            "client_01ABC",
+        )
+    })?;
+    if !launch.workos_api_url.is_empty() {
+        config = config.with_api_url(&launch.workos_api_url).map_err(|_| {
+            unusable(
+                "WorkOS API URL",
+                "workos_api_url",
+                WORKOS_API_URL,
+                "https://api.workos.com",
+            )
+        })?;
+    }
+    if !launch.workos_redirect_port.is_empty() {
+        let port = launch.workos_redirect_port.parse().map_err(|_| {
+            unusable(
+                "WorkOS redirect port",
+                "workos_redirect_port",
+                WORKOS_REDIRECT_PORT,
+                "8400",
+            )
+        })?;
+        config = config.with_redirect_port(port);
+    }
+    Ok(config)
+}
+
+/// The Entra configuration the launch selects, with its tenant, client,
+/// authority and API scope; an error names the setting that gave the value.
+pub(crate) fn entra_config(launch: &Launch) -> Result<entra_auth::Config, String> {
+    let mut config = entra_auth::Config::new(&launch.entra_tenant_id, &launch.entra_client_id)
+        .map_err(|_| {
+            format!(
+                "The Entra tenant ID (entra_tenant_id or {ENTRA_TENANT_ID}) or client ID (entra_client_id or {ENTRA_CLIENT_ID}) is not one sign-in can use; set each like 00000000-0000-0000-0000-000000000001."
+            )
+        })?;
+    if !launch.entra_authority.is_empty() {
+        config = config
+            .with_authority(&launch.entra_authority)
+            .map_err(|_| {
+                let example = "https://login.microsoftonline.com";
+                unusable(
+                    "Entra authority",
+                    "entra_authority",
+                    ENTRA_AUTHORITY,
+                    example,
+                )
+            })?;
+    }
+    if !launch.entra_api_scope.is_empty() {
+        config = config
+            .with_scope(API_RESOURCE, &launch.entra_api_scope)
+            .map_err(|_| {
+                let example = "api://00000000-0000-0000-0000-000000000003/API.Access";
+                unusable(
+                    "Entra API scope",
+                    "entra_api_scope",
+                    ENTRA_API_SCOPE,
+                    example,
+                )
+            })?;
+    }
+    Ok(config)
+}
+
+/// A setting sign-in cannot use, by its build config and variable names.
+fn unusable(what: &str, key: &str, variable: &str, example: &str) -> String {
+    format!("The {what} ({key} or {variable}) is not one sign-in can use; set it like {example}.")
+}
+
+/// Why this launch cannot sign in at all although it names a provider:
+/// development sign-in reaches only an API on this computer. The app still
+/// opens, and the Spaces say so instead of asking for a sign-in.
+pub(crate) fn sign_in_unavailable(launch: &Launch) -> Option<String> {
+    let hosted = !launch.api_url.is_empty() && !loopback_url(&launch.api_url);
+    (launch.provider == "dev" && hosted).then(|| {
+        format!(
+            "Development sign-in reaches only an API on this computer, and this app is set to {}. Set identity_provider to workos or entra, or api_url to this computer, in connection.json, then open the app again.",
+            launch.api_url
+        )
+    })
 }
 
 pub(crate) fn nett_url_error() -> String {
@@ -267,8 +375,13 @@ pub(crate) fn install(launch: &Launch) -> Result<(), String> {
             Ok(())
         }
         ApiBackend::Subspace if launch.api_url.is_empty() => Ok(()),
-        ApiBackend::Subspace => subspace_api_client::configure_api_origin(&launch.api_url)
-            .map_err(|_| subspace_url_error()),
+        ApiBackend::Subspace => {
+            if let Some(reason) = sign_in_unavailable(launch) {
+                subspace_api_client::set_sign_in_unavailable(reason);
+            }
+            subspace_api_client::configure_api_origin(&launch.api_url)
+                .map_err(|_| subspace_url_error())
+        }
     }
 }
 
@@ -595,8 +708,16 @@ mod tests {
                 r#"{"nett_api_url": "https://api.nett.example"}"#,
                 "Remove nett_api_url",
             ),
-            // Development sign-in only ever reaches this computer.
-            (r#"{"api_url": "https://api.example.com"}"#, "dev provider"),
+            (r#"{"identity_provider": "WorkOS"}"#, "identity_provider"),
+            (
+                r#"{"identity_provider": "workos", "workos_client_id": "client_01ABC",
+                    "workos_api_url": "not a url"}"#,
+                "(workos_api_url)",
+            ),
+            (
+                r#"{"identity_provider": "entra", "entra_tenant_id": "x", "entra_client_id": "y"}"#,
+                "tenant ID (entra_tenant_id) or client ID (entra_client_id)",
+            ),
         ] {
             match resolve_with(&SUBSPACE, Some(&file(json)), Vec::new()) {
                 Err(Failure::File(path, message)) => {
@@ -619,14 +740,13 @@ mod tests {
 
     #[test]
     fn a_variable_can_complete_or_correct_the_file() {
-        // The file alone would leave development sign-in on a hosted API.
+        // The file alone names WorkOS without its client.
         let launch = resolve_with(
             &SUBSPACE,
-            Some(&file(r#"{"api_url": "https://api.example.com"}"#)),
-            vars(&[
-                ("SUBSPACE_IDENTITY_PROVIDER", "workos"),
-                ("SUBSPACE_WORKOS_CLIENT_ID", "client_01ABC"),
-            ]),
+            Some(&file(
+                r#"{"api_url": "https://api.example.com", "identity_provider": "workos"}"#,
+            )),
+            vars(&[("SUBSPACE_WORKOS_CLIENT_ID", "client_01ABC")]),
         )
         .unwrap();
         assert_eq!(launch.api_url, "https://api.example.com");
@@ -638,6 +758,69 @@ mod tests {
         )
         .unwrap();
         assert_eq!(launch.api_url, "http://127.0.0.1:3000");
+        // An empty variable still turns the file's sign-in off for one run.
+        let launch = resolve_with(
+            &SUBSPACE,
+            Some(&file(
+                r#"{"identity_provider": "workos", "workos_client_id": "client_01ABC"}"#,
+            )),
+            vars(&[("SUBSPACE_IDENTITY_PROVIDER", "")]),
+        )
+        .unwrap();
+        assert_eq!(launch.provider, "");
+    }
+
+    #[test]
+    fn a_provider_value_sign_in_would_refuse_stops_the_launch_by_its_variable() {
+        for (name, value, says) in [
+            (
+                "SUBSPACE_IDENTITY_PROVIDER",
+                "WorkOS",
+                "SUBSPACE_IDENTITY_PROVIDER",
+            ),
+            (
+                "SUBSPACE_WORKOS_API_URL",
+                "not a url",
+                "SUBSPACE_WORKOS_API_URL",
+            ),
+            (
+                "SUBSPACE_WORKOS_REDIRECT_PORT",
+                "eighty",
+                "SUBSPACE_WORKOS_REDIRECT_PORT",
+            ),
+        ] {
+            let failure = resolve_with(
+                &SUBSPACE,
+                None,
+                vars(&[
+                    ("SUBSPACE_IDENTITY_PROVIDER", "workos"),
+                    ("SUBSPACE_WORKOS_CLIENT_ID", "client_01ABC"),
+                    (name, value),
+                ]),
+            )
+            .unwrap_err();
+            match failure {
+                Failure::Environment(message) => assert!(message.contains(says), "{message}"),
+                other => panic!("{name}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn development_sign_in_on_a_hosted_api_opens_without_sign_in() {
+        let hosted = vars(&[("SUBSPACE_API_URL", "https://api.example.com")]);
+        let launch = resolve_with(&SUBSPACE, None, hosted).unwrap();
+        let reason = super::sign_in_unavailable(&launch).unwrap();
+        assert!(reason.contains("https://api.example.com"), "{reason}");
+        let launch = resolve_with(
+            &SUBSPACE,
+            Some(&file(r#"{"api_url": "https://api.example.com"}"#)),
+            Vec::new(),
+        )
+        .unwrap();
+        assert!(super::sign_in_unavailable(&launch).is_some());
+        let local = resolve(&SUBSPACE, Vec::new()).unwrap();
+        assert_eq!(super::sign_in_unavailable(&local), None);
     }
 
     #[test]

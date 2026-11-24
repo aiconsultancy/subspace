@@ -7,7 +7,7 @@
 //! "none"`) has no provider, so it registers no account and never asks
 //! anyone to sign in. Nothing here names a real tenant, client or API.
 
-use crate::launch::{self, Launch, Stamped};
+use crate::launch::{self, API_RESOURCE, Launch, Stamped};
 use crate::settings::ApiBackend;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -15,8 +15,6 @@ use subspace_framework::account::{Error, Provider};
 use subspace_framework::shell::{AccountRegistration, AccountTokenSource, account_session};
 
 const MINIMUM_API_TOKEN_VALIDITY: Duration = Duration::from_secs(120);
-/// The resource name the app registers for Subspace API tokens.
-const API_RESOURCE: &str = "subspace-api";
 /// The resource name a NETT build registers for NETT API tokens.
 const NETT_RESOURCE: &str = "nett-api";
 const ORGANIZATION_NAME: &str = env!("SUBSPACE_BUILD_ORGANIZATION_NAME");
@@ -105,16 +103,14 @@ fn required_account(
 
 /// WorkOS device authorisation with the environment's one accepted client.
 fn nett_provider(namespace: &str) -> Option<Arc<dyn Provider>> {
-    use subspace_framework::workos_auth::{Config, SessionManager};
+    use subspace_framework::workos_auth::SessionManager;
     let built = (|| -> Result<Arc<dyn Provider>, Error> {
         let launch = LAUNCH.get().ok_or(Error::Unconfigured)?;
-        let mut config = Config::new(&launch.workos_client_id)?
+        let config = launch::workos_config(launch)
+            .map_err(|_| Error::Unconfigured)?
             .with_organization(ORGANIZATION_NAME)
             .with_resource(NETT_RESOURCE)?
             .with_device_authorization();
-        if !launch.workos_api_url.is_empty() {
-            config = config.with_api_url(&launch.workos_api_url)?;
-        }
         let credentials = nett_credentials(namespace, &launch.nett_api_url);
         Ok(Arc::new(SessionManager::system(config, &credentials)))
     })();
@@ -169,35 +165,22 @@ fn dev(launch: &Launch) -> Result<Arc<dyn Provider>, Error> {
 }
 
 fn workos(launch: &Launch, namespace: &str) -> Result<Arc<dyn Provider>, Error> {
-    use subspace_framework::workos_auth::{Config, SessionManager};
-    let mut config = Config::new(&launch.workos_client_id)?
+    let config = launch::workos_config(launch)
+        .map_err(|_| Error::Unconfigured)?
         .with_organization(ORGANIZATION_NAME)
         .with_resource(API_RESOURCE)?;
-    if !launch.workos_api_url.is_empty() {
-        config = config.with_api_url(&launch.workos_api_url)?;
-    }
-    if !launch.workos_redirect_port.is_empty() {
-        config = config.with_redirect_port(
-            launch
-                .workos_redirect_port
-                .parse()
-                .map_err(|_| Error::Unconfigured)?,
-        );
-    }
-    Ok(Arc::new(SessionManager::system(config, namespace)))
+    Ok(Arc::new(
+        subspace_framework::workos_auth::SessionManager::system(config, namespace),
+    ))
 }
 
 fn entra(launch: &Launch, namespace: &str) -> Result<Arc<dyn Provider>, Error> {
-    use subspace_framework::entra_auth::{Config, SessionManager};
-    let mut config = Config::new(&launch.entra_tenant_id, &launch.entra_client_id)?
+    let config = launch::entra_config(launch)
+        .map_err(|_| Error::Unconfigured)?
         .with_organization(ORGANIZATION_NAME);
-    if !launch.entra_authority.is_empty() {
-        config = config.with_authority(&launch.entra_authority)?;
-    }
-    if !launch.entra_api_scope.is_empty() {
-        config = config.with_scope(API_RESOURCE, &launch.entra_api_scope)?;
-    }
-    Ok(Arc::new(SessionManager::system(config, namespace)))
+    Ok(Arc::new(
+        subspace_framework::entra_auth::SessionManager::system(config, namespace),
+    ))
 }
 
 fn configure_subspace_api(source: AccountTokenSource) {

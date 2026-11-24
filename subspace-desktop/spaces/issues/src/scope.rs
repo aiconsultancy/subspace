@@ -123,7 +123,7 @@ pub(crate) fn screen_text(screen: &Screen, _profile: &str) -> ScreenText {
     let Screen::Failed(failure) = screen;
     let service = subspace_api_client::service_name();
     let (title, message) = match failure {
-        Failure::Edge => ("Sign-in required", SIGN_IN_MESSAGE.to_owned()),
+        Failure::Edge => subspace_api_client::sign_in_state(),
         Failure::Forbidden => (
             "Access denied",
             format!("{service} refused access. Try again after access is restored."),
