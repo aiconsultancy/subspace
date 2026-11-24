@@ -604,8 +604,8 @@ the one panel for that message. This keeps you in Channels. Older issues show
 the change instant. A transcript at the bottom stays at the bottom.
 
 Point at a tile or an inline reference, or move the keyboard to a reference,
-to see the same floating card. An ordinary issue shows its state edge,
-identifier, urgent or high priority, title and state. A supplied summary sits
+to see the same floating card. An ordinary issue shows its identifier, urgent
+or high priority, title and coloured state badge. A supplied summary sits
 below the title in muted text, wrapped to at most three lines. When supplied, its footer
 shows the assignee (an anchor for an agent, initials for a person), agent rank,
 a different owner and the latest activity time. A green dot marks activity

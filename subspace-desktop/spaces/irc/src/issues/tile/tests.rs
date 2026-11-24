@@ -20,7 +20,7 @@ fn now() -> DateTime<Utc> {
 fn hover_card_variant_follows_issue_type() {
     let ordinary = issue();
     let tracker = issue().with_markers(true, false);
-    assert_eq!(variant(&ordinary), Variant::Accent);
+    assert_eq!(variant(&ordinary), Variant::Ordinary);
     assert_eq!(variant(&tracker), Variant::Tracker);
 }
 #[test]
