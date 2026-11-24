@@ -26,6 +26,12 @@ impl Hub {
             .serves_any(initiatives, &self.applied.networks)
     }
 
+    /// Whether the latest read of the memberships, or the account side's
+    /// latest request, could not reach the API at all.
+    pub(crate) fn api_unreachable(&self, cx: &gpui_kit::App) -> bool {
+        self.initiatives.catalog.read(cx).unreachable() || self.managed.unreachable()
+    }
+
     pub(crate) fn missing_initiative_network(&self) -> Option<String> {
         self.initiatives.missing_network(&self.applied.networks)
     }
@@ -33,21 +39,38 @@ impl Hub {
     /// Configures the runtime with `networks` when they differ from what it
     /// runs. Until the stored buffers are restored, it waits; an account
     /// network held back until its own are read is left out until then.
+    /// Until the first read of the memberships settles it runs nothing, and
+    /// while Channels is closed it runs none.
     pub(super) fn run(&mut self, networks: Vec<NetworkConfig>) {
         if let Some(waiting) = self.recall.waiting.as_mut() {
             *waiting = networks;
             return;
         }
+        if self.initiatives.awaiting_read() {
+            return;
+        }
         let starting = &self.recall.starting;
+        let closed = self.initiatives.closed();
         let networks: Vec<NetworkConfig> = networks
             .into_iter()
-            .filter(|network| !starting.contains(&network.id))
+            .filter(|network| !closed && !starting.contains(&network.id))
             .collect();
         if networks != self.running {
             self.send(Command::Configure(networks.clone()));
             self.running = networks;
-            self.apply_initiative(false);
+            self.apply_initiative();
         }
+    }
+
+    /// Runs the networks the settings name again, after the first read of
+    /// the memberships settled or Channels closed or reopened: none while it
+    /// is closed, all of them otherwise, each told where to catch up from.
+    pub(crate) fn rerun(&mut self) {
+        self.run(running::initial(
+            &self.applied.networks,
+            &self.state.removed,
+        ));
+        self.send_anchors();
     }
 
     /// Follows newly saved settings, with the account's networks derived

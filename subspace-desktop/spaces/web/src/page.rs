@@ -14,6 +14,10 @@ pub(crate) enum PageEvent {
     /// The page asked for a new window, which opens in the browser.
     NewWindow(String),
     Download,
+    /// A native session's site sent the view to its signal, which the view
+    /// never loads (`SessionScope::with_signal`).
+    #[cfg(target_os = "macos")]
+    SessionRequired,
     Message {
         source: String,
         body: String,
@@ -64,8 +68,23 @@ impl Profile {
     }
 }
 
+/// A native session's cookie as the web view's store holds it: host-only
+/// on `domain`, `Secure`, `HttpOnly` and `SameSite=Strict`, until `expires`.
+/// The value never leaves native code.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SiteCookie {
+    pub name: String,
+    pub value: subspace_framework::core::Secret,
+    pub domain: String,
+    pub path: String,
+    pub expires: std::time::SystemTime,
+}
+
 #[cfg(any(target_os = "macos", windows))]
 mod native;
+#[cfg(target_os = "macos")]
+pub(crate) use native::Admission;
 #[cfg(all(target_os = "macos", debug_assertions))]
 mod snapshot;
 

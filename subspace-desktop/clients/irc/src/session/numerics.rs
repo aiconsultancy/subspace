@@ -40,12 +40,14 @@ pub(super) fn server_line(session: &Session, message: &Message, kind: LineKind, 
 pub(super) fn logged_in(session: &mut Session, message: &Message, out: &mut Output) {
     server_line(session, message, LineKind::Info, out);
     session.reg.account = Some(message.param(2).to_owned()).filter(|account| !account.is_empty());
+    out.send.extend(super::history::targets::request(session));
 }
 
 /// 901 (`RPL_LOGGEDOUT`): shown, and our account forgotten.
 pub(super) fn logged_out(session: &mut Session, message: &Message, out: &mut Output) {
     server_line(session, message, LineKind::Info, out);
     session.reg.account = None;
+    session.discovering_queries = None;
 }
 
 pub(super) fn isupport(session: &mut Session, message: &Message, out: &mut Output) {

@@ -1046,9 +1046,10 @@ does the same as `./install.sh providers`.
    with `"identity_provider": "workos"` and `"workos_client_id"`. See
    [The connection file](subspace-desktop/docs/subspace/connection-file.md).
 3. **Channels.** The installer already added the fleet's IRC network, signed in
-   as your account with the password file it saved. Pick the fleet's
-   initiative in **Channels** to join its Starbase, fleet command and ship
-   channels. Say hello to the rear admiral in Starbase. If the desktop's settings file could not
+   as your account with the password file it saved. **Channels** joins the
+   Starbase, fleet command and ship channels of your first initiative, or of
+   the one you last chose; switch initiative from its menu. Say hello to the
+   rear admiral in Starbase. If the desktop's settings file could not
    be updated automatically, the installer printed the network to add under
    **Settings > Channels > Add network**; `./install.sh desktop` writes it
    again.
@@ -1086,14 +1087,24 @@ Your own coding agents can work with the fleet too: read and update issues,
 log decisions, write documents, and talk to the rear admiral and captains on
 IRC. The [Subspace skills](agent-skills/README.md) add this to Claude Code,
 Codex and OpenCode, each in its own form, and register the Subspace API's MCP
-server with them:
+server with them. For a hosted WorkOS API, first create
+`~/.subspace/agent.json` with the API URL and AuthKit client ID. See the
+[hosted API setup](agent-skills/README.md#hosted-api-with-workos) for the
+settings and WorkOS callback registration.
 
 ```sh
 ./install.sh skills --agents claude,codex,opencode --name "Your Name"
 ```
 
-On Windows, use `.\install.ps1 skills ...`. This changes your agents' user
-profiles, so agents run it only when the user agreed to it in the plan. Local agents sign in with
+For WorkOS, run `python3 ~/.subspace/bin/subspace_token.py --login` once and
+complete sign-in in the browser. The agents then share the session and
+refresh it as needed. For development sign-in, keep the fleet's tunnel
+running with `./install.sh tunnel --background`.
+
+On Windows, use `.\install.ps1 skills ...` and
+`py "$HOME/.subspace/bin/subspace_token.py" --login` for WorkOS.
+The installer changes your agents' user profiles, so agents run it only
+when the user agreed to it in the plan. Local agents sign in with
 **your** login. They must always say they are an agent acting for you, with
 their model and version, for example
 `[on behalf of George (Claude Opus 5.5)]` on IRC, or
@@ -1212,6 +1223,9 @@ them. Agent isolation stays, because it never blocks your login.
 - **The desktop shows no initiatives.** Check that the tunnel runs and that
   `curl http://127.0.0.1:3000/health` answers. Re-run the installer if the API
   was not up.
+- **Channels says you are not a member of any initiative.** The API answered,
+  and lists no initiative for your account. An administrator adds you to one
+  in Subspace; then reload Channels.
 - **Channels names a server to add.** The desktop's IRC network must match the
   fleet's host, port and TLS setting exactly: `127.0.0.1`, `6667`, TLS off for
   IRC on the fleet VM. Run `./install.sh desktop`.

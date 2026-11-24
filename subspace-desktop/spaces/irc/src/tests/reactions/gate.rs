@@ -150,13 +150,20 @@ fn a_stop_item_left_open_is_checked_again_when_chosen(cx: &mut TestAppContext) {
         crate::conversation::reacting::toggle(view, ("m1".into(), HAND.into()), true, stop, cx);
     });
     assert_eq!(sent(&hub, cx), before, "m1 is no agent's message");
-    // The roster loses astra while her request's menu is open.
+    // The roster loses astra while her request's menu is open: the person
+    // now belongs only to an initiative without a fleet.
+    let fleetless = serde_json::from_value(serde_json::json!([
+        {"id": "initiative-local", "name": "Local", "channels": "#subspace"}
+    ]))
+    .unwrap();
     hub.update(cx, |hub, cx| {
         hub.initiatives.catalog.clone().update(cx, |catalog, cx| {
-            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(Vec::new()), cx)
+            catalog.set_memberships_for_test(Some("fixture-user".into()), Ok(fleetless), cx)
         })
     });
     cx.run_until_parked();
+    // The new initiative's channels take over the autojoin.
+    let before = sent(&hub, cx);
     conversation.update(cx, |view, cx| {
         let stop = Some("astra".to_owned());
         crate::conversation::reacting::toggle(view, ("r1".into(), HAND.into()), true, stop, cx);

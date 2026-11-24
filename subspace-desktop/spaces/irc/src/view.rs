@@ -24,7 +24,7 @@ mod navigator;
 use details::{kind, kind_icon};
 
 pub(crate) use details::{server_summary, status_line};
-pub(crate) use frame::{space_docks, toggle_space_dock};
+pub(crate) use frame::{closed, space_docks, toggle_space_dock};
 pub(crate) use hosting::{Hosted, open_channel};
 pub(crate) use inspector::InspectorTab;
 #[cfg(test)]
@@ -124,6 +124,7 @@ pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
         reveal(board, &query, cx);
     }
     crate::initiatives::dismiss_stale_picker(board, cx);
+    close_join_while_closed(board, cx);
     dock::restore(board, cx);
     if !retired.is_empty() {
         dock::close_retired(board, retired, cx);
@@ -134,6 +135,13 @@ pub(crate) fn sync(board: &mut Irc, cx: &mut Context<Irc>) {
     crate::thread::refresh(board, cx);
     inspector::want_in_play(board, cx);
     cx.notify();
+}
+
+/// Closes the Join dialog once Channels closes, as nothing it sends would go.
+fn close_join_while_closed(board: &mut Irc, cx: &mut Context<Irc>) {
+    if board.join.is_some() && frame::closed(board, cx) {
+        crate::dock::with_window(board, cx, crate::join::close);
+    }
 }
 
 /// Tells the hub, while the board and its window are in front, which buffer

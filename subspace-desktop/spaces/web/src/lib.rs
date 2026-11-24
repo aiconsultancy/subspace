@@ -2,10 +2,13 @@
 //! shows one web page, or a web app from a folder of built files, in a
 //! native web view. The app registers one instance per entry with
 //! [`create`], and adds the entries of the web Spaces it ships with
-//! [`builtin::install`].
+//! [`builtin::install`]. On macOS a product may also compose a web Space
+//! signed in with the app's own account, with `create_with_session`.
 
 mod app;
 mod bridge;
+#[cfg(target_os = "macos")]
+mod browser_session;
 pub mod builtin;
 pub mod install;
 pub mod manager;
@@ -13,6 +16,7 @@ mod manifest;
 mod mirror;
 mod page;
 mod page_bridge;
+mod pages;
 mod policy;
 mod source;
 mod state;
@@ -32,10 +36,16 @@ use subspace_framework::dashboard::{
     Dashboard, DashboardEvent, DashboardHandle, KeyHelp, Tokens, contracts, feedback, workspace,
 };
 
+#[cfg(target_os = "macos")]
+pub use browser_session::{
+    InvalidScope, MAX_SESSION_LIFETIME, MIN_SESSION_LIFETIME, NativeSession, SessionAccount,
+    SessionCookie, SessionFailure, SessionGrant, SessionScope, create_with_session,
+};
 use page::{Page, Profile, Start};
+use pages::{PageSource, Placeholder};
 pub use source::{configuration, description, settings_fields};
 use state::PageState;
-use toolbar::Navigation;
+use toolbar::{Navigation, PageMove};
 
 /// How often the board reads its page's events.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -62,14 +72,23 @@ pub struct WebBoard {
     bridge: Option<bridge::Bridge>,
     follow: page_bridge::Follow,
     mirror: mirror::Mirror,
+    /// Where the page comes from: the config file, or a product's native
+    /// session.
+    source: PageSource,
 }
 
 impl WebBoard {
     fn with_config(config: WebBoardConfig, cx: &mut Context<Self>) -> Self {
+        Self::with_source(config, PageSource::Config, cx)
+    }
+
+    /// The board for `config`, whose page comes from `source`, which also
+    /// says where the view starts and whether it has a bridge.
+    fn with_source(config: WebBoardConfig, source: PageSource, cx: &mut Context<Self>) -> Self {
         Self::watch(cx);
         Self {
-            start: source::start(&config),
-            bridge: bridge::Bridge::new(&config, source::entry(&config.id, cx).as_ref()),
+            start: source.start(&config),
+            bridge: source.bridge(&config, cx),
             config,
             focus: cx.focus_handle(),
             page: None,
@@ -80,10 +99,12 @@ impl WebBoard {
             last_external: None,
             follow: page_bridge::Follow::new(cx),
             mirror: mirror::Mirror::new(),
+            source,
         }
     }
 
-    fn ensure_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens the page the config file names, unless it is open or failed.
+    fn open_configured(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.page.is_some() || self.error.is_some() {
             return;
         }
@@ -126,8 +147,16 @@ impl WebBoard {
         .detach();
     }
 
+    /// The board's one poll: the page's events, then a native session's
+    /// account and clock.
     fn poll(&mut self, cx: &mut Context<Self>) {
         mirror::refresh(self, cx);
+        self.read_events(cx);
+        #[cfg(target_os = "macos")]
+        self.tick_session(cx);
+    }
+
+    fn read_events(&mut self, cx: &mut Context<Self>) {
         let Some(page) = &self.page else {
             return;
         };
@@ -146,6 +175,10 @@ impl WebBoard {
     }
 
     fn page_event(&mut self, event: page::PageEvent, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        if event == page::PageEvent::SessionRequired {
+            return self.signal_session(cx);
+        }
         if let page::PageEvent::Message {
             source,
             body,
@@ -187,21 +220,36 @@ impl WebBoard {
         }
     }
 
-    pub(crate) fn navigate(&mut self, navigation: Navigation, cx: &mut Context<Self>) {
+    pub(crate) fn navigate(
+        &mut self,
+        navigation: Navigation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match navigation {
+            Navigation::Browser => self.open_in_browser(cx),
+            Navigation::Reload => self.reload_or_retry(window, cx),
+            Navigation::Back => self.move_page(PageMove::Back, cx),
+            Navigation::Forward => self.move_page(PageMove::Forward, cx),
+            Navigation::Home => self.move_page(PageMove::Home, cx),
+        }
+    }
+
+    fn move_page(&mut self, to: PageMove, cx: &mut Context<Self>) {
         let Some(page) = &self.page else {
             return;
         };
-        let result = toolbar::navigate(page, &self.start.url, navigation, cx);
+        let result = toolbar::move_page(page, &self.start.url, to, cx);
         if let Err(error) = result {
             self.state.notice = Some(error);
             cx.notify();
         }
     }
 
-    fn retry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.error = None;
-        self.ensure_page(window, cx);
-        self.sync_shown(cx);
+    fn open_in_browser(&self, cx: &mut Context<Self>) {
+        if let Some(url) = self.browser_target(cx) {
+            cx.open_url(&url);
+        }
     }
 
     /// What the pane shows under its toolbar: the page, or why there is
@@ -211,19 +259,25 @@ impl WebBoard {
         if let Some(page) = &self.page {
             return mirror::view(self, page.view().into_any_element(), cx);
         }
-        match &self.error {
-            Some(error) => feedback::error_box(
+        match self.placeholder() {
+            Placeholder::Failed(error) => feedback::error_box(
                 &tokens,
                 INSTANCE,
                 "Cannot show this page",
-                error.clone(),
+                error,
                 cx.listener(|board, _: &ClickEvent, window, cx| board.retry(window, cx)),
             )
             .into_any_element(),
-            None => feedback::loading_line(&tokens, "web-board-opening", "Opening the page…")
-                .px(workspace::text_edge(&tokens))
-                .py(tokens.pad_x)
-                .into_any_element(),
+            #[cfg(target_os = "macos")]
+            Placeholder::SignIn(hint) => {
+                feedback::empty(&tokens, INSTANCE, "Sign-in required", hint).into_any_element()
+            }
+            Placeholder::Opening => {
+                feedback::loading_line(&tokens, "web-board-opening", "Opening the page…")
+                    .px(workspace::text_edge(&tokens))
+                    .py(tokens.pad_x)
+                    .into_any_element()
+            }
         }
     }
 }
@@ -342,10 +396,6 @@ impl Dashboard for WebBoard {
     }
 
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.page.is_some() {
-            self.navigate(Navigation::Reload, cx);
-        } else {
-            self.retry(window, cx);
-        }
+        self.reload_or_retry(window, cx);
     }
 }

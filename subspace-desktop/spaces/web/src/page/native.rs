@@ -1,7 +1,7 @@
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
-    mpsc::{self, Receiver, SyncSender},
+    mpsc::{Receiver, SyncSender},
 };
 
 use gpui_kit::{AnyView, App, AppContext as _, Context, Entity, Window};
@@ -10,6 +10,15 @@ use gpui_webview::WebView;
 use super::{AppFolder, PageEvent, Profile, Start};
 use crate::app::{APP_SCHEME, serve};
 use crate::policy::navigation_allowed;
+
+#[cfg(target_os = "macos")]
+mod cookies;
+#[cfg(target_os = "macos")]
+mod session;
+mod view;
+
+pub(crate) use view::Admission;
+use view::{Inbox, View, channel};
 
 /// Page events wait here until the board's next poll; more are dropped and
 /// the board reads the page's state instead.
@@ -24,11 +33,15 @@ pub(crate) struct Page {
     events: Receiver<PageEvent>,
     overflow: Arc<AtomicBool>,
     epoch: Arc<AtomicU64>,
-    /// WebView2 reads its profile folder from this context while the view
-    /// lives.
-    #[cfg(windows)]
-    _context: wry::WebContext,
+    _store: Store,
 }
+
+/// What the view needs kept while it lives: on Windows the context
+/// WebView2 reads its profile folder from.
+#[cfg(windows)]
+type Store = wry::WebContext;
+#[cfg(target_os = "macos")]
+type Store = ();
 
 #[derive(Clone)]
 struct Events {
@@ -46,40 +59,77 @@ impl Events {
 }
 
 impl Page {
-    /// Create the web view as a child of `window`, loading `start`.
+    /// Create a board's web view as a child of `window`, loading `start`,
+    /// with the board's own site data store.
     pub(crate) fn open<T: 'static>(
         start: &Start,
         profile: &Profile,
         window: &mut Window,
         cx: &mut Context<T>,
     ) -> Result<Self, String> {
-        let (sender, events) = mpsc::sync_channel(EVENT_CAPACITY);
-        let overflow = Arc::new(AtomicBool::new(false));
-        let epoch = Arc::new(AtomicU64::new(0));
-        let reporter = Events {
-            sender,
-            overflow: overflow.clone(),
-            epoch: epoch.clone(),
+        let origin = start.app.as_ref().map(|app| app.origin.clone());
+        let view = |builder| View {
+            builder,
+            url: &start.url,
+            admit: Box::new(
+                move |url: &str| match navigation_allowed(url, origin.as_deref()) {
+                    true => Admission::Load,
+                    false => Admission::Refuse,
+                },
+            ),
+            app: start.app.as_ref().map(|app| (app, profile.board.as_str())),
+            devtools: cfg!(debug_assertions),
         };
+        let (events, inbox) = channel();
         #[cfg(target_os = "macos")]
-        let raw = build_macos(start, profile, reporter, window)?;
+        let (raw, store) = {
+            use wry::WebViewBuilderExtDarwin as _;
+            let id = crate::policy::data_store_id(&profile.product, &profile.board);
+            let builder = wry::WebViewBuilder::new().with_data_store_identifier(id);
+            let raw = view(builder).build(events, window);
+            (
+                raw.map_err(|error| format!("Cannot open the web view: {error}"))?,
+                (),
+            )
+        };
         #[cfg(windows)]
-        let (raw, context) = build_windows(start, profile, reporter, window)?;
+        let (raw, store) = {
+            use wry::WebViewBuilderExtWindows as _;
+            let mut context = web_context(profile)?;
+            // An app origin must be a secure context, as on macOS.
+            let builder =
+                wry::WebViewBuilder::new_with_web_context(&mut context).with_https_scheme(true);
+            let raw = view(builder).build(events, window).map_err(|error| {
+                format!(
+                    "Cannot open the web view. Check that Microsoft Edge WebView2 is installed: {error}"
+                )
+            })?;
+            (raw, context)
+        };
+        Ok(Self::adopt(raw, inbox, store, window, cx))
+    }
+
+    /// The page around a built view.
+    fn adopt<T: 'static>(
+        raw: wry::WebView,
+        inbox: Inbox,
+        store: Store,
+        window: &mut Window,
+        cx: &mut Context<T>,
+    ) -> Self {
         #[cfg(all(target_os = "macos", debug_assertions))]
         if std::env::var_os("SUBSPACE_CAPTURE_DIR").is_some() {
             super::snapshot::keep_drawing(&raw);
         }
-        let view = cx.new(|cx| WebView::new(raw, window, cx));
-        Ok(Self {
-            view,
+        Self {
+            view: cx.new(|cx| WebView::new(raw, window, cx)),
             #[cfg(all(target_os = "macos", debug_assertions))]
             snapshots: Arc::default(),
-            events,
-            overflow,
-            epoch,
-            #[cfg(windows)]
-            _context: context,
-        })
+            events: inbox.events,
+            overflow: inbox.overflow,
+            epoch: inbox.epoch,
+            _store: store,
+        }
     }
 
     /// The page's element. The native view takes the bounds GPUI lays this
@@ -169,101 +219,15 @@ impl Page {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn build_macos(
-    start: &Start,
-    profile: &Profile,
-    events: Events,
-    window: &Window,
-) -> Result<wry::WebView, String> {
-    use wry::WebViewBuilderExtDarwin as _;
-    let store = crate::policy::data_store_id(&profile.product, &profile.board);
-    let builder = wry::WebViewBuilder::new().with_data_store_identifier(store);
-    configure(builder, start, &profile.board, events)
-        .build_as_child(window)
-        .map_err(|error| format!("Cannot open the web view: {error}"))
-}
-
+/// The folder WebView2 keeps this board's site data in.
 #[cfg(windows)]
-fn build_windows(
-    start: &Start,
-    profile: &Profile,
-    events: Events,
-    window: &Window,
-) -> Result<(wry::WebView, wry::WebContext), String> {
-    use wry::WebViewBuilderExtWindows as _;
+fn web_context(profile: &Profile) -> Result<wry::WebContext, String> {
     let directory = profile
         .state_dir
         .as_ref()
         .map(|dir| dir.join("web-boards").join(&profile.board))
         .ok_or("Cannot find a private folder for the page's data.")?;
-    let mut context = wry::WebContext::new(Some(directory));
-    // An app origin must be a secure context, as on macOS.
-    let builder = wry::WebViewBuilder::new_with_web_context(&mut context).with_https_scheme(true);
-    let raw = configure(builder, start, &profile.board, events)
-        .build_as_child(window)
-        .map_err(|error| {
-            format!(
-                "Cannot open the web view. Check that Microsoft Edge WebView2 is installed: {error}"
-            )
-        })?;
-    Ok((raw, context))
-}
-
-/// The handlers every web board installs: navigation limits, new windows
-/// in the browser, no downloads, load and title reports, and the board's
-/// app files when it shows an app.
-fn configure<'a>(
-    builder: wry::WebViewBuilder<'a>,
-    start: &Start,
-    board: &str,
-    events: Events,
-) -> wry::WebViewBuilder<'a> {
-    let origin = start.app.as_ref().map(|app| app.origin.clone());
-    let builder = match &start.app {
-        Some(app) => {
-            let builder = serve_app(builder, app, board);
-            let builder = capture_visible(builder);
-            if app.bridge_enabled {
-                install_bridge(builder, &app.origin, events.clone())
-            } else {
-                builder
-            }
-        }
-        None => builder,
-    };
-    let navigation = events.clone();
-    let popup = events.clone();
-    let download = events.clone();
-    let load = events.clone();
-    builder
-        .with_devtools(cfg!(debug_assertions))
-        .with_navigation_handler(move |url| {
-            let allowed = navigation_allowed(&url, origin.as_deref());
-            if allowed {
-                navigation.epoch.fetch_add(1, Ordering::Relaxed);
-            }
-            if !allowed {
-                navigation.send(PageEvent::Blocked(url));
-            }
-            allowed
-        })
-        .with_new_window_req_handler(move |url, _| {
-            popup.send(PageEvent::NewWindow(url));
-            wry::NewWindowResponse::Deny
-        })
-        .with_download_started_handler(move |_, _| {
-            download.send(PageEvent::Download);
-            false
-        })
-        .with_on_page_load_handler(move |event, url| {
-            load.send(match event {
-                wry::PageLoadEvent::Started => PageEvent::Loading(url),
-                wry::PageLoadEvent::Finished => PageEvent::Loaded(url),
-            });
-        })
-        .with_document_title_changed_handler(move |title| events.send(PageEvent::Title(title)))
-        .with_url(&start.url)
+    Ok(wry::WebContext::new(Some(directory)))
 }
 
 /// Debug capture builds only: see `snapshot::VISIBLE_SCRIPT`.

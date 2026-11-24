@@ -10,9 +10,68 @@ and sends it commands. The in-app guide is
 ## Initiative channel sets
 
 The process Hub reads `GET /api/v1/me/initiatives` with the same Subspace API
-client as Issues. Only the caller's latest successful memberships are used;
-an access error, verified user change or empty result falls back to Local channels. The picker is
-shared across windows through the Hub and resets when you quit.
+client as Issues. Only the caller's latest successful memberships are used.
+Once they are read, a member always has an initiative selected (`Catalog` in
+`clients/subspace-api/src/initiatives.rs`): the one they last chose for this
+account and organisation while they still belong to it, else their first in
+the API's order. The picker offers their initiatives only, with no Local
+channels choice. The choice is remembered across restarts in the state file
+through the `prefs` global, under `initiatives.selected`: each entry is keyed
+by a digest of the API, the verified user and the NETT organisation, and
+holds only the initiative's ID. Only the person's own choice is remembered,
+not the first initiative selected for them. An account or organisation
+change retires the selection with the memberships (`fence_scope`, `reset`),
+and a remembered initiative the person has left falls back to their first.
+A selection made for the person, by default or as a fallback, joins its
+channels without focusing one; only their own pick (`Catalog::picks`)
+shows the new initiative's first channel, once a connection carries it.
+While the same person's memberships in another organisation are read, the
+previous initiative's channels stay, and the new organisation's initiative
+replaces them once read, so the configured channels are not joined in
+between; another person's are retired at once. The centre layout is saved with the selected initiative's
+conversations, which come back with it; only a switch's retirement of the
+previous initiative's tabs leaves the saved layout alone.
+
+Where the API may serve initiative channels
+(`subspace_api_client::may_serve_initiative_channels`: always for Subspace
+API, and for NETT until the organisation's capability list says otherwise),
+a running hub holds its networks at start until the first read of the
+memberships settles, or 45 seconds pass, as long as Issues allows an API to
+wake (`READ_TIMEOUT`, `Hub::await_first_read`). The pane says *Checking
+initiatives…* meanwhile. A member's configured channels on the initiative's
+server are then not joined only to be left for the initiative's, and
+someone in no initiative never connects. A read refused for want of a
+session settles nothing, since a saved session may still be restoring; the
+next read after sign-in does. The initiative's list replaces the configured
+channels on its server, so those are not joined as well.
+
+Someone whose latest settled read found no memberships has Channels closed
+(`InitiativeIrc::closed`, `initiatives::not_a_member`): the runtime runs no
+network, unrelated servers and the account's networks included; the hub
+sends no network command and refuses agent tools; the Space offers no
+commands, search, subject or agent context; and the pane shows only *Not a
+member of any initiative yet* with **Reload**, which the status bar repeats.
+A read that then fails in transit keeps it closed (`Outcome::empty`), and
+while another account's or organisation's memberships are read Channels
+stays as it was. Showing the Space or **Reload** reads them again; the read
+that finds one reopens Channels on that initiative, with each buffer's
+newest line sent so it catches up. A read that fails before any settled
+(*Initiatives unavailable*), a refusal, an API without the endpoint, a NETT
+organisation that does not serve initiative channels and a build with no API
+backend keep the configured networks and their own autojoin, as before.
+
+When the memberships read, or the account's check or login request, cannot
+reach the API at all (`Error::Network`; `Catalog::unreachable`,
+`Managed::unreachable`, `Hub::api_unreachable`), the status bar says so once
+in `subspace_api_client::unreachable_message()`, the words Issues and
+Decisions use, which a build may extend. With no network to show, the pane
+says *Offline* with that message and **Reload** in place of *No IRC
+networks*. The account side keeps retrying with backoff meanwhile; only a
+request it made counts, not a kept login it offered. **Reload** asks again
+at once: the memberships, the account check while it has not settled, and
+each server's login. A refusal
+or another failure is not named so: *Initiatives unavailable* stays for
+those.
 
 The selected list replaces autojoin on exactly one connection: the one on the
 selected initiative's IRC server. An initiative assigned to a fleet uses that
@@ -317,8 +376,9 @@ fleets on one network claim belongs to neither.
 - Every row with unread messages is emphasised. A mention adds an `@` mark
   in `Tone::Red` before the count, which keeps the accent.
 - A fleet group that is not the selected initiative's fleet starts folded
-  the first time it appears (`view/navigator.rs`, `fold_new_fleets`); with no initiative
-  selected every fleet starts open. A network's only fleet's group, which
+  the first time it appears (`view/navigator.rs`, `fold_new_fleets`). A
+  member always has an initiative selected, so only their first, or the one
+  they chose, starts open. A network's only fleet's group, which
   takes in the network's other channels and Server row, keeps the fold of
   the network's group instead. Revealing a row in a folded group
   unfolds it, a folded group the selected row moves into opens, and later

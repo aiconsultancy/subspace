@@ -1,7 +1,7 @@
 //! Anchors: a connection asks only for the lines the owner missed, and the
 //! lines around one message, answered as `Event::Backfill`.
 
-use super::{ALL_CAPS, channel, command, config, feed, in_channel, now, sent};
+use super::{ALL_CAPS, ERGO_ISUPPORT, channel, command, config, feed, in_channel, now, sent};
 use crate::model::{Anchor, Command, Event, NetworkId, Target};
 use crate::session::{Carry, Session};
 
@@ -39,6 +39,151 @@ fn resumed(anchors: Vec<Anchor>) -> (Session, Vec<String>) {
     );
     let sent = sent(&out);
     (session, sent)
+}
+
+fn discovery_session(anchors: Vec<Anchor>, limit: u16) -> (Session, Vec<String>) {
+    let mut config = config();
+    config.sasl = None;
+    let carry = Carry {
+        anchors,
+        ..Carry::default()
+    };
+    let mut session = Session::new(config, carry);
+    session.start(now());
+    let welcome = feed(
+        &mut session,
+        &[
+            ":ergo.test CAP * LS :batch draft/chathistory",
+            ":ergo.test CAP subspace ACK :batch draft/chathistory",
+            ":ergo.test 900 * * subspace :Logged in",
+            ":ergo.test 001 subspace :Welcome",
+            &format!(":ergo.test 005 subspace CHATHISTORY={limit} :Supported"),
+            ":ergo.test 376 subspace :End of MOTD",
+        ],
+    );
+    (session, sent(&welcome))
+}
+
+#[test]
+fn a_first_offline_dm_is_discovered_and_delivered_as_replay() {
+    let (mut session, welcome) =
+        discovery_session(vec![anchor(Target::Query("bob".into()), None)], 1000);
+    assert!(welcome.contains(
+        &"CHATHISTORY TARGETS timestamp=2026-01-02T03:04:10.000Z timestamp=1970-01-01T00:00:00.000Z 100".into()
+    ));
+    let discovered = feed(
+        &mut session,
+        &[
+            ":ergo.test BATCH +targets draft/chathistory-targets",
+            "@batch=targets :ergo.test CHATHISTORY TARGETS #subspace 2026-01-02T03:04:05.000Z",
+            "@batch=targets :ergo.test CHATHISTORY TARGETS bob 2026-01-02T03:04:05.000Z",
+            "@batch=targets :ergo.test CHATHISTORY TARGETS subspace 2026-01-02T03:04:05.000Z",
+            "@batch=targets :ergo.test CHATHISTORY TARGETS alice 2026-01-02T03:03:05.000Z",
+            "@batch=targets :ergo.test CHATHISTORY TARGETS Alice 2026-01-02T03:03:05.000Z",
+            ":ergo.test BATCH -targets",
+        ],
+    );
+    assert_eq!(sent(&discovered), ["CHATHISTORY LATEST alice * 500"]);
+    assert!(discovered.events.is_empty());
+    let reply = feed(
+        &mut session,
+        &[
+            ":ergo.test BATCH +dm chathistory alice",
+            "@batch=dm;time=2026-01-02T03:03:05.000Z;msgid=offline :alice!a@h PRIVMSG subspace :hello while away",
+            ":ergo.test BATCH -dm",
+        ],
+    );
+    assert!(matches!(
+        reply.events.as_slice(),
+        [Event::Replayed(line)]
+            if line.buffer.target == Target::Query("alice".into()) && line.text == "hello while away"
+    ));
+    assert!(
+        session
+            .into_carry()
+            .anchors
+            .iter()
+            .any(|anchor| anchor.id.as_deref() == Some("offline"))
+    );
+}
+
+#[test]
+fn discovery_waits_for_sign_in_when_it_happens_after_welcome() {
+    let mut network = config();
+    network.sasl = None;
+    let mut session = Session::new(network, Carry::default());
+    session.start(now());
+    let welcome = feed(
+        &mut session,
+        &[
+            ":ergo.test CAP * LS :batch draft/chathistory",
+            ":ergo.test CAP subspace ACK :batch draft/chathistory",
+            ":ergo.test 001 subspace :Welcome",
+            ERGO_ISUPPORT,
+        ],
+    );
+    assert_eq!(
+        sent(&welcome).last().map(String::as_str),
+        Some("JOIN #subspace")
+    );
+
+    let login = ":ergo.test 900 subspace subspace!u@h subspace :Logged in";
+    assert_eq!(
+        sent(&feed(&mut session, &[login])),
+        [
+            "CHATHISTORY TARGETS timestamp=2026-01-02T03:04:10.000Z timestamp=1970-01-01T00:00:00.000Z 100"
+        ]
+    );
+    assert!(feed(&mut session, &[login]).send.is_empty());
+}
+
+#[test]
+fn discovery_pages_past_known_conversations_and_respects_the_server_limit() {
+    let (mut session, welcome) = discovery_session(vec![], 2);
+    assert!(welcome.iter().any(|line| line.ends_with("00.000Z 2")));
+    let first = feed(
+        &mut session,
+        &[
+            ":ergo.test BATCH +a draft/chathistory-targets",
+            "@batch=a :ergo.test CHATHISTORY TARGETS #one 2026-01-02T03:04:04.000Z",
+            "@batch=a :ergo.test CHATHISTORY TARGETS #two 2026-01-02T03:04:03.000Z",
+            ":ergo.test BATCH -a",
+        ],
+    );
+    assert_eq!(
+        sent(&first),
+        [
+            "CHATHISTORY TARGETS timestamp=2026-01-02T03:04:03.000Z timestamp=1970-01-01T00:00:00.000Z 2"
+        ]
+    );
+    let second = feed(
+        &mut session,
+        &[
+            "@draft/chathistory-end :ergo.test BATCH +b draft/chathistory-targets",
+            "@batch=b :ergo.test CHATHISTORY TARGETS alice 2026-01-02T03:04:02.000Z",
+            ":ergo.test BATCH -b",
+        ],
+    );
+    assert_eq!(sent(&second), ["CHATHISTORY LATEST alice * 2"]);
+}
+
+#[test]
+fn failed_target_discovery_leaves_known_dm_catch_up_pending() {
+    let (mut session, _) = discovery_session(vec![anchor(Target::Query("bob".into()), None)], 1000);
+    let failure = feed(
+        &mut session,
+        &["@label=subspace-history-targets :ergo.test FAIL CHATHISTORY MESSAGE_ERROR :No context"],
+    );
+    assert!(backfill(&failure.events).is_none());
+    let reply = feed(
+        &mut session,
+        &[
+            ":ergo.test BATCH +dm chathistory bob",
+            "@batch=dm;time=2026-01-02T03:04:05.000Z :bob!b@h PRIVMSG subspace :still missed",
+            ":ergo.test BATCH -dm",
+        ],
+    );
+    assert_eq!(backfill(&reply.events).unwrap().1, ["still missed"]);
 }
 
 fn backfill(events: &[Event]) -> Option<(&Target, Vec<&str>)> {

@@ -19,7 +19,7 @@ use std::sync::Arc;
 use subspace_framework::agent_tools::{AgentTool, ReadTool, ToolEnvironment, ToolHost, WriteTool};
 use subspace_framework::dashboard::full_text::Service;
 
-pub(crate) use bridge::{Request, close, open, serve};
+pub(crate) use bridge::{Request, close, open, refuse, serve};
 
 pub(crate) fn agent_tools(environment: &ToolEnvironment) -> Vec<Arc<dyn AgentTool>> {
     match environment.host {

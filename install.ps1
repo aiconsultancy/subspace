@@ -112,7 +112,7 @@ if ($HostKey -and $HostKey -cnotmatch '^SHA256:[A-Za-z0-9+/]{43}$') { Die '--hos
 foreach ($value in $Passthrough) { if ($value.Contains('"')) { Die 'Values cannot contain double quotes.' } }
 $State = Join-Path (Join-Path $SubspaceHome 'targets') $Target
 
-if (-not (Get-Command ssh.exe -ErrorAction SilentlyContinue)) {
+if ($Command -ne 'skills' -and -not (Get-Command ssh.exe -ErrorAction SilentlyContinue)) {
     Die 'The OpenSSH client is missing. Add it in Settings > System > Optional features > OpenSSH Client, then rerun.'
 }
 
@@ -808,8 +808,6 @@ function Invoke-IrcServer {
 
 function Invoke-Skills {
     # Local agents (Claude Code, Codex, OpenCode) on this PC: skills, helpers and MCP.
-    Get-TargetEnv | Out-Null
-    if (-not (Test-Path (Join-Path $State 'summary.env'))) { Die 'Install the fleet first.' }
     $agents = @(); $person = ''
     for ($n = 0; $n -lt $Passthrough.Count; $n++) {
         switch ($Passthrough[$n]) {
@@ -825,20 +823,29 @@ function Invoke-Skills {
         (Get-Command $_ -ErrorAction SilentlyContinue) -and ((Invoke-Quiet { & $_ -c 'import sys; print(sys.version_info[0])' }) -contains '3')
     } | Select-Object -First 1
     if (-not $python) { Die "The skills' helpers need Python 3 (winget install Python.Python.3.12)." }
+    $hosted = & $python (Join-Path $Root 'agent-skills\bin\subspace_token.py') --workos-mcp-url
+    if ($LASTEXITCODE -ne 0) { Die 'Check the local agent configuration.' }
+    if (-not $hosted) {
+        Get-TargetEnv | Out-Null
+        if (-not (Test-Path (Join-Path $State 'summary.env'))) { Die 'Install the fleet first.' }
+    }
     $bin = Join-Path $SubspaceHome 'bin'
-    New-Item -ItemType Directory -Force -Path $bin | Out-Null
-    Copy-Item -Force (Join-Path $Root 'agent-skills\bin\subspace_token.py'), (Join-Path $Root 'agent-skills\bin\subspace_irc.py') $bin
     $agentsEnv = Join-Path $SubspaceHome 'agents.env'
     if (-not $person -and (Test-Path $agentsEnv)) { $person = (Read-Env $agentsEnv).SUBSPACE_HUMAN_NAME }
     if (-not $person) { $person = (Read-Env (Join-Path $State 'summary.env')).SUBSPACE_ADMIN_ACCOUNT }
+    if ($hosted -and -not $person) { Die 'Pass --name for the person these agents act for.' }
+    New-Item -ItemType Directory -Force -Path $bin | Out-Null
+    Copy-Item -Force (Join-Path $Root 'agent-skills\bin\subspace_token.py'), (Join-Path $Root 'agent-skills\bin\subspace_irc.py') $bin
     [IO.File]::WriteAllText($agentsEnv, "SUBSPACE_TARGET=$Target`nSUBSPACE_HUMAN_NAME=$person`n")
     Say "Local agents will sign in as you and mark their messages 'on behalf of $person (<model>)'."
-    $mcp = 'http://127.0.0.1:3000/mcp'
+    $mcp = if ($hosted) { $hosted } else { 'http://127.0.0.1:3000/mcp' }
     $token = (Join-Path $bin 'subspace_token.py') -replace '\\', '/'
     # Claude Code runs headersHelper through a shell, so quote both paths: they may contain spaces.
     $pythonExe = (@(Invoke-Quiet { & $python -c 'import sys; print(sys.executable)' }) -join '').Trim()
     if (-not $pythonExe) { $pythonExe = $python }
     $helper = '"' + ($pythonExe -replace '\\', '/') + '" "' + $token + '" --header'
+    # A hosted registration pins its URL; the development registration stays as it was.
+    if ($hosted) { $helper += ' --mcp-endpoint "' + $mcp + '"' }
     foreach ($agent in $agents) {
         $dest = switch ($agent) {
             'claude' { Join-Path $HOME '.claude\skills' }
@@ -881,10 +888,13 @@ function Invoke-Skills {
                 if (Get-Command codex -ErrorAction SilentlyContinue) {
                     # Removing fails harmlessly when there is no entry yet.
                     Invoke-Quiet { & codex mcp remove subspace } | Out-Null
-                    Invoke-Quiet { & codex mcp add subspace --url $mcp --bearer-token-env-var SUBSPACE_API_TOKEN } | Out-Null
+                    if ($hosted) {
+                        Invoke-Quiet { & codex mcp add subspace -- $pythonExe $token --mcp-stdio --mcp-endpoint $mcp } | Out-Null
+                    } else {
+                        Invoke-Quiet { & codex mcp add subspace --url $mcp --bearer-token-env-var SUBSPACE_API_TOKEN } | Out-Null
+                    }
                     if ($LASTEXITCODE -ne 0) {
-                        Write-Warning 'Could not add the Subspace MCP server to Codex. Add it yourself with:'
-                        Note "codex mcp add subspace --url $mcp --bearer-token-env-var SUBSPACE_API_TOKEN"
+                        Write-Warning 'Could not add the Subspace MCP server to Codex. See agent-skills\README.md.'
                         $script:SkillsFailed = $true
                     }
                 }
@@ -894,17 +904,26 @@ function Invoke-Skills {
                 try {
                     $config = if (Test-Path $file) { Get-Content $file -Raw | ConvertFrom-Json } else { [pscustomobject]@{ '$schema' = 'https://opencode.ai/config.json' } }
                     if (-not ($config.PSObject.Properties.Name -contains 'mcp')) { $config | Add-Member mcp ([pscustomobject]@{}) }
-                    $config.mcp | Add-Member -Force subspace ([pscustomobject]@{ type = 'remote'; url = $mcp; enabled = $true
-                        headers = [pscustomobject]@{ Authorization = 'Bearer {env:SUBSPACE_API_TOKEN}' } })
+                    $server = if ($hosted) {
+                        @{ type = 'local'; command = @($pythonExe, $token, '--mcp-stdio', '--mcp-endpoint', $mcp); enabled = $true }
+                    } else {
+                        @{ type = 'remote'; url = $mcp; enabled = $true
+                           headers = [pscustomobject]@{ Authorization = 'Bearer {env:SUBSPACE_API_TOKEN}' } }
+                    }
+                    $config.mcp | Add-Member -Force subspace ([pscustomobject]$server)
                     [IO.File]::WriteAllText($file, ($config | ConvertTo-Json -Depth 12))
                 } catch { Note "Could not edit opencode.json (comments?). Add mcp.subspace by hand; see agent-skills\README.md." }
             }
         }
         Say "Installed the Subspace skills for $agent in $dest."
     }
-    Note 'Claude Code refreshes its API token by itself. For Codex and OpenCode, start them with:'
-    Note "  `$env:SUBSPACE_API_TOKEN = (& $python $token)"
-    Note "Keep the tunnel running: .\install.ps1 tunnel --target $Target --background"
+    if ($hosted) {
+        Note "Sign in once: & $python `"$token`" --login"
+    } else {
+        Note 'Claude Code refreshes its API token by itself. For Codex and OpenCode, start them with:'
+        Note "  `$env:SUBSPACE_API_TOKEN = (& $python $token)"
+        Note "Keep the tunnel running: .\install.ps1 tunnel --target $Target --background"
+    }
     if ($SkillsFailed) { Die 'The skills are installed, but an MCP registration failed (see the warnings above).' }
 }
 

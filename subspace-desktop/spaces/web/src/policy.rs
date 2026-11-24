@@ -95,6 +95,9 @@ pub(crate) fn blocked_message(value: &str) -> String {
     match scheme {
         "http" => "Blocked an insecure http:// page. Web Spaces load HTTPS, or HTTP on localhost."
             .to_owned(),
+        // A web page this Space does not show: one with credentials in its
+        // address, or outside a native session's scope.
+        "https" => "Blocked a page this Space does not show.".to_owned(),
         _ => format!("Blocked a {scheme}: link. Web Spaces only load web pages."),
     }
 }
@@ -237,6 +240,10 @@ mod tests {
     fn blocked_messages_name_the_kind_of_link() {
         assert!(blocked_message("http://example.com").contains("insecure"));
         assert!(blocked_message("mailto:a@b.c").contains("mailto:"));
+        assert_eq!(
+            blocked_message("https://sign-in.example.net/"),
+            "Blocked a page this Space does not show."
+        );
     }
 
     #[cfg(target_os = "macos")]

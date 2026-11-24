@@ -162,8 +162,7 @@ dot: filled green while any of its crew is working and a ring while none
 is, when Subspace can read the fleet; hover the dot to see who is working
 and on what. Without the fleet's live state the dot follows the captain's
 own status. Several fleets on one server each have a group. Fleets other than
-the selected initiative's start folded; with no initiative selected, every
-fleet starts open. Private conversations with people
+the selected initiative's start folded. Private conversations with people
 are listed under **People**, after the fleets, each with a dot that is
 filled while that person is in a channel you share and not away. An older private conversation
 with a fleet agent stays under its network, as agents talk only in channels.
@@ -288,17 +287,32 @@ another buffer and back; **Jump to latest** returns to the newest line.
 ### Switch initiatives
 
 If you have Subspace initiative memberships and a Subspace IRC connection,
-open the initiative menu at the start of the toolbar. Search for an initiative and
-select it to join its channels and show its own first channel, or its
-fleet's Starbase when it has none of its own. **Local channels** restores the autojoin
-list in your IRC settings. The initiative choice also filters the Projects
-menu in Issues. You can change or clear the selection from either Space.
+Channels joins the channels of the initiative you last chose, or of your
+first one. To switch, open the initiative menu at the start of the toolbar.
+Search for an initiative and select it to join its channels and show its
+own first channel, or its fleet's Starbase when it has none of its own. The
+initiative choice also filters the Projects menu in Issues. You can change
+the selection from either Space.
 
 One verified Subspace IRC connection uses the selected list. Other
 networks, private conversations and manually joined channels stay open.
 A channel you leave can still appear in the server's public channel list.
-A selection lasts until you quit the app. The IRC server still controls
-which channels you can join.
+Subspace remembers your choice for your account and organisation the next
+time it starts. The IRC server still controls which channels you can join.
+
+Your initiative's channels take the place of the channels to join that you
+set for the same server in **Settings > Channels**. When Subspace starts, it
+says it is checking your initiatives and connects once it knows them, so it
+does not join those channels first only to leave them.
+
+If you are not a member of any initiative yet, Channels is off: it connects
+to no server, including servers that have nothing to do with initiatives,
+and says so. Once an administrator adds you to an initiative in Subspace,
+choose **Reload**, and Channels connects to its channels. If Subspace cannot
+read your initiatives, Channels keeps your own connections and the status
+bar says so. When the Subspace API cannot be reached at all, the status bar
+names the address it tried, as Issues does, and Channels keeps trying; with
+nothing else to show it says **Offline** and offers **Reload**.
 
 To show the menu when an initiative is available, configure Subspace IRC
 with TLS and certificate verification. Use **Reload** to retry if the
@@ -340,7 +354,9 @@ name shows the same.
 
 When Subspace starts, each channel and private conversation shows the messages
 kept from earlier sessions straight away. After connecting, it asks the server
-only for the messages you missed since the newest kept one. Opening a channel
+only for the messages you missed since the newest kept one. On servers that
+support chat history discovery, signed-in accounts also see new private
+conversations that started while they were away. Opening a channel
 or private conversation with few lines asks the server for recent history when
 it supports `draft/chathistory`. **Load older messages** at
 the top of the transcript asks for the 100 lines before the oldest one shown.
@@ -1015,6 +1031,8 @@ notification** follows the saved master choice.
 
 | Symptom | Check or action |
 | --- | --- |
+| `Not a member of any initiative yet` | Channels is off until an administrator adds you to an initiative in Subspace. Then choose **Reload**. |
+| `No API reachable at …` or `Couldn't reach Subspace API` | Channels could not reach the Subspace API for your initiatives or your account's sign-in. Start the API or check the address, then choose **Reload**; it also tries again by itself. |
 | `No IRC networks` | Choose **Add network…** and add one in Settings. A malformed entry in `irc/config.json` is named in red under the actions. A file that is not valid JSON, or that others can read, is named in the startup notices. |
 | Save reports a network problem | The message names the network and the field. Choose **Edit…** to fix it, or remove the network. |
 | A network shows **Failed** | Open its **Server** row: the error is the latest red line and in **Status**. Check `host`, `port` and `tls`, then choose **Connect**. |

@@ -72,6 +72,32 @@ pub(super) fn render_screen(
         .into_any_element()
 }
 
+/// Issues while the person belongs to no initiative: why, and **Reload** to
+/// read the memberships again, as Channels says it.
+pub(super) fn not_a_member(tokens: &Tokens, cx: &mut Context<Issues>) -> AnyElement {
+    let reload = feedback::recovery_action(
+        "issues-no-initiative-reload",
+        Intent::Primary,
+        IconName::RotateCw,
+        "Reload",
+        cx.listener(|this, _, _, cx| this.retry(cx)),
+    );
+    div()
+        .id("issues-no-initiative")
+        .test_support()
+        .child(feedback::empty_with_actions(
+            tokens,
+            "issues-no-initiative",
+            subspace_api_client::initiatives::NO_MEMBERSHIPS,
+            format!(
+                "Once an administrator adds you to an initiative in {}, reload to see its projects.",
+                subspace_api_client::service_name()
+            ),
+            [reload],
+        ))
+        .into_any_element()
+}
+
 /// The first action is the state's default; the others are secondary.
 fn intent(_index: usize) -> Intent {
     Intent::Neutral

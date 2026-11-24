@@ -333,6 +333,12 @@ impl Hub {
         if let Some(networks) = self.recall.waiting.take() {
             self.run(networks);
         }
+        self.send_anchors();
+    }
+
+    /// Tells the runtime each buffer's newest line, so it catches up from
+    /// there.
+    pub(super) fn send_anchors(&mut self) {
         let networks: Vec<_> = self
             .state
             .networks()

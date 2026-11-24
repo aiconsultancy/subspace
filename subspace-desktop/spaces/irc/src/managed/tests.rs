@@ -7,6 +7,7 @@
 mod fence;
 mod history;
 mod lifecycle;
+mod reach;
 pub(crate) mod support;
 
 use gpui_kit::{TestAppContext, VisualTestContext};

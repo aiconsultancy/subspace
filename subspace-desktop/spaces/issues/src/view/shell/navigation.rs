@@ -7,7 +7,7 @@ use subspace_framework::lucide::IconName;
 
 use crate::model::ProjectScope;
 use crate::navigator::{self, Entry, View};
-use crate::{Issues, initiative, pickers};
+use crate::{Issues, pickers};
 
 /// The navigator: the Space's name, with the NETT organisation and New
 /// issue in its header, then the views, the projects in scope and the
@@ -91,11 +91,7 @@ fn project_row(entry: Entry, cx: &Context<Issues>) -> NavRow {
 
 /// The initiative picker's choices, once there is one to make.
 fn initiative_rows(issues: &Issues, cx: &Context<Issues>) -> Vec<AnyElement> {
-    let options = issues
-        .initiatives
-        .read(cx)
-        .menu(initiative::CLEAR_LABEL)
-        .options;
+    let options = issues.initiatives.read(cx).menu().options;
     let entries = navigator::initiatives(&options);
     if entries.is_empty() {
         return Vec::new();
