@@ -903,6 +903,40 @@ def installed_stargate_source():
     return Path(entry).parents[1] if entry else None
 
 
+# Stargate's Fleet API server moved between the releases the installer supports: src/api/v1 in v0.40 to v0.43,
+# src/observability/dashboard/api/v1 from v0.44 (and commit 5630a5c). Any other src/**/api/v1/server.ts is
+# taken for a later move.
+FLEET_API_SERVERS = ("src/api/v1/server.ts", "src/observability/dashboard/api/v1/server.ts")
+
+
+def fleet_api_server(source):
+    """Where an installed Stargate checkout keeps its Fleet API server, relative to it, or None."""
+    if not source:
+        return None
+    for relative in FLEET_API_SERVERS:
+        if (source / relative).is_file():
+            return relative
+    found = sorted(path.relative_to(source) for path in source.glob("src/**/api/v1/server.ts"))
+    return str(found[0]) if found else None
+
+
+def confirm_fleet_api(requested, source):
+    """Whether the installed Stargate gets its Fleet API, once it is installed: requested is True (--stargate-api
+    on) or None (auto, for a pinned commit). Asked for but missing stops setup; auto but missing says so."""
+    found = fleet_api_server(source)
+    looked = " or ".join(FLEET_API_SERVERS) + ", or any src/**/api/v1/server.ts"
+    if found:
+        say(f"Stargate's Fleet API is in {found}; it is on")
+        return True
+    where = f"in {source}" if source else "(no installed Stargate checkout was found)"
+    require(not requested, f"--stargate-api on, but the installed Stargate has no Fleet API {where}: looked for "
+            f"{looked}. Pass --stargate-api off, or a --stargate-ref that has the Fleet API (v0.40.0 or later).")
+    say(f"NOTE: the installed Stargate has no Fleet API {where} (looked for {looked}), so it stays off: the Subspace "
+        "API records no Fleet API address for this fleet and Fleet Console has nothing to reach. Pass a "
+        "--stargate-ref that has it, or --stargate-api off to say so.")
+    return False
+
+
 # Subspace API ----------------------------------------------------------------
 
 def compose(*args, capture=False, check=True, env=None, input_text=None):
@@ -1940,15 +1974,13 @@ def configure(args):
         # reach the API's port, and the officers, and only they, reach the agent listener.
         run(HERE / "lockdown.sh", "isolate", *isolation_args(answers))
     if stargate_api is None:
-        source = installed_stargate_source()
-        stargate_api = bool(source and (source / "src/api/v1/server.ts").is_file())
+        stargate_api = confirm_fleet_api(None, installed_stargate_source())
         if stargate_api:
+            # Again with the Fleet API: its listener, firewall rule and token, and its address in the fleet's record.
             write_inputs(irc_ref, api_block, True, token, history)
             installer(config_path)
-        else:
-            say("the pinned Stargate has no Fleet API; leaving it off")
-    elif stargate_api and not ((source := installed_stargate_source()) and (source / "src/api/v1/server.ts").is_file()):
-        raise SetupError("The installed Stargate has no Fleet API. Pass --stargate-api off or a newer --stargate-ref.")
+    elif stargate_api:
+        confirm_fleet_api(True, installed_stargate_source())
 
     lockdown_id = ""
     if answers["lockdown"]:

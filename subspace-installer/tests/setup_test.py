@@ -1739,6 +1739,49 @@ class HostedApiSetupTests(unittest.TestCase):
         self.assertFalse((fleet_setup.INPUTS / "fleet.secrets").exists())
 
 
+class FirstFleetTests(unittest.TestCase):
+    """What the first real fleet install found: the Fleet API, the fleet's record, IRC wording and stdin."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        fleet_setup.INPUTS = self.root / "inputs"
+        fleet_setup.INPUTS.mkdir(mode=0o700)
+
+    def checkout(self, relative):
+        source = self.root / "stargate"
+        (source / relative).parent.mkdir(parents=True, exist_ok=True)
+        (source / relative).write_text("export {};\n")
+        return source
+
+    def test_the_fleet_api_is_found_where_each_supported_stargate_keeps_it(self):
+        # v0.40 to v0.43 keep it in src/api/v1; v0.44, v0.45 and commit 5630a5c in src/observability/dashboard/api/v1.
+        for relative in ("src/api/v1/server.ts", "src/observability/dashboard/api/v1/server.ts",
+                         "src/somewhere/else/api/v1/server.ts"):
+            with self.subTest(relative):
+                source = self.checkout(relative)
+                self.assertEqual(fleet_setup.fleet_api_server(source), relative)
+                output = []
+                with patch.object(fleet_setup, "say", side_effect=output.append):
+                    self.assertTrue(fleet_setup.confirm_fleet_api(None, source))
+                    self.assertTrue(fleet_setup.confirm_fleet_api(True, source))
+                self.assertIn(f"Stargate's Fleet API is in {relative}; it is on", output)
+                shutil.rmtree(source)
+        source = self.checkout("src/main.ts")
+        self.assertIsNone(fleet_setup.fleet_api_server(source))
+        self.assertIsNone(fleet_setup.fleet_api_server(None))
+        # Asked for but missing stops setup, naming what it looked for; auto but missing says so.
+        with self.assertRaisesRegex(fleet_setup.SetupError, "--stargate-api on, but the installed Stargate has no "
+                                    "Fleet API in .*src/observability/dashboard/api/v1/server.ts"):
+            fleet_setup.confirm_fleet_api(True, source)
+        output = []
+        with patch.object(fleet_setup, "say", side_effect=output.append):
+            self.assertFalse(fleet_setup.confirm_fleet_api(None, source))
+        self.assertTrue(output[0].startswith("NOTE: the installed Stargate has no Fleet API"))
+        self.assertIn("records no Fleet API address", output[0])
+
+
 class OutboundTests(unittest.TestCase):
     """setup stops at once, saying what to open, when the VM cannot reach what the install downloads."""
 
