@@ -4,7 +4,9 @@ A web Space is a web app that the Web Space shows in a native web view. A
 folder-based web Space can declare native settings and request selected
 Subspace actions through `subspace-board.json`, which sits beside its built
 `index.html`. No Node.js process or HTTP server runs in Subspace. URL web
-Spaces (websites) do not receive this API.
+Spaces (websites) do not receive this API. On macOS a product can also
+compose a web Space whose site is signed in with the app's account; see
+[Sign a web Space in with the app's account](#sign-a-web-space-in-with-the-apps-account).
 
 This page is the reference. For a step-by-step walkthrough, from an empty
 folder to a published package, read the
@@ -479,6 +481,175 @@ This is a page adapter, not Web Push. It has no service-worker integration,
 notification actions, click/close callbacks or OS retraction. `close()` is
 a no-op. `Notification.permission` updates after `info()` or
 `requestPermission()`, so call one again after native permission edits.
+
+## Sign a web Space in with the app's account
+
+This section is for product builders. On macOS, a product can compose a
+web Space whose site is signed in with the account under
+**Settings › Account**, so the person signs in once. It is off unless a
+product composes it: no setting, manifest field or page script turns it
+on, and a build that does not compose it shows no trace of it. The in-app
+guide describes what the person sees in
+[Spaces signed in by the app](../spaces/web/help.md#spaces-signed-in-by-the-app).
+
+The product supplies a trusted native adapter that exchanges the account
+for a session cookie the site issues, on the adapter's own HTTPS path. The
+Space installs only that cookie in its view; the account's tokens never
+reach the page. The API is compiled for macOS only, so keep the
+composition in a module under `#[cfg(target_os = "macos")]`, in the
+product crate beside its other registrations, and compose
+`subspace_web_board::create`, or nothing, on other platforms. The names
+below are fictional:
+
+```rust
+#[cfg(target_os = "macos")]
+mod desk {
+    use std::time::Duration;
+
+    use subspace_framework::core::Secret;
+    use subspace_framework::core::config::web_boards::{WebBoard, WebBoardSource};
+    use subspace_framework::shell::{AccountSession, BoardRegistration, account_session};
+    use subspace_web_board::{
+        NativeSession, SessionAccount, SessionCookie, SessionFailure, SessionGrant, SessionScope,
+    };
+
+    /// A Space cannot name the shell, so the product forwards its account.
+    struct Account(AccountSession);
+
+    impl SessionAccount for Account {
+        fn generation(&self) -> u64 {
+            self.0.generation()
+        }
+
+        fn is_current(&self) -> bool {
+            self.0.is_current()
+        }
+    }
+
+    pub(crate) fn registration() -> BoardRegistration {
+        let page = WebBoard {
+            id: "desk".into(),
+            title: "Desk".into(),
+            // What Open in browser opens: the site's ordinary page.
+            source: WebBoardSource::Url("https://desk.example.com/".into()),
+            settings: Default::default(),
+            secrets: Default::default(),
+            permissions: Default::default(),
+        };
+        BoardRegistration::configured::<subspace_web_board::WebBoard>(
+            "desk",
+            "Desk",
+            "The team desk",
+            move |window, cx| {
+                let scope = SessionScope::new("https://desk.example.com/app/")
+                    .and_then(|scope| scope.with_signal("session/required"))
+                    .and_then(|scope| scope.with_reserved("session"));
+                match scope {
+                    Ok(scope) => {
+                        let account = |cx: &gpui_kit::App| account_session(cx).map(Account);
+                        let session = NativeSession::new(scope, account, sign_in);
+                        subspace_web_board::create_with_session(&page, session, window, cx)
+                    }
+                    Err(_) => subspace_web_board::create(&page, window, cx),
+                }
+            },
+        )
+    }
+
+    /// Runs off the UI thread. `desk_api` is the product's own client.
+    fn sign_in(account: &Account) -> Result<SessionGrant, SessionFailure> {
+        let token = account
+            .0
+            .token_for("desk", Duration::from_secs(240))
+            .map_err(|_| SessionFailure::action("Sign in again under Settings › Account."))?;
+        let session = desk_api::exchange(&token)
+            .map_err(|_| SessionFailure::temporary("Desk is unreachable. Try again."))?;
+        let revoked = session.clone();
+        let cookie = SessionCookie::new("__Secure-Desk", Secret::new(session.value()));
+        Ok(SessionGrant::new(cookie, session.lifetime())
+            .with_revoke(move || desk_api::revoke(&revoked)))
+    }
+}
+```
+
+| Item | What it is |
+| --- | --- |
+| `SessionScope::new(home)` | The address the view starts at: `https://`, a host, no credentials, query or fragment, and a path ending in `/`. The path is the prefix every page must sit under. |
+| `with_signal(route)` | A route under the home that the site sends the view to when it no longer accepts the session, such as `session/required`. |
+| `with_reserved(route)` | A route under the home, and everything under it, that the view never navigates to, such as the site's session endpoints. |
+| `SessionAccount` | The account a session belongs to: its generation, which changes with another account, and whether it is still current. Implement it on a newtype around the shell's `AccountSession`. |
+| `NativeSession::new(scope, account, acquire)` | `account` reads the account signed in now, on the UI thread; `acquire` turns it into a grant, off the UI thread. |
+| `SessionGrant::new(cookie, lifetime)` | The cookie and how long it lasts: at least `MIN_SESSION_LIFETIME` (4 minutes), or the Space refuses it, and at most `MAX_SESSION_LIFETIME` (24 hours). `with_revoke` ends it at the site; calling it again replaces the earlier revocation, which then never runs. |
+| `SessionCookie::new(name, value)` | The cookie's name and opaque value. `with_path` narrows its path within the scope: the scope's path, with its final `/`, or a route under it. |
+| `SessionFailure::action` or `temporary` | Why an attempt failed, in words for the person. A temporary failure of a renewal is retried. Never put a credential in it. |
+
+### What the Space does
+
+- **An isolated view.** The view has a new, in-memory WebKit store, not the
+  per-board store other web Spaces keep on disk, and it goes when the view
+  closes. The view has no app files, no bridge, no initialisation script and
+  no developer tools.
+- **The cookie, natively.** The Space checks the cookie and sets every
+  attribute itself: host-only on the scope's host, the scope's path (or the
+  cookie's narrower one), `Secure`, `HttpOnly`, `SameSite=Strict`, and
+  expiring when the grant does. It installs it through `WKHTTPCookieStore`
+  without blocking the UI thread, reads the store back to confirm every
+  attribute and the expiry, and only then loads the scope. The value never
+  reaches a script, an address, a log or a store on disk, and formatting a
+  grant or cookie hides it. A cookie path outside the scope, or a name that
+  is not a token, is the product's mistake: the Space logs it, without the
+  value, and asks the person to open the site in their browser.
+- **Only the scope.** The view starts on `about:blank` and then loads HTTPS
+  pages on the home's origin under its path, and nothing else, redirects
+  included; once a page in the scope has loaded, `about:blank` is refused
+  too, so Back stops at the first page. The rule applies to every frame:
+  an iframe from another site, `about:srcdoc`, `blob:` or `data:` is
+  refused, and the status bar shows a Blocked notice. It refuses addresses
+  with credentials, empty or dot segments, a backslash or `;`, and a
+  percent-escape of an unreserved character, a separator, `%`, a control
+  character or anything outside ASCII. Reserved routes and the signal
+  match ignoring ASCII case. Reserved routes limit navigations only: a page
+  in the scope can still `fetch` them, and the request carries the cookie.
+  A pop-up never opens a window; a web page it asks for opens in the
+  default browser, without the session.
+- **Sign-in required.** While `account` returns no current account, the
+  Space shows `Sign-in required` and starts no attempt.
+- **Renewal.** The Space acquires a new grant two minutes before the current
+  one ends, or at half its life if that is shorter, and installs it in the
+  same view; the old grant is then revoked, so each grant must be a session
+  of its own at the site, not the same one extended. A grant shorter than
+  `MIN_SESSION_LIFETIME` is refused, so renewals never follow each other at
+  once. A temporary failure is retried three times, 30 seconds apart. A
+  renewal the store refuses, or does not confirm within 10 seconds, ends
+  the session and closes the view, which says
+  `Cannot install the private session for this page. Try again.` with
+  **Retry**: a late write could otherwise replace the live cookie with one
+  whose grant was revoked. Keep the cookie's name and path across renewals,
+  so each new cookie replaces the last.
+- **The signal.** The view never loads the signal. The Space renews the
+  session at once and loads the page the view shows again. If the site
+  sends the view to the signal again within 30 seconds of that, or after
+  renewing has failed for good, the Space closes the view and says the
+  session ended, with **Retry**. While a failed renewal waits 30 seconds to
+  try again, a signal waits with it rather than call the adapter at once.
+- **Time limits.** An attempt that takes more than 60 seconds counts as a
+  temporary failure, so **Retry** always works, and a grant it returns
+  later is revoked. The Space cannot stop the adapter, so a hung adapter
+  keeps its background thread until its own call returns: give its
+  requests their own timeouts.
+- **Revocation.** A grant is revoked once, on its own thread, when a renewal
+  replaces it, the session ends or expires, the account changes or signs
+  out, the Space closes, or a grant arrives for an attempt that no longer
+  applies. Quitting revokes every live grant and waits at most two seconds
+  for the revocations to finish. Bound the revocation's own request with a
+  timeout.
+
+After a renewal the Space dispatches `subspace-session-renewed` on the
+page's `window`, with no data.
+
+WebView2 has an asynchronous cookie store too, but the capability is not
+built or tested there yet, so Windows and Linux builds have none of this
+API.
 
 ## Trust and compatibility
 

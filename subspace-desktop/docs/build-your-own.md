@@ -109,6 +109,12 @@ Keep the bundle id (`com.aiconsultancy.subspace` and its channel variants):
 it decides where the app keeps its settings, state and keychain entries, and
 changing it strands existing installs.
 
+To show your own site in a web Space signed in with the app's account on
+macOS, so people sign in once, compose it in your product crate with
+`subspace_web_board::create_with_session` and a native adapter for your
+site. See
+[Sign a web Space in with the app's account](web-spaces-reference.md#sign-a-web-space-in-with-the-apps-account).
+
 ## Signing and publishing
 
 | Variable | What it does |
