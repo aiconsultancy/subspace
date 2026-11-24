@@ -1,5 +1,4 @@
-//! Renewal, expiry and the site's signal, and where the view returns or
-//! resumes after them.
+//! Renewal and expiry, and where the view resumes after a session ends.
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -80,37 +79,6 @@ fn a_renewal_the_store_does_not_confirm_in_time_ends_the_session() {
         session.waiting(),
         Some(Waiting::Ended(NOT_INSTALLED.into()))
     );
-}
-
-#[test]
-fn a_signal_after_a_failed_renewal_waits_for_the_retry() {
-    let now = Now::current();
-    let mut session = live(now, grant(now));
-    let at = later(now, 780);
-    session.tick(at, true, None);
-    let failure = SessionFailure::temporary("The fixture site is unreachable.");
-    session.acquired(2, Err(failure), at);
-    assert_eq!(
-        session.signal(later(at, 1), None),
-        [],
-        "the retry is 30 seconds away"
-    );
-    assert_eq!(
-        session.tick(later(at, 30), true, None),
-        [Effect::Acquire(3)]
-    );
-}
-
-#[test]
-fn a_signal_after_renewing_failed_for_good_ends_the_session() {
-    let now = Now::current();
-    let mut session = live(now, grant(now));
-    let at = later(now, 780);
-    session.tick(at, true, None);
-    session.acquired(2, Err(SessionFailure::action("Sign in again.")), at);
-    assert!(session.needs_retry());
-    assert_eq!(session.signal(later(at, 1), None), [Effect::Close]);
-    assert_eq!(session.waiting(), Some(Waiting::Ended(ENDED.into())));
 }
 
 #[test]
@@ -244,55 +212,5 @@ fn a_session_ends_when_it_expires_while_a_renewal_is_under_way() {
         session.acquired(2, Ok(grant(now)), now),
         [],
         "the renewal no longer applies"
-    );
-}
-
-#[test]
-fn the_signal_renews_at_once_and_returns_to_the_page() {
-    let now = Now::current();
-    let mut session = live(now, grant(now));
-    let signalled = later(now, 60);
-    assert_eq!(session.signal(signalled, None), [Effect::Acquire(2)]);
-    assert_eq!(session.signal(signalled, None), [], "one renewal at a time");
-    assert_eq!(
-        session.acquired(2, Ok(grant(signalled)), signalled),
-        [Effect::Install(2, site_cookie(signalled))]
-    );
-    assert_eq!(
-        session.installed(2, Stored::Confirmed, signalled, Some(PAGE.into())),
-        [Effect::Return(PAGE.into())]
-    );
-    assert_eq!(
-        session.signal(later(signalled, 5), None),
-        [Effect::Close],
-        "renewing did not help"
-    );
-    assert_eq!(session.waiting(), Some(Waiting::Ended(ENDED.into())));
-}
-
-#[test]
-fn a_later_signal_renews_again() {
-    let now = Now::current();
-    let mut session = live(now, grant(now));
-    session.signal(now, None);
-    session.acquired(2, Ok(grant(now)), now);
-    session.installed(2, Stored::Confirmed, now, None);
-    let much_later = later(now, 31);
-    assert_eq!(session.signal(much_later, None), [Effect::Acquire(3)]);
-}
-
-#[test]
-fn a_signal_during_a_renewal_returns_to_the_page_once_it_is_installed() {
-    let now = Now::current();
-    let mut session = live(now, grant(now));
-    let renew_at = later(now, 780);
-    session.tick(renew_at, true, None);
-    assert_eq!(session.signal(renew_at, None), []);
-    session.acquired(2, Ok(grant(renew_at)), renew_at);
-    assert_eq!(session.signal(renew_at, None), []);
-    assert_eq!(
-        session.installed(2, Stored::Confirmed, renew_at, None),
-        [Effect::Return(HOME.into())],
-        "a view outside the scope returns home"
     );
 }
