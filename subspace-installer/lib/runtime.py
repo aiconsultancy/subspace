@@ -2188,6 +2188,70 @@ def unreadable_message(names):
             "again (installer README, 'Add private repositories later'). Otherwise check the URLs.")
 
 
+# The account type of CLIProxyAPI's that serves each family's models by their own IDs: Claude models through a
+# Claude account, GPT models through a Codex (ChatGPT) account.
+FAMILY_ACCOUNTS = {"claude": ("claude", "claude-"), "codex": ("codex", "gpt-")}
+ACCOUNT_LOGINS = {"claude": "claude", "codex": "codex-device"}
+
+
+def proxy_accounts():
+    """The types of CLIProxyAPI's signed-in accounts (each auth file's type, as providers.sh lists them), or none
+    before the first sign-in."""
+    types = set()
+    try:
+        paths = sorted((STATE / "proxy" / "auth").glob("*.json"))
+    except OSError:
+        return types
+    for path in paths:
+        try:
+            kind = json.loads(path.read_text()).get("type")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(kind, str):
+            types.add(kind)
+    return types
+
+
+def unserved_officers(cfg, accounts):
+    """Officers whose Claude or GPT model no signed-in account serves, as (officer, model, account type).
+    Nothing is checked before the first sign-in, nor a model of another provider."""
+    if not accounts:
+        return []
+    unserved = []
+    for person in cfg["members"]:
+        harness = person["harness"]
+        kind, prefix = FAMILY_ACCOUNTS[harness["family"]]
+        if harness["model"].startswith(prefix) and kind not in accounts:
+            unserved.append((person["id"], harness["model"], kind))
+    return unserved
+
+
+def officer_models_line(cfg):
+    """The officers' models and efforts, and the account type CLIProxyAPI needs for them."""
+    groups = {}
+    for person in cfg["members"]:
+        harness = person["harness"]
+        groups.setdefault((harness["model"], harness["effort"]), []).append(person["id"])
+    kinds = sorted({kind for person in cfg["members"]
+                    for kind, prefix in [FAMILY_ACCOUNTS[person["harness"]["family"]]]
+                    if person["harness"]["model"].startswith(prefix)})
+    parts = [f"{', '.join(ids)} on {model}" + (f" at {effort} effort" if effort else " at the provider's default effort")
+             for (model, effort), ids in groups.items()]
+    need = f" The model proxy needs a {' and a '.join(kinds)} account for them." if kinds else ""
+    return f"Officer models: {'; '.join(parts)}.{need}"
+
+
+def unserved_message(unserved, accounts):
+    models = ", ".join(sorted({f"{model} ({kind} account)" for _, model, kind in unserved}))
+    officers = ", ".join(officer for officer, _, _ in unserved)
+    logins = " and ".join(sorted({ACCOUNT_LOGINS[kind] for _, _, kind in unserved}))
+    return (f"The model proxy is signed in to {', '.join(sorted(accounts))} accounts only, which cannot serve "
+            f"{models}, the model of {officers}. Sign it in to such an account (./install.sh providers login "
+            f"{logins} from your computer, or sudo subspace-setup providers login {logins} on the VM) and run "
+            "this again, or give those officers a model the signed-in accounts serve (subspace-setup "
+            "--captain-model and --rear-admiral-model, or harness in fleet.json; installer README, 'Officer models').")
+
+
 def reconcile_workspaces(cfg, homes, refresh_only=False):
     if not cfg["repositories"]:
         return None
@@ -2804,6 +2868,10 @@ def main(args):
         # The real run would stop before it clones anything, so the dry run stops too, saying how to go on.
         unreadable = unreadable_repositories(cfg)
         require(not unreadable, unreadable_message(unreadable))
+        # Officers whose model no signed-in account serves would stay silent, so both runs stop.
+        accounts = proxy_accounts()
+        unserved = unserved_officers(cfg, accounts)
+        require(not unserved, unserved_message(unserved, accounts))
         if verb == "prepare":
             stage = Path(tail[2])
             (stage / "fleet.json").write_text(json_text(config))
@@ -2829,6 +2897,7 @@ def main(args):
             count = sum(len(person["crew"]) for person in cfg["members"])
             print(f"Fleet {cfg['slug']} has {len(cfg['members']) - 1} captains, {count} crew and one rear admiral. "
                   f"IRC mode is {cfg['irc']['mode']}. Crew run as their captain and have no IRC accounts.")
+            print(officer_models_line(cfg))
             print(f"Standard IRC channels: {' '.join(cfg['irc']['channels'])} (Starbase, fleet command, then one "
                   "ship channel per captain)." + ("" if cfg["irc"]["mode"] == "local" else
                                                    " On a remote server the officers create them by joining, so they "

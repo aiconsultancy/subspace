@@ -1543,6 +1543,9 @@ class OfficerModelTests(unittest.TestCase):
                           "claude-proxy/claude-opus-5-5#xhigh"])
         self.assertEqual(runtime.session_model(cfg["members"][1]["harness"]),
                          {"providerID": "claude-proxy", "id": "claude-opus-5-5", "variant": "xhigh"})
+        self.assertEqual(runtime.officer_models_line(cfg),
+                         "Officer models: atlas on claude-fable-5-2 at high effort; orion, vega on claude-opus-5-5 "
+                         "at xhigh effort. The model proxy needs a claude account for them.")
 
     def test_the_fleet_then_the_role_then_the_officer_override_the_default(self):
         # A fleet-wide model, as fleets wrote before the role defaults, applies to both roles at the provider's
@@ -1577,6 +1580,47 @@ class OfficerModelTests(unittest.TestCase):
                 self.harnesses(self.config({"type": "opencode", **harness}))
         self.assertEqual(self.harnesses(self.config({"captain": {"model": "claude-opus-4-5", "effort": "xhigh"}}))
                          ["orion"], ("claude", "claude-opus-4-5", "xhigh"))
+
+    def test_officers_whose_model_no_signed_in_account_serves_stop_both_runs(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        work = Path(temporary.name)
+        (work / "fleet.json").write_text(json.dumps(self.config()))
+        (work / "fleet.secrets.json").write_text(json.dumps(officer_secrets("example-vega")))
+        (work / "fleet.secrets.json").chmod(0o600)
+        auth = work / "state/proxy/auth"
+
+        def main(verb):
+            output = io.StringIO()
+            (work / "stage").mkdir(exist_ok=True)
+            tail = [str(work / "stage")] if verb == "prepare" else []
+            with patch.object(runtime, "ETC", work / "etc"), patch.object(runtime, "STATE", work / "state"), \
+                    contextlib.redirect_stdout(output):
+                runtime.main([verb, str(work / "fleet.json"), str(work / "fleet.secrets.json"), *tail, "", "false"])
+            return output.getvalue()
+
+        # Before the first sign-in nothing is checked: the install comes first, then the sign-in.
+        self.assertIn("The model proxy needs a claude account for them.", main("plan"))
+        auth.mkdir(parents=True)
+        (auth / "codex-someone@example.com-plus.json").write_text(json.dumps({"type": "codex", "access_token": "x"}))
+        for verb in ("plan", "prepare"):
+            with self.subTest(verb), self.assertRaises(Invalid) as refused:
+                main(verb)
+            message = str(refused.exception)
+            self.assertIn("signed in to codex accounts only, which cannot serve claude-fable-5-2 (claude account), "
+                          "claude-opus-5-5 (claude account), the model of atlas, orion, vega", message)
+            self.assertIn("providers login claude", message)
+            self.assertIn("--captain-model and --rear-admiral-model", message)
+            self.assertNotIn("access_token", message)
+        (auth / "claude-someone@example.com.json").write_text(json.dumps({"type": "claude"}))
+        main("plan")
+        # A model of another provider is the operator's to check.
+        (auth / "claude-someone@example.com.json").unlink()
+        config = self.config({"type": "opencode", "captain": {"family": "codex", "model": "kimi-k3"},
+                              "rearAdmiral": {"family": "codex", "model": "gpt-5.4"}})
+        (work / "fleet.json").write_text(json.dumps(config))
+        self.assertIn("The model proxy needs a codex account for them.", main("plan"))
+
 
 class IrcCertificateTests(unittest.TestCase):
     """Officers sign in to a remote IRC server with a certificate each (SASL EXTERNAL) unless told otherwise."""
