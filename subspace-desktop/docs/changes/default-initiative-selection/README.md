@@ -57,13 +57,18 @@ In detail:
 - **Start-up.** Where the API may serve initiative channels (for NETT, until
   the organisation's capability list says otherwise), a running hub holds
   its networks until the first read of the memberships settles, or 45
-  seconds pass, the time Issues allows an API to wake, and the pane says
-  *Checking initiatives…*. A member's configured channels are then not
-  joined and left, and someone in no initiative never connects. A read
-  refused for want of a session settles nothing, as a saved session may
-  still be restoring. The longer wait was chosen over 10 seconds with a
-  documented join-then-leave on a cold API: the wait ends as soon as the
-  read settles, so only a slow API waits longer, and it says why.
+  seconds pass, and the pane says *Checking initiatives…*. A member's
+  configured channels are then not joined and left, and someone in no
+  initiative never connects. The 45 seconds match one API request's
+  timeout, but the read makes at least two in turn (the account, then its
+  memberships), so a slow API can outlast the wait. The configured
+  channels may then be joined and left, and someone in no initiative
+  connects and is disconnected, once the read settles. A read refused for
+  want of a session settles nothing, as a saved session may still be
+  restoring, so a signed-out start waits the full 45 seconds. The longer
+  wait was chosen over 10 seconds with a documented join-then-leave on a
+  cold API: the wait ends as soon as the read settles, so only a slow API
+  or a signed-out start waits longer, and the pane says why.
 - **Unchanged.** A read that fails before any settled (*Initiatives
   unavailable*), a refusal, an API without the endpoint, a NETT organisation
   that does not serve initiative channels and a build with no API backend

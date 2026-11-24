@@ -102,10 +102,24 @@ fn a_read_that_fails_lets_the_networks_run(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn a_read_that_never_settles_lets_the_networks_run_after_the_timeout(cx: &mut TestAppContext) {
     let (hub, cx) = mount_reading(cx, signed_out());
+    let redraws = Rc::new(Cell::new(0));
+    let counted = Rc::clone(&redraws);
+    cx.update(|_, cx| {
+        cx.observe(&hub, move |_, _| counted.set(counted.get() + 1))
+            .detach();
+    });
     cx.executor().advance_clock(READ_TIMEOUT);
+    cx.run_until_parked();
+    // The pane must not rely on a network event to stop saying it is
+    // checking: with no network, none follows.
+    assert!(redraws.get() > 0, "the end of the wait redraws the pane");
     settle(cx);
     assert_eq!(running(&hub, cx), Some(1));
     hub.read_with(cx, |hub, _| assert!(!hub.initiatives.awaiting_read()));
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("irc-checking-initiatives").is_none());
+    });
 }
 
 #[gpui_kit::test]
