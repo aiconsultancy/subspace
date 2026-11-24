@@ -621,6 +621,11 @@ def fleet_ipc_policy(rules, label):
                 "(an ask, or a pattern with other wildcards, cannot authorise a fleet tool).")
 
 
+def model_family(model):
+    """The family whose provider serves a model ID: claude-* through claude-proxy, any other through openai-proxy."""
+    return "claude" if model.startswith("claude-") else "codex"
+
+
 def claude_efforts(model):
     """The efforts OpenCode 2.3.2 gives a Claude model through anthropic-compatible (Variant.resolve): Claude
     4.6 has no xhigh, and Claude 3.7 and 4.0 to 4.5 (but Opus 4.5) think on a token budget, as high and max."""
@@ -641,9 +646,16 @@ def claude_efforts(model):
 def harness_config(value, inherited):
     value = fields(value, "harness", "type model family effort permissions allowedTools")
     backend = pattern(value.get("type", inherited["type"]), r"opencode|claude-sdk", "harness type (opencode or claude-sdk)")
+    if "model" in value and "family" not in value and isinstance(value["model"], str):
+        # A model named without its family goes where its ID says, as subspace-setup writes it: claude-* through
+        # the Claude family and any other through Codex, whatever the default family is.
+        value = {**value, "family": model_family(value["model"])}
     family = pattern(value.get("family", inherited["family"]), r"claude|codex", "model family")
     candidate = value.get("model", inherited["model"] if family == inherited["family"] else FAMILIES[family])
     model = pattern(candidate, MODEL if backend == "opencode" else r"[a-zA-Z0-9][a-zA-Z0-9._:\[\]-]{0,127}", "CLIProxyAPI model ID")
+    require(model_family(model) == family, f"Harness model {model} does not belong to the {family} family: Claude "
+            "models (claude-*) go through the claude family and any other through codex. Set harness family to "
+            f"{model_family(model)}, or leave it out.")
     require("#" not in model, f"Harness model {model} names an OpenCode variant: give the model ID alone and the "
             "reasoning effort as harness effort.")
     # An effort belongs to its model: a harness that names another model has the provider's default effort

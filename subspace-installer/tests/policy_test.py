@@ -1565,6 +1565,32 @@ class OfficerModelTests(unittest.TestCase):
         config["harness"] = {"type": "opencode"}
         self.assertEqual(self.harnesses(config)["vega"], ("claude", "claude-opus-5-5", "xhigh"))
 
+    def test_a_hand_written_model_goes_to_its_own_family_and_renders_as_before(self):
+        # Before the role defaults every officer was Codex, so a harness that named only a model, as the old
+        # default {"type":"opencode","model":"gpt-5.4"} did, ran it through openai-proxy. It still does, at the
+        # provider's default effort, fleet-wide or on one officer.
+        for harness in ({"type": "opencode", "model": "gpt-5.4"}, {"model": "gpt-6.2-sol"}):
+            with self.subTest(harness):
+                cfg = validate(self.config(harness), officer_secrets("example-vega"))
+                self.assertEqual({runtime.harness_model(person["harness"]) for person in cfg["members"]},
+                                 {f"openai-proxy/{harness['model']}"})
+                self.assertEqual({person["harness"]["effort"] for person in cfg["members"]}, {None})
+        config = self.config()
+        config["captains"][1]["harness"] = {"model": "gpt-6.2-sol"}
+        config["rearAdmiral"]["harness"] = {"model": "claude-sonnet-5-5"}
+        self.assertEqual(self.harnesses(config), {
+            "atlas": ("claude", "claude-sonnet-5-5", None), "orion": ("claude", "claude-opus-5-5", "xhigh"),
+            "vega": ("codex", "gpt-6.2-sol", None)})
+        # A harness that names only a family: codex runs its default as before; claude runs the role's Claude
+        # default, which is what the role defaults to anyway, rather than claude-sonnet-5-5.
+        self.assertEqual(set(self.harnesses(self.config({"family": "codex"})).values()), {("codex", "gpt-5.4", None)})
+        self.assertEqual(self.harnesses(self.config({"family": "claude"}))["orion"], ("claude", "claude-opus-5-5", "xhigh"))
+        # A model and a family that disagree are refused, whichever way round.
+        for harness, family in (({"family": "claude", "model": "gpt-5.4"}, "claude"),
+                                ({"family": "codex", "model": "claude-opus-5-5"}, "codex")):
+            with self.subTest(harness), self.assertRaisesRegex(Invalid, f"does not belong to the {family} family"):
+                self.harnesses(self.config(harness))
+
     def test_an_effort_the_harness_cannot_give_is_refused(self):
         cases = [
             ({"captain": {"family": "codex", "model": "gpt-5.4", "effort": "xhigh"}},

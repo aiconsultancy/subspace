@@ -140,6 +140,15 @@ The installer resolves each officer's harness in this order:
 3. The role's block.
 4. The officer's own `harness`.
 
+At any of these levels, a `model` without a `family` goes where its ID says:
+`claude-*` through the Claude family and any other through Codex. A harness
+written for the old all-Codex default, such as `{"model": "gpt-6.2-sol"}`,
+therefore runs as it did. A model and a family that disagree are refused.
+A harness that names only a family runs that family's default for the
+role. With `codex` that is `gpt-5.4`. With `claude` it is the role's Claude
+default, `claude-opus-5-5` or `claude-fable-5-2`, rather than
+`claude-sonnet-5-5` as before.
+
 How the effort reaches the model:
 
 - **OpenCode.** OpenCode gives each model reasoning variants for its

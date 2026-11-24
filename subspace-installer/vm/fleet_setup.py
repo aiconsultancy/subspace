@@ -843,7 +843,7 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
     for role, choice in answers.get("officerModels", {}).items():
         block = dict(harness.get(role) or {})
         if choice.get("model"):
-            block.update(model=choice["model"], family="claude" if choice["model"].startswith("claude") else "codex")
+            block.update(model=choice["model"], family=runtime.model_family(choice["model"]))
         elif "model" in choice:
             block.pop("model", None)
             block.pop("family", None)
