@@ -1226,6 +1226,10 @@ class IrcCertificateSetupTests(unittest.TestCase):
         owner = patch.object(fleet_setup, "SECRET_OWNER", os.getuid())
         owner.start()
         self.addCleanup(owner.stop)
+        # No installed fleet unless a test writes one.
+        installed = patch.object(fleet_setup, "FLEET_ETC", self.root / "etc")
+        installed.start()
+        self.addCleanup(installed.stop)
 
     def answers(self, *extra, saved=None):
         args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
@@ -1261,6 +1265,31 @@ class IrcCertificateSetupTests(unittest.TestCase):
                                  "--irc-operator-password-file", "/x"], "for certificate sign-in")):
             with self.subTest(extra), self.assertRaisesRegex(fleet_setup.SetupError, message):
                 self.answers(*extra)
+
+    def test_the_installed_fleets_sign_in_and_certificates_are_kept(self):
+        # A remote fleet that setup set up with passwords, moved to certificates with the fleet installer alone.
+        etc = self.root / "etc"
+        (etc / "irc-certs").mkdir(parents=True)
+        (etc / "fleet.json").write_text(json.dumps({"irc": {"mode": "remote", "auth": "certificate"}}))
+        bundle = runtime.new_irc_bundle("example-fleet-orion")
+        (etc / "irc-certs/orion.pem").write_text(bundle)
+        saved = {"irc": "remote", "slug": "example-fleet", "ircAuth": "password"}
+        answers, _ = self.answers(saved=saved)
+        self.assertEqual(answers["ircAuth"], "certificate")
+        self.assertEqual(self.answers("--irc-auth", "password", saved=saved)[0]["ircAuth"], "password")
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        fingerprint = runtime.irc_fingerprint(bundle, "orion")
+        # The dry run reads the installed certificate; the real run keeps it, so its bound fingerprint holds.
+        planned = fleet_setup.officer_certificates(members, generate=False)
+        self.assertEqual(planned["example-fleet-orion"][1], fingerprint)
+        self.assertIsNone(planned["example-fleet-atlas"][1])
+        made = fleet_setup.officer_certificates(members, generate=True)
+        self.assertEqual(made["example-fleet-orion"][0].read_text(), bundle)
+        self.assertNotEqual(made["example-fleet-atlas"][1], None)
+        # Without an installed method, an older remote fleet keeps passwords and a new one gets certificates.
+        (etc / "fleet.json").unlink()
+        self.assertEqual(self.answers(saved=saved)[0]["ircAuth"], "password")
+        self.assertEqual(self.answers()[0]["ircAuth"], "certificate")
 
     def test_certificates_live_in_the_secrets_directory_and_the_lines_bind_them(self):
         answers, _ = self.answers()

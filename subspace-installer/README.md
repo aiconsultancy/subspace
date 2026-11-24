@@ -566,11 +566,15 @@ generates the certificates during the upgrade: the install summary prints
 them, and the officers stay off IRC until you bind them.
 
 **With `subspace-setup` and a remote server**, officers sign in by
-certificate too, unless `--irc-auth password` says otherwise; setup keeps
-the choice, and a remote fleet it set up before this release keeps
-passwords. Setup generates each officer's bundle once, in
+certificate too, unless `--irc-auth password` says otherwise. Without the
+option, setup keeps how the installed fleet signs in (its
+`/etc/subspace-fleet/fleet.json`, which the fleet installer alone may have
+changed), else its own earlier choice; a remote fleet it set up before this
+release keeps passwords. Setup keeps each officer's bundle in
 `/root/fleet/fleet.secrets/<officer-id>/irc-client.pem`, from where the
-fleet installer takes it, and prints, for each officer, its account, its
+fleet installer takes it: the installed fleet's bundle when there is one, so
+a fingerprint already bound stays valid, else a new one, made once. It
+prints, for each officer, its account, its
 SHA-256 fingerprint and the two lines the server's operator runs:
 
 ```text

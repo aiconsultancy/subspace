@@ -324,6 +324,9 @@ def gather(args, saved):
             answers["ircCa"] = args.irc_ca
         if args.irc_auth:
             answers["ircAuth"] = args.irc_auth
+        elif installed_irc_auth():
+            # Keep how the installed fleet signs in, which the fleet installer alone may have changed since.
+            answers["ircAuth"] = installed_irc_auth()
         elif "ircAuth" not in answers:
             # A remote fleet set up before certificates were the default signs in with passwords; keep it so.
             answers["ircAuth"] = "password" if saved.get("irc") == "remote" else "certificate"
@@ -1418,18 +1421,40 @@ def fleet_channels(answers, members):
     return standard_channels.standard(answers["slug"], [person["id"] for person in members[1:]])
 
 
+def installed_irc_auth():
+    """How the installed fleet's officers sign in to a remote IRC server, from its own fleet.json, or None."""
+    try:
+        irc = read_json(FLEET_ETC / "fleet.json", {}).get("irc") or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    auth = irc.get("auth") if irc.get("mode") == "remote" else None
+    return auth if auth in ("certificate", "password") else None
+
+
+def installed_bundle(agent_id):
+    """The certificate bundle the installed fleet signs an officer in with, or None."""
+    try:
+        text = (FLEET_ETC / "irc-certs" / f"{agent_id}.pem").read_text()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text
+
+
 def officer_certificates(members, generate):
     """Each officer's IRC certificate bundle in the fleet's secrets directory, where the fleet installer takes it
-    from, as {account: (path, SHA-256 fingerprint)}. A missing one is generated, once, except in a dry run, which
-    writes nothing: its fingerprint is then None."""
+    from, as {account: (path, SHA-256 fingerprint)}. A missing one is the installed fleet's, so a fingerprint
+    already bound stays valid, else a new one, made once. A dry run writes nothing: it reads the installed
+    bundle, or reports None for one the real run will make."""
     result = {}
     for person in members:
         path = INPUTS / "fleet.secrets" / person["id"] / runtime.IRC_CLIENT_PEM
+        installed = None if path.exists() else installed_bundle(person["id"])
         if not path.exists() and generate:
             path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(path.parent.parent, 0o700)
-            write_private(path, runtime.new_irc_bundle(person["account"]))
-        fingerprint = runtime.irc_fingerprint(path.read_text(), str(path)) if path.exists() else None
+            write_private(path, installed or runtime.new_irc_bundle(person["account"]))
+        text = path.read_text() if path.exists() else installed
+        fingerprint = runtime.irc_fingerprint(text, str(path)) if text else None
         result[person["account"]] = (path, fingerprint)
     return result
 
