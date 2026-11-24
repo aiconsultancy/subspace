@@ -148,7 +148,8 @@ like other website boards, with these differences:
   The page cannot read the session, and Subspace never puts it in an
   address or a log.
 - **Renewal.** Subspace renews the session before it ends. If the site asks
-  for a new session, Subspace renews it and reloads the page. If the site
+  for a new session, Subspace renews it and reloads the page, trying again
+  first if the site cannot be reached for a moment. If the site
   asks again straight away, or the session cannot be renewed in time, the
   Space says `Your <title> session has ended.` with **Retry**, which reopens
   the page where you were. If the page's private store does not accept a

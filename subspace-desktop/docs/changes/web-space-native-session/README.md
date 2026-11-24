@@ -34,8 +34,9 @@ lifecycle in a bag of flags. This change fixes all three.
   transition takes what happened (account, clock, the adapter's answer, the
   store's answer, the signal, Retry), the time and where the view is (a
   page in the scope, or none), and returns effects (acquire, open a view,
-  install, show the view opened for an attempt at an address, report
-  renewal, return to an address, close, notice, log).
+  install, show the view opened for an attempt at an address, drop a view
+  that never showed, report renewal, return to an address, close, notice,
+  log).
   `browser_session/board.rs` applies them. A session that ends keeps where
   the view was, so Retry reopens there; another account starts at the
   home page. The tests drive the transitions.
@@ -50,9 +51,13 @@ lifecycle in a bag of flags. This change fixes all three.
   initialisation script or developer tools, starts at `about:blank`, and
   loads the scope only once the store confirms the cookie. The board keeps
   a new view with its attempt until the session shows it, closes, or opens
-  a newer one; a view that opens for an attempt that no longer applies is
-  dropped unused, and a session that goes live without its view ends, with
-  Retry, rather than wait behind "Opening the page…".
+  a newer one, and drops it at once, with its store, when the store
+  refuses its cookie or does not confirm it in time. A view that opens for
+  an attempt that no longer applies is dropped unused, and a session that
+  goes live without its view ends, with Retry, rather than wait behind
+  "Opening the page…". Page events left in a batch after the page closed,
+  such as the title of a page whose session the signal ended, are not
+  applied.
 - **Cookie.** The Space validates the name and value and sets every
   attribute: host-only on the scope's host, the scope's path or a narrower
   one inside it, `Secure`, `HttpOnly`, `SameSite=Strict`, expiring with the
@@ -71,7 +76,8 @@ lifecycle in a bag of flags. This change fixes all three.
   origin under its path. It refuses other origins and schemes, credentials,
   empty and dot segments, backslashes, `;`, percent-escapes of unreserved
   characters, separators, `%`, control characters and anything outside
-  ASCII, reserved routes (ignoring ASCII case) and frame documents such as
+  ASCII, reserved routes (ignoring ASCII case, and with or without a format
+  suffix such as `.json`) and frame documents such as
   `about:srcdoc`, `blob:` and `data:`, for every navigation Wry reports in
   any frame, redirects included. Reserved routes limit navigations only; a
   page's `fetch` still carries the cookie. A cookie path must keep the
@@ -79,7 +85,9 @@ lifecycle in a bag of flags. This change fixes all three.
 - **Signal.** The view never loads the signal. The session renews at once
   and the page loads again; a second signal within 30 seconds, or one after
   renewing failed for good, ends the session, and one while a failed
-  renewal waits to retry waits with it. There is no separate probe.
+  renewal waits to retry waits with it. A signal that waited, or whose own
+  renewal failed and is retried, loads the page again and starts the
+  30-second guard once a renewal succeeds. There is no separate probe.
 - **Redraws.** A transition redraws the Space only when it has effects or
   changes what the Space shows, so an idle session costs no redraws.
 - **Renewal.** Two minutes before the end, or at half life; grants shorter
@@ -105,7 +113,8 @@ lifecycle in a bag of flags. This change fixes all three.
 
 ## Delivery
 
-- Tests: `browser_session/tests.rs` and `tests/{renewal,grant,board}.rs`
+- Tests: `browser_session/tests.rs` and
+  `tests/{renewal,signal,grant,board}.rs`
   drive sign-in, the first attempt waiting until shown, a new view's
   install confirmed, refused and timed out, renewal timing, a renewal
   confirmed, refused, timed out and failing, expiry by either clock and
@@ -126,6 +135,16 @@ lifecycle in a bag of flags. This change fixes all three.
   lifetime, a renewal the store does not confirm in time, signals after a
   failed renewal, an idle session that never redraws, and quitting that
   returns only after a slow revocation.
+- Review fixes, after the first pull request merged: its Claude Opus 5.5
+  review found that a signal waiting for a failed renewal's retry was
+  dropped, so the page never loaded again; that a new view the store
+  failed stayed hidden, holding a revoked grant's store, until Retry; that
+  events left in a batch could bring back a closed page's title or notice;
+  that reserved routes missed format suffixes; and that this reference
+  claimed no trace in builds that still ship the in-app guide. Each is
+  fixed, with a test for each code fix. A same account that stops being
+  current while a sign-in is in progress, then comes back, starts again
+  at the home page, by design.
 - `cargo test`, `cargo clippy --all-targets -- -D warnings` and the format
   check for `subspace-web-board`; `cargo test` for `subspace` and
   `subspace-descriptor`; the architecture, board-guide, documentation-index
