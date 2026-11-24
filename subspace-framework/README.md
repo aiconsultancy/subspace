@@ -239,6 +239,12 @@ gpui-pre-platform = { opt-level = 3 }
 - **Fonts.** The Framework embeds no font files. An app lists the ones it
   embeds in `ProductBuild::fonts`, with their licences in its own notices;
   see [embedded fonts](docs/appearance.md#embedded-fonts).
+- **Start-up failures.** An app that checks its own settings before
+  `shell::launch` and finds one it cannot use calls
+  `shell::report_startup_failure(app_name, title, detail)`: it prints the
+  problem and shows one small window with it and **Quit**, so someone who
+  opened the app from the Finder, the Dock or the Start menu sees why it did
+  not start.
 
 ## Accounts
 
