@@ -98,6 +98,22 @@ ACCOUNT = r"[a-zA-Z][a-zA-Z0-9_-]{0,31}"
 ERGO_ACCOUNT = r"[a-z][a-z0-9_-]{0,31}"
 UUID = r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}"
 FAMILIES = {"claude": "claude-sonnet-5-5", "codex": "gpt-5.4"}
+# Each officer role's default harness model and reasoning effort; fleet.json's harness and its captain and
+# rearAdmiral blocks override them. Crew keep FAMILIES.
+OFFICER_DEFAULTS = {
+    "rear_admiral": {"family": "claude", "model": "claude-fable-5-2", "effort": "high"},
+    "captain": {"family": "claude", "model": "claude-opus-5-5", "effort": "xhigh"},
+}
+# The harness block for each role, under fleet.json's harness.
+ROLE_HARNESS = {"rear_admiral": "rearAdmiral", "captain": "captain"}
+# Reasoning efforts per harness and family. OpenCode spells each as a variant of the model, which it derives
+# from the provider package (Variant.resolve): anthropic-compatible gives Claude low to max, and
+# openai-compatible responses gives low, medium and high. Stargate's Claude Agent SDK backend takes effort.
+EFFORTS = {
+    ("opencode", "claude"): ("low", "medium", "high", "xhigh", "max"),
+    ("opencode", "codex"): ("low", "medium", "high"),
+    ("claude-sdk", "claude"): ("low", "medium", "high", "xhigh", "max"),
+}
 # OpenCode provider IDs per model family, as in Stargate's OpenCode template.
 PROVIDERS = {"claude": "claude-proxy", "codex": "openai-proxy"}
 MODEL = r"[a-zA-Z0-9][a-zA-Z0-9._/:#-]{0,127}"
@@ -605,12 +621,42 @@ def fleet_ipc_policy(rules, label):
                 "(an ask, or a pattern with other wildcards, cannot authorise a fleet tool).")
 
 
+def claude_efforts(model):
+    """The efforts OpenCode 2.3.2 gives a Claude model through anthropic-compatible (Variant.resolve): Claude
+    4.6 has no xhigh, and Claude 3.7 and 4.0 to 4.5 (but Opus 4.5) think on a token budget, as high and max."""
+    found = re.search(r"(?:claude-)?(opus|sonnet|haiku|fable|mythos)-(\d+)(?:[.-](\d+))?", model, re.I) \
+        or re.search(r"claude-(\d+)(?:[.-](\d+))?-(opus|sonnet|haiku|fable|mythos)", model, re.I)
+    if not found:
+        return EFFORTS["opencode", "claude"]
+    family, major, minor = (found.group(1), found.group(2), found.group(3)) if found.group(1).isalpha() else \
+        (found.group(3), found.group(1), found.group(2))
+    major, minor = int(major), int(minor or 0)
+    if (major, minor) == (3, 7) or major == 4 and minor < 6 and (family.lower(), minor) != ("opus", 5):
+        return ("high", "max")
+    if (major, minor) == (4, 6):
+        return ("low", "medium", "high", "max")
+    return EFFORTS["opencode", "claude"]
+
+
 def harness_config(value, inherited):
-    value = fields(value, "harness", "type model family permissions allowedTools")
+    value = fields(value, "harness", "type model family effort permissions allowedTools")
     backend = pattern(value.get("type", inherited["type"]), r"opencode|claude-sdk", "harness type (opencode or claude-sdk)")
     family = pattern(value.get("family", inherited["family"]), r"claude|codex", "model family")
     candidate = value.get("model", inherited["model"] if family == inherited["family"] else FAMILIES[family])
     model = pattern(candidate, MODEL if backend == "opencode" else r"[a-zA-Z0-9][a-zA-Z0-9._:\[\]-]{0,127}", "CLIProxyAPI model ID")
+    require("#" not in model, f"Harness model {model} names an OpenCode variant: give the model ID alone and the "
+            "reasoning effort as harness effort.")
+    # An effort belongs to its model: a harness that names another model has the provider's default effort
+    # unless it names one too.
+    same = (family, model) == (inherited["family"], inherited["model"])
+    effort = value.get("effort", inherited.get("effort") if same else None)
+    if effort is not None:
+        offered = EFFORTS.get((backend, family), ())
+        if backend == "opencode" and family == "claude":
+            offered = claude_efforts(model)
+        require(effort in offered, f"Reasoning effort {effort!r} is not available for {model} with the {backend} "
+                f"harness, which offers {', '.join(offered) or 'none'}." if offered else
+                f"The {backend} harness cannot set a reasoning effort for the {family} family. Remove harness effort.")
     tools = value.get("allowedTools", inherited.get("allowedTools", []))
     require(isinstance(tools, list), "Claude allowedTools must be an array.")
     for tool in tools:
@@ -627,7 +673,8 @@ def harness_config(value, inherited):
         pattern(permission["effect"], r"allow|deny|ask", "permission effect")
         string(permission["action"], "permission action")
         string(permission["resource"], "permission resource", 1024)
-    return {"type": backend, "family": family, "model": model, "permissions": permissions, "allowedTools": tools}
+    return {"type": backend, "family": family, "model": model, "effort": effort, "permissions": permissions,
+            "allowedTools": tools}
 
 
 def crew_config(value, inherited):
@@ -837,7 +884,15 @@ def validate(config, credentials, check_files=True):
     require(len(channels) <= 20, f"Use at most 18 captains: the rear admiral joins Starbase, {irc['commandChannel']} "
             "and every ship channel, and Stargate joins at most 20 channels.")
     irc.update(channels=channels)
-    hull = harness_config(cfg.get("harness", {}), {"type": "opencode", "family": "codex", "model": FAMILIES["codex"], "permissions": None})
+    # Each role's default model, then the fleet's harness, then its captain or rearAdmiral block, then the officer's.
+    fleet_harness = cfg.get("harness", {})
+    require(isinstance(fleet_harness, dict), "harness must be an object.")
+    roles = {key: fields(fleet_harness.get(key, {}), f"harness.{key}", "family model effort")
+             for key in ROLE_HARNESS.values()}
+    shared = {key: val for key, val in fleet_harness.items() if key not in roles}
+    hulls = {role: harness_config(roles[key], harness_config(shared, {"type": "opencode", **OFFICER_DEFAULTS[role],
+                                                                         "permissions": None}))
+             for role, key in ROLE_HARNESS.items()}
     crew = crew_config(cfg.get("crew", {}), {family: {"count": 2, "model": model} for family, model in FAMILIES.items()})
     repositories = repository_config(cfg.get("repositories", []))
     agents = []
@@ -845,7 +900,7 @@ def validate(config, credentials, check_files=True):
         role = "captain" if index else "rear_admiral"
         officer = {key: val for key, val in person.items() if key not in ("crew", "crewNames")}
         agents.append({**officer, "role": role, "channel": room, "crew": [],
-                       "harness": harness_config(person.get("harness", {}), hull)})
+                       "harness": harness_config(person.get("harness", {}), hulls[role])})
         if role != "captain":
             continue
         crew_names = person.get("crewNames", {})
@@ -1288,8 +1343,20 @@ def configure_git(person, user, prune, protected):
             run("git", "config", "--global", "--replace-all", "--", key, value, user=user)
 
 
-def model_ref(family, model):
-    return f"{PROVIDERS[family]}/{model}"
+def model_ref(family, model, effort=None):
+    """OpenCode's provider/model reference, with #effort for a reasoning-effort variant."""
+    return f"{PROVIDERS[family]}/{model}" + (f"#{effort}" if effort else "")
+
+
+def harness_model(harness):
+    """An officer's OpenCode model reference: its model and reasoning effort."""
+    return model_ref(harness["family"], harness["model"], harness["effort"])
+
+
+def session_model(harness):
+    """An officer's model as an OpenCode session records it."""
+    return {"providerID": PROVIDERS[harness["family"]], "id": harness["model"],
+            **({"variant": harness["effort"]} if harness["effort"] else {})}
 
 
 def model_provider(cfg, family, models):
@@ -1426,7 +1493,7 @@ def crew_options(cfg, person, home, engine_port, session_id, captain_directory=N
         "mesijCommand": str(MESIJ),
         "team": {
             "captain": {"id": person["id"], "agent": sessions.CAPTAIN_AGENT,
-                        "model": model_ref(harness["family"], harness["model"])},
+                        "model": harness_model(harness)},
             "historyScope": "team",
             "toolAccess": "curated",
             # The plugin reads crew history through this captain's own authenticated loopback engine.
@@ -1695,7 +1762,7 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
             models.append(worker["model"])
     permissions = harness_permissions(cfg, person)
     engine = {
-        "model": model_ref(harness["family"], harness["model"]), "permissions": permissions,
+        "model": harness_model(harness), "permissions": permissions,
         "providers": {PROVIDERS[family]: model_provider(cfg, family, models) for family, models in catalogue.items()},
     }
     if enrolled(cfg):
@@ -1767,6 +1834,7 @@ def claude_backend(cfg, person, workspace, documents):
     harness = person["harness"]
     backend = {
         "type": "claude", "directory": str(workspace), "model": harness["model"], "allowedTools": harness["allowedTools"],
+        **({"effort": harness["effort"]} if harness["effort"] else {}),
         "systemPrompt": documents["claudePrompt"],
         "provider": {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}/v1", "apiKeyEnv": "CLIPROXYAPI_API_KEY"},
     }
@@ -2574,7 +2642,7 @@ def commission(prune, existing=False):
             expected = {
                 "directory": settings["directory"], "title": f"{cfg['slug']}/{person['id']}",
                 "crew": [worker["id"] for worker in person["crew"]],
-                "model": {"providerID": PROVIDERS[harness["family"]], "id": harness["model"]},
+                "model": session_model(harness),
                 "permissions": harness_permissions(cfg, person) if rear else captain_permissions(cfg, person),
             }
             if person["crew"]:

@@ -870,11 +870,11 @@ class InstalledFleet(unittest.TestCase):
             "enabled": True, "api": {"baseUrl": "https://subspace.example.com"},
             "enrolment": {"tokenFile": str(gateway_home / runtime.ENROLMENT_TOKEN)},
             "officers": [
-                {"name": "Atlas", "rank": "rearAdmiral", "model": "gpt-5.4", "ircNick": "example-atlas",
+                {"name": "Atlas", "rank": "rearAdmiral", "model": "claude-fable-5-2", "ircNick": "example-atlas",
                  "socketPath": str(sockets / "atlas/api.sock")},
-                {"name": "example-orion", "rank": "captain", "ship": "Orion", "model": "gpt-5.4",
+                {"name": "example-orion", "rank": "captain", "ship": "Orion", "model": "claude-opus-5-5",
                  "ircNick": "example-orion", "socketPath": str(sockets / "orion/api.sock")},
-                {"name": "example-vega", "rank": "captain", "ship": "Vega", "model": "claude-sonnet-5-5",
+                {"name": "example-vega", "rank": "captain", "ship": "Vega", "model": "claude-opus-5-5",
                  "ircNick": "example-vega", "socketPath": str(sockets / "vega/api.sock")},
             ]})
         # The token is the gateway user's alone; the sockets' directories admit each officer's engine group.

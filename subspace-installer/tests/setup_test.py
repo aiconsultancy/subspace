@@ -366,10 +366,12 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual((registration["starbaseChannel"], registration["commandChannel"]),
                          ("#fleet-two-starbase", f"#fleet-two-{COMMAND_SUFFIX}"))
         self.assertEqual(registration["rearAdmiral"], {
-            "name": "Nova", "ircNick": "fleet-two-nova", "defaultModel": "gpt-5.4",
+            "name": "Nova", "ircNick": "fleet-two-nova", "defaultModel": "claude-fable-5-2",
             "serviceTokenClientId": "fleet-two-nova@agents.example.com"})
-        self.assertEqual([(row["ship"], row["channel"], row["ircNick"]) for row in registration["captains"]],
-                         [("Lyra", "#fleet-two-lyra", "fleet-two-lyra"), ("Vega", "#fleet-two-vega", "fleet-two-vega")])
+        self.assertEqual([(row["ship"], row["channel"], row["ircNick"], row["defaultModel"])
+                          for row in registration["captains"]],
+                         [("Lyra", "#fleet-two-lyra", "fleet-two-lyra", "claude-opus-5-5"),
+                          ("Vega", "#fleet-two-vega", "fleet-two-vega", "claude-opus-5-5")])
         self.assertNotIn("Password", fleet_setup.json.dumps(registration))
         # Its Fleet API is off, so the bundle says it has no address.
         self.assertIsNone(registration["fleetApiUrl"])

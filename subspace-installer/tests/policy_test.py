@@ -219,7 +219,8 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertEqual(options["mesijCommand"], "/opt/subspace-fleet/bin/mesij")
         self.assertEqual(options["captainSessionID"], "ses_fixture")
         team = options["team"]
-        self.assertEqual(team["captain"], {"id": "orion", "agent": "build", "model": "openai-proxy/gpt-5.4"})
+        # The captain's default model with its reasoning effort, as OpenCode's model#variant.
+        self.assertEqual(team["captain"], {"id": "orion", "agent": "build", "model": "claude-proxy/claude-opus-5-5#xhigh"})
         self.assertEqual(team["modelProviders"], ["claude-proxy", "openai-proxy"])
         self.assertEqual(team["historyAPI"], {"url": "http://127.0.0.1:4097",
                                               "headersEnv": {"authorization": "OPENCODE_AUTHORIZATION"}})
@@ -331,10 +332,13 @@ class FleetPolicyTests(unittest.TestCase):
         config["api"] = {"url": "http://127.0.0.1:3000", "agentUrl": "http://127.0.0.1:3001"}
         cfg = validate(config, api_secrets())
         person = dict(cfg["members"][1], harness={
-            "type": "claude-sdk", "family": "claude", "model": "example-model", "permissions": None,
+            "type": "claude-sdk", "family": "claude", "model": "example-model", "effort": None, "permissions": None,
             "allowedTools": ["Read"]})
         documents = {"claudePrompt": "Example prompt"}
         backend = runtime.claude_backend(cfg, person, Path("/workspace"), documents)
+        self.assertNotIn("effort", backend)
+        self.assertEqual(runtime.claude_backend(cfg, {**person, "harness": {**person["harness"], "effort": "xhigh"}},
+                                                Path("/workspace"), documents)["effort"], "xhigh")
         self.assertEqual(backend["mcpServers"], {"subspace": {
             "type": "http", "url": "http://127.0.0.1:3001/mcp",
             "headersHelper": f"/opt/subspace-fleet/lib/runtime.py agent-header {person['account']}",
@@ -1278,7 +1282,7 @@ class FleetRecordsTests(unittest.TestCase):
     def setUp(self):
         self.config = example_config()
         self.config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra",
-                                        "harness": {"family": "claude"}})
+                                        "harness": {"family": "codex"}})
         self.config["api"] = {"url": "http://127.0.0.1:3000"}
         self.secrets = {**officer_secrets("example-lyra"), "apiToken": "header.payload.admin"}
         self.api = fixture.Subspace()
@@ -1306,7 +1310,7 @@ class FleetRecordsTests(unittest.TestCase):
         agents = {row["name"]: row for row in self.api.agents.values()}
         self.assertEqual(agents["Atlas"]["serviceTokenClientId"], "example-atlas@agents.example.com")
         self.assertEqual((agents["Atlas"]["defaultModel"], agents["example-lyra"]["defaultModel"]),
-                         ("gpt-5.4", runtime.FAMILIES["claude"]))
+                         ("claude-fable-5-2", runtime.FAMILIES["codex"]))
         self.assertEqual(self.register(), [], "a re-run changes nothing")
 
     def test_a_changed_roster_is_reconciled(self):
@@ -1510,6 +1514,69 @@ class RepositoryAccessTests(unittest.TestCase):
         with patch.object(runtime.subprocess, "run", side_effect=subprocess.TimeoutExpired("git", 30)):
             self.assertFalse(readable_without_credentials("https://github.com/example/slow.git"))
 
+
+class OfficerModelTests(unittest.TestCase):
+    """Captains default to Claude Opus 5.5 at xhigh effort and the rear admiral to Claude Fable 5.2 at high."""
+
+    def config(self, harness=None):
+        config = example_config()
+        config["captains"].append({"id": "vega", "name": "Vega", "account": "example-vega"})
+        if harness is None:
+            del config["harness"]
+        else:
+            config["harness"] = harness
+        return config
+
+    def harnesses(self, config):
+        cfg = validate(config, officer_secrets("example-vega"))
+        return {person["id"]: (person["harness"]["family"], person["harness"]["model"], person["harness"]["effort"])
+                for person in cfg["members"]}
+
+    def test_each_role_has_its_default_and_the_example_names_it(self):
+        defaults = {"atlas": ("claude", "claude-fable-5-2", "high"), "orion": ("claude", "claude-opus-5-5", "xhigh"),
+                    "vega": ("claude", "claude-opus-5-5", "xhigh")}
+        self.assertEqual(self.harnesses(self.config()), defaults)
+        self.assertEqual(self.harnesses(example_config() | {"captains": self.config()["captains"]}), defaults)
+        cfg = validate(self.config(), officer_secrets("example-vega"))
+        self.assertEqual([runtime.harness_model(person["harness"]) for person in cfg["members"]],
+                         ["claude-proxy/claude-fable-5-2#high", "claude-proxy/claude-opus-5-5#xhigh",
+                          "claude-proxy/claude-opus-5-5#xhigh"])
+        self.assertEqual(runtime.session_model(cfg["members"][1]["harness"]),
+                         {"providerID": "claude-proxy", "id": "claude-opus-5-5", "variant": "xhigh"})
+
+    def test_the_fleet_then_the_role_then_the_officer_override_the_default(self):
+        # A fleet-wide model, as fleets wrote before the role defaults, applies to both roles at the provider's
+        # default effort: an effort belongs to the model it was set for.
+        old = {"type": "opencode", "family": "codex", "model": "gpt-5.4"}
+        self.assertEqual(set(self.harnesses(self.config(old)).values()), {("codex", "gpt-5.4", None)})
+        roles = {"type": "opencode", "captain": {"family": "codex", "model": "gpt-6.2-sol", "effort": "high"},
+                 "rearAdmiral": {"effort": "max"}}
+        config = self.config(roles)
+        config["captains"][1]["harness"] = {"model": "claude-sonnet-5-5", "family": "claude"}
+        self.assertEqual(self.harnesses(config), {
+            "atlas": ("claude", "claude-fable-5-2", "max"), "orion": ("codex", "gpt-6.2-sol", "high"),
+            "vega": ("claude", "claude-sonnet-5-5", None)})
+        # The same model keeps its role's effort; a Claude Agent SDK captain takes it too.
+        config["captains"][1].update(harness={"type": "claude-sdk", "model": "claude-opus-5-5"},
+                                     crew={"claude": {"count": 0}, "codex": {"count": 0}})
+        config["harness"] = {"type": "opencode"}
+        self.assertEqual(self.harnesses(config)["vega"], ("claude", "claude-opus-5-5", "xhigh"))
+
+    def test_an_effort_the_harness_cannot_give_is_refused(self):
+        cases = [
+            ({"captain": {"family": "codex", "model": "gpt-5.4", "effort": "xhigh"}},
+             "'xhigh' is not available for gpt-5.4 with the opencode harness, which offers low, medium, high"),
+            ({"captain": {"model": "claude-sonnet-4-6", "effort": "xhigh"}},
+             "offers low, medium, high, max"),
+            ({"captain": {"model": "claude-sonnet-4-5", "effort": "low"}}, "offers high, max"),
+            ({"captain": {"model": "claude-opus-5-5#xhigh"}}, "give the model ID alone"),
+            ({"captain": {"model": "claude-opus-5-5", "speed": "fast"}}, "harness.captain contains an unknown field"),
+        ]
+        for harness, message in cases:
+            with self.subTest(harness), self.assertRaisesRegex(Invalid, re.escape(message)):
+                self.harnesses(self.config({"type": "opencode", **harness}))
+        self.assertEqual(self.harnesses(self.config({"captain": {"model": "claude-opus-4-5", "effort": "xhigh"}}))
+                         ["orion"], ("claude", "claude-opus-4-5", "xhigh"))
 
 class IrcCertificateTests(unittest.TestCase):
     """Officers sign in to a remote IRC server with a certificate each (SASL EXTERNAL) unless told otherwise."""
