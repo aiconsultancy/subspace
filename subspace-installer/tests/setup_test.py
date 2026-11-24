@@ -204,6 +204,35 @@ class SetupInputsTests(unittest.TestCase):
         self.assertEqual(renamed["repositories"], [{"id": "shared", "url": "https://github.com/example/lib.git",
                                                     "private": True}])
 
+    def test_private_repositories_and_github_apps_added_by_hand_survive_a_rerun(self):
+        # The documented way to add private repositories after the first install: edit fleet.json, then re-run
+        # setup without --repositories. Nothing is dropped or reordered.
+        argv = ["--name", "Example Fleet", "--rear-admiral", "Atlas", "--captains", "Orion,Vega", "--no-demo"]
+        answers, members, config, _, _ = self.generate(argv)
+        apps = {member["id"]: {"appId": index + 1, "installationId": index + 10, "clientId": f"client-{index}",
+                               "botLogin": f"example-{member['id']}[bot]", "botId": index + 100}
+                for index, member in enumerate(members)}
+        for person in [config["rearAdmiral"], *config["captains"]]:
+            person["githubApp"] = apps[person["id"]]
+        config["repositories"] = [
+            {"id": "service", "url": "https://github.com/example/service.git", "private": True},
+            {"id": "library", "url": "https://github.com/example/library.git", "private": True},
+            {"id": "docs", "url": "https://github.com/example/docs.git"},
+        ]
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        fleet_setup.save_answers(answers)
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            again = fleet_setup.gather(args, fleet_setup.read_json(fleet_setup.INPUTS / "answers.json"))
+        rerun = fleet_setup.fleet_config(again, members, "a" * 40)
+        self.assertEqual(rerun["repositories"], config["repositories"])
+        self.assertEqual([person.get("githubApp") for person in [rerun["rearAdmiral"], *rerun["captains"]]],
+                         [apps["atlas"], apps["orion"], apps["vega"]])
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, again["slug"], None), members,
+                                            again["admin"])
+        cfg = validate(rerun, secrets, check_files=False)
+        self.assertEqual([name for name, repo in cfg["repositories"].items() if repo["private"]], ["service", "library"])
+
     def test_a_rejected_repository_url_is_not_echoed(self):
         fixture = "fixture-not-a-secret"
         for url in (f"https://user:{fixture}@example.com/a.git", f"https://example.com/a.git?token={fixture}",
