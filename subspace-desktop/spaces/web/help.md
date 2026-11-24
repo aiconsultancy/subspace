@@ -3,7 +3,8 @@
 <!--
 Evidence: spaces/web/src/{lib,toolbar,source,policy,state,manifest,bridge,
 bridge/{runtime,protocol,theme,issues},page,page/unsupported,page/native,app,
-install/*}.rs, bridge/init.js, manager.rs, manager/{view,
+install/*}.rs, bridge/init.js, browser_session.rs, browser_session/*.rs,
+page/native/{view,session,cookies}.rs, pages.rs (Spaces signed in by the app), manager.rs, manager/{view,
 view/collection,view/editor,editor,model,operations}.rs;
 products/subspace/src/main.rs (one registration per webBoards entry, shared guide);
 products/subspace/src/web_spaces.rs, spaces/web/src/builtin.rs (built-in Fleet Console);
@@ -56,9 +57,10 @@ or use the **Help (?)** toolbar button to show this guide.
 - **Platform.** macOS (WKWebView) or Windows (WebView2). Windows CI builds and
   tests the code, but native Windows runtime validation is outstanding.
 - **Sign-in.** A website board uses its own site's sign-in. Subspace does not
-  sign in for you. Each board keeps its own cookies and site data across
-  restarts, and boards do not share sign-ins with each other or with your
-  browser.
+  sign in for you, unless your app includes a web Space that signs in with
+  your account (see [Spaces signed in by the app](#spaces-signed-in-by-the-app)).
+  Each board keeps its own cookies and site data across restarts, and boards
+  do not share sign-ins with each other or with your browser.
 - **GitHub imports** need a GitHub account selected in Settings. The account
   must belong to the repository's organization and have read access to the
   repository. Personal repositories are not eligible. Only built files are
@@ -129,6 +131,42 @@ server or Node.js runs.
   objects, base URL changes and form navigation are blocked. React and Vite
   client routing and JavaScript form handlers still work. A folder app without
   a manifest keeps its earlier behavior and gets no bridge.
+
+### Spaces signed in by the app
+
+An app built on Subspace can include a web Space that signs in to its site
+with your account under **Settings › Account**, so the site needs no second
+sign-in. Subspace on its own includes none, and you cannot add one in
+Settings: the app's makers build it in, on macOS only. Such a Space works
+like other website boards, with these differences:
+
+- **Sign-in required.** Until you sign in, the Space says `Sign-in required`
+  and asks you to sign in under **Settings › Account**. Signing out or
+  switching account closes its page at once.
+- **Nothing on disk.** Its page keeps the site's session, and anything else
+  the site stores, in memory only, and forgets it all when the page closes.
+  The page cannot read the session, and Subspace never puts it in an
+  address or a log.
+- **Renewal.** Subspace renews the session before it ends. If the site asks
+  for a new session, Subspace renews it and reloads the page. If the site
+  asks again straight away, or the session cannot be renewed in time, the
+  Space says `Your <title> session has ended.` with **Retry**, which reopens
+  the page where you were. If the page's private store does not accept a
+  renewed session, the Space says
+  `Cannot install the private session for this page. Try again.` with
+  **Retry**. Unsaved changes in the page may be lost.
+- **Back.** Back stops at the first page the Space showed.
+- **Only the site's pages for the app.** The page loads only the part of the
+  site made for the app. Other pages are blocked, and the status bar says
+  `Blocked a page this Space does not show.`, including frames embedded
+  from other sites. **Open in browser** opens the site's ordinary page,
+  which signs in on its own.
+- **No bridge.** The page gets no `window.subspace` and no developer tools.
+
+Closing the Space, signing out, switching account and quitting the app each
+also end the session at the site, when the site offers that. Quitting waits
+at most two seconds for it. On Windows and Linux the app shows the site
+with its own sign-in instead, or not at all, as its makers choose.
 
 ### The Weather example
 
@@ -205,7 +243,9 @@ Links that open a new window open in your default browser when they are
 second. Other links, such as `mailto:`, and unsafe addresses are blocked, and
 the status bar says `Blocked a <scheme>: link. Web Spaces only load web pages.`
 or `Blocked an insecure http:// page. Web Spaces load HTTPS, or HTTP on
-localhost.`
+localhost.` An HTTPS address the Space does not show, such as one with a
+user name or password in it, says `Blocked a page this Space does not
+show.`
 
 ## Details
 
@@ -463,6 +503,10 @@ permissions. There are no background-update controls.
 | `<path> has no index.html` | Build the app into the folder, then select **Retry**. |
 | `This app cannot open.` | The manifest is invalid, over 256 KiB or has the wrong shape. Fix `subspace-board.json` and reload. |
 | `Web Spaces need macOS or Windows.` | Linux has no web view. Open the page in your browser. |
+| `Sign-in required` | The Space signs in with your account. Sign in under **Settings › Account**. |
+| `Your <title> session has ended.` | The site ended the session, or it could not be renewed. Select **Retry**. |
+| `Cannot install the private session for this page. Try again.` | The page's private store did not accept the session, when the Space opened or renewed it. Select **Retry**. |
+| `Blocked a page this Space does not show.` | Any web Space blocks an address with a user name or password in it; a Space signed in by the app also blocks pages outside the part of the site made for it. Select **Open in browser**. |
 | A blank page | The page may need a site setting or a cross-origin permission that its host does not allow. Check the status bar host. Select **Reload page**. |
 | A client route returns an error after reload | Folder apps return `index.html` for addresses with no file extension. Check that the route has no extension and that `index.html` exists. |
 | `Blocked an insecure http:// page` | Web Spaces load HTTPS, or HTTP on `localhost` and loopback only. |
@@ -485,7 +529,8 @@ services accept its origin, or that a GitHub grant authorizes later updates.
 ## Limits
 
 - Each board keeps its own cookies and site data across restarts. Boards
-  do not share sign-ins with each other or with your browser.
+  do not share sign-ins with each other or with your browser. A Space signed
+  in by the app keeps nothing across restarts, and needs macOS.
 - The page only loads HTTPS pages, or HTTP pages on this computer. Links
   that open a new window open in your default browser. Other links, such as
   `mailto:`, are blocked.

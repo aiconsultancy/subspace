@@ -27,23 +27,27 @@ pub(crate) enum Navigation {
     Browser,
 }
 
-pub(crate) fn navigate(
+/// Where a toolbar control sends the page. Open in browser moves no page:
+/// the board opens its browser target itself (`pages.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PageMove {
+    Back,
+    Forward,
+    Reload,
+    Home,
+}
+
+pub(crate) fn move_page(
     page: &Page,
     start: &str,
-    navigation: Navigation,
+    to: PageMove,
     cx: &mut App,
 ) -> Result<(), String> {
-    match navigation {
-        Navigation::Back => page.back(cx),
-        Navigation::Forward => page.forward(cx),
-        Navigation::Reload => page.reload(cx),
-        Navigation::Home => page.load(start, cx),
-        Navigation::Browser => {
-            if let Some(url) = page.url(cx).and_then(|url| policy::browser_url(&url)) {
-                cx.open_url(&url);
-            }
-            Ok(())
-        }
+    match to {
+        PageMove::Back => page.back(cx),
+        PageMove::Forward => page.forward(cx),
+        PageMove::Reload => page.reload(cx),
+        PageMove::Home => page.load(start, cx),
     }
 }
 
@@ -82,8 +86,8 @@ const OPEN_IN_BROWSER: Control = (
 );
 
 /// The Space's pane toolbar. Its controls are disabled until the page
-/// exists. A local app has no Open in browser, which its private address
-/// cannot use.
+/// exists, and Open in browser until it has somewhere to go. A local app
+/// has no Open in browser, which its private address cannot use.
 pub(crate) fn render(board: &WebBoard, cx: &mut Context<WebBoard>) -> Toolbar {
     let enabled = board.page.is_some();
     let toolbar = NAVIGATION
@@ -98,7 +102,10 @@ pub(crate) fn render(board: &WebBoard, cx: &mut Context<WebBoard>) -> Toolbar {
     };
     match board.start.app.is_some() {
         true => toolbar,
-        false => toolbar.trailing(browser_control(enabled, cx)),
+        false => {
+            let browser = board.browser_target(cx).is_some();
+            toolbar.trailing(browser_control(browser, cx))
+        }
     }
 }
 
@@ -112,8 +119,8 @@ fn control(item: Control, enabled: bool, cx: &mut Context<WebBoard>) -> IconButt
     let (navigation, id, icon, name) = item;
     icon_button(id, Intent::Quiet, icon, name)
         .disabled(!enabled)
-        .on_click(cx.listener(move |board, _: &ClickEvent, _, cx| {
-            board.navigate(navigation, cx);
+        .on_click(cx.listener(move |board, _: &ClickEvent, window, cx| {
+            board.navigate(navigation, window, cx);
         }))
 }
 

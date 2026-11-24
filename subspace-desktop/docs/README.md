@@ -89,7 +89,8 @@ then fill in its [board checklist](../../subspace-framework/docs/board-checklist
   web Space, use the bridge, test it with Node, package it with
   `scripts/package-web-space.py` and install it from a folder, ZIP or GitHub.
   The [web Space reference](web-spaces-reference.md) lists every manifest
-  field, package rule and error; the packages live in
+  field, package rule and error, and how a product signs a web Space in with
+  the app's account; the packages live in
   [web-spaces/](../web-spaces/README.md).
 
 | Board | In-app guide | Developer page |
@@ -102,7 +103,7 @@ then fill in its [board checklist](../../subspace-framework/docs/board-checklist
 | Space Lab | [Native dashboards and managed environments](../spaces/space-lab/help.md) | [Space Lab](space-lab.md): enablement and safety; [design evidence](agents/space-lab/README.md): retired harness history |
 | Actions | [GitHub Actions](../spaces/actions/help.md) | [Actions board](actions.md) |
 | Component gallery | [Shared UI components](../../subspace-framework/spaces/component-gallery/help.md) | |
-| Web Spaces | [Websites and installed web Spaces](../spaces/web/help.md) | [Web Space reference](web-spaces-reference.md): manifest, install sources, package rules, bridge; [authoring guide](web-spaces-guide.md) |
+| Web Spaces | [Websites and installed web Spaces](../spaces/web/help.md) | [Web Space reference](web-spaces-reference.md): manifest, install sources, package rules, bridge, native sessions; [authoring guide](web-spaces-guide.md) |
 
 - [Desktop UI components](ui-components.md): shared catalogue and component ownership.
 
