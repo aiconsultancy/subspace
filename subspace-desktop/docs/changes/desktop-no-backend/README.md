@@ -41,6 +41,7 @@ builds behave exactly as before.
 | Settings › Fleets | Lists the fleets the API assigns to initiatives | `surfaces::settings_extensions` (`src/surfaces.rs`) |
 | Channels initiative picker and its status-bar hints | The API's initiatives | `Capabilities::NONE` (`clients/subspace-api/src/backend.rs`) |
 | Channels fleet context (fleet groups, ship and starbase inspector, roster) | The initiatives' fleets | No initiatives, so nothing to follow |
+| Channels account networks, Settings › Channels' **From your account** section and **Use account sign-in…** | The API's verified account and its IRC credentials | The account is never checked (`Env::available`, `has_backend()`, in `spaces/irc/src/managed`), so no network is derived, no credential is asked for and Settings shows only the saved networks |
 | Channels captain notices | Route by the API's initiatives and fleets | `Capabilities::NONE`; the **Notify ship captains** switch in Settings › Channels is hidden with `has_backend()` (`spaces/irc/src/editor/view.rs`) |
 | Channels chat uploads (attach, paste upload, upload tiles) | The API's upload store | `Capabilities::NONE`; `chat_uploads::references` finds none, so an `UPL-` key stays the text that was sent and never shows **Sign in to open** (`clients/subspace-api/src/chat_uploads.rs`) |
 | Channels tracker commands and message actions | Write to the API through the Issues Space | Without the Issues Space they are not offered; `/assign`, `/ready` and `/decision` are ordinary IRC input instead of an error that names the API (`spaces/irc/src/tracker/flow.rs`) |
@@ -61,8 +62,6 @@ Not present, so nothing to leave out:
   Neither the palette nor About has an account or API entry; the Framework's
   Settings navigation drops Account without a provider
   (`app_pages_omit_account_without_a_provider`).
-- **Account networks in Channels.** Pull request 83 adds them; `main` does
-  not have them yet.
 
 ### What it keeps
 
@@ -150,6 +149,6 @@ and two lines in Channels.
       the API.
 - [x] Fleet Console from its own settings or a fleet added inside it.
 - [x] Tests, README section and this record.
-- [ ] When pull request 83 lands, check that account networks stay off in
-      a `none` build (no client and no capability) and that Settings ›
-      Channels shows nothing of them.
+- [x] Account networks in Channels stay off, with no request and nothing
+      in Settings › Channels
+      (`managed::tests::lifecycle::a_build_without_an_api_backend_brings_no_account_network`).

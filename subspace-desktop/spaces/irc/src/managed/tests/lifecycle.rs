@@ -2,11 +2,14 @@
 //! timer path: a switch never plans from the previous account's fleets,
 //! late answers for a forgotten account are dropped, a source refuses once
 //! its account is gone, the fleets' servers come and go, and memberships
-//! that could not be read are read again.
+//! that could not be read are read again. A build with no API backend
+//! brings none.
 
 use gpui_kit::TestAppContext;
 
-use super::support::{Api, configured, connect, fleets, hosts, issued, member_of, person, settle};
+use super::support::{
+    Api, configured, connect, connect_to, fleets, hosts, issued, member_of, person, settle,
+};
 use crate::tests::{mount, settings};
 
 #[gpui_kit::test]
@@ -148,4 +151,25 @@ fn memberships_that_were_not_read_for_the_account_are_read_again(cx: &mut TestAp
     settle(&hub, cx);
     assert_eq!(reads(cx), 0, "known again");
     assert_eq!(configured(&hub, cx).len(), 2);
+}
+
+/// With no API backend the account is never checked: no request, no
+/// credential asked for, no account network, and Settings shows the saved
+/// networks as before, with nothing to switch to.
+#[gpui_kit::test]
+fn a_build_without_an_api_backend_brings_no_account_network(cx: &mut TestAppContext) {
+    let (_board, hub, cx) = mount(cx, settings());
+    let api = Api::new(&["127.0.0.1"]);
+    connect_to(&hub, &api, false, cx);
+    member_of(&hub, (Some(1), "user-ada"), fleets("127.0.0.1", None), cx);
+    settle(&hub, cx);
+    assert_eq!(
+        hosts(&configured(&hub, cx)),
+        ["127.0.0.1"],
+        "only the saved network"
+    );
+    assert!(api.mock.requests().is_empty(), "nothing reached the API");
+    assert!(api.asked().is_empty());
+    let shown = hub.read_with(cx, |hub, cx| hub.account_networks(cx));
+    assert_eq!(shown, crate::managed::AccountNetworks::default());
 }
