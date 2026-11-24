@@ -14,6 +14,7 @@ import pwd
 import re
 import secrets
 import socket
+import ssl
 import stat
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from agent_files import collect_cloud, private_directory, private_file, provisio
 import fleet_records
 from network import rules
 from roles import API_SKILL_MISSING, api_skill_path, default_permissions, provision_role, role_documents
+from roles import provision_workspace, workspace_documents
 import sessions
 import standard_channels
 from workspaces import crew_worktree, prepare_workspaces, prune_worktrees
@@ -42,6 +44,16 @@ REPOS = "ss-fleet-repos"
 MEDICAL = "ss-fleet-medical"
 SENTRY_TOKEN = ("medical", "sentry-auth-token")
 MEDICAL_IRC_PASSWORD = ("medical", "irc-password")
+# IRC sign-in with certificates (SASL EXTERNAL, irc.auth "certificate"): one owner-only PEM bundle per officer,
+# a certificate and its private key, owned by the gateway user that serves the officer. Stargate reads it
+# as clientPemFile. An operator may supply one as <secrets-dir>/<officer-id>/irc-client.pem.
+IRC_CERTS = ETC / "irc-certs"
+IRC_CLIENT_PEM = "irc-client.pem"
+# Stargate's own limits for clientPemFile (src/irc/client-pem.ts): at most 64 KiB, a certificate whose first
+# one matches an unencrypted private key in one of these PEM forms.
+IRC_PEM_BYTES = 64 * 1024
+IRC_PEM_CERTIFICATE = re.compile(r"-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----")
+IRC_PEM_KEY = re.compile(r"-----BEGIN (PRIVATE KEY|EC PRIVATE KEY|RSA PRIVATE KEY)-----[\s\S]*?-----END \1-----")
 # Stargate's agent dispatch defaults (docs/agent-dispatch.md), each overridable under agentDispatch.
 DISPATCH_DEFAULTS = {"pollIntervalSeconds": 120, "answerTimeoutSeconds": 300,
                      "retryLadderSeconds": [3600, 10800, 21600, 43200]}
@@ -78,6 +90,9 @@ FAMILIES = {"claude": "claude-sonnet-5-5", "codex": "gpt-5.4"}
 PROVIDERS = {"claude": "claude-proxy", "codex": "openai-proxy"}
 MODEL = r"[a-zA-Z0-9][a-zA-Z0-9._/:#-]{0,127}"
 SESSIONS = ETC / "sessions"
+# Where each captain's sessions start: "workspace", the directory above its repositories (the default), or
+# "repository", its checkout of the first repository, as before. ETC/session-roots.json keeps each root.
+ROOT_MODES = ("workspace", "repository")
 MESIJ = APP / "bin/mesij"
 CREW_ID = r"[a-z0-9][a-z0-9_-]{0,31}"
 # Stargate's crew plugin accepts up to nine repositories and fifty member contexts per captain.
@@ -216,7 +231,7 @@ def source(value, label, repo, ref=None):
 def member(value):
     require(not isinstance(value, dict) or "crewGitHubApps" not in value,
             "Remove crewGitHubApps: crew run as their captain and commit and push with the captain's githubApp.")
-    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames serviceTokenClientId", ["id", "name", "account"])
+    value = fields(value, "fleet member", "id name account channel git githubApp harness crew crewNames serviceTokenClientId sessionRoot slack", ["id", "name", "account"])
     pattern(value["id"], r"[a-z][a-z0-9-]{0,19}", "member ID")
     require(not value["id"].startswith("fleet-"), "Member IDs cannot start with fleet-.")
     require(value["id"] != SENTRY_TOKEN[0], "The medical member ID is reserved for integration credentials.")
@@ -239,6 +254,11 @@ def member(value):
     if "serviceTokenClientId" in value:
         # The member's account subject at the API's identity provider, for its API agent record.
         string(value["serviceTokenClientId"], f"Member {value['id']}'s serviceTokenClientId", 200)
+    if "sessionRoot" in value:
+        # Where a captain's sessions start: its workspace (the default) or its first repository's checkout.
+        pattern(value["sessionRoot"], "|".join(ROOT_MODES), f"sessionRoot for {value['id']} (workspace or repository)")
+    if "slack" in value:
+        officer_slack(value["slack"], value["id"])
     return value
 
 
@@ -254,16 +274,141 @@ def github_app(value):
     return app
 
 
+# Slack Socket Mode tokens, as files in an officer's secrets directory and the prefix each must have. They never
+# go in fleet.json; the gateway reads them from its private environment, under the names slack_env() gives.
+SLACK_TOKEN_FILES = {"slack-app-token": "xapp", "slack-bot-token": "xoxb"}
+
+
+def officer_slack(value, agent_id):
+    """An officer's own Slack bot: its app, and explicit lists of who may address it and where."""
+    label = f"Member {agent_id}'s slack"
+    slack = fields(value, label, "appId users channels mentionOnly", ["appId", "users", "channels"])
+    pattern(slack["appId"], r"A[A-Z0-9]+", f"{label}.appId: expected a Slack app ID (A...)")
+    for key, expression, kind in (("users", r"[UW][A-Z0-9]+", "member IDs (U... or W...)"),
+                                  ("channels", r"[CGD][A-Z0-9]+", "conversation IDs (C..., G... or D...)")):
+        entries = slack[key]
+        # Nobody may address the bot by default: Stargate's * is refused, as for stakeholders.slack.
+        require(isinstance(entries, list) and entries,
+                f"{label}.{key} must list explicit Slack {kind}; nobody may address the bot by default.")
+        for entry in entries:
+            pattern(entry, expression, f"{label}.{key} entry: use explicit Slack {kind}, not *")
+        require(len(set(entries)) == len(entries), f"{label}.{key} lists an ID twice.")
+    if "mentionOnly" in slack:
+        require(type(slack["mentionOnly"]) is bool, f"{label}.mentionOnly must be true or false.")
+    return slack
+
+
+def slack_env(agent_id):
+    """The gateway environment variables that hold an officer's Slack app-level and bot tokens."""
+    suffix = agent_id.upper().replace("-", "_")
+    return f"SLACK_APP_TOKEN_{suffix}", f"SLACK_BOT_TOKEN_{suffix}"
+
+
+def slack_bot_id(agent_id):
+    """The officer's Stargate bot ID. Member IDs never start with fleet-, so it cannot meet an IRC registration's."""
+    return f"fleet-slack-{agent_id}"
+
+
+def officer_title(person):
+    return f"{'Rear admiral' if person.get('role') == 'rear_admiral' else 'Captain'} {person['id']}"
+
+
+def check_officer_slack(agents, stakeholder):
+    """Officers' own Slack bots: each a distinct Slack app, on an OpenCode officer.
+
+    The rear admiral's own bot replaces stakeholders.slack, which reads the same token files.
+    """
+    apps = [stakeholder["appId"]] if stakeholder else []
+    for person in agents:
+        if "slack" not in person:
+            continue
+        require(person["harness"]["type"] == "opencode",
+                f"{officer_title(person)} uses claude-sdk and cannot have its own Slack bot: Stargate's Claude "
+                "backend has no root session for Slack and IRC to share, and its gateway runs as the officer, whose "
+                "model could read the Slack tokens. Remove its slack, or use the opencode harness.")
+        require(not (person["role"] == "rear_admiral" and stakeholder),
+                "Give the rear admiral one Slack bot: rearAdmiral.slack shares its root session with IRC, and "
+                "stakeholders.slack keeps sessions of its own. Both read the same token files; remove one.")
+        apps.append(person["slack"]["appId"])
+    require(len(set(apps)) == len(apps), "Each Slack bot needs its own Slack app: an appId appears twice.")
+
+
+def slack_members(cfg):
+    """The officers whose secrets directories hold Slack tokens: each with its own bot, and the rear admiral for
+    stakeholders.slack."""
+    return [person["id"] for person in cfg["members"]
+            if "slack" in person or person["role"] == "rear_admiral" and cfg["integrations"]["slack"]]
+
+
+def slack_app_id(cfg, agent_id):
+    """The Slack app whose tokens an officer's secrets directory holds: its own bot's, else stakeholders.slack's."""
+    person = next(person for person in cfg["members"] if person["id"] == agent_id)
+    return (person.get("slack") or cfg["integrations"]["slack"])["appId"]
+
+
+def slack_owner(cfg, agent_id):
+    return "the rear admiral's" if agent_id == cfg["members"][0]["id"] else f"captain {agent_id}'s"
+
+
+def officer_slack_bot(person, registration, tokens):
+    """The officer's Stargate Slack bot and the environment it reads, or (None, {}) without one.
+
+    The bot takes the backend of the officer's IRC registration, its pinned sessionID included: Stargate lets one
+    Slack bot and one IRC registration pin the same OpenCode root, so a request on either reaches that session.
+    Each still delivers only the replies to its own requests.
+    """
+    slack = person.get("slack")
+    if not slack:
+        return None, {}
+    require(tokens and SLACK_TOKEN_FILES.keys() <= tokens.keys() and tokens.get("appId", slack["appId"]) == slack["appId"],
+            f"Supply slack-app-token and slack-bot-token for Slack app {slack['appId']} in {person['id']}'s secrets "
+            "directory.")
+    app_env, bot_env = slack_env(person["id"])
+    bot = {
+        "id": slack_bot_id(person["id"]), "displayName": person["name"], "backend": dict(registration["backend"]),
+        "slack": {"appId": slack["appId"], "appTokenEnv": app_env, "botTokenEnv": bot_env},
+        "access": {"users": slack["users"], "channels": slack["channels"],
+                   "mentionOnly": slack.get("mentionOnly", True)},
+    }
+    return bot, {app_env: tokens["slack-app-token"], bot_env: tokens["slack-bot-token"]}
+
+
+def slack_plan(cfg):
+    """What --dry-run says about officers' own Slack bots, one line each."""
+    lines = []
+    for person in cfg["members"]:
+        if not (slack := person.get("slack")):
+            continue
+        app_env, bot_env = slack_env(person["id"])
+        if person["role"] == "rear_admiral" or person["crew"]:
+            session = "shares its pinned root session with its IRC registration"
+        else:
+            session = ("has no pinned root without crew, so Slack threads and IRC conversations keep separate "
+                       "sessions")
+        lines.append(
+            f"Slack: {officer_title(person)} answers as Slack app {slack['appId']} ({slack_bot_id(person['id'])}), "
+            f"to users {', '.join(slack['users'])} in {', '.join(slack['channels'])}"
+            f"{', when mentioned' if slack.get('mentionOnly', True) else ''}; it {session}. Its tokens come from "
+            f"{person['id']}/slack-app-token and slack-bot-token in the secrets directory, as {app_env} and {bot_env}.")
+    return lines
+
+
+def rear_root(cfg):
+    """Whether the rear admiral has a pinned root: agent dispatch needs one, and its own Slack bot shares it."""
+    return bool(cfg["agentDispatch"] or "slack" in cfg["members"][0])
+
+
 def listener(value, label, default_port, allow_bind=False):
     value = fields(value, label, "port bind" if allow_bind else "port")
     return {"port": port(value.get("port", default_port)), "bind": ip(value.get("bind", LOOPBACK))}
 
 
 def irc_config(value, slug, check_files):
-    value = fields(value, "irc", "mode host port tls caFile allowedAccounts commandChannel starbaseChannel advertise compose", ["mode", "allowedAccounts"])
+    value = fields(value, "irc", "mode host port tls caFile allowedAccounts commandChannel starbaseChannel advertise compose auth", ["mode", "allowedAccounts"])
     mode = pattern(value["mode"], r"local|remote", "IRC mode")
     tls = boolean(value.get("tls", mode == "remote"))
     require(mode == "local" or tls, "Remote IRC requires TLS.")
+    auth = irc_auth(value, mode, tls)
     server_host = host(value.get("host", LOOPBACK if mode == "local" else None))
     server_port = port(value.get("port", 6697 if tls else 6667))
     if mode == "local":
@@ -277,6 +422,7 @@ def irc_config(value, slug, check_files):
         "mode": mode, "host": server_host, "port": server_port, "tls": tls, "allowedAccounts": allowed,
         "starbaseChannel": standard_channels.starbase(slug), "commandChannel": standard_channels.command(slug),
     }
+    irc["auth"] = auth
     for key, label in (("starbaseChannel", "irc.starbaseChannel"), ("commandChannel", "irc.commandChannel")):
         if key in value:
             require(value[key] == irc[key], not_standard(slug, label, value[key], irc[key]))
@@ -313,6 +459,19 @@ def irc_config(value, slug, check_files):
         if "websocketUrl" in advertised:
             irc["advertise"]["websocketUrl"] = url(advertised["websocketUrl"], "IRC WebSocket URL", True, websocket=True)
     return irc
+
+
+def irc_auth(value, mode, tls):
+    """How officers sign in to IRC: certificates (SASL EXTERNAL) by default on a remote server, else passwords."""
+    auth = pattern(value.get("auth", "certificate" if mode == "remote" else "password"), r"certificate|password",
+                   "irc.auth (certificate or password)")
+    if auth == "certificate":
+        # Stargate takes exactly one of passwordEnv and clientPemFile per account, and clientPemFile needs TLS.
+        require(mode == "remote", "irc.auth certificate needs a remote IRC server for now. The fleet reaches the "
+                "Ergo this installer manages over plain loopback IRC, and Stargate presents a client certificate "
+                "only over TLS. Leave irc.auth out, or set it to password (README, 'IRC sign-in').")
+        require(tls, "IRC certificates (SASL EXTERNAL) need TLS: set irc.tls to true, or irc.auth to password.")
+    return auth
 
 
 def history_config(value):
@@ -497,7 +656,7 @@ def repository_config(value):
     require(isinstance(value, list), "repositories must be an array.")
     repos = {}
     for row in value:
-        row = fields(row, "repository", "id url private", ["id", "url"])
+        row = fields(row, "repository", "id url private description tracker", ["id", "url"])
         # IDs are also Stargate crew project keys: lowercase, starting with a letter, never "default".
         name = pattern(row["id"], r"[a-z][a-z0-9_-]{0,39}", "repository ID (start with a lowercase letter)")
         require(name != "default", "The repository ID default is reserved by Stargate's crew plugin.")
@@ -509,6 +668,21 @@ def repository_config(value):
             pattern(address, r"https://github\.com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+", "private GitHub repository HTTPS URL")
         repos[name] = {"url": address, "private": private}
     return repos
+
+
+def repository_notes(value):
+    """Each repository's optional one-line description and tracker note, for its captains' workspace instructions.
+
+    Kept apart from repository_config, whose URL and visibility are fixed once installed; these may change.
+    """
+    notes = {}
+    for row in value:
+        note = {}
+        for key, maximum in (("description", 200), ("tracker", 300)):
+            if key in row:
+                note[key] = string(row[key], f"repository {row['id']} {key} (one line)", maximum).strip()
+        notes[row["id"]] = note
+    return notes
 
 
 def toolchain_config(value):
@@ -562,7 +736,7 @@ def integrations_config(cfg):
     for family, settings in families.items():
         fields(settings, f"{family} quota provider", "")
     if "reportChannel" in usage:
-        require(slack is not None, "Usage notices require rear-admiral Slack.")
+        require(slack is not None or "slack" in cfg["rearAdmiral"], "Usage notices require rear-admiral Slack.")
         pattern(usage["reportChannel"], r"[CG][A-Z0-9]+", "Slack quota report channel")
     return {"slack": slack, "teams": teams,
             "usage": {**usage, "providers": sorted(families or FAMILIES)}}
@@ -621,6 +795,8 @@ def validate(config, credentials, check_files=True):
     require(isinstance(cfg["captains"], list), "Captains must be an array.")
     officers = [member(person) for person in [cfg["rearAdmiral"], *cfg["captains"]]]
     require(not {"crew", "crewNames"} & officers[0].keys(), "Only captains may declare crew.")
+    require("sessionRoot" not in officers[0], "Only captains take sessionRoot: the rear admiral works in its "
+            "reference checkout of the first repository.")
     irc = irc_config(cfg["irc"], slug, check_files)
     captain_ids = [person["id"] for person in officers[1:]]
     trouble = standard_channels.problem(slug, captain_ids)
@@ -712,9 +888,9 @@ def validate(config, credentials, check_files=True):
             "githubPolicy.protectedBranches must be an array of branch patterns.")
     protected = [pattern(branch, r"[a-zA-Z0-9*?._/-]{1,120}", "GitHub protected branch pattern") for branch in protected]
 
-    private = fields(credentials, "secrets", "proxyKey ircPasswords ircOperatorPassword ircHistoryPassword apiToken rearAdmiralApiToken", ["proxyKey", "ircPasswords"])
+    private = fields(credentials, "secrets", "proxyKey ircPasswords ircOperatorPassword ircHistoryPassword apiToken rearAdmiralApiToken", ["proxyKey"])
     proxy_key = pattern(private["proxyKey"], r"[a-zA-Z0-9_=-]{20,256}", "proxy client key")
-    passwords = private["ircPasswords"]
+    passwords = private.get("ircPasswords", {})
     require(isinstance(passwords, dict), "ircPasswords must be an object.")
     medical = medical_config(cfg.get("medical", {}), irc, agents)
     required = {person["account"] for person in agents}
@@ -729,7 +905,14 @@ def validate(config, credentials, check_files=True):
             pattern(account, ERGO_ACCOUNT, "local Ergo account")
     else:
         require(operator_password is None, "An IRC operator password requires local mode.")
-    require(required <= passwords.keys(), "Supply an IRC password for the rear admiral and every captain.")
+    if irc["auth"] == "certificate":
+        # With certificates no IRC password exists for an officer, so none is accepted or stored.
+        require(not {name.lower() for name in passwords} & accounts,
+                "Officers sign in to IRC with certificates (irc.auth certificate, the default with a remote server), "
+                "so the secrets file keeps no IRC password for the rear admiral or a captain. Remove their entries "
+                "from ircPasswords, or set irc.auth to password to keep signing in with passwords.")
+    else:
+        require(required <= passwords.keys(), "Supply an IRC password for the rear admiral and every captain.")
     require(passwords.keys() <= permitted, "ircPasswords names an account that is not the rear admiral's or a captain's. "
             "Crew have no IRC accounts. Local mode also accepts passwords for allowlisted humans.")
     for password in passwords.values():
@@ -768,10 +951,13 @@ def validate(config, credentials, check_files=True):
             fleet_records.check(slug, fleet_records.roster({"members": agents, "irc": irc}))
         except fleet_records.Refused as error:
             raise Invalid(str(error)) from None
+    integrations = integrations_config(cfg)
+    check_officer_slack(agents, integrations["slack"])
     return {
         "slug": slug, "name": string(cfg["name"], "fleet name"), "members": agents, "irc": irc, "medical": medical,
         "repositories": repositories,
-        "integrations": integrations_config(cfg), "operators": operators, "protectedBranches": protected,
+        "repositoryNotes": repository_notes(cfg.get("repositories", [])),
+        "integrations": integrations, "operators": operators, "protectedBranches": protected,
         "toolchains": toolchain_config(cfg.get("toolchains", {})),
         "maintenance": maintenance_config(cfg.get("maintenance", {})),
         "stargate": {**source({key: stargate[key] for key in ("repo", "ref") if key in stargate},
@@ -852,8 +1038,7 @@ def app_keys(people, directory, saved_people=()):
 
 def extra_sources(cfg, directory, partial=False):
     integrations = cfg["integrations"]
-    rear = cfg["members"][0]["id"]
-    slack = integrations["slack"]
+    slack = slack_members(cfg)
     quota = "reportChannel" in integrations["usage"]
     with private_directory(directory) as root:
         if root is None:
@@ -862,14 +1047,14 @@ def extra_sources(cfg, directory, partial=False):
         cloud = collect_cloud(root, [person["id"] for person in cfg["members"]])
         files = {(agent, "cloud", name): contents
                  for agent, entries in cloud.items() for name, contents in entries.items()}
-        if slack:
-            with private_directory(rear, root) as agent_dir:
-                require(partial or agent_dir is not None, "Supply Slack credentials in the rear admiral's secrets directory.")
+        for agent in slack:
+            with private_directory(agent, root) as agent_dir:
+                require(partial or agent_dir is not None, f"Supply Slack credentials in {slack_owner(cfg, agent)} secrets directory.")
                 if agent_dir is not None:
-                    for name in ("slack-app-token", "slack-bot-token"):
+                    for name in SLACK_TOKEN_FILES:
                         contents = private_file(name, optional=partial, dir_fd=agent_dir)
                         if contents is not None:
-                            files[rear, name] = contents
+                            files[agent, name] = contents
         if quota:
             contents = private_file("proxy-management-key", optional=partial, dir_fd=root)
             if contents is not None:
@@ -887,18 +1072,28 @@ def extra_sources(cfg, directory, partial=False):
 
 def extra_snapshot(cfg, directory, previous, prune):
     files = extra_sources(cfg, directory, partial=not prune) if directory else {}
-    rear = cfg["members"][0]["id"]
     tokens = {} if prune else previous.get("tokens", {}).copy()
-    slack_tokens = previous.get("slack", {}).copy()
-    slack = {} if prune else slack_tokens.get(rear, {}).copy()
-    for name, prefix in (("slack-app-token", "xapp"), ("slack-bot-token", "xoxb")):
-        if (rear, name) in files:
-            slack[name] = pattern(files[rear, name].decode("ascii").strip(), fr"{prefix}-[a-zA-Z0-9-]{{8,512}}", name)
-        require(not cfg["integrations"]["slack"] or name in slack, f"Supply {name} in the rear admiral's secrets directory.")
-    if slack:
-        slack_tokens[rear] = slack
-    else:
-        slack_tokens.pop(rear, None)
+    # Slack tokens by officer. An upgrade keeps tokens it is not given, as for other credentials; pruning keeps
+    # only those of officers whose Slack bot is configured, from the secrets directory.
+    slack_tokens = {} if prune else {agent: entries.copy() for agent, entries in previous.get("slack", {}).items()}
+    for agent in slack_members(cfg):
+        app = slack_app_id(cfg, agent)
+        slack = slack_tokens.setdefault(agent, {})
+        replaced = slack.get("appId", app) != app
+        if replaced:
+            # The tokens belong to a Slack app: none kept for the officer's previous app may pair with the new one.
+            slack = slack_tokens[agent] = {}
+        for name, prefix in SLACK_TOKEN_FILES.items():
+            if (agent, name) in files:
+                slack[name] = pattern(files[agent, name].decode("ascii").strip(), fr"{prefix}-[a-zA-Z0-9-]{{8,512}}", name)
+            require(name in slack, f"Supply {name} in {slack_owner(cfg, agent)} secrets directory"
+                    + (f": its Slack app changed to {app}, so both of the new app's tokens are needed." if replaced
+                       else "."))
+        # Installed copies from before this record are taken to be the configured app's.
+        slack["appId"] = app
+    for name in SLACK_TOKEN_FILES:
+        configured = [slack_tokens[agent][name] for agent in slack_members(cfg)]
+        require(len(set(configured)) == len(configured), f"Each Slack bot needs its own {name}: two officers share one.")
     if ("proxy-management-key",) in files:
         tokens["proxy-management-key"] = pattern(files["proxy-management-key",].decode("ascii").strip(), r"[a-zA-Z0-9_=-]{20,256}", "proxy management key")
     if "reportChannel" in cfg["integrations"]["usage"]:
@@ -1088,8 +1283,12 @@ def captain_permissions(cfg, person):
     return [*permissions, *CREW_GRANTS, *([DISPATCH_GRANT] if cfg["agentDispatch"] else [])]
 
 
-def crew_options(cfg, person, home, engine_port, session_id):
-    """Stargate crew plugin options: one worktree per repository per crew member, under the captain."""
+def crew_options(cfg, person, home, engine_port, session_id, captain_directory=None):
+    """Stargate crew plugin options: one worktree per repository per crew member, under the captain.
+
+    The captain's directory is where its pinned root works: by default its workspace, which need not be a Git
+    repository and lies outside every worktree; the first repository stays the default project either way.
+    """
     repos = list(cfg["repositories"])
 
     def project(repo):
@@ -1101,7 +1300,7 @@ def crew_options(cfg, person, home, engine_port, session_id):
     options = {
         "namespace": f"{cfg['slug']}-{person['id']}",
         "stateDirectory": str(home / ".local/stargate-crew"),
-        "captainDirectory": default["projectDirectory"],
+        "captainDirectory": str(captain_directory or default["projectDirectory"]),
         **default,
         "mesijCommand": str(MESIJ),
         "team": {
@@ -1127,47 +1326,189 @@ def crew_options(cfg, person, home, engine_port, session_id):
     return options
 
 
-def pinned_session(person, workspace):
+def pinned_session(person, workspace, project=None):
     """A captain's confirmed root session, after checking it still fits the configured crew.
 
     The record is read whatever the requested roster: zero crew or no repositories must not drop a pin.
+    workspace is the root's directory; project, for a captain with crew, the first repository's checkout,
+    which Stargate's crew state names whether or not the root works there.
     """
     try:
         record = sessions.SessionRecord(SESSIONS, person["id"]).load()
         if not record or not record.get("confirmed"):
             return None
         sessions.check_roster(record, [worker["id"] for worker in person["crew"]])
-        require(record.get("directory") == str(workspace),
-                "its first repository is fixed once its session is pinned, because Stargate's crew state names "
-                "that checkout. Restore the original first repository.")
+        fixed = ("its first repository is fixed once its session is pinned, because Stargate's crew state names "
+                 "that checkout. Restore the original first repository.")
+        require(record.get("directory") == str(workspace), fixed)
+        # Records from before the workspace root name no project: their root is the first repository.
+        require(project is None or record.get("project", record.get("directory")) == str(project), fixed)
         return pattern(record.get("sessionID"), sessions.SESSION_ID.pattern, "pinned captain session ID")
     except (Invalid, sessions.SessionError) as error:
-        raise Invalid(f"Captain {person['id']}: {error}") from None
+        raise Invalid(f"{officer_title(person)}: {error}") from None
 
 
-def captain_pins(cfg):
+def recorded_roots():
+    """Each installed captain's session root mode, by captain ID, kept when a captain leaves the roster."""
+    path = ETC / "session-roots.json"
+    recorded = read_json(path) if os.access(path, os.R_OK) else {}
+    require(isinstance(recorded, dict) and all(mode in ROOT_MODES for mode in recorded.values()),
+            f"Invalid captain session root record {path}.")
+    return recorded
+
+
+def root_label(root, first):
+    """How --dry-run and notices describe a captain's session root."""
+    if root["mode"] == "workspace" or not first:
+        return f"{root['path']}, the workspace above its repositories"
+    return f"{root['path']}, its checkout of the first repository"
+
+
+def captain_roots(cfg):
+    """Where each captain's sessions start, checked before anything is installed: {captain ID: root}.
+
+    Each root has "path", "mode" (workspace or repository) and "notice", a line for the operator or None.
+    A pinned root never moves: Stargate's crew state and the gateway's backend name its directory, so a
+    sessionRoot that asks for another is refused. An unpinned captain keeps the root it was installed with
+    (recorded_roots; a checkout of the first repository from an installer without that record
+    means it started there) unless its sessionRoot names another. A new captain starts in its workspace.
+    """
+    first = next(iter(cfg["repositories"]), None)
+    recorded = recorded_roots()
+    readable = os.access(SESSIONS, os.R_OK | os.X_OK)
+    roots = {}
+    for person in cfg["members"][1:]:
+        agent_id = person["id"]
+        workspace = STATE / "agents" / agent_id / "workspace"
+        paths = {"workspace": workspace, "repository": workspace / first if first else workspace}
+        configured = person.get("sessionRoot")
+        record = None
+        if readable:
+            try:
+                record = sessions.SessionRecord(SESSIONS, agent_id).load()
+            except sessions.SessionError as error:
+                raise Invalid(f"Captain {agent_id}: {error}") from None
+        if record and record.get("confirmed"):
+            pinned = Path(str(record.get("directory")))
+            mode = "workspace" if pinned == workspace else "repository"
+            require(configured in (None, mode),
+                    f"Captain {agent_id}'s root session is pinned in {pinned}, but its sessionRoot is {configured}. "
+                    "The installer never moves a pinned session: Stargate's crew state and the gateway name its "
+                    f"directory. Remove sessionRoot or set it to {mode}, or give the crew to a new captain ID, "
+                    "whose session starts in its workspace (see Captain sessions in the installer README).")
+            root = {"path": pinned, "mode": mode, "pinned": True, "notice": None}
+            if mode == "repository" and configured is None:
+                root["notice"] = (
+                    f"Captain {agent_id}'s root session is pinned in {pinned}, its checkout of the first repository, "
+                    "and stays there: the installer never moves a pinned session, though new captains start in "
+                    'their workspace. Set its sessionRoot to "repository" to keep it there without this notice; '
+                    "see Captain sessions in the installer README to move it.")
+            roots[agent_id] = root
+            continue
+        previous = recorded.get(agent_id)
+        if previous is None and first and os.path.isdir(paths["repository"]):
+            # Installed before the workspace root: its sessions started in the first repository's checkout.
+            previous = "repository"
+        mode = configured or previous or "workspace"
+        root = {"path": paths[mode], "mode": mode, "pinned": False, "notice": None}
+        if previous and paths[previous] != paths[mode]:
+            root["notice"] = (f"Captain {agent_id} moves from {paths[previous]} to {root_label(root, first)}, as "
+                              "its sessionRoot asks: its conversations start new sessions there, and earlier "
+                              "sessions stay in its history.")
+        elif mode == "repository" and configured is None and first:
+            root["notice"] = (
+                f"Captain {agent_id} keeps starting its sessions in {root_label(root, first)}, as installed; new "
+                'captains start in their workspace. Set its sessionRoot to "workspace" to move it (its '
+                'conversations then start new sessions), or to "repository" to keep it without this notice.')
+        roots[agent_id] = root
+    return roots
+
+
+def session_root_lines(cfg):
+    """--dry-run: where each captain's sessions will start, and any pinned or installed root that differs, after
+    the rear admiral's pinned root when it has one."""
+    first = next(iter(cfg["repositories"]), None)
+    lines = rear_root_lines(cfg)
+    for agent_id, root in captain_roots(cfg).items():
+        lines.append(f"Captain {agent_id}'s root session is pinned in {root_label(root, first)}." if root["pinned"]
+                     else f"Captain {agent_id}'s sessions will start in {root_label(root, first)}.")
+        if root["notice"]:
+            lines.append(root["notice"])
+    if lines and os.geteuid() != 0 and STATE.exists():
+        lines.append("Run the dry run as root to compare these with the sessions already pinned on this host.")
+    return lines
+
+
+def captain_pins(cfg, roots=None):
     """Each captain's pinned root session or None, checked before anything is installed."""
+    roots = roots or captain_roots(cfg)
     first = next(iter(cfg["repositories"]), None)
     pins = {}
     for person in cfg["members"][1:]:
         workspace = STATE / "agents" / person["id"] / "workspace"
-        pins[person["id"]] = pinned_session(person, workspace / first if first else workspace)
+        project = workspace / first if first and person["crew"] else None
+        pins[person["id"]] = pinned_session(person, roots[person["id"]]["path"], project)
     return pins
 
 
+def pinned_directory(person):
+    """The directory of an officer's confirmed root session, or None (also when this user cannot read the records)."""
+    if not os.access(SESSIONS, os.R_OK | os.X_OK):
+        return None
+    try:
+        record = sessions.SessionRecord(SESSIONS, person["id"]).load()
+    except sessions.SessionError as error:
+        raise Invalid(f"{officer_title(person)}: {error}") from None
+    return Path(str(record.get("directory"))) if record and record.get("confirmed") else None
+
+
 def rear_workspace(cfg):
-    """The rear admiral's working directory: its reference checkout of the first repository, if any."""
-    rear = cfg["members"][0]["id"]
+    """The rear admiral's working directory: its reference checkout of the first repository, if any.
+
+    Its own Slack bot pins its root even in a fleet without repositories, in its workspace. Like a captain's, a
+    pinned root never moves, so it stays in the workspace when repositories are added (rear_root_lines says so).
+    """
+    rear = cfg["members"][0]
+    workspace = STATE / "agents" / rear["id"] / "workspace"
     first = next(iter(cfg["repositories"]), None)
-    return STATE / "references" / rear / first if first else STATE / "agents" / rear / "workspace"
+    if first and rear_root(cfg) and pinned_directory(rear) == workspace:
+        return workspace
+    return STATE / "references" / rear["id"] / first if first else workspace
+
+
+def rear_root_lines(cfg):
+    """--dry-run: where the rear admiral's root is or will be pinned, when agent dispatch or its own Slack bot pins
+    it, and what that fixes."""
+    if not rear_root(cfg):
+        return []
+    rear = cfg["members"][0]
+    path = rear_workspace(cfg)
+    first = next(iter(cfg["repositories"]), None)
+    in_reference = path.parent.parent == STATE / "references"
+    where = f"{path}, {'its reference checkout of the first repository' if in_reference else 'its workspace'}"
+    if pinned_directory(rear):
+        lines = [f"The rear admiral's root session is pinned in {where}."]
+    else:
+        reasons = [reason for reason, on in (("agent dispatch is on", cfg["agentDispatch"]),
+                                             ("it has its own Slack bot", "slack" in rear)) if on]
+        lines = [f"The rear admiral's root session will be pinned in {where}, because {' and '.join(reasons)}."]
+    if in_reference:
+        lines.append("Its first repository is then fixed, as a captain's is: the installer refuses a later change.")
+    elif first:
+        lines.append(f"It was pinned before the fleet had a repository and stays there, because the installer never "
+                     f"moves a pinned session; its reference checkouts are under {STATE / 'references' / rear['id']}.")
+    else:
+        lines.append("It stays in the workspace when repositories are added: the installer never moves a pinned "
+                     "session.")
+    return lines
 
 
 def rear_pin(cfg):
-    """The rear admiral's pinned root session while agent dispatch is on, or None.
+    """The rear admiral's pinned root session while agent dispatch is on or it has its own Slack bot, or None.
 
     Captains name it in their fleetControl target, which is how they recognise their rear admiral's offers.
     """
-    if not cfg["agentDispatch"]:
+    if not rear_root(cfg):
         return None
     return pinned_session(cfg["members"][0], rear_workspace(cfg))
 
@@ -1269,7 +1610,7 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         if session_id:
             engine["plugins"] = [{
                 "package": str(APP / "src" / f"stargate-{cfg['stargate']['ref']}"),
-                "options": crew_options(cfg, person, home, engine_port, session_id),
+                "options": crew_options(cfg, person, home, engine_port, session_id, workspace),
             }]
             if answers_offers:
                 # Stargate's fleet plugin gives the pinned root fleet_answer_offer, over the gateway's socket.
@@ -1316,11 +1657,177 @@ def claude_backend(cfg, person, workspace, documents):
 
 def irc_agent(cfg, person, backend):
     agent_id = person["id"]
+    if cfg["irc"]["auth"] == "certificate":
+        # SASL EXTERNAL: the gateway reads the officer's certificate and key; no password variable exists.
+        return {
+            "id": agent_id, "displayName": person["name"], "account": person["account"],
+            "clientPemFile": str(irc_client_pem(agent_id)), "backend": backend,
+        }, {}
     password_var = "IRC_" + agent_id.upper().replace("-", "_")
     return {
         "id": agent_id, "displayName": person["name"], "account": person["account"],
         "passwordEnv": password_var, "backend": backend,
     }, {password_var: cfg["passwords"][person["account"]]}
+
+
+def check_sign_in(registration, server):
+    """The pinned Stargate's rule per IRC account: exactly one of passwordEnv (SASL PLAIN) and clientPemFile
+    (SASL EXTERNAL), and a client certificate only over TLS."""
+    require(("passwordEnv" in registration) != ("clientPemFile" in registration),
+            f"IRC account {registration['account']} needs exactly one of a password and a client certificate.")
+    require("clientPemFile" not in registration or server["tls"],
+            f"IRC account {registration['account']} signs in with a client certificate, which needs TLS.")
+
+
+def irc_client_pem(agent_id):
+    return IRC_CERTS / f"{agent_id}.pem"
+
+
+def irc_gateway_user(person):
+    """The Linux user whose gateway serves an officer: its own for a Claude SDK officer, else the shared one."""
+    return GATEWAY if person["harness"]["type"] == "opencode" else f"ss-{person['id']}"
+
+
+def irc_fingerprint(bundle, label):
+    """Check a client bundle as Stargate does and return the SHA-256 fingerprint of its first certificate, the
+    lower-case hex form that Ergo's NickServ CERT ADD takes."""
+    certificates = IRC_PEM_CERTIFICATE.findall(bundle)
+    require(len(bundle.encode()) <= IRC_PEM_BYTES and certificates and IRC_PEM_KEY.search(bundle),
+            f"{label} must hold a PEM certificate and its unencrypted private key, at most 64 KiB.")
+    with tempfile.TemporaryDirectory() as work:
+        path = Path(work) / "bundle.pem"
+        path.write_text(bundle)
+        path.chmod(0o600)
+        try:
+            # OpenSSL takes the first certificate as the leaf and checks that the key matches it, as Stargate does.
+            ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_cert_chain(path, password=lambda: b"")
+            leaf = ssl.PEM_cert_to_DER_cert(certificates[0])
+        except (ssl.SSLError, ValueError):
+            raise Invalid(f"{label}: the first certificate does not match an unencrypted private key.") from None
+    return hashlib.sha256(leaf).hexdigest()
+
+
+def read_irc_bundle(path):
+    """An installed bundle's text, or None when there is none. Reads only a regular file, never a link."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise Invalid(f"Cannot read the IRC certificate bundle at {path}.") from None
+    with os.fdopen(fd, "rb") as stream:
+        require(stat.S_ISREG(os.fstat(fd).st_mode), f"Expected a regular file at {path}.")
+        contents = stream.read(IRC_PEM_BYTES + 1)
+    try:
+        return contents.decode("ascii")
+    except UnicodeError:
+        raise Invalid(f"Expected a PEM certificate bundle at {path}.") from None
+
+
+def irc_bundles(cfg, directory):
+    """Bundles an operator supplies as <secrets-dir>/<officer-id>/irc-client.pem, checked, by officer ID."""
+    found = {}
+    if cfg["irc"]["auth"] != "certificate" or directory is None:
+        return found
+    try:
+        with private_directory(directory) as root:
+            for person in cfg["members"] if root is not None else ():
+                with private_directory(person["id"], root) as agent:
+                    if agent is not None:
+                        found[person["id"]] = private_file(IRC_CLIENT_PEM, optional=True, dir_fd=agent)
+    except ValueError as error:
+        if isinstance(error, Invalid):
+            raise
+        raise Invalid(f"Cannot read an IRC certificate bundle in {directory}: {error} Supply owner-only regular "
+                      f"{IRC_CLIENT_PEM} files (chmod 600) in private directories.") from None
+    bundles = {}
+    for agent_id, contents in found.items():
+        if contents is None:
+            continue
+        label = str(Path(directory) / agent_id / IRC_CLIENT_PEM)
+        try:
+            bundles[agent_id] = contents.decode("ascii")
+        except UnicodeError:
+            raise Invalid(f"Expected a PEM certificate bundle at {label}.") from None
+        irc_fingerprint(bundles[agent_id], label)
+    return bundles
+
+
+def new_irc_bundle(account):
+    """A new P-256 key and self-signed certificate for an officer's IRC account, as one PEM bundle."""
+    with tempfile.TemporaryDirectory() as work:
+        key, certificate = Path(work) / "key.pem", Path(work) / "certificate.pem"
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+             "-sha256", "-days", "3650", "-subj", f"/CN={account}", "-keyout", key, "-out", certificate],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return certificate.read_text() + key.read_text()
+
+
+def own_file(path, content, user):
+    """Write a file owned by user with mode 0600: Stargate takes a client PEM only from its own, owner-only file."""
+    account = pwd.getpwnam(user)
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        info = None
+    if (info and stat.S_ISREG(info.st_mode) and (info.st_uid, info.st_gid) == (account.pw_uid, account.pw_gid)
+            and stat.S_IMODE(info.st_mode) == 0o600 and read_irc_bundle(path) == content):
+        return
+    (STATE / "pending").touch()
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False, encoding="ascii") as stream:
+        temp = Path(stream.name)
+        try:
+            os.fchmod(stream.fileno(), 0o600)
+            os.fchown(stream.fileno(), account.pw_uid, account.pw_gid)
+            stream.write(content)
+            stream.close()
+            os.replace(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
+
+
+def irc_certificates(cfg):
+    """Give each officer's gateway user its IRC certificate bundle: the installed or supplied one, else a new one.
+
+    The installer keeps it across upgrades; install.sh puts a supplied bundle in place before rendering.
+    """
+    directory(IRC_CERTS, 0o711)
+    for person in cfg["members"]:
+        path = irc_client_pem(person["id"])
+        bundle = read_irc_bundle(path)
+        if bundle is None:
+            bundle = new_irc_bundle(person["account"])
+        irc_fingerprint(bundle, str(path))
+        own_file(path, bundle, irc_gateway_user(person))
+
+
+def irc_sign_in(cfg, bundles=None, installed=True):
+    """What the operator needs to know about the officers' IRC sign-in, and each certificate's fingerprint.
+
+    Never prints key material: only the SHA-256 fingerprints of the certificates.
+    """
+    irc = cfg["irc"]
+    if irc["auth"] != "certificate":
+        return ["Officers sign in to IRC with passwords (SASL PLAIN, irc.auth password)."]
+    lines = ["Officers sign in to IRC with certificates (SASL EXTERNAL, irc.auth certificate). An officer can sign "
+             f"in only once its fingerprint is bound to its account on {irc['host']}. Bind each one as an IRC "
+             "operator with NickServ's accreg capability, as below, or signed in as the account itself, without "
+             "the account name:"]
+    for person in cfg["members"]:
+        bundle = (bundles or {}).get(person["id"])
+        source = "supplied"
+        if bundle is None and os.access(irc_client_pem(person["id"]), os.R_OK):
+            bundle, source = read_irc_bundle(irc_client_pem(person["id"])), "installed"
+        if bundle is None:
+            lines.append(f"  {person['account']}: a new certificate is generated on install; the install summary "
+                         "prints its fingerprint.")
+            continue
+        fingerprint = irc_fingerprint(bundle, f"The IRC certificate of {person['id']}")
+        note = "" if installed else f" ({source})"
+        lines.append(f"  /msg NickServ CERT ADD {person['account']} {fingerprint}{note}")
+    return lines
 
 
 def irc_officer(cfg, person, registration):
@@ -1645,7 +2152,9 @@ def stakeholder_settings(cfg, tokens, backend, user, data, environment):
         settings["quotaWatch"] = {
             "proxy": {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}", "managementKeyFile": str(data.parent / "quota-management-key")},
             "stateFile": str(data / "quota.json"), "providers": usage["providers"],
-            "report": {"bot": "fleet-stakeholder-slack", "channel": usage["reportChannel"]},
+            # The rear admiral posts as its stakeholder bot, or as its own Slack bot when it has that instead.
+            "report": {"bot": "fleet-stakeholder-slack" if slack else slack_bot_id(cfg["members"][0]["id"]),
+                       "channel": usage["reportChannel"]},
         }
     return settings, writable
 
@@ -1680,9 +2189,14 @@ def render(cfg, extra, prune=False):
     if slug_path.exists():
         require(slug_path.read_text().strip() == cfg["slug"], "Fleet slug is immutable on this VM.")
     write(slug_path, cfg["slug"] + "\n")
-    pins = captain_pins(cfg)
+    roots = captain_roots(cfg)
+    pins = captain_pins(cfg, roots)
     rear_session = rear_pin(cfg)
+    rear_directory = rear_workspace(cfg)
     withdraw_ready(pins)
+    # Record each captain's root before its checkouts are cloned, so a later run keeps it (captain_roots).
+    write(ETC / "session-roots.json",
+          json_text({**recorded_roots(), **{agent_id: root["mode"] for agent_id, root in roots.items()}}))
     tokens = {**extra["tokens"], **extra.get("slack", {}).get(cfg["members"][0]["id"], {})}
     if "reportChannel" not in cfg["integrations"]["usage"]:
         tokens.pop("proxy-management-key", None)
@@ -1713,24 +2227,32 @@ def render(cfg, extra, prune=False):
             ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "role"],
             input=json_text(documents[agent_id]), text=True, check=True,
         )
+        if person["role"] == "captain":
+            # The workspace's own AGENTS.md and CLAUDE.md, written as the captain beside its checkouts, never in one.
+            subprocess.run(
+                ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "workspace-instructions"],
+                input=json_text(workspace_documents(cfg, person, roots[agent_id]["path"], home)), text=True,
+                check=True,
+            )
         files = extra["cloud"].get(agent_id, {})
         if files or (home / ".config/subspace/cloud/.installer-files").is_file():
             subprocess.run(
                 ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "cloud", str(prune).lower()],
                 input=json_text(files), text=True, check=True,
             )
-    references = reconcile_workspaces(cfg, homes)
+    reconcile_workspaces(cfg, homes)
     databases, engines = [], []
     registrations, environments = {}, {}
     for person in cfg["members"]:
         agent_id = person["id"]
         home = homes[agent_id]
         harness = person["harness"]
-        workspace = home / "workspace"
-        if references:
-            if person["role"] == "rear_admiral":
-                workspace = references
-            workspace /= next(iter(cfg["repositories"]))
+        if person["role"] == "captain":
+            # The captain's session root: its workspace above the checkouts, or where it was installed or pinned.
+            workspace = roots[agent_id]["path"]
+        else:
+            # The rear admiral's reference checkout of the first repository, or the workspace its root is pinned in.
+            workspace = rear_directory
         if harness["type"] == "opencode":
             pin = rear_session if person["role"] == "rear_admiral" else pins.get(agent_id)
             unit, backend, headers, database = render_engine(
@@ -1752,6 +2274,8 @@ def render(cfg, extra, prune=False):
         after.append(local_unit)
         medical_after.append(local_unit)
     units.extend(medical_units(cfg, extra.get("medical", {}), medical_after))
+    if cfg["irc"]["auth"] == "certificate":
+        irc_certificates(cfg)
     groups = {}
     rear = cfg["members"][0]
     default_group = "gateway" if rear["harness"]["type"] == "opencode" else "gateway-opencode"
@@ -1768,6 +2292,7 @@ def render(cfg, extra, prune=False):
         opts = groups.setdefault(group, {"user": user, "home": home, "irc": [], "environment": {}, "ready": [],
                                          "writable": []})
         entry = irc_officer(cfg, person, registrations[agent_id])
+        check_sign_in(entry, entry["server"])
         if control := fleet_control(cfg, person, pins.get(agent_id), rear_session, gateway_home):
             # This captain answers dispatch offers with Stargate's fleet plugin. The socket directory belongs to the
             # gateway and admits only this captain's engine group; the evidence ledger is the gateway's alone.
@@ -1779,6 +2304,11 @@ def render(cfg, extra, prune=False):
             opts["writable"].append(fleet_socket(agent_id).parent)
         opts["irc"].append(entry)
         opts["environment"].update(environments[agent_id])
+        # The officer's own Slack bot joins the gateway that serves its IRC registration, on the same backend.
+        bot, slack_environment = officer_slack_bot(person, registrations[agent_id], extra.get("slack", {}).get(agent_id))
+        if bot:
+            opts.setdefault("bots", []).append(bot)
+            opts["environment"].update(slack_environment)
         if person["crew"]:
             opts["ready"].append(ready_marker(agent_id))
 
@@ -1808,6 +2338,9 @@ def render(cfg, extra, prune=False):
                     "allowedNetworks": ["127.0.0.0/8", "::1/128"], "fleetName": cfg["name"],
                     "corsOrigins": cfg["stargate"]["api"]["corsOrigins"],
                 }
+        if options.get("bots"):
+            # Officers' own Slack bots, before the rear admiral's stakeholder bot when it has one.
+            settings["bots"] = [*options["bots"], *settings.get("bots", [])]
         name = "stargate" if is_primary else f"stargate-{group}"
         config_path = save_settings(name, settings, user)
         runtime_path = save_settings(group, {
@@ -1852,7 +2385,7 @@ def commission(prune, existing=False):
     for person in cfg["members"]:
         # Captains with crew, and the rear admiral while agent dispatch is on (captains name its root).
         rear = person["role"] == "rear_admiral"
-        if not (person["crew"] or rear and cfg["agentDispatch"]):
+        if not (person["crew"] or rear and rear_root(cfg)):
             continue
         store = sessions.SessionRecord(SESSIONS, person["id"])
         try:
@@ -1867,6 +2400,10 @@ def commission(prune, existing=False):
                 "model": {"providerID": PROVIDERS[harness["family"]], "id": harness["model"]},
                 "permissions": harness_permissions(cfg, person) if rear else captain_permissions(cfg, person),
             }
+            if person["crew"]:
+                # Stargate's crew state names the first repository's checkout as the default project, whether
+                # the root works there or in the workspace above it, so the record keeps it fixed too.
+                expected["project"] = str(STATE / "agents" / person["id"] / "workspace" / next(iter(cfg["repositories"])))
             if existing:
                 _, new = sessions.ensure(client, store, expected, wait=lambda c, i: sessions.wait_until_ready(c, i, 2),
                                          notice=lambda _text: None)
@@ -1994,6 +2531,10 @@ def main(args):
             rear_pin(cfg)
         prune = tail[-1] == "true"
         if verb == "render":
+            # Say once per install which captains keep a root other than the workspace, and why.
+            for root in captain_roots(cfg).values():
+                if root["notice"]:
+                    print(root["notice"])
             render(cfg, read_json(cache, private=True), prune)
             return
         directory = Path(tail[-2]) if tail[-2] else None
@@ -2012,6 +2553,9 @@ def main(args):
             }}
         keys = app_keys(cfg["members"], directory, saved_people)
         extra = extra_snapshot(cfg, directory, previous, prune)
+        bundles = irc_bundles(cfg, directory)
+        for person in cfg["members"]:
+            check_sign_in(irc_agent(cfg, person, {})[0], cfg["irc"])
         if verb == "prepare":
             stage = Path(tail[2])
             (stage / "fleet.json").write_text(json_text(config))
@@ -2025,6 +2569,14 @@ def main(args):
             if cfg["irc"]["mode"] == "local":
                 sources.extend(cfg["irc"]["compose"][key] for key in ("repo", "ref"))
             (stage / "sources").write_text("\n".join(sources) + "\n")
+            # Supplied IRC certificate bundles: install.sh puts them in IRC_CERTS, where render gives each to its gateway.
+            for member_id, bundle in bundles.items():
+                (stage / "irc-certs").mkdir(mode=0o700, exist_ok=True)
+                (stage / "irc-certs" / f"{member_id}.pem").write_text(bundle)
+                installed = read_irc_bundle(irc_client_pem(member_id)) if os.access(IRC_CERTS, os.X_OK) else None
+                if installed and installed != bundle:
+                    print(f"Replacing {member_id}'s IRC certificate {irc_fingerprint(installed, member_id)} with the "
+                          f"supplied {irc_fingerprint(bundle, member_id)}. Bind the new fingerprint on the IRC server.")
         else:
             count = sum(len(person["crew"]) for person in cfg["members"])
             print(f"Fleet {cfg['slug']} has {len(cfg['members']) - 1} captains, {count} crew and one rear admiral. "
@@ -2045,6 +2597,11 @@ def main(args):
             if not cfg["repositories"] and len(cfg["members"]) > 1:
                 print("No repositories are configured, so captains have no crew: crew work in Git worktrees of "
                       "their captain's checkouts.")
+            for line in session_root_lines(cfg):
+                print(line)
+            for line in slack_plan(cfg):
+                print(line)
+            print("\n".join(irc_sign_in(cfg, bundles, installed=False)))
     elif verb == "commission":
         commission(tail[0] == "true", existing="existing" in tail[1:])
     elif verb == "engine":
@@ -2064,6 +2621,9 @@ def main(args):
         provision_cloud(json.load(sys.stdin), tail == ["true"])
     elif verb == "role":
         provision_role(json.load(sys.stdin))
+    elif verb == "workspace-instructions":
+        # Run as the captain: its workspace AGENTS.md and CLAUDE.md, keeping the operator notes.
+        provision_workspace(json.load(sys.stdin))
     elif verb == "agent-header":
         # Stargate's Claude backend runs this as the officer for its Subspace MCP server's headers.
         require(len(tail) == 1 and re.fullmatch(r"[a-z][a-z0-9-]{0,23}", tail[0]), "Name one agent account.")
@@ -2077,6 +2637,11 @@ def main(args):
         gateway_key()
     elif verb == "irc":
         compose(tail)
+    elif verb == "irc-fingerprints":
+        # The install summary: each officer's certificate fingerprint for the IRC operator to bind.
+        cfg = validate(read_json(ETC / "fleet.json", private=True), read_json(ETC / "secrets.json", private=True))
+        if cfg["irc"]["auth"] == "certificate":
+            print("\n".join(irc_sign_in(cfg)))
     else:
         raise Invalid("Unknown runtime action.")
 

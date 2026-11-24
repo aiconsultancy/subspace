@@ -1,8 +1,16 @@
 """Offline checks for network, GitHub and workspace policy."""
 
+import contextlib
+import hashlib
+import io
 import json
+import os
+import pwd
 import re
+import ssl
+import stat
 import subprocess
+import tarfile
 import tempfile
 import sys
 from pathlib import Path
@@ -24,7 +32,10 @@ import workspaces
 
 
 def example_config():
-    return json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+    config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+    # These tests sign officers in with passwords; IrcCertificateTests covers the default, certificates.
+    config["irc"]["auth"] = "password"
+    return config
 
 
 def api_secrets():
@@ -481,6 +492,7 @@ class FleetPolicyTests(unittest.TestCase):
     def test_stargate_fleet_api_is_an_operator_listener(self):
         example = Path(__file__).resolve().parents[1] / "fleet.example.json"
         config = json.loads(example.read_text())
+        config["irc"]["auth"] = "password"
         config["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
         secrets = {"proxyKey": "fixture-model-proxy-key", "ircPasswords": {
             account: "fixture-password" for account in ("example-atlas", "example-orion")
@@ -531,6 +543,180 @@ class FleetPolicyTests(unittest.TestCase):
         self.assertFalse(any(rule["action"] == "edit" for rule in rear))
         self.assertIn({"action": "edit", "resource": "*", "effect": "allow"}, captain)
         self.assertFalse(any(rule["resource"].startswith("git push") for rule in captain))
+
+
+def workspace_fleet(**api):
+    """The example fleet with crew, two repositories and, optionally, the Subspace API."""
+    config = example_config()
+    config["crew"] = {"claude": {"count": 1}, "codex": {"count": 1}}
+    config["repositories"] = [
+        {"id": "project", "url": "https://github.com/example/project.git", "description": "The example service.",
+         "tracker": "Example issues at https://tracker.example.com/project"},
+        {"id": "library", "url": "https://github.com/example/library.git"},
+    ]
+    config["captains"].append({"id": "vega", "name": "Vega", "account": "example-vega"})
+    secrets = officer_secrets("example-vega")
+    if api:
+        config["api"] = api
+        secrets = {**secrets, "apiToken": api_secrets()["apiToken"]}
+    return validate(config, secrets)
+
+
+class WorkspaceRootTests(unittest.TestCase):
+    """A captain's session starts in its workspace above the checkouts, with generated instructions there."""
+
+    home = Path("/var/lib/subspace-fleet/agents/orion")
+
+    def test_the_crew_plugin_roots_the_captain_in_its_workspace(self):
+        cfg = workspace_fleet()
+        captain = cfg["members"][1]
+        options = runtime.crew_options(cfg, captain, self.home, 4097, "ses_fixture", self.home / "workspace")
+        # The captain's directory need not be a Git repository; the first repository stays the default project.
+        self.assertEqual(options["captainDirectory"], f"{self.home}/workspace")
+        self.assertEqual(options["projectDirectory"], f"{self.home}/workspace/project")
+        self.assertEqual(options["projects"]["library"]["projectDirectory"], f"{self.home}/workspace/library")
+        # Stargate requires the captain's directory and every worker worktree to be distinct and non-nested.
+        workers = [*options["worktrees"].values(),
+                   *(path for project in options["projects"].values() for path in project["worktrees"].values())]
+        captain_directory = Path(options["captainDirectory"])
+        for path in map(Path, workers):
+            self.assertFalse(path.is_relative_to(captain_directory) or captain_directory.is_relative_to(path))
+        # Without a directory it keeps the previous root, the first repository's checkout.
+        legacy = runtime.crew_options(cfg, captain, self.home, 4097, "ses_fixture")
+        self.assertEqual(legacy["captainDirectory"], legacy["projectDirectory"])
+
+    def test_the_session_root_is_a_captain_setting(self):
+        config = example_config()
+        config["captains"][0]["sessionRoot"] = "repository"
+        self.assertEqual(validate(config, officer_secrets())["members"][1]["sessionRoot"], "repository")
+        config["captains"][0]["sessionRoot"] = "home"
+        with self.assertRaisesRegex(Invalid, "workspace or repository"):
+            validate(config, officer_secrets())
+        config = example_config()
+        config["rearAdmiral"]["sessionRoot"] = "workspace"
+        with self.assertRaisesRegex(Invalid, "Only captains take sessionRoot"):
+            validate(config, officer_secrets())
+
+    def test_repository_notes_are_one_line_and_kept_apart_from_the_sources(self):
+        cfg = workspace_fleet()
+        self.assertEqual(cfg["repositoryNotes"], {
+            "project": {"description": "The example service.",
+                        "tracker": "Example issues at https://tracker.example.com/project"},
+            "library": {},
+        })
+        # Notes stay out of the repository sources, whose URL and visibility are fixed once installed.
+        self.assertEqual(cfg["repositories"]["project"], {"url": "https://github.com/example/project.git",
+                                                          "private": False})
+        for row, message in (({"description": "two\nlines"}, "one line"), ({"tracker": "x" * 301}, "one line"),
+                             ({"tracker": 7}, "one line")):
+            config = example_config()
+            config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git", **row}]
+            with self.subTest(row=row), self.assertRaisesRegex(Invalid, message):
+                validate(config, officer_secrets())
+
+    def test_the_workspace_instructions_describe_repositories_trackers_and_channels(self):
+        cfg = workspace_fleet(url="http://127.0.0.1:3000")
+        captain = cfg["members"][1]
+        documents = roles.workspace_documents(cfg, captain, self.home / "workspace", self.home)
+        agents = documents["AGENTS.md"]
+        self.assertTrue(agents.startswith(roles.GENERATED))
+        self.assertIn("You are Orion, a captain in Example Fleet.", agents)
+        self.assertIn(f"`{self.home}/workspace`", agents)
+        self.assertIn("Your sessions start here", agents)
+        self.assertIn("The rear admiral, Atlas,", agents)
+        # Each repository: its ID, description, remote, tracker and where its own instructions are.
+        project, library = agents.split("### `project`")[1].split("### `library`")
+        self.assertIn("The example service.", project)
+        self.assertIn("- Remote: https://github.com/example/project.git", project)
+        self.assertIn("- Tracker: Example issues at https://tracker.example.com/project", project)
+        self.assertIn("- Instructions: `project/AGENTS.md`", project)
+        self.assertIn(f"- Crew worktrees: `{self.home}/worktrees/<crew ID>/project`", project)
+        # A repository without a tracker note uses the fleet's Subspace tracker.
+        self.assertIn("- Tracker: the fleet's Subspace tracker", library)
+        self.assertIn("- Instructions: `library/AGENTS.md`", library)
+        self.assertIn("passing the repository ID as `project` for any repository but `project`", agents)
+        for line in ("- `#example-fleet-orion`: your ship channel", "- `#example-fleet-command`: fleet command",
+                     "- `#example-fleet-vega`: Vega's ship channel.", "- `#example-fleet-starbase`: Starbase"):
+            self.assertIn(line, agents)
+        self.assertIn("its AGENTS.md, branch and review rules, checks and tracker take precedence", agents)
+        self.assertNotIn("$", agents)
+        self.assertEqual(documents["CLAUDE.md"].splitlines()[-1], "@AGENTS.md")
+        self.assertTrue(documents["CLAUDE.md"].startswith(roles.GENERATED))
+        # Without the API a repository with no note says the tracker is not recorded.
+        cfg = workspace_fleet()
+        agents = roles.workspace_documents(cfg, cfg["members"][2], self.home / "workspace/project", self.home)["AGENTS.md"]
+        self.assertIn("- Tracker: not recorded in the fleet configuration", agents)
+        self.assertIn("Your sessions start in `project/`, your checkout of the first repository", agents)
+
+    def provision(self, home, documents):
+        with patch.dict("os.environ", {"HOME": str(home)}):
+            roles.provision_workspace(documents)
+
+    def test_regeneration_keeps_operator_notes_and_never_writes_into_a_checkout(self):
+        cfg = workspace_fleet()
+        captain = cfg["members"][1]
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            workspace = home / "workspace"
+            for repo in ("project", "library"):
+                (workspace / repo / ".git").mkdir(parents=True)
+                (workspace / repo / "AGENTS.md").write_text(f"{repo}'s own instructions\n")
+            checkouts = {path: path.read_bytes() for path in workspace.glob("*/**/*") if path.is_file()}
+            documents = roles.workspace_documents(cfg, captain, workspace, home)
+            self.provision(home, documents)
+            agents, claude = workspace / "AGENTS.md", workspace / "CLAUDE.md"
+            self.assertEqual(roles.operator_notes(agents.read_text()), "")
+            self.assertEqual((agents.stat().st_mode & 0o777, claude.stat().st_mode & 0o777), (0o600, 0o600))
+            self.assertEqual(claude.read_text(), documents["CLAUDE.md"])
+            # Idempotent: an unchanged run replaces neither file.
+            inodes = (agents.stat().st_ino, claude.stat().st_ino)
+            self.provision(home, documents)
+            self.assertEqual((agents.stat().st_ino, claude.stat().st_ino), inodes)
+            # An operator's notes survive a regeneration with changed fleet details.
+            text = agents.read_text().replace(f"{roles.NOTES_START}\n\n",
+                                              f"{roles.NOTES_START}\nDeploy windows are Tuesdays.\n\nAsk first.\n")
+            agents.write_text(text)
+            cfg["repositoryNotes"]["library"]["tracker"] = "Library board"
+            changed = roles.workspace_documents(cfg, captain, workspace, home)
+            self.provision(home, changed)
+            regenerated = agents.read_text()
+            self.assertIn("- Tracker: Library board", regenerated)
+            self.assertEqual(roles.operator_notes(regenerated), "Deploy windows are Tuesdays.\n\nAsk first.")
+            self.assertTrue(regenerated.rstrip().endswith(roles.NOTES_END))
+            self.provision(home, changed)
+            self.assertEqual(agents.read_text(), regenerated)
+            # Only the workspace's own two files were written: every checkout is as it was.
+            self.assertEqual({path: path.read_bytes() for path in workspace.glob("*/**/*") if path.is_file()}, checkouts)
+            self.assertEqual(sorted(path.name for path in workspace.iterdir()),
+                             ["AGENTS.md", "CLAUDE.md", "library", "project"])
+
+    def test_files_the_installer_did_not_write_are_kept_or_left_alone(self):
+        cfg = workspace_fleet()
+        captain = cfg["members"][1]
+        with tempfile.TemporaryDirectory() as temp:
+            home = Path(temp)
+            workspace = home / "workspace"
+            workspace.mkdir()
+            (workspace / "AGENTS.md").write_text("Hand-written workspace notes.\n")
+            (workspace / "CLAUDE.md").write_text("Prefer small pull requests.\n")
+            documents = roles.workspace_documents(cfg, captain, workspace, home)
+            with patch("sys.stderr", new_callable=io.StringIO) as warnings:
+                self.provision(home, documents)
+            self.assertIn("kept the text of", warnings.getvalue())
+            notes = roles.operator_notes((workspace / "AGENTS.md").read_text())
+            self.assertEqual(notes, "Hand-written workspace notes.\n\nPrefer small pull requests.")
+            self.assertEqual((workspace / "CLAUDE.md").read_text(), documents["CLAUDE.md"])
+            self.provision(home, documents)
+            self.assertEqual(roles.operator_notes((workspace / "AGENTS.md").read_text()), notes)
+            # A file the captain cannot read safely, such as a symbolic link, is left as it is.
+            (workspace / "AGENTS.md").unlink()
+            (workspace / "AGENTS.md").symlink_to(workspace / "CLAUDE.md")
+            before = (workspace / "CLAUDE.md").read_text()
+            with patch("sys.stderr", new_callable=io.StringIO) as warnings:
+                self.provision(home, documents)
+            self.assertIn("unchanged", warnings.getvalue())
+            self.assertTrue((workspace / "AGENTS.md").is_symlink())
+            self.assertEqual((workspace / "CLAUDE.md").read_text(), before)
 
 
 class StandardChannelTests(unittest.TestCase):
@@ -828,6 +1014,258 @@ class AgentDispatchTests(unittest.TestCase):
         self.assertIn(captain["account"], rear_entry["fleetPolicy"]["agentAccounts"])
 
 
+def slack_settings(app="AFIXTURE1", **extra):
+    return {"appId": app, "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"], **extra}
+
+
+class OfficerSlackTests(unittest.TestCase):
+    """An officer's own Slack bot, on the root session its IRC registration uses."""
+
+    def setUp(self):
+        self.config = example_config()
+        self.config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        self.config["captains"][0]["slack"] = slack_settings()
+        self.secrets = officer_secrets()
+        self.root = tempfile.TemporaryDirectory()
+        self.addCleanup(self.root.cleanup)
+        self.directory = Path(self.root.name) / "fleet.secrets"
+        self.directory.mkdir(mode=0o700)
+
+    def token(self, agent_id, name, value, mode=0o600):
+        folder = self.directory / agent_id
+        folder.mkdir(mode=0o700, exist_ok=True)
+        (folder / name).write_text(value + "\n")
+        (folder / name).chmod(mode)
+
+    def tokens(self, agent_id="orion", suffix="orion"):
+        self.token(agent_id, "slack-app-token", f"xapp-1-fixture-{suffix}")
+        self.token(agent_id, "slack-bot-token", f"xoxb-1-fixture-{suffix}")
+
+    def test_settings_name_explicit_slack_users_and_channels(self):
+        captain = validate(self.config, self.secrets)["members"][1]
+        self.assertEqual(captain["slack"], slack_settings())
+        refusals = (
+            ({"appId": "AFIXTURE1", "users": ["UFIXTURE1"]}, "missing a required field"),
+            (slack_settings(users=["*"]), r"users entry: use explicit Slack member IDs .*not \*"),
+            (slack_settings(channels=["*"]), r"channels entry: use explicit Slack conversation IDs"),
+            (slack_settings(users=[]), "nobody may address the bot by default"),
+            (slack_settings(channels="CFIXTURE1"), "nobody may address the bot by default"),
+            (slack_settings(users=["UFIXTURE1", "UFIXTURE1"]), "lists an ID twice"),
+            (slack_settings(app="fixture"), "expected a Slack app ID"),
+            (slack_settings(mentionOnly="yes"), "mentionOnly must be true or false"),
+            # Tokens belong in the secrets directory, never in fleet.json.
+            (slack_settings(botToken="xoxb-1-fixture"), "unknown field"),
+        )
+        for settings, message in refusals:
+            self.config["captains"][0]["slack"] = settings
+            with self.subTest(settings=settings), self.assertRaisesRegex(Invalid, message):
+                validate(self.config, self.secrets)
+
+    def test_what_cannot_share_a_session_or_an_app_is_refused(self):
+        claude = json.loads(json.dumps(self.config))
+        claude["captains"][0]["harness"] = {"type": "claude-sdk", "family": "claude"}
+        claude["captains"][0]["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
+        with self.assertRaisesRegex(Invalid, "Captain orion uses claude-sdk and cannot have its own Slack bot"):
+            validate(claude, self.secrets)
+        twice = json.loads(json.dumps(self.config))
+        twice["rearAdmiral"]["slack"] = slack_settings()
+        with self.assertRaisesRegex(Invalid, "own Slack app: an appId appears twice"):
+            validate(twice, self.secrets)
+        stakeholder = json.loads(json.dumps(self.config))
+        stakeholder["rearAdmiral"]["slack"] = slack_settings("AFIXTURE2")
+        stakeholder["stakeholders"] = {"slack": slack_settings("AFIXTURE3")}
+        with self.assertRaisesRegex(Invalid, "Give the rear admiral one Slack bot"):
+            validate(stakeholder, self.secrets)
+        stakeholder["stakeholders"]["slack"]["appId"] = "AFIXTURE1"
+        del stakeholder["rearAdmiral"]["slack"]
+        with self.assertRaisesRegex(Invalid, "an appId appears twice"):
+            validate(stakeholder, self.secrets)
+
+    def test_tokens_come_from_each_officers_secrets_directory(self):
+        cfg = validate(self.config, self.secrets)
+        with self.assertRaisesRegex(Invalid, "Supply slack-app-token in captain orion's secrets directory"):
+            runtime.extra_snapshot(cfg, self.directory, {}, False)
+        self.token("orion", "slack-bot-token", "xoxb-1-fixture-orion")
+        # Half of the pair is refused as well.
+        with self.assertRaisesRegex(Invalid, "Supply slack-app-token in captain orion's secrets directory"):
+            runtime.extra_snapshot(cfg, self.directory, {}, False)
+        self.token("orion", "slack-app-token", "xapp-1-fixture-orion", 0o644)
+        with self.assertRaisesRegex(ValueError, "owner-only"):
+            runtime.extra_snapshot(cfg, self.directory, {}, False)
+        self.token("orion", "slack-app-token", "xoxb-1-fixture-orion")
+        with self.assertRaisesRegex(Invalid, "Invalid slack-app-token"):
+            runtime.extra_snapshot(cfg, self.directory, {}, False)
+        self.tokens()
+        extra = runtime.extra_snapshot(cfg, self.directory, {}, False)
+        self.assertEqual(extra["slack"], {"orion": {"slack-app-token": "xapp-1-fixture-orion",
+                                                    "slack-bot-token": "xoxb-1-fixture-orion", "appId": "AFIXTURE1"}})
+        # An upgrade without a secrets directory keeps the installed tokens.
+        self.assertEqual(runtime.extra_snapshot(cfg, None, extra, False)["slack"], extra["slack"])
+        # Two officers cannot share a bot.
+        self.config["rearAdmiral"]["slack"] = slack_settings("AFIXTURE2")
+        self.token("atlas", "slack-app-token", "xapp-1-fixture-atlas")
+        self.token("atlas", "slack-bot-token", "xoxb-1-fixture-orion")
+        with self.assertRaisesRegex(Invalid, "own slack-bot-token"):
+            runtime.extra_snapshot(validate(self.config, self.secrets), self.directory, {}, False)
+        # Removing an officer's Slack keeps its tokens until they are pruned, and renders no bot.
+        del self.config["rearAdmiral"]["slack"], self.config["captains"][0]["slack"]
+        cfg = validate(self.config, self.secrets)
+        self.assertEqual(runtime.extra_snapshot(cfg, None, extra, False)["slack"], extra["slack"])
+        self.assertEqual(runtime.extra_snapshot(cfg, self.directory, extra, True)["slack"], {})
+        self.assertEqual(runtime.officer_slack_bot(cfg["members"][1], {"backend": {}}, extra["slack"]["orion"]),
+                         (None, {}))
+
+    def test_a_new_slack_app_needs_both_of_its_tokens(self):
+        self.tokens()
+        installed = runtime.extra_snapshot(validate(self.config, self.secrets), self.directory, {}, False)
+        # The officer moves to another Slack app and supplies only the new app-level token.
+        self.config["captains"][0]["slack"] = slack_settings("AFIXTURE9")
+        cfg = validate(self.config, self.secrets)
+        fresh = Path(self.root.name) / "new.secrets"
+        (fresh / "orion").mkdir(parents=True, mode=0o700)
+        fresh.chmod(0o700)
+        (fresh / "orion/slack-app-token").write_text("xapp-1-fixture-new\n")
+        (fresh / "orion/slack-app-token").chmod(0o600)
+        with self.assertRaisesRegex(Invalid, "slack-bot-token .*Slack app changed to AFIXTURE9, so both"):
+            runtime.extra_snapshot(cfg, fresh, installed, False)
+        # Without any secrets directory the old app's tokens are not reused either.
+        with self.assertRaisesRegex(Invalid, "Supply slack-app-token .*Slack app changed to AFIXTURE9"):
+            runtime.extra_snapshot(cfg, None, installed, False)
+        (fresh / "orion/slack-bot-token").write_text("xoxb-1-fixture-new\n")
+        (fresh / "orion/slack-bot-token").chmod(0o600)
+        replaced = runtime.extra_snapshot(cfg, fresh, installed, False)["slack"]["orion"]
+        self.assertEqual(replaced, {"slack-app-token": "xapp-1-fixture-new", "slack-bot-token": "xoxb-1-fixture-new",
+                                    "appId": "AFIXTURE9"})
+        # The render never pairs a bot with tokens recorded for another app.
+        registration = {"backend": {"directory": "/w"}}
+        with self.assertRaisesRegex(Invalid, "for Slack app AFIXTURE9"):
+            runtime.officer_slack_bot(cfg["members"][1], registration, installed["slack"]["orion"])
+        self.assertEqual(runtime.officer_slack_bot(cfg["members"][1], registration, replaced)[1]["SLACK_BOT_TOKEN_ORION"],
+                         "xoxb-1-fixture-new")
+        # Tokens installed before the app was recorded are kept for the configured app on an upgrade.
+        legacy = {"slack": {"orion": {name: value for name, value in installed["slack"]["orion"].items()
+                                      if name != "appId"}}}
+        self.assertEqual(runtime.extra_snapshot(cfg, None, legacy, False)["slack"]["orion"]["appId"], "AFIXTURE9")
+
+    def test_the_bot_uses_the_irc_registrations_backend_and_pinned_session(self):
+        self.config["captains"][0]["slack"] = slack_settings(mentionOnly=False)
+        captain = validate(self.config, self.secrets)["members"][1]
+        backend = {"type": "opencode", "url": "http://127.0.0.1:4097", "directory": "/workspace/project",
+                   "agent": "build", "sessionID": "ses_fixture", "permissions": [], "enforcePermissions": True,
+                   "headersEnv": {"authorization": "ENGINE_ORION"}}
+        registration, _ = runtime.irc_agent(validate(self.config, self.secrets), captain, backend)
+        tokens = {"slack-app-token": "xapp-1-fixture-orion", "slack-bot-token": "xoxb-1-fixture-orion"}
+        bot, environment = runtime.officer_slack_bot(captain, registration, tokens)
+        self.assertEqual(bot, {
+            "id": "fleet-slack-orion", "displayName": "Orion", "backend": backend,
+            "slack": {"appId": "AFIXTURE1", "appTokenEnv": "SLACK_APP_TOKEN_ORION",
+                      "botTokenEnv": "SLACK_BOT_TOKEN_ORION"},
+            "access": {"users": ["UFIXTURE1"], "channels": ["CFIXTURE1"], "mentionOnly": False},
+        })
+        # The configuration names the variables only; the tokens go in the gateway's private environment.
+        self.assertNotIn("fixture-orion", json.dumps(bot))
+        self.assertEqual(environment, {"SLACK_APP_TOKEN_ORION": "xapp-1-fixture-orion",
+                                       "SLACK_BOT_TOKEN_ORION": "xoxb-1-fixture-orion"})
+        self.config["captains"][0]["slack"] = slack_settings()
+        captain = validate(self.config, self.secrets)["members"][1]
+        self.assertTrue(runtime.officer_slack_bot(captain, registration, tokens)[0]["access"]["mentionOnly"])
+        with self.assertRaisesRegex(Invalid, "Supply slack-app-token and slack-bot-token"):
+            runtime.officer_slack_bot(captain, registration, None)
+
+    def test_the_rear_admirals_own_bot_pins_its_root_and_reports_quota(self):
+        cfg = validate(self.config, self.secrets)
+        self.assertFalse(runtime.rear_root(cfg))
+        self.config["rearAdmiral"]["slack"] = slack_settings("AFIXTURE2")
+        with self.assertRaisesRegex(Invalid, "Usage notices require rear-admiral Slack"):
+            validate({**self.config, "rearAdmiral": example_config()["rearAdmiral"],
+                      "usage": {"reportChannel": "CFIXTURE1"}}, self.secrets)
+        self.config["usage"] = {"reportChannel": "CFIXTURE1"}
+        cfg = validate(self.config, self.secrets)
+        self.assertTrue(runtime.rear_root(cfg))
+        tokens = {"slack-app-token": "xapp-1-fixture-atlas", "slack-bot-token": "xoxb-1-fixture-atlas",
+                  "proxy-management-key": "fixture-proxy-management-key"}
+        with patch.object(runtime.subprocess, "run"):
+            settings, _ = runtime.stakeholder_settings(cfg, tokens, {}, "ss-fleet-gateway",
+                                                       Path("/var/lib/subspace-fleet/gateway/data"), {})
+        self.assertNotIn("bots", settings)
+        self.assertEqual(settings["quotaWatch"]["report"], {"bot": "fleet-slack-atlas", "channel": "CFIXTURE1"})
+
+    def test_officers_with_a_bot_are_told_how_slack_requests_arrive(self):
+        cfg = validate(self.config, self.secrets)
+        home = Path("/var/lib/subspace-fleet/agents/orion")
+        rear, captain = (roles.role_documents(cfg, person, Path("/references/atlas"), home)["instructions"]
+                         for person in cfg["members"])
+        self.assertIn("s=slack;c=<channel>;t=<thread>;m=<message>;u=<user>", captain)
+        self.assertIn("goal of that Slack thread", captain)
+        self.assertNotIn("s=slack", rear)
+        self.assertNotIn("$", captain)
+
+    def test_a_workspace_rooted_captain_keeps_its_slack_guidance_beside_the_workspace_instructions(self):
+        # The workspace AGENTS.md is the project file OpenCode loads in the workspace; the role instructions with
+        # the Slack section are its global file. Both are written as the captain, and neither replaces the other.
+        cfg = validate(self.config, self.secrets)
+        captain = cfg["members"][1]
+        with tempfile.TemporaryDirectory() as temp, patch.dict("os.environ", {"HOME": temp}):
+            home = Path(temp)
+            (home / "workspace" / "project").mkdir(parents=True)
+            roles.provision_role(roles.role_documents(cfg, captain, Path("/references/atlas"), home))
+            roles.provision_workspace(roles.workspace_documents(cfg, captain, home / "workspace", home))
+            role = (home / ".config/opencode/AGENTS.md").read_text()
+            workspace = (home / "workspace/AGENTS.md").read_text()
+        self.assertIn("s=slack;c=<channel>;t=<thread>;m=<message>;u=<user>", role)
+        self.assertNotIn("s=slack", workspace)
+        self.assertIn("- Slack: people can also reach you through your own Slack bot", workspace)
+        self.assertIn("Your sessions start here", workspace)
+        # Without a bot, neither file mentions Slack.
+        del self.config["captains"][0]["slack"]
+        captain = validate(self.config, self.secrets)["members"][1]
+        documents = roles.workspace_documents(cfg, captain, Path("/w"), Path("/"))["AGENTS.md"]
+        self.assertNotIn("Slack", documents)
+
+    def test_dry_run_lists_the_bots_and_refuses_a_half_configured_officer(self):
+        self.config["rearAdmiral"]["slack"] = slack_settings("AFIXTURE2")
+        self.config["captains"].append({"id": "lyra", "name": "Lyra", "account": "example-lyra",
+                                        "crew": {"claude": {"count": 0}, "codex": {"count": 0}},
+                                        "slack": slack_settings("AFIXTURE3", mentionOnly=False)})
+        config_path = Path(self.root.name) / "fleet.json"
+        config_path.write_text(json.dumps(self.config))
+        secrets_path = Path(self.root.name) / "fleet.secrets.json"
+        secrets_path.write_text(json.dumps(officer_secrets("example-lyra")))
+        secrets_path.chmod(0o600)
+
+        def plan():
+            output = io.StringIO()
+            with patch.object(runtime, "ETC", Path(self.root.name) / "etc"), \
+                    patch.object(runtime, "STATE", Path(self.root.name) / "state"), \
+                    patch.object(runtime, "SESSIONS", Path(self.root.name) / "etc/sessions"), \
+                    patch.object(sys, "stdout", output), patch.object(sys, "stderr", io.StringIO()):
+                runtime.main(["plan", str(config_path), str(secrets_path), str(self.directory), "false"])
+            return output.getvalue()
+
+        self.tokens()
+        self.tokens("atlas", "atlas")
+        self.token("lyra", "slack-bot-token", "xoxb-1-fixture-lyra")
+        with self.assertRaisesRegex(Invalid, "Supply slack-app-token in captain lyra's secrets directory"):
+            plan()
+        self.token("lyra", "slack-app-token", "xapp-1-fixture-lyra")
+        output = plan()
+        # The rear admiral's bot pins its root, so the dry run says where, as it does for each captain's root.
+        state = Path(self.root.name) / "state"
+        self.assertIn(f"The rear admiral's root session will be pinned in {state}/references/atlas/project, its "
+                      "reference checkout of the first repository, because it has its own Slack bot.\nIts first "
+                      "repository is then fixed", output)
+        self.assertIn(f"Captain orion's sessions will start in {state}/agents/orion/workspace", output)
+        lines = [line for line in output.splitlines() if line.startswith("Slack:")]
+        self.assertEqual(len(lines), 3)
+        self.assertIn("Rear admiral atlas answers as Slack app AFIXTURE2 (fleet-slack-atlas), to users UFIXTURE1 in "
+                      "CFIXTURE1, when mentioned; it shares its pinned root session with its IRC registration.", lines[0])
+        self.assertIn("Captain orion answers as Slack app AFIXTURE1", lines[1])
+        self.assertIn("shares its pinned root session", lines[1])
+        self.assertIn("in CFIXTURE1; it has no pinned root without crew", lines[2])
+        self.assertIn("as SLACK_APP_TOKEN_LYRA and SLACK_BOT_TOKEN_LYRA", lines[2])
+        self.assertNotIn("xoxb-", "\n".join(lines))
+
+
 class FleetRecordsTests(unittest.TestCase):
     """The fleet's standard channels, ships and officers in the Subspace API (fleetctl register)."""
 
@@ -1005,6 +1443,247 @@ class FleetRecordsTests(unittest.TestCase):
             config.pop("api")
             secrets.pop("apiToken")
             validate(config, secrets)
+
+
+class IrcCertificateTests(unittest.TestCase):
+    """Officers sign in to a remote IRC server with a certificate each (SASL EXTERNAL) unless told otherwise."""
+
+    SECRETS = {"proxyKey": "fixture-model-proxy-key"}
+
+    def setUp(self):
+        self.config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
+        # The example names the default explicitly; these tests check the default itself.
+        del self.config["irc"]["auth"]
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.work = Path(temporary.name)
+
+    def bundle(self, account="example-atlas"):
+        return runtime.new_irc_bundle(account)
+
+    def supply(self, agent_id, contents, mode=0o600):
+        directory = self.work / "fleet.secrets" / agent_id
+        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+        (self.work / "fleet.secrets").chmod(0o700)
+        path = directory / runtime.IRC_CLIENT_PEM
+        path.write_text(contents)
+        path.chmod(mode)
+        return path
+
+    @staticmethod
+    def split(bundle):
+        """A generated bundle's certificate and its private key."""
+        start = runtime.IRC_PEM_KEY.search(bundle).start()
+        return bundle[:start], bundle[start:]
+
+    def fingerprint(self, bundle):
+        """Independently of the installer: SHA-256 over the first certificate's DER, as Ergo computes certfp."""
+        first = bundle[:bundle.index("-----END CERTIFICATE-----") + len("-----END CERTIFICATE-----")]
+        return hashlib.sha256(ssl.PEM_cert_to_DER_cert(first)).hexdigest()
+
+    def test_a_remote_server_defaults_to_certificates_and_keeps_no_officer_password(self):
+        cfg = validate(self.config, self.SECRETS)
+        self.assertEqual(cfg["irc"]["auth"], "certificate")
+        self.assertEqual(cfg["passwords"], {})
+        officer_passwords = {"ircPasswords": {"example-orion": "fixture-password"}}
+        with self.assertRaisesRegex(Invalid, "no IRC password for the rear admiral or a captain.*irc.auth to password"):
+            validate(self.config, {**self.SECRETS, **officer_passwords})
+        # Account names fold: a password under another spelling of an officer's account is still refused.
+        with self.assertRaisesRegex(Invalid, "Remove their entries from ircPasswords"):
+            validate(self.config, {**self.SECRETS, "ircPasswords": {"Example-Orion": "fixture-password"}})
+
+    def test_the_example_files_are_an_installable_pair(self):
+        # Quick start copies both files: remote IRC with certificates, so the secrets hold no officer password.
+        root = Path(__file__).resolve().parents[1]
+        cfg = validate(json.loads((root / "fleet.example.json").read_text()),
+                       json.loads((root / "secrets.example.json").read_text()))
+        self.assertEqual((cfg["irc"]["auth"], cfg["passwords"]), ("certificate", {}))
+        # Every optional feature is off: no repositories (so no crew or pinned root), no Slack bot, no API.
+        self.assertEqual((cfg["repositories"], cfg["api"], cfg["agentDispatch"]), ({}, None, None))
+        self.assertFalse(any("slack" in person or "sessionRoot" in person or person["crew"]
+                             for person in cfg["members"]))
+        self.assertFalse(runtime.rear_root(cfg))
+
+    def test_the_readmes_optional_settings_complete_the_example(self):
+        root = Path(__file__).resolve().parents[1]
+        readme = (root / "README.md").read_text()
+        fragment = json.loads(re.search(r"### Optional settings\n.*?```json\n(.*?)```", readme, re.S).group(1))
+        config = {**json.loads((root / "fleet.example.json").read_text()), **fragment}
+        cfg = validate(config, json.loads((root / "secrets.example.json").read_text()))
+        rear, orion = cfg["members"]
+        self.assertEqual((rear["slack"]["appId"], orion["slack"]["appId"], orion["sessionRoot"]),
+                         ("A0EXAMPLE01", "A0EXAMPLE02", "workspace"))
+        self.assertEqual(cfg["repositoryNotes"]["project"]["tracker"],
+                         "Example issues at https://tracker.example.com/project")
+        self.assertEqual(cfg["irc"]["auth"], "certificate")
+        self.assertTrue(runtime.rear_root(cfg))
+
+    def test_passwords_remain_an_explicit_choice(self):
+        self.config["irc"]["auth"] = "password"
+        with self.assertRaisesRegex(Invalid, "Supply an IRC password"):
+            validate(self.config, self.SECRETS)
+        cfg = validate(self.config, officer_secrets())
+        registration, environment = runtime.irc_agent(cfg, cfg["members"][1], {"directory": "/w"})
+        self.assertEqual(registration["passwordEnv"], "IRC_ORION")
+        self.assertNotIn("clientPemFile", registration)
+        self.assertEqual(environment, {"IRC_ORION": "fixture-password"})
+        self.assertEqual(runtime.irc_sign_in(cfg), ["Officers sign in to IRC with passwords (SASL PLAIN, irc.auth password)."])
+        with self.assertRaisesRegex(Invalid, r"irc.auth \(certificate or password\)"):
+            validate(dict(self.config, irc={**self.config["irc"], "auth": "external"}), officer_secrets())
+
+    def test_the_managed_ergo_keeps_passwords(self):
+        self.config["irc"] = {"mode": "local", "allowedAccounts": ["operator"],
+                              "compose": {"operator": "ircop", "ref": "0" * 40}}
+        secrets = {**officer_secrets(), "ircOperatorPassword": "fixture-operator-password"}
+        self.assertEqual(validate(self.config, secrets)["irc"]["auth"], "password")
+        self.config["irc"]["auth"] = "certificate"
+        with self.assertRaisesRegex(Invalid, "needs a remote IRC server.*only over TLS"):
+            validate(self.config, secrets)
+
+    def test_the_gateway_registration_names_the_bundle_and_no_password(self):
+        cfg = validate(self.config, self.SECRETS)
+        for person in cfg["members"]:
+            registration, environment = runtime.irc_agent(cfg, person, {"directory": "/w"})
+            self.assertEqual(registration["clientPemFile"], f"/etc/subspace-fleet/irc-certs/{person['id']}.pem")
+            self.assertNotIn("passwordEnv", registration)
+            self.assertEqual(environment, {})
+            entry = runtime.irc_officer(cfg, person, registration)
+            self.assertTrue(entry["server"]["tls"])
+            runtime.check_sign_in(entry, entry["server"])
+        # Stargate's rule: exactly one of the two, and a certificate only over TLS.
+        both = {**registration, "passwordEnv": "IRC_ORION"}
+        neither = {key: value for key, value in registration.items() if key != "clientPemFile"}
+        for broken in (both, neither):
+            with self.assertRaisesRegex(Invalid, "exactly one of a password and a client certificate"):
+                runtime.check_sign_in(broken, {"tls": True})
+        with self.assertRaisesRegex(Invalid, "needs TLS"):
+            runtime.check_sign_in(registration, {"tls": False})
+
+    def test_bundles_are_kept_and_owned_only_by_the_gateway_that_serves_the_officer(self):
+        # Orion runs on the Claude Agent SDK, so its own Linux user runs its gateway.
+        self.config["captains"][0].update(harness={"type": "claude-sdk", "family": "claude"},
+                                          crew={"claude": {"count": 0}, "codex": {"count": 0}})
+        cfg = validate(self.config, self.SECRETS)
+        owners = []
+        me = pwd.getpwuid(os.getuid())
+
+        def lookup(name):
+            owners.append(name)
+            return me
+
+        certs = self.work / "irc-certs"
+        with patch.object(runtime, "IRC_CERTS", certs), patch.object(runtime, "STATE", self.work), \
+                patch.object(runtime, "directory", lambda path, mode, *_: path.mkdir(mode=mode, exist_ok=True)), \
+                patch.object(runtime.pwd, "getpwnam", lookup):
+            runtime.irc_certificates(cfg)
+            self.assertEqual(owners, [runtime.GATEWAY, "ss-orion"])
+            first = {path.name: path.read_text() for path in certs.iterdir()}
+            self.assertEqual(set(first), {"atlas.pem", "orion.pem"})
+            for name, bundle in first.items():
+                info = (certs / name).stat()
+                self.assertEqual((stat.S_IMODE(info.st_mode), info.st_uid), (0o600, os.getuid()))
+                self.assertEqual(len(runtime.IRC_PEM_CERTIFICATE.findall(bundle)), 1)
+                self.assertIsNotNone(runtime.IRC_PEM_KEY.search(bundle))
+                self.assertNotIn("ENCRYPTED", bundle)
+            # An upgrade keeps each officer's certificate, so its bound fingerprint stays valid.
+            (self.work / "pending").unlink()
+            runtime.irc_certificates(cfg)
+            self.assertEqual({path.name: path.read_text() for path in certs.iterdir()}, first)
+            self.assertFalse((self.work / "pending").exists())
+            # A bundle that is not a certificate and its key stops the render rather than reaching Stargate.
+            (certs / "atlas.pem").write_text(self.split(first["orion.pem"])[0])
+            with self.assertRaisesRegex(Invalid, "certificate and its unencrypted private key"):
+                runtime.irc_certificates(cfg)
+
+    def test_an_operator_can_bring_existing_bundles(self):
+        cfg = validate(self.config, self.SECRETS)
+        supplied = self.bundle("example-orion")
+        self.supply("orion", supplied)
+        self.assertEqual(runtime.irc_bundles(cfg, self.work / "fleet.secrets"), {"orion": supplied})
+        # Passwords need no bundle, so none is read.
+        self.assertEqual(runtime.irc_bundles(validate(example_config(), officer_secrets()), self.work / "fleet.secrets"), {})
+        # Only owner-only files, and only a certificate with its own key, as Stargate requires.
+        self.supply("orion", supplied, 0o640)
+        with self.assertRaisesRegex(Invalid, "owner-only"):
+            runtime.irc_bundles(cfg, self.work / "fleet.secrets")
+        other = self.bundle("example-atlas")
+        certificate, _ = self.split(supplied)
+        _, key = self.split(other)
+        self.supply("orion", certificate + key)
+        with self.assertRaisesRegex(Invalid, "does not match an unencrypted private key"):
+            runtime.irc_bundles(cfg, self.work / "fleet.secrets")
+        self.supply("orion", certificate)
+        with self.assertRaisesRegex(Invalid, "certificate and its unencrypted private key"):
+            runtime.irc_bundles(cfg, self.work / "fleet.secrets")
+
+    def test_the_readmes_move_from_passwords_to_certificates_works_in_its_order(self):
+        config, secrets = self.work / "fleet.json", self.work / "fleet.secrets.json"
+        config.write_text(json.dumps(self.config))
+
+        def dry_run():
+            secrets.chmod(0o600)
+            output = io.StringIO()
+            with patch.object(runtime, "IRC_CERTS", self.work / "installed"), contextlib.redirect_stdout(output):
+                runtime.main(["plan", str(config), str(secrets), str(self.work / "fleet.secrets"), "false"])
+            return output.getvalue()
+        # An installed remote fleet's secrets still hold the officers' passwords: even the dry run is refused.
+        secrets.write_text(json.dumps({**self.SECRETS, "ircPasswords": {
+            "example-atlas": "fixture-password", "example-orion": "fixture-password"}}))
+        with self.assertRaisesRegex(Invalid, "Remove their entries from ircPasswords"):
+            dry_run()
+        # 1. Remove them; 2. supply bundles; 3. the dry run prints each fingerprint to bind (4) before upgrading (5).
+        secrets.write_text(json.dumps(self.SECRETS))
+        bundles = {agent: self.bundle(f"example-{agent}") for agent in ("atlas", "orion")}
+        for agent, bundle in bundles.items():
+            self.supply(agent, bundle)
+        text = dry_run()
+        for agent, bundle in bundles.items():
+            self.assertIn(f"/msg NickServ CERT ADD example-{agent} {self.fingerprint(bundle)} (supplied)", text)
+
+    def test_dry_run_prints_fingerprints_for_binding_and_never_key_material(self):
+        supplied = self.bundle("example-orion")
+        self.supply("orion", supplied)
+        config, secrets = self.work / "fleet.json", self.work / "fleet.secrets.json"
+        config.write_text(json.dumps(self.config))
+        secrets.write_text(json.dumps(self.SECRETS))
+        secrets.chmod(0o600)
+        output = io.StringIO()
+        with patch.object(runtime, "IRC_CERTS", self.work / "installed"), contextlib.redirect_stdout(output):
+            runtime.main(["plan", str(config), str(secrets), str(self.work / "fleet.secrets"), "false"])
+        text = output.getvalue()
+        fingerprint = self.fingerprint(supplied)
+        self.assertRegex(fingerprint, r"\A[0-9a-f]{64}\Z")
+        self.assertIn(f"/msg NickServ CERT ADD example-orion {fingerprint} (supplied)", text)
+        self.assertIn("example-atlas: a new certificate is generated on install", text)
+        self.assertIn("bound to its account on irc.example.com", text)
+        self.assertNotIn("PRIVATE KEY", text)
+        key_body = self.split(supplied)[1].splitlines()[1]
+        self.assertNotIn(key_body, text)
+        # The install summary reads the installed bundles and prints the same form.
+        cfg = validate(self.config, self.SECRETS)
+        installed = self.work / "installed"
+        installed.mkdir()
+        for agent_id, bundle in (("atlas", self.bundle()), ("orion", supplied)):
+            (installed / f"{agent_id}.pem").write_text(bundle)
+        with patch.object(runtime, "IRC_CERTS", installed):
+            lines = runtime.irc_sign_in(cfg)
+        self.assertEqual(lines[1:], [
+            f"  /msg NickServ CERT ADD example-atlas {self.fingerprint((installed / 'atlas.pem').read_text())}",
+            f"  /msg NickServ CERT ADD example-orion {fingerprint}",
+        ])
+
+    def test_dispatch_carries_supplied_bundles_to_the_vm(self):
+        import dispatch
+        supplied = self.bundle("example-orion")
+        self.supply("orion", supplied)
+        (self.work / "fleet.json").write_text(json.dumps(self.config))
+        (self.work / "fleet.secrets.json").write_text(json.dumps(self.SECRETS))
+        (self.work / "fleet.secrets.json").chmod(0o600)
+        payload = dispatch.bundle({"config": "fleet.json", "secrets": "fleet.secrets.json"}, self.work)
+        with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
+            member = archive.getmember(f"fleet.secrets/orion/{runtime.IRC_CLIENT_PEM}")
+            self.assertEqual(member.mode, 0o600)
+            self.assertEqual(archive.extractfile(member).read().decode(), supplied)
 
 
 if __name__ == "__main__":

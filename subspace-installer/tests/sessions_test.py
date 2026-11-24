@@ -187,6 +187,29 @@ class CaptainSessionTests(unittest.TestCase):
         self.assertEqual(self.server.updates, [tighter])
         self.assertEqual(self.server.sessions[session_id]["permissions"], tighter)
 
+    def test_a_workspace_root_records_its_first_repository_as_the_project(self):
+        workspace = DIRECTORY.rsplit("/", 1)[0]
+        expected = {**EXPECTED, "directory": workspace, "project": DIRECTORY}
+        session_id, _ = self.ensure(expected)
+        self.assertEqual(self.server.sessions[session_id]["location"], {"directory": workspace})
+        self.assertEqual(json.loads(self.record.confirmed.read_text())["project"], DIRECTORY)
+        self.assertEqual(self.ensure(expected), (session_id, False))
+        # The root does not work in the first repository, but Stargate's crew state still names it.
+        with self.assertRaisesRegex(sessions.SessionError, "first repository is fixed"):
+            self.ensure({**expected, "project": DIRECTORY.replace("project", "library")})
+        person = {"id": "orion", "crew": [{"id": "claude-1"}, {"id": "codex-1"}]}
+        with patch.object(runtime, "SESSIONS", Path(self.directory.name)):
+            self.assertEqual(runtime.pinned_session(person, Path(workspace), Path(DIRECTORY)), session_id)
+            with self.assertRaisesRegex(runtime.Invalid, "Captain orion: .*first repository is fixed"):
+                runtime.pinned_session(person, Path(workspace), Path(DIRECTORY.replace("project", "library")))
+
+    def test_a_record_from_before_the_workspace_root_is_its_own_project(self):
+        session_id, _ = self.ensure()
+        self.assertNotIn("project", json.loads(self.record.confirmed.read_text()))
+        self.assertEqual(self.ensure({**EXPECTED, "project": DIRECTORY}), (session_id, False))
+        with self.assertRaisesRegex(sessions.SessionError, "first repository is fixed"):
+            self.ensure({**EXPECTED, "project": DIRECTORY.replace("project", "library")})
+
     def test_render_reads_only_confirmed_records_that_still_fit(self):
         person = {"id": "orion", "crew": [{"id": "claude-1"}, {"id": "codex-1"}]}
         with patch.object(runtime, "SESSIONS", Path(self.directory.name)):
@@ -295,6 +318,7 @@ def secrets_for(*accounts):
 def crew_fleet(*captains):
     config = json.loads((Path(__file__).resolve().parents[1] / "fleet.example.json").read_text())
     config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+    config["irc"]["auth"] = "password"
     config["captains"] = [{"id": name, "name": name.title(), "account": f"example-{name}"} for name in captains]
     secrets = secrets_for("example-atlas", *(f"example-{name}" for name in captains))
     return config, secrets
@@ -302,6 +326,11 @@ def crew_fleet(*captains):
 
 class InstalledFleet(unittest.TestCase):
     """Render and commission against temporary /etc and /var/lib trees, without root or systemd."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Real IRC certificate bundles, made with openssl before setUp replaces subprocess.run.
+        cls.bundles = {account: runtime.new_irc_bundle(account) for account in ("example-atlas", "example-orion")}
 
     def setUp(self):
         self.root = tempfile.TemporaryDirectory()
@@ -433,6 +462,122 @@ class InstalledFleet(unittest.TestCase):
                 self.assertEqual(self.events, [])
         self.assertTrue((self.etc / "sessions/orion.ready").exists())
 
+    def installed(self, config, secrets):
+        """The installed inputs commission reads, and a fake engine per officer on its allocated port."""
+        extra = {"tokens": {}, "cloud": {}}
+        for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
+            (self.etc / name).write_text(json.dumps(value))
+            (self.etc / name).chmod(0o600)
+        servers = {4096 + index: FakeOpenCode() for index in range(len(config["captains"]) + 1)}
+        self.start(patch.object(runtime.sessions, "OpenCode",
+                                side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])]))
+        return servers
+
+    def roots_record(self):
+        return json.loads((self.etc / "session-roots.json").read_text())
+
+    def engine_directory(self, captain="orion"):
+        return json.loads((self.etc / f"engine-{captain}.json").read_text())["directory"]
+
+    def test_a_new_captain_pins_its_root_in_the_workspace_above_its_checkouts(self):
+        config, secrets = crew_fleet("orion")
+        servers = self.installed(config, secrets)
+        workspace = self.state / "agents/orion/workspace"
+        self.render(config, secrets)
+        self.assertEqual(self.roots_record(), {"orion": "workspace"})
+        self.assertEqual(self.engine_directory(), str(workspace))
+        # The workspace instructions are written as the captain, which owns the workspace.
+        calls = [call for call in runtime.subprocess.run.call_args_list if "workspace-instructions" in call.args[0]]
+        self.assertEqual(calls[-1].args[0][:3], ["runuser", "-u", "ss-orion"])
+        self.assertIn(f"`{workspace}`", json.loads(calls[-1].kwargs["input"])["AGENTS.md"])
+
+        runtime.commission(False)
+        record = json.loads(self.store.confirmed.read_text())
+        self.assertEqual((record["directory"], record["project"]), (str(workspace), str(workspace / "project")))
+        self.assertEqual(servers[4097].sessions[record["sessionID"]]["location"], {"directory": str(workspace)})
+        options = json.loads((self.etc / "opencode-orion.json").read_text())["plugins"][0]["options"]
+        self.assertEqual((options["captainDirectory"], options["projectDirectory"], options["captainSessionID"]),
+                         (str(workspace), str(workspace / "project"), record["sessionID"]))
+        served, _ = self.gateway()
+        self.assertEqual((served["orion"]["directory"], served["orion"]["sessionID"]), (str(workspace), record["sessionID"]))
+        orion = next(entry for entry in json.loads((self.etc / "stargate.json").read_text())["irc"] if entry["id"] == "orion")
+        self.assertEqual(orion["fleetPolicy"]["assignedCheckout"], str(workspace))
+        # The rear admiral keeps its read-only reference checkout of the first repository.
+        self.assertEqual(served["atlas"]["directory"], str(self.state / "references/atlas/project"))
+        self.render(config, secrets)
+        self.assertEqual(self.events, [])
+        # The first repository stays fixed: Stargate's crew state names it as the default project.
+        config["repositories"].insert(0, {"id": "library", "url": "https://github.com/example/library.git"})
+        with self.assertRaisesRegex(runtime.Invalid, "Captain orion: .*first repository is fixed"):
+            self.render(config, secrets)
+        self.assertEqual(self.events, [])
+
+    def test_an_upgrade_never_moves_a_session_pinned_in_the_first_repository(self):
+        config, secrets = crew_fleet("orion")
+        self.pin()  # pinned before the workspace root: in the first repository's checkout
+        root = runtime.captain_roots(runtime.validate(config, secrets))["orion"]
+        self.assertEqual((root["path"], root["mode"], root["pinned"]), (Path(self.workspace), "repository", True))
+        self.assertIn("stays there: the installer never moves a pinned session", root["notice"])
+        self.render(config, secrets)
+        self.assertEqual(self.engine_directory(), self.workspace)
+        options = json.loads((self.etc / "opencode-orion.json").read_text())["plugins"][0]["options"]
+        self.assertEqual(options["captainDirectory"], self.workspace)
+        self.assertEqual(self.roots_record(), {"orion": "repository"})
+        # Asking for the workspace is refused before anything is written; asking to stay silences the notice.
+        config["captains"][0]["sessionRoot"] = "workspace"
+        with self.assertRaisesRegex(runtime.Invalid, "pinned in .*but its sessionRoot is workspace.*never moves"):
+            self.render(config, secrets)
+        self.assertEqual(self.events, [])
+        config["captains"][0]["sessionRoot"] = "repository"
+        self.assertIsNone(runtime.captain_roots(runtime.validate(config, secrets))["orion"]["notice"])
+        self.render(config, secrets)
+        self.assertEqual(self.events, [])
+
+    def test_an_installed_captain_keeps_its_root_until_its_session_root_moves_it(self):
+        config, secrets = crew_fleet("orion")
+        config["captains"][0]["crew"] = {"claude": {"count": 0}, "codex": {"count": 0}}
+        checkout = self.state / "agents/orion/workspace/project"
+        checkout.mkdir(parents=True)  # installed by an installer without the workspace root
+        root = runtime.captain_roots(runtime.validate(config, secrets))["orion"]
+        self.assertIn("keeps starting its sessions in", root["notice"])
+        self.render(config, secrets)
+        self.assertEqual((self.engine_directory(), self.roots_record()), (str(checkout), {"orion": "repository"}))
+        # Recorded, it stays there even though its checkout no longer tells.
+        checkout.rmdir()
+        self.assertEqual(runtime.captain_roots(runtime.validate(config, secrets))["orion"]["path"], checkout)
+        # Moving it is an explicit setting, which says what happens to its conversations.
+        config["captains"][0]["sessionRoot"] = "workspace"
+        root = runtime.captain_roots(runtime.validate(config, secrets))["orion"]
+        self.assertIn("moves from", root["notice"])
+        self.assertIn("start new sessions there", root["notice"])
+        self.render(config, secrets)
+        self.assertEqual((self.engine_directory(), self.roots_record()), (str(checkout.parent), {"orion": "workspace"}))
+        del config["captains"][0]["sessionRoot"]
+        root = runtime.captain_roots(runtime.validate(config, secrets))["orion"]
+        self.assertEqual((root["path"], root["notice"]), (checkout.parent, None))
+        self.render(config, secrets)
+        self.assertEqual(self.events, [])
+
+    def test_the_dry_run_shows_each_captains_root_and_a_pinned_one_that_differs(self):
+        config, secrets = crew_fleet("orion", "vega")
+        self.pin("orion")
+        self.events.clear()
+        paths = []
+        for name, value in (("fleet.json", config), ("fleet.secrets.json", secrets)):
+            paths.append(Path(self.root.name) / name)
+            paths[-1].write_text(json.dumps(value))
+            paths[-1].chmod(0o600)
+        with patch.object(sys, "stdout", io.StringIO()) as output:
+            runtime.main(["plan", *map(str, paths), "", "false"])
+        text = output.getvalue()
+        self.assertIn(f"Captain orion's root session is pinned in {self.workspace}, its checkout of the first "
+                      "repository.", text)
+        self.assertIn("stays there: the installer never moves a pinned session", text)
+        self.assertIn(f"Captain vega's sessions will start in {self.state}/agents/vega/workspace, the workspace above "
+                      "its repositories.", text)
+        self.assertEqual(self.events, [])
+        self.assertFalse((self.etc / "session-roots.json").exists())
+
     def commission_setup(self, *captains):
         config, secrets = crew_fleet(*captains)
         for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", {})):
@@ -538,6 +683,250 @@ class InstalledFleet(unittest.TestCase):
         # A clean re-run changes nothing.
         self.render(config, secrets)
         self.assertEqual(self.events, [])
+
+    def test_officers_slack_bots_reach_the_same_root_as_their_irc(self):
+        config, secrets = crew_fleet("orion")
+        for person, app in ((config["rearAdmiral"], "AFIXTURE1"), (config["captains"][0], "AFIXTURE2")):
+            person["slack"] = {"appId": app, "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"]}
+        extra = {"tokens": {}, "cloud": {}, "slack": {
+            agent: {"slack-app-token": f"xapp-1-fixture-{agent}", "slack-bot-token": f"xoxb-1-fixture-{agent}"}
+            for agent in ("atlas", "orion")}}
+        for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
+            (self.etc / name).write_text(json.dumps(value))
+            (self.etc / name).chmod(0o600)
+        servers = {4096: FakeOpenCode(), 4097: FakeOpenCode()}
+        for port, member, directory in ((4096, "atlas", "references/atlas/project"),
+                                        (4097, "orion", "agents/orion/workspace/project")):
+            (self.etc / f"engine-{member}.json").write_text(json.dumps({
+                "port": port, "directory": str(self.state / directory),
+                "environment": {"OPENCODE_PASSWORD": "fixture-password"}}))
+        self.start(patch.object(runtime.sessions, "OpenCode",
+                                side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])]))
+
+        def bots():
+            stargate = json.loads((self.etc / "stargate.json").read_text())
+            return ({entry["id"]: entry["backend"] for entry in stargate["irc"]},
+                    {bot["id"]: bot for bot in stargate.get("bots", [])})
+
+        runtime.render(runtime.validate(config, secrets), extra)
+        irc, slack = bots()
+        # Before commissioning, the captain with crew is served on neither transport.
+        self.assertEqual((list(irc), list(slack)), (["atlas"], ["fleet-slack-atlas"]))
+        self.assertEqual(slack["fleet-slack-atlas"]["backend"], irc["atlas"])
+
+        # Without agent dispatch, the rear admiral's own Slack bot is reason enough to pin its root.
+        runtime.commission(False)
+        rear_session = json.loads((self.etc / "sessions/atlas.json").read_text())["sessionID"]
+        captain_session = json.loads(self.store.confirmed.read_text())["sessionID"]
+        irc, slack = bots()
+        self.assertEqual(list(slack), ["fleet-slack-atlas", "fleet-slack-orion"])
+        for agent, session_id in (("atlas", rear_session), ("orion", captain_session)):
+            bot = slack[f"fleet-slack-{agent}"]
+            self.assertEqual(bot["backend"]["sessionID"], session_id)
+            self.assertEqual(bot["backend"], irc[agent])
+            self.assertEqual(bot["slack"]["appTokenEnv"], f"SLACK_APP_TOKEN_{agent.upper()}")
+            self.assertTrue(bot["access"]["mentionOnly"])
+        self.assertEqual(slack["fleet-slack-orion"]["backend"]["agent"], "build")
+        self.assertNotIn("xoxb-", (self.etc / "stargate.json").read_text())
+        environment = json.loads((self.etc / "gateway.json").read_text())["environment"]
+        self.assertEqual(environment["SLACK_BOT_TOKEN_ORION"], "xoxb-1-fixture-orion")
+        self.assertEqual(environment["SLACK_APP_TOKEN_ATLAS"], "xapp-1-fixture-atlas")
+
+        # Removing the captain's Slack settings removes its bot and its tokens from the gateway; IRC keeps its root.
+        del config["captains"][0]["slack"]
+        runtime.render(runtime.validate(config, secrets), extra)
+        irc, slack = bots()
+        self.assertEqual(list(slack), ["fleet-slack-atlas"])
+        self.assertEqual(irc["orion"]["sessionID"], captain_session)
+        environment = json.loads((self.etc / "gateway.json").read_text())["environment"]
+        self.assertFalse({"SLACK_APP_TOKEN_ORION", "SLACK_BOT_TOKEN_ORION"} & environment.keys())
+        del config["rearAdmiral"]["slack"]
+        runtime.render(runtime.validate(config, secrets), extra)
+        irc, slack = bots()
+        self.assertEqual(slack, {})
+        # Like turning agent dispatch off, the rear admiral's IRC goes back to a session per conversation.
+        self.assertNotIn("sessionID", irc["atlas"])
+
+    def test_a_rear_admiral_pinned_by_its_slack_bot_before_any_repository_keeps_its_root(self):
+        # Agent dispatch needs a captain with crew, so it never pinned a rear admiral without repositories; the
+        # rear admiral's own Slack bot does. Adding repositories later must neither move that root nor be refused.
+        config, secrets = crew_fleet("orion")
+        config["repositories"] = []
+        config["rearAdmiral"]["slack"] = {"appId": "AFIXTURE1", "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"]}
+        extra = {"tokens": {}, "cloud": {}, "slack": {"atlas": {
+            "slack-app-token": "xapp-1-fixture-atlas", "slack-bot-token": "xoxb-1-fixture-atlas"}}}
+        for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
+            (self.etc / name).write_text(json.dumps(value))
+            (self.etc / name).chmod(0o600)
+        self.start(patch.object(runtime, "reconcile_workspaces", side_effect=lambda cfg, homes: (
+            self.state / "references/atlas" if cfg["repositories"] else None)))
+        server = FakeOpenCode()
+        self.start(patch.object(runtime.sessions, "OpenCode", return_value=server))
+        workspace = self.state / "agents/atlas/workspace"
+        runtime.render(runtime.validate(config, secrets), extra)
+        runtime.commission(False)
+        record = json.loads((self.etc / "sessions/atlas.json").read_text())
+        self.assertEqual(record["directory"], str(workspace))
+        self.assertEqual(server.sessions[record["sessionID"]]["location"], {"directory": str(workspace)})
+
+        def served():
+            stargate = json.loads((self.etc / "stargate.json").read_text())
+            return (next(entry["backend"] for entry in stargate["irc"] if entry["id"] == "atlas"),
+                    next(bot["backend"] for bot in stargate["bots"] if bot["id"] == "fleet-slack-atlas"))
+
+        config["repositories"] = [{"id": "project", "url": "https://github.com/example/project.git"}]
+        cfg = runtime.validate(config, secrets)
+        self.assertEqual(runtime.rear_pin(cfg), record["sessionID"])
+        runtime.render(cfg, extra)
+        irc, bot = served()
+        self.assertEqual((irc["directory"], irc["sessionID"]), (str(workspace), record["sessionID"]))
+        self.assertEqual(bot, irc)
+        self.assertEqual(json.loads((self.etc / "engine-atlas.json").read_text())["directory"], str(workspace))
+        # Without a root to keep, the rear admiral works in its reference checkout of the first repository.
+        del config["rearAdmiral"]["slack"]
+        self.assertEqual(runtime.rear_workspace(runtime.validate(config, secrets)),
+                         self.state / "references/atlas/project")
+        # A root pinned in a reference checkout is fixed, and the refusal names the rear admiral, not a captain.
+        config["rearAdmiral"]["slack"] = {"appId": "AFIXTURE1", "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"]}
+        record["directory"] = str(self.state / "references/atlas/project")
+        (self.etc / "sessions/atlas.json").write_text(json.dumps(record))
+        config["repositories"].insert(0, {"id": "library", "url": "https://github.com/example/library.git"})
+        with self.assertRaisesRegex(runtime.Invalid, "^Rear admiral atlas: its first repository is fixed"):
+            runtime.rear_pin(runtime.validate(config, secrets))
+
+    def combined(self, config):
+        """The four installer features together: IRC certificates (the remote default), Slack bots for the rear
+        admiral and the captain, repository notes, and the API block subspace-setup writes, which is the same
+        whether the VM's API keeps its own PostgreSQL or uses an existing one (--database-url-file)."""
+        config.pop("irc", None)
+        config["irc"] = {"mode": "remote", "host": "irc.example.com", "allowedAccounts": ["operator"]}
+        config["repositories"] = [
+            {"id": "project", "url": "https://github.com/example/project.git", "description": "The example service.",
+             "tracker": "Example issues at https://tracker.example.com/project"},
+            {"id": "library", "url": "https://github.com/example/library.git"},
+        ]
+        config["api"] = {"url": "http://127.0.0.1:3000", "initiatives": ["00000000-0000-4000-8000-000000000001"],
+                         "agentUrl": "http://127.0.0.1:3001"}
+        for person, app in ((config["rearAdmiral"], "AFIXTURE1"), (config["captains"][0], "AFIXTURE2")):
+            person["slack"] = {"appId": app, "users": ["UFIXTURE1"], "channels": ["CFIXTURE1"]}
+        secrets = {"proxyKey": "fixture-model-proxy-key", "apiToken": "aaa.bbb.admin"}
+        extra = {"tokens": {}, "cloud": {}, "slack": {
+            agent: {"slack-app-token": f"xapp-1-fixture-{agent}", "slack-bot-token": f"xoxb-1-fixture-{agent}"}
+            for agent in ("atlas", "orion")}}
+        for name, value in (("fleet.json", config), ("secrets.json", secrets), ("extra-secrets.json", extra)):
+            (self.etc / name).write_text(json.dumps(value))
+            (self.etc / name).chmod(0o600)
+        certificates = self.etc / "irc-certs"
+        certificates.mkdir(exist_ok=True)
+        self.start(patch.object(runtime, "IRC_CERTS", certificates))
+        self.start(patch.object(runtime, "new_irc_bundle", side_effect=lambda account: self.bundles[account]))
+        self.start(patch.object(runtime.pwd, "getpwnam", return_value=runtime.pwd.getpwuid(os.getuid())))
+        servers = {4096: FakeOpenCode(), 4097: FakeOpenCode()}
+        self.start(patch.object(runtime.sessions, "OpenCode",
+                                side_effect=lambda url, _password: servers[int(url.rsplit(":", 1)[1])]))
+        return secrets, extra, servers
+
+    def stargate(self):
+        stargate = json.loads((self.etc / "stargate.json").read_text())
+        return ({entry["id"]: entry for entry in stargate["irc"]}, {bot["id"]: bot for bot in stargate.get("bots", [])},
+                json.loads((self.etc / "gateway.json").read_text())["environment"])
+
+    def provisioned(self, verb, user="ss-orion"):
+        """The last documents render handed to a runtime.py verb run as an officer."""
+        calls = [call for call in runtime.subprocess.run.call_args_list
+                 if verb in call.args[0] and call.args[0][:3] == ["runuser", "-u", user]]
+        return json.loads(calls[-1].kwargs["input"])
+
+    def test_certificates_slack_a_workspace_root_and_the_vms_api_render_one_coherent_fleet(self):
+        config, _ = crew_fleet("orion")
+        secrets, extra, servers = self.combined(config)
+        cfg = runtime.validate(config, secrets)
+        self.assertEqual((cfg["irc"]["auth"], cfg["passwords"]), ("certificate", {}))
+        runtime.render(cfg, extra)
+        runtime.commission(False)
+
+        workspace = self.state / "agents/orion/workspace"
+        reference = self.state / "references/atlas/project"
+        record = json.loads(self.store.confirmed.read_text())
+        rear_record = json.loads((self.etc / "sessions/atlas.json").read_text())
+        irc, bots, environment = self.stargate()
+        # One root per officer, named alike by its session record, its IRC registration and its Slack bot.
+        self.assertEqual((record["directory"], record["project"]), (str(workspace), str(workspace / "project")))
+        self.assertEqual(servers[4097].sessions[record["sessionID"]]["location"], {"directory": str(workspace)})
+        self.assertEqual(rear_record["directory"], str(reference))
+        for agent, session, directory in (("atlas", rear_record, reference), ("orion", record, workspace)):
+            backend = irc[agent]["backend"]
+            self.assertEqual((backend["directory"], backend["sessionID"]), (str(directory), session["sessionID"]))
+            self.assertEqual(bots[f"fleet-slack-{agent}"]["backend"], backend)
+            self.assertEqual(irc[agent]["fleetPolicy"]["assignedCheckout"], str(directory))
+            # Certificates, not passwords: the registration names the bundle, and no IRC password reaches Stargate.
+            self.assertEqual(irc[agent]["clientPemFile"], str(self.etc / f"irc-certs/{agent}.pem"))
+            self.assertNotIn("passwordEnv", irc[agent])
+            self.assertEqual(stat.S_IMODE((self.etc / f"irc-certs/{agent}.pem").stat().st_mode), 0o600)
+        self.assertFalse({"IRC_ATLAS", "IRC_ORION"} & environment.keys())
+        self.assertEqual((environment["SLACK_BOT_TOKEN_ATLAS"], environment["SLACK_BOT_TOKEN_ORION"]),
+                         ("xoxb-1-fixture-atlas", "xoxb-1-fixture-orion"))
+        options = json.loads((self.etc / "opencode-orion.json").read_text())
+        self.assertEqual(options["plugins"][0]["options"]["captainDirectory"], str(workspace))
+        self.assertEqual(options["mcp"]["servers"][runtime.SUBSPACE_MCP]["url"], "http://127.0.0.1:3001/mcp")
+
+        # The captain's instructions agree with that root, its repositories' trackers and its Slack bot.
+        role = self.provisioned("role")["instructions"]
+        agents = self.provisioned("workspace-instructions")["AGENTS.md"]
+        self.assertIn("s=slack;c=<channel>", role)
+        self.assertIn("Your sessions start here, so one session reaches every repository below.", agents)
+        self.assertIn("- Tracker: Example issues at https://tracker.example.com/project", agents)
+        self.assertIn("- Tracker: the fleet's Subspace tracker, through your `subspace` tools", agents)
+        self.assertIn("- Slack: people can also reach you through your own Slack bot", agents)
+        self.assertIn(f"`{self.state}/agents/orion/worktrees/<crew ID>/library`", agents)
+        # A clean re-run changes nothing, the certificates included.
+        bundles = {path.name: path.read_text() for path in (self.etc / "irc-certs").iterdir()}
+        self.events.clear()
+        runtime.render(runtime.validate(config, secrets), extra)
+        self.assertEqual(self.events, [])
+        self.assertEqual({path.name: path.read_text() for path in (self.etc / "irc-certs").iterdir()}, bundles)
+
+    def test_an_upgrade_that_brings_several_new_settings_at_once(self):
+        # Installed by an earlier installer: remote IRC with officer passwords, the captain pinned in its first
+        # repository's checkout.
+        config, old_secrets = crew_fleet("orion")
+        del config["irc"]["auth"]
+        with self.assertRaisesRegex(runtime.Invalid, "Remove their entries from ircPasswords, or set irc.auth to "
+                                    "password"):
+            runtime.validate(config, old_secrets)
+        # The operator moves to certificates, adds Slack bots and repository notes, and asks for the workspace
+        # root at once. The pinned root cannot move, so the run stops before it writes anything.
+        secrets, extra, servers = self.combined(config)
+        expected = {**EXPECTED, "directory": self.workspace, "crew": ["claude-1", "claude-2", "codex-1", "codex-2"]}
+        session_id, _ = sessions.ensure(servers[4097], self.store, expected, wait=ready)
+        config["repositories"] = config["repositories"][:1]
+        config["captains"][0]["sessionRoot"] = "workspace"
+        (self.state / "slug").write_text("example-fleet\n")
+        self.events.clear()
+        with self.assertRaisesRegex(runtime.Invalid, "pinned in .*but its sessionRoot is workspace"):
+            runtime.render(runtime.validate(config, secrets), extra)
+        self.assertEqual(self.events, [])
+        self.assertEqual(list((self.etc / "irc-certs").iterdir()), [])
+        self.assertFalse((self.etc / "session-roots.json").exists())
+
+        # Without the move, everything else applies, and every part names the root where the session is pinned.
+        del config["captains"][0]["sessionRoot"]
+        cfg = runtime.validate(config, secrets)
+        self.assertIn("stays there", runtime.captain_roots(cfg)["orion"]["notice"])
+        runtime.render(cfg, extra)
+        runtime.commission(False)
+        irc, bots, _ = self.stargate()
+        self.assertEqual((irc["orion"]["backend"]["directory"], irc["orion"]["backend"]["sessionID"]),
+                         (self.workspace, session_id))
+        self.assertEqual(bots["fleet-slack-orion"]["backend"], irc["orion"]["backend"])
+        self.assertEqual(irc["orion"]["clientPemFile"], str(self.etc / "irc-certs/orion.pem"))
+        self.assertIn("Your sessions start in `project/`, your checkout of the first repository",
+                      self.provisioned("workspace-instructions")["AGENTS.md"])
+        self.assertEqual(self.roots_record(), {"orion": "repository"})
+        # The rear admiral's new Slack bot pinned its root, in its reference checkout.
+        self.assertEqual(irc["atlas"]["backend"]["sessionID"],
+                         json.loads((self.etc / "sessions/atlas.json").read_text())["sessionID"])
+        self.assertEqual(bots["fleet-slack-atlas"]["backend"], irc["atlas"]["backend"])
 
 
 if __name__ == "__main__":

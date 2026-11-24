@@ -44,6 +44,12 @@
 #                        `./install.sh irc-server --target NAME`
 #   --api-target NAME    for a further fleet: skip this VM's Subspace API and
 #                        register the fleet with the API on fleet NAME instead
+#   --database-url-file FILE  run this VM's Subspace API against an existing
+#                        PostgreSQL: a private (chmod 600) file on this machine
+#                        holding its postgresql://...?sslmode=verify-full URL,
+#                        copied to the VM as root's; add --migrate to migrate it
+#   --database-ca-file FILE   that server's CA certificate (PEM), when the
+#                        VM does not already trust it
 #   --fleet-console ID   (desktop) the Board ID of the Fleet Console web Space
 #                        (default fleet-console, the one built into Subspace)
 #   --yes                never prompt; fail when an answer is missing
@@ -82,6 +88,8 @@ disk=60
 install_deps=false
 irc_target=
 api_target=
+database_url_file=
+database_ca_file=
 fleet_console=fleet-console
 assume_yes=false
 background=false
@@ -125,6 +133,8 @@ while [ $# -gt 0 ]; do
         --install-deps) install_deps=true; shift ;;
         --irc-server) irc_target=${2:?}; shift 2 ;;
         --api-target) api_target=${2:?}; shift 2 ;;
+        --database-url-file) database_url_file=${2:?}; shift 2 ;;
+        --database-ca-file) database_ca_file=${2:?}; shift 2 ;;
         --fleet-console) fleet_console=${2:?}; shift 2 ;;
         --yes|-y) assume_yes=true; shift ;;
         --background) background=true; shift ;;
@@ -678,6 +688,12 @@ do_install() {
             die "The Subspace API on '$api_target' cannot register this fleet; nothing was changed."
         passthrough+=(--no-api)
     fi
+    # subspace-setup --dry-run changes nothing on the VM: the files it is given go to a scratch directory that
+    # is removed afterwards, never over the inputs (such as the database URL) that the next real run uses.
+    local dry_run=false inputs=/root/fleet arg
+    for arg in ${passthrough[@]+"${passthrough[@]}"}; do
+        if [ "$arg" = --dry-run ]; then dry_run=true; inputs=/root/subspace-setup-dry-run; fi
+    done
     if [ -n "$irc_target" ]; then
         [ -f "$home/targets/$irc_target/summary.env" ] || die "No shared IRC server '$irc_target'. Run ./install.sh irc-server first."
         local irc_host irc_port self_signed
@@ -686,16 +702,43 @@ do_install() {
         self_signed=$(sed -n 's/^SUBSPACE_IRC_SELF_SIGNED=//p' "$home/targets/$irc_target/summary.env")
         passthrough+=(--irc remote --irc-host "$irc_host" --irc-port "$irc_port")
         if [ "$self_signed" = 1 ]; then
-            vm sudo -n sh -c "'umask 077; mkdir -p /root/fleet; cat > /root/fleet/irc-ca.pem'" < "$home/targets/$irc_target/ca.pem"
-            passthrough+=(--irc-ca /root/fleet/irc-ca.pem)
+            vm sudo -n sh -c "'umask 077; mkdir -p $inputs; cat > $inputs/irc-ca.pem'" < "$home/targets/$irc_target/ca.pem"
+            passthrough+=(--irc-ca "$inputs/irc-ca.pem")
         fi
-        printf '%s\n' "$irc_target" > "$state/irc-target"
+        "$dry_run" || printf '%s\n' "$irc_target" > "$state/irc-target"
+    fi
+
+    if [ -n "$database_url_file" ]; then
+        # The URL holds the database's password: it travels over SSH on stdin, never in a command line.
+        [ -f "$database_url_file" ] && [ -r "$database_url_file" ] || die "Cannot read --database-url-file $database_url_file."
+        local perms
+        if [ "$os" = Darwin ]; then perms=$(stat -f %Lp "$database_url_file"); else perms=$(stat -c %a "$database_url_file"); fi
+        case $perms in [0-7]00) ;; *) die "--database-url-file $database_url_file must be private to you: chmod 600 it." ;; esac
+        [ -z "$api_target" ] || die "--database-url-file runs this VM's own Subspace API, which --api-target leaves out."
+        vm sudo -n sh -c "'umask 077; mkdir -p $inputs; cat > $inputs/database-url.new && mv -f $inputs/database-url.new $inputs/database-url'" < "$database_url_file" ||
+            die "Could not copy the database URL to the VM."
+        passthrough+=(--database-url-file "$inputs/database-url")
+    fi
+    if [ -n "$database_ca_file" ]; then
+        [ -f "$database_ca_file" ] || die "Cannot read --database-ca-file $database_ca_file."
+        vm sudo -n sh -c "'umask 077; mkdir -p $inputs; cat > $inputs/database-ca.pem.new && mv -f $inputs/database-ca.pem.new $inputs/database-ca.pem'" < "$database_ca_file" ||
+            die "Could not copy the database CA certificate to the VM."
+        passthrough+=(--database-ca-file "$inputs/database-ca.pem")
     fi
 
     send_payload
     local -a setup_args=(setup)
     interactive || setup_args+=(--non-interactive)
     setup_args+=(${passthrough[@]+"${passthrough[@]}"})
+    if "$dry_run"; then
+        say "Running subspace-setup --dry-run on the VM. It changes nothing there."
+        local status=0
+        vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")" || status=$?
+        vm sudo -n rm -rf "$inputs" || note "Remove $inputs on the VM by hand."
+        [ "$status" = 0 ] || die "The dry run failed; read subspace-setup's output above."
+        say "Dry run complete. Run the same command without --dry-run to install."
+        return
+    fi
     say "Running subspace-setup on the VM. This takes a while the first time."
     vm_tty sudo "$setup_cmd" "$(quote_args "${setup_args[@]}")"
 

@@ -47,6 +47,7 @@
   "irc": {
     "mode": "remote",
     "host": "irc.example.com",
-    "allowedAccounts": ["operator"]
+    "allowedAccounts": ["operator"],
+    "auth": "certificate"
   }
 }

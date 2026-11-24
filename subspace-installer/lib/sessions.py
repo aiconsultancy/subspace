@@ -198,29 +198,40 @@ def model_differs(session, model):
 
 
 def ensure(client, store, expected, wait=wait_until_ready, notice=None):
-    """Create or confirm the captain's root session; return (sessionID, newly confirmed)."""
+    """Create or confirm the captain's root session; return (sessionID, newly confirmed).
+
+    expected["directory"] is where the root works. A captain with crew also has expected["project"], the first
+    repository's checkout, which Stargate's crew state names even when the root works in the workspace above it;
+    a record without one predates the workspace root, so its directory is that checkout.
+    """
     notice = notice or (lambda text: print(text, file=sys.stderr))
+    project = {"project": expected["project"]} if "project" in expected else {}
+    fixed = ("The captain's first repository is fixed once its session is pinned, because Stargate's crew "
+             "state names that checkout. Restore the original first repository.")
     record = store.load()
     if record is not None:
         require(SESSION_ID.fullmatch(str(record.get("sessionID", ""))), "Invalid pinned captain session record.")
         if record.get("confirmed"):
-            require(record.get("directory") == expected["directory"],
-                    "The captain's first repository is fixed once its session is pinned, because Stargate's crew "
-                    "state names that checkout. Restore the original first repository.")
+            require(record.get("directory") == expected["directory"], fixed)
+            require(not project or record.get("project", record.get("directory")) == project["project"], fixed)
             check_roster(record, expected["crew"])
     else:
         # Reserve before creating so an interrupted create is retried with the same ID.
-        record = {"sessionID": new_session_id(), "directory": expected["directory"], "agent": CAPTAIN_AGENT,
+        record = {"sessionID": new_session_id(), "directory": expected["directory"], **project, "agent": CAPTAIN_AGENT,
                   "crew": expected["crew"], "confirmed": False}
         store.save(record)
     session = wait(client, record["sessionID"])
     if not record.get("confirmed") and record.get("directory") != expected["directory"]:
-        # Only a reservation: re-reserve the same unused ID for the new first repository.
+        # Only a reservation: re-reserve the same unused ID for the new first repository or root.
         require(session is None,
                 "The captain's root session already exists in its original first repository, although the "
                 "installer has not confirmed it. Restore the original first repository; the installer never "
                 "replaces a captain root.")
-        record = {**record, "directory": expected["directory"], "crew": expected["crew"]}
+        record = {**record, "directory": expected["directory"], **project, "crew": expected["crew"]}
+        store.save(record)
+    elif not record.get("confirmed") and project and record.get("project") != project["project"]:
+        # A reservation in the workspace whose first repository changed: nothing names it yet.
+        record = {**record, **project, "crew": expected["crew"]}
         store.save(record)
     if session is None:
         require(not record.get("confirmed"),

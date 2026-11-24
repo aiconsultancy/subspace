@@ -305,6 +305,15 @@ if [[ -d $scratch/github-apps ]]; then
         install_file "$key" "$etc/github-apps/$member/github-app.pem" 0600
     done
 fi
+# Officers' IRC certificate bundles supplied in the secrets directory. The render gives each to the gateway
+# user that serves its officer, and generates any that are missing with openssl (runtime.py irc_certificates).
+ensure_packages openssl
+install -d -m 0711 "$etc/irc-certs"
+if [[ -d $scratch/irc-certs ]]; then
+    for bundle in "$scratch/irc-certs/"*.pem; do
+        install_file "$bundle" "$etc/irc-certs/${bundle##*/}" 0600
+    done
+fi
 install_releases
 checkout_source stargate "${source[0]}" "${source[1]}"
 stargate=$app/src/stargate-${source[1]}
@@ -372,4 +381,6 @@ fi
 if ! "$no_systemd"; then
     "$app/lib/fleetctl.py" register
 fi
+# With certificates, the fingerprints an IRC operator binds to the officers' accounts. No key material.
+python3 "$app/lib/runtime.py" irc-fingerprints
 printf 'Fleet installation complete.\n'
