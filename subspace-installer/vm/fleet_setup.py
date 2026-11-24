@@ -45,7 +45,7 @@ import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, urlsplit
-from urllib.request import ProxyHandler, Request, build_opener, urlopen
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener, urlopen
 
 HERE = Path(__file__).resolve().parent
 PAYLOAD = HERE.parents[1]
@@ -213,6 +213,14 @@ def parse_args(argv):
                         "holding that account's password. Read for this run only; never printed or saved")
     parser.add_argument("--irc-operator-password-file", help="absolute path to a root-only file (mode 0600) holding "
                         "that operator's password. Read for this run only; never printed or saved")
+    parser.add_argument("--api-url", help="use a Subspace API on another host, such as https://subspace.example.com, "
+                        "instead of one on this VM: no API container or PostgreSQL here, and the officers enrol "
+                        "their own keys through Stargate. Needs --api-enrolment-token-file on the first run and a "
+                        "Stargate with subspaceAgents (--stargate-ref). Kept on later runs")
+    parser.add_argument("--api-enrolment-token-file", help="absolute path to a root-only file (mode 0600) holding "
+                        "the fleet's enrolment token (senr1.…) from that API's administrator. Never printed")
+    parser.add_argument("--switch-to-hosted-api", action="store_true",
+                        help="with --api-url on a VM whose API runs here: switch anyway, leaving that tracker behind")
     parser.add_argument("--no-api", dest="api", action="store_false", default=None,
                         help="skip the Subspace API and PostgreSQL on this VM")
     parser.add_argument("--database-url-file", help="run the API on this VM against an existing PostgreSQL, with no "
@@ -342,7 +350,10 @@ def gather(args, saved):
             "Pass --irc-operator-account and --irc-operator-account-password-file together.")
     require(not args.irc_operator_account or args.irc_operator,
             "--irc-operator-account is the account the operator's connection signs in to: pass --irc-operator too.")
-    if args.api is not None:
+    hosted_api(args, answers, saved)
+    if answers.get("apiUrl"):
+        answers["api"] = False  # The hosted API replaces one on this VM.
+    elif args.api is not None:
         answers["api"] = args.api
     elif args.database_url_file and answers.get("api") is False:
         # A fleet set up with --no-api: asking for an existing PostgreSQL asks for the API that uses it.
@@ -802,6 +813,9 @@ def fleet_config(answers, members, irc_ref, api_block=None, stargate_api=False, 
         # An address the operator gave; without one, the installer records the SSH tunnel's end.
         if stargate_api and answers.get("fleetApiUrl"):
             config["api"]["fleetApiUrl"] = answers["fleetApiUrl"]
+    elif answers.get("apiUrl"):
+        # A hosted API: the officers enrol through Stargate, and this VM keeps no administrator token.
+        config["api"] = {"url": answers["apiUrl"], "enrolment": True}
     # Timings someone set by hand stay; the answer switches dispatch on or off. It needs the API block.
     dispatch = previous.get("agentDispatch") if isinstance(previous.get("agentDispatch"), dict) else {}
     if dispatch or answers.get("agentDispatch"):
@@ -895,6 +909,136 @@ def compose(*args, capture=False, check=True, env=None, input_text=None):
     return run("docker", "compose", "--project-name", API_PROJECT, "--project-directory", API_DIR,
                "--env-file", INPUTS / "api.env", "-f", API_DIR / "compose.yaml", "-f", INPUTS / "api.override.yaml",
                *args, capture=capture, check=check, env=env, input_text=input_text)
+
+
+def hosted_api(args, answers, saved):
+    """A Subspace API on another host (--api-url): kept on later runs, exclusive of an API on this VM, and never
+    switched to from one without --switch-to-hosted-api."""
+    if args.api_url is None:
+        require(not args.api_enrolment_token_file or answers.get("apiUrl"),
+                "--api-enrolment-token-file is for a hosted API: pass --api-url too.")
+        require(not args.switch_to_hosted_api, "--switch-to-hosted-api goes with --api-url.")
+        require(not (answers.get("apiUrl") and args.database_url_file),
+                f"This fleet uses the hosted Subspace API at {answers.get('apiUrl')}, so its API has no database "
+                "here: leave out --database-url-file.")
+        return
+    require(args.api_url != "", "setup has no way back from a hosted API to one on this VM: set up a fresh VM.")
+    try:
+        parts = urlsplit(args.api_url)
+        parts.port  # noqa: B018 -- raises ValueError for an invalid port
+    except ValueError:
+        raise SetupError("--api-url must be the hosted API's origin, such as https://subspace.example.com.") from None
+    require(parts.scheme == "https" and parts.hostname and parts.path in ("", "/", "/api", "/api/")
+            and not (parts.query or parts.fragment or parts.username or parts.password),
+            "--api-url must be the hosted API's HTTPS origin, such as https://subspace.example.com, with no path.")
+    require(not args.database_url_file and not args.migrate and not args.database_ca_file,
+            "--api-url uses an API on another host, which keeps its own database: leave out --database-url-file, "
+            "--database-ca-file and --migrate.")
+    require(not args.demo, "Demo data is fictional and never goes into a hosted API: drop --demo.")
+    require(not args.agent_dispatch, "Agent dispatch needs a rear admiral token that setup mints from an API on this "
+            "VM; with --api-url, leave out --agent-dispatch.")
+    origin = f"https://{parts.netloc.lower()}"
+    # The fleet's tracker is in an API on this VM, with its own PostgreSQL or an existing one: switching leaves it.
+    tracker = not saved.get("apiUrl") and saved.get("api", True) and (
+        saved.get("databaseUrlFile") or (INPUTS / "api.env").is_file())
+    require(not tracker or args.switch_to_hosted_api,
+            "This fleet's API runs on this VM and keeps its tracker. A hosted API starts without that tracker, and "
+            "setup does not move it: pass --switch-to-hosted-api with --api-url to switch anyway, leaving it behind.")
+    for key in ("databaseUrlFile", "databaseCaFile"):
+        answers.pop(key, None)
+    answers["apiUrl"] = origin
+    answers["demo"] = False
+    answers.setdefault("agentDispatch", False)
+
+
+def enrolment_token(args, saved):
+    """The enrolment token given on this run, read from a root-only file and checked for its form, or None.
+    Nothing is written here: store_enrolment_token keeps it once the run's checks have passed. Never printed.
+
+    A run that makes the fleet hosted, a first run or a switch from an API on this VM, needs one: only a fleet
+    already saved as hosted has a token from an earlier run."""
+    if not args.api_enrolment_token_file:
+        require(saved.get("apiUrl"),
+                "The first run with --api-url, and a switch to it, need the fleet's enrolment token: pass "
+                "--api-enrolment-token-file FILE (an administrator of the hosted API issues it for this fleet).")
+        return None
+    token = password_file(args.api_enrolment_token_file, "--api-enrolment-token-file", "enrolment token")
+    require(re.fullmatch(runtime.ENROLMENT_TOKEN_TEXT, token),
+            f"The enrolment token file {args.api_enrolment_token_file} must hold the fleet's enrolment token "
+            "(senr1.…) that the hosted API's administrator issued.")
+    return token
+
+
+def store_enrolment_token(token):
+    """Keep a token given on this run in the fleet's secrets directory, where the fleet installer takes it from.
+    An earlier token stays until a new one replaces it: Stargate reads it only to enrol an officer that has no
+    enrolment yet, so an expired one never troubles officers already enrolled."""
+    destination = INPUTS / "fleet.secrets" / runtime.ENROLMENT_TOKEN
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(destination.parent, 0o700)
+    write_private(destination, token + "\n")
+
+
+class NoRedirect(HTTPRedirectHandler):
+    """Refuse a redirect rather than follow it: urllib would send the enrolment token on to the new host."""
+
+    def redirect_request(self, request, _fp, code, _message, headers, _new_url):
+        target = urlsplit(headers.get("Location", "")).hostname or "an unnamed host"
+        raise SetupError(f"The hosted Subspace API at {urlsplit(request.full_url).scheme}://"
+                         f"{urlsplit(request.full_url).netloc} answered with a redirect ({code}) to {target}. Setup "
+                         "does not follow it with the enrolment token: pass the API's own origin with --api-url.")
+
+
+def hosted_checks(answers, token):
+    """Checks of a hosted API on every run: that it answers (GET /health), and that a token given on this run is
+    valid, which means its fleet exists. An enrolment request with an empty body is refused for its body (400)
+    only once the token is accepted, and uses nothing. No redirect is followed."""
+    origin = answers["apiUrl"]
+    opener = build_opener(NoRedirect)
+    try:
+        with opener.open(Request(f"{origin}/health", headers={"Accept": "application/json"}), timeout=15) as reply:
+            healthy = json.load(reply).get("status") == "ok"
+    except (HTTPError, URLError, OSError, ValueError):
+        healthy = False
+    require(healthy, f"The hosted Subspace API at {origin} does not answer GET /health. Check the URL and that this "
+            "VM reaches it (outbound HTTPS, and any private network or access proxy).")
+    say(f"hosted API: {origin} answers")
+    if not token:
+        say("hosted API: no enrolment token given on this run, so none is checked. Officers already enrolled keep "
+            "working without one; a new officer, or one whose key is replaced, needs a fresh token "
+            "(--api-enrolment-token-file).")
+        return
+    request = Request(f"{origin}/api/v1/agents/enrol", data=b"{}", method="POST", headers={
+        "Authorization": f"Bearer {token}", "Content-Type": "application/json", "Accept": "application/json"})
+    try:
+        with opener.open(request, timeout=15) as reply:
+            status, detail = reply.status, ""
+    except HTTPError as error:
+        status = error.code
+        try:
+            detail = str(json.load(error).get("detail", ""))[:200]
+        except (ValueError, AttributeError):
+            detail = ""
+    except (URLError, OSError):
+        raise SetupError(f"The hosted Subspace API at {origin} did not answer the enrolment check.") from None
+    require(status == 400, f"The hosted Subspace API at {origin} refused the enrolment token ({status}"
+            + (f": {detail}" if detail else "") + "). Ask its administrator for a new one for this fleet "
+            "(POST /api/v1/fleets/<fleet>/enrolment-tokens).")
+    say("hosted API: the enrolment token is valid, so its fleet exists (checked without using it)")
+
+
+def stargate_agents(ref):
+    """Whether Stargate at ref has the subspaceAgents section a hosted API needs: fetch that one commit, without
+    history, and look for runtime.SUBSPACE_AGENTS_FILE in it."""
+    with tempfile.TemporaryDirectory(prefix="subspace-setup-stargate-") as work:
+        try:
+            run("git", "init", "--quiet", "--bare", work, capture=True, timeout=30)
+            run("git", "-C", work, "fetch", "--quiet", "--depth", "1", STARGATE_REPO, ref, capture=True, timeout=120)
+        except SetupError:
+            raise SetupError(f"Could not fetch Stargate {ref[:12]} from {STARGATE_REPO} to check it. "
+                             + OUTBOUND_HELP) from None
+        return run("git", "-C", work, "cat-file", "-e", f"FETCH_HEAD:{runtime.SUBSPACE_AGENTS_FILE}",
+                   check=False) == 0
 
 
 def external_database(answers):
@@ -1623,6 +1767,7 @@ def summary(answers, members, stargate_api, lockdown_id=""):
         "SUBSPACE_ACCESS": answers["access"],
         "SUBSPACE_LOCKDOWN": "1" if answers["lockdown"] else "0",
         "SUBSPACE_LOCKDOWN_ID": lockdown_id,
+        **({"SUBSPACE_HOSTED_API": answers["apiUrl"]} if answers.get("apiUrl") else {}),
     }
     write_private(INPUTS / "summary.env", "".join(f"{key}={value}\n" for key, value in values.items()))
     return values
@@ -1664,19 +1809,31 @@ def configure(args):
             "This VM's API already keeps its tracker in its own PostgreSQL, which setup does not move. To use an "
             "existing PostgreSQL, restore a dump of that database there and set up a fresh VM with "
             "--database-url-file (installer README, 'An existing PostgreSQL').")
+    if answers.get("stargateRef"):
+        stargate_tag, stargate_ref = "pinned", answers["stargateRef"]
+    else:
+        stargate_tag, stargate_ref = latest_stargate()
+    say(f"installing Stargate {stargate_tag} ({stargate_ref[:12]})")
+    enrolment = None
+    if answers.get("apiUrl"):
+        # Every check of the hosted API comes before setup saves anything, so a refused run, a switch from an
+        # API on this VM included, leaves the fleet's answers and secrets exactly as they were.
+        require(stargate_agents(stargate_ref),
+                f"A hosted API (--api-url) needs a Stargate with its subspaceAgents section, from commit "
+                f"{runtime.SUBSPACE_AGENTS_COMMIT[:12]} on, and Stargate {stargate_tag} ({stargate_ref[:12]}) has not "
+                "got it: pass --stargate-ref with that commit or a later one.")
+        say(f"Stargate {stargate_ref[:12]} has subspaceAgents ({runtime.SUBSPACE_AGENTS_FILE})")
+        enrolment = enrolment_token(args, saved)
+        hosted_checks(answers, enrolment)
     save_answers(answers)
+    if enrolment:
+        store_enrolment_token(enrolment)
     # A dry run neither reads nor writes Key Vault: a value the copied store lacks is made up for validation.
     secret_store = Secrets(INPUTS, answers["slug"], None if args.dry_run else answers.get("keyVault"))
     members = roster(answers, rear, captains)
     local_irc = answers["irc"] == "local"
     config_path = INPUTS / "fleet.json"
     secrets_path = INPUTS / "fleet.secrets.json"
-
-    if answers.get("stargateRef"):
-        stargate_tag, stargate_ref = "pinned", answers["stargateRef"]
-    else:
-        stargate_tag, stargate_ref = latest_stargate()
-    say(f"installing Stargate {stargate_tag} ({stargate_ref[:12]})")
 
     dispatch_token = ""
 

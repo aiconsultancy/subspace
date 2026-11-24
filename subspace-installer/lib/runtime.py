@@ -25,7 +25,8 @@ from urllib.parse import urlsplit
 from agent_files import collect_cloud, private_directory, private_file, provision_cloud, write_private
 import fleet_records
 from network import rules
-from roles import API_SKILL_MISSING, api_skill_path, default_permissions, provision_role, role_documents
+from roles import API_SKILL_MISSING, add_request_guidance, api_skill_path, default_permissions, provision_role
+from roles import role_documents
 from roles import provision_workspace, workspace_documents
 import sessions
 import standard_channels
@@ -75,6 +76,17 @@ STARGATE_REPO = "https://github.com/aiconsultancy/stargate.git"
 # against GitHub and moves them together: see "Stargate pin" in subspace-installer/README.md.
 STARGATE_RELEASE = "v0.43.0"
 STARGATE_REF = "fcf6ac75d9c780878c06c8b49fb160e4a27832ff"
+# A hosted Subspace API (api.enrolment): Stargate's subspaceAgents section, its signing proxy and its MCP bridge,
+# first in this commit; a checkout has them when it has SUBSPACE_AGENTS_FILE. Releases up to v0.43 lack them.
+SUBSPACE_AGENTS_COMMIT = "5630a5ce9ca1e7cd533bc7a5ab951bb4681757be"
+SUBSPACE_AGENTS_FILE = "src/subspace/bridge.ts"
+SUBSPACE_AGENTS_RELEASE = (0, 44, 0)
+# Each officer's signing-proxy socket, in a directory of its own that admits the gateway and the officer's
+# engine group only. /run is emptied at boot, so a tmpfiles.d entry makes the directories again.
+AGENT_SOCKETS = Path("/run/subspace-fleet/agents")
+AGENT_TMPFILES = Path("/etc/tmpfiles.d/subspace-fleet-agents.conf")
+ENROLMENT_TOKEN = "subspace-enrolment-token"
+ENROLMENT_TOKEN_TEXT = r"senr1\.[A-Za-z0-9_-]{64}"
 # Fleet API browser origins: macOS Spaces, and the built-in Fleet Console's WebView2 origin on
 # Windows, which Stargate stopped allowing by default in v0.41.0.
 FLEET_API_ORIGINS = ["subspace://*", "https://subspace.fleet-console"]
@@ -495,7 +507,7 @@ def history_config(value):
 
 
 def api_config(value):
-    value = fields(value, "api", "url initiatives vmHost fleetApiUrl agentUrl", ["url"])
+    value = fields(value, "api", "url initiatives vmHost fleetApiUrl agentUrl enrolment", ["url"])
     base = url(value["url"], "API base URL", True, ("", "/", "/api", "/api/")).rstrip("/")
     initiatives = value.get("initiatives", [])
     require(isinstance(initiatives, list), "API initiatives must be an array.")
@@ -503,6 +515,17 @@ def api_config(value):
     cfg = {"url": base if base.endswith("/api") else f"{base}/api", "initiatives": list(dict.fromkeys(ids))}
     if "vmHost" in value:
         cfg["vmHost"] = host(value["vmHost"])
+    if value.get("enrolment") is not None:
+        require(type(value["enrolment"]) is bool, "api.enrolment must be true or false.")
+    if value.get("enrolment"):
+        # A hosted API: officers enrol their own keys with the fleet's enrolment token, and Stargate signs their
+        # requests; nothing names an agent by a header.
+        require("agentUrl" not in value, "api.enrolment and api.agentUrl exclude each other: an enrolled fleet's "
+                "officers reach the API through Stargate, never through an agent listener.")
+        parts = urlsplit(base)
+        cfg["origin"] = f"{parts.scheme}://{parts.netloc.lower()}"
+        cfg["enrolment"] = True
+        require(api_skill_path() is not None, API_SKILL_MISSING)
     if "agentUrl" in value:
         # The API's agent-only listener, on this VM's loopback: agents name themselves there and need no token.
         agent_url = url(value["agentUrl"], "API agent listener URL", True, ("", "/"))
@@ -921,7 +944,20 @@ def validate(config, credentials, check_files=True):
         else:
             string(password, "IRC password", 256)
     token = private.get("apiToken", "")
-    if api:
+    if api and api.get("enrolment"):
+        # Officers enrol with the fleet's enrolment token, so no administrator token is kept on the VM.
+        require(token == "", "api.enrolment keeps no administrator token on the VM: remove apiToken from the "
+                "secrets file. The hosted API's administrators register the fleet, and its officers enrol "
+                "themselves.")
+        require(any(person["harness"]["type"] == "opencode" for person in agents),
+                "api.enrolment needs an OpenCode officer: the shared gateway that holds the officers' keys serves "
+                "OpenCode officers, and a fleet of Claude Agent SDK officers has none.")
+        release = tuple(int(part) for part in re.findall(r"\d+", STARGATE_RELEASE)[:3])
+        require(stargate.get("ref", STARGATE_REF) != STARGATE_REF or release >= SUBSPACE_AGENTS_RELEASE,
+                f"api.enrolment needs a Stargate with its subspaceAgents section, from commit "
+                f"{SUBSPACE_AGENTS_COMMIT[:12]} on; this installer's pinned release, {STARGATE_RELEASE}, has not "
+                "got it. Set stargate.ref (subspace-setup --stargate-ref) to that commit or a later one.")
+    elif api:
         pattern(token, JWT, "API bearer JWT")
     else:
         require(token == "", "An API token requires API configuration.")
@@ -1059,6 +1095,11 @@ def extra_sources(cfg, directory, partial=False):
             contents = private_file("proxy-management-key", optional=partial, dir_fd=root)
             if contents is not None:
                 files["proxy-management-key",] = contents
+        if enrolled(cfg):
+            # Optional on every run: an upgrade keeps the installed token, and enrolled officers need none.
+            contents = private_file(ENROLMENT_TOKEN, optional=True, dir_fd=root)
+            if contents is not None:
+                files[ENROLMENT_TOKEN,] = contents
         if cfg["medical"]:
             with private_directory(SENTRY_TOKEN[0], root) as medical_dir:
                 require(partial or medical_dir is not None, "Supply credentials in the medical secrets directory.")
@@ -1096,6 +1137,18 @@ def extra_snapshot(cfg, directory, previous, prune):
         require(len(set(configured)) == len(configured), f"Each Slack bot needs its own {name}: two officers share one.")
     if ("proxy-management-key",) in files:
         tokens["proxy-management-key"] = pattern(files["proxy-management-key",].decode("ascii").strip(), r"[a-zA-Z0-9_=-]{20,256}", "proxy management key")
+    if enrolled(cfg):
+        if (ENROLMENT_TOKEN,) in files:
+            try:
+                tokens[ENROLMENT_TOKEN] = pattern(files[ENROLMENT_TOKEN,].decode("ascii").strip(), ENROLMENT_TOKEN_TEXT,
+                                                  "fleet enrolment token")
+            except (Invalid, UnicodeDecodeError):
+                raise Invalid(f"The {ENROLMENT_TOKEN} in the secrets directory is not a fleet enrolment token "
+                              "(senr1.…).") from None
+        require(ENROLMENT_TOKEN in tokens, f"api.enrolment needs the fleet's enrolment token, from the hosted API's "
+                f"administrator, as {ENROLMENT_TOKEN} in the secrets directory (mode 0600).")
+    else:
+        tokens.pop(ENROLMENT_TOKEN, None)
     if "reportChannel" in cfg["integrations"]["usage"]:
         require("proxy-management-key" in tokens, "Supply a proxy management key in the secrets directory.")
         require(tokens["proxy-management-key"] != cfg["proxy"]["key"], "Use distinct proxy management and model client keys.")
@@ -1261,6 +1314,74 @@ def subspace_mcp_url(cfg):
     return (cfg.get("api") or {}).get("agentMcpUrl")
 
 
+def enrolled(cfg):
+    """Whether the fleet's officers reach a hosted API through Stargate's signing proxy (api.enrolment)."""
+    return bool((cfg.get("api") or {}).get("enrolment"))
+
+
+def agent_socket(agent_id):
+    return AGENT_SOCKETS / agent_id / "api.sock"
+
+
+def stargate_entry(cfg):
+    return APP / "src" / f"stargate-{cfg['stargate']['ref']}" / "src/main.ts"
+
+
+def subspace_bridge(cfg, agent_id):
+    """Stargate's stdio MCP bridge to an officer's signing-proxy socket, as a command line."""
+    return [str(APP / "bin/bun"), str(stargate_entry(cfg)), "subspace", "mcp", "--socket", str(agent_socket(agent_id))]
+
+
+def subspace_request(cfg, agent_id):
+    """The command an officer's REST calls to the hosted API go through, before the path."""
+    return [str(APP / "bin/bun"), str(stargate_entry(cfg)), "subspace", "request", "--socket",
+            str(agent_socket(agent_id))]
+
+
+def stargate_has_subspace_agents(cfg):
+    """Whether the installed Stargate checkout has the subspaceAgents section (SUBSPACE_AGENTS_FILE)."""
+    return (APP / "src" / f"stargate-{cfg['stargate']['ref']}" / SUBSPACE_AGENTS_FILE).is_file()
+
+
+def require_subspace_agents(cfg):
+    require(stargate_has_subspace_agents(cfg),
+            f"api.enrolment needs a Stargate with its subspaceAgents section ({SUBSPACE_AGENTS_FILE}), from commit "
+            f"{SUBSPACE_AGENTS_COMMIT[:12]} on, and Stargate {cfg['stargate']['ref'][:12]} has not got it. Set "
+            "stargate.ref (subspace-setup --stargate-ref) to that commit or a later one.")
+
+
+def subspace_agents_settings(cfg, gateway_home):
+    """Stargate's subspaceAgents section for the gateway that runs as the gateway user: one entry per officer,
+    named as the API registration names them (the rear admiral by its name; a captain by its account, with its
+    ship), and each officer's socket."""
+    officers = []
+    for person in cfg["members"]:
+        rear = person["role"] == "rear_admiral"
+        officers.append({
+            "name": person["name"] if rear else person["account"], "rank": "rearAdmiral" if rear else "captain",
+            **({} if rear else {"ship": person["name"]}), "model": person["harness"]["model"],
+            "ircNick": person["account"], "socketPath": str(agent_socket(person["id"])),
+        })
+    return {
+        "enabled": True, "api": {"baseUrl": cfg["api"]["origin"]},
+        "enrolment": {"tokenFile": str(gateway_home / ENROLMENT_TOKEN)}, "officers": officers,
+    }
+
+
+def agent_socket_directories(cfg):
+    """Each officer's socket directory: the gateway's, entered only by the officer's engine group (mode 2750),
+    under parents that only root writes. Made now and, through tmpfiles.d, at every boot before the gateway."""
+    lines = [f"d {AGENT_SOCKETS.parent} 0711 root root -", f"d {AGENT_SOCKETS} 0711 root root -"]
+    directory(AGENT_SOCKETS.parent, 0o711)
+    directory(AGENT_SOCKETS, 0o711)
+    for person in cfg["members"]:
+        path, group = agent_socket(person["id"]).parent, f"ss-{person['id']}"
+        directory(path, 0o2750, GATEWAY, group)
+        lines.append(f"d {path} 2750 {GATEWAY} {group} -")
+    write(AGENT_TMPFILES, "".join(f"{line}\n" for line in lines), 0o644)
+    return [agent_socket(person["id"]).parent for person in cfg["members"]]
+
+
 def harness_permissions(cfg, person):
     """The officer's harness policy, plus the Subspace API's MCP tools when the agent listener is configured.
 
@@ -1268,7 +1389,7 @@ def harness_permissions(cfg, person):
     adds its grant only when the policy says nothing about these tools.
     """
     permissions = person["harness"]["permissions"]
-    if subspace_mcp_url(cfg) and not any(
+    if (subspace_mcp_url(cfg) or enrolled(cfg)) and not any(
             str(rule.get("action", "")).startswith(f"{SUBSPACE_MCP}_") for rule in permissions):
         return [*permissions, SUBSPACE_MCP_GRANT]
     return permissions
@@ -1577,7 +1698,11 @@ def render_engine(cfg, person, home, workspace, engine_port, seed, documents, se
         "model": model_ref(harness["family"], harness["model"]), "permissions": permissions,
         "providers": {PROVIDERS[family]: model_provider(cfg, family, models) for family, models in catalogue.items()},
     }
-    if mcp_url := subspace_mcp_url(cfg):
+    if enrolled(cfg):
+        # A hosted API: Stargate's stdio bridge to the officer's signing proxy, which signs as the officer with
+        # its enrolled key. The engine holds no credential and names no agent.
+        engine["mcp"] = {"servers": {SUBSPACE_MCP: {"type": "local", "command": subspace_bridge(cfg, agent_id)}}}
+    elif mcp_url := subspace_mcp_url(cfg):
         # The Subspace API's agent listener: the officer, and the crew sessions on this server, act as the
         # officer's own agent record, named by its IRC account. The listener needs no token.
         engine["mcp"] = {"servers": {SUBSPACE_MCP: {
@@ -1645,7 +1770,12 @@ def claude_backend(cfg, person, workspace, documents):
         "systemPrompt": documents["claudePrompt"],
         "provider": {"baseURL": f"http://{LOOPBACK}:{cfg['proxy']['port']}/v1", "apiKeyEnv": "CLIPROXYAPI_API_KEY"},
     }
-    if mcp_url := subspace_mcp_url(cfg):
+    if enrolled(cfg):
+        # The officer's own gateway process, as its own user, runs Stargate's bridge to its signing-proxy socket,
+        # whose directory admits that user's group.
+        command, *arguments = subspace_bridge(cfg, person["id"])
+        backend["mcpServers"] = {SUBSPACE_MCP: {"type": "stdio", "command": command, "args": arguments}}
+    elif mcp_url := subspace_mcp_url(cfg):
         # Stargate's Claude backend takes header values only from a helper command, and permits every
         # tool of a configured server itself (mcp__subspace); allowedTools holds built-in tools only.
         backend["mcpServers"] = {SUBSPACE_MCP: {
@@ -2242,6 +2372,15 @@ def render(cfg, extra, prune=False):
     ports = allocate_ports(cfg)
 
     gateway_home = account(GATEWAY, STATE / "gateway")
+    sockets = []
+    if enrolled(cfg):
+        # A hosted API: the gateway user keeps the fleet's enrolment token and, through Stargate, each officer's
+        # key and signing-proxy socket.
+        require_subspace_agents(cfg)
+        own_file(gateway_home / ENROLMENT_TOKEN, extra["tokens"][ENROLMENT_TOKEN] + "\n", GATEWAY)
+        sockets = agent_socket_directories(cfg)
+    elif AGENT_TMPFILES.exists():
+        AGENT_TMPFILES.unlink()
     if "caFile" in cfg["irc"]:
         write(ETC / "irc-ca.pem", Path(cfg["irc"]["caFile"]).read_text(), 0o644)
     homes = {}
@@ -2254,6 +2393,8 @@ def render(cfg, extra, prune=False):
         configure_git(person, user, prune, cfg["protectedBranches"])
         references = STATE / "references" / agent_id if cfg["repositories"] else None
         documents[agent_id] = role_documents(cfg, person, references, home)
+        if enrolled(cfg):
+            add_request_guidance(documents[agent_id], subspace_request(cfg, agent_id))
         subprocess.run(
             ["runuser", "-u", user, "--", str(APP / "lib/runtime.py"), "role"],
             input=json_text(documents[agent_id]), text=True, check=True,
@@ -2350,6 +2491,10 @@ def render(cfg, extra, prune=False):
         is_primary = group == "gateway"
         settings = {"dataDirectory": str(data), "dashboard": is_primary, "irc": options["irc"]}
         writable = [home, *options["writable"]]
+        if enrolled(cfg) and user == GATEWAY:
+            # The gateway user's process holds every officer's key and opens each officer's socket.
+            settings["subspaceAgents"] = subspace_agents_settings(cfg, gateway_home)
+            writable.extend(sockets)
         if is_primary:
             # Slack and Teams keep their own sessions; a pinned root has one chat owner, the rear admiral's IRC.
             stakeholder_backend = {key: value for key, value in registrations[rear["id"]]["backend"].items()
@@ -2628,7 +2773,17 @@ def main(args):
                       f"{cfg['irc']['commandChannel']}.")
             else:
                 print("Agent dispatch is off.")
-            if cfg["api"]:
+            if enrolled(cfg):
+                print(f"The Subspace API is hosted at {cfg['api']['origin']}: each officer enrols its own key through "
+                      "Stargate with the fleet's enrolment token and reaches the API through its signing proxy. This "
+                      "VM keeps no administrator token and registers nothing; the API's administrators keep the "
+                      "fleet's records.")
+                if (APP / "src" / f"stargate-{cfg['stargate']['ref']}").is_dir():
+                    require_subspace_agents(cfg)
+                else:
+                    print(f"The install stops unless Stargate {cfg['stargate']['ref'][:12]} has its subspaceAgents "
+                          f"section ({SUBSPACE_AGENTS_FILE}, from commit {SUBSPACE_AGENTS_COMMIT[:12]} on).")
+            elif cfg["api"]:
                 address = fleet_records.fleet_api_address(cfg)
                 print(f"The Subspace API will record the fleet's Stargate Fleet API at {address}." if address else
                       "Stargate's Fleet API is off, so the Subspace API will record no Fleet API address.")

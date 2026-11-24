@@ -18,6 +18,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
@@ -27,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
 import fleet_setup  # noqa: E402
 import irc_accounts  # noqa: E402
+import roles  # noqa: E402
 import runtime  # noqa: E402
 from runtime import irc_officer, validate  # noqa: E402
 from standard_channels import COMMAND_SUFFIX  # noqa: E402
@@ -1418,6 +1420,323 @@ class IrcCertificateSetupTests(unittest.TestCase):
                 patch.object(irc_accounts, "check_login", return_value=None), \
                 self.assertRaisesRegex(fleet_setup.SetupError, "cannot sign in to localhost"):
             fleet_setup.check_certificates(answers, members, certificates, operator, register=True)
+
+
+class HostedApi(BaseHTTPRequestHandler):
+    """A hosted Subspace API's health route and enrolment route, as the merged API answers them."""
+
+    token = "senr1." + "B" * 64
+
+    def reply(self, status, body):
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    redirect = None  # A Location to answer every request with, as a misconfigured proxy might.
+
+    def do_GET(self):
+        if self.redirect:
+            return self.moved()
+        self.reply(200, {"status": "ok"}) if self.path == "/health" else self.reply(404, {})
+
+    def moved(self):
+        self.send_response(302)
+        self.send_header("Location", self.redirect)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        self.server.enrolments += 1
+        if self.redirect:
+            return self.moved()
+        if self.headers.get("Authorization") != f"Bearer {self.token}":
+            self.reply(401, {"detail": "A valid enrolment token is required."})
+        else:
+            self.reply(400, {"detail": "The request contains invalid fields."})
+
+    def log_message(self, *_args):
+        pass
+
+
+class HostedApiSetupTests(unittest.TestCase):
+    """subspace-setup with a Subspace API on another host (--api-url)."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        fleet_setup.INPUTS = self.root / "inputs"
+        fleet_setup.INPUTS.mkdir(mode=0o700)
+        for name, value in (("SECRET_OWNER", os.getuid()), ("FLEET_ETC", self.root / "etc")):
+            patcher = patch.object(fleet_setup, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.token_file = fleet_setup.INPUTS / "enrolment-token"
+        self.token_file.write_text(HostedApi.token + "\n")
+        self.token_file.chmod(0o600)
+
+    def answers(self, *extra, saved=None):
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+                                       "--rear-admiral", "Atlas", "--captains", "Orion", *extra])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            answers = fleet_setup.gather(args, saved or {})
+            fleet_setup.check_answers(answers)
+        return answers, args
+
+    def test_the_hosted_api_replaces_one_on_this_vm_and_is_kept(self):
+        answers, _ = self.answers("--api-url", "https://Subspace.Example.com/")
+        self.assertEqual((answers["apiUrl"], answers["api"], answers["demo"], answers["agentDispatch"]),
+                         ("https://subspace.example.com", False, False, False))
+        later, _ = self.answers(saved=answers)
+        self.assertEqual((later["apiUrl"], later["api"]), ("https://subspace.example.com", False))
+        for extra, message in (
+                (["--api-url", "http://subspace.example.com"], "HTTPS origin"),
+                (["--api-url", "https://subspace.example.com/tracker"], "HTTPS origin"),
+                (["--api-url", ""], "no way back"),
+                (["--api-url", "https://subspace.example.com", "--database-url-file", "/root/fleet/database-url"],
+                 "leave out --database-url-file"),
+                (["--api-url", "https://subspace.example.com", "--demo"], "drop --demo"),
+                (["--api-url", "https://subspace.example.com", "--agent-dispatch"], "leave out --agent-dispatch"),
+                (["--api-enrolment-token-file", str(self.token_file)], "pass --api-url too")):
+            with self.subTest(extra), self.assertRaisesRegex(fleet_setup.SetupError, message):
+                self.answers(*extra)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "leave out --database-url-file"):
+            self.answers("--database-url-file", "/root/fleet/database-url", saved=answers)
+
+    def test_a_fleet_whose_tracker_is_here_switches_only_when_asked(self):
+        for saved in ({"api": True, "slug": "example-fleet"},
+                      {"api": True, "slug": "example-fleet", "databaseUrlFile": "/root/fleet/database-url"}):
+            (fleet_setup.INPUTS / "api.env").write_text("POSTGRES_PASSWORD=example\n")
+            with self.subTest(saved), self.assertRaisesRegex(fleet_setup.SetupError, "--switch-to-hosted-api"):
+                self.answers("--api-url", "https://subspace.example.com", saved=saved)
+            switched, _ = self.answers("--api-url", "https://subspace.example.com", "--switch-to-hosted-api",
+                                       saved=saved)
+            self.assertNotIn("databaseUrlFile", switched)
+            self.assertFalse(switched["api"])
+        # A fleet with no API here has no tracker to leave behind.
+        (fleet_setup.INPUTS / "api.env").unlink()
+        self.assertTrue(self.answers("--api-url", "https://subspace.example.com", saved={"api": False})[0]["apiUrl"])
+
+    def test_the_enrolment_token_goes_to_the_secrets_directory_and_is_never_shown(self):
+        _, args = self.answers("--api-url", "https://subspace.example.com",
+                               "--api-enrolment-token-file", str(self.token_file))
+        self.assertEqual(fleet_setup.enrolment_token(args, {}), HostedApi.token)
+        stored = fleet_setup.INPUTS / "fleet.secrets" / runtime.ENROLMENT_TOKEN
+        self.assertFalse(stored.exists(), "nothing is kept before the run's checks pass")
+        fleet_setup.store_enrolment_token(HostedApi.token)
+        self.assertEqual((stored.read_text(), stored.stat().st_mode & 0o777), (HostedApi.token + "\n", 0o600))
+        # A later run of a fleet saved as hosted checks no token: the stored one may have expired, and enrolled
+        # officers need none. A run that makes a fleet hosted without a token stops, whatever files exist.
+        _, later = self.answers("--api-url", "https://subspace.example.com")
+        self.assertIsNone(fleet_setup.enrolment_token(later, {"apiUrl": "https://subspace.example.com"}))
+        (fleet_setup.FLEET_ETC).mkdir()
+        (fleet_setup.FLEET_ETC / "extra-secrets.json").write_text("{}")
+        for saved in ({}, {"api": True, "slug": "example-fleet"}):
+            with self.subTest(saved), self.assertRaisesRegex(fleet_setup.SetupError, "need the fleet's enrolment token"):
+                fleet_setup.enrolment_token(later, saved)
+        for text, mode, message in ((HostedApi.token, 0o644, "mode 0600"), ("not-a-token", 0o600, "senr1")):
+            self.token_file.write_text(text)
+            self.token_file.chmod(mode)
+            with self.subTest(message), self.assertRaisesRegex(fleet_setup.SetupError, message) as refused:
+                fleet_setup.enrolment_token(args, {})
+            self.assertNotIn(HostedApi.token, str(refused.exception))
+
+    def test_the_dry_run_checks_the_api_and_the_token_without_using_it(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), HostedApi)
+        server.enrolments = 0
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        answers = {"apiUrl": f"http://127.0.0.1:{server.server_port}"}
+        output = []
+        with patch.object(fleet_setup, "say", side_effect=output.append):
+            fleet_setup.hosted_checks(answers, HostedApi.token)
+        self.assertIn("checked without using it", "\n".join(output))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "refused the enrolment token \\(401: A valid "
+                                    "enrolment token is required.\\)") as refused:
+            fleet_setup.hosted_checks(answers, "senr1." + "C" * 64)
+        self.assertNotIn("senr1.", str(refused.exception))
+        self.assertEqual(server.enrolments, 2)
+        # Without a token given on this run (a rerun, its stored token maybe expired) only health is checked.
+        output.clear()
+        with patch.object(fleet_setup, "say", side_effect=output.append):
+            fleet_setup.hosted_checks(answers, None)
+        self.assertEqual(server.enrolments, 2)
+        self.assertIn("Officers already enrolled keep working without one; a new officer", "\n".join(output))
+        with self.assertRaisesRegex(fleet_setup.SetupError, "does not answer GET /health"):
+            fleet_setup.hosted_checks({"apiUrl": "http://127.0.0.1:9"}, HostedApi.token)
+        # A redirect is never followed with the token, and the message names where it pointed.
+        HostedApi.redirect = "https://elsewhere.example.net/api/v1/agents/enrol"
+        self.addCleanup(setattr, HostedApi, "redirect", None)
+        for token in (None, HostedApi.token):
+            with self.subTest(token=bool(token)), \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "redirect \\(302\\) to elsewhere.example.net"):
+                fleet_setup.hosted_checks(answers, token)
+
+    def test_the_hosted_paths_are_the_apis_own(self):
+        # The health check, the enrolment check and the REST examples in the officers' instructions name paths
+        # the API serves, as its OpenAPI document lists them.
+        document = json.loads((Path(fleet_setup.HERE).parents[1] / "subspace-api/openapi.json").read_text())
+        for path, method in (("/health", "get"), ("/api/v1/agents/enrol", "post"), ("/api/v1/me", "get"),
+                             ("/api/v1/issues", "post"), ("/api/v1/fleets/{reference}/enrolment-tokens", "post")):
+            self.assertIn(method, document["paths"].get(path, {}), path)
+        source = Path(fleet_setup.__file__).read_text()
+        self.assertIn('f"{origin}/health"', source)
+        self.assertIn('f"{origin}/api/v1/agents/enrol"', source)
+        guidance = roles.REQUEST_GUIDANCE
+        self.assertIn("/api/v1/me", guidance)
+        self.assertIn("/api/v1/issues", guidance)
+
+    def test_stargate_is_checked_for_subspace_agents_at_the_chosen_commit(self):
+        source = self.root / "stargate"
+        git = ["git", "-C", str(source), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com"]
+        subprocess.run(["git", "init", "--quiet", str(source)], check=True)
+        subprocess.run([*git, "config", "uploadpack.allowAnySHA1InWant", "true"], check=True)
+        (source / "README.md").write_text("Stargate\n")
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "--quiet", "-m", "before"], check=True)
+        before = subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        (source / "src/subspace").mkdir(parents=True)
+        (source / runtime.SUBSPACE_AGENTS_FILE).write_text("export {};\n")
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "--quiet", "-m", "subspaceAgents"], check=True)
+        after = subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        with patch.object(fleet_setup, "STARGATE_REPO", f"file://{source}"):
+            self.assertFalse(fleet_setup.stargate_agents(before))
+            self.assertTrue(fleet_setup.stargate_agents(after))
+            with self.assertRaisesRegex(fleet_setup.SetupError, "Could not fetch Stargate"):
+                fleet_setup.stargate_agents("0" * 40)
+
+    def test_the_fleet_installer_gets_an_enrolment_api_and_no_administrator_token(self):
+        answers, _ = self.answers("--api-url", "https://subspace.example.com", "--irc", "remote",
+                                  "--irc-host", "irc.example.com")
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        config = fleet_setup.fleet_config(answers, members, "a" * 40, stargate_ref=runtime.SUBSPACE_AGENTS_COMMIT)
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
+                                            answers["admin"], local_irc=False, certificates=True)
+        self.assertEqual(config["api"], {"url": "https://subspace.example.com", "enrolment": True})
+        self.assertNotIn("apiToken", secrets)
+        cfg = validate(config, secrets, check_files=False)
+        self.assertEqual((cfg["api"]["origin"], cfg["api"]["enrolment"], cfg["token"]),
+                         ("https://subspace.example.com", True, ""))
+        values = fleet_setup.summary(answers, members, False)
+        self.assertEqual((values["SUBSPACE_API"], values["SUBSPACE_HOSTED_API"]), ("0", "https://subspace.example.com"))
+        self.assertNotIn("SUBSPACE_HOSTED_API", fleet_setup.summary(self.answers()[0], members, False))
+
+    def test_the_host_installers_copy_the_token_for_the_run_only(self):
+        # Without an SSH harness, check the text: the token file goes with the operator's password files, which
+        # reach the VM after the installer and are removed however the run ends, and --api-url excludes
+        # --api-target and --database-url-file before anything is copied.
+        root = Path(fleet_setup.HERE).parents[1]
+        shell, powershell = (root / "install.sh").read_text(), (root / "install.ps1").read_text()
+        self.assertEqual(shell.count("for option in irc-operator-password irc-operator-account-password "
+                                     "api-enrolment-token; do"), 2)
+        self.assertIn('api-enrolment-token) printf \'%s\' "$api_enrolment_token_file" ;;', shell)
+        self.assertIn("@('api-enrolment-token', $ApiEnrolmentTokenFile)", powershell)
+        for text, check, first_copy in ((shell, "--api-url|--api-url=*) hosted=true", "database-url.new"),
+                                        (powershell, "if ($hosted) {\n        if ($ApiTarget)", "database-url.new")):
+            self.assertLess(text.index(check), text.index(first_copy))
+
+    def test_a_refused_switch_leaves_the_fleet_as_it_was(self):
+        # An installed fleet whose API runs here, with an existing PostgreSQL, tries to switch and is refused.
+        saved = {"api": True, "slug": "example-fleet", "name": "Example Fleet", "databaseUrlFile": "/root/fleet/db"}
+        fleet_setup.write_json(fleet_setup.INPUTS / "answers.json", saved)
+        (fleet_setup.INPUTS / "api.env").write_text("DATABASE_URL='postgresql://example'\n")
+        before = {path.name: path.read_bytes() for path in fleet_setup.INPUTS.iterdir() if path.is_file()}
+        argv = ["--non-interactive", "--operator", "operator", "--rear-admiral", "Atlas", "--captains", "Orion",
+                "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40, "--api-url",
+                "https://subspace.example.com", "--switch-to-hosted-api", "--api-enrolment-token-file",
+                str(self.token_file)]
+        for failing in ("stargate_agents", "hosted_checks"):
+            with self.subTest(failing), patch.object(fleet_setup.pwd, "getpwnam"), \
+                    patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "stargate_agents", return_value=failing != "stargate_agents"), \
+                    patch.object(fleet_setup, "hosted_checks", side_effect=fleet_setup.SetupError("refused")
+                                 if failing == "hosted_checks" else None), \
+                    patch.object(fleet_setup, "installer") as installer, patch.object(fleet_setup, "say"), \
+                    self.assertRaises(fleet_setup.SetupError):
+                fleet_setup.setup(fleet_setup.parse_args(argv))
+            installer.assert_not_called()
+            self.assertEqual({path.name: path.read_bytes() for path in fleet_setup.INPUTS.iterdir() if path.is_file()},
+                             before)
+            self.assertFalse((fleet_setup.INPUTS / "fleet.secrets").exists())
+
+    def test_a_saved_api_target_gives_way_to_a_hosted_api(self):
+        # A fleet once set up with --api-target keeps that in its host state; --api-url sets it aside instead of
+        # refusing, and a successful real run forgets it, after the dry-run branch has returned.
+        root = Path(fleet_setup.HERE).parents[1]
+        shell, powershell = (root / "install.sh").read_text(), (root / "install.ps1").read_text()
+        for text, load, keep, forget, dry in (
+                (shell, 'if "$hosted"; then\n            note "Leaving out the saved --api-target',
+                 'api_target=$(cat "$state/api-target")', 'if "$hosted"; then rm -f "$state/api-target"; fi',
+                 'say "Dry run complete.'),
+                (powershell, 'if ($hosted) { Write-Host "    Leaving out the saved --api-target',
+                 "else { $script:ApiTarget = (Get-Content $apiFile -Raw).Trim() }",
+                 "if ($hosted) { Remove-Item -Force -ErrorAction SilentlyContinue $apiFile }",
+                 "Say 'Dry run complete.")):
+            self.assertLess(text.index(load), text.index(keep))
+            self.assertLess(text.index(dry), text.index(forget))
+        # The explicit option with --api-url is still refused.
+        self.assertIn('[ -z "$api_target" ] || die "--api-url names the fleet\'s API, so --api-target does not apply."',
+                      shell)
+
+    def test_a_switch_without_a_token_changes_nothing(self):
+        # A fleet whose API runs here, installed (so the fleet installer's extra-secrets.json exists), switches
+        # without --api-enrolment-token-file: refused before setup saves anything.
+        saved = {"api": True, "slug": "example-fleet", "name": "Example Fleet"}
+        fleet_setup.write_json(fleet_setup.INPUTS / "answers.json", saved)
+        (fleet_setup.INPUTS / "api.env").write_text("POSTGRES_PASSWORD=example\n")
+        fleet_setup.FLEET_ETC.mkdir()
+        (fleet_setup.FLEET_ETC / "extra-secrets.json").write_text('{"tokens": {}, "cloud": {}}')
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        argv = ["--non-interactive", "--operator", "operator", "--rear-admiral", "Atlas", "--captains", "Orion",
+                "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40, "--api-url",
+                "https://subspace.example.com", "--switch-to-hosted-api"]
+        for dry in ([], ["--dry-run"]):
+            with self.subTest(dry=bool(dry)), patch.object(fleet_setup.pwd, "getpwnam"), \
+                    patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "stargate_agents", return_value=True), \
+                    patch.object(fleet_setup, "hosted_checks") as checks, \
+                    patch.object(fleet_setup, "installer") as installer, patch.object(fleet_setup, "say"), \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "a switch to it, need the fleet's enrolment token"):
+                fleet_setup.setup(fleet_setup.parse_args(argv + dry))
+            checks.assert_not_called()
+            installer.assert_not_called()
+            self.assertEqual({path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}, before)
+
+    def test_the_host_scripts_take_api_url_with_an_equals_sign(self):
+        root = Path(fleet_setup.HERE).parents[1]
+        self.assertIn("case $arg in --api-url|--api-url=*) hosted=true ;; esac", (root / "install.sh").read_text())
+        self.assertIn("$_ -ceq '--api-url' -or $_ -clike '--api-url=*'", (root / "install.ps1").read_text())
+
+    def test_a_dry_run_on_the_pinned_release_stops_before_anything_else(self):
+        argv = ["--non-interactive", "--operator", "operator", "--name", "Example Fleet", "--rear-admiral", "Atlas",
+                "--captains", "Orion", "--inputs", str(fleet_setup.INPUTS), "--stargate-ref", "c" * 40,
+                "--api-url", "https://subspace.example.com", "--api-enrolment-token-file", str(self.token_file),
+                "--dry-run"]
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "stargate_agents",
+                                                                    return_value=False), \
+                patch.object(fleet_setup, "installer") as installer, patch.object(fleet_setup, "say"), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "needs a Stargate with its subspaceAgents section"):
+            fleet_setup.setup(fleet_setup.parse_args(argv))
+        installer.assert_not_called()
+        written = []
+        with patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup, "stargate_agents", return_value=True), \
+                patch.object(fleet_setup, "hosted_checks") as checks, patch.object(fleet_setup, "say"), \
+                patch.object(fleet_setup, "installer", side_effect=lambda path, **_: written.append(
+                    (json.loads(Path(path).read_text()), sorted(p.name for p in (Path(path).parent / "fleet.secrets")
+                                                                .iterdir())))):
+            fleet_setup.setup(fleet_setup.parse_args(argv))
+        checks.assert_called_once()
+        self.assertEqual(checks.call_args.args[1], HostedApi.token)
+        config, secrets = written[0]
+        self.assertEqual(config["api"], {"url": "https://subspace.example.com", "enrolment": True})
+        self.assertIn(runtime.ENROLMENT_TOKEN, secrets)
+        # The dry run left nothing on the VM: the token went only to its private copy.
+        self.assertFalse((fleet_setup.INPUTS / "fleet.secrets").exists())
 
 
 class OutboundTests(unittest.TestCase):

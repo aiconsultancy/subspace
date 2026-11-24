@@ -950,6 +950,108 @@ refusals for an unknown organisation or person, and TLS with
 all in Docker against a throwaway PostgreSQL 17. It has not run on a fleet VM
 or against a managed PostgreSQL service.
 
+## A hosted Subspace API
+
+A fleet can use a Subspace API on another host, such as one an organisation
+runs for several fleets, instead of one on its VM. The fleet then runs no API
+container, PostgreSQL or agent listener and keeps no administrator token: the
+API's administrators create the fleet there and issue it a one-time
+**enrolment token** (`POST /api/v1/fleets/<fleet>/enrolment-tokens`, a
+`senr1.…` value; see the API README's
+[enrolment](../subspace-api/README.md#enrolment)), and Stargate does the
+rest, as its `docs/subspace-agents.md` describes: it keeps one key and
+certificate per officer, enrols each with the token, and signs each
+officer's requests to the API with that officer's key. The API needs
+`AGENT_TOKEN_AUDIENCE` set to its public origin.
+
+```sh
+sudo install -m 600 /dev/null /root/fleet/enrolment-token
+sudoedit /root/fleet/enrolment-token          # senr1.…
+sudo subspace-setup --api-url https://subspace.example.com \
+  --api-enrolment-token-file /root/fleet/enrolment-token \
+  --stargate-ref <commit at or after 5630a5c> --dry-run
+```
+
+From your machine, `./install.sh --api-url URL --api-enrolment-token-file FILE`
+(or `install.ps1` with the same options) copies a file that is private to you
+(`chmod 600`) to the VM for that run only and removes it afterwards, however
+the run ends.
+
+- **Options.** `--api-url` is the API's HTTPS origin, kept on later runs. It
+  excludes `--database-url-file`, `--database-ca-file`, `--migrate`, `--demo`
+  and `--agent-dispatch`, and, on the host, `--api-target`. There is no way
+  back to an API on the VM. A fleet whose tracker is in an API on its VM, with
+  its own PostgreSQL or an existing one, switches only with
+  `--switch-to-hosted-api`, which leaves that tracker behind. The token file
+  must be owned by root with mode `0600` and is never printed; setup keeps the
+  token in `/root/fleet/fleet.secrets/subspace-enrolment-token` for the fleet
+  installer, so later runs need no token.
+- **A Stargate that has it.** The mode needs Stargate's `subspaceAgents`
+  section, first in commit `5630a5c` and in no release yet, so this
+  installer's pinned v0.43.0 has not got it: pass `--stargate-ref` with that
+  commit or a later one. Setup checks every run by fetching that one commit
+  and looking for `src/subspace/bridge.ts`; the fleet installer refuses its
+  pinned release and stops before rendering unless the checked-out Stargate
+  has that file.
+- **Checks.** Before setup saves anything, every run, the dry run included,
+  checks that the API answers `GET /health` and, when the run is given a
+  token, checks it by posting an empty enrolment: the API refuses that for
+  its body (400) only once the token is valid, which means the token's fleet
+  exists, and it uses none of the token's uses. An expired, revoked or
+  unknown token is reported with the API's reason. Neither request follows a
+  redirect: the token goes only to the origin given. A refused run, a refused
+  `--switch-to-hosted-api` included, leaves the fleet's answers and secrets
+  as they were.
+- **Later runs.** A run without `--api-enrolment-token-file` checks no
+  token: tokens last an hour by default and a week at most, and officers
+  already enrolled need none. Stargate reads the stored token only to enrol
+  an officer with no enrolment yet, in the background, so an expired one
+  only logs that officer's failure and never stops the gateway. The stored
+  token stays (root-only, and the gateway user's copy mode `0600`) until a
+  new one replaces it. To add an officer or replace a key, ask for a fresh
+  token and pass it.
+- **Names.** Officers enrol under the names [registration](#subspace-api-registration)
+  uses: the rear admiral by its name, a captain by its IRC account with its
+  name as its ship, and each with its model and IRC nick. An agent of the
+  same name in another fleet is refused (409).
+
+What the fleet installer renders, with `api.enrolment` set:
+
+- In the gateway that runs as the gateway user, Stargate's `subspaceAgents`
+  section: the API's origin, the token file
+  (`/var/lib/subspace-fleet/gateway/subspace-enrolment-token`, the gateway
+  user's, mode `0600`) and one entry per officer with its socket,
+  `/run/subspace-fleet/agents/<officer-id>/api.sock`. Stargate enrols the
+  officers in the background each time the gateway starts; an officer
+  already enrolled with its key is left alone.
+- Each socket's directory, mode `2750`, owned by the gateway user with the
+  officer's engine group (`ss-<officer-id>`), under parents with mode `0711`.
+  `/run` is emptied at boot, so `/etc/tmpfiles.d/subspace-fleet-agents.conf`
+  makes them again before the gateway starts.
+- For an OpenCode officer, a local MCP server named `subspace` that runs
+  Stargate's bridge, `bun <stargate>/src/main.ts subspace mcp --socket
+  <socket>`, as the engine's own user. A Claude Agent SDK officer, in its own
+  gateway process, gets the same command as a stdio server. Neither holds a
+  credential or names itself with a header.
+- The `subspace_*` tool grant, the API skill, and a section in each officer's
+  instructions on making REST calls with `stargate subspace request --socket
+  <socket> /api/v1/...`.
+- Nothing of the agent listener: no `X-Subspace-Agent` header, no
+  `agent-header` helper and no `AGENT_PORT`. `subspace-fleetctl register`
+  registers nothing, since the API's administrators keep the fleet's records.
+
+With the fleet installer alone, set `api` to
+`{"url": "https://subspace.example.com", "enrolment": true}`, `stargate.ref`
+to a commit that has `subspaceAgents`, leave `apiToken` out of the secrets
+file, and put the token in the secrets directory as
+`subspace-enrolment-token`. The gateway user must reach the API's port (the
+lockdown limits only this VM's loopback ports).
+
+What is verified: the rendered files and refusals in the installer's tests,
+and the token check against the merged API in a throwaway PostgreSQL. No
+hosted API was available, so enrolment, the signing proxy and a harness
+calling the tools through the bridge have not run against one.
+
 ## Agent dispatch
 
 Stargate's dispatcher runs in the rear admiral's gateway and hands out
@@ -1374,7 +1476,7 @@ their crew's assignments through `stargate_crew`.
 | `maintenance` | `mirrorCalendar` (hourly), `toolsCalendar` (weekly), `pruneCalendar` (daily), `logDays` (14) and `worktreeDays` (30). |
 | `medical` | Optional [medical ship](#medical-ship) Sentry polling and IRC alerts. |
 | `usage` | Optional [crew quota](#crew-quota) notices, with a Slack `reportChannel` and provider selection. The rear admiral posts them through `stakeholders.slack` or its own Slack bot, so one of them is required. |
-| `api` | Optional `url` (origin or ending in `/api`), `vmHost`, `fleetApiUrl` (where a desktop reaches the Fleet API, when not through the SSH tunnel; needs `stargate.api`; see [Subspace API registration](#subspace-api-registration)) `initiatives` (array of UUIDs) and `agentUrl` (the API's agent listener on this VM's loopback, such as `http://127.0.0.1:3001`; see [The API's agent listener](#the-apis-agent-listener)). HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
+| `api` | Optional `url` (origin or ending in `/api`), `vmHost`, `fleetApiUrl` (where a desktop reaches the Fleet API, when not through the SSH tunnel; needs `stargate.api`; see [Subspace API registration](#subspace-api-registration)) `initiatives` (array of UUIDs) and `agentUrl` (the API's agent listener on this VM's loopback, such as `http://127.0.0.1:3001`; see [The API's agent listener](#the-apis-agent-listener)), or `enrolment: true` for [a hosted Subspace API](#a-hosted-subspace-api), which excludes `agentUrl` and `apiToken`. HTTPS required except on loopback. The matching `apiToken` needs organisation administrator permissions. With it, the [registration's naming rules](#subspace-api-registration) apply to the rear admiral's name, ship names and accounts. |
 | `agentDispatch` | Optional [agent dispatch](#agent-dispatch): `enabled` (default `false`), `pollIntervalSeconds` (120), `answerTimeoutSeconds` (300) and `retryLadderSeconds` (`[3600, 10800, 21600, 43200]`). On, it needs `api`, a captain with crew, an OpenCode rear admiral and `rearAdmiralApiToken`. |
 
 The mode-0600 secrets JSON has `proxyKey` (a random proxy client key),
@@ -1408,6 +1510,7 @@ row is on.
 | `<member-id>/irc-client.pem` | An officer's existing IRC certificate and key, with `irc.auth` `certificate` ([IRC sign-in](#irc-sign-in)); without it the VM generates one | `/etc/subspace-fleet/irc-certs/<member-id>.pem`, owned by the gateway user that serves the officer |
 | `medical/sentry-auth-token`, `medical/irc-password` | The [medical ship](#medical-ship) | Root-only files that systemd gives its service |
 | `proxy-management-key` | [Crew quota](#crew-quota) notices | Root-only `/etc/subspace-fleet/extra-secrets.json`, and the gateway's quota watcher |
+| `subspace-enrolment-token` | [A hosted Subspace API](#a-hosted-subspace-api) (`api.enrolment`): the fleet's `senr1.` enrolment token | Root-only `/etc/subspace-fleet/extra-secrets.json`, and the gateway user's `/var/lib/subspace-fleet/gateway/subspace-enrolment-token` (mode `0600`) |
 
 Upgrades without a secrets directory keep the installed copies, and
 `--prune-secrets` with a secrets directory removes the installed cloud
