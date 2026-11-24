@@ -379,12 +379,26 @@ def ship(write, fleet_id, ships, used, person, existing):
     return found["id"], 1
 
 
-def taken_names(rows, slug, officers):
-    """Officers whose name or IRC nick another API agent holds, as messages naming that agent and its fleet.
+def usernames(call):
+    """The usernames of the organisation's people (GET /users, which lists active members): a person's username
+    is their IRC account, so the API refuses it as an agent's name or nick."""
+    names, cursor = [], ""
+    while True:
+        page = call("GET", f"/users?limit={PAGE}" + (f"&cursor={quote(cursor, safe='')}" if cursor else ""), None)
+        names += [row["username"] for row in page.get("items", [])
+                  if row.get("kind") == "human" and isinstance(row.get("username"), str)]
+        cursor = page.get("nextCursor") or ""
+        if not cursor:
+            return names
+
+
+def taken_names(rows, slug, officers, people=()):
+    """Officers whose name or IRC nick another API agent or a person holds, as messages naming that agent and its
+    fleet (never the person).
 
     rows: the organisation's agents (GET /agents). officers: (agent name, IRC nick, own nicks) per officer,
     where own nicks are the nicks this officer's own record may have now (its current one, and its old one
-    during a rename): such a record of this fleet is the officer itself.
+    during a rename): such a record of this fleet is the officer itself. people: people's usernames (usernames()).
     """
     problems = []
     for name, nick, own in officers:
@@ -393,13 +407,19 @@ def taken_names(rows, slug, officers):
         # older record shares it (the API compares only names that change).
         wanted = [value for value in (name, nick)
                   if not any(same(row.get("name"), value) or same(row.get("ircNick"), value) for row in mine)]
+        found = None
         for row in rows:
             if row in mine:
                 continue
             taken = [value for value in wanted if same(row.get("name"), value) or same(row.get("ircNick"), value)]
             if taken:
-                problems.append(f"{taken[0]} is taken in the Subspace API: {holder(row)} has it")
+                found = f"{taken[0]} is taken in the Subspace API: {holder(row)} has it"
                 break
+        person = next((value for value in wanted if any(same(username, value) for username in people)), None)
+        if found is None and person:
+            found = f"{person} is taken in the Subspace API: a person in the organisation has it as their username"
+        if found:
+            problems.append(found)
     return problems
 
 
@@ -439,11 +459,15 @@ def rename(call, slug, renames, say=print):
                 f"{item['nick']}) in the Subspace API; its ID {row['userId']}, keys and history are kept.")
             writes += 1
         ship_row = ships.get(row.get("shipId"))
-        if item.get("channel") and ship_row and same(ship_row.get("channel"), item["channel"][0]):
+        # The ship's recorded channel moves with it; a ship with none (enrolment makes ships without one) gets the
+        # new standard channel. A channel set to something else by hand stays.
+        if item.get("channel") and ship_row and (ship_row.get("channel") is None
+                                                 or same(ship_row.get("channel"), item["channel"][0])):
             write("PATCH", f"/ships/{ship_row['id']}", {"name": ship_row["name"], "channel": item["channel"][1],
                                                         "version": ship_row["version"]},
                   f"Ship {ship_row['name']} changed while its channel was being moved. Run the rename again.")
-            say(f"Moved ship {ship_row['name']}'s channel from {item['channel'][0]} to {item['channel'][1]} in the "
-                "Subspace API.")
+            say(f"Moved ship {ship_row['name']}'s channel from {ship_row['channel']} to {item['channel'][1]} in the "
+                "Subspace API." if ship_row.get("channel") else
+                f"Gave ship {ship_row['name']} its channel {item['channel'][1]} in the Subspace API.")
             writes += 1
     return writes

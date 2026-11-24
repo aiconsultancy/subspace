@@ -132,6 +132,8 @@ class Subspace:
 
     def __init__(self, provider="dev", page=200):
         self.fleets, self.ships, self.agents = {}, {}, {}
+        # People's usernames: each is their IRC account, which no agent's name or nick may take.
+        self.people = []
         self.initiatives = {INITIATIVE: {"id": INITIATIVE, "name": "Example initiative", "fleetId": None, "channels": ""}}
         self.provider, self.page, self.admin = provider, page, True
         self.counts, self.writes, self.serial = Counter(), [], 0
@@ -200,6 +202,14 @@ class Subspace:
                 limit = min(int(query.get("limit", ["50"])[0]), self.page)
                 following = start + limit
                 return {"items": [dict(row) for row in rows[start:following]],
+                        "nextCursor": str(following) if following < len(rows) else None}
+            case "GET", ["users"]:
+                rows = [{"username": name, "kind": "human"} for name in self.people] + [
+                    {"username": row.get("ircNick"), "kind": "agent"} for row in self.agents.values()]
+                start = int(query.get("cursor", ["0"])[0])
+                limit = min(int(query.get("limit", ["50"])[0]), self.page)
+                following = start + limit
+                return {"items": rows[start:following],
                         "nextCursor": str(following) if following < len(rows) else None}
             case "POST", ["agents"]:
                 self.administrator()
@@ -305,6 +315,9 @@ class Subspace:
                     or (new_nick and row["name"].lower() == nick.lower())):
                 raise Refusal(409, f"An account subject, agent name or IRC nick is already registered: agent "
                                    f"{row['name']} of fleet {row['fleet']} has it.")
+        for username in self.people:
+            if (nick and username.lower() == nick.lower()) or (new_name and username.lower() == body["name"].lower()):
+                raise Refusal(409, "The name is taken: a person in this organisation has it as their username.")
         return {"name": body["name"], "rank": body["rank"], "fleetId": fleet["id"], "fleet": fleet["slug"],
                 "shipId": body.get("shipId"), "defaultModel": body["defaultModel"], "serviceTokenClientId": subject,
                 "ircNick": nick}

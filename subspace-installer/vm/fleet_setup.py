@@ -1445,22 +1445,23 @@ def api_reader(answers):
 
 
 def local_name_problems(answers, members, token, own=None):
-    """With the API on this VM (an administrator's token): officers whose name or IRC nick another agent holds.
-    own: {officer ID: nicks its own record may have now}, beside its new nick."""
+    """With the API on this VM (an administrator's token): officers whose name or IRC nick another agent, or a
+    person as their username, holds. own: {officer ID: nicks its own record may have now}, beside its new nick."""
     if not token:
         say("names: could not sign in to the API on this VM to read its agents; registration still refuses a taken "
             "name")
         return []
+    call = lambda method, path, body: api_call(token, method, path, body)  # noqa: E731
     try:
-        rows = fleet_records.agents(lambda method, path, body: api_call(token, method, path, body))
+        rows, people = fleet_records.agents(call), fleet_records.usernames(call)
     except SetupError as error:
-        say(f"names: could not list the API's agents ({error}); registration still refuses a taken name")
+        say(f"names: could not list the API's agents and people ({error}); registration still refuses a taken name")
         return []
     officers = [(name, nick, {nick, *(own or {}).get(person["id"], ())})
                 for (_, name, nick, _), person in zip(officer_records(answers, members), members, strict=True)]
-    problems = fleet_records.taken_names(rows, answers["slug"], officers)
+    problems = fleet_records.taken_names(rows, answers["slug"], officers, people)
     if not problems:
-        say("names: no other agent in the Subspace API on this VM has an officer's name or IRC nick")
+        say("names: no other agent or person in the Subspace API on this VM has an officer's name or IRC nick")
     return problems
 
 
@@ -1497,16 +1498,35 @@ def irc_name_problems(answers, members, certificates, operator, staged=None, con
         say(f"names: could not ask {host}'s NickServ about the officers' accounts ({error}); registration there still "
             "refuses a taken account")
         return []
+    # An account an earlier run registered for this very certificate, and stopped before binding, is the officer's.
+    registered = registered_accounts()
     problems = []
     for person in members:
-        holder = taken.get(person["account"])
-        if holder and not (holder.lower() == person["account"].lower()
-                           and (signed_in.get(person["account"]) or "").lower() == person["account"].lower()):
-            problems.append(f"{person['account']} is taken on {host}: NickServ knows it as account {holder}, which the "
-                            "officer's certificate does not sign in to")
+        name = person["account"]
+        holder = taken.get(name)
+        if not holder:
+            continue
+        signs_in = (signed_in.get(name) or "").lower() == name.lower()
+        fingerprint = registered.get(name) if holder.lower() == name.lower() and not signs_in else None
+        if fingerprint and fingerprint != bundle_fingerprint(bundles.get(name)):
+            fingerprint = None
+        if fingerprint:
+            say(f"names: {name} on {host} was registered by an earlier run that stopped before binding its "
+                f"certificate; --irc-operator finishes it, or an IRC operator runs: /NS CERT ADD {name} {fingerprint}")
+        elif not (holder.lower() == name.lower() and signs_in):
+            problems.append(f"{name} is taken on {host}: NickServ knows it as account {holder}, which the officer's "
+                            "certificate does not sign in to")
     if not problems:
         say(f"names: {host}'s NickServ has none of the officers' accounts under another owner")
     return problems
+
+
+def bundle_fingerprint(path):
+    """The SHA-256 fingerprint of a certificate bundle's certificate, or None when there is no valid bundle."""
+    try:
+        return runtime.irc_fingerprint(Path(path).read_text(), str(path)) if path else None
+    except (OSError, UnicodeDecodeError, runtime.Invalid):
+        return None
 
 
 def require_names(problems):
@@ -2159,19 +2179,38 @@ def certificate_lines(answers, certificates):
     return lines
 
 
-def password_file(path, option, label):
-    """A password from a root-only file, for this run only. Messages name the file, never what it holds."""
+def secret_file(path, option, label):
+    """What a root-only file holds, stripped, for this run only. Messages name the file, never what it holds."""
     require(Path(path).is_absolute(), f"{option} needs an absolute path to a file on this VM.")
     try:
         info = os.lstat(path)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == SECRET_OWNER and not info.st_mode & 0o077,
                 f"The {label} file {path} must be a regular file owned by root with mode 0600: chmod 600 {path}.")
-        password = Path(path).read_text().strip()
+        return Path(path).read_text().strip()
     except (OSError, UnicodeDecodeError):
         raise SetupError(f"Cannot read the {label} file {path}.") from None
+
+
+def password_file(path, option, label):
+    """A password from a root-only file, for this run only. Messages name the file, never what it holds."""
+    password = secret_file(path, option, label)
     require(password and len(password) <= 512 and not re.search(r"[\s\x00]", password),
             f"The {label} file {path} must hold one password on one line.")
     return password
+
+
+# The longest bearer token the Subspace API reads (subspace-api src/auth.ts); identity providers' access tokens
+# are often 600 to 2,000 characters.
+API_TOKEN_LIMIT = 16_384
+
+
+def bearer_token_file(path, option, label):
+    """A bearer token from a root-only file, for this run only: one line of printable ASCII, at most the API's own
+    limit. Messages name the file, never what it holds."""
+    token = secret_file(path, option, label)
+    require(re.fullmatch(rf"[\x21-\x7e]{{1,{API_TOKEN_LIMIT}}}", token),
+            f"The {label} file {path} must hold one bearer token on one line, at most {API_TOKEN_LIMIT:,} characters.")
+    return token
 
 
 def irc_operator(args):
@@ -2190,9 +2229,31 @@ def irc_operator(args):
     return args.irc_operator, password, account
 
 
+# IRC accounts setup registered (SAREGISTER) for a certificate whose binding (CERT ADD) it has not seen succeed.
+IRC_REGISTERED = "irc-registered.json"
+
+
+def registered_accounts():
+    """{account: certificate fingerprint} for accounts an earlier run registered with NickServ and may have stopped
+    before binding: the next run finishes the binding instead of taking the account for someone else's."""
+    value = read_json(INPUTS / IRC_REGISTERED, {})
+    return value if isinstance(value, dict) else {}
+
+
+def note_registered(account, fingerprint=None):
+    """Record that setup created an account for a certificate (fingerprint), or forget it once it signs in."""
+    registered = registered_accounts()
+    if fingerprint:
+        registered[account] = fingerprint
+    elif registered.pop(account, None) is None:
+        return
+    write_json(INPUTS / IRC_REGISTERED, registered)
+
+
 def check_certificates(answers, members, certificates, operator, register):
     """With the operator's credential: check it, register the officers' accounts and bind their certificates
-    (register), and check that each certificate signs in as its account. A dry run only checks."""
+    (register), and check that each certificate signs in as its account. A dry run only checks. An account an
+    earlier run registered and stopped before binding (registered_accounts) is only bound."""
     host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
     name, password, signed_in_as = operator
 
@@ -2209,12 +2270,16 @@ def check_certificates(answers, members, certificates, operator, register):
     try:
         missing = unbound()
         # Only accounts whose certificate does not sign in yet are registered; a rerun registers nothing.
-        replies = irc_accounts.register(host, port, ca, name, password, missing if register else {}, signed_in_as)
+        earlier = {account for account, fingerprint in registered_accounts().items() if missing.get(account) == fingerprint}
+        replies = irc_accounts.register(host, port, ca, name, password, missing if register else {}, signed_in_as,
+                                        registered=earlier, created=note_registered)
         if not register:
             say(f"the IRC operator {name} is accepted on {host}")
         for account, lines in replies.items():
             say(f"NickServ for {account}: " + " / ".join(lines))
         failed = list(unbound()) if register and missing else []
+        for account in set(missing) - set(failed) if register else ():
+            note_registered(account)
     except irc_accounts.IrcError as error:
         raise SetupError(str(error)) from None
     require(not register or not failed, f"{', '.join(failed)} cannot sign in to {host} with {'its' if len(failed) == 1 else 'their'} "
@@ -2614,6 +2679,10 @@ def rename_parser():
                        ("--crew-names", "names for the crew of captains already installed, as for setup: needs a "
                         "Stargate whose crew plugin lets a crew member's name differ from its ID")):
         parser.add_argument(flag, help=text)
+    parser.add_argument("--no-api-records", action="store_true",
+                        help="for a fleet with no Subspace API on this VM and no hosted one: no Subspace API keeps "
+                             "this fleet's agent records (not one installed with --api-target), so only IRC and "
+                             "Stargate are renamed")
     parser.add_argument("--inputs", default=str(INPUTS), help=argparse.SUPPRESS)
     return parser
 
@@ -2669,7 +2738,12 @@ def copy_gateway_key(old, new):
 
 def rename_officers(argv):
     """subspace-setup rename-officers: move an installed fleet from fleet-prefixed officer names to plain ones, and
-    name the crew of installed captains where the installed Stargate allows it."""
+    name the crew of installed captains where the installed Stargate allows it.
+
+    The rename is recorded in answers.json (officerRename): "from", the old names, before anything changes; the
+    plain names once IRC and the API have them; "switched" only once setup has run with them and, with certificate
+    sign-in, every installed certificate signs in as its new account. Until then every run resumes at that last
+    step, and only then does it print what is left to remove."""
     global INPUTS
     args = rename_parser().parse_args(argv)
     INPUTS = Path(args.inputs)
@@ -2680,7 +2754,9 @@ def rename_officers(argv):
     record = answers.get("officerRename") or {}
     plan = installed_plan(answers)
     officers = answers.get("officerNames") != "plain"
-    if not officers and not crew:
+    # Renamed in IRC and the API, but setup has not yet finished a run with the new names.
+    pending = not officers and bool(record.get("from")) and not record.get("switched")
+    if not (officers or pending or crew):
         say("this fleet's officers already have plain names" + (f" (renamed from {', '.join(record['from'].values())})"
                                                                if record.get("from") else "") + ".")
         for line in rename_cleanup(answers, plan, record):
@@ -2691,13 +2767,26 @@ def rename_officers(argv):
     hosted = bool(answers.get("apiUrl"))
     local_api = answers.get("api") and not hosted and (INPUTS / "api.env").is_file()
     certificate = answers.get("irc") == "remote" and answers.get("ircAuth") == "certificate"
-    staged, operator, admin = {}, None, None
+    staged, operator, admin, unasked = {}, None, None, False
     if officers:
         say(f"renaming fleet {answers['slug']}'s officers to plain names:")
         for person, old, new, old_api, new_api, channel in plan:
             say(f"  {person['name']}: IRC account {old} -> {new}; API agent {old_api} -> {new_api}"
                 + (f"; ship channel {channel[0]} -> {channel[1]}" if channel else ""))
-        admin = password_file(args.api_admin_token_file, "--api-admin-token-file", "API administrator token") \
+        # Read-only checks first. The answers as setup reads them with plain names, checked as a new fleet's are
+        # (names IRC, the API or the installer keep for themselves, the ship channels, the account lengths).
+        check_answers(gather(parse_args(["--non-interactive"]), json.loads(json.dumps(plain))))
+        require(hosted or local_api or args.no_api_records,
+                f"Fleet {answers['slug']} has no Subspace API on this VM and no hosted API (--api-url), so this VM "
+                "cannot rename its agent records. If another fleet's API keeps them (a fleet installed with "
+                "--api-target, or registered there by hand), renaming here would leave those records under the old "
+                "names, and the next registration would refuse the new names or add duplicate officers: the rename "
+                "does not reach another fleet's API, so keep this fleet's fleet-prefixed names. If no Subspace API "
+                "keeps this fleet's records, run the rename again with --no-api-records. Nothing was changed.")
+        require(not local_api or dev_auth_enabled(),
+                "The Subspace API on this VM no longer offers development sign-in, which setup renames its agent "
+                "records with. Keep the fleet's fleet-prefixed names. Nothing was changed.")
+        admin = bearer_token_file(args.api_admin_token_file, "--api-admin-token-file", "API administrator token") \
             if args.api_admin_token_file else None
         require(not hosted or admin or args.dry_run,
                 f"This fleet uses the hosted Subspace API at {answers.get('apiUrl')}, whose agent records only an "
@@ -2706,28 +2795,47 @@ def rename_officers(argv):
         operator = irc_operator(args)
         staged = {person["id"]: staged_bundle(person["id"], new, not args.dry_run) for person, _, new, *_ in plan
                   if certificate}
-        # Read-only checks first: every new name must be free on the IRC server and in the API, or this fleet's own.
+        # Every new name must be free on the IRC server and in the API, or this fleet's own.
         current = [INPUTS / "fleet.secrets" / person["id"] / runtime.IRC_CLIENT_PEM for person, *_ in plan]
         problems = irc_name_problems(plain, members, None, operator, staged, current)
         own = {person["id"]: {old} for person, old, *_ in plan}
         if hosted and admin:
-            rows = fleet_records.agents(
-                lambda method, path, body: hosted_call(answers["apiUrl"], admin, method, path, body))
+            call = lambda method, path, body: hosted_call(answers["apiUrl"], admin, method, path, body)  # noqa: E731
             wanted = [(name, nick, {nick, *own[person["id"]]})
                       for (_, name, nick, _), person in zip(officer_records(plain, members), members, strict=True)]
-            problems += fleet_records.taken_names(rows, answers["slug"], wanted)
-        elif local_api and dev_auth_enabled() and api_healthy():
+            problems += fleet_records.taken_names(fleet_records.agents(call), answers["slug"], wanted,
+                                                  fleet_records.usernames(call))
+        elif hosted:
+            unasked = True
+            say("names: without --api-admin-token-file the hosted Subspace API was not asked about the new names")
+        elif local_api and api_healthy():
             problems += local_name_problems(plain, members, api_reader(answers), own)
+        elif local_api:
+            unasked = True
+            say("names: the Subspace API on this VM is not running, so it was not asked about the new names")
         require(not problems, "Cannot rename: " + "; ".join(problems) + ". An officer's ID is its plain name and "
                 "cannot change here; free the name on the IRC server or in the API, or keep the fleet's prefixed "
                 "names. Nothing was changed.")
+    elif pending:
+        say(f"fleet {answers['slug']}'s officers have their plain names on IRC and in the API, but setup has not yet "
+            "finished a run with them: this run does that, then checks the installed certificates")
     if args.dry_run:
-        say("dry run: " + ("the names are free. The real run makes a new IRC certificate for each new account and "
-                           + ("registers it with --irc-operator, " if operator else
-                              "prints the NickServ lines to register it, ")
-                           + "renames the API agent records in place, moves the ship channels, then " if officers else
-                           "the real run ")
-            + "runs setup again with the new names. Nothing on this VM changed.")
+        if officers:
+            steps = []
+            if certificate:
+                steps.append("makes a new IRC certificate for each new account and "
+                             + ("registers it with --irc-operator" if operator else "prints the NickServ lines to "
+                                "register it"))
+            elif answers.get("irc") == "remote":
+                steps.append("writes the fleet's IRC bundle with the new accounts and stops until they sign in")
+            if hosted or local_api:
+                steps.append("renames the API agent records in place and moves the ship channels")
+            say("dry run: " + ("the API was not asked, so its names are unchecked; the other checks found the new "
+                               "names free. " if unasked else "the names are free. ")
+                + "The real run " + ", then ".join([*steps, "runs setup again with the new names"])
+                + ". Nothing on this VM changed.")
+        else:
+            say("dry run: the real run runs setup again with the new names. Nothing on this VM changed.")
         return
     if crew:
         for key in ("crewNames", "crewIds"):
@@ -2774,20 +2882,38 @@ def rename_officers(argv):
                 write_private(current, staged[person["id"]].read_text())
         answers["officerNames"] = "plain"
         save_answers(answers)
-    # 4. Switch: the fleet's inputs, Stargate, the officers' configuration and the summary, as a re-run does.
+    # 4. Switch: the fleet's inputs, Stargate, the officers' configuration and the summary, as a re-run does. A run
+    # that stops here, or whose certificates do not sign in yet, is resumed from here by the next one.
     say("running setup with the new names")
     configure(parse_args(["--non-interactive"]))
+    if officers or pending:
+        finish_rename(plan)
+
+
+def finish_rename(plan):
+    """The rename's last check: with certificate sign-in, every installed certificate signs in as its officer's new
+    account. Only then is the rename recorded as switched, and what is left to remove printed."""
     answers = read_json(INPUTS / "answers.json", {})
-    if officers:
-        answers["officerRename"] = {**answers.get("officerRename", {}), "switched": True}
-        save_answers(answers)
-    if officers and certificate:
+    if answers.get("irc") == "remote" and answers.get("ircAuth") == "certificate":
         host, port, ca = answers["ircHost"], answers["ircPort"], answers.get("ircCa")
+        wrong = []
         for person, _, new, *_ in plan:
             bundle = FLEET_ETC / "irc-certs" / f"{person['id']}.pem"
-            signed = irc_accounts.check_login(host, port, ca, str(bundle)) if bundle.is_file() else None
+            try:
+                signed = irc_accounts.check_login(host, port, ca, str(bundle)) if bundle.is_file() else None
+            except irc_accounts.IrcError as error:
+                raise SetupError(f"{error} The rename is not finished: run 'sudo subspace-setup rename-officers' "
+                                 "again once the IRC server answers.") from None
             say(f"{new}: the installed certificate {'signs in as ' + signed if signed else 'does not sign in'}")
-    for line in rename_cleanup(answers, plan, answers.get("officerRename") or {}):
+            if (signed or "").lower() != new.lower():
+                wrong.append(new)
+        require(not wrong, f"The installed certificate of {', '.join(wrong)} does not sign in as the new account on "
+                f"{host}, so the rename is not finished: keep the old accounts. Check the new accounts' certificates "
+                "there (NickServ CERT LIST), then run 'sudo subspace-setup rename-officers' again, which runs setup "
+                "with the new names and checks again.")
+    answers["officerRename"] = {**(answers.get("officerRename") or {}), "switched": True}
+    save_answers(answers)
+    for line in rename_cleanup(answers, plan, answers["officerRename"]):
         say(line)
 
 
@@ -2839,8 +2965,11 @@ def rename_irc_certificates(answers, plan, staged, operator):
         say("every new account signs in with its new certificate")
         return
     say(f"register the new accounts on {host} as an IRC operator with NickServ's accreg capability:")
+    registered = registered_accounts()
     for account, fingerprint in missing:
-        say(f"  /NS SAREGISTER {account}")
+        # An account an earlier run registered, and stopped before binding, needs only its certificate.
+        if registered.get(account) != fingerprint:
+            say(f"  /NS SAREGISTER {account}")
         say(f"  /NS CERT ADD {account} {fingerprint}")
     raise SetupError("The new IRC accounts are not registered yet. Send the lines above (or run rename-officers "
                      "again with --irc-operator), then run 'sudo subspace-setup rename-officers' again. The officers "

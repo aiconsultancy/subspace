@@ -1191,7 +1191,7 @@ fleet's agents then have no way into the API yet.
 | Connect the rear admiral to Slack or Teams | [Slack](docs/slack.md), [Teams](docs/teams.md) |
 | Change the repositories | Run the install command again with `--repositories`; it replaces the list. Once a captain's session is pinned, the installer refuses an empty list or a different first repository, whether reordered or replaced |
 | Add private repositories or GitHub Apps | Edit `/root/fleet/fleet.json` on the VM, put credential files under `/root/fleet/fleet.secrets/`, then `sudo subspace-setup` |
-| Give a fleet installed with fleet-prefixed names (`example-fleet-orion`) plain ones | `sudo subspace-setup rename-officers --dry-run`, then without `--dry-run`, on the VM ([Officer names](subspace-installer/README.md#rename-an-installed-fleet)) |
+| Give a fleet installed with fleet-prefixed names (`example-fleet-orion`) plain ones | `sudo subspace-setup rename-officers --dry-run`, then without `--dry-run`, on the VM ([Officer names](subspace-installer/README.md#rename-an-installed-fleet)); not for a fleet installed with `--api-target` |
 | Print your IRC password | `sudo subspace-setup secret irc-admin` on the VM |
 | Seed the demo data again | `sudo subspace-setup demo` on the VM |
 | Stop or start a local VM | `./install.sh stop`, `./install.sh start` |

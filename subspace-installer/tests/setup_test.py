@@ -1357,6 +1357,8 @@ class FakeIrcServer:
 
     def __init__(self, work, client_bundles, operator=("ircop", "fixture-operator-password")):
         self.accounts, self.operator, self.requests = {}, operator, []
+        # An account whose SAREGISTER the server answers, then drops the connection before anything else.
+        self.drop_after = None
         # Ergo's require-sasl: only connections signed in to an account (passwords here) get past registration.
         self.require_sasl, self.passwords = False, {}
         subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
@@ -1451,6 +1453,9 @@ class FakeIrcServer:
                 elif request[0] == "SAREGISTER":
                     send(f":NickServ!NickServ@services NOTICE you :Successfully registered account {request[1]}")
                     self.accounts[request[1]] = set()
+                    if request[1] == self.drop_after:
+                        self.drop_after = None
+                        break
                 elif request[:2] == ["CERT", "ADD"] and request[2] in self.accounts:
                     self.accounts[request[2]].add(request[3])
                     send(":NickServ!NickServ@services NOTICE you :Certificate fingerprint successfully added")
@@ -1677,10 +1682,15 @@ class IrcCertificateSetupTests(unittest.TestCase):
         fleet_records.register(api.call, fleet_records.fleet_fields(cfg), fleet_records.roster(cfg), lambda _: None)
         ids = sorted(api.agents)
         output = []
+        # The fleet's answers are checked as setup reads them, with the test server's name standing in for a DNS one.
+        check_answers = fleet_setup.check_answers
         patches = [patch.object(fleet_setup, "say", side_effect=output.append), fake_api(api),
                    patch.object(fleet_setup.os, "geteuid", return_value=0),
                    patch.object(fleet_setup, "api_token", return_value="admin"),
-                   patch.object(fleet_setup, "api_healthy", return_value=True)]
+                   patch.object(fleet_setup, "api_healthy", return_value=True),
+                   patch.object(fleet_setup.pwd, "getpwnam"),
+                   patch.object(fleet_setup, "check_answers",
+                                side_effect=lambda answers: check_answers({**answers, "ircHost": "irc.example.com"}))]
         for patcher in patches:
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -1700,14 +1710,30 @@ class IrcCertificateSetupTests(unittest.TestCase):
         self.assertTrue(any(line.strip().startswith("/NS CERT ADD orion ") for line in output))
         self.assertEqual(fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")["officerNames"], "prefixed")
         self.assertEqual({row["ircNick"] for row in api.agents.values()}, {"example-fleet-atlas", "example-fleet-orion"})
-        # With an operator it registers them; the old accounts keep their certificates until they are dropped.
+        # With an operator it registers them. The connection drops after atlas's SAREGISTER, before its CERT ADD:
+        # the run stops, and the next one recognises the account it made and only binds the certificate.
         operator = self.root / "operator-password"
         operator.write_text("fixture-operator-password\n")
         operator.chmod(0o600)
-        with patch.object(fleet_setup, "configure") as configure:
-            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS), "--irc-operator", "ircop",
-                                         "--irc-operator-password-file", str(operator)])
-        configure.assert_called_once()
+        rename = ["--inputs", str(fleet_setup.INPUTS), "--irc-operator", "ircop", "--irc-operator-password-file",
+                  str(operator)]
+        fingerprints = {agent: runtime.irc_fingerprint(path.read_text(), agent) for agent, path in staged.items()}
+        server.drop_after = "atlas"
+        with patch.object(fleet_setup, "configure") as configure, \
+                self.assertRaisesRegex(fleet_setup.SetupError, "closed the connection"):
+            fleet_setup.rename_officers(rename)
+        configure.assert_not_called()
+        self.assertEqual(server.accounts["atlas"], set())
+        self.assertEqual(fleet_setup.registered_accounts(), {"atlas": fingerprints["atlas"]})
+        # Setup itself then stops part-way through the switch to the new names.
+        output.clear()
+        with patch.object(fleet_setup, "configure", side_effect=fleet_setup.SetupError("setup stopped")), \
+                self.assertRaisesRegex(fleet_setup.SetupError, "setup stopped"):
+            fleet_setup.rename_officers(rename)
+        self.assertIn(f"/NS CERT ADD atlas {fingerprints['atlas']}", "\n".join(output))
+        self.assertEqual(server.requests.count(["SAREGISTER", "atlas"]), 1)
+        self.assertEqual(server.requests.count(["CERT", "ADD", "atlas", fingerprints["atlas"]]), 1)
+        self.assertEqual(fleet_setup.registered_accounts(), {})
         self.assertEqual(sorted(server.accounts), ["atlas", "example-fleet-atlas", "example-fleet-orion", "orion"])
         self.assertEqual(server.accounts["example-fleet-orion"], {certificates["example-fleet-orion"][1]})
         # The API's records are renamed in place: the same IDs, account subjects kept, the ship's channel moved.
@@ -1718,6 +1744,7 @@ class IrcCertificateSetupTests(unittest.TestCase):
         saved = fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")
         self.assertEqual(saved["officerNames"], "plain")
         self.assertEqual(saved["officerRename"]["from"], {"atlas": "example-fleet-atlas", "orion": "example-fleet-orion"})
+        self.assertNotIn("switched", saved["officerRename"])
         self.assertEqual(saved["officerRename"]["subjects"]["orion"], "example-fleet-orion@agents.example.com")
         renamed = fleet_setup.roster(saved, "atlas", ["orion"])
         self.assertEqual([(person["account"], person["serviceTokenClientId"]) for person in renamed],
@@ -1728,15 +1755,85 @@ class IrcCertificateSetupTests(unittest.TestCase):
             self.assertEqual((fleet_setup.INPUTS / "fleet.secrets" / agent / "irc-client.pem").read_text(),
                              (fleet_setup.INPUTS / "rename" / agent / "irc-client.pem").read_text())
             self.assertTrue((fleet_setup.INPUTS / "rename" / agent / "irc-client.previous.pem").is_file())
+        self.assertNotIn("/NS ERASE", "\n".join(output))
+        # The next run resumes at the switch. While the installed certificates do not sign in as the new accounts,
+        # the rename is not finished, and nothing says to drop the old ones.
+        output.clear()
+        with patch.object(fleet_setup, "configure") as configure, \
+                self.assertRaisesRegex(fleet_setup.SetupError, "atlas, orion does not sign in as the new account.*"
+                                       "not finished"):
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS)])
+        configure.assert_called_once()
+        self.assertIn("have their plain names on IRC and in the API, but setup has not yet finished",
+                      "\n".join(output))
+        self.assertNotIn("/NS ERASE", "\n".join(output))
+        self.assertNotIn("switched", fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")["officerRename"])
+        # Once setup has installed the new certificates, the rename is done and says what is left.
+
+        def install(_args):
+            (fleet_setup.FLEET_ETC / "irc-certs").mkdir(parents=True, exist_ok=True)
+            for agent in ("atlas", "orion"):
+                shutil.copy(fleet_setup.INPUTS / "fleet.secrets" / agent / "irc-client.pem",
+                            fleet_setup.FLEET_ETC / "irc-certs" / f"{agent}.pem")
+        output.clear()
+        fleet_setup.rename_officers(["--dry-run", "--inputs", str(fleet_setup.INPUTS)])
+        self.assertIn("dry run: the real run runs setup again with the new names", "\n".join(output))
+        with patch.object(fleet_setup, "configure", side_effect=install) as configure:
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS)])
+        configure.assert_called_once()
+        self.assertTrue(fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")["officerRename"]["switched"])
         cleanup = "\n".join(output)
+        self.assertIn("atlas: the installed certificate signs in as atlas", cleanup)
         self.assertIn("/NS ERASE example-fleet-atlas; /NS ERASE example-fleet-orion", cleanup)
         self.assertIn("IRC_AUTH_LOCAL_ACCOUNTS), add atlas orion", cleanup)
         self.assertIn("old ship channels (#example-fleet-orion)", cleanup)
         # Run again, it says the fleet is renamed and repeats what is left.
         output.clear()
-        fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS)])
+        with patch.object(fleet_setup, "configure") as configure:
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS)])
+        configure.assert_not_called()
         self.assertIn("already have plain names (renamed from example-fleet-atlas, example-fleet-orion)",
                       "\n".join(output))
+
+    def test_the_rename_checks_the_plain_names_before_it_changes_anything(self):
+        # A captain whose fleet-prefixed account was fine, but whose plain name the IRC server keeps for itself.
+        args = fleet_setup.parse_args(["--non-interactive", "--operator", "operator", "--name", "Example Fleet",
+                                       "--rear-admiral", "Atlas", "--captains", "Global", "--irc", "remote",
+                                       "--irc-host", "irc.example.com"])
+        with patch.object(fleet_setup.pwd, "getpwnam"):
+            answers = fleet_setup.gather(args, {"slug": "example-fleet"})
+            fleet_setup.check_answers(answers)
+        members = fleet_setup.roster(answers, "atlas", ["global"])
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", fleet_setup.fleet_config(answers, members, "a" * 40))
+        fleet_setup.save_answers({**answers, "api": False})
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        with patch.object(fleet_setup, "say"), patch.object(fleet_setup.pwd, "getpwnam"), \
+                patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                patch.object(fleet_setup, "irc_name_problems") as irc, \
+                self.assertRaisesRegex(fleet_setup.SetupError, "global is a name the IRC server"):
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS), "--no-api-records"])
+        irc.assert_not_called()
+        self.assertEqual({path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}, before)
+
+    def test_a_fleet_whose_records_are_in_another_fleets_api_is_not_renamed(self):
+        # Installed with --api-target: the host keeps the API target, and this VM has no API of its own.
+        answers, _, _ = self.installed_prefixed()
+        fleet_setup.save_answers({**answers, "api": False})
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        for dry in ([], ["--dry-run"]):
+            with self.subTest(dry=bool(dry)), patch.object(fleet_setup, "say"), \
+                    patch.object(fleet_setup.pwd, "getpwnam"), patch.object(fleet_setup.os, "geteuid", return_value=0), \
+                    patch.object(fleet_setup, "irc_name_problems") as irc, \
+                    self.assertRaisesRegex(fleet_setup.SetupError, "no Subspace API on this VM and no hosted API.*"
+                                           "--api-target.*keep this fleet's fleet-prefixed names.*--no-api-records"):
+                fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS), *dry])
+            irc.assert_not_called()
+            self.assertEqual({path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}, before)
+        # A fleet that no API keeps records of says so, and its IRC names are renamed.
+        with patch.object(fleet_setup, "say") as say, patch.object(fleet_setup.pwd, "getpwnam"), \
+                patch.object(fleet_setup, "irc_name_problems", return_value=[]):
+            fleet_setup.rename_officers(["--inputs", str(fleet_setup.INPUTS), "--dry-run", "--no-api-records"])
+        self.assertIn("dry run: the names are free", "\n".join(call.args[0] for call in say.call_args_list))
 
     def test_installed_crew_are_named_only_where_stargate_allows(self):
         self.installed_prefixed()
@@ -2014,6 +2111,88 @@ class HostedApiSetupTests(unittest.TestCase):
             self.assertEqual(fleet_setup.hosted_name_problems(answers, members, HostedApi.token), [])
         self.assertIn("This enrolment token has expired.", "\n".join(output))
         self.assertIn("predates POST /api/v1/agents/enrol/check", "\n".join(output))
+
+    def test_a_hosted_fleet_is_renamed_with_an_administrators_access_token(self):
+        # A fleet installed with fleet-prefixed names against a hosted API, its IRC on this VM. Enrolment made its
+        # records: the rear admiral by its name, the captain by its account, the ship with no channel.
+        answers, _ = self.answers("--api-url", "https://subspace.example.com", saved={"slug": "example-fleet"})
+        self.assertEqual(answers["officerNames"], "prefixed")
+        members = fleet_setup.roster(answers, "atlas", ["orion"])
+        config = fleet_setup.fleet_config(answers, members, "a" * 40, stargate_ref=runtime.SUBSPACE_AGENTS_COMMIT)
+        fleet_setup.write_json(fleet_setup.INPUTS / "fleet.json", config)
+        fleet_setup.save_answers(answers)
+        api = fixture.Subspace()
+        secrets = fleet_setup.fleet_secrets(fleet_setup.Secrets(fleet_setup.INPUTS, answers["slug"], None), members,
+                                            answers["admin"])
+        cfg = validate({key: value for key, value in config.items() if key != "api"}, secrets, check_files=False)
+        fleet_records.register(api.call, fleet_records.fleet_fields(cfg), fleet_records.roster(cfg), lambda _: None)
+        for ship in api.ships.values():
+            ship["channel"] = None
+        ids = sorted(api.agents)
+        api.people = ["orion"]  # A person whose username is the captain's plain name.
+        keys = self.root / "subspace-agents"
+        keys.mkdir()
+        for name in ("Atlas", "example-fleet-orion"):
+            (keys / f"{name}.pem").write_text(f"{name} key\n")
+            (keys / f"{name}.pem").chmod(0o600)
+        # An identity provider's access token, longer than any password the installer reads.
+        token = "eyJ" + "x" * 1997
+        token_file = self.root / "admin-token"
+        token_file.write_text(token + "\n")
+        token_file.chmod(0o600)
+
+        def hosted(_origin, bearer, method, path, body=None):
+            self.assertEqual(bearer, token)
+            return api.call(method, path, body)
+        output = []
+        for patcher in (patch.object(fleet_setup, "say", side_effect=output.append),
+                        patch.object(fleet_setup, "hosted_call", side_effect=hosted),
+                        patch.object(fleet_setup, "GATEWAY_KEYS", keys), patch.object(fleet_setup.pwd, "getpwnam"),
+                        patch.object(fleet_setup.os, "geteuid", return_value=0)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        rename = ["--inputs", str(fleet_setup.INPUTS)]
+        # Without an administrator's token the dry run cannot ask the API, and says so; the real run stops.
+        fleet_setup.rename_officers([*rename, "--dry-run"])
+        text = "\n".join(output)
+        self.assertIn("without --api-admin-token-file the hosted Subspace API was not asked", text)
+        self.assertIn("dry run: the API was not asked, so its names are unchecked", text)
+        self.assertNotIn("the names are free", text)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "pass --api-admin-token-file"):
+            fleet_setup.rename_officers(rename)
+        # With it, a person's username is found before anything changes, and no person is named.
+        rename += ["--api-admin-token-file", str(token_file)]
+        writes = list(api.writes)
+        with self.assertRaisesRegex(fleet_setup.SetupError, "orion is taken in the Subspace API: a person in the "
+                                    "organisation has it as their username.*Nothing was changed"):
+            fleet_setup.rename_officers(rename)
+        self.assertEqual(api.writes, writes)
+        api.people = []
+        with patch.object(fleet_setup, "configure") as configure:
+            fleet_setup.rename_officers(rename)
+        configure.assert_called_once()
+        # The records are renamed in place, and the ship enrolment left without a channel gets its new one.
+        self.assertEqual(sorted(api.agents), ids)
+        self.assertEqual(api.summary()["agents"], [("atlas", "rearAdmiral", "atlas", None, True),
+                                                   ("orion", "captain", "orion", "Orion", True)])
+        self.assertEqual(api.summary()["ships"], [("Orion", "#orion")])
+        # Stargate's enrolled keys are kept under the new names (atlas.pem is Atlas.pem on a case-blind disk).
+        self.assertEqual(((keys / "atlas.pem").read_text(), (keys / "orion.pem").read_text()),
+                         ("Atlas key\n", "example-fleet-orion key\n"))
+        self.assertTrue(fleet_setup.read_json(fleet_setup.INPUTS / "answers.json")["officerRename"]["switched"])
+        self.assertIn("Stargate kept the old key files", "\n".join(output))
+        self.assertNotIn(token, "\n".join(output))
+        # The token file is checked as a password file is, and may be as long as the API reads.
+        for text, mode, message in ((token, 0o644, "mode 0600"), ("two words", 0o600, "one bearer token"),
+                                    ("x" * (fleet_setup.API_TOKEN_LIMIT + 1), 0o600, "at most 16,384")):
+            token_file.write_text(text)
+            token_file.chmod(mode)
+            with self.subTest(message), self.assertRaisesRegex(fleet_setup.SetupError, message) as refused:
+                fleet_setup.bearer_token_file(str(token_file), "--api-admin-token-file", "API administrator token")
+            self.assertNotIn(text, str(refused.exception))
+        token_file.write_text("x" * fleet_setup.API_TOKEN_LIMIT)
+        self.assertEqual(len(fleet_setup.bearer_token_file(str(token_file), "--api-admin-token-file", "token")),
+                         fleet_setup.API_TOKEN_LIMIT)
 
     def test_the_hosted_paths_are_the_apis_own(self):
         # The health check, the enrolment check and the REST examples in the officers' instructions name paths

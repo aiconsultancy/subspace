@@ -77,6 +77,9 @@ class Connection:
     def close(self):
         try:
             self.send("QUIT :subspace-setup")
+        except OSError:
+            pass  # The server closed it first.
+        try:
             self.sock.close()
         except OSError:
             pass
@@ -103,13 +106,17 @@ def sign_in(connection, host, account, password):
         raise IrcError(f"The IRC server {host} refused the sign-in of the account {account}.")
 
 
-def register(host, port, ca_file, operator, password, fingerprints, account=None):
+def register(host, port, ca_file, operator, password, fingerprints, account=None, registered=(), created=None):
     """As the IRC operator, register each account with no password and bind its certificate fingerprint.
 
     fingerprints: {account: SHA-256 hex}, for accounts whose certificate does not sign in yet. account: an IRC
     account and its password to sign in to first, for a server that admits only signed-in connections (Ergo's
     require-sasl). Returns NickServ's replies by account. An account SAREGISTER does not create (it exists, or
     NickServ refuses it) gets no CERT ADD, and stops the run once every other account is done.
+
+    registered: accounts an earlier run created for these fingerprints (created() recorded them) and that stopped
+    before binding them, which are only bound now. created(account, fingerprint) is called as soon as SAREGISTER
+    creates an account, before its CERT ADD, so a run that stops between the two can finish the binding.
     """
     connection = Connection(host, port, ca_file)
     replies = {}
@@ -135,14 +142,19 @@ def register(host, port, ca_file, operator, password, fingerprints, account=None
         if command != "381":
             raise IrcError(f"The IRC server {host} refused the operator credential for {operator}.")
         refused = []
-        for account, fingerprint in fingerprints.items():
-            replies[account] = [nickserv(connection, f"SAREGISTER {account}")]
-            # Bind a certificate only to an account this run created: an existing account's certificates are
-            # never changed, whoever registered it.
-            if not CREATED.search(replies[account][0]):
-                refused.append(f"{account} (NickServ: {replies[account][0]})")
+        for target, fingerprint in fingerprints.items():
+            if target in registered:
+                replies[target] = [nickserv(connection, f"CERT ADD {target} {fingerprint}")]
                 continue
-            replies[account].append(nickserv(connection, f"CERT ADD {account} {fingerprint}"))
+            replies[target] = [nickserv(connection, f"SAREGISTER {target}")]
+            # Bind a certificate only to an account this run (or an earlier one, recorded) created: an existing
+            # account's certificates are never changed, whoever registered it.
+            if not CREATED.search(replies[target][0]):
+                refused.append(f"{target} (NickServ: {replies[target][0]})")
+                continue
+            if created:
+                created(target, fingerprint)
+            replies[target].append(nickserv(connection, f"CERT ADD {target} {fingerprint}"))
     finally:
         connection.close()
     if refused:

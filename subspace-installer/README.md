@@ -823,17 +823,28 @@ captain's ID; renaming the fleet fixes that.
 ### Rename an installed fleet
 
 `subspace-setup rename-officers` moves an installed fleet to plain names.
-It is safe to run again after a failure: each step finds what is done.
+It is safe to run again after a failure: each step finds what is done, and
+a run that stopped during or after the switch (step 4) resumes there.
 
 ```sh
-sudo subspace-setup rename-officers --dry-run
+sudo subspace-setup rename-officers --dry-run [--api-admin-token-file FILE]
 sudo subspace-setup rename-officers [--irc-operator NAME --irc-operator-password-file FILE] \
   [--api-admin-token-file FILE]
 ```
 
 1. **Plan and check.** It prints each officer's old and new IRC account,
-   API agent name and ship channel, and checks the new names on the IRC
-   server and in the API, as setup does. The dry run stops here.
+   API agent name and ship channel. Before it changes anything, it checks
+   the fleet's answers with plain names as setup checks a new fleet's (a
+   name the IRC server, the API or the installer keeps for itself is
+   refused), and the new names on the IRC server and in the API: other
+   agents' names and nicks, and people's usernames. A hosted API is asked
+   only with `--api-admin-token-file`; without it, the dry run says the
+   API was not asked. The dry run stops here.
+   - A fleet with no Subspace API on its VM and no hosted API is refused:
+     a fleet installed with `--api-target` keeps its agent records in
+     another fleet's API, which the rename cannot reach, so keep its
+     fleet-prefixed names. If no API keeps the fleet's records at all,
+     pass `--no-api-records`.
 2. **IRC.** With certificate sign-in it makes a new certificate for each new
    account, kept in `/root/fleet/rename/<officer-id>/irc-client.pem`: Ergo
    binds a certificate fingerprint to one account only, so the officer's
@@ -841,7 +852,10 @@ sudo subspace-setup rename-officers [--irc-operator NAME --irc-operator-password
    signs in to the old one. With `--irc-operator` it registers each new
    account and binds its certificate, as setup does; without it, it prints
    the `/NS SAREGISTER` and `/NS CERT ADD` lines and stops until they are
-   sent. On a shared server the installer manages, with passwords, it writes
+   sent. An account setup registered and then lost the connection before
+   binding is recorded (`/root/fleet/irc-registered.json`), so the next run
+   only binds it, or prints the one `/NS CERT ADD` line for it, rather than
+   taking it for someone else's. On a shared server the installer manages, with passwords, it writes
    the fleet's new bundle and stops until the new accounts sign in (add the
    bundle there with `subspace-setup irc-server add`). The officers keep
    signing in to their old accounts throughout.
@@ -849,11 +863,13 @@ sudo subspace-setup rename-officers [--irc-operator NAME --irc-operator-password
    `PUT /api/v1/agents/{userId}`, an organisation administrator's route: the
    same user ID, key credentials, account subject and history, under the
    new name and IRC nick. The old nick stays retired for that agent alone.
-   A captain's ship keeps its record and moves its recorded channel with
-   `PATCH /api/v1/ships/{id}`. With the API on this VM, setup's own
+   A captain's ship keeps its record, and its recorded channel moves with
+   `PATCH /api/v1/ships/{id}`; a ship with no channel, as enrolment makes
+   them, is given the new one. With the API on this VM, setup's own
    administrator token does this. With a hosted API, pass
-   `--api-admin-token-file` with an administrator's bearer token (a
-   root-only file, read for that run only), and Stargate's key bundle for
+   `--api-admin-token-file` with an administrator's bearer token, such as
+   the identity provider's access token (a root-only file, read for that run
+   only, up to the API's 16,384 characters), and Stargate's key bundle for
    each officer is copied to its new name, so the officer keeps its
    enrolled key.
 4. **Switch.** It records the plain names and runs setup again, as a re-run
@@ -861,8 +877,13 @@ sudo subspace-setup rename-officers [--irc-operator NAME --irc-operator-password
    officer's Stargate registration, peers, fleet control and dispatch
    targets, `subspaceAgents` entry, MCP header and instructions with the new
    names, installs the new certificates and restarts the gateway. It then
-   checks that each installed certificate signs in as its new account.
-5. **What is left** is printed, and printed again by a later run:
+   checks that each installed certificate signs in as its new account. Only
+   then is the rename recorded as done (`officerRename.switched` in
+   `answers.json`); until then, every run of `rename-officers` runs setup
+   again and repeats the check, and says nothing about dropping the old
+   accounts.
+5. **What is left** is printed once the rename is done, and again by a
+   later run:
    - an IRC server whose Subspace API sign-in hook lists local-only accounts
      (`IRC_AUTH_LOCAL_ACCOUNTS`): add the new names, restart it, and take
      the old ones out when they are dropped;
