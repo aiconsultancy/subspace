@@ -189,13 +189,10 @@ def setup(name, dry_run, force):
         print(f"{'would ' if dry_run else ''}{kind}: {path} ({about})")
     for path, about in kept:
         print(f"{'would keep' if dry_run else 'kept'}: {path}, which {about}")
-    if kept:
-        print("Agents in this repository use its own helpers and settings (agent-kit/) either way. --force replaces "
-              "the files kept above too, keeping a copy of each, so that agents elsewhere on this computer act on "
-              "this deployment as well.")
     if not steps and not kept:
         print(f"{home} is already set up for this repository.")
     if dry_run:
+        warn_kept(kept, dry_run)
         return
     stamp = time.strftime("%Y%m%d%H%M%S")
     for kind, path, _ in steps:
@@ -215,15 +212,29 @@ def setup(name, dry_run, force):
     if not settings:
         print("\nThis deployment has no hosted API: keep the fleet's tunnel running, and register the MCP server "
               "with ./install.sh skills from a Subspace checkout.")
-        return
-    token = "python3 agent-kit/bin/subspace_token.py --config agent-kit/agent.json"
-    print(f"""
+    else:
+        token = "python3 agent-kit/bin/subspace_token.py --config agent-kit/agent.json"
+        print(f"""
 Next, from this repository's root:
   1. Sign in once in your browser:  {token} --login
      Check it:                      {token} --me
   2. Start Claude Code in this repository and allow the `subspace` server from .mcp.json when asked.
      For Codex, trust this repository when asked: project MCP servers load only in trusted projects.
   3. Agent sessions already running see the skills and the server only after they restart.""")
+    warn_kept(kept, dry_run)
+
+
+def warn_kept(kept, dry_run):
+    """Say last, so that it cannot be missed, what setup left as it was."""
+    if not kept:
+        return
+    print(f"\nWARNING: {'setup would leave' if dry_run else 'setup left'} these as they are, because they differ from "
+          "this repository's and --force was not given:")
+    for path, about in kept:
+        print(f"  {path}, which {about}")
+    print("Agents in this repository use its own helpers and settings (agent-kit/) either way, but agents "
+          "elsewhere on this computer keep using the files above. Run setup again with --force to replace them; "
+          "a copy of each is kept.")
 
 
 def main():

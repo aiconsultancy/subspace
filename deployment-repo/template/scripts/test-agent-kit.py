@@ -122,10 +122,16 @@ class AgentKitTest(unittest.TestCase):
                       "api_url 'https://other.example.com' there, 'https://api.example.com' here", output)
         self.assertIn(f"would keep: {newer}, which differs from this repository's copy by +1 -2 lines; see: diff -u",
                       output)
+        self.assertIn("WARNING: setup would leave these as they are", output)
         code, output, _ = self.run_kit("setup")
         self.assertEqual(code, 0)
         self.assertIn(f"kept: {newer}", output)
-        self.assertIn("Agents in this repository use its own helpers and settings", output)
+        # The warning is the last thing setup says.
+        warning = output[output.index("\nWARNING: setup left these as they are"):]
+        self.assertIn(f"  {newer}, which differs", warning)
+        self.assertIn(f"  {self.home / 'agent.json'}, which is set up for another API", warning)
+        self.assertTrue(warning.rstrip().endswith("a copy of each is kept."))
+        self.assertNotIn("Next,", warning)
         self.assertEqual(json.loads((self.home / "agent.json").read_text()), other)
         self.assertEqual(newer.read_text(), "a newer helper\nfrom another deployment\n")
         self.assertIn("would replace helper", self.run_kit("setup", "--force", "--dry-run")[1])
