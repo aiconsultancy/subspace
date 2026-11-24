@@ -177,3 +177,111 @@ fn sign_in_covers_the_window_only_while_a_required_account_has_no_session(cx: &m
     assert!(!gate("required-offline", cx));
     assert!(!gate("required-keychain", cx));
 }
+
+/// Draws `window`, runs what the draw deferred, and draws again.
+fn settle(window: gpui_kit::WindowHandle<SubspaceApp>, cx: &mut TestAppContext) {
+    cx.update_window(window.into(), |_root, window, cx| {
+        window.refresh();
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(window.into(), |_root, window, cx| window.render_frame(cx))
+        .unwrap();
+}
+
+/// The shell over the fixture board, with the terminal, and a required
+/// account seeded in `state`.
+fn gated(
+    state: &str,
+    root: &std::path::Path,
+    cx: &mut TestAppContext,
+) -> (
+    gpui_kit::WindowHandle<SubspaceApp>,
+    gpui_kit::Entity<Fixture>,
+) {
+    cx.update(crate::app::terminal_fixture::install);
+    let (window, fixture) = open_fixture(root, cx);
+    cx.update(|cx| crate::account::fixture(state, cx).unwrap());
+    settle(window, cx);
+    (window, fixture)
+}
+
+/// While the app asks for sign-in, no key or menu command reaches anything
+/// behind it: Settings, the palette, the terminal, chat and the Space
+/// switches refuse, and only Quit acts.
+#[gpui_kit::test]
+fn the_sign_in_gate_refuses_every_action_but_quit(cx: &mut TestAppContext) {
+    use crate::app::{
+        NextDashboard, OpenSettings, Quit, ToggleChat, TogglePalette, ToggleTerminal,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let (window, _) = gated("required-signed-out", root.path(), cx);
+    let refused: [Box<dyn gpui_kit::Action>; 5] = [
+        Box::new(OpenSettings),
+        Box::new(TogglePalette),
+        Box::new(ToggleTerminal),
+        Box::new(ToggleChat),
+        Box::new(NextDashboard),
+    ];
+    for action in refused {
+        let name = action.name();
+        window
+            .update(cx, |_, window, cx| {
+                assert!(!window.is_action_available(action.as_ref(), cx), "{name}");
+                window.dispatch_action(action, cx);
+            })
+            .unwrap();
+        settle(window, cx);
+        window
+            .update(cx, |app, window, _| {
+                assert!(app.settings.is_none(), "{name} opened Settings");
+                assert!(app.session.is_none(), "{name} opened the palette");
+                assert!(app.shown_terminal().is_none(), "{name} showed the terminal");
+                assert!(!app.chat_open, "{name} opened chat");
+                assert!(window.try_find("sign-in-gate").is_some());
+            })
+            .unwrap();
+    }
+    window
+        .update(cx, |_, window, cx| {
+            assert!(window.is_action_available(&Quit, cx))
+        })
+        .unwrap();
+}
+
+/// What was open when the session ended closes under the gate, and focus
+/// returns to the Space once signed in again.
+#[gpui_kit::test]
+fn the_sign_in_gate_closes_settings_and_gives_focus_back(cx: &mut TestAppContext) {
+    let root = tempfile::tempdir().unwrap();
+    let (window, fixture) = gated("required-signed-in", root.path(), cx);
+    // A test window has no Kit root to show the dialog in; the shell's own
+    // record of open Settings is what the gate closes.
+    window
+        .update(cx, |app, window, cx| {
+            app.settings = Some(crate::settings::Settings::open(window, cx).unwrap());
+        })
+        .unwrap();
+    cx.update(|cx| crate::account::fixture("required-signed-out", cx).unwrap());
+    settle(window, cx);
+    window
+        .update(cx, |app, _, _| {
+            assert!(app.settings.is_none(), "Settings closed")
+        })
+        .unwrap();
+    cx.update(|cx| crate::account::fixture("required-signed-in", cx).unwrap());
+    settle(window, cx);
+    window
+        .update(cx, |_, window, cx| {
+            assert!(window.try_find("sign-in-gate").is_none());
+            assert!(window.is_action_available(&crate::app::OpenSettings, cx));
+            let space = fixture.read(cx).focus.clone();
+            assert_eq!(
+                window.focused(cx),
+                Some(space),
+                "focus is back on the Space"
+            );
+        })
+        .unwrap();
+}

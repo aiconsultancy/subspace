@@ -5,11 +5,12 @@
 //! app; it closes once signed in and returns when the session ends. An app
 //! without a required account never shows it.
 
-use gpui_kit::component::{Disableable as _, v_flex};
+use gpui_kit::component::{Disableable as _, WindowExt as _, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, Div, Entity, EntityId, FocusHandle, Global, InteractiveElement as _,
-    IntoElement as _, ParentElement as _, Role, StatefulInteractiveElement as _, Styled as _,
-    Subscription, TestSupportExt as _, Window, div,
+    IntoElement as _, ParentElement as _, Role, Stateful, StatefulInteractiveElement as _,
+    Styled as _, Subscription, TestSupportExt as _, Window, div,
 };
 use subspace_account::Error;
 use subspace_dashboard::Tokens;
@@ -17,7 +18,7 @@ use subspace_dashboard::action::{Intent, dialog_button};
 use subspace_dashboard::dialog;
 use subspace_lucide::IconName;
 
-use super::SubspaceApp;
+use super::{Quit, QuitAndRestart, SubspaceApp};
 use crate::account::{self as native, NativeAccount, Status, sign_in_label, status_text};
 
 /// The shell's side of the gate, kept with the window's app: the account it
@@ -28,11 +29,15 @@ pub(super) struct SignInGate {
     watched: Option<(EntityId, Subscription)>,
     shown: bool,
     pub(in crate::app) focus: Option<FocusHandle>,
+    /// Brings focus back to the gate while it shows.
+    kept: Option<Subscription>,
 }
 
 impl Global for SignInGate {}
 
-/// The gate over `app`'s window, while the account asks for sign-in.
+/// The gate over `app`'s window, while the account asks for sign-in. When
+/// it appears it closes what was open and takes focus; when it closes,
+/// focus returns to the Space on show.
 pub(super) fn render(
     tokens: &Tokens,
     window: &mut Window,
@@ -41,15 +46,88 @@ pub(super) fn render(
     let entity = native::shared(cx)?;
     watch_account(&entity, cx);
     let asks = entity.read(cx).asks_for_sign_in();
-    let focus = cx.focus_handle();
+    let focus = gate_focus(window, cx);
     let state = cx.default_global::<SignInGate>();
-    let appeared = asks && !state.shown;
-    state.shown = asks;
-    let focus = state.focus.get_or_insert(focus).clone();
-    if appeared {
-        window.focus(&focus, cx);
+    let was = std::mem::replace(&mut state.shown, asks);
+    match (was, asks) {
+        (false, true) => cx.defer_in(window, |app, window, cx| app.clear_for_sign_in(window, cx)),
+        (true, false) => cx.defer_in(window, |app, window, cx| app.focus_active(window, cx)),
+        _ => {}
     }
     asks.then(|| gate(&entity, &focus, tokens, cx))
+}
+
+/// Whether the app asks for sign-in now, as last drawn.
+pub(super) fn shown(cx: &gpui_kit::App) -> bool {
+    cx.try_global::<SignInGate>()
+        .is_some_and(|state| state.shown)
+}
+
+/// The sign-in button's focus, made once. While the gate shows, focus that
+/// leaves it, as Tab would move it to a control behind, comes back.
+fn gate_focus(window: &mut Window, cx: &mut Context<SubspaceApp>) -> FocusHandle {
+    if let Some(focus) = cx
+        .try_global::<SignInGate>()
+        .and_then(|state| state.focus.clone())
+    {
+        return focus;
+    }
+    let focus = cx.focus_handle();
+    let back = focus.clone();
+    let kept = cx.on_focus_out(&focus, window, move |_, _, window, cx| {
+        if shown(cx) {
+            window.focus(&back, cx);
+        }
+    });
+    let state = cx.default_global::<SignInGate>();
+    state.focus = Some(focus.clone());
+    state.kept = Some(kept);
+    focus
+}
+
+impl SubspaceApp {
+    /// Quitting, which works whatever covers the window.
+    pub(super) fn quit_actions(shell: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
+        shell
+            .on_action(cx.listener(|app, _: &Quit, _, cx| app.request_quit(cx)))
+            .on_action(cx.listener(|app, _: &QuitAndRestart, _, cx| app.request_restart(cx)))
+    }
+
+    /// Every other shell, Space-switch, terminal and chat action. While the
+    /// app asks for sign-in none of them is attached, so neither a key nor a
+    /// menu command reaches anything behind the sign-in dialog.
+    pub(super) fn app_actions(shell: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
+        if shown(cx) {
+            return shell;
+        }
+        shell
+            .map(|shell| Self::shell_actions(shell, cx))
+            .map(|shell| Self::chat_actions(shell, cx))
+            .map(|shell| Self::terminal_actions(shell, cx))
+            .map(|shell| Self::switch_actions(shell, cx))
+    }
+
+    /// Closes what was open when the gate appears, the palette, Settings and
+    /// any dialog, so nothing takes input above or beneath it, then focuses
+    /// its sign-in.
+    fn clear_for_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.session = None;
+        self.dismiss_shortcuts(window, cx);
+        if self.settings.is_some() {
+            self.close_settings(window, cx);
+        }
+        // A window without Kit's root, such as a test window, has no dialogs.
+        if window.root::<gpui_kit::base::Root>().flatten().is_some() {
+            window.close_all_dialogs(cx);
+        }
+        if let Some(focus) = cx
+            .try_global::<SignInGate>()
+            .and_then(|state| state.focus.clone())
+        {
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
 }
 
 /// Renders the app again whenever the account changes, including an

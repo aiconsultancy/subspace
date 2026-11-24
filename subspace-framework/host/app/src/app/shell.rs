@@ -17,9 +17,8 @@ use subspace_dashboard::workspace::{SpaceDock, SpaceDocks};
 use super::keys::{APP_CONTEXT, ShowDashboard};
 use super::state::window_title;
 use super::{
-    CloseJig, NextDashboard, PreviousDashboard, Quit, QuitAndRestart, SubspaceApp, ToggleJig,
-    ToggleNavigationCollapsed, ToggleNavigationMode, ToggleSpaceInspector, ToggleSpaceNavigator,
-    ToggleWrap,
+    CloseJig, NextDashboard, PreviousDashboard, SubspaceApp, ToggleJig, ToggleNavigationCollapsed,
+    ToggleNavigationMode, ToggleSpaceInspector, ToggleSpaceNavigator, ToggleWrap,
 };
 use crate::status_bar::{self, StatusFacts};
 
@@ -145,8 +144,6 @@ impl SubspaceApp {
             .on_action(cx.listener(Self::configure_board))
             .on_action(cx.listener(Self::open_about))
             .on_action(cx.listener(Self::close_help))
-            .on_action(cx.listener(|app, _: &Quit, _, cx| app.request_quit(cx)))
-            .on_action(cx.listener(|app, _: &QuitAndRestart, _, cx| app.request_restart(cx)))
             .on_action(cx.listener(|app, _: &ToggleNavigationMode, window, cx| {
                 app.toggle_navigation_mode(window, cx)
             }))
@@ -319,10 +316,8 @@ impl Render for SubspaceApp {
 
         layout::root(window, cx)
             .key_context(APP_CONTEXT)
-            .map(|shell| Self::shell_actions(shell, cx))
-            .map(|shell| Self::chat_actions(shell, cx))
-            .map(|shell| Self::terminal_actions(shell, cx))
-            .map(|shell| Self::switch_actions(shell, cx))
+            .map(|shell| Self::quit_actions(shell, cx))
+            .map(|shell| Self::app_actions(shell, cx))
             .relative()
             .size_full()
             .bg(tokens.bg)
