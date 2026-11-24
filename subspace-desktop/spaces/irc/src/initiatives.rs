@@ -317,14 +317,16 @@ impl Hub {
     }
 
     /// Holds the networks until the first read settles or [`READ_TIMEOUT`]
-    /// passes.
+    /// passes. When the wait times out, the pane is redrawn, so it stops
+    /// saying it is checking even when no network event follows.
     pub(crate) fn hold_for_first_read(&mut self, cx: &mut Context<Self>) {
         self.initiatives.awaiting_read = true;
         cx.spawn(async move |hub, cx| {
             cx.background_executor().timer(READ_TIMEOUT).await;
-            _ = hub.update(cx, |hub, _| {
+            _ = hub.update(cx, |hub, cx| {
                 if std::mem::take(&mut hub.initiatives.awaiting_read) {
                     hub.rerun();
+                    cx.notify();
                 }
             });
         })
