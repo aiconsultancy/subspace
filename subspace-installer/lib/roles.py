@@ -65,7 +65,8 @@ Your `subspace` MCP server reaches the fleet's Subspace API through
 Stargate, which signs each request as you with your own key: you hold no
 token, and send no header that names you. This replaces the agent listener
 and `X-Subspace-Agent` header that the `subspace-tracker` skill describes.
-For a REST call the tools do not cover, use the same route:
+For a REST call the tools do not cover, use the same route with the
+`$command` command, which your policy allows:
 
 ```sh
 $command /api/v1/me

@@ -363,6 +363,22 @@ class FleetPolicyTests(unittest.TestCase):
                 granted = runtime.harness_permissions(cfg, operator)
                 self.assertEqual(granted, [*base, rule])
                 self.assertNotIn(runtime.SUBSPACE_MCP_GRANT, granted)
+        # The agent listener has no REST command of its own; a hosted API's is granted to every officer.
+        self.assertNotIn(runtime.SUBSPACE_REQUEST_GRANT, runtime.harness_permissions(cfg, person))
+
+    def test_a_hosted_api_gives_every_officer_its_rest_command_unless_a_rule_names_it(self):
+        config = example_config()
+        config["api"] = {"url": "https://subspace.example.com", "enrolment": True}
+        config["stargate"] = {"ref": runtime.SUBSPACE_AGENTS_COMMIT}
+        cfg = validate(config, officer_secrets())
+        for person in cfg["members"]:
+            granted = runtime.harness_permissions(cfg, person)
+            self.assertEqual(granted[-2:], [runtime.SUBSPACE_MCP_GRANT, runtime.SUBSPACE_REQUEST_GRANT])
+            self.assertEqual(fixture.opencode_decision(granted, "shell", ["subspace-request /api/v1/me"]), "allow")
+        person = cfg["members"][0]
+        rule = {"action": "shell", "resource": "subspace-request *", "effect": "deny"}
+        operator = dict(person, harness=dict(person["harness"], permissions=[*person["harness"]["permissions"], rule]))
+        self.assertEqual(runtime.harness_permissions(cfg, operator)[-2:], [rule, runtime.SUBSPACE_MCP_GRANT])
 
     def test_without_the_agent_listener_officers_get_no_api_server_or_skill(self):
         config = example_config()

@@ -9,7 +9,9 @@ import io
 import json
 import os
 from pathlib import Path
+import pwd
 import stat
+import subprocess
 import sys
 import tempfile
 from threading import Thread
@@ -18,6 +20,8 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fixture  # noqa: E402
 import runtime  # noqa: E402
 import sessions  # noqa: E402
 
@@ -908,7 +912,8 @@ class InstalledFleet(unittest.TestCase):
             (self.etc / name).write_text(json.dumps(value))
             (self.etc / name).chmod(0o600)
         sockets, tmpfiles = Path(self.root.name) / "run/agents", self.etc / "tmpfiles.conf"
-        for name, value in (("AGENT_SOCKETS", sockets), ("AGENT_TMPFILES", tmpfiles)):
+        self.request = Path(self.root.name) / "bin/subspace-request"
+        for name, value in (("AGENT_SOCKETS", sockets), ("AGENT_TMPFILES", tmpfiles), ("SUBSPACE_REQUEST", self.request)):
             self.start(patch.object(runtime, name, value))
         self.start(patch.object(runtime, "stargate_has_subspace_agents", return_value=True))
         (self.state / "gateway").mkdir()  # account() makes it on a VM
@@ -973,20 +978,37 @@ class InstalledFleet(unittest.TestCase):
                 self.assertFalse({runtime.AGENT_HEADER, "headersHelper", "http://127.0.0.1:3001/mcp"} & found, path)
                 self.assertNotIn(token, path.read_text())
         self.assertFalse(any("agent-header" in path.read_text() for path in self.systemd.iterdir()))
-        # The officers' instructions say how REST calls reach the API.
+        # The officers' instructions name one stable REST command, which every OpenCode officer's policy allows,
+        # the rear admiral's included, and which runs Stargate's request command on the caller's own socket.
         roles_input = [json.loads(call.kwargs["input"]) for call in runtime.subprocess.run.call_args_list
                        if call.args[0][-1] == "role"]
-        self.assertTrue(all("subspace request --socket" in document["instructions"] for document in roles_input))
-        self.assertIn(f"subspace request --socket {sockets / 'orion/api.sock'} /api/v1/me",
-                      json.dumps(roles_input))
+        self.assertEqual({document["role"] for document in roles_input}, {"rear-admiral", "captain"})
+        for document in roles_input:
+            self.assertIn("subspace-request /api/v1/me\nsubspace-request --method POST", document["instructions"])
+            self.assertNotIn("--socket", document["instructions"])
+        for officer in ("atlas", "orion"):
+            rules = json.loads((self.etc / f"opencode-{officer}.json").read_text())["permissions"]
+            self.assertEqual(rules[-1], runtime.SUBSPACE_REQUEST_GRANT)
+            self.assertEqual(fixture.opencode_decision(rules, "shell", ["subspace-request /api/v1/me"]), "allow")
+        script = self.request.read_text()
+        self.assertEqual(script.splitlines()[-1], f'exec {bridge[0]} {bridge[1]} subspace request --socket "$socket" "$@"')
+        self.assertIn(f'socket="{sockets}/$officer/api.sock"', script)
+        # Run by a user that is not an officer's (subprocess.run is this suite's mock), it refuses.
+        self.assertFalse(pwd.getpwuid(os.getuid()).pw_name.startswith("ss-"))
+        shell = subprocess.Popen(["sh", str(self.request), "/api/v1/me"], stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+        _, error = shell.communicate(timeout=30)
+        self.assertEqual(shell.returncode, 2, error)
+        self.assertIn("run it as a fleet officer", error)
         # Registration is left to the hosted API's administrators: no request, no token.
         import fleetctl
         with patch.object(fleetctl, "Api") as api:
             fleetctl.register(cfg)
         api.assert_not_called()
-        # Back to an API on this VM, the tmpfiles entry goes.
+        # Back to an API on this VM, the tmpfiles entry and the REST command go.
         runtime.render(runtime.validate(*self.fleets()["local-api"]), {"tokens": {}, "cloud": {}})
         self.assertFalse(tmpfiles.exists())
+        self.assertFalse(self.request.exists())
 
     def test_a_hosted_api_refuses_what_it_cannot_serve(self):
         config, secrets, extra, token, _, _ = self.hosted()

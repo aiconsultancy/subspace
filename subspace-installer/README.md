@@ -1200,8 +1200,15 @@ What the fleet installer renders, with `api.enrolment` set:
   gateway process, gets the same command as a stdio server. Neither holds a
   credential or names itself with a header.
 - The `subspace_*` tool grant, the API skill, and a section in each officer's
-  instructions on making REST calls with `stargate subspace request --socket
-  <socket> /api/v1/...`.
+  instructions on making REST calls with `subspace-request /api/v1/...`
+  (`--method` and `--input FILE` for a body). That command,
+  `/opt/subspace-fleet/bin/subspace-request`, runs Stargate's
+  `subspace request` on the socket of the officer whose Linux user runs it,
+  so its name stays the same when Stargate's checkout changes, and crew act
+  as their captain, as through its MCP server. Every OpenCode officer's
+  policy allows it (`{"action": "shell", "resource": "subspace-request *",
+  "effect": "allow"}`), the rear admiral's included, unless a rule of its own
+  names it.
 - Nothing of the agent listener: no `X-Subspace-Agent` header, no
   `agent-header` helper and no `AGENT_PORT`. `subspace-fleetctl register`
   registers nothing, since the API's administrators keep the fleet's records.
