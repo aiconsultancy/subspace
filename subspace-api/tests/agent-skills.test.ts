@@ -33,6 +33,25 @@ test("the agent skills never teach an administrator tool as something an agent d
     for (const name of adminOnlyTools) expect(readFileSync(path, "utf8")).not.toContain(name);
 });
 
+test("MCP tool schemas have no top-level schema combinators", () => {
+  for (const [name, { inputSchema }] of Object.entries(mcpTools)) {
+    const unsupported = Object.keys(inputSchema).filter((key) =>
+      /^(anyOf|allOf|oneOf)$/u.test(key),
+    );
+    expect([name, inputSchema.type, unsupported]).toEqual([name, "object", []]);
+  }
+  expect(mcpTools.subspace_get_review_status.inputSchema).toMatchObject({
+    properties: {
+      document: expect.any(Object),
+      documentRevision: expect.any(Object),
+      issue: expect.any(Object),
+      kind: expect.any(Object),
+      subject: expect.any(Object),
+      revision: expect.any(Object),
+    },
+  });
+});
+
 test("each harness's tracker skill shares the same rules", () => {
   const shared = harnesses.map((harness) => {
     const text = readFileSync(join(root, harness, "subspace-tracker/SKILL.md"), "utf8");
