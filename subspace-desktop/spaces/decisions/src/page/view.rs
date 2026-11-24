@@ -24,12 +24,17 @@ use crate::words;
 const GONE: &str = "This decision is no longer available. It may have been removed, or you may no longer have access.";
 
 /// The page in the pane, scrolling on its own.
-pub(crate) fn render(page: &Page, tokens: &Tokens, cx: &mut Context<Decisions>) -> AnyElement {
+pub(crate) fn render(
+    board: &Decisions,
+    page: &Page,
+    tokens: &Tokens,
+    cx: &mut Context<Decisions>,
+) -> AnyElement {
     let body = match &page.state {
         PageState::Loading => vec![loading(tokens)],
         PageState::Gone => vec![notice(tokens, "decisions-page-gone", GONE)],
         PageState::Failed(failure) => vec![failed(*failure, tokens, cx)],
-        PageState::Loaded(detail) => reading(detail, tokens, cx),
+        PageState::Loaded(detail) => loaded(board, detail, tokens, cx),
     };
     v_flex()
         .id("decisions-page")
@@ -47,6 +52,23 @@ pub(crate) fn render(page: &Page, tokens: &Tokens, cx: &mut Context<Decisions>) 
                 .children(body),
         )
         .into_any_element()
+}
+
+fn loaded(
+    board: &Decisions,
+    detail: &DecisionDetail,
+    tokens: &Tokens,
+    cx: &mut Context<Decisions>,
+) -> Vec<AnyElement> {
+    let mut content = Vec::new();
+    if crate::author::available() {
+        content.push(super::controls::render(board, detail, cx));
+    }
+    content.extend(crate::history::render(&board.history, tokens, cx));
+    if board.history.snapshot().is_none() {
+        content.extend(reading(detail, tokens, cx));
+    }
+    content
 }
 
 fn loading(tokens: &Tokens) -> AnyElement {
@@ -88,7 +110,7 @@ fn failed(failure: Failure, tokens: &Tokens, cx: &mut Context<Decisions>) -> Any
 }
 
 /// The loaded decision: banners, the heading, the sections, the evidence.
-fn reading(
+pub(crate) fn reading(
     detail: &DecisionDetail,
     tokens: &Tokens,
     cx: &mut Context<Decisions>,

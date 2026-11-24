@@ -7,6 +7,9 @@ use ureq::http::StatusCode;
 
 use crate::{Backend, Client, model::DecisionDetail, transport};
 
+mod authoring;
+pub use authoring::{DecisionAttribution, DecisionChanges, DecisionReview};
+
 const TITLE_LIMIT: usize = 200;
 const TEXT_LIMIT: usize = 50_000;
 const ISSUE_LIMIT: usize = 100;
@@ -117,6 +120,8 @@ fn invalid_evidence(message: &IrcEvidence<'_>) -> bool {
 pub enum DecisionWriteError {
     #[error("Write a decision with a title of 1 to 200 characters on one line.")]
     Invalid,
+    #[error("Enter the decision date in YYYY-MM-DD format.")]
+    Date,
     #[error(
         "Write a decision of up to 50,000 characters, with its context and evidence within their limits."
     )]
@@ -131,6 +136,12 @@ pub enum DecisionWriteError {
     Unavailable,
     #[error("This project is archived. Unarchive it before recording decisions.")]
     ProjectArchived,
+    #[error("The decision or its replacement link has changed. Review the current record.")]
+    Conflict,
+    #[error(
+        "Add an evidence type and reference. References allow up to 2,000 characters and excerpts up to 4,000."
+    )]
+    Evidence,
     #[error("Subspace API refused this decision. Check the issue and the text.")]
     Refused,
     #[error("The service is busy. Wait before trying again.")]
@@ -158,19 +169,26 @@ impl Client {
         let body = serde_json::to_value(decision).map_err(|_| DecisionWriteError::NotSent)?;
         let response = transport::post_json(self, &url, &body, transport::READ_TIMEOUT)
             .map_err(|_| DecisionWriteError::Unconfirmed)?;
-        decision_response(self, response)
+        decode_response(
+            self,
+            response,
+            StatusCode::CREATED,
+            DecisionWriteError::ProjectArchived,
+        )
     }
 }
 
-fn decision_response(
+fn decode_response(
     client: &Client,
     response: ureq::http::Response<ureq::Body>,
+    success: StatusCode,
+    conflict: DecisionWriteError,
 ) -> Result<DecisionDetail, DecisionWriteError> {
     let status = response.status();
     if transport::is_access_challenge(&response) || status == StatusCode::UNAUTHORIZED {
         return Err(DecisionWriteError::SignIn);
     }
-    if status == StatusCode::CREATED {
+    if status == success {
         return client
             .read(response)
             .map_err(|_| DecisionWriteError::Unconfirmed);
@@ -179,7 +197,7 @@ fn decision_response(
         400 | 422 => DecisionWriteError::Refused,
         403 => DecisionWriteError::Forbidden,
         404 => DecisionWriteError::Unavailable,
-        409 => DecisionWriteError::ProjectArchived,
+        409 => conflict,
         429 => DecisionWriteError::RateLimited,
         _ => DecisionWriteError::Unconfirmed,
     })

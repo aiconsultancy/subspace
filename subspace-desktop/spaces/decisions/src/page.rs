@@ -1,6 +1,7 @@
 //! A decision opened as a page: its own tab beside the list, read in full
 //! from Subspace API, until it is closed.
 
+mod controls;
 pub(crate) mod view;
 
 use gpui_kit::{AppContext as _, Context, Window};
@@ -90,6 +91,7 @@ impl Decisions {
         if self.follow_account(cx) {
             return;
         }
+        self.history = Default::default();
         self.page = Some(Page {
             id,
             title,
@@ -110,7 +112,8 @@ impl Decisions {
         self.page_reads = self.page_reads.wrapping_add(1);
         let number = self.page_reads;
         let reader = self.reader.detail.clone();
-        let read = cx.background_spawn(async move { reader(&id) });
+        let lease = self.lease.clone();
+        let read = cx.background_spawn(async move { reader(&id, lease.as_ref()) });
         self._page_read = Some(cx.spawn(async move |this, cx| {
             let result = read.await;
             _ = this.update(cx, |this, cx| this.finish_page(number, result, cx));
@@ -146,6 +149,7 @@ impl Decisions {
             return;
         }
         self.page = None;
+        self.history = Default::default();
         self.showing_page = false;
         self._page_read = None;
         self.focus.focus(window, cx);
@@ -170,7 +174,9 @@ impl Decisions {
     /// The issues the open page's decision links to, once it is read.
     pub(crate) fn page_issues(&self) -> Vec<peek::Issue> {
         match self.shown_page().map(|page| &page.state) {
-            Some(PageState::Loaded(detail)) => peek::relations(detail).issues,
+            Some(PageState::Loaded(detail)) => {
+                peek::relations(self.history.snapshot().unwrap_or(detail)).issues
+            }
             _ => Vec::new(),
         }
     }

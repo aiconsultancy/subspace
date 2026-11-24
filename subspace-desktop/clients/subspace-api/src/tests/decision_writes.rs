@@ -120,3 +120,46 @@ fn refusals_read_in_plain_words_and_are_never_replayed() {
         assert!(!expected.to_string().contains("fixture"));
     }
 }
+
+#[test]
+fn desktop_edits_and_reviews_send_the_shown_version_once() {
+    use crate::decision_writes::{DecisionChanges, DecisionReview};
+
+    let mock = Mock::new(|request| {
+        if request.path.ends_with("/status") {
+            (409, "{}".into())
+        } else {
+            (200, detail().to_string())
+        }
+    });
+    let api = client(&mock);
+    let changes = DecisionChanges {
+        context: Some(String::new()),
+        supersedes_id: Some(None),
+        ..DecisionChanges::default()
+    };
+    assert!(api.edit_decision("decision-1", 7, &changes).is_ok());
+    assert_eq!(
+        api.review_decision("decision-1", 8, DecisionReview::Reject)
+            .err(),
+        Some(DecisionWriteError::Conflict)
+    );
+    let requests = mock.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        (requests[0].method.as_str(), requests[0].path.as_str()),
+        ("PUT", "/api/v1/decisions/decision-1")
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&requests[0].body).unwrap(),
+        json!({"context":"","supersedesId":null,"version":7})
+    );
+    assert_eq!(
+        (requests[1].method.as_str(), requests[1].path.as_str()),
+        ("PUT", "/api/v1/decisions/decision-1/status")
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&requests[1].body).unwrap(),
+        json!({"status":"rejected","version":8})
+    );
+}

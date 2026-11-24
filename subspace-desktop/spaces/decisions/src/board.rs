@@ -42,6 +42,10 @@ pub(crate) fn new(window: &mut Window, cx: &mut Context<Decisions>) -> Decisions
         session: Session::default(),
         listing: Listing::default(),
         page: None,
+        author: None,
+        history: Default::default(),
+        #[cfg(test)]
+        test_writer: None,
         showing_page: false,
         reader: load::Reader::service(),
         reads: 0,
@@ -143,9 +147,10 @@ impl Decisions {
         let Ok(directory) = directory else {
             return;
         };
-        self.session.account = Some(directory.me.display_name);
+        self.session.account = Some(directory.me);
         self.session.projects = directory.projects;
         self.session.people = directory.people;
+        self.session.human_makers = directory.human_makers;
     }
 
     fn apply_found(&mut self, found: Found, now: Instant) {
@@ -317,13 +322,13 @@ impl Decisions {
         if self.account_moved() {
             return service.to_owned();
         }
-        state::status_line(service, self.session.account.as_deref(), &self.listing, now)
+        state::status_line(service, self.session.account_name(), &self.listing, now)
     }
 
     pub(crate) fn account_line(&self) -> String {
         state::account_line(
             subspace_api_client::service_name(),
-            self.session.account.as_deref(),
+            self.session.account_name(),
             &self.listing,
         )
     }

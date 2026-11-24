@@ -1,6 +1,6 @@
 [package]
 name = "subspace-decisions-board"
-description = "Subspace dashboard: searchable, read-only Subspace API decisions"
+description = "Subspace dashboard: propose, review and browse Subspace API decisions"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

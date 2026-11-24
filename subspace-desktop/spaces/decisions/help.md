@@ -8,7 +8,7 @@ The Decisions Space lists the decisions recorded in Subspace API in one
 searchable place: what was decided, who made it, when, and whether a later
 decision superseded it. Decisions are logged against issues, by people and by
 agents; the Issues Space shows the decisions of one issue, and this Space
-shows them all. It reads only.
+shows them all and lets you propose and review decisions.
 
 Choose **Decisions** in the Space switcher. Open **Help** in **Commands**, or
 press `?` while the Space has focus.
@@ -120,21 +120,46 @@ group; on a page, or when the list does not hold it, it opens that decision.
 Right-click a row for **Open** and **Copy title**. Select text in the
 inspector or on the page and right-click to copy it.
 
+### Propose, edit and review
+
+Choose **New decision**, select a project, and give the proposal a title and
+the decision itself. Enter issue identifiers to link work in the same project.
+You can also record the context, reasoning, implications, alternatives and tags.
+
+The app records you as the recorder. To credit someone else, select the human
+maker and provide an evidence type and reference. For a Subspace comment, use
+the ID of a comment written by that maker. Evidence stays available on the
+decision page.
+
+Open a proposed decision to **Edit**, **Accept**, or **Reject** it. These
+actions are available on active projects to members allowed to change the
+proposal. If the record changed while you were editing, the app keeps your
+draft and shows the current revision. Select **Use current version** after
+reviewing it, then save again. Your link and tag changes are applied to the
+current list. If the API returns only some of a decision's linked issues,
+the editor preserves all of its links when you save other changes.
+
+To replace an accepted decision, open it and choose **Propose replacement**.
+The earlier decision is superseded when the replacement is accepted.
+
+Choose **Revision history** on a decision's page and open a revision to see
+its saved snapshot. Revisions include who saved them and which fields changed.
+
 ## Keyboard shortcuts
 
 | Key | Action |
 | --- | --- |
 | `j` / Down, `k` / Up | Move through the list. |
 | Enter | Open the selected decision as a page, or fold or unfold a group. A click only selects a decision; a double click opens it. |
-| Escape | Close a menu, then close the open decision. |
+| Escape | Close a dialog or menu, then close the open decision. |
 | `1`–`5` | All decisions, Proposed, Accepted, Rejected, Superseded. |
 | `/` | Focus the search. Enter or Escape returns focus to the list. |
 | `r` | Read the list again. |
 | `?` | Open this guide. |
 
 Plain keys do not act while you type in the search. The command palette lists
-every view, maker and project, **Filter by tag…**, the linked issues of the
-selected decision and the dock switches.
+every view, maker and project, **Filter by tag…**, the available decision
+actions, the linked issues of the selected decision and the dock switches.
 
 ## Settings
 
@@ -155,14 +180,11 @@ settings: the account is the one under **Settings › Account**.
 
 ## Limits
 
-The Space reads only. Log, accept, reject or supersede a decision through
-Subspace API's own tools; there are no editing controls here.
-
 One read lists at most a thousand decisions. When more match, the count ends
 in **+** and the decisions after the first thousand are not listed; narrow
 the view, maker, project, tag or search to reach them. A decision shows at
 most the first fifty linked issues the API returns, with the number of the
-others. Revisions of a decision are not shown.
+others.
 
 Decision content stays in memory. The Space has no agent tools, chat
 context, full-text index, notifications or background updates, and it keeps

@@ -169,7 +169,7 @@ fn all_board_registrations() -> Vec<BoardRegistration> {
         BoardRegistration::new::<subspace_issues_board::Issues>()
             .description("Subspace API issues and comments"),
         BoardRegistration::new::<subspace_decisions_board::Decisions>()
-            .description("Subspace API decisions, searchable and read only"),
+            .description("Search, propose and review Subspace API decisions"),
         #[cfg(all(feature = "space-lab", target_os = "macos", target_arch = "aarch64"))]
         BoardRegistration::new::<subspace_space_lab_board::SpaceLab>()
             .description("Native dashboards and managed runtimes (alpha)"),

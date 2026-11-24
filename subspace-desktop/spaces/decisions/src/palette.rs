@@ -2,6 +2,7 @@
 //! inspector offer; no reads of its own.
 
 use gpui_kit::{App, Context, SharedString, Window};
+use subspace_api_client::decision_writes::DecisionReview;
 use subspace_framework::dashboard::{CloseDetail, PaletteCommand};
 
 use crate::keys;
@@ -21,6 +22,7 @@ pub(crate) fn commands(this: &Decisions) -> Vec<PaletteCommand> {
     let moved = this.account_moved();
     if !moved {
         commands.extend(decision_commands(this));
+        commands.extend(author_commands(this));
     }
     let search = PaletteCommand::new("Search decisions", keys::FocusSearch);
     commands.push(search.shortcut("/"));
@@ -34,6 +36,54 @@ pub(crate) fn commands(this: &Decisions) -> Vec<PaletteCommand> {
     }));
     commands.extend(dock_commands(this));
     commands
+}
+
+fn author_commands(this: &Decisions) -> Vec<PaletteCommand> {
+    let mut commands = Vec::new();
+    if this.can_author() {
+        commands.push(callback(this, "New decision…", |this, window, cx| {
+            this.new_decision(false, window, cx);
+        }));
+    }
+    let Some(detail) = this.current_detail().filter(|_| crate::author::available()) else {
+        return commands;
+    };
+    let current = this.history.snapshot().is_none();
+    if current && this.can_change(detail) {
+        commands.extend(review_commands(this));
+    }
+    if current && this.can_replace(detail) {
+        commands.push(callback(
+            this,
+            "Propose replacement…",
+            |this, window, cx| {
+                this.new_decision(true, window, cx);
+            },
+        ));
+    }
+    let history = if this.history.open {
+        "Hide revision history"
+    } else {
+        "Revision history"
+    };
+    commands.push(callback(this, history, |this, _, cx| {
+        this.toggle_history(cx)
+    }));
+    commands
+}
+
+fn review_commands(this: &Decisions) -> [PaletteCommand; 3] {
+    [
+        callback(this, "Edit decision…", |this, window, cx| {
+            this.edit_decision(window, cx)
+        }),
+        callback(this, "Accept decision…", |this, window, cx| {
+            this.review_decision(DecisionReview::Accept, window, cx)
+        }),
+        callback(this, "Reject decision…", |this, window, cx| {
+            this.review_decision(DecisionReview::Reject, window, cx)
+        }),
+    ]
 }
 
 /// Open or close the decision, then open its linked issues.

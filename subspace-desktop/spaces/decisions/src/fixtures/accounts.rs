@@ -69,7 +69,7 @@ pub(crate) fn reader_for(accounts: &Accounts) -> Reader {
             };
             Leased::Read(lease, answer)
         }),
-        detail: Arc::new(move |id: &str| {
+        detail: Arc::new(move |id, _| {
             let (lease, who) = detail.client();
             let found = match who {
                 Who::Operator => super::detail(id).ok_or(Error::NotFound),
@@ -96,6 +96,7 @@ fn other_answer(plan: &Plan) -> Answer {
     let item: DecisionListItem = serde_json::from_value(value).unwrap();
     let directory = Directory {
         me: me(OTHER_USER, OTHER_NAME),
+        human_makers: Vec::new(),
         projects: vec![project("OPS", "Operations")],
         people: [(OTHER_USER.to_owned(), OTHER_NAME.to_owned())]
             .into_iter()

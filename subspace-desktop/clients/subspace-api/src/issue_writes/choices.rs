@@ -26,12 +26,14 @@ pub enum ChoiceSource {
 pub struct IssueChoice {
     id: String,
     name: String,
+    human: bool,
 }
 impl IssueChoice {
     pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
+            human: false,
         }
     }
     pub fn id(&self) -> &str {
@@ -39,6 +41,11 @@ impl IssueChoice {
     }
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Whether this member can be the human maker of a decision.
+    pub fn human_id(&self) -> Option<&str> {
+        self.human.then_some(self.id.as_str())
     }
 }
 impl std::fmt::Debug for IssueChoice {
@@ -81,14 +88,17 @@ impl Client {
                     .into_iter()
                     .filter(|p| matches!(p.kind.as_str(), "human" | "agent"))
                     .map(|p| {
-                        IssueChoice::new(
+                        let human = p.kind == "human";
+                        let mut choice = IssueChoice::new(
                             p.id,
                             if p.kind == "agent" {
                                 format!("{} (agent)", p.display_name)
                             } else {
                                 p.display_name
                             },
-                        )
+                        );
+                        choice.human = human;
+                        choice
                     })
                     .collect())
             }

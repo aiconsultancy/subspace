@@ -25,7 +25,8 @@ STATE_TYPES = ('triage', 'backlog', 'unstarted', 'started', 'completed', 'cancel
 TERMINAL = ('completed', 'canceled', 'duplicate')
 STATE_NAMES = ('Triage', 'Backlog', 'Todo', 'In progress', 'Done', 'Cancelled', 'Duplicate')
 DECISIONS_PATH = '/api/v1/decisions'
-DECISION_SCENARIOS = ('normal', 'missing', 'forbidden', 'unavailable')
+DECISION_SCENARIOS = ('normal', 'missing', 'forbidden', 'unavailable', 'conflict')
+DECISION_TEXT = ('decision', 'context', 'why', 'implications', 'alternatives')
 
 
 def uid(name):
@@ -771,8 +772,9 @@ def ready_for_agents_after(row, payload, values):
 def log_decision(fixture, payload):
     """POST /decisions as the signed-in person (Ada Fixture): the maker and
     the recorder, with the IRC evidence a payload names."""
-    allowed = {'projectId', 'title', 'decidedOn', 'decision', 'context', 'issueIds',
-               'evidenceKind', 'evidenceReference', 'evidenceExcerpt'}
+    allowed = {*DECISION_TEXT, 'projectId', 'title', 'decidedOn', 'issueIds', 'tags',
+               'supersedesId', 'madeByType', 'madeByUserId', 'evidenceKind',
+               'evidenceReference', 'evidenceExcerpt'}
     if not isinstance(payload, dict) or set(payload) - allowed:
         raise Problem(400, 'Supply decision fields only.')
     title, text = payload.get('title'), payload.get('decision')
@@ -781,24 +783,106 @@ def log_decision(fixture, payload):
     project_row = next((p for p in fixture.projects if p['id'] == payload.get('projectId')), None)
     if project_row is None:
         raise Problem(404, 'Project not found.')
-    linked = [fixture.find_issue(issue_id) for issue_id in payload.get('issueIds', [])]
-    if any(row is None for row in linked):
-        raise Problem(400, 'Link existing issues.')
+    linked = decision_links(fixture, project_row['id'], payload.get('issueIds', []))
     now = instant()
     key = 'logged-' + str(uuid.uuid4())
+    maker = ADA
+    if payload.get('madeByType') == 'human':
+        maker = next((person for person in (ADA, GRACE) if person['userId'] == payload.get('madeByUserId')), None)
+        if maker is None or not payload.get('evidenceKind') or not payload.get('evidenceReference'):
+            raise Problem(400, 'Choose a human maker and add evidence.')
+    elif payload.get('madeByType'):
+        raise Problem(403, 'The signed-in fixture person can record human decisions.')
     row, detail = decision_record(key, title.strip(), 'proposed', now, payload['decidedOn'], project_row,
-                                  linked, text.strip())
-    provenance = dict(detail['provenance'], evidenceKind=payload.get('evidenceKind'),
-                      evidenceReference=payload.get('evidenceReference'), evidenceExcerpt=payload.get('evidenceExcerpt'))
-    row.update(tags=[], **{k: provenance[k] for k in ('evidenceKind', 'evidenceReference', 'evidenceExcerpt')})
-    detail.update(context=payload.get('context', ''), why='', implications='', alternatives='', provenance=provenance)
+                                  linked, text.strip(), maker)
+    evidence = {key: payload.get(key) for key in ('evidenceKind', 'evidenceReference', 'evidenceExcerpt')}
+    row.update(tags=payload.get('tags', []), madeBy=decision_maker(maker), **evidence)
+    row.update(replacement(fixture, row, payload.get('supersedesId')))
+    detail.update({key: payload.get(key, '') for key in DECISION_TEXT if key != 'decision'})
+    detail['provenance'].update(evidence)
     fixture.decisions[row['id']] = (row, detail)
+    save_decision_revision(fixture, row, detail, ['created'])
     for link in linked:
         event = activity(link, now, 'decision.logged')
         event.update(actor=actor(ADA), data=dict(decisionId=row['id']))
         fixture.events[link['id']].insert(0, event)
     return dict(row, **detail)
 
+
+
+def decision_maker(person):
+    return dict(userId=person['userId'], displayName=person['displayName'],
+                available=True, kind=person['kind'])
+
+
+def decision_links(fixture, project, ids):
+    linked = [fixture.find_issue(issue_id) for issue_id in dict.fromkeys(ids)]
+    if any(row is None or row['projectId'] != project for row in linked):
+        raise Problem(400, 'Link existing issues in the decision project.')
+    return linked
+
+
+def replacement(fixture, row, prior):
+    linked = fixture.decisions.get(prior)
+    if prior and (linked is None or linked[0]['projectId'] != row['projectId']
+                  or linked[0]['status'] != 'accepted' or prior == row['id']):
+        raise Problem(409, 'Choose a current accepted decision to supersede.')
+    return dict(supersedesId=prior, supersedes=decision_summary(linked[0]) if linked else None)
+
+
+def save_decision_revision(fixture, row, detail, changed):
+    versions = fixture.decision_revisions.setdefault(row['id'], [])
+    number = row['revisionNumber']
+    revision = dict(id=uid(f"decision-revision-{row['id']}-{number}"), number=number,
+                    savedAt=row['updatedAt'], savedBy=decision_maker(ADA), changedFields=changed)
+    versions.append((revision, copy.deepcopy(dict(row, **detail))))
+
+
+def update_decision(fixture, row, detail, payload, review, scenario):
+    decision_id = row['id']
+    if scenario == 'conflict' and decision_id not in fixture.decision_conflicts:
+        fixture.decision_conflicts.add(decision_id)
+        row.update(version=row['version'] + 1, revisionNumber=row['revisionNumber'] + 1,
+                   updatedAt=instant())
+        detail['context'] = 'Another fixture editor updated the context.'
+        save_decision_revision(fixture, row, detail, ['context'])
+    if payload.get('version') != row['version'] or row['status'] != 'proposed' or row['project']['archived']:
+        raise Problem(409, 'The proposed decision has changed.', dict(currentVersion=row['version']))
+    changed = sorted(set(payload) - {'version'})
+    if not changed:
+        raise Problem(400, 'Change a field before saving.')
+    update = {}
+    if review:
+        status = payload.get('status')
+        if status not in ('accepted', 'rejected') or changed != ['status']:
+            raise Problem(400, 'Accept or reject the decision.')
+        update['status'] = status
+        if status == 'accepted':
+            update.update(replacement(fixture, row, row.get('supersedesId')))
+    else:
+        if set(changed) - {*DECISION_TEXT, 'title', 'decidedOn', 'tags', 'issueIds', 'supersedesId'}:
+            raise Problem(400, 'Edit proposed decision fields only.')
+        if 'supersedesId' in changed:
+            update.update(replacement(fixture, row, payload['supersedesId']))
+        if 'issueIds' in changed:
+            linked = decision_links(fixture, row['projectId'], payload['issueIds'])
+            links = [{key: issue[key] for key in ('id', 'identifier', 'title')} for issue in linked]
+            update['issues'] = dict(items=links, count=len(links))
+        update.update({key: payload[key] for key in ('title', 'decidedOn', 'tags') if key in changed})
+    now = instant()
+    row.update(version=row['version'] + 1, revisionNumber=row['revisionNumber'] + 1,
+               updatedAt=now, **update)
+    detail.update({key: payload[key] for key in DECISION_TEXT if key in changed})
+    if review:
+        status = row['status']
+        detail.update({f'{status}At': now, f'{status}ByUserId': ADA['userId']})
+        if status == 'accepted' and row['supersedesId']:
+            old, older_detail = fixture.decisions[row['supersedesId']]
+            old.update(status='superseded', supersededById=row['id'], supersededBy=decision_summary(row),
+                       version=old['version'] + 1, revisionNumber=old['revisionNumber'] + 1, updatedAt=now)
+            save_decision_revision(fixture, old, older_detail, ['status', 'supersededById'])
+    save_decision_revision(fixture, row, detail, changed)
+    return dict(row, **detail)
 
 def issue_write_route(handler, method, path, query):
     fixture = handler.server.fixture
@@ -824,8 +908,6 @@ def issue_write_route(handler, method, path, query):
         return 200, project_row
     if method == 'POST' and path == '/api/v1/issues':
         return 201, fixture.create_issue(handler.read_json())
-    if method == 'POST' and path == DECISIONS_PATH:
-        return 201, log_decision(fixture, handler.read_json())
     return None
 
 
@@ -1321,6 +1403,10 @@ class FixtureServer(ThreadingHTTPServer):
         self.updates = UpdateFeed(updates_stream)
         self.change_after = change_after
         self.decision_scenario = decision_scenario
+        self.fixture.decision_revisions = {}
+        self.fixture.decision_conflicts = set()
+        for row, detail in self.fixture.decisions.values():
+            save_decision_revision(self.fixture, row, detail, ['created'])
         self.fleet_api_url = fleet_api_url
         self.irc_credential = irc_credential
         # Off: the fixture person belongs to no initiative.
@@ -1355,6 +1441,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.handle_request('POST')
+
+    def do_PUT(self):
+        self.handle_request('PUT')
 
     def do_PATCH(self):
         self.handle_request('PATCH')
@@ -1454,8 +1543,8 @@ class Handler(BaseHTTPRequestHandler):
         chat = self.chat_route(method, path)
         if chat is not None:
             return chat
-        if method == 'GET' and (path == DECISIONS_PATH or path.startswith(DECISIONS_PATH + '/')):
-            return self.decision_route(path, query)
+        if path == DECISIONS_PATH or path.startswith(DECISIONS_PATH + '/'):
+            return self.decision_route(method, path, query)
         if method == 'GET' and path == '/api/v1/me':
             return 200, dict(userId=ADA['userId'], kind='human', displayName=ADA['displayName'],
                              username=IRC_ACCOUNT, email='ada@example.test', agentName=None, agentRank=None,
@@ -1506,7 +1595,7 @@ class Handler(BaseHTTPRequestHandler):
             raise Problem(404, 'Issue not found.')
         return self.issue_route(method, row, match[2] or '', query)
 
-    def decision_route(self, path, query):
+    def decision_route(self, method, path, query):
         fixture = self.server.fixture
         scenario = self.server.decision_scenario
         if scenario == 'forbidden':
@@ -1514,19 +1603,41 @@ class Handler(BaseHTTPRequestHandler):
         if scenario == 'unavailable':
             raise Problem(503, 'Decisions are unavailable in this fixture scenario.')
         if path == DECISIONS_PATH:
-            return 200, decision_list(fixture, query)
-        ref = path.removeprefix(DECISIONS_PATH + '/')
-        if '/' in ref:
+            if method == 'POST':
+                return 201, log_decision(fixture, self.read_json())
+            if method == 'GET':
+                return 200, decision_list(fixture, query)
             raise Problem(404, 'Route not found.')
+        ref, _, suffix = path.removeprefix(DECISIONS_PATH + '/').partition('/')
         decision_id = decision_uuid(ref)
-        if decision_id is None:
+        if not decision_id:
             raise Problem(400, 'Use a decision UUID.')
         record = fixture.decisions.get(decision_id)
         # The list and activity can still refer to an older decision whose detail is missing.
         if record is None or (scenario == 'missing' and record[0]['status'] == 'superseded'):
             raise Problem(404, 'Decision not found.')
         row, detail = record
-        return 200, dict(row, **detail)
+        if method == 'PUT' and suffix in ('', 'status'):
+            return 200, update_decision(fixture, row, detail, self.read_json(), suffix == 'status', scenario)
+        if method == 'GET' and suffix == '':
+            return 200, dict(row, **detail)
+        if method == 'GET' and (suffix == 'revisions' or suffix.startswith('revisions/')):
+            return 200, self.decision_revisions(row, suffix, query)
+        raise Problem(404, 'Route not found.')
+
+    def decision_revisions(self, row, suffix, query):
+        versions = self.server.fixture.decision_revisions.get(row['id'], [])
+        if suffix == 'revisions':
+            return page([revision for revision, _ in reversed(versions)], query, row['id'], maximum=100)
+        target = suffix.removeprefix('revisions/')
+        for index, (revision, snapshot) in enumerate(versions):
+            if revision['id'] == target:
+                previous = versions[index - 1][0]['id'] if index else None
+                following = versions[index + 1][0]['id'] if index + 1 < len(versions) else None
+                return dict(revision=revision, snapshot=snapshot, currentVersion=row['version'],
+                            currentRevisionNumber=row['revisionNumber'], previousRevisionId=previous,
+                            nextRevisionId=following)
+        raise Problem(404, 'Revision not found.')
 
     def issue_route(self, method, row, suffix, query):
         fixture = self.server.fixture
