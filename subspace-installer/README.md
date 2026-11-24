@@ -843,6 +843,16 @@ writes nothing. Registration never sends the Fleet API's token to the
 Subspace API or prints it: the desktop app asks for the fleet's token once and
 keeps it on the user's own machine.
 
+**Pull requests in the Fleet API.** With `stargate.api` on, the installer
+lists each crew worktree of a GitHub repository, by its path, with that
+repository's `owner/repository` in Stargate's `api.pullRequestRepositories`,
+so the Fleet API can show the pull request of a crew member's branch.
+Stargate reads the branch with Git and looks the pull request up with `gh`,
+both as the gateway's Linux user. Until that user can read the captains'
+worktrees, which lie in their mode `0700` homes (STAR-4), and has `gh`
+installed and signed in to GitHub, which the installer does not do, a
+crew context's `pullRequest` stays `null`.
+
 `subspace-setup` registers the same records with the API on its VM before it
 runs the installer, so [agent dispatch](#agent-dispatch) can sign the rear
 admiral in, and `subspace-setup register-fleet` registers a further fleet's

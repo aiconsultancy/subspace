@@ -501,6 +501,35 @@ class InstalledFleet(unittest.TestCase):
             lines = runtime.policy_lines(cfg)
         self.assertEqual(lines[-1], "Run the dry run as root to compare the tool policy of orion with the installed one.")
 
+    def test_the_fleet_api_looks_up_pull_requests_for_each_crew_worktree_of_a_github_repository(self):
+        config, secrets = crew_fleet("orion", "vega")
+        config["captains"][1]["crew"] = {"claude": {"count": 1}, "codex": {"count": 0}}
+        config["repositories"] += [{"id": "tool", "url": "https://git.example.com/team/tool.git"},
+                                   {"id": "library", "url": "https://github.com/example/library"}]
+        config["stargate"] = {"api": {"port": 8484}}
+        self.render(config, secrets)
+        api = json.loads((self.etc / "stargate.json").read_text())["api"]
+        worktrees = {captain: self.state / "agents" / captain / "worktrees" for captain in ("orion", "vega")}
+        self.assertEqual(api["pullRequestRepositories"], {
+            **{str(worktrees["orion"] / crew / "project"): "example/project" for crew in fixture.CREW},
+            **{str(worktrees["orion"] / crew / "library"): "example/library" for crew in fixture.CREW},
+            str(worktrees["vega"] / "claude-1/project"): "example/project",
+            str(worktrees["vega"] / "claude-1/library"): "example/library",
+        })
+        # Keyed by the worktree paths the crew plugin is given.
+        cfg = runtime.validate(config, secrets)
+        options = runtime.crew_options(cfg, cfg["members"][1], self.state / "agents/orion", 4097, "ses_fixture")
+        self.assertEqual(options["projects"]["library"]["worktrees"]["claude-1"],
+                         str(worktrees["orion"] / "claude-1/library"))
+        self.assertEqual([runtime.github_repository(url) for url in (
+            "https://github.com/example/project.git", "https://GitHub.com/example/project/", "http://github.com/a/b",
+            "https://github.com/example", "https://github.com/example/..", "https://gitlab.com/example/project")],
+            ["example/project", "example/project", None, None, None, None])
+        # Without the Fleet API there is nothing to configure.
+        config.pop("stargate")
+        self.render(config, secrets)
+        self.assertNotIn("api", json.loads((self.etc / "stargate.json").read_text()))
+
     def test_a_marker_without_a_confirmed_record_is_withdrawn_before_anything_is_written(self):
         config, secrets = crew_fleet("orion")
         self.pin()

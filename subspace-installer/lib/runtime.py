@@ -768,6 +768,26 @@ def repository_config(value):
     return repos
 
 
+def github_repository(address):
+    """A GitHub HTTPS repository URL's owner/repository, as Stargate reads a remote
+    (src/api/v1/github-repository.ts), or None for any other URL."""
+    parts = urlsplit(address)
+    if parts.scheme != "https" or (parts.hostname or "").lower() != "github.com" or parts.query or parts.fragment:
+        return None
+    name = parts.path[1:].removesuffix("/").removesuffix(".git")
+    valid = re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}", name) and not re.search(r"/\.{1,2}$", name)
+    return name if valid else None
+
+
+def pull_request_repositories(cfg, homes):
+    """Stargate's api.pullRequestRepositories: each crew worktree of a GitHub repository, keyed by its path as the
+    crew plugin names it, and that repository's owner/repository, so the Fleet API can look up the pull request
+    of the worktree's branch."""
+    return {str(crew_worktree(homes[person["id"]], worker, repo_id)): name
+            for person in cfg["members"][1:] for worker in person["crew"]
+            for repo_id, repo in cfg["repositories"].items() if (name := github_repository(repo["url"]))}
+
+
 def repository_notes(value):
     """Each repository's optional one-line description and tracker note, for its captains' workspace instructions.
 
@@ -2793,6 +2813,8 @@ def render(cfg, extra, prune=False):
                     "allowedNetworks": ["127.0.0.0/8", "::1/128"], "fleetName": cfg["name"],
                     "corsOrigins": cfg["stargate"]["api"]["corsOrigins"],
                 }
+                if repositories := pull_request_repositories(cfg, homes):
+                    settings["api"]["pullRequestRepositories"] = repositories
         if options.get("bots"):
             # Officers' own Slack bots, before the rear admiral's stakeholder bot when it has one.
             settings["bots"] = [*options["bots"], *settings.get("bots", [])]
