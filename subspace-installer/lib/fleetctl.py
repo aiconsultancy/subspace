@@ -19,9 +19,10 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class ApiError(Invalid):
-    def __init__(self, method, status):
+    def __init__(self, method, status, detail=""):
         self.status = status
-        super().__init__(f"Subspace API returned HTTP {status} for {method}.")
+        self.detail = detail
+        super().__init__(f"Subspace API returned HTTP {status} for {method}." + (f" {detail}" if detail else ""))
 
 
 class Api:
@@ -40,8 +41,14 @@ class Api:
             with self.opener.open(request, timeout=20) as response:
                 value = json.load(response)
         except HTTPError as error:
+            try:
+                detail = json.load(error).get("detail")
+            except (ValueError, AttributeError, OSError):
+                detail = None
             error.close()
-            raise ApiError(method, error.code) from None
+            # The API's reason, such as which agent and fleet hold a name, on one line.
+            raise ApiError(method, error.code, " ".join(detail.split())[:400] if isinstance(detail, str) else "") \
+                from None
         except (URLError, OSError, ValueError):
             raise Invalid(f"Could not read the Subspace API response for {method}.") from None
         require(isinstance(value, (dict, list)), "Unexpected Subspace API response.")

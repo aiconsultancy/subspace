@@ -59,7 +59,8 @@ file holds no IRC password, and every optional feature off.
 [Optional settings](#optional-settings) shows the others together.
 
 For remote IRC, register a SASL account for the rear admiral and each
-captain, such as `example-atlas` and `example-orion`. They sign in with a
+captain, named as the officer: its ID, such as `atlas` and `orion`
+([Officer names](#officer-names)). They sign in with a
 certificate each, whose fingerprints the installer prints for you to bind to
 the accounts ([IRC sign-in](#irc-sign-in)); with `"auth": "password"` under
 `irc`, supply their passwords in `ircPasswords` instead. Crew have no IRC accounts. Add trusted human
@@ -234,11 +235,11 @@ Linux user, through Stargate's crew plugin:
   `/var/lib/subspace-fleet/agents/<captain-id>/worktrees/<crew-id>/<repository-id>`.
   Each worktree belongs to the captain's checkout of that repository and
   starts on the branch `crew/<fleet-slug>-<captain-id>-<crew-id>`.
-- Crew display names default to `Claude 1`, `Codex 1` and so on, which give
-  the crew IDs `claude-1` and `codex-1`. To rename one, set the captain's
-  `crewNames` map by slot, for example `"crewNames": {"codex-1": "Rigel"}`,
-  which gives the crew ID `rigel`. Names use ASCII letters, digits, spaces,
-  hyphens and underscores.
+- Every crew member has a name of its own, set in the captain's `crewNames`
+  map by slot (`claude-1`, `claude-2`, `codex-1`, ...), for example
+  `"crewNames": {"claude-1": "Rigel", "codex-1": "Mira"}`. Stargate's crew
+  plugin derives the crew ID from the name (`rigel`), and the captain
+  addresses the crew member by that ID. See [Crew names](#crew-names).
 - Claude-family crew use `crew.claude.model` through `claude-proxy`, and
   Codex-family crew use `crew.codex.model` through `openai-proxy`, both
   served by CLIProxyAPI. The default is two of each.
@@ -278,6 +279,58 @@ its crew counts to 0. Crew take no harness `type`, so Claude Agent SDK crew
 are refused. The primary dashboard shows registrations in the rear admiral's
 gateway. The pinned revision has a Codex SDK adapter. The OpenAI Agents SDK
 (`openai-sdk`) is currently unavailable.
+
+### Crew names
+
+Every crew member has a name of its own, chosen when its captain is
+installed. `subspace-setup` asks for them, or takes `--crew-names`, one list
+per captain in slot order, Claude-family crew first, then Codex-family:
+
+```sh
+sudo subspace-setup --crew-names 'Orion=Rigel,Deneb,Mira,Sirius;Vega=Altair,Castor,Pollux,Spica'
+```
+
+It refuses a new captain with crew whose crew are not all named, and keeps
+the names in `fleet.json` as each captain's `crewNames`, keyed by slot. A
+fleet with a theme (stars, birds, ships of a navy) is easy to tell apart.
+The fleet installer refuses the same for any `fleet.json` with plain
+officer names: a crew member of a captain the installed fleet does not have
+yet needs a name of its own.
+
+Later runs keep the names, and take the same `--crew-names` again.
+`--crew-names` that would give an installed crew member another ID is
+refused before setup saves anything (see below). A captain taken out of
+`--captains` takes its crew's names along, and fewer crew per captain pass
+only the remaining slots' names to `fleet.json`.
+
+- **Rules.** ASCII letters, digits, spaces, hyphens and underscores,
+  shortening to a crew ID of at most 32 characters. A name is unique in the
+  fleet, across every ship, compared without case, and is never an officer's
+  ID, account or name. The fleet installer enforces them for any
+  `fleet.json`, and setup checks them before it writes anything. Crew have
+  no records in the Subspace API, so the API does not check them: a captain
+  records a crew member's work with `relayedCrew: {"name", "model"}`, where
+  the name is the one given here, as the captain's instructions say.
+- **The model stays visible beside the name.** The crew member's Stargate
+  role says its family and slot ("Implementation and review (Claude-family
+  crew slot claude-1)"), which the Fleet API returns with its model; the
+  captain's instructions list each one as name, ID, family, slot and model;
+  and `--dry-run` prints each captain's crew as `Rigel (Claude 1,
+  claude-sonnet-5-5)`.
+- **Installed fleets keep their crew.** A slot without a name of its own is
+  called after its slot, `Claude 1`, on every ship, as in fleets installed
+  before crew names; such names may repeat across ships. Stargate keeps a
+  crew member's sessions, worktrees, branch and queued tasks under its ID,
+  which it derives from the name, and refuses a changed ID once the crew has
+  state, so the installer never changes an installed crew member's name.
+- **Naming the crew of an installed fleet** needs Stargate's help. Its crew
+  plugin requires a crew member's name to match its ID ("Agent IDs must
+  match assigned names", `src/coordination/crew/team.ts`), so `Claude 1`
+  can be named only `Claude 1`. Once a Stargate release drops that rule,
+  `sudo subspace-setup rename-officers --crew-names 'Orion=Rigel,...'`
+  keeps each crew member's ID (`crewIds`) and gives it the new name, so its
+  sessions, worktrees and queued tasks stay. With today's Stargate it stops,
+  saying so, and changes nothing.
 
 ### Captain sessions
 
@@ -514,7 +567,13 @@ desktop recognises them by name:
 | --- | --- | --- | --- |
 | Starbase | `#<slug>-starbase` | Admirals and the rear admiral | People talk to the rear admiral and to each other. |
 | Fleet command | `#<slug>-command` | The rear admiral and every captain | The rear admiral and the captains coordinate. Agent dispatch offers and assigns issues here and captains answer here. |
-| Ship | `#<slug>-<captain-id>`, one per captain | The captain, the rear admiral and the other captains | The captain's own channel, where people talk to it. |
+| Ship | `#<captain-id>`, one per captain, named after the captain (`#<slug>-<captain-id>` in a fleet installed with [fleet-prefixed names](#officer-names)) | The captain, the rear admiral and the other captains | The captain's own channel, where people talk to it. |
+
+Starbase and fleet command keep the fleet's slug: several fleets can share
+one IRC server, and each has its own two. A ship channel carries the
+captain's own name, which is unique on the server and in the organisation
+([Officer names](#officer-names)), so it needs no prefix. The desktop reads
+all three from the fleet's records in the Subspace API.
 
 The installer always creates them: it seeds them on local Ergo, puts them in
 the bundle for a [shared server](../INSTALL.md#one-fleet-or-several-shared-irc),
@@ -607,7 +666,7 @@ the install summary print one line per officer, with the SHA-256 fingerprint
 in the lower-case hex form Ergo's NickServ takes, and never key material:
 
 ```text
-/msg NickServ CERT ADD example-orion 4b1d…0c9e
+/msg NickServ CERT ADD orion 4b1d…0c9e
 ```
 
 Send each line as an IRC operator whose operator class has Ergo's `accreg`
@@ -650,7 +709,7 @@ to move without a gap, work on your copies of the inputs in this order:
    umask 077
    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
      -pkeyopt ec_param_enc:named_curve -nodes \
-     -days 3650 -sha256 -subj "/CN=example-orion" -keyout key.pem -out irc-client.pem
+     -days 3650 -sha256 -subj "/CN=orion" -keyout key.pem -out irc-client.pem
    cat key.pem >> irc-client.pem && rm key.pem
    ```
 
@@ -678,8 +737,8 @@ prints, for each officer, its account, its
 SHA-256 fingerprint and the two lines the server's operator runs:
 
 ```text
-/NS SAREGISTER example-fleet-orion
-/NS CERT ADD example-fleet-orion 4b1d…0c9e
+/NS SAREGISTER orion
+/NS CERT ADD orion 4b1d…0c9e
 ```
 
 A dry run generates nothing, so it prints these only for certificates a
@@ -722,6 +781,132 @@ installer passes `--irc-auth password`. Three things are missing:
   fingerprints instead of passwords, and `subspace-setup irc-server add`
   would seed them the same way.
 
+## Officer names
+
+**An officer has one name, its ID** (`orion`): its IRC account and nick, its
+agent name and IRC nick in the Subspace API, and its Stargate registration
+ID, by which Stargate's Fleet API lists its ship. The desktop's Ship panel
+finds a captain's ship in the Fleet API by the captain's IRC nick, so the
+three must be the same name. A captain's ship channel is named after it,
+`#orion`. Starbase and fleet command keep the fleet's slug
+([Channels](#channels)). `fleet.json` says so with `"officerNames": "plain"`,
+which `subspace-setup` writes for every new fleet.
+
+**Names are unique on the IRC server and in the organisation**, compared
+without case: two fleets on one server cannot both have an `orion`. The IRC
+server's accounts are unique by nature, and the API refuses a taken agent
+name or IRC nick, naming the agent and fleet that hold it. Before it changes
+anything, setup, and its `--dry-run`, checks each officer's name:
+
+- on a remote IRC server with certificate sign-in, with NickServ `INFO`. A
+  server that admits only signed-in connections is asked through
+  `--irc-operator-account`, or through an officer certificate that already
+  signs in. A name registered to an account that the officer's certificate
+  does not sign in to stops setup;
+- with the API on this VM, against its agents, when it is running;
+- with a [hosted API](#a-hosted-subspace-api), with
+  `POST /api/v1/agents/enrol/check` and the fleet's enrolment token, which
+  changes nothing and uses none of the token's uses.
+
+It also refuses two officers whose names differ only by case or
+punctuation. When a name is taken, pick another name for that officer.
+
+**Fleets installed before plain names keep their names.** Their officers'
+accounts carry the fleet's slug (`example-fleet-orion`), as do their ship
+channels (`#example-fleet-orion`), and a captain's agent name is its
+account. Every re-run keeps them: setup records `"officerNames": "prefixed"`
+for such a fleet, and the fleet installer reads a `fleet.json` without
+`officerNames` the same way. Their ships show as "Not listed" in the
+desktop's Ship panel, because the Fleet API lists each ship by the
+captain's ID; renaming the fleet fixes that.
+
+### Rename an installed fleet
+
+`subspace-setup rename-officers` moves an installed fleet to plain names.
+It is safe to run again after a failure: each step finds what is done, and
+a run that stopped during or after the switch (step 4) resumes there.
+
+```sh
+sudo subspace-setup rename-officers --dry-run [--api-admin-token-file FILE]
+sudo subspace-setup rename-officers [--irc-operator NAME --irc-operator-password-file FILE] \
+  [--api-admin-token-file FILE]
+```
+
+1. **Plan and check.** It prints each officer's old and new IRC account,
+   API agent name and ship channel. Before it changes anything, it checks
+   the fleet's answers with plain names as setup checks a new fleet's (a
+   name the IRC server, the API or the installer keeps for itself is
+   refused), and the new names on the IRC server and in the API: other
+   agents' names and nicks, and people's usernames. A hosted API is asked
+   only with `--api-admin-token-file`; without it, the dry run says the
+   API was not asked. The dry run stops here.
+   - A fleet with no Subspace API on its VM and no hosted API is refused:
+     a fleet installed with `--api-target` keeps its agent records in
+     another fleet's API, which the rename cannot reach, so keep its
+     fleet-prefixed names. If no API keeps the fleet's records at all,
+     pass `--no-api-records`.
+2. **IRC.** With certificate sign-in it makes a new certificate for each new
+   account, kept in `/root/fleet/rename/<officer-id>/irc-client.pem`: Ergo
+   binds a certificate fingerprint to one account only, so the officer's
+   current certificate cannot sign in to the new account while it still
+   signs in to the old one. With `--irc-operator` it registers each new
+   account and binds its certificate, as setup does; without it, it prints
+   the `/NS SAREGISTER` and `/NS CERT ADD` lines and stops until they are
+   sent. An account setup registered and then lost the connection before
+   binding is recorded (`/root/fleet/irc-registered.json`), so the next run
+   only binds it, or prints the one `/NS CERT ADD` line for it, rather than
+   taking it for someone else's. On a shared server the installer manages, with passwords, it writes
+   the fleet's new bundle and stops until the new accounts sign in (add the
+   bundle there with `subspace-setup irc-server add`). The officers keep
+   signing in to their old accounts throughout.
+3. **The API.** It renames each officer's agent record in place with
+   `PUT /api/v1/agents/{userId}`, an organisation administrator's route: the
+   same user ID, key credentials, account subject and history, under the
+   new name and IRC nick. The old nick stays retired for that agent alone.
+   A captain's ship keeps its record, and its recorded channel moves with
+   `PATCH /api/v1/ships/{id}`; a ship with no channel, as enrolment makes
+   them, is given the new one. With the API on this VM, setup's own
+   administrator token does this. With a hosted API, pass
+   `--api-admin-token-file` with an administrator's bearer token, such as
+   the identity provider's access token (a root-only file, read for that run
+   only, up to the API's 16,384 characters), and Stargate's key bundle for
+   each officer is copied to its new name, so the officer keeps its
+   enrolled key.
+4. **Switch.** It records the plain names and runs setup again, as a re-run
+   with the fleet's saved answers does: the fleet installer renders each
+   officer's Stargate registration, peers, fleet control and dispatch
+   targets, `subspaceAgents` entry, MCP header and instructions with the new
+   names, installs the new certificates and restarts the gateway. It then
+   checks that each installed certificate signs in as its new account. Only
+   then is the rename recorded as done (`officerRename.switched` in
+   `answers.json`); until then, every run of `rename-officers` runs setup
+   again and repeats the check, and says nothing about dropping the old
+   accounts.
+5. **What is left** is printed once the rename is done, and again by a
+   later run:
+   - an IRC server whose Subspace API sign-in hook lists local-only accounts
+     (`IRC_AUTH_LOCAL_ACCOUNTS`): add the new names, restart it, and take
+     the old ones out when they are dropped;
+   - drop the old accounts as an IRC operator (`/NS ERASE <old account>`)
+     once the new ones work, and the old ship channels with ChanServ when
+     their history is no longer needed;
+   - with a hosted API, remove Stargate's old key files, named in the
+     message;
+   - run the host installer again so desktops join the new ship channels.
+
+**Work in progress.** Stargate keeps an IRC registration's queue, delivery
+cursors and unpinned per-channel sessions under its account, so a renamed
+officer starts those afresh; in-flight agent-dispatch offers and fleet
+review proofs name the old account too. Captains' pinned root sessions, and
+their crew's sessions, worktrees and queued tasks, are kept: they are keyed
+by IDs, which do not change. Rename a fleet while it is idle.
+
+**Going back**, before the old accounts are dropped: rename the API records
+back (each agent may take its old nick again), put each
+`/root/fleet/rename/<officer-id>/irc-client.previous.pem` back as
+`/root/fleet/fleet.secrets/<officer-id>/irc-client.pem`, set
+`"officerNames": "prefixed"` in `/root/fleet/answers.json` and run setup.
+
 ## Subspace API registration
 
 With `api` set, `subspace-fleetctl register`, which the installer runs after
@@ -735,11 +920,13 @@ ships record plus the initiative's own.
   `starbaseChannel` and `commandChannel`, and `fleetApiUrl`, where the
   desktop reaches Stargate's Fleet API (below).
 - **One ship per captain**, named after the ship, the captain's `name`, and
-  recording its ship channel, `#<slug>-<captain-id>`.
-- **The rear admiral's agent record**, rank `rearAdmiral`, named with its
-  own `name`, and **one per captain**, rank `captain`, on its ship. A captain
-  has no name of its own, so its agent name is its account,
-  `<slug>-<captain-id>`. Each record has `ircNick` (the officer's IRC
+  recording its ship channel, `#<captain-id>`.
+- **The rear admiral's agent record**, rank `rearAdmiral`, and **one per
+  captain**, rank `captain`, on its ship. With plain names each is named
+  with the officer's ID, which is also its IRC account; in a fleet installed
+  with fleet-prefixed names the rear admiral keeps its own `name` and a
+  captain its account, `<slug>-<captain-id>` ([Officer names](#officer-names)).
+  Each record has `ircNick` (the officer's IRC
   account), `defaultModel` (its harness model) and `serviceTokenClientId`,
   the account subject the API knows it by: by default
   `<account>@agents.example.com`, which suits the API's development sign-in.
@@ -748,12 +935,13 @@ ships record plus the initiative's own.
 - **Crew have no records.** They are not on IRC, and the API records crew
   work under their captain with the crew member's name and model.
 
-The API keeps the rear admiral's name as its agent name, which allows only
-letters, digits and hyphens (at most 64), and is unique in the organisation
-ignoring case, as is every agent's IRC nick. Ship names are one line of at
-most 64 characters, distinct in the fleet, and a captain's account, its agent
-name, has no underscores. `--dry-run` refuses a fleet with `api` that breaks
-these rules. The `apiToken` must belong to a human organisation
+An agent name allows only letters, digits and hyphens (at most 64). The API
+keeps agent names and IRC nicks in one namespace per organisation, compared
+without case, with people's usernames: a new or changed name may not be
+another record's name, IRC nick or username, and its refusal names the agent
+and fleet that hold it. Ship names are one line of at most 64 characters,
+distinct in the fleet, and a captain's account, its agent name, has no
+underscores. `--dry-run` refuses a fleet with `api` that breaks these rules. The `apiToken` must belong to a human organisation
 administrator: only one may register fleets and agents.
 
 Registration is idempotent. Existing records are found by IRC nick, else by
@@ -762,8 +950,8 @@ nothing. A renamed ship keeps its record. A captain removed from the roster
 has its agent record deactivated and its ship's channel cleared (the API
 cannot delete ships); add the captain back and its record is reactivated. The
 installer refuses, naming the record, to take over an agent with the same IRC
-nick under another account subject, an agent of another fleet, or an agent
-name already in use.
+nick under another account subject, an agent of another fleet, or a name
+another agent already has as its name or IRC nick.
 
 **The Fleet API address.** The desktop reads each fleet's live state from
 its Stargate Fleet API, at the `fleetApiUrl` the fleet records. With
@@ -1114,9 +1302,14 @@ the run ends.
   new one replaces it. To add an officer or replace a key, ask for a fresh
   token and pass it.
 - **Names.** Officers enrol under the names [registration](#subspace-api-registration)
-  uses: the rear admiral by its name, a captain by its IRC account with its
-  name as its ship, and each with its model and IRC nick. An agent of the
-  same name in another fleet is refused (409).
+  uses: with plain names each by its ID, which is also its IRC nick (with
+  fleet-prefixed ones, the rear admiral by its name and a captain by its
+  IRC account), a captain with its name as its ship, and each with its
+  model. Before anything is registered, setup asks the API what enrolling
+  each officer would do with `POST /api/v1/agents/enrol/check` and the
+  token, and stops at a name another agent or person holds, naming the
+  agent and fleet ([Officer names](#officer-names)). Enrolment itself
+  refuses such a name (409) too.
 
 What the fleet installer renders, with `api.enrolment` set:
 
@@ -1409,7 +1602,6 @@ token (`xoxb-…`). Invite each bot to the channels where it should answer.
 {
   "id": "orion",
   "name": "Orion",
-  "account": "example-orion",
   "slack": {
     "appId": "A0EXAMPLE01",
     "users": ["U0EXAMPLE01"],
@@ -1589,14 +1781,15 @@ their crew's assignments through `stargate_crew`.
 | Field | Meaning and default |
 | --- | --- |
 | `slug`, `name` | Stable fleet ID and display label. Keep the slug fixed on a VM. Use up to 35 lowercase ASCII letters, digits and hyphens, starting with a letter or digit. |
-| `rearAdmiral`, `captains[]` | Each has `id`, `name`, `account` and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew`, `crewNames` and `sessionRoot`: `"workspace"` (the default for a new captain) or `"repository"`, where its sessions start; a pinned root never moves (see [Captain sessions](#captain-sessions)). IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
+| `officerNames` | `plain` (the example, and what `subspace-setup` writes for a new fleet): each officer's `account` is its `id`, which is also its API agent name and Stargate ID, and a ship channel is `#<captain-id>`. `prefixed`, the default when left out: accounts as written and ship channels `#<slug>-<captain-id>`, as fleets installed before plain names have them. See [Officer names](#officer-names). |
+| `rearAdmiral`, `captains[]` | Each has `id`, `name`, an `account` (with `officerNames` plain it may be left out, and is the `id` if given) and optional `channel`, `git`, `githubApp`, `harness` and `serviceTokenClientId` (its [API agent record's](#subspace-api-registration) account subject). Captains also take optional `crew`, `crewNames` (each crew slot's [name](#crew-names)), `crewIds` (an installed crew member's ID kept under a new name; needs a Stargate that allows it) and `sessionRoot`: `"workspace"` (the default for a new captain) or `"repository"`, where its sessions start; a pinned root never moves (see [Captain sessions](#captain-sessions)). IDs start with a lowercase letter and use up to 20 lowercase letters, digits and hyphens; `all` and `captain` are reserved. Keep IDs and SASL accounts unique; accounts have at most 32 characters. Choose a slug and captain IDs short enough that each [standard channel](#channels) fits 50 characters. A member's optional `channel` must be its standard channel. An empty captain array is valid; the most is 18, because the rear admiral joins every standard channel and Stargate joins at most 20. |
 | Member `git` | Optional `email` and SSH `signingKey` (absolute path to the public key). Provision an agent-owned private key or an SSH agent and register its public signing key with your Git host. The rear admiral and each captain have their own Git identity and workspace under `/var/lib/subspace-fleet/agents/<id>/workspace`. Crew commit with their captain's. |
 | Member `slack` | Optional, for an OpenCode officer: its own Slack bot, with `appId`, explicit `users` and `channels`, and `mentionOnly` (default `true`). Tokens go in its [secrets directory](#secrets-directory). The rear admiral's bot pins its root and replaces `stakeholders.slack`. See [Slack for officers](#slack-for-officers). |
 | `harness` | Default `{"type":"opencode"}` with each role's [model and effort](#officer-models) (captains `claude-opus-5-5` at `xhigh`, the rear admiral `claude-fable-5-2` at `high`) and the [role's starter permissions](#instructions-permissions-and-toolchains). `family`, `model` and `effort` here apply to both roles; `captain` and `rearAdmiral` blocks, each with `family`, `model` and `effort`, apply to one. Explicit OpenCode V2 rules have `action`, `resource`, and `effect` (`allow`, `deny` or `ask`). Applies to the rear admiral and captains. |
 | `crew` | Fleet-wide `claude` and `codex` objects with `count` (0 to 10, default 2) and `model` (defaults `claude-sonnet-5-5` and `gpt-5.4`); a captain's `crew` overrides them. Crew need at least one repository and an OpenCode captain. See [crew and repositories](#crew-and-repositories). |
 | `repositories` | Ordered `{"id", "url", "private"}` objects that every captain checks out, each with an optional one-line `description` (at most 200 characters) and `tracker` (at most 300) for the captains' [workspace instructions](#workspace-instructions). The ID, URL and visibility are fixed once installed; the description and tracker may change. See [crew and repositories](#crew-and-repositories). |
 | `irc` | `mode` is `remote` or `local`. Remote requires `host` and uses TLS/6697 unless a different port is set. Local listens on loopback/6667 for fleet members. Optional `caFile` is an absolute, local PEM path for remote TLS. `allowedAccounts` is the explicit human SASL allowlist. `auth` is `certificate` (the remote default) or `password` (the local default and only choice); see [IRC sign-in](#irc-sign-in). |
-| `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<slug>-<id>` for a captain. Any other name is refused. |
+| `irc.starbaseChannel`, `irc.commandChannel`, member `channel` | Optional, and only ever the [standard names](#channels): `#<slug>-starbase`, `#<slug>-command`, and Starbase for the rear admiral and `#<id>` for a captain (`#<slug>-<id>` with fleet-prefixed names). Any other name is refused. |
 | `irc.advertise` | Optional `host`, `port`, `tls` and `websocketUrl` that the API publishes. Defaults to the IRC endpoint used by the gateway. For a desktop on another machine, advertise an endpoint it can actually reach. |
 | `irc.compose` | Local mode only. Defaults to the Subspace repository. Requires a full `ref` and an `operator` account. Optional `repo`, `serverName`, `tlsBind`, `tlsPort` (6697), `tlsCert`, `tlsKey`, `channels` (additional channel names to seed) and `history`: `{"database": "sqlite"}` (the default) or `{"database": "postgresql", "host": …, "port": 5432, "user": "ergo", "name": "ergo_history", "sslMode": "disable", "network": <Docker network that reaches it>}` with `ircHistoryPassword` in the secrets file. `subspace-setup` uses the API's PostgreSQL this way on a single-host fleet. |
 | `stargate` | Optional `repo` and `ref`. Defaults to the [Stargate pin](#stargate-pin): Stargate's latest release when this installer was released, and never older than v0.43.0, the first with [agent dispatch](#agent-dispatch). `subspace-setup` (see [INSTALL.md](../INSTALL.md)) instead pins Stargate's newest `vX.Y.Z` release, looked up on every run. Changes must preserve the OpenCode V2 and IRC configuration contract. Optional `api` (`{"port": 8484}` by default) turns on Stargate's private Fleet API on loopback for the primary gateway; the default pin has it. Only root and `operatorUsers` can connect to it. `sudo subspace-fleetctl api-token` prints its bearer token. Its `corsOrigins` default to `subspace://*` and `https://subspace.fleet-console`, the built-in Fleet Console's origin on Windows; list your own instead if you installed the Fleet Console under another Board ID. |
@@ -1670,12 +1863,13 @@ is a `subspace-setup` option, not part of this file.
 ```json
 {
   "rearAdmiral": {
-    "id": "atlas", "name": "Atlas", "account": "example-atlas",
+    "id": "atlas", "name": "Atlas",
     "slack": { "appId": "A0EXAMPLE01", "users": ["U0EXAMPLE01"], "channels": ["C0EXAMPLE01"] }
   },
   "captains": [
     {
-      "id": "orion", "name": "Orion", "account": "example-orion",
+      "id": "orion", "name": "Orion",
+      "crewNames": { "claude-1": "Rigel", "claude-2": "Deneb", "codex-1": "Mira", "codex-2": "Sirius" },
       "sessionRoot": "workspace",
       "slack": { "appId": "A0EXAMPLE02", "users": ["U0EXAMPLE01"], "channels": ["C0EXAMPLE02"], "mentionOnly": true }
     }
