@@ -1758,7 +1758,10 @@ def new_irc_bundle(account):
     with tempfile.TemporaryDirectory() as work:
         key, certificate = Path(work) / "key.pem", Path(work) / "certificate.pem"
         subprocess.run(
-            ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+            # A named curve: an OpenSSL that writes explicit curve parameters (LibreSSL) makes a certificate that
+            # Go TLS servers such as Ergo refuse during the handshake.
+            ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+             "-pkeyopt", "ec_param_enc:named_curve", "-nodes",
              "-sha256", "-days", "3650", "-subj", f"/CN={account}", "-keyout", key, "-out", certificate],
             check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )

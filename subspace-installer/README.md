@@ -548,7 +548,8 @@ to move without a gap, work on your copies of the inputs in this order:
 
    ```sh
    umask 077
-   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+     -pkeyopt ec_param_enc:named_curve -nodes \
      -days 3650 -sha256 -subj "/CN=example-orion" -keyout key.pem -out irc-client.pem
    cat key.pem >> irc-client.pem && rm key.pem
    ```
