@@ -4,6 +4,38 @@ Release Please adds an entry for each release of the Subspace Framework, from
 the conventional commits that touch `subspace-framework/`. See
 [Publishing the Framework](docs/publishing.md).
 
+## [0.4.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.3.0...subspace-framework-v0.4.0) (2026-11-24)
+
+
+### ⚠ BREAKING CHANGES
+
+* **framework:** UpdateSource has a new public field, `exclusive`.
+* **framework:** AccountRegistration has a new public field, `required`.
+
+### Features
+
+* **desktop:** make the public release ready to download and try ([1781a57](https://github.com/aiconsultancy/subspace/commit/1781a5712a575e6e6e36e90cb77a14c07a2fa99b))
+* **framework:** ask for a required account's sign-in over the window ([3e138f4](https://github.com/aiconsultancy/subspace/commit/3e138f47ef26ec1cdb2d3187f7b00dd407dfb9f8))
+* **framework:** let a board hide records from search without deleting them ([5da63a8](https://github.com/aiconsultancy/subspace/commit/5da63a88bb3466a3f3cfdc682359f76815d31faa))
+* **framework:** let a build variant install only its own archives ([3b7dc64](https://github.com/aiconsultancy/subspace/commit/3b7dc6445b9470e17deb89b94b0a61ebb24dfb64))
+* **framework:** show a start-up failure in a window ([7a66e38](https://github.com/aiconsultancy/subspace/commit/7a66e383dac75c92a5bafec753068dfab53423a7))
+* **irc:** connect Channels from the signed-in account with no settings ([7f6f9c3](https://github.com/aiconsultancy/subspace/commit/7f6f9c3427200d4b2aa25ea09acd61a8646b5120))
+* **irc:** tracker commands and a message toolbar in Channels ([2f8eff0](https://github.com/aiconsultancy/subspace/commit/2f8eff0c38bb7b9090ace9b9e004f5a82e2d68a7))
+
+
+### Bug Fixes
+
+* **framework:** keep a failed sign-in attempt from unlocking the app ([bb59aff](https://github.com/aiconsultancy/subspace/commit/bb59aff8fe3197a5d519be5616dc8460ba97a73b))
+* **framework:** keep chunks on doubt and sweep only what a chunk holds ([078f491](https://github.com/aiconsultancy/subspace/commit/078f4918e1693427b37d21b748f2709b543716f5))
+* **framework:** keep focus and outside routes out from behind sign-in ([32a2c3c](https://github.com/aiconsultancy/subspace/commit/32a2c3c3e5bb58d429ab39c481bd97fb98d2e018))
+* **framework:** keep hidden records out of related items, reads and candidates ([ba49c6c](https://github.com/aiconsultancy/subspace/commit/ba49c6c4767afe635f62513b0190a6be23c52af4))
+* **framework:** keep plain secrets verbatim and verify split ones ([d41d146](https://github.com/aiconsultancy/subspace/commit/d41d146858c2da9f908f665a3e320711181bb756))
+* **framework:** land the reviewed Windows credential split ([19f8187](https://github.com/aiconsultancy/subspace/commit/19f8187acee6711df165d644c96782c57a0da06e))
+* **framework:** refuse every action but Quit behind the sign-in dialog ([5efd132](https://github.com/aiconsultancy/subspace/commit/5efd1328f61d26f6a674e06f646e8672b70132d3))
+* **framework:** split long secrets across Windows credentials ([6280fe2](https://github.com/aiconsultancy/subspace/commit/6280fe2c121a1b67eff06ea10e33166224c05c1c))
+* **framework:** sweep keychain chunks only at sign-out, and only exactly ([91b404c](https://github.com/aiconsultancy/subspace/commit/91b404c56fda20e47561d0c09fb2ddffe2bc28f4))
+* **framework:** treat an identity provider outage as offline ([4deb986](https://github.com/aiconsultancy/subspace/commit/4deb98670e8d93b4fd8261fecce10a5e0b2e50f6))
+
 ## [0.3.0](https://github.com/aiconsultancy/subspace/compare/subspace-framework-v0.2.0...subspace-framework-v0.3.0) (2026-11-23)
 
 
