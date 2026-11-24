@@ -156,6 +156,8 @@ How the effort reaches the model:
   reference, as in `claude-proxy/claude-opus-5-5#xhigh`. Claude models take
   `low`, `medium`, `high`, `xhigh` and `max`. Claude 4.6 has no `xhigh`.
   Claude 3.7 and 4.0 to 4.5, except Opus 4.5, take only `high` and `max`.
+  The installer reads dated IDs by their version, so
+  `claude-opus-4-20250514` counts as Claude 4.0.
   The Codex family takes `low`, `medium` and `high`.
 - **Claude Agent SDK.** An officer with `"type": "claude-sdk"` passes the
   effort to Stargate's Claude backend as `effort`.

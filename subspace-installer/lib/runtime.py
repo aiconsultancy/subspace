@@ -629,12 +629,16 @@ def model_family(model):
 def claude_efforts(model):
     """The efforts OpenCode 2.3.2 gives a Claude model through anthropic-compatible (Variant.resolve): Claude
     4.6 has no xhigh, and Claude 3.7 and 4.0 to 4.5 (but Opus 4.5) think on a token budget, as high and max."""
-    found = re.search(r"(?:claude-)?(opus|sonnet|haiku|fable|mythos)-(\d+)(?:[.-](\d+))?", model, re.I) \
-        or re.search(r"claude-(\d+)(?:[.-](\d+))?-(opus|sonnet|haiku|fable|mythos)", model, re.I)
-    if not found:
-        return EFFORTS["opencode", "claude"]
-    family, major, minor = (found.group(1), found.group(2), found.group(3)) if found.group(1).isalpha() else \
-        (found.group(3), found.group(1), found.group(2))
+    # Versions are one or two digits, so a date such as claude-opus-4-20250514's is not read as a version, and
+    # the version-first spelling (claude-3-7-sonnet-20250219) is tried first.
+    found = re.search(r"claude-(\d{1,2})(?:[.-](\d{1,2}))?-(opus|sonnet|haiku|fable|mythos)(?![a-z])", model, re.I)
+    if found:
+        family, major, minor = found.group(3), found.group(1), found.group(2)
+    else:
+        found = re.search(r"(?:claude-)?(opus|sonnet|haiku|fable|mythos)-(\d{1,2})(?:[.-](\d{1,2}))?(?!\d)", model, re.I)
+        if not found:
+            return EFFORTS["opencode", "claude"]
+        family, major, minor = found.group(1), found.group(2), found.group(3)
     major, minor = int(major), int(minor or 0)
     if (major, minor) == (3, 7) or major == 4 and minor < 6 and (family.lower(), minor) != ("opus", 5):
         return ("high", "max")

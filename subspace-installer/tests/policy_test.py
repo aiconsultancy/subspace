@@ -1598,6 +1598,10 @@ class OfficerModelTests(unittest.TestCase):
             ({"captain": {"model": "claude-sonnet-4-6", "effort": "xhigh"}},
              "offers low, medium, high, max"),
             ({"captain": {"model": "claude-sonnet-4-5", "effort": "low"}}, "offers high, max"),
+            # Dated IDs: the date is not a version, and the version-first spelling is read as such.
+            ({"captain": {"model": "claude-3-7-sonnet-20250219", "effort": "xhigh"}}, "offers high, max"),
+            ({"captain": {"model": "claude-opus-4-20250514", "effort": "xhigh"}}, "offers high, max"),
+            ({"captain": {"model": "claude-sonnet-4-5-20250929", "effort": "medium"}}, "offers high, max"),
             ({"captain": {"model": "claude-opus-5-5#xhigh"}}, "give the model ID alone"),
             ({"captain": {"model": "claude-opus-5-5", "speed": "fast"}}, "harness.captain contains an unknown field"),
         ]
@@ -1606,6 +1610,11 @@ class OfficerModelTests(unittest.TestCase):
                 self.harnesses(self.config({"type": "opencode", **harness}))
         self.assertEqual(self.harnesses(self.config({"captain": {"model": "claude-opus-4-5", "effort": "xhigh"}}))
                          ["orion"], ("claude", "claude-opus-4-5", "xhigh"))
+        for model, effort in (("claude-opus-4-5-20251101", "xhigh"), ("claude-sonnet-4-5-20250929", "high"),
+                              ("claude-opus-4-6", "max"), ("claude-opus-5-5", "max")):
+            with self.subTest(model):
+                self.assertEqual(self.harnesses(self.config({"captain": {"model": model, "effort": effort}}))["orion"],
+                                 ("claude", model, effort))
 
     def test_officers_whose_model_no_signed_in_account_serves_stop_both_runs(self):
         temporary = tempfile.TemporaryDirectory()
