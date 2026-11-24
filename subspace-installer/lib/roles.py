@@ -168,6 +168,8 @@ def delegate_shell():
         *rules("deny", DELEGATE_GIT_REREFUSED),
         *rules("allow", DELEGATE_GIT_LIST_MODES),
         *rules("deny", (f"{subcommand} *" for subcommand in DELEGATE_GIT_WRITES)),
+        # OpenCode keeps a command's spacing, which the rules above spell with one space after `git`.
+        {"action": "shell", "resource": "*git  *", "effect": "deny"},
         *({"action": "shell", "resource": form, "effect": "deny"}
           for editor in DELEGATE_IN_PLACE for form in (editor, f"* {editor}")),
     ]

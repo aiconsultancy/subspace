@@ -550,7 +550,8 @@ any command runs, chained, piped or in a subshell, except
 Each Git rule covers `git` itself, Git's global options before the
 subcommand (`git -C project push`) and anything before `git`
 (`GIT_TERMINAL_PROMPT=0 git push`, `env git push`, `xargs git rm`,
-`/usr/bin/git push`). `git fetch`, `git log`, `git diff`, builds, tests and
+`/usr/bin/git push`), and any Git command with more than one space after
+`git` is refused. `git fetch`, `git log`, `git diff`, builds, tests and
 everything else run.
 
 **This is a working agreement, not a security boundary.** OpenCode 2.3.2

@@ -671,6 +671,8 @@ DELEGATE_REFUSED = (
     ("find . -name '*.ts' | xargs sed -i 's/a/b/'", ["find . -name '*.ts'", "xargs sed -i 's/a/b/'"]),
     ("perl -pi -e 's/a/b/' src/main.ts", ["perl -pi -e 's/a/b/' src/main.ts"]),
     ("/usr/bin/git push", ["/usr/bin/git push"]),
+    ("git  push origin HEAD", ["git  push origin HEAD"]),
+    ("git   commit -m wip", ["git   commit -m wip"]),
     # The README's known false refusal: a bare Git write word after a global option.
     ("git -C project log --grep stash", ["git -C project log --grep stash"]),
 )
