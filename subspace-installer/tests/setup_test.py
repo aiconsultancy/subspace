@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import ssl
 import subprocess
@@ -1434,6 +1435,45 @@ class HostInstallerTests(unittest.TestCase):
             self.assertEqual(ssh("-L", "8080:127.0.0.1:8080"),
                              ["-L", "8080:127.0.0.1:8080", "-F", config, "subspace-target"])
             self.assertEqual(ssh(), ["-F", config, "subspace-target"])
+            # Everything after -- is the remote command's, even words that look like the installer's options.
+            self.assertEqual(ssh("--", "df", "-h", "--yes", "--target", "other", "--local"),
+                             ["-F", config, "subspace-target", "df", "-h", "--yes", "--target", "other", "--local"])
+
+    @unittest.skipUnless(shutil.which("pwsh"), "needs PowerShell (pwsh)")
+    def test_install_ps1_ssh_runs_a_command_under_strict_mode(self):
+        with tempfile.TemporaryDirectory() as temp:
+            work = Path(temp)
+            (work / "bin").mkdir()
+            (work / "home/targets/example").mkdir(parents=True)
+            (work / "home/targets/example/target.env").write_text(
+                "KIND=remote\nHOST=ops@vm.example.com\nPORT=22\nIDENTITY=\nPROXY=\n")
+            fake = work / "bin/ssh.exe"
+            fake.write_text('#!/bin/sh\nfor a in "$@"; do printf "%s\\n" "$a"; done\n')
+            fake.chmod(0o755)
+            # Off Windows, the script's ACL helper cannot run; nothing else on this path needs Windows.
+            script = (Path(fleet_setup.HERE).parents[1] / "install.ps1").read_text()
+            script = re.sub(r"(?ms)^function Protect-File\b.*?^}\n", "function Protect-File([string]$Path) { }\n",
+                            script, count=1)
+            (work / "install.ps1").write_text(script)
+            environment = {**os.environ, "PATH": f"{work / 'bin'}:{os.environ['PATH']}", "SUBSPACE_HOME": str(work / "home")}
+            config = str(work / "home/targets/example/ssh_config")
+
+            def ssh(words, file=False):
+                command = ["pwsh", "-NoProfile", "-File", str(work / "install.ps1"), "ssh", "--target", "example",
+                           *words] if file else ["pwsh", "-NoProfile", "-Command",
+                                                 f"& '{work / 'install.ps1'}' ssh --target example {' '.join(words)}"]
+                result = subprocess.run(command, env=environment, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return result.stdout.splitlines()
+            host = ["-F", config, "subspace-target"]
+            self.assertEqual(ssh(["uptime"]), [*host, "uptime"])
+            self.assertEqual(ssh(["--", "uptime"]), [*host, "uptime"])
+            self.assertEqual(ssh(["df", "-h"]), [*host, "df", "-h"])
+            self.assertEqual(ssh(["-L", "8080:127.0.0.1:8080", "sudo", "uptime", "--yes"]),
+                             ["-F", config, "-L", "8080:127.0.0.1:8080", "subspace-target", "sudo", "uptime", "--yes"])
+            self.assertEqual(ssh([]), host)
+            self.assertEqual(ssh(["--"], file=True), host)
+            self.assertEqual(ssh(["--", "df", "-h", "--yes"], file=True), [*host, "df", "-h", "--yes"])
 
 
 class IrcServerTests(unittest.TestCase):

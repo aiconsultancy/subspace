@@ -66,6 +66,11 @@ if ($list.Count -gt 0 -and $list[0] -in @('install', 'irc-server', 'tunnel', 'pr
 function Next-Value { $script:i++; if ($script:i -ge $list.Count) { Die "$($list[$script:i - 1]) needs a value." }; return [string]$list[$script:i] }
 for (; $i -lt $list.Count; $i++) {
     $arg = [string]$list[$i]
+    if ($Command -eq 'ssh') {
+        # The remote command is not the installer's: from '--' or its first word, everything goes to ssh unchanged.
+        if ($arg -eq '--' -or -not $arg.StartsWith('-')) { $Passthrough.AddRange([string[]]@($list)[$i..($list.Count - 1)]); break }
+        if ($arg -cmatch '^-[BbcDEeFIiJLlmOoPpQRSWw]$') { $Passthrough.Add($arg); $Passthrough.Add([string](Next-Value)); continue }
+    }
     switch -CaseSensitive ($arg) {
         '--local' { $Mode = 'local' }
         '--remote' { $Mode = 'remote'; $Remote = Next-Value }
@@ -907,8 +912,11 @@ switch ($Command) {
         $command = New-Object System.Collections.Generic.List[string]
         for ($n = 0; $n -lt $Passthrough.Count; $n++) {
             $word = [string]$Passthrough[$n]
-            if ($word -eq '--') { $command.AddRange([string[]]@($Passthrough)[($n + 1)..($Passthrough.Count)]); break }
-            if (-not $word.StartsWith('-')) { $command.AddRange([string[]]@($Passthrough)[$n..($Passthrough.Count)]); break }
+            if ($word -eq '--') {
+                if ($n + 1 -lt $Passthrough.Count) { $command.AddRange([string[]]@($Passthrough)[($n + 1)..($Passthrough.Count - 1)]) }
+                break
+            }
+            if (-not $word.StartsWith('-')) { $command.AddRange([string[]]@($Passthrough)[$n..($Passthrough.Count - 1)]); break }
             $options.Add($word)
             if ($word -cmatch '^-[BbcDEeFIiJLlmOoPpQRSWw]$' -and $n + 1 -lt $Passthrough.Count) { $n++; $options.Add([string]$Passthrough[$n]) }
         }

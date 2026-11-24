@@ -128,6 +128,10 @@ case ${1:-} in
     install|irc-server|tunnel|providers|skills|desktop|ssh|status|audit|stop|start|destroy) command=$1; shift ;;
 esac
 while [ $# -gt 0 ]; do
+    if [ "$command" = ssh ] && [ "$1" = -- ]; then
+        # The remote command is not the installer's: everything from -- goes to ssh unchanged.
+        passthrough+=("$@"); break
+    fi
     case $1 in
         --local) mode=local; shift ;;
         --remote) mode=remote; remote=${2:?--remote needs USER@HOST}; shift 2 ;;
