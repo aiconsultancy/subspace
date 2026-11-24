@@ -1038,7 +1038,7 @@ class InstalledFleet(unittest.TestCase):
             self.assertNotIn("--socket", document["instructions"])
         for officer in ("atlas", "orion"):
             rules = json.loads((self.etc / f"opencode-{officer}.json").read_text())["permissions"]
-            self.assertEqual(rules[-1], runtime.SUBSPACE_REQUEST_GRANT)
+            self.assertEqual(rules[-2:], [runtime.SUBSPACE_REQUEST_GRANT, runtime.SUBSPACE_MCP_GRANT])
             self.assertEqual(fixture.opencode_decision(rules, "shell", ["subspace-request /api/v1/me"]), "allow")
         script = self.request.read_text()
         self.assertEqual(script.splitlines()[-1], f'exec {bridge[0]} {bridge[1]} subspace request --socket "$socket" "$@"')

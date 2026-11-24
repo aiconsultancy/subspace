@@ -366,19 +366,38 @@ class FleetPolicyTests(unittest.TestCase):
         # The agent listener has no REST command of its own; a hosted API's is granted to every officer.
         self.assertNotIn(runtime.SUBSPACE_REQUEST_GRANT, runtime.harness_permissions(cfg, person))
 
-    def test_a_hosted_api_gives_every_officer_its_rest_command_unless_a_rule_names_it(self):
-        config = example_config()
-        config["api"] = {"url": "https://subspace.example.com", "enrolment": True}
-        config["stargate"] = {"ref": runtime.SUBSPACE_AGENTS_COMMIT}
-        cfg = validate(config, officer_secrets())
-        for person in cfg["members"]:
-            granted = runtime.harness_permissions(cfg, person)
-            self.assertEqual(granted[-2:], [runtime.SUBSPACE_MCP_GRANT, runtime.SUBSPACE_REQUEST_GRANT])
-            self.assertEqual(fixture.opencode_decision(granted, "shell", ["subspace-request /api/v1/me"]), "allow")
-        person = cfg["members"][0]
-        rule = {"action": "shell", "resource": "subspace-request *", "effect": "deny"}
-        operator = dict(person, harness=dict(person["harness"], permissions=[*person["harness"]["permissions"], rule]))
-        self.assertEqual(runtime.harness_permissions(cfg, operator)[-2:], [rule, runtime.SUBSPACE_MCP_GRANT])
+    def test_a_hosted_api_gives_every_officer_its_rest_command_and_the_operator_the_last_word(self):
+        def hosted(harness=None):
+            config = example_config()
+            config["api"] = {"url": "https://subspace.example.com", "enrolment": True}
+            config["stargate"] = {"ref": runtime.SUBSPACE_AGENTS_COMMIT}
+            if harness:
+                config["harness"] = {**config["harness"], **harness}
+            cfg = validate(config, officer_secrets())
+            return [(person, runtime.harness_permissions(cfg, person)) for person in cfg["members"]]
+
+        def request(granted):
+            return fixture.opencode_decision(granted, "shell", ["subspace-request /api/v1/me"])
+
+        for person, granted in hosted():
+            self.assertEqual(granted, [*person["harness"]["permissions"], runtime.SUBSPACE_REQUEST_GRANT,
+                                       runtime.SUBSPACE_MCP_GRANT])
+            self.assertEqual(request(granted), "allow")
+        # After the starter policy and before the operator's own rules, which win under last-match-wins, a
+        # wildcard included: a role's deny of subspace-* or of every command holds.
+        for resource in ("subspace-*", "*"):
+            rule = {"action": "shell", "resource": resource, "effect": "deny"}
+            rear, captain = hosted({"captain": {"extraPermissions": [rule]}})
+            self.assertEqual(captain[1][-3:], [runtime.SUBSPACE_REQUEST_GRANT, rule, runtime.SUBSPACE_MCP_GRANT])
+            self.assertEqual((request(rear[1]), request(captain[1])), ("allow", "deny"))
+        # An explicit harness.permissions is the operator's too, so the grant comes first and the policy decides.
+        own = [{"action": "*", "resource": "*", "effect": "allow"}]
+        for _, granted in hosted({"permissions": own}):
+            self.assertEqual(granted, [runtime.SUBSPACE_REQUEST_GRANT, *own, runtime.SUBSPACE_MCP_GRANT])
+            self.assertEqual(request(granted), "allow")
+        closed = [{"action": "*", "resource": "*", "effect": "deny"}, {"action": "read", "resource": "*", "effect": "allow"}]
+        for _, granted in hosted({"permissions": closed}):
+            self.assertEqual(request(granted), "deny")
 
     def test_without_the_agent_listener_officers_get_no_api_server_or_skill(self):
         config = example_config()

@@ -1085,11 +1085,15 @@ def validate(config, credentials, check_files=True):
         delegate = person["role"] == "captain" and captain_tools == "delegate" and bool(person["crew"])
         if delegate:
             person["delegatesCoding"] = True
-        if person["harness"]["permissions"] is None:
+        starter = person["harness"]["permissions"] is None
+        if starter:
             references = STATE / "references" / person["id"] if cfg.get("repositories") else None
             worktrees = STATE / "agents" / person["id"] / "worktrees" if person["crew"] else None
             person["harness"]["permissions"] = default_permissions(person["role"], references, delegate=delegate,
                                                                    worktrees=worktrees)
+        # Where the operator's own rules begin, an explicit harness.permissions or else extraPermissions: a grant
+        # the installer adds goes before them (harness_permissions), so they have the last word.
+        person["harness"]["operatorRulesFrom"] = len(person["harness"]["permissions"]) if starter else 0
         if extra := person["harness"]["extraPermissions"]:
             # After the starter policy or an explicit harness.permissions, so the operator's rules win.
             person["harness"]["permissions"] = [*person["harness"]["permissions"], *extra]
@@ -1554,18 +1558,20 @@ def harness_permissions(cfg, person):
     """The officer's harness policy, plus the Subspace API's MCP tools when the agent listener or a hosted API is
     configured, and with a hosted API the officer's REST command (SUBSPACE_REQUEST).
 
-    An operator rule that already names a subspace_ action (an allow, ask or deny), or the REST command, stands
-    alone: the installer adds its grant only when the policy says nothing about it.
+    An operator rule that already names a subspace_ action (an allow, ask or deny) stands alone: the installer
+    adds the MCP tools' grant only when the policy says nothing about them. The REST command's grant goes after
+    the starter policy and before the operator's own rules (operatorRulesFrom): the last matching rule wins, so
+    any operator rule that matches the command, such as a deny of `subspace-*`, decides.
     """
     permissions = person["harness"]["permissions"]
-    grants = []
+    granted = permissions
+    if enrolled(cfg):
+        own = person["harness"].get("operatorRulesFrom", 0)
+        granted = [*permissions[:own], SUBSPACE_REQUEST_GRANT, *permissions[own:]]
     if (subspace_mcp_url(cfg) or enrolled(cfg)) and not any(
             str(rule.get("action", "")).startswith(f"{SUBSPACE_MCP}_") for rule in permissions):
-        grants.append(SUBSPACE_MCP_GRANT)
-    if enrolled(cfg) and not any(rule.get("action") == "shell" and str(rule.get("resource", "")).startswith(
-            SUBSPACE_REQUEST.name) for rule in permissions):
-        grants.append(SUBSPACE_REQUEST_GRANT)
-    return [*permissions, *grants] if grants else permissions
+        granted = [*granted, SUBSPACE_MCP_GRANT]
+    return granted
 
 
 def captain_permissions(cfg, person):

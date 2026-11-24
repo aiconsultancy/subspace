@@ -1262,8 +1262,12 @@ What the fleet installer renders, with `api.enrolment` set:
   so its name stays the same when Stargate's checkout changes, and crew act
   as their captain, as through its MCP server. Every OpenCode officer's
   policy allows it (`{"action": "shell", "resource": "subspace-request *",
-  "effect": "allow"}`), the rear admiral's included, unless a rule of its own
-  names it.
+  "effect": "allow"}`), the rear admiral's included. The installer puts that
+  rule after the starter policy and before the operator's own rules, an
+  explicit `harness.permissions` or `harness.extraPermissions`, so any of
+  them that matches the command decides, a deny of `subspace-*` or `*`
+  included. A hand-written `harness.permissions` that denies by default
+  therefore has to allow `subspace-request *` itself.
 - Nothing of the agent listener: no `X-Subspace-Agent` header, no
   `agent-header` helper and no `AGENT_PORT`. `subspace-fleetctl register`
   registers nothing, since the API's administrators keep the fleet's records.
